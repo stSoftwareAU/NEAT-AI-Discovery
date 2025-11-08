@@ -50,6 +50,39 @@ jobs:
           BASE_BRANCH="develop"
         fi
         
+        # FIRST: Check if version has already been incremented on this PR branch
+        # If the version on the PR branch is higher than base branch, skip increment (job done)
+        # This prevents duplicate version increments on the same PR
+        if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
+          BASE_VERSION=$(git show origin/$BASE_BRANCH:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "")
+          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          
+          if [ -n "$BASE_VERSION" ] && [ -n "$CURRENT_VERSION" ]; then
+            echo "Base branch version: $BASE_VERSION"
+            echo "PR branch version: $CURRENT_VERSION"
+            
+            # Compare versions numerically to see if PR version is higher
+            IFS='.' read -r base_major base_minor base_patch <<< "$BASE_VERSION"
+            IFS='.' read -r curr_major curr_minor curr_patch <<< "$CURRENT_VERSION"
+            
+            # Check if PR version is higher than base version
+            VERSION_ALREADY_INCREMENTED=false
+            if [ "$curr_major" -gt "$base_major" ]; then
+              VERSION_ALREADY_INCREMENTED=true
+            elif [ "$curr_major" -eq "$base_major" ] && [ "$curr_minor" -gt "$base_minor" ]; then
+              VERSION_ALREADY_INCREMENTED=true
+            elif [ "$curr_major" -eq "$base_major" ] && [ "$curr_minor" -eq "$base_minor" ] && [ "$curr_patch" -gt "$base_patch" ]; then
+              VERSION_ALREADY_INCREMENTED=true
+            fi
+            
+            if [ "$VERSION_ALREADY_INCREMENTED" = "true" ]; then
+              echo "✅ Version has already been incremented on this PR branch (job done)"
+              echo "Skipping version increment to avoid duplicate commits"
+              exit 0
+            fi
+          fi
+        fi
+        
         # Check if there are changes in src directory compared to base branch
         # This correctly detects changes even if auto-format pushed commits
         HAS_SRC_CHANGES=false
@@ -69,29 +102,6 @@ jobs:
           else
             echo "No changes in src directory, skipping version increment"
             exit 0
-          fi
-        fi
-        
-        # If we have src changes, check if version has already been incremented
-        # If the version on the PR branch is higher than base branch, skip increment (job done)
-        if [ "$HAS_SRC_CHANGES" = "true" ] && git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
-          BASE_VERSION=$(git show origin/$BASE_BRANCH:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "")
-          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-          
-          if [ -n "$BASE_VERSION" ] && [ "$CURRENT_VERSION" != "$BASE_VERSION" ]; then
-            echo "Version on PR branch ($CURRENT_VERSION) differs from base branch ($BASE_VERSION)"
-            echo "Checking if version increment is already done..."
-            
-            # Compare versions numerically to see if PR version is higher
-            IFS='.' read -r base_major base_minor base_patch <<< "$BASE_VERSION"
-            IFS='.' read -r curr_major curr_minor curr_patch <<< "$CURRENT_VERSION"
-            
-            if [ "$curr_major" -gt "$base_major" ] || \
-               ([ "$curr_major" -eq "$base_major" ] && [ "$curr_minor" -gt "$base_minor" ]) || \
-               ([ "$curr_major" -eq "$base_major" ] && [ "$curr_minor" -eq "$base_minor" ] && [ "$curr_patch" -gt "$base_patch" ]); then
-              echo "Version has already been incremented on this PR branch, skipping (job done)"
-              exit 0
-            fi
           fi
         fi
         
