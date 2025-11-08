@@ -45,7 +45,13 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
                 ));
             }
         }
-        record_indices.clone()
+        // Deduplicate indices while preserving order to ensure each obs_index
+        // uniquely identifies a training record (atomic write requirement)
+        let mut seen = std::collections::HashSet::new();
+        record_indices
+            .iter()
+            .filter_map(|&idx| if seen.insert(idx) { Some(idx) } else { None })
+            .collect()
     } else {
         // Process all records
         (0..input.training_data.len()).collect()
@@ -545,6 +551,86 @@ mod tests {
         assert!(
             error_msg.contains("hidden or output neuron"),
             "Error should mention that hidden or output neurons are required, got: {error_msg}"
+        );
+    }
+
+    #[test]
+    fn test_record_discovery_data_deduplicates_record_indices() {
+        // Test that duplicate record_indices are deduplicated to ensure each obs_index
+        // uniquely identifies a training record (atomic write requirement)
+        let temp_dir = TempDir::new().unwrap();
+        let mut input = create_test_input();
+        input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+        // Create 10 training records
+        input.training_data = (0..10)
+            .map(|i| crate::TrainingRecord {
+                input: vec![i as f32, (i * 2) as f32],
+                output: vec![i as f32],
+            })
+            .collect();
+
+        // Provide duplicate indices: 1, 3, 1, 5, 3
+        // After deduplication, should only process 1, 3, 5
+        input.record_indices = Some(vec![1, 3, 1, 5, 3]);
+
+        let result = record_discovery_data(&input).unwrap();
+
+        // Verify file was created
+        let parquet_file = Path::new(&result.temp_dir).join(&result.file);
+        assert!(parquet_file.exists());
+
+        // Read the parquet file and verify only unique obs_index values exist
+        // We have 2 neurons (hidden-1 and output-0), so we should have 6 records total (3 unique indices * 2 neurons)
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::fs::File;
+        let file = File::open(&parquet_file).unwrap();
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        let reader = builder.build().unwrap();
+        let mut record_count = 0;
+        let mut obs_index_counts = std::collections::HashMap::new();
+
+        for batch_result in reader {
+            let batch = batch_result.unwrap();
+            let obs_index_array = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::UInt32Array>()
+                .unwrap();
+
+            for i in 0..batch.num_rows() {
+                let obs_index = obs_index_array.value(i);
+                *obs_index_counts.entry(obs_index).or_insert(0) += 1;
+                record_count += 1;
+            }
+        }
+
+        // Should have 6 records (3 unique indices * 2 neurons)
+        assert_eq!(
+            record_count, 6,
+            "Should have 6 records (3 unique indices * 2 neurons)"
+        );
+        // Should only contain indices 1, 3, 5 (no duplicates)
+        assert_eq!(
+            obs_index_counts.len(),
+            3,
+            "Should have 3 unique obs_index values (duplicates should be removed)"
+        );
+        // Each obs_index should appear exactly twice (once per neuron)
+        assert_eq!(
+            obs_index_counts.get(&1),
+            Some(&2),
+            "obs_index 1 should appear exactly twice (once per neuron)"
+        );
+        assert_eq!(
+            obs_index_counts.get(&3),
+            Some(&2),
+            "obs_index 3 should appear exactly twice (once per neuron)"
+        );
+        assert_eq!(
+            obs_index_counts.get(&5),
+            Some(&2),
+            "obs_index 5 should appear exactly twice (once per neuron)"
         );
     }
 }
