@@ -1,0 +1,418 @@
+name: CI/CD Pipeline
+
+on:
+  pull_request:
+    branches: [ Develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version-increment:
+    name: Auto-increment Versions
+    runs-on: ubuntu-latest
+    needs: [auto-format]
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.head_ref }}
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Configure Git
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+    - name: Pull latest changes
+      run: git pull origin ${{ github.head_ref }}
+        
+    - name: Fetch base branch
+      run: |
+        git fetch origin Develop:Develop || git fetch origin develop:develop || true
+        
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Install cargo-outdated
+      run: cargo install cargo-outdated
+        
+    - name: Check for source changes and increment version
+      run: |
+        # Determine base branch name (try Develop first, then develop)
+        BASE_BRANCH="Develop"
+        if ! git show-ref --verify --quiet refs/remotes/origin/Develop; then
+          BASE_BRANCH="develop"
+        fi
+        
+        # FIRST: Check if a version increment commit already exists in this PR branch
+        # This is the most reliable way to prevent duplicate increments
+        if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
+          # Check if there's already a version increment commit in PR branch that's not in base branch
+          VERSION_COMMIT_COUNT=$(git log --oneline origin/$BASE_BRANCH..HEAD --grep="chore: auto-increment versions for changed projects" | wc -l)
+          if [ "$VERSION_COMMIT_COUNT" -gt 0 ]; then
+            echo "✅ Version increment commit already exists in this PR branch (found $VERSION_COMMIT_COUNT commit(s))"
+            echo "Skipping version increment to avoid duplicate commits"
+            exit 0
+          fi
+        fi
+        
+        # SECOND: Check if version is already different from the base branch
+        # If the version on the PR branch differs from base branch, skip increment (already done)
+        # This prevents duplicate version increments on the same PR
+        if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
+          BASE_VERSION=$(git show origin/$BASE_BRANCH:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "")
+          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          
+          if [ -n "$BASE_VERSION" ] && [ -n "$CURRENT_VERSION" ]; then
+            echo "Base branch version: $BASE_VERSION"
+            echo "PR branch version: $CURRENT_VERSION"
+            
+            # If versions are different, version has already been incremented for this PR
+            if [ "$CURRENT_VERSION" != "$BASE_VERSION" ]; then
+              echo "✅ Version is already different from base branch ($BASE_VERSION -> $CURRENT_VERSION)"
+              echo "Skipping version increment to avoid duplicate commits"
+              exit 0
+            fi
+          fi
+        fi
+        
+        # Check if there are changes in src directory compared to base branch
+        # This correctly detects changes even if auto-format pushed commits
+        HAS_SRC_CHANGES=false
+        if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
+          if ! git diff --quiet origin/$BASE_BRANCH...HEAD -- src/; then
+            HAS_SRC_CHANGES=true
+            echo "Found changes in src directory compared to base branch"
+          else
+            echo "No changes in src directory compared to base branch, skipping version increment"
+            exit 0
+          fi
+        else
+          # Fallback: if base branch not available, check HEAD~1 (original logic)
+          if ! git diff --quiet HEAD~1 HEAD -- src/; then
+            HAS_SRC_CHANGES=true
+            echo "Found changes in src directory"
+          else
+            echo "No changes in src directory, skipping version increment"
+            exit 0
+          fi
+        fi
+        
+        # Get current version from Cargo.toml
+        CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+        echo "Current version: $CURRENT_VERSION"
+        
+        # Increment patch version
+        # Normalize version to always have 3 parts (major.minor.patch)
+        # Default missing parts to 0 (e.g., "1.0" becomes "1.0.0")
+        IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+        major=${major:-0}
+        minor=${minor:-0}
+        patch=${patch:-0}
+        NEW_VERSION="$major.$minor.$((patch + 1))"
+        echo "New version: $NEW_VERSION"
+        
+        # Update Cargo.toml with new version (escape regex meta characters in CURRENT_VERSION)
+        # Use a single escape pass to avoid double-escaping backslashes
+        ESCAPED_CURRENT=$(printf '%s' "$CURRENT_VERSION" | sed 's/[\/.^$*+?()[\]{}|]/\\&/g')
+        sed -i.bak "s/^version = \"$ESCAPED_CURRENT\"/version = \"$NEW_VERSION\"/" Cargo.toml
+        rm Cargo.toml.bak
+        
+        echo "✅ Version updated from $CURRENT_VERSION to $NEW_VERSION"
+        
+        cargo update
+        cargo outdated -R || true
+        
+    - name: Check if there are changes
+      id: changes
+      run: |
+        if ! git diff --quiet; then
+          git add -A
+          git commit -m "chore: auto-increment versions for changed projects"
+          git push origin ${{ github.head_ref }}
+        else
+          echo "No version changes to commit"
+        fi
+
+  quality:
+    name: Quality Checks
+    runs-on: ubuntu-latest
+    needs: [version-increment, auto-format]
+    env:
+      RUSTFLAGS: "-D warnings"
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.head_ref }}
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Pull latest changes
+      run: git pull origin ${{ github.head_ref }}
+        
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+        
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+      
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+      
+    - name: Run linter
+      run: cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args
+      
+    - name: Check types
+      run: cargo check --all-targets --all-features
+      
+    - name: Build library
+      run: cargo build --lib
+      
+    - name: Run tests
+      run: cargo test --all-targets --all-features --verbose
+
+  security:
+    uses: ./.github/workflows/security.yml
+    with:
+      include-dependency-review: true
+
+  validation:
+    name: Project Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check for required files
+      run: |
+        echo "🔍 Checking for required project files..."
+        
+        required_files=(
+          "Cargo.toml"
+          "README.md"
+          "LICENSE"
+          "src/lib.rs"
+        )
+        
+        missing_files=()
+        for file in "${required_files[@]}"; do
+          if [ ! -f "$file" ]; then
+            missing_files+=("$file")
+          fi
+        done
+        
+        if [ ${#missing_files[@]} -ne 0 ]; then
+          echo "❌ Missing required files: ${missing_files[*]}"
+          exit 1
+        else
+          echo "✅ All required files present"
+        fi
+
+    - name: Validate Cargo.toml
+      run: |
+        echo "🔍 Validating Cargo.toml..."
+        
+        if ! cargo check --manifest-path Cargo.toml --quiet; then
+          echo "❌ Cargo.toml validation failed"
+          exit 1
+        fi
+        
+        for field in "name" "version" "edition"; do
+          if ! grep -q "$field = " Cargo.toml; then
+            echo "❌ Missing '$field' field in Cargo.toml"
+            exit 1
+          fi
+        done
+        
+        echo "✅ Cargo.toml validation passed"
+
+    - name: Check documentation
+      run: |
+        echo "🔍 Checking documentation..."
+        
+        readme_lines=$(wc -l < README.md)
+        if [ "$readme_lines" -lt 10 ]; then
+          echo "❌ README.md seems too short (${readme_lines} lines)"
+          exit 1
+        fi
+        
+        if [ -f "src/lib.rs" ]; then
+          doc_comments=$(grep -c "///" src/lib.rs || echo "0")
+          if [ "$doc_comments" -eq 0 ]; then
+            echo "⚠️  No documentation comments found in src/lib.rs"
+          else
+            echo "✅ Found $doc_comments documentation comments"
+          fi
+        fi
+
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    needs: [version-increment, auto-format, quality]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.head_ref }}
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Pull latest changes
+      run: git pull origin ${{ github.head_ref }}
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+        
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+          
+    - name: Build release library
+      run: cargo build --release --lib
+      
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: neat-ai-discovery-release
+        path: target/release/libneat_ai_discovery.*
+
+  auto-format:
+    name: Auto-format Code
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.head_ref }}
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Ensure bash scripts are executable
+      run: |
+        echo "🔍 Ensuring all bash scripts are executable..."
+        CHANGED=false
+        while IFS= read -r script; do
+          if [ ! -x "$script" ]; then
+            echo "Making $script executable..."
+            chmod +x "$script"
+            CHANGED=true
+          else
+            echo "✅ $script is already executable"
+          fi
+        done < <(find . -name "*.sh" -not -path "./target/*" -not -path "./.git/*")
+        if [ "$CHANGED" = true ]; then
+          echo "Scripts were made executable"
+        else
+          echo "All scripts are already executable"
+        fi
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Format Code
+      run: cargo fmt
+
+    - name: Check for Changes
+      id: check_changes
+      run: |
+        if git diff --quiet; then
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+        else
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Commit Changes
+      if: steps.check_changes.outputs.has_changes == 'true'
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git commit -am "chore: apply rustfmt fixes"
+
+    - name: Push Changes
+      if: steps.check_changes.outputs.has_changes == 'true'
+      run: git push origin ${{ github.head_ref }}
+
+  shell-checks:
+    name: Shell Script Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.head_ref }}
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Check bash script syntax
+      run: |
+        echo "🔍 Checking bash script syntax with bash -n..."
+        EXIT_CODE=0
+        while IFS= read -r script; do
+          echo "Checking $script..."
+          if bash -n "$script"; then
+            echo "✅ $script passed syntax check"
+          else
+            echo "❌ $script has syntax errors"
+            EXIT_CODE=1
+          fi
+        done < <(find . -name "*.sh" -not -path "./target/*" -not -path "./.git/*")
+        if [ $EXIT_CODE -eq 0 ]; then
+          echo "✅ All bash scripts passed syntax checks"
+        else
+          echo "❌ Some bash scripts have syntax errors"
+          exit 1
+        fi
+
+  spell-check:
+    name: Spell Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.head_ref }}
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Run codespell
+      uses: codespell-project/actions-codespell@v2
+      with:
+        check_filenames: true
+        check_hidden: true
+        skip: "./target,./.git,./tests/data"
+
