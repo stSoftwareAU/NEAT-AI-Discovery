@@ -112,6 +112,29 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
         }
     }
 
+    // Check if we have any records to write
+    // This can happen if the creature only has input neurons (which are skipped)
+    if all_records.is_empty() {
+        // Count non-input neurons to provide a helpful error message
+        let non_input_count = input
+            .creature
+            .neurons
+            .iter()
+            .filter(|n| n.neuron_type != "input")
+            .count();
+
+        if non_input_count == 0 {
+            return Err(anyhow::anyhow!(
+                "Cannot record discovery data: creature has no non-input neurons. Discovery recording requires at least one hidden or output neuron to record activations and errors."
+            ));
+        }
+
+        // This shouldn't happen, but provide a generic error if it does
+        return Err(anyhow::anyhow!(
+            "No discovery records were generated from the training data"
+        ));
+    }
+
     // Write all records to Parquet file
     let parquet_file = temp_dir.join("discovery_data.parquet");
     let parquet_path = parquet_file
@@ -193,8 +216,12 @@ mod tests {
         let result = record_discovery_data(&input);
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        // Error should mention "No records" or "Failed to write"
-        assert!(error_msg.contains("No records") || error_msg.contains("Failed to write"));
+        // Error should mention that no discovery records were generated
+        assert!(
+            error_msg.contains("No discovery records")
+                || error_msg.contains("no discovery records"),
+            "Error should mention that no discovery records were generated, got: {error_msg}"
+        );
     }
 
     #[test]
@@ -476,5 +503,48 @@ mod tests {
         assert!(found_indices.contains(&0), "Should contain obs_index 0");
         assert!(found_indices.contains(&1), "Should contain obs_index 1");
         assert!(found_indices.contains(&2), "Should contain obs_index 2");
+    }
+
+    #[test]
+    fn test_record_discovery_data_only_input_neurons() {
+        // Test that a creature with only input neurons produces a clear error message
+        let temp_dir = TempDir::new().unwrap();
+        let mut input = create_test_input();
+        input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+        // Replace neurons with only input neurons
+        input.creature.neurons = vec![
+            crate::NeuronJson {
+                uuid: "input-0".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            crate::NeuronJson {
+                uuid: "input-1".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ];
+
+        // Should have training data but no non-input neurons
+        input.training_data = vec![crate::TrainingRecord {
+            input: vec![0.1, 0.2],
+            output: vec![0.5],
+        }];
+
+        let result = record_discovery_data(&input);
+        assert!(result.is_err(), "Should fail when only input neurons exist");
+
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("no non-input neurons") || error_msg.contains("non-input neurons"),
+            "Error should explain that no non-input neurons exist, got: {error_msg}"
+        );
+        assert!(
+            error_msg.contains("hidden or output neuron"),
+            "Error should mention that hidden or output neurons are required, got: {error_msg}"
+        );
     }
 }

@@ -72,12 +72,37 @@ pub struct RecordDiscoveryOutput {
 /// Main entry point for recording discovery data
 ///
 /// Takes JSON input and returns JSON output for easy integration with TypeScript/DenoJS
+/// Always returns a JSON string, even on error (with success=false)
 pub fn record_discovery(input_json: &str) -> Result<String> {
-    let input: RecordDiscoveryInput = serde_json::from_str(input_json)
-        .map_err(|e| anyhow::anyhow!("Failed to parse input JSON: {e}"))?;
+    // Parse input JSON - if this fails, return JSON error
+    let input: RecordDiscoveryInput = match serde_json::from_str(input_json) {
+        Ok(input) => input,
+        Err(e) => {
+            let output = RecordDiscoveryOutput {
+                success: false,
+                temp_dir: None,
+                file: None,
+                error: Some(format!("Failed to parse input JSON: {e}")),
+            };
+            return Ok(serde_json::to_string(&output)?);
+        }
+    };
 
-    let result = record::record_discovery_data(&input)?;
+    // Process discovery data - if this fails, return JSON error
+    let result = match record::record_discovery_data(&input) {
+        Ok(result) => result,
+        Err(e) => {
+            let output = RecordDiscoveryOutput {
+                success: false,
+                temp_dir: None,
+                file: None,
+                error: Some(e.to_string()),
+            };
+            return Ok(serde_json::to_string(&output)?);
+        }
+    };
 
+    // Success case
     let output = RecordDiscoveryOutput {
         success: true,
         temp_dir: Some(result.temp_dir),
