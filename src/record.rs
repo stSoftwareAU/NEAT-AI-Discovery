@@ -28,16 +28,6 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
     fs::create_dir_all(temp_dir)
         .with_context(|| format!("Failed to create temp directory: {temp_dir_str}"))?;
 
-    // Validate that training data size doesn't exceed u32::MAX
-    // This prevents silent overflow when converting obs_index from usize to u32
-    if input.training_data.len() > u32::MAX as usize {
-        return Err(anyhow::anyhow!(
-            "Training data size ({}) exceeds maximum supported size ({})",
-            input.training_data.len(),
-            u32::MAX
-        ));
-    }
-
     // Collect all discovery records
     // For now, we'll process sequentially to ensure atomicity
     // TODO: Add parallel processing with proper synchronization
@@ -60,6 +50,20 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
         // Process all records
         (0..input.training_data.len()).collect()
     };
+
+    // Validate that the indices being processed don't exceed u32::MAX
+    // This prevents silent overflow when converting obs_index from usize to u32
+    // When record_indices is provided, we only validate those indices.
+    // When record_indices is not provided, we validate the total training data size.
+    if let Some(max_index) = indices_to_process.iter().max() {
+        if *max_index > u32::MAX as usize {
+            return Err(anyhow::anyhow!(
+                "Maximum record index ({}) exceeds maximum supported size ({})",
+                max_index,
+                u32::MAX
+            ));
+        }
+    }
 
     for &obs_index in &indices_to_process {
         let _training_record = &input.training_data[obs_index];
@@ -402,5 +406,75 @@ mod tests {
         for i in 0..5 {
             assert!(found_indices.contains(&i), "Should contain obs_index {i}");
         }
+    }
+
+    #[test]
+    fn test_record_discovery_data_with_record_indices_validates_indices_not_total_size() {
+        // Test that when record_indices is provided, validation checks the indices
+        // being processed, not the total training data size.
+        // This test verifies that a large dataset can be processed if only
+        // small indices are selected via record_indices.
+        let temp_dir = TempDir::new().unwrap();
+        let mut input = create_test_input();
+        input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+        // Create a large training dataset (simulating a case where total size
+        // might be large, but we only want to process a small subset)
+        // We use a reasonable large number (100,000) to simulate the scenario
+        // In real usage, this could be millions, but we can't create that many in tests
+        input.training_data = (0..100_000)
+            .map(|_| crate::TrainingRecord {
+                input: vec![0.1, 0.2],
+                output: vec![0.5],
+            })
+            .collect();
+
+        // Only process small indices (0, 1, 2) - all well within u32::MAX
+        input.record_indices = Some(vec![0, 1, 2]);
+
+        // This should succeed because we're only processing indices 0, 1, 2,
+        // which are all within u32::MAX, even though the total dataset is large
+        let result = record_discovery_data(&input);
+        assert!(
+            result.is_ok(),
+            "Should succeed when record_indices contains valid indices, even if total dataset is large"
+        );
+
+        // Verify file was created
+        let parquet_file =
+            Path::new(&result.as_ref().unwrap().temp_dir).join(&result.as_ref().unwrap().file);
+        assert!(parquet_file.exists());
+
+        // Verify only the specified indices were processed
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::fs::File;
+        let file = File::open(&parquet_file).unwrap();
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        let reader = builder.build().unwrap();
+        let mut found_indices = std::collections::HashSet::new();
+
+        for batch_result in reader {
+            let batch = batch_result.unwrap();
+            let obs_index_array = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::UInt32Array>()
+                .unwrap();
+
+            for i in 0..batch.num_rows() {
+                let obs_index = obs_index_array.value(i);
+                found_indices.insert(obs_index);
+            }
+        }
+
+        // Should only contain indices 0, 1, 2
+        assert_eq!(
+            found_indices.len(),
+            3,
+            "Should have 3 unique obs_index values (0, 1, 2)"
+        );
+        assert!(found_indices.contains(&0), "Should contain obs_index 0");
+        assert!(found_indices.contains(&1), "Should contain obs_index 1");
+        assert!(found_indices.contains(&2), "Should contain obs_index 2");
     }
 }

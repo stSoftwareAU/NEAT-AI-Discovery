@@ -92,7 +92,7 @@ ensure_lib_built() {
 
   # Build the library (Cargo will handle incremental compilation)
   >&2 echo "Building ${PKG} v${DESIRED}"
-  cargo build --release --lib --locked >&2
+  cargo build --release --lib >&2
 
   # Copy to cargo lib directory
   >&2 echo "Installing ${lib_file} → ${lib_path}"
