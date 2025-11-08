@@ -50,8 +50,20 @@ jobs:
           BASE_BRANCH="develop"
         fi
         
-        # FIRST: Check if version has already been incremented on this PR branch
-        # If the version on the PR branch is higher than base branch, skip increment (job done)
+        # FIRST: Check if a version increment commit already exists in this PR branch
+        # This is the most reliable way to prevent duplicate increments
+        if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
+          # Check if there's already a version increment commit in PR branch that's not in base branch
+          VERSION_COMMIT_COUNT=$(git log --oneline origin/$BASE_BRANCH..HEAD --grep="chore: auto-increment versions for changed projects" | wc -l)
+          if [ "$VERSION_COMMIT_COUNT" -gt 0 ]; then
+            echo "✅ Version increment commit already exists in this PR branch (found $VERSION_COMMIT_COUNT commit(s))"
+            echo "Skipping version increment to avoid duplicate commits"
+            exit 0
+          fi
+        fi
+        
+        # SECOND: Check if version is already different from the base branch
+        # If the version on the PR branch differs from base branch, skip increment (already done)
         # This prevents duplicate version increments on the same PR
         if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
           BASE_VERSION=$(git show origin/$BASE_BRANCH:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "")
@@ -61,32 +73,9 @@ jobs:
             echo "Base branch version: $BASE_VERSION"
             echo "PR branch version: $CURRENT_VERSION"
             
-            # Compare versions numerically to see if PR version is higher
-            # Normalize versions to always have 3 parts (major.minor.patch)
-            # Default missing parts to 0 (e.g., "1.0" becomes "1.0.0")
-            IFS='.' read -r base_major base_minor base_patch <<< "$BASE_VERSION"
-            IFS='.' read -r curr_major curr_minor curr_patch <<< "$CURRENT_VERSION"
-            
-            # Default missing parts to 0 for safe numeric comparison
-            base_major=${base_major:-0}
-            base_minor=${base_minor:-0}
-            base_patch=${base_patch:-0}
-            curr_major=${curr_major:-0}
-            curr_minor=${curr_minor:-0}
-            curr_patch=${curr_patch:-0}
-            
-            # Check if PR version is higher than base version
-            VERSION_ALREADY_INCREMENTED=false
-            if [ "$curr_major" -gt "$base_major" ]; then
-              VERSION_ALREADY_INCREMENTED=true
-            elif [ "$curr_major" -eq "$base_major" ] && [ "$curr_minor" -gt "$base_minor" ]; then
-              VERSION_ALREADY_INCREMENTED=true
-            elif [ "$curr_major" -eq "$base_major" ] && [ "$curr_minor" -eq "$base_minor" ] && [ "$curr_patch" -gt "$base_patch" ]; then
-              VERSION_ALREADY_INCREMENTED=true
-            fi
-            
-            if [ "$VERSION_ALREADY_INCREMENTED" = "true" ]; then
-              echo "✅ Version has already been incremented on this PR branch (job done)"
+            # If versions are different, version has already been incremented for this PR
+            if [ "$CURRENT_VERSION" != "$BASE_VERSION" ]; then
+              echo "✅ Version is already different from base branch ($BASE_VERSION -> $CURRENT_VERSION)"
               echo "Skipping version increment to avoid duplicate commits"
               exit 0
             fi
