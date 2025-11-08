@@ -11,6 +11,7 @@ jobs:
   version-increment:
     name: Auto-increment Versions
     runs-on: ubuntu-latest
+    needs: [auto-format]
     permissions:
       contents: write
       pull-requests: write
@@ -27,6 +28,15 @@ jobs:
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+    - name: Pull latest changes
+      run: git pull origin ${{ github.head_ref }}
+        
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Install cargo-outdated
+      run: cargo install cargo-outdated
         
     - name: Check for source changes and increment version
       run: |
@@ -78,7 +88,12 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
+        ref: ${{ github.head_ref }}
         fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Pull latest changes
+      run: git pull origin ${{ github.head_ref }}
         
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -194,6 +209,13 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        ref: ${{ github.head_ref }}
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Pull latest changes
+      run: git pull origin ${{ github.head_ref }}
       
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -290,6 +312,7 @@ jobs:
       with:
         ref: ${{ github.head_ref }}
         fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
         
     - name: Check bash script syntax
       run: |
@@ -321,6 +344,7 @@ jobs:
       with:
         ref: ${{ github.head_ref }}
         fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Run codespell
       uses: codespell-project/actions-codespell@v2
