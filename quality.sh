@@ -16,9 +16,6 @@ cargo build
 echo "🪄 Auto-formatting code..."
 cargo fmt --all
 
-echo "🔍 Checking code formatting..."
-cargo fmt --all -- --check
-
 echo "🔧 Running linter..."
 cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args
 

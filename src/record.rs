@@ -125,7 +125,7 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
 
         if non_input_count == 0 {
             return Err(anyhow::anyhow!(
-                "Cannot record discovery data: creature has no non-input neurons. Discovery recording requires at least one hidden or output neuron to record activations and errors."
+                "Cannot record discovery data: creature has no non-input neurons. Input neurons are skipped during discovery recording. Discovery recording requires at least one hidden or output neuron to record activations and errors."
             ));
         }
 
