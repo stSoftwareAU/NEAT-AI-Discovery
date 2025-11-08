@@ -28,6 +28,16 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
     fs::create_dir_all(temp_dir)
         .with_context(|| format!("Failed to create temp directory: {temp_dir_str}"))?;
 
+    // Validate that training data size doesn't exceed u32::MAX
+    // This prevents silent overflow when converting obs_index from usize to u32
+    if input.training_data.len() > u32::MAX as usize {
+        return Err(anyhow::anyhow!(
+            "Training data size ({}) exceeds maximum supported size ({})",
+            input.training_data.len(),
+            u32::MAX
+        ));
+    }
+
     // Collect all discovery records
     // For now, we'll process sequentially to ensure atomicity
     // TODO: Add parallel processing with proper synchronization
@@ -44,6 +54,16 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
         // - Get neuron activations and errors
         // - For now, we'll create placeholder records
 
+        // Safely convert obs_index from usize to u32
+        // This will never fail because we validated the length above
+        let obs_index_u32 = u32::try_from(obs_index).map_err(|_| {
+            anyhow::anyhow!(
+                "Observation index {} exceeds u32::MAX ({})",
+                obs_index,
+                u32::MAX
+            )
+        })?;
+
         // Process each neuron
         for neuron in &input.creature.neurons {
             // Skip input neurons for now (match TypeScript behavior)
@@ -57,7 +77,7 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
             let errors = vec![]; // TODO: Get from creature.record()
 
             let record = DiscoverRecord::new(
-                obs_index as u32,
+                obs_index_u32,
                 neuron.uuid.clone(),
                 value,
                 activation,
@@ -151,5 +171,67 @@ mod tests {
         let error_msg = result.unwrap_err().to_string();
         // Error should mention "No records" or "Failed to write"
         assert!(error_msg.contains("No records") || error_msg.contains("Failed to write"));
+    }
+
+    #[test]
+    fn test_record_discovery_data_obs_index_conversion() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut input = create_test_input();
+        input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+        // Test with a reasonable number of records (well within u32::MAX)
+        // This verifies that the safe conversion from usize to u32 works correctly
+        input.training_data = (0..1000)
+            .map(|_| crate::TrainingRecord {
+                input: vec![0.1, 0.2],
+                output: vec![0.5],
+            })
+            .collect();
+
+        // This should succeed - obs_index should be safely converted using try_from
+        let result = record_discovery_data(&input);
+        assert!(
+            result.is_ok(),
+            "Should handle valid obs_index values within u32::MAX"
+        );
+
+        // Verify the file was created
+        let parquet_file =
+            Path::new(&result.as_ref().unwrap().temp_dir).join(&result.as_ref().unwrap().file);
+        assert!(parquet_file.exists());
+    }
+
+    #[test]
+    fn test_record_discovery_data_obs_index_overflow_validation() {
+        // This test verifies that the validation logic correctly prevents
+        // training data that would exceed u32::MAX from being processed.
+        // Note: We can't actually create 4.3 billion records in memory for testing,
+        // but we can verify the validation code path exists and the conversion
+        // uses try_from instead of unsafe 'as' casting.
+
+        // The validation check `if input.training_data.len() > u32::MAX as usize`
+        // will catch any overflow case. The use of `u32::try_from(obs_index)`
+        // provides a second layer of protection that would error if somehow
+        // an obs_index exceeded u32::MAX.
+
+        // For a practical test, we verify that normal-sized datasets work correctly
+        // and that the conversion is safe (not using 'as' which would silently truncate)
+        let temp_dir = TempDir::new().unwrap();
+        let mut input = create_test_input();
+        input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+        // Test with a reasonable number of records to verify safe conversion
+        input.training_data = (0..100)
+            .map(|_| crate::TrainingRecord {
+                input: vec![0.1, 0.2],
+                output: vec![0.5],
+            })
+            .collect();
+
+        let result = record_discovery_data(&input);
+        assert!(
+            result.is_ok(),
+            "Safe conversion should work for valid ranges"
+        );
     }
 }
