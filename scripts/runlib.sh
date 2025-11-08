@@ -108,3 +108,8 @@ ensure_lib_built() {
   echo "$lib_path"
 }
 
+# If script is executed directly (not sourced), run the function
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  ensure_lib_built
+fi
+
