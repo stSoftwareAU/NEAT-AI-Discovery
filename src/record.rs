@@ -43,7 +43,27 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
     // TODO: Add parallel processing with proper synchronization
     let mut all_records = Vec::new();
 
-    for (obs_index, _training_record) in input.training_data.iter().enumerate() {
+    // Determine which indices to process
+    let indices_to_process: Vec<usize> = if let Some(ref record_indices) = input.record_indices {
+        // Validate all indices are within bounds
+        for &idx in record_indices {
+            if idx >= input.training_data.len() {
+                return Err(anyhow::anyhow!(
+                    "Record index {} is out of bounds (training data has {} records)",
+                    idx,
+                    input.training_data.len()
+                ));
+            }
+        }
+        record_indices.clone()
+    } else {
+        // Process all records
+        (0..input.training_data.len()).collect()
+    };
+
+    for &obs_index in &indices_to_process {
+        let _training_record = &input.training_data[obs_index];
+
         // For each training record, we need to:
         // 1. Activate creature with training_record.input
         // 2. Get all neuron activations and errors
@@ -233,5 +253,154 @@ mod tests {
             result.is_ok(),
             "Safe conversion should work for valid ranges"
         );
+    }
+
+    #[test]
+    fn test_record_discovery_data_respects_record_indices() {
+        // Test that when record_indices is provided, only those indices are processed
+        let temp_dir = TempDir::new().unwrap();
+        let mut input = create_test_input();
+        input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+        // Create 10 training records
+        input.training_data = (0..10)
+            .map(|i| crate::TrainingRecord {
+                input: vec![i as f32, (i * 2) as f32],
+                output: vec![i as f32],
+            })
+            .collect();
+
+        // Only process indices 1, 3, and 5
+        input.record_indices = Some(vec![1, 3, 5]);
+
+        let result = record_discovery_data(&input).unwrap();
+
+        // Verify file was created
+        let parquet_file = Path::new(&result.temp_dir).join(&result.file);
+        assert!(parquet_file.exists());
+
+        // Read the parquet file and verify only records with obs_index 1, 3, 5 exist
+        // We have 2 neurons (hidden-1 and output-0), so we should have 6 records total (3 indices * 2 neurons)
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::fs::File;
+        let file = File::open(&parquet_file).unwrap();
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        let reader = builder.build().unwrap();
+        let mut record_count = 0;
+        let mut found_indices = std::collections::HashSet::new();
+
+        for batch_result in reader {
+            let batch = batch_result.unwrap();
+            let obs_index_array = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::UInt32Array>()
+                .unwrap();
+
+            for i in 0..batch.num_rows() {
+                let obs_index = obs_index_array.value(i);
+                found_indices.insert(obs_index);
+                record_count += 1;
+            }
+        }
+
+        // Should have 6 records (3 indices * 2 neurons)
+        assert_eq!(
+            record_count, 6,
+            "Should have 6 records (3 indices * 2 neurons)"
+        );
+        // Should only contain indices 1, 3, 5
+        assert_eq!(
+            found_indices.len(),
+            3,
+            "Should have 3 unique obs_index values"
+        );
+        assert!(found_indices.contains(&1), "Should contain obs_index 1");
+        assert!(found_indices.contains(&3), "Should contain obs_index 3");
+        assert!(found_indices.contains(&5), "Should contain obs_index 5");
+    }
+
+    #[test]
+    fn test_record_discovery_data_record_indices_out_of_bounds() {
+        // Test that invalid record_indices are rejected
+        let temp_dir = TempDir::new().unwrap();
+        let mut input = create_test_input();
+        input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+        // Create 5 training records (indices 0-4)
+        input.training_data = (0..5)
+            .map(|_| crate::TrainingRecord {
+                input: vec![0.1, 0.2],
+                output: vec![0.5],
+            })
+            .collect();
+
+        // Try to access index 10 which is out of bounds
+        input.record_indices = Some(vec![0, 2, 10]);
+
+        let result = record_discovery_data(&input);
+        assert!(result.is_err(), "Should reject out-of-bounds indices");
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("out of bounds"),
+            "Error should mention out of bounds, got: {error_msg}"
+        );
+    }
+
+    #[test]
+    fn test_record_discovery_data_without_record_indices_processes_all() {
+        // Test that when record_indices is None, all records are processed
+        let temp_dir = TempDir::new().unwrap();
+        let mut input = create_test_input();
+        input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+        // Create 5 training records
+        input.training_data = (0..5)
+            .map(|_| crate::TrainingRecord {
+                input: vec![0.1, 0.2],
+                output: vec![0.5],
+            })
+            .collect();
+
+        // Don't set record_indices (should be None)
+        input.record_indices = None;
+
+        let result = record_discovery_data(&input).unwrap();
+
+        // Verify file was created
+        let parquet_file = Path::new(&result.temp_dir).join(&result.file);
+        assert!(parquet_file.exists());
+
+        // Read the parquet file and verify all records exist
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::fs::File;
+        let file = File::open(&parquet_file).unwrap();
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        let reader = builder.build().unwrap();
+        let mut found_indices = std::collections::HashSet::new();
+
+        for batch_result in reader {
+            let batch = batch_result.unwrap();
+            let obs_index_array = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::UInt32Array>()
+                .unwrap();
+
+            for i in 0..batch.num_rows() {
+                let obs_index = obs_index_array.value(i);
+                found_indices.insert(obs_index);
+            }
+        }
+
+        // Should have all 5 indices (0-4) * 2 neurons = 10 records, but unique obs_index values should be 0-4
+        assert_eq!(
+            found_indices.len(),
+            5,
+            "Should have all 5 unique obs_index values (0-4)"
+        );
+        for i in 0..5 {
+            assert!(found_indices.contains(&i), "Should contain obs_index {i}");
+        }
     }
 }

@@ -62,8 +62,18 @@ jobs:
             echo "PR branch version: $CURRENT_VERSION"
             
             # Compare versions numerically to see if PR version is higher
+            # Normalize versions to always have 3 parts (major.minor.patch)
+            # Default missing parts to 0 (e.g., "1.0" becomes "1.0.0")
             IFS='.' read -r base_major base_minor base_patch <<< "$BASE_VERSION"
             IFS='.' read -r curr_major curr_minor curr_patch <<< "$CURRENT_VERSION"
+            
+            # Default missing parts to 0 for safe numeric comparison
+            base_major=${base_major:-0}
+            base_minor=${base_minor:-0}
+            base_patch=${base_patch:-0}
+            curr_major=${curr_major:-0}
+            curr_minor=${curr_minor:-0}
+            curr_patch=${curr_patch:-0}
             
             # Check if PR version is higher than base version
             VERSION_ALREADY_INCREMENTED=false
@@ -110,7 +120,12 @@ jobs:
         echo "Current version: $CURRENT_VERSION"
         
         # Increment patch version
+        # Normalize version to always have 3 parts (major.minor.patch)
+        # Default missing parts to 0 (e.g., "1.0" becomes "1.0.0")
         IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+        major=${major:-0}
+        minor=${minor:-0}
+        patch=${patch:-0}
         NEW_VERSION="$major.$minor.$((patch + 1))"
         echo "New version: $NEW_VERSION"
         
