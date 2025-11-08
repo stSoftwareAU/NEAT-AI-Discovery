@@ -32,6 +32,10 @@ jobs:
     - name: Pull latest changes
       run: git pull origin ${{ github.head_ref }}
         
+    - name: Fetch base branch
+      run: |
+        git fetch origin Develop:Develop || git fetch origin develop:develop || true
+        
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       
@@ -40,10 +44,55 @@ jobs:
         
     - name: Check for source changes and increment version
       run: |
-        # Check if there are changes in src directory
-        if git diff --quiet HEAD~1 HEAD -- src/; then
-          echo "No changes in src directory, skipping version increment"
-          exit 0
+        # Determine base branch name (try Develop first, then develop)
+        BASE_BRANCH="Develop"
+        if ! git show-ref --verify --quiet refs/remotes/origin/Develop; then
+          BASE_BRANCH="develop"
+        fi
+        
+        # Check if there are changes in src directory compared to base branch
+        # This correctly detects changes even if auto-format pushed commits
+        HAS_SRC_CHANGES=false
+        if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
+          if ! git diff --quiet origin/$BASE_BRANCH...HEAD -- src/; then
+            HAS_SRC_CHANGES=true
+            echo "Found changes in src directory compared to base branch"
+          else
+            echo "No changes in src directory compared to base branch, skipping version increment"
+            exit 0
+          fi
+        else
+          # Fallback: if base branch not available, check HEAD~1 (original logic)
+          if ! git diff --quiet HEAD~1 HEAD -- src/; then
+            HAS_SRC_CHANGES=true
+            echo "Found changes in src directory"
+          else
+            echo "No changes in src directory, skipping version increment"
+            exit 0
+          fi
+        fi
+        
+        # If we have src changes, check if version has already been incremented
+        # If the version on the PR branch is higher than base branch, skip increment (job done)
+        if [ "$HAS_SRC_CHANGES" = "true" ] && git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
+          BASE_VERSION=$(git show origin/$BASE_BRANCH:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "")
+          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          
+          if [ -n "$BASE_VERSION" ] && [ "$CURRENT_VERSION" != "$BASE_VERSION" ]; then
+            echo "Version on PR branch ($CURRENT_VERSION) differs from base branch ($BASE_VERSION)"
+            echo "Checking if version increment is already done..."
+            
+            # Compare versions numerically to see if PR version is higher
+            IFS='.' read -r base_major base_minor base_patch <<< "$BASE_VERSION"
+            IFS='.' read -r curr_major curr_minor curr_patch <<< "$CURRENT_VERSION"
+            
+            if [ "$curr_major" -gt "$base_major" ] || \
+               ([ "$curr_major" -eq "$base_major" ] && [ "$curr_minor" -gt "$base_minor" ]) || \
+               ([ "$curr_major" -eq "$base_major" ] && [ "$curr_minor" -eq "$base_minor" ] && [ "$curr_patch" -gt "$base_patch" ]); then
+              echo "Version has already been incremented on this PR branch, skipping (job done)"
+              exit 0
+            fi
+          fi
         fi
         
         # Get current version from Cargo.toml
