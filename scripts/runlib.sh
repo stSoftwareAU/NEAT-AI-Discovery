@@ -4,13 +4,36 @@ set -euo pipefail
 
 _require_tools() {
   export PATH="$HOME/.cargo/bin:$PATH"
-  for cmd in cargo rustup jq; do
-    command -v "$cmd" >/dev/null 2>&1 || {
-      echo "Missing required tool: $cmd. Install prerequisites (Rust + rustup + jq). See README 'Prerequisites'." >&2
-      exit 1
-    }
-  done
-  rustup show >/dev/null
+  
+  # Check for jq (should be system-wide)
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "ERROR: jq is not available. Please install jq system-wide." >&2
+    exit 1
+  fi
+  
+  # Install Rust (rustup + cargo) if missing
+  if ! command -v cargo >/dev/null 2>&1 || ! command -v rustup >/dev/null 2>&1; then
+    echo "Installing Rust (rustup + cargo)..." >&2
+    curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    export PATH="$HOME/.cargo/bin:$PATH"
+    # Ensure PATH is set for future invocations
+    if [[ -f "$HOME/.bashrc" ]] && ! grep -q "\.cargo/bin" "$HOME/.bashrc" 2>/dev/null; then
+      echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$HOME/.bashrc"
+    fi
+    if [[ -f "$HOME/.zshrc" ]] && ! grep -q "\.cargo/bin" "$HOME/.zshrc" 2>/dev/null; then
+      echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$HOME/.zshrc"
+    fi
+    if [[ -f "$HOME/.bash_profile" ]] && ! grep -q "\.cargo/bin" "$HOME/.bash_profile" 2>/dev/null; then
+      echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$HOME/.bash_profile"
+    fi
+    echo "Rust installed successfully" >&2
+  fi
+  
+  # Verify rustup is working
+  rustup show >/dev/null 2>&1 || {
+    echo "ERROR: rustup installation appears incomplete. Please check Rust installation." >&2
+    exit 1
+  }
 }
 
 # Must be run from the crate dir (where Cargo.toml lives).
@@ -112,4 +135,3 @@ ensure_lib_built() {
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   ensure_lib_built
 fi
-
