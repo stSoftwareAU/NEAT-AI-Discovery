@@ -521,7 +521,7 @@ mod tests {
         // Create a string with multi-byte characters near position 500
         let mut s = String::new();
         for _ in 0..100 {
-            s.push_str("🦀"); // Each emoji is 4 bytes, so 100 emojis = 400 bytes
+            s.push('🦀'); // Each emoji is 4 bytes, so 100 emojis = 400 bytes
         }
         s.push_str("Hello"); // Add 5 more bytes = 405 bytes total
 

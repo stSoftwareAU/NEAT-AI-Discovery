@@ -183,6 +183,8 @@ pub fn read_records_from_parquet(
         }
     }
 
+    // Note: Records are returned in Parquet read order (not sorted by obs_index)
+    // TypeScript sorts records by obs_index after reading for cross-neuron matching
     Ok(records)
 }
 
@@ -299,5 +301,36 @@ mod tests {
 
         let result = write_records_to_parquet(file_path, &records);
         assert!(result.is_ok(), "Validation should allow valid error counts");
+    }
+
+    #[test]
+    fn test_read_records_from_parquet_preserves_obs_index() {
+        // Test that records maintain their obs_index when reading, even if written out of order
+        // Note: Records are NOT sorted by Rust - TypeScript handles sorting after reading
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        // Write records in non-sequential order
+        let records = vec![
+            DiscoverRecord::new(5, "neuron-1".to_string(), Some(0.5), 0.7, vec![0.1]),
+            DiscoverRecord::new(2, "neuron-1".to_string(), Some(0.6), 0.8, vec![0.15]),
+            DiscoverRecord::new(8, "neuron-1".to_string(), Some(0.7), 0.9, vec![0.2]),
+            DiscoverRecord::new(1, "neuron-1".to_string(), Some(0.4), 0.6, vec![0.05]),
+            DiscoverRecord::new(3, "neuron-1".to_string(), Some(0.65), 0.85, vec![0.18]),
+        ];
+
+        write_records_to_parquet(file_path, &records).unwrap();
+
+        // Read back records
+        let read_records = read_records_from_parquet(file_path, "neuron-1").unwrap();
+
+        // Verify all records are present with correct obs_index values
+        assert_eq!(read_records.len(), 5, "Should have 5 records");
+        let obs_indices: Vec<u32> = read_records.iter().map(|r| r.obs_index).collect();
+        assert!(obs_indices.contains(&1), "Should contain obs_index 1");
+        assert!(obs_indices.contains(&2), "Should contain obs_index 2");
+        assert!(obs_indices.contains(&3), "Should contain obs_index 3");
+        assert!(obs_indices.contains(&5), "Should contain obs_index 5");
+        assert!(obs_indices.contains(&8), "Should contain obs_index 8");
     }
 }

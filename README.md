@@ -149,8 +149,9 @@ Many data tools support Parquet natively (Tableau, Apache Spark, etc.)
 - **Atomic writes**: For each training record, activate creature, collect ALL neuron data (activations, errors), then write ALL neuron rows together
 - **Parallelization allowed**: Since training dataset is already randomized, we CAN process different training records in parallel
 - **Per-record atomicity**: Each parallel task must process one complete training record (activate → collect all neurons → write all neurons atomically)
-- **Cross-neuron alignment**: Record i in neuron A must correspond to record i in neuron B (they were written together from the same training record)
+- **Cross-neuron alignment**: Records with the same `obs_index` across different neurons correspond to the same training record
 - **No mixing**: Never mix data from different training records within a single discovery record write
+- **Matching by obs_index**: TypeScript matches records across neurons by `obs_index` (not by array position), so record order from Rust doesn't matter
 
 ## JSON Interface
 
