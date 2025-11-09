@@ -317,19 +317,12 @@ pub fn read_discovery_records(input_json: &str) -> Result<String> {
     // Convert to JSON format
     let json_records: Vec<DiscoverRecordJson> = records
         .into_iter()
-        .map(|r| {
-            // DEBUG: Log first few records
-            if r.neuron_uuid == "hidden-3" && r.obs_index < 3 {
-                eprintln!("[DEBUG Rust lib read] Converting record: obs_index={}, activation={}, errors.len()={}, errors={:?}", 
-                    r.obs_index, r.activation, r.errors.len(), &r.errors[..r.errors.len().min(3)]);
-            }
-            DiscoverRecordJson {
-                obs_index: r.obs_index,
-                neuron_uuid: r.neuron_uuid,
-                value: r.value,
-                activation: r.activation,
-                errors: r.errors,
-            }
+        .map(|r| DiscoverRecordJson {
+            obs_index: r.obs_index,
+            neuron_uuid: r.neuron_uuid,
+            value: r.value,
+            activation: r.activation,
+            errors: r.errors,
         })
         .collect();
 
@@ -340,14 +333,6 @@ pub fn read_discovery_records(input_json: &str) -> Result<String> {
     };
 
     let json_string = serde_json::to_string(&output)?;
-
-    // DEBUG: Log first 1000 chars of JSON to verify errors are included
-    let json_preview = if json_string.len() > 1000 {
-        format!("{}...", truncate_utf8_safe(&json_string, 1000))
-    } else {
-        json_string.clone()
-    };
-    eprintln!("[DEBUG Rust lib read] JSON output preview (first 1000 chars): {json_preview}");
 
     Ok(json_string)
 }
