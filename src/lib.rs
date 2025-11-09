@@ -175,8 +175,9 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
                 training_data.len()
             );
             if let Some(first_record) = training_data.first() {
-                if let Some(neuron_data) =
-                    first_record.get("neuron_data").and_then(|neuron_data_val| neuron_data_val.as_array())
+                if let Some(neuron_data) = first_record
+                    .get("neuron_data")
+                    .and_then(|neuron_data_val| neuron_data_val.as_array())
                 {
                     eprintln!(
                         "[DEBUG Rust lib] First record neuron_data.length={}",
