@@ -72,17 +72,7 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
     }
 
     for &obs_index in &indices_to_process {
-        let _training_record = &input.training_data[obs_index];
-
-        // For each training record, we need to:
-        // 1. Activate creature with training_record.input
-        // 2. Get all neuron activations and errors
-        // 3. Collect all neuron data atomically
-
-        // TODO: This is a placeholder - actual implementation needs to:
-        // - Activate the creature (requires Creature implementation or FFI)
-        // - Get neuron activations and errors
-        // - For now, we'll create placeholder records
+        let training_record = &input.training_data[obs_index];
 
         // Safely convert obs_index from usize to u32
         // This will never fail because we validated the length above
@@ -94,27 +84,42 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
             )
         })?;
 
-        // Process each neuron
-        for neuron in &input.creature.neurons {
-            // Skip input neurons for now (match TypeScript behavior)
-            if neuron.neuron_type == "input" {
-                continue;
+        // Use pre-computed neuron_data if available (from TypeScript)
+        // Otherwise, we would need to activate the creature here (not implemented)
+        if let Some(neuron_data) = &training_record.neuron_data {
+            // Process each neuron from pre-computed data
+            for neuron_info in neuron_data {
+                // Skip input neurons and non-existent neurons (match TypeScript behavior)
+                let neuron = match input
+                    .creature
+                    .neurons
+                    .iter()
+                    .find(|n| n.uuid == neuron_info.neuron_uuid)
+                {
+                    Some(n) => n,
+                    None => continue, // Skip non-existent neurons to prevent invalid discovery data
+                };
+
+                if neuron.neuron_type == "input" {
+                    continue;
+                }
+
+                let record = DiscoverRecord::new(
+                    obs_index_u32,
+                    neuron_info.neuron_uuid.clone(),
+                    neuron_info.value,
+                    neuron_info.activation,
+                    neuron_info.errors.clone(),
+                );
+
+                all_records.push(record);
             }
-
-            // Placeholder: In real implementation, these would come from creature activation
-            let activation = 0.0; // TODO: Get from creature.activate()
-            let value = None; // TODO: Get from creature state
-            let errors = vec![]; // TODO: Get from creature.record()
-
-            let record = DiscoverRecord::new(
-                obs_index_u32,
-                neuron.uuid.clone(),
-                value,
-                activation,
-                errors,
-            );
-
-            all_records.push(record);
+        } else {
+            // No pre-computed data - this should not happen in normal operation
+            // TypeScript should always provide neuron_data
+            return Err(anyhow::anyhow!(
+                "No pre-computed neuron_data provided. TypeScript must compute activations and errors before calling Rust."
+            ));
         }
     }
 
@@ -186,10 +191,38 @@ mod tests {
                 crate::TrainingRecord {
                     input: vec![0.1, 0.2],
                     output: vec![0.5],
+                    neuron_data: Some(vec![
+                        crate::NeuronData {
+                            neuron_uuid: "hidden-1".to_string(),
+                            activation: 0.5,
+                            value: Some(0.4),
+                            errors: vec![0.1],
+                        },
+                        crate::NeuronData {
+                            neuron_uuid: "output-0".to_string(),
+                            activation: 0.5,
+                            value: Some(0.5),
+                            errors: vec![0.0],
+                        },
+                    ]),
                 },
                 crate::TrainingRecord {
                     input: vec![0.3, 0.4],
                     output: vec![0.6],
+                    neuron_data: Some(vec![
+                        crate::NeuronData {
+                            neuron_uuid: "hidden-1".to_string(),
+                            activation: 0.6,
+                            value: Some(0.5),
+                            errors: vec![0.15],
+                        },
+                        crate::NeuronData {
+                            neuron_uuid: "output-0".to_string(),
+                            activation: 0.6,
+                            value: Some(0.6),
+                            errors: vec![0.0],
+                        },
+                    ]),
                 },
             ],
             temp_dir: ".discovery/test".to_string(),
@@ -242,6 +275,20 @@ mod tests {
             .map(|_| crate::TrainingRecord {
                 input: vec![0.1, 0.2],
                 output: vec![0.5],
+                neuron_data: Some(vec![
+                    crate::NeuronData {
+                        neuron_uuid: "hidden-1".to_string(),
+                        activation: 0.5,
+                        value: Some(0.4),
+                        errors: vec![0.1],
+                    },
+                    crate::NeuronData {
+                        neuron_uuid: "output-0".to_string(),
+                        activation: 0.5,
+                        value: Some(0.5),
+                        errors: vec![0.0],
+                    },
+                ]),
             })
             .collect();
 
@@ -282,6 +329,20 @@ mod tests {
             .map(|_| crate::TrainingRecord {
                 input: vec![0.1, 0.2],
                 output: vec![0.5],
+                neuron_data: Some(vec![
+                    crate::NeuronData {
+                        neuron_uuid: "hidden-1".to_string(),
+                        activation: 0.5,
+                        value: Some(0.4),
+                        errors: vec![0.1],
+                    },
+                    crate::NeuronData {
+                        neuron_uuid: "output-0".to_string(),
+                        activation: 0.5,
+                        value: Some(0.5),
+                        errors: vec![0.0],
+                    },
+                ]),
             })
             .collect();
 
@@ -304,6 +365,20 @@ mod tests {
             .map(|i| crate::TrainingRecord {
                 input: vec![i as f32, (i * 2) as f32],
                 output: vec![i as f32],
+                neuron_data: Some(vec![
+                    crate::NeuronData {
+                        neuron_uuid: "hidden-1".to_string(),
+                        activation: i as f32 * 0.1,
+                        value: Some(i as f32 * 0.1),
+                        errors: vec![i as f32 * 0.01],
+                    },
+                    crate::NeuronData {
+                        neuron_uuid: "output-0".to_string(),
+                        activation: i as f32,
+                        value: Some(i as f32),
+                        errors: vec![0.0],
+                    },
+                ]),
             })
             .collect();
 
@@ -369,6 +444,20 @@ mod tests {
             .map(|_| crate::TrainingRecord {
                 input: vec![0.1, 0.2],
                 output: vec![0.5],
+                neuron_data: Some(vec![
+                    crate::NeuronData {
+                        neuron_uuid: "hidden-1".to_string(),
+                        activation: 0.5,
+                        value: Some(0.4),
+                        errors: vec![0.1],
+                    },
+                    crate::NeuronData {
+                        neuron_uuid: "output-0".to_string(),
+                        activation: 0.5,
+                        value: Some(0.5),
+                        errors: vec![0.0],
+                    },
+                ]),
             })
             .collect();
 
@@ -385,6 +474,111 @@ mod tests {
     }
 
     #[test]
+    fn test_record_discovery_data_with_neuron_data() {
+        // Test that when neuron_data is provided, it writes correctly and can be read back
+        let temp_dir = TempDir::new().unwrap();
+        let mut input = create_test_input();
+        input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+        // Create training data with pre-computed neuron_data (simulating TypeScript behavior)
+        input.training_data = vec![
+            crate::TrainingRecord {
+                input: vec![0.1, 0.2],
+                output: vec![0.5],
+                neuron_data: Some(vec![
+                    crate::NeuronData {
+                        neuron_uuid: "hidden-1".to_string(),
+                        activation: 0.7,
+                        value: Some(0.6),
+                        errors: vec![0.1, 0.2],
+                    },
+                    crate::NeuronData {
+                        neuron_uuid: "output-0".to_string(),
+                        activation: 0.5,
+                        value: Some(0.5),
+                        errors: vec![0.0],
+                    },
+                ]),
+            },
+            crate::TrainingRecord {
+                input: vec![0.3, 0.4],
+                output: vec![0.6],
+                neuron_data: Some(vec![
+                    crate::NeuronData {
+                        neuron_uuid: "hidden-1".to_string(),
+                        activation: 0.8,
+                        value: Some(0.7),
+                        errors: vec![0.15, 0.25],
+                    },
+                    crate::NeuronData {
+                        neuron_uuid: "output-0".to_string(),
+                        activation: 0.6,
+                        value: Some(0.6),
+                        errors: vec![0.0],
+                    },
+                ]),
+            },
+        ];
+
+        let result = record_discovery_data(&input).unwrap();
+
+        // Verify file was created
+        let parquet_file = Path::new(&result.temp_dir).join(&result.file);
+        assert!(parquet_file.exists());
+
+        // Read back records for each neuron and verify they match
+        use crate::parquet_format::read_records_from_parquet;
+
+        // Read hidden-1 records
+        let hidden1_records =
+            read_records_from_parquet(parquet_file.to_str().unwrap(), "hidden-1").unwrap();
+
+        assert_eq!(
+            hidden1_records.len(),
+            2,
+            "Should have 2 records for hidden-1"
+        );
+        assert_eq!(hidden1_records[0].obs_index, 0);
+        assert_eq!(hidden1_records[0].activation, 0.7);
+        assert_eq!(hidden1_records[0].value, Some(0.6));
+        assert_eq!(hidden1_records[0].errors, vec![0.1, 0.2]);
+        assert_eq!(hidden1_records[1].obs_index, 1);
+        assert_eq!(hidden1_records[1].activation, 0.8);
+        assert_eq!(hidden1_records[1].value, Some(0.7));
+        assert_eq!(hidden1_records[1].errors, vec![0.15, 0.25]);
+
+        // Read output-0 records
+        let output0_records =
+            read_records_from_parquet(parquet_file.to_str().unwrap(), "output-0").unwrap();
+
+        assert_eq!(
+            output0_records.len(),
+            2,
+            "Should have 2 records for output-0"
+        );
+        assert_eq!(output0_records[0].obs_index, 0);
+        assert_eq!(output0_records[0].activation, 0.5);
+        assert_eq!(output0_records[0].value, Some(0.5));
+        assert_eq!(output0_records[0].errors, vec![0.0]);
+        assert_eq!(output0_records[1].obs_index, 1);
+        assert_eq!(output0_records[1].activation, 0.6);
+        assert_eq!(output0_records[1].value, Some(0.6));
+        assert_eq!(output0_records[1].errors, vec![0.0]);
+
+        // Verify records can be matched by obs_index across neurons
+        // (TypeScript handles sorting, we just need obs_index to be present for matching)
+        for hidden_record in &hidden1_records {
+            let obs_idx = hidden_record.obs_index;
+            // Find corresponding record in output-0 with same obs_index
+            let matching_output = output0_records.iter().find(|r| r.obs_index == obs_idx);
+            assert!(
+                matching_output.is_some(),
+                "Should find matching record with obs_index {obs_idx} in output-0"
+            );
+        }
+    }
+
+    #[test]
     fn test_record_discovery_data_without_record_indices_processes_all() {
         // Test that when record_indices is None, all records are processed
         let temp_dir = TempDir::new().unwrap();
@@ -396,6 +590,20 @@ mod tests {
             .map(|_| crate::TrainingRecord {
                 input: vec![0.1, 0.2],
                 output: vec![0.5],
+                neuron_data: Some(vec![
+                    crate::NeuronData {
+                        neuron_uuid: "hidden-1".to_string(),
+                        activation: 0.5,
+                        value: Some(0.4),
+                        errors: vec![0.1],
+                    },
+                    crate::NeuronData {
+                        neuron_uuid: "output-0".to_string(),
+                        activation: 0.5,
+                        value: Some(0.5),
+                        errors: vec![0.0],
+                    },
+                ]),
             })
             .collect();
 
@@ -459,6 +667,20 @@ mod tests {
             .map(|_| crate::TrainingRecord {
                 input: vec![0.1, 0.2],
                 output: vec![0.5],
+                neuron_data: Some(vec![
+                    crate::NeuronData {
+                        neuron_uuid: "hidden-1".to_string(),
+                        activation: 0.5,
+                        value: Some(0.4),
+                        errors: vec![0.1],
+                    },
+                    crate::NeuronData {
+                        neuron_uuid: "output-0".to_string(),
+                        activation: 0.5,
+                        value: Some(0.5),
+                        errors: vec![0.0],
+                    },
+                ]),
             })
             .collect();
 
@@ -538,6 +760,7 @@ mod tests {
         input.training_data = vec![crate::TrainingRecord {
             input: vec![0.1, 0.2],
             output: vec![0.5],
+            neuron_data: Some(vec![]), // Empty because no non-input neurons
         }];
 
         let result = record_discovery_data(&input);
@@ -567,6 +790,20 @@ mod tests {
             .map(|i| crate::TrainingRecord {
                 input: vec![i as f32, (i * 2) as f32],
                 output: vec![i as f32],
+                neuron_data: Some(vec![
+                    crate::NeuronData {
+                        neuron_uuid: "hidden-1".to_string(),
+                        activation: i as f32 * 0.1,
+                        value: Some(i as f32 * 0.1),
+                        errors: vec![i as f32 * 0.01],
+                    },
+                    crate::NeuronData {
+                        neuron_uuid: "output-0".to_string(),
+                        activation: i as f32,
+                        value: Some(i as f32),
+                        errors: vec![0.0],
+                    },
+                ]),
             })
             .collect();
 
@@ -630,7 +867,79 @@ mod tests {
         assert_eq!(
             obs_index_counts.get(&5),
             Some(&2),
-            "obs_index 5 should appear exactly twice (once per neuron)"
+            "            obs_index 5 should appear exactly twice (once per neuron)"
+        );
+    }
+
+    #[test]
+    fn test_record_discovery_data_skips_non_existent_neurons() {
+        // Test that neuron_data containing UUIDs that don't exist in creature.neurons
+        // are skipped and don't create invalid records
+        let temp_dir = TempDir::new().unwrap();
+        let mut input = create_test_input();
+        input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+        // Create training data with a non-existent neuron UUID
+        input.training_data = vec![crate::TrainingRecord {
+            input: vec![0.1, 0.2],
+            output: vec![0.5],
+            neuron_data: Some(vec![
+                crate::NeuronData {
+                    neuron_uuid: "hidden-1".to_string(), // Exists in creature
+                    activation: 0.5,
+                    value: Some(0.4),
+                    errors: vec![0.1],
+                },
+                crate::NeuronData {
+                    neuron_uuid: "non-existent-neuron".to_string(), // Does NOT exist in creature
+                    activation: 0.9,
+                    value: Some(0.8),
+                    errors: vec![0.2],
+                },
+                crate::NeuronData {
+                    neuron_uuid: "output-0".to_string(), // Exists in creature
+                    activation: 0.5,
+                    value: Some(0.5),
+                    errors: vec![0.0],
+                },
+            ]),
+        }];
+
+        let result = record_discovery_data(&input).unwrap();
+
+        // Verify file was created
+        let parquet_file = Path::new(&result.temp_dir).join(&result.file);
+        assert!(parquet_file.exists());
+
+        // Read the parquet file and verify only existing neurons have records
+        use crate::parquet_format::read_records_from_parquet;
+
+        // hidden-1 should have records
+        let hidden1_records =
+            read_records_from_parquet(parquet_file.to_str().unwrap(), "hidden-1").unwrap();
+        assert_eq!(
+            hidden1_records.len(),
+            1,
+            "Should have 1 record for hidden-1 (existing neuron)"
+        );
+
+        // output-0 should have records
+        let output0_records =
+            read_records_from_parquet(parquet_file.to_str().unwrap(), "output-0").unwrap();
+        assert_eq!(
+            output0_records.len(),
+            1,
+            "Should have 1 record for output-0 (existing neuron)"
+        );
+
+        // non-existent-neuron should NOT have records
+        let non_existent_records =
+            read_records_from_parquet(parquet_file.to_str().unwrap(), "non-existent-neuron")
+                .unwrap();
+        assert_eq!(
+            non_existent_records.len(),
+            0,
+            "Should have 0 records for non-existent-neuron (should be skipped)"
         );
     }
 }
