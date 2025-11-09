@@ -131,17 +131,19 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
 
             // Process each neuron from pre-computed data
             for neuron_info in neuron_data {
-                // Skip input neurons (match TypeScript behavior)
-                let neuron = input
+                // Skip input neurons and non-existent neurons (match TypeScript behavior)
+                let neuron = match input
                     .creature
                     .neurons
                     .iter()
-                    .find(|n| n.uuid == neuron_info.neuron_uuid);
+                    .find(|n| n.uuid == neuron_info.neuron_uuid)
+                {
+                    Some(n) => n,
+                    None => continue, // Skip non-existent neurons to prevent invalid discovery data
+                };
 
-                if let Some(neuron) = neuron {
-                    if neuron.neuron_type == "input" {
-                        continue;
-                    }
+                if neuron.neuron_type == "input" {
+                    continue;
                 }
 
                 let record = DiscoverRecord::new(
@@ -935,7 +937,79 @@ mod tests {
         assert_eq!(
             obs_index_counts.get(&5),
             Some(&2),
-            "obs_index 5 should appear exactly twice (once per neuron)"
+            "            obs_index 5 should appear exactly twice (once per neuron)"
+        );
+    }
+
+    #[test]
+    fn test_record_discovery_data_skips_non_existent_neurons() {
+        // Test that neuron_data containing UUIDs that don't exist in creature.neurons
+        // are skipped and don't create invalid records
+        let temp_dir = TempDir::new().unwrap();
+        let mut input = create_test_input();
+        input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+        // Create training data with a non-existent neuron UUID
+        input.training_data = vec![crate::TrainingRecord {
+            input: vec![0.1, 0.2],
+            output: vec![0.5],
+            neuron_data: Some(vec![
+                crate::NeuronData {
+                    neuron_uuid: "hidden-1".to_string(), // Exists in creature
+                    activation: 0.5,
+                    value: Some(0.4),
+                    errors: vec![0.1],
+                },
+                crate::NeuronData {
+                    neuron_uuid: "non-existent-neuron".to_string(), // Does NOT exist in creature
+                    activation: 0.9,
+                    value: Some(0.8),
+                    errors: vec![0.2],
+                },
+                crate::NeuronData {
+                    neuron_uuid: "output-0".to_string(), // Exists in creature
+                    activation: 0.5,
+                    value: Some(0.5),
+                    errors: vec![0.0],
+                },
+            ]),
+        }];
+
+        let result = record_discovery_data(&input).unwrap();
+
+        // Verify file was created
+        let parquet_file = Path::new(&result.temp_dir).join(&result.file);
+        assert!(parquet_file.exists());
+
+        // Read the parquet file and verify only existing neurons have records
+        use crate::parquet_format::read_records_from_parquet;
+
+        // hidden-1 should have records
+        let hidden1_records =
+            read_records_from_parquet(parquet_file.to_str().unwrap(), "hidden-1").unwrap();
+        assert_eq!(
+            hidden1_records.len(),
+            1,
+            "Should have 1 record for hidden-1 (existing neuron)"
+        );
+
+        // output-0 should have records
+        let output0_records =
+            read_records_from_parquet(parquet_file.to_str().unwrap(), "output-0").unwrap();
+        assert_eq!(
+            output0_records.len(),
+            1,
+            "Should have 1 record for output-0 (existing neuron)"
+        );
+
+        // non-existent-neuron should NOT have records
+        let non_existent_records =
+            read_records_from_parquet(parquet_file.to_str().unwrap(), "non-existent-neuron")
+                .unwrap();
+        assert_eq!(
+            non_existent_records.len(),
+            0,
+            "Should have 0 records for non-existent-neuron (should be skipped)"
         );
     }
 }
