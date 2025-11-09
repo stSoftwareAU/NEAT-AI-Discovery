@@ -208,7 +208,17 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
         }
         Err(e) => {
             eprintln!("[DEBUG Rust lib] record_discovery_internal failed: {e}");
-            let error_json = format!(r#"{{"success":false,"error":"{e}"}}"#);
+            // Properly serialize error message to avoid JSON injection issues
+            let output = RecordDiscoveryOutput {
+                success: false,
+                temp_dir: None,
+                file: None,
+                error: Some(e.to_string()),
+            };
+            let error_json = serde_json::to_string(&output).unwrap_or_else(|_| {
+                // Fallback if serialization fails (shouldn't happen)
+                r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
+            });
             return CString::new(error_json).unwrap().into_raw();
         }
     };
@@ -362,7 +372,16 @@ pub extern "C" fn read_discovery_records_ffi(
         }
         Err(e) => {
             eprintln!("[DEBUG Rust lib] read_discovery_records failed: {e}");
-            let error_json = format!(r#"{{"success":false,"error":"{e}"}}"#);
+            // Properly serialize error message to avoid JSON injection issues
+            let output = ReadDiscoveryOutput {
+                success: false,
+                records: None,
+                error: Some(e.to_string()),
+            };
+            let error_json = serde_json::to_string(&output).unwrap_or_else(|_| {
+                // Fallback if serialization fails (shouldn't happen)
+                r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
+            });
             return CString::new(error_json).unwrap().into_raw();
         }
     };
@@ -414,5 +433,44 @@ mod tests {
         let parsed: RecordDiscoveryInput = serde_json::from_str(input).unwrap();
         assert_eq!(parsed.creature.input, 2);
         assert_eq!(parsed.creature.output, 1);
+    }
+
+    #[test]
+    fn test_error_message_json_escaping() {
+        // Test that error messages with special characters are properly escaped
+        let error_messages = vec![
+            r#"Error with "quotes""#,
+            r#"Error with \backslash"#,
+            "Error with\nnewline",
+            r#"Error with "quotes" and \backslash and\nnewline"#,
+            r#"Error with "multiple" "quotes" and \multiple\backslashes"#,
+        ];
+
+        for error_msg in error_messages {
+            // Test RecordDiscoveryOutput
+            let output = RecordDiscoveryOutput {
+                success: false,
+                temp_dir: None,
+                file: None,
+                error: Some(error_msg.to_string()),
+            };
+            let json = serde_json::to_string(&output).unwrap();
+            // Verify JSON is valid and can be parsed back
+            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed["success"], false);
+            assert_eq!(parsed["error"].as_str(), Some(error_msg));
+
+            // Test ReadDiscoveryOutput
+            let read_output = ReadDiscoveryOutput {
+                success: false,
+                records: None,
+                error: Some(error_msg.to_string()),
+            };
+            let read_json = serde_json::to_string(&read_output).unwrap();
+            // Verify JSON is valid and can be parsed back
+            let parsed_read: serde_json::Value = serde_json::from_str(&read_json).unwrap();
+            assert_eq!(parsed_read["success"], false);
+            assert_eq!(parsed_read["error"].as_str(), Some(error_msg));
+        }
     }
 }

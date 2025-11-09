@@ -245,7 +245,6 @@ pub fn read_records_from_parquet(
 
     for batch_result in reader {
         let batch = batch_result.context("Failed to read record batch")?;
-        total_rows += batch.num_rows();
         let debug_msg = format!(
             "[DEBUG Rust parquet read] Read batch with {} rows",
             batch.num_rows()
@@ -306,6 +305,7 @@ pub fn read_records_from_parquet(
         debug_log(&debug_msg4);
 
         // DEBUG: Log all column values for first few rows to verify data
+        // Check BEFORE incrementing total_rows so we can detect the first batch
         if total_rows == 0 && batch.num_rows() > 0 {
             // Log first 5 rows to see the pattern
             for row_idx in 0..batch.num_rows().min(5) {
@@ -333,6 +333,9 @@ pub fn read_records_from_parquet(
                 debug_log(&debug_msg);
             }
         }
+
+        // Increment total_rows after debug logging check
+        total_rows += batch.num_rows();
 
         // Filter by neuron UUID and collect records
         for i in 0..batch.num_rows() {
