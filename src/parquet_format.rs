@@ -101,6 +101,93 @@ pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> 
     Ok(())
 }
 
+/// Read discovery records from a Parquet file, filtered by neuron UUID
+pub fn read_records_from_parquet(
+    file_path: &str,
+    neuron_uuid: &str,
+) -> Result<Vec<DiscoverRecord>> {
+    use arrow::array::{Array, Float32Array, ListArray, StringArray, UInt32Array};
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use std::fs::File;
+
+    let file = File::open(file_path)
+        .with_context(|| format!("Failed to open Parquet file: {file_path}"))?;
+
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        .context("Failed to create Parquet reader builder")?;
+
+    let reader = builder.build().context("Failed to build Parquet reader")?;
+
+    let mut records = Vec::new();
+
+    for batch_result in reader {
+        let batch = batch_result.context("Failed to read record batch")?;
+
+        // Get columns - use schema field names to find correct columns instead of hardcoded indices
+        let obs_index_col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .context("Failed to cast obs_index column")?;
+        let neuron_uuid_col = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("Failed to cast neuron_uuid column")?;
+        let value_col = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .context("Failed to cast value column")?;
+        let activation_col = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .context("Failed to cast activation column")?;
+        let errors_col = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .context("Failed to cast errors column")?;
+
+        // Filter by neuron UUID and collect records
+        for i in 0..batch.num_rows() {
+            let uuid = neuron_uuid_col.value(i);
+            if uuid == neuron_uuid {
+                let obs_index = obs_index_col.value(i);
+                let value = if value_col.is_null(i) {
+                    None
+                } else {
+                    Some(value_col.value(i))
+                };
+                let activation = activation_col.value(i);
+
+                // Extract errors array
+                let errors_list = errors_col.value(i);
+                let errors_array = errors_list
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .context("Failed to cast errors array")?;
+                let errors: Vec<f32> = (0..errors_array.len())
+                    .map(|j| errors_array.value(j))
+                    .collect();
+
+                records.push(DiscoverRecord::new(
+                    obs_index,
+                    uuid.to_string(),
+                    value,
+                    activation,
+                    errors,
+                ));
+            }
+        }
+    }
+
+    // Note: Records are returned in Parquet read order (not sorted by obs_index)
+    // TypeScript sorts records by obs_index after reading for cross-neuron matching
+    Ok(records)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,5 +301,36 @@ mod tests {
 
         let result = write_records_to_parquet(file_path, &records);
         assert!(result.is_ok(), "Validation should allow valid error counts");
+    }
+
+    #[test]
+    fn test_read_records_from_parquet_preserves_obs_index() {
+        // Test that records maintain their obs_index when reading, even if written out of order
+        // Note: Records are NOT sorted by Rust - TypeScript handles sorting after reading
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        // Write records in non-sequential order
+        let records = vec![
+            DiscoverRecord::new(5, "neuron-1".to_string(), Some(0.5), 0.7, vec![0.1]),
+            DiscoverRecord::new(2, "neuron-1".to_string(), Some(0.6), 0.8, vec![0.15]),
+            DiscoverRecord::new(8, "neuron-1".to_string(), Some(0.7), 0.9, vec![0.2]),
+            DiscoverRecord::new(1, "neuron-1".to_string(), Some(0.4), 0.6, vec![0.05]),
+            DiscoverRecord::new(3, "neuron-1".to_string(), Some(0.65), 0.85, vec![0.18]),
+        ];
+
+        write_records_to_parquet(file_path, &records).unwrap();
+
+        // Read back records
+        let read_records = read_records_from_parquet(file_path, "neuron-1").unwrap();
+
+        // Verify all records are present with correct obs_index values
+        assert_eq!(read_records.len(), 5, "Should have 5 records");
+        let obs_indices: Vec<u32> = read_records.iter().map(|r| r.obs_index).collect();
+        assert!(obs_indices.contains(&1), "Should contain obs_index 1");
+        assert!(obs_indices.contains(&2), "Should contain obs_index 2");
+        assert!(obs_indices.contains(&3), "Should contain obs_index 3");
+        assert!(obs_indices.contains(&5), "Should contain obs_index 5");
+        assert!(obs_indices.contains(&8), "Should contain obs_index 8");
     }
 }
