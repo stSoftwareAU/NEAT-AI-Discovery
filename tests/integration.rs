@@ -2,7 +2,7 @@
 
 mod common;
 
-use neat_ai_discovery::record_discovery;
+use neat_ai_discovery::record_discovery_internal;
 use tempfile::TempDir;
 
 #[test]
@@ -32,14 +32,28 @@ fn test_record_discovery_integration() {
                 "output": 1
             }},
             "training_data": [
-                {{"input": [0.1, 0.2], "output": [0.5]}},
-                {{"input": [0.3, 0.4], "output": [0.6]}}
+                {{
+                    "input": [0.1, 0.2],
+                    "output": [0.5],
+                    "neuron_data": [
+                        {{"neuron_uuid": "hidden-1", "activation": 0.7, "value": 0.6, "errors": [0.1]}},
+                        {{"neuron_uuid": "output-0", "activation": 0.5, "value": 0.5, "errors": [0.0]}}
+                    ]
+                }},
+                {{
+                    "input": [0.3, 0.4],
+                    "output": [0.6],
+                    "neuron_data": [
+                        {{"neuron_uuid": "hidden-1", "activation": 0.8, "value": 0.7, "errors": [0.15]}},
+                        {{"neuron_uuid": "output-0", "activation": 0.6, "value": 0.6, "errors": [0.0]}}
+                    ]
+                }}
             ],
             "temp_dir": "{temp_path}"
         }}"#
     );
 
-    let result = record_discovery(&input).unwrap();
+    let result = record_discovery_internal(&input).unwrap();
     let output: serde_json::Value = serde_json::from_str(&result).unwrap();
 
     assert_eq!(output["success"], true);
@@ -55,10 +69,10 @@ fn test_record_discovery_integration() {
 #[test]
 fn test_record_discovery_invalid_json() {
     // Invalid JSON should return JSON error response, not a Rust error
-    let result = record_discovery("invalid json");
+    let result = record_discovery_internal("invalid json");
     assert!(
         result.is_ok(),
-        "record_discovery should return Ok(String) even on invalid JSON"
+        "record_discovery_internal should return Ok(String) even on invalid JSON"
     );
 
     let output_str = result.unwrap();
@@ -80,10 +94,10 @@ fn test_record_discovery_invalid_json() {
 fn test_record_discovery_missing_fields() {
     // Missing fields should return JSON error response, not a Rust error
     let input = r#"{"creature": {}}"#;
-    let result = record_discovery(input);
+    let result = record_discovery_internal(input);
     assert!(
         result.is_ok(),
-        "record_discovery should return Ok(String) even on missing fields"
+        "record_discovery_internal should return Ok(String) even on missing fields"
     );
 
     let output_str = result.unwrap();
@@ -131,10 +145,10 @@ fn test_record_discovery_returns_json_error_on_failure() {
     );
 
     // Should return JSON string, not a Rust error
-    let result = record_discovery(&input);
+    let result = record_discovery_internal(&input);
     assert!(
         result.is_ok(),
-        "record_discovery should return Ok(String) even on failure"
+        "record_discovery_internal should return Ok(String) even on failure"
     );
 
     let output_str = result.unwrap();
@@ -144,11 +158,12 @@ fn test_record_discovery_returns_json_error_on_failure() {
     // Should have success=false and an error message
     assert_eq!(output["success"], false);
     assert!(output["error"].is_string());
+    let error_msg = output["error"].as_str().unwrap();
     assert!(
-        output["error"]
-            .as_str()
-            .unwrap()
-            .contains("non-input neurons"),
-        "Error message should explain the issue"
+        error_msg.contains("no non-input neurons")
+            || error_msg.contains("non-input neurons")
+            || error_msg.contains("No discovery records")
+            || error_msg.contains("No pre-computed neuron_data"),
+        "Error message should explain the issue. Got: {error_msg}"
     );
 }

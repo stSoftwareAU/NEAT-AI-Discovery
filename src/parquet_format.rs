@@ -1,15 +1,41 @@
 //! Parquet file format handling for discovery records
 
 use anyhow::{Context, Result};
-use arrow::array::{Float32Array, ListArray, StringArray, UInt32Array};
+use arrow::array::{Array, Float32Array, ListArray, StringArray, UInt32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use std::fs::File;
+use std::io::Write;
 use std::sync::Arc;
 
 use crate::types::DiscoverRecord;
+
+/// Write debug message to file
+fn debug_log(msg: &str) {
+    // Always print to stderr first (this should appear in test output)
+    eprintln!("{msg}");
+
+    // Also write to file
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/neat_ai_discovery_debug.log")
+    {
+        Ok(mut file) => {
+            if let Err(e) = writeln!(file, "{msg}") {
+                eprintln!("[DEBUG ERROR] Failed to write to debug log: {e}");
+            }
+            if let Err(e) = file.flush() {
+                eprintln!("[DEBUG ERROR] Failed to flush debug log: {e}");
+            }
+        }
+        Err(e) => {
+            eprintln!("[DEBUG ERROR] Failed to open debug log file: {e}");
+        }
+    }
+}
 
 /// Parquet schema for discovery records
 pub fn create_schema() -> Schema {
@@ -40,11 +66,34 @@ pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> 
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
         .context("Failed to create ArrowWriter")?;
 
+    // DEBUG: Log first few records before creating arrays
+    if !records.is_empty() {
+        let debug_msg = format!(
+            "[DEBUG Rust parquet write] Preparing {} records for Parquet",
+            records.len()
+        );
+        debug_log(&debug_msg);
+        if let Some(hidden3_record) = records.iter().find(|r| r.neuron_uuid == "hidden-3") {
+            let debug_msg2 = format!("[DEBUG Rust parquet write] First hidden-3 record: obs_index={}, activation={}, errors.len()={}", 
+                hidden3_record.obs_index, hidden3_record.activation, hidden3_record.errors.len());
+            debug_log(&debug_msg2);
+        }
+    }
+
     // Prepare arrays
     let obs_indices: Vec<u32> = records.iter().map(|r| r.obs_index).collect();
     let neuron_uuids: Vec<String> = records.iter().map(|r| r.neuron_uuid.clone()).collect();
     let values: Vec<Option<f32>> = records.iter().map(|r| r.value).collect();
     let activations: Vec<f32> = records.iter().map(|r| r.activation).collect();
+
+    // DEBUG: Verify array data
+    if !activations.is_empty() {
+        let debug_msg = format!(
+            "[DEBUG Rust parquet write] activations[0]={}, obs_indices[0]={}",
+            activations[0], obs_indices[0]
+        );
+        debug_log(&debug_msg);
+    }
 
     // Collect error values and validate total count to prevent i32 overflow
     // Arrow's OffsetBuffer uses i32 for offsets, so the total error value count
@@ -64,10 +113,32 @@ pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> 
         error_values.extend_from_slice(&record.errors);
     }
 
+    // DEBUG: Log error_values for first hidden-3 record
+    if let Some(hidden3_idx) = records.iter().position(|r| r.neuron_uuid == "hidden-3") {
+        let mut error_offset = 0;
+        for (idx, record) in records.iter().enumerate() {
+            if idx < hidden3_idx {
+                error_offset += record.errors.len();
+            } else if idx == hidden3_idx {
+                let debug_msg = format!("[DEBUG Rust parquet write] First hidden-3 record at index {}, error_offset={}, errors.len()={}, error_values[{}..{}]={:?}",
+                    hidden3_idx, error_offset, record.errors.len(),
+                    error_offset, error_offset + record.errors.len().min(3),
+                    &error_values[error_offset..(error_offset + record.errors.len().min(3))]);
+                debug_log(&debug_msg);
+                break;
+            }
+        }
+    }
+
     let obs_index_array = Arc::new(UInt32Array::from(obs_indices));
     let neuron_uuid_array = Arc::new(StringArray::from(neuron_uuids));
     let value_array = Arc::new(Float32Array::from(values));
     let activation_array = Arc::new(Float32Array::from(activations));
+
+    // DEBUG: Verify array lengths match
+    let debug_msg = format!("[DEBUG Rust parquet write] Array lengths: obs_indices={}, neuron_uuids={}, values={}, activations={}, error_values={}", 
+        obs_index_array.len(), neuron_uuid_array.len(), value_array.len(), activation_array.len(), error_values.len());
+    debug_log(&debug_msg);
 
     // Build ListArray for errors
     // from_lengths converts lengths to cumulative offsets, which must fit in i32
@@ -80,6 +151,29 @@ pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> 
         error_value_array,
         None, // No nulls - all error lists are non-null
     )?);
+
+    // DEBUG: Log what we're about to write
+    if !obs_index_array.is_empty() {
+        let debug_msg = format!("[DEBUG Rust parquet write] Creating RecordBatch with {} rows. First row: obs_index={}, uuid={}, activation={}, value={:?}", 
+            obs_index_array.len(),
+            obs_index_array.value(0),
+            neuron_uuid_array.value(0),
+            activation_array.value(0),
+            if value_array.is_null(0) { None } else { Some(value_array.value(0)) }
+        );
+        debug_log(&debug_msg);
+
+        // Check if first row is hidden-3
+        if neuron_uuid_array.value(0) == "hidden-3" {
+            let errors_list = errors_array.value(0);
+            if let Some(errors_inner) = errors_list.as_any().downcast_ref::<Float32Array>() {
+                let debug_msg2 = format!("[DEBUG Rust parquet write] First row is hidden-3! errors.len()={}, first_error={}", 
+                    errors_inner.len(),
+                    if !errors_inner.is_empty() { errors_inner.value(0) } else { 0.0 });
+                debug_log(&debug_msg2);
+            }
+        }
+    }
 
     let batch = RecordBatch::try_new(
         schema,
@@ -99,6 +193,196 @@ pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> 
     writer.close().context("Failed to close Parquet writer")?;
 
     Ok(())
+}
+
+/// Read discovery records from a Parquet file, filtered by neuron UUID
+pub fn read_records_from_parquet(
+    file_path: &str,
+    neuron_uuid: &str,
+) -> Result<Vec<DiscoverRecord>> {
+    debug_log(&format!("[DEBUG Rust parquet read] Starting read_records_from_parquet for neuron_uuid={neuron_uuid}, file_path={file_path}"));
+    use arrow::array::{Array, Float32Array, ListArray, StringArray, UInt32Array};
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use std::fs::File;
+
+    // DEBUG: Log file info
+    if let Ok(metadata) = std::fs::metadata(file_path) {
+        eprintln!(
+            "[DEBUG Rust read] Opening Parquet file: {}, size={} bytes, neuron_uuid={}",
+            file_path,
+            metadata.len(),
+            neuron_uuid
+        );
+    }
+
+    let file = File::open(file_path)
+        .with_context(|| format!("Failed to open Parquet file: {file_path}"))?;
+
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        .context("Failed to create Parquet reader builder")?;
+
+    // DEBUG: Log the schema from the Parquet file
+    let file_schema = builder.schema();
+    let debug_msg = format!(
+        "[DEBUG Rust parquet read] Parquet file schema has {} fields",
+        file_schema.fields().len()
+    );
+    debug_log(&debug_msg);
+    for (idx, field) in file_schema.fields().iter().enumerate() {
+        let debug_msg2 = format!(
+            "[DEBUG Rust parquet read] Schema field {}: name={}, type={:?}",
+            idx,
+            field.name(),
+            field.data_type()
+        );
+        debug_log(&debug_msg2);
+    }
+
+    let reader = builder.build().context("Failed to build Parquet reader")?;
+
+    let mut records = Vec::new();
+    let mut total_rows = 0;
+
+    for batch_result in reader {
+        let batch = batch_result.context("Failed to read record batch")?;
+        total_rows += batch.num_rows();
+        let debug_msg = format!(
+            "[DEBUG Rust parquet read] Read batch with {} rows",
+            batch.num_rows()
+        );
+        debug_log(&debug_msg);
+
+        // DEBUG: Log batch schema
+        let batch_schema = batch.schema();
+        let debug_msg2 = format!(
+            "[DEBUG Rust parquet read] Batch schema has {} fields",
+            batch_schema.fields().len()
+        );
+        debug_log(&debug_msg2);
+        for (idx, field) in batch_schema.fields().iter().enumerate() {
+            let debug_msg3 = format!(
+                "[DEBUG Rust parquet read] Batch field {}: name={}, type={:?}",
+                idx,
+                field.name(),
+                field.data_type()
+            );
+            debug_log(&debug_msg3);
+        }
+
+        // Get columns - use schema field names to find correct columns instead of hardcoded indices
+        let obs_index_col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .context("Failed to cast obs_index column")?;
+        let neuron_uuid_col = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("Failed to cast neuron_uuid column")?;
+        let value_col = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .context("Failed to cast value column")?;
+        let activation_col = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .context("Failed to cast activation column")?;
+        let errors_col = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .context("Failed to cast errors column")?;
+
+        // DEBUG: Verify column types match expectations
+        let debug_msg4 = format!("[DEBUG Rust parquet read] Column types: col0={:?}, col1={:?}, col2={:?}, col3={:?}, col4={:?}", 
+            batch.column(0).data_type(),
+            batch.column(1).data_type(),
+            batch.column(2).data_type(),
+            batch.column(3).data_type(),
+            batch.column(4).data_type());
+        debug_log(&debug_msg4);
+
+        // DEBUG: Log all column values for first few rows to verify data
+        if total_rows == 0 && batch.num_rows() > 0 {
+            // Log first 5 rows to see the pattern
+            for row_idx in 0..batch.num_rows().min(5) {
+                let uuid_val = neuron_uuid_col.value(row_idx);
+                let obs_idx_val = obs_index_col.value(row_idx);
+                let activation_val = activation_col.value(row_idx);
+                let value_val = if value_col.is_null(row_idx) {
+                    None
+                } else {
+                    Some(value_col.value(row_idx))
+                };
+                let errors_list_val = errors_col.value(row_idx);
+                let errors_array_inner = errors_list_val
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .unwrap();
+                let errors_len = errors_array_inner.len();
+                let first_error = if errors_len > 0 {
+                    errors_array_inner.value(0)
+                } else {
+                    0.0
+                };
+
+                let debug_msg = format!("[DEBUG Rust parquet read] Row {row_idx}: obs_index={obs_idx_val}, uuid={uuid_val}, value={value_val:?}, activation={activation_val}, errors.len()={errors_len}, first_error={first_error}");
+                debug_log(&debug_msg);
+            }
+        }
+
+        // Filter by neuron UUID and collect records
+        for i in 0..batch.num_rows() {
+            let uuid = neuron_uuid_col.value(i);
+            if uuid == neuron_uuid {
+                let obs_index = obs_index_col.value(i);
+                let value = if value_col.is_null(i) {
+                    None
+                } else {
+                    Some(value_col.value(i))
+                };
+                let activation = activation_col.value(i);
+
+                // Extract errors array
+                let errors_list = errors_col.value(i);
+                let errors_array = errors_list
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .context("Failed to cast errors array")?;
+                let errors: Vec<f32> = (0..errors_array.len())
+                    .map(|j| errors_array.value(j))
+                    .collect();
+
+                // DEBUG: Log first few records for hidden-3 with detailed info
+                if uuid == "hidden-3" && records.len() < 3 {
+                    let debug_msg = format!("[DEBUG Rust parquet read] Row {}: obs_index={}, activation={}, value={:?}, errors_list.len()={}, errors_array.len()={}, errors={:?}", 
+                        i, obs_index, activation, value, errors_list.len(), errors_array.len(), &errors[..errors.len().min(3)]);
+                    debug_log(&debug_msg);
+                }
+
+                records.push(DiscoverRecord::new(
+                    obs_index,
+                    uuid.to_string(),
+                    value,
+                    activation,
+                    errors,
+                ));
+            }
+        }
+    }
+
+    let debug_msg = format!(
+        "[DEBUG Rust parquet read] Total rows processed: {}, Records found for {}: {}",
+        total_rows,
+        neuron_uuid,
+        records.len()
+    );
+    debug_log(&debug_msg);
+
+    Ok(records)
 }
 
 #[cfg(test)]

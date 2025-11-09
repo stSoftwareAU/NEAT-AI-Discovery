@@ -47,10 +47,12 @@ The current DenoJS implementation requires extreme filtering of the training dat
    - All new tests should pass after implementation
    - **Always read this README before making any changes**
 
-2. **Code Quality Enforcement**: Run quality checks after every code change
-   - Execute `./quality.sh` after making any code modifications
-   - Fix all linting issues automatically
+2. **Code Quality Enforcement**: **MUST run quality checks after EVERY code change**
+   - **CRITICAL**: Execute `./quality.sh` after making ANY code modifications
+   - This script runs formatting, linting, type checking, and all tests
+   - Fix all linting issues automatically before committing
    - Ensure code formatting and quality standards are maintained
+   - **Never commit code without running `./quality.sh` first**
 
 ### Prerequisites
 
