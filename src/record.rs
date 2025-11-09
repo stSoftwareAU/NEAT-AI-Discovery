@@ -2,37 +2,11 @@
 
 use anyhow::{Context, Result};
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 
 use crate::parquet_format::write_records_to_parquet;
 use crate::types::DiscoverRecord;
 use crate::RecordDiscoveryInput;
-
-/// Write debug message to file
-fn debug_log(msg: &str) {
-    // Always print to stderr first (this should appear in test output)
-    eprintln!("{msg}");
-
-    // Also write to file
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/neat_ai_discovery_debug.log")
-    {
-        Ok(mut file) => {
-            if let Err(e) = writeln!(file, "{msg}") {
-                eprintln!("[DEBUG ERROR] Failed to write to debug log: {e}");
-            }
-            if let Err(e) = file.flush() {
-                eprintln!("[DEBUG ERROR] Failed to flush debug log: {e}");
-            }
-        }
-        Err(e) => {
-            eprintln!("[DEBUG ERROR] Failed to open debug log file: {e}");
-        }
-    }
-}
 
 /// Result of recording discovery data
 #[derive(Debug)]
@@ -48,10 +22,6 @@ pub struct RecordResult {
 /// Since the training dataset is already randomized, parallelization is allowed,
 /// but each training record must be processed atomically (all neurons written together).
 pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResult> {
-    debug_log(&format!(
-        "[DEBUG Rust record] record_discovery_data called with {} training records",
-        input.training_data.len()
-    ));
     // Create temp directory
     let temp_dir = Path::new(&input.temp_dir);
     let temp_dir_str = input.temp_dir.clone();
@@ -117,18 +87,6 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
         // Use pre-computed neuron_data if available (from TypeScript)
         // Otherwise, we would need to activate the creature here (not implemented)
         if let Some(neuron_data) = &training_record.neuron_data {
-            // DEBUG: Log first record's neuron_data for hidden-3
-            if obs_index == 0 {
-                if let Some(hidden3_data) = neuron_data.iter().find(|n| n.neuron_uuid == "hidden-3")
-                {
-                    let debug_msg = format!("[DEBUG Rust record] First record, hidden-3: activation={}, errors.len()={}, errors={:?}",
-                        hidden3_data.activation,
-                        hidden3_data.errors.len(),
-                        &hidden3_data.errors[..hidden3_data.errors.len().min(3)]);
-                    debug_log(&debug_msg);
-                }
-            }
-
             // Process each neuron from pre-computed data
             for neuron_info in neuron_data {
                 // Skip input neurons and non-existent neurons (match TypeScript behavior)
@@ -153,14 +111,6 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
                     neuron_info.activation,
                     neuron_info.errors.clone(),
                 );
-
-                // DEBUG: Verify record data before pushing
-                if obs_index == 0 && neuron_info.neuron_uuid == "hidden-3" {
-                    let debug_msg = format!("[DEBUG Rust record] Creating record: obs_index={}, uuid={}, activation={}, errors.len()={}, errors={:?}",
-                        record.obs_index, record.neuron_uuid, record.activation,
-                        record.errors.len(), &record.errors[..record.errors.len().min(3)]);
-                    debug_log(&debug_msg);
-                }
 
                 all_records.push(record);
             }
@@ -202,32 +152,8 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?;
 
-    // DEBUG: Log what we're writing
-    if !all_records.is_empty() {
-        let debug_msg = format!(
-            "[DEBUG Rust record] Writing {} records to {}",
-            all_records.len(),
-            parquet_path
-        );
-        debug_log(&debug_msg);
-        if let Some(first_record) = all_records.iter().find(|r| r.neuron_uuid == "hidden-3") {
-            let debug_msg2 = format!("[DEBUG Rust record] First hidden-3 record in all_records: obs_index={}, activation={}, errors.len()={}", 
-                first_record.obs_index, first_record.activation, first_record.errors.len());
-            debug_log(&debug_msg2);
-        }
-    }
-
     write_records_to_parquet(parquet_path, &all_records)
         .context("Failed to write records to Parquet")?;
-
-    // DEBUG: Verify file was written
-    if let Ok(metadata) = std::fs::metadata(parquet_path) {
-        let debug_msg = format!(
-            "[DEBUG Rust record] Parquet file written, size={} bytes",
-            metadata.len()
-        );
-        debug_log(&debug_msg);
-    }
 
     Ok(RecordResult {
         temp_dir: input.temp_dir.clone(),

@@ -81,6 +81,26 @@ pub struct RecordDiscoveryOutput {
     pub error: Option<String>,
 }
 
+/// Safely truncate a UTF-8 string at character boundaries
+///
+/// Returns a string truncated to at most `max_bytes` bytes, ensuring the
+/// truncation occurs at a valid UTF-8 character boundary to avoid panics.
+fn truncate_utf8_safe(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    // Find the last valid character boundary at or before max_bytes
+    // We iterate through character boundaries and keep the last one <= max_bytes
+    let mut last_valid_boundary = 0;
+    for (idx, _) in s.char_indices() {
+        if idx > max_bytes {
+            break;
+        }
+        last_valid_boundary = idx;
+    }
+    &s[..last_valid_boundary]
+}
+
 /// Main entry point for recording discovery data
 ///
 /// Takes JSON input and returns JSON output for easy integration with TypeScript/DenoJS
@@ -159,7 +179,7 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
 
     // DEBUG: Log first 500 chars of input JSON to verify structure
     let input_preview = if input_str.len() > 500 {
-        format!("{}...", &input_str[..500])
+        format!("{}...", truncate_utf8_safe(input_str, 500))
     } else {
         input_str.to_string()
     };
@@ -323,7 +343,7 @@ pub fn read_discovery_records(input_json: &str) -> Result<String> {
 
     // DEBUG: Log first 1000 chars of JSON to verify errors are included
     let json_preview = if json_string.len() > 1000 {
-        format!("{}...", &json_string[..1000])
+        format!("{}...", truncate_utf8_safe(&json_string, 1000))
     } else {
         json_string.clone()
     };
@@ -472,5 +492,67 @@ mod tests {
             assert_eq!(parsed_read["success"], false);
             assert_eq!(parsed_read["error"].as_str(), Some(error_msg));
         }
+    }
+
+    #[test]
+    fn test_truncate_utf8_safe_ascii() {
+        // Test with ASCII (single-byte characters)
+        let s = "Hello, World!";
+        assert_eq!(truncate_utf8_safe(s, 5), "Hello");
+        assert_eq!(truncate_utf8_safe(s, 13), s);
+        assert_eq!(truncate_utf8_safe(s, 100), s);
+    }
+
+    #[test]
+    fn test_truncate_utf8_safe_multibyte() {
+        // Test with multi-byte UTF-8 characters (each emoji is 4 bytes)
+        let s = "Hello 🦀 World 🌍";
+        // "Hello 🦀" is 11 bytes: "Hello " (6) + "🦀" (4) + " W" (2) = 12 bytes
+        // But we want to test truncation at byte 11, which should cut before "🦀"
+        let truncated = truncate_utf8_safe(s, 11);
+        // Should truncate at character boundary, not in middle of emoji
+        assert!(truncated.len() <= 11);
+        assert!(truncated.is_char_boundary(truncated.len()));
+    }
+
+    #[test]
+    fn test_truncate_utf8_safe_boundary_at_500() {
+        // Test the specific case mentioned in the issue: truncation at byte 500
+        // Create a string with multi-byte characters near position 500
+        let mut s = String::new();
+        for _ in 0..100 {
+            s.push_str("🦀"); // Each emoji is 4 bytes, so 100 emojis = 400 bytes
+        }
+        s.push_str("Hello"); // Add 5 more bytes = 405 bytes total
+
+        // Truncate at 500 - should return full string since it's < 500
+        assert_eq!(truncate_utf8_safe(&s, 500), s.as_str());
+
+        // Truncate at 400 - should cut at character boundary (after 100 emojis)
+        let truncated = truncate_utf8_safe(&s, 400);
+        assert_eq!(truncated.len(), 400); // Exactly 100 emojis
+        assert!(truncated.is_char_boundary(truncated.len()));
+
+        // Truncate at 401 - should include first character of "Hello" (H = 1 byte)
+        let truncated2 = truncate_utf8_safe(&s, 401);
+        assert_eq!(truncated2.len(), 401);
+        assert!(truncated2.is_char_boundary(truncated2.len()));
+    }
+
+    #[test]
+    fn test_truncate_utf8_safe_empty() {
+        let s = "";
+        assert_eq!(truncate_utf8_safe(s, 0), "");
+        assert_eq!(truncate_utf8_safe(s, 100), "");
+    }
+
+    #[test]
+    fn test_truncate_utf8_safe_exact_boundary() {
+        // Test truncation exactly at a character boundary
+        let s = "Hello🦀World";
+        // "Hello" = 5 bytes, "🦀" starts at byte 5
+        let truncated = truncate_utf8_safe(s, 5);
+        assert_eq!(truncated, "Hello");
+        assert_eq!(truncated.len(), 5);
     }
 }
