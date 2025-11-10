@@ -56,9 +56,17 @@ The current DenoJS implementation requires extreme filtering of the training dat
 
 ### Prerequisites
 
-- Rust (latest stable version)
-- Cargo
-- jq (for build scripts)
+**User-installable (automatically handled by `runlib.sh`):**
+- Rust (latest stable version) - automatically installed by `runlib.sh` if missing
+- Cargo - automatically installed by `runlib.sh` if missing
+
+**System packages (must be installed by administrator):**
+- **jq** - must be installed system-wide (required for build scripts)
+- **Build tools (gcc/cc)** - required on Linux systems:
+  - **Ubuntu/Debian**: `sudo apt-get install -y build-essential`
+  - **RHEL/CentOS/Amazon Linux**: `sudo yum groupinstall -y "Development Tools" && sudo yum install -y gcc`
+  - **Fedora**: `sudo dnf groupinstall -y "Development Tools" && sudo dnf install -y gcc`
+- **macOS**: Xcode Command Line Tools (typically already installed, or can be installed via `xcode-select --install` without sudo)
 
 ### Building
 
@@ -81,6 +89,11 @@ The library can be built and installed using the `scripts/runlib.sh` script:
 ```
 
 This will build the library and install it to `~/.cargo/lib/` with version tracking.
+
+**Note:** The script automatically installs Rust and Cargo if missing (no sudo required). However, system packages must be installed by an administrator:
+- **jq** must be installed system-wide
+- **Build tools (gcc/cc)** must be installed on Linux systems (see Prerequisites above)
+- If build tools are missing, the script will display clear error messages with installation instructions for the administrator
 
 ### Testing
 
