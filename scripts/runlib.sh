@@ -11,6 +11,64 @@ _require_tools() {
     exit 1
   fi
   
+  # On Linux, check for build tools (gcc/cc) needed for Rust compilation
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1; then
+      echo "ERROR: Build tools (gcc/cc) not found." >&2
+      echo "" >&2
+      echo "An administrator must install the following system packages:" >&2
+      echo "" >&2
+      
+      # Detect package manager and provide installation instructions
+      if command -v apt-get >/dev/null 2>&1; then
+        # Ubuntu/Debian
+        echo "  For Ubuntu/Debian:" >&2
+        echo "    sudo apt-get update" >&2
+        echo "    sudo apt-get install -y build-essential" >&2
+      elif command -v yum >/dev/null 2>&1; then
+        # RHEL/CentOS/Amazon Linux
+        echo "  For RHEL/CentOS/Amazon Linux:" >&2
+        echo "    sudo yum groupinstall -y \"Development Tools\"" >&2
+        echo "    sudo yum install -y gcc" >&2
+      elif command -v dnf >/dev/null 2>&1; then
+        # Fedora
+        echo "  For Fedora:" >&2
+        echo "    sudo dnf groupinstall -y \"Development Tools\"" >&2
+        echo "    sudo dnf install -y gcc" >&2
+      else
+        echo "  Please install gcc and build-essential using your system's package manager." >&2
+      fi
+      echo "" >&2
+      exit 1
+    fi
+  fi
+  
+  # On macOS, check for Xcode Command Line Tools (can be installed without sudo)
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1; then
+      # Check if Xcode Command Line Tools are installed by checking for developer directory
+      if [[ ! -d "/Library/Developer/CommandLineTools" ]] && [[ ! -d "/Applications/Xcode.app/Contents/Developer" ]]; then
+        echo "WARNING: Build tools (gcc/cc) not found on macOS." >&2
+        echo "Attempting to install Xcode Command Line Tools (no sudo required)..." >&2
+        # xcode-select --install returns 0 if it triggers installation dialog, non-zero if already installed
+        if xcode-select --install 2>&1; then
+          echo "Installation dialog triggered. Please follow the prompt to install Xcode Command Line Tools." >&2
+          echo "After installation completes, run this script again." >&2
+          exit 1
+        else
+          # Tools claim to be installed but not found - might be a PATH issue
+          echo "Xcode Command Line Tools may be installed but gcc/cc not found in PATH." >&2
+          echo "Please ensure Xcode Command Line Tools are properly installed and configured." >&2
+          exit 1
+        fi
+      else
+        echo "ERROR: Xcode Command Line Tools appear to be installed but gcc/cc not found in PATH." >&2
+        echo "Please ensure Xcode Command Line Tools are properly configured and PATH is set correctly." >&2
+        exit 1
+      fi
+    fi
+  fi
+  
   # Install Rust (rustup + cargo) if missing
   if ! command -v cargo >/dev/null 2>&1 || ! command -v rustup >/dev/null 2>&1; then
     echo "Installing Rust (rustup + cargo)..." >&2
