@@ -1,14 +1,113 @@
 # NEAT-AI-Discovery
 
-High-performance Rust library for recording neuron activations and errors during the discovery training phase, then scanning recorded data to identify beneficial new synapses/neurons that would reduce error.
+A high-performance Rust companion library for
+[`stSoftwareAU/NEAT-AI`](https://github.com/stSoftwareAU/NEAT-AI). It records
+neuron activations and errors during discovery runs, then analyses the captured
+samples to recommend structural upgrades (new synapses or neurons) that reduce
+error. Controllers call into the library via Deno FFI to power
+`Creature.discoveryDir()` workflows.
+
+## Why use this library?
+
+- **Production-ready discovery** – Handles millions of observations without the
+  memory blow-outs that limit the TypeScript implementation.
+- **Single-file artefacts** – Writes per-run Parquet files so results are easy to
+  transfer, archive, or inspect with standard tooling.
+- **Drop-in for NEAT-AI** – Exposes the `libneat_ai_discovery` symbol set expected
+  by the TypeScript bindings in `NEAT-AI`.
+
+## Quick start
+
+1. Install prerequisites (`rustup`, `cargo`, build tools, and `jq`). The
+   `scripts/runlib.sh` helper will guide you if anything is missing.
+2. Build the library:
+   ```bash
+   cargo build --release --lib
+   # or use the helper that also installs into ~/.cargo/lib
+   ./scripts/runlib.sh
+   ```
+3. Confirm the artefact exists (`target/release/libneat_ai_discovery.*`).
+4. Run the quality gate before committing:
+   ```bash
+   ./quality.sh
+   ```
+
+## Using the library with NEAT-AI
+
+1. Place the compiled artefact where Deno can load it:
+   - Copy `libneat_ai_discovery.*` into `~/.cargo/lib`, **or**
+   - Export `NEAT_AI_DISCOVERY_LIB_PATH=/absolute/path/to/libneat_ai_discovery.*`.
+2. Grant FFI permissions when running discovery jobs:
+   ```bash
+   deno run --allow-env --allow-ffi --allow-read your-script.ts
+   ```
+3. From your controller, guard calls with
+   `isRustDiscoveryEnabled()` so the job fails fast if the module cannot be
+   loaded.
+4. Follow the end-to-end discovery orchestration documented in the
+   [`DiscoveryDir` guide](https://github.com/stSoftwareAU/NEAT-AI/blob/main/docs/DiscoveryDir.md).
+   The guide covers safe-write practices, worker loops, and how to persist the
+   improved creatures that this library exports.
+
+## Verifying the installation
+
+Use the NEAT-AI helper script after copying the library:
+
+```bash
+cd /path/to/NEAT-AI
+./scripts/check_discovery.ts
+```
+
+If the script reports that discovery is enabled, you are ready to schedule
+`Creature.discoveryDir()` jobs against your sampled datasets. Otherwise revisit
+`NEAT_AI_DISCOVERY_LIB_PATH` and the permissions passed to `deno run`.
+
+## Troubleshooting
+
+- **Library not found**: Double-check the artefact path, file extension (e.g.
+  `.dylib` on macOS, `.so` on Linux), and `NEAT_AI_DISCOVERY_LIB_PATH`.
+- **FFI permission errors**: Ensure discovery workers launch with
+  `--allow-ffi --allow-env --allow-read --allow-write` and only point to trusted
+  library locations.
+- **Empty Parquet output**: Confirm the caller supplies the sampled discovery
+  dataset and that each record bundles observations, activations, and errors for
+  the same training index.
+
+## Existing reference material
+
+The sections below capture the original project brief, scale targets, and
+engineering standards. They remain authoritative for contributors and are linked
+here for convenience:
+
+- [Project goal](#goal)
+- [Problem statement](#problem-statement)
+- [Performance requirements](#performance-requirements)
+- [Features](#features)
+- [Development guidelines](#development)
+- [File format](#file-format)
+- [JSON interface](#json-interface)
+- [Code quality expectations](#code-quality)
+- [Cross-platform support](#cross-platform-support)
+- [Distributed build & versioning](#distributed-build--versioning)
+
+---
 
 ## Goal
 
-The goal is to record neuron activations and errors during the discovery training phase, then scan this recorded data to identify beneficial new synapses/neurons that would reduce error. **The current DenoJS implementation has severe performance and memory issues that make discovery unviable for larger models.** This Rust library must solve these performance/memory problems while maintaining the same functional behavior.
+The goal is to record neuron activations and errors during the discovery
+training phase, then scan this recorded data to identify beneficial new
+synapses/neurons that would reduce error. **The current DenoJS implementation has
+severe performance and memory issues that make discovery unviable for larger
+models.** This Rust library must solve these performance/memory problems while
+maintaining the same functional behavior.
 
 ## Problem Statement
 
-The current DenoJS implementation requires extreme filtering of the training data (millions of records) to make discovery work in reasonable time. The DenoJS has severe performance and memory issues that make discovery unviable for larger models. This library aims to solve these problems while maintaining the same functional behavior.
+The current DenoJS implementation requires extreme filtering of the training
+data (millions of records) to make discovery work in reasonable time. The
+DenoJS has severe performance and memory issues that make discovery unviable
+for larger models. This library aims to solve these problems while maintaining
+the same functional behavior.
 
 **Target Scale:**
 - Training records: Millions (not hard-coded, but that's the scale)
@@ -160,7 +259,7 @@ Many data tools support Parquet natively (Tableau, Apache Spark, etc.)
 
 **Implementation Requirements:**
 - **Atomic writes**: For each training record, activate creature, collect ALL neuron data (activations, errors), then write ALL neuron rows together
-- **Parallelization allowed**: Since training dataset is already randomized, we CAN process different training records in parallel
+- **Parallelisation allowed**: Since training dataset is already randomised, we CAN process different training records in parallel
 - **Per-record atomicity**: Each parallel task must process one complete training record (activate → collect all neurons → write all neurons atomically)
 - **Cross-neuron alignment**: Records with the same `obs_index` across different neurons correspond to the same training record
 - **No mixing**: Never mix data from different training records within a single discovery record write
