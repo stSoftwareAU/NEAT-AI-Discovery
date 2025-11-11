@@ -4,6 +4,7 @@
 //! during the discovery training phase, then scanning recorded data to identify
 //! beneficial new synapses/neurons that would reduce error.
 
+pub mod analysis;
 pub mod parquet_format;
 pub mod record;
 pub mod types;
@@ -77,6 +78,45 @@ pub struct RecordDiscoveryOutput {
     pub temp_dir: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeSynapsesInput {
+    pub parquet_file: String,
+    pub creature: CreatureJson,
+    pub focus_neurons: Vec<String>,
+    #[serde(default)]
+    pub improvement_threshold: Option<f32>,
+    #[serde(default)]
+    pub max_candidates: Option<usize>,
+    #[serde(default)]
+    pub require_gpu: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CandidateSynapseJson {
+    pub from_neuron_uuid: String,
+    pub to_neuron_uuid: String,
+    pub weight: f32,
+    pub expected_improvement_percentage: f32,
+    pub improved_count: u32,
+    pub total_count: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeSynapsesOutput {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_used: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub helpful_synapses: Option<Vec<CandidateSynapseJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harmful_synapses: Option<Vec<CandidateSynapseJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -248,6 +288,69 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
         Ok(c_string) => c_string.into_raw(),
         Err(_) => {
             let error = r#"{"success":false,"error":"Failed to create output string"}"#;
+            CString::new(error).unwrap().into_raw()
+        }
+    }
+}
+
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+
+    let input_str = unsafe {
+        if input_json.is_null() {
+            let error = r#"{\"success\":false,\"error\":\"Null input pointer\"}"#;
+            return CString::new(error).unwrap().into_raw();
+        }
+        match CStr::from_ptr(input_json).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                let error = r#"{\"success\":false,\"error\":\"Invalid UTF-8 in input\"}"#;
+                return CString::new(error).unwrap().into_raw();
+            }
+        }
+    };
+
+    let output = match serde_json::from_str::<AnalyzeSynapsesInput>(input_str) {
+        Ok(input) => match analysis::analyze_synapses(&input) {
+            Ok(result) => AnalyzeSynapsesOutput {
+                success: true,
+                gpu_used: Some(result.gpu_used),
+                helpful_synapses: Some(result.helpful_synapses),
+                harmful_synapses: Some(result.harmful_synapses),
+                error: None,
+            },
+            Err(e) => AnalyzeSynapsesOutput {
+                success: false,
+                gpu_used: None,
+                helpful_synapses: None,
+                harmful_synapses: None,
+                error: Some(e.to_string()),
+            },
+        },
+        Err(e) => AnalyzeSynapsesOutput {
+            success: false,
+            gpu_used: None,
+            helpful_synapses: None,
+            harmful_synapses: None,
+            error: Some(format!("Failed to parse input JSON: {e}")),
+        },
+    };
+
+    let json = match serde_json::to_string(&output) {
+        Ok(json) => json,
+        Err(e) => {
+            let fallback =
+                format!("{{\"success\":false,\"error\":\"Failed to serialize output: {e}\"}}");
+            return CString::new(fallback).unwrap().into_raw();
+        }
+    };
+
+    match CString::new(json) {
+        Ok(result) => result.into_raw(),
+        Err(_) => {
+            let error = r#"{\"success\":false,\"error\":\"Failed to create output string\"}"#;
             CString::new(error).unwrap().into_raw()
         }
     }
