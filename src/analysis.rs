@@ -5,11 +5,16 @@ use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc};
 use wgpu::util::DeviceExt;
 
 const EPSILON: f32 = 1e-8;
 const WORKGROUP_SIZE: u32 = 256;
+
+#[cfg(test)]
+static FORCE_GPU_ADAPTER_FAILURE: AtomicBool = AtomicBool::new(false);
 
 pub struct AnalyzeSynapsesResult {
     pub helpful_synapses: Vec<CandidateSynapseJson>,
@@ -186,18 +191,42 @@ fn cpu_harmful_stats(samples: &[HelpfulSample], weight: f32) -> HarmfulStats {
 }
 
 struct GpuAnalyzer {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    helpful_layout: wgpu::BindGroupLayout,
-    helpful_pipeline: wgpu::ComputePipeline,
-    harmful_layout: wgpu::BindGroupLayout,
-    harmful_pipeline: wgpu::ComputePipeline,
+    device: Option<wgpu::Device>,
+    queue: Option<wgpu::Queue>,
+    helpful_layout: Option<wgpu::BindGroupLayout>,
+    helpful_pipeline: Option<wgpu::ComputePipeline>,
+    harmful_layout: Option<wgpu::BindGroupLayout>,
+    harmful_pipeline: Option<wgpu::ComputePipeline>,
     gpu_used: bool,
 }
 
 impl GpuAnalyzer {
+    fn cpu_fallback() -> Self {
+        Self {
+            device: None,
+            queue: None,
+            helpful_layout: None,
+            helpful_pipeline: None,
+            harmful_layout: None,
+            harmful_pipeline: None,
+            gpu_used: false,
+        }
+    }
+
     fn new(require_gpu: bool) -> Result<Self> {
         let instance = wgpu::Instance::default();
+        #[cfg(test)]
+        let adapter = if FORCE_GPU_ADAPTER_FAILURE.load(AtomicOrdering::SeqCst) {
+            None
+        } else {
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            }))
+        };
+
+        #[cfg(not(test))]
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
@@ -210,20 +239,28 @@ impl GpuAnalyzer {
                 if require_gpu {
                     return Err(anyhow!("No GPU adapter available for discovery analysis"));
                 }
-                return Err(anyhow!(
-                    "GPU adapter unavailable and GPU analysis is required for this run"
-                ));
+                return Ok(Self::cpu_fallback());
             }
         };
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
+        let (device, queue) = match pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("NEAT-AI Discovery GPU device"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
             },
             None,
-        ))?;
+        )) {
+            Ok(result) => result,
+            Err(err) => {
+                if require_gpu {
+                    return Err(anyhow!(
+                        "Failed to initialise GPU device for discovery analysis: {err}"
+                    ));
+                }
+                return Ok(Self::cpu_fallback());
+            }
+        };
 
         let (helpful_layout, helpful_pipeline) =
             Self::build_helpful_pipeline(&device, "helpful-synapse-pipeline");
@@ -231,12 +268,12 @@ impl GpuAnalyzer {
             Self::build_harmful_pipeline(&device, "harmful-synapse-pipeline");
 
         Ok(Self {
-            device,
-            queue,
-            helpful_layout,
-            helpful_pipeline,
-            harmful_layout,
-            harmful_pipeline,
+            device: Some(device),
+            queue: Some(queue),
+            helpful_layout: Some(helpful_layout),
+            helpful_pipeline: Some(helpful_pipeline),
+            harmful_layout: Some(harmful_layout),
+            harmful_pipeline: Some(harmful_pipeline),
             gpu_used: true,
         })
     }
@@ -368,6 +405,27 @@ impl GpuAnalyzer {
             return Ok(HelpfulStats::default());
         }
 
+        if !self.gpu_used {
+            return Ok(cpu_helpful_stats(samples));
+        }
+
+        let device = self
+            .device
+            .as_ref()
+            .context("GPU device not initialised for helpful analysis")?;
+        let queue = self
+            .queue
+            .as_ref()
+            .context("GPU queue not initialised for helpful analysis")?;
+        let helpful_layout = self
+            .helpful_layout
+            .as_ref()
+            .context("GPU layout not initialised for helpful analysis")?;
+        let helpful_pipeline = self
+            .helpful_pipeline
+            .as_ref()
+            .context("GPU pipeline not initialised for helpful analysis")?;
+
         let gpu_samples: Vec<GpuHelpfulSample> = samples
             .iter()
             .copied()
@@ -375,23 +433,19 @@ impl GpuAnalyzer {
             .collect();
         let contributions_zeroed = vec![HelpfulContribution::zeroed(); samples.len()];
 
-        let sample_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("helpful-samples-buffer"),
-                contents: bytemuck::cast_slice(&gpu_samples),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("helpful-samples-buffer"),
+            contents: bytemuck::cast_slice(&gpu_samples),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
 
-        let contributions_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("helpful-contributions-buffer"),
-                    contents: bytemuck::cast_slice(&contributions_zeroed),
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_SRC
-                        | wgpu::BufferUsages::COPY_DST,
-                });
+        let contributions_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("helpful-contributions-buffer"),
+            contents: bytemuck::cast_slice(&contributions_zeroed),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
 
         let uniforms = HelpfulUniforms {
             length: samples.len() as u32,
@@ -399,16 +453,14 @@ impl GpuAnalyzer {
             epsilon: EPSILON,
             pad1: 0.0,
         };
-        let uniform_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("helpful-uniform-buffer"),
-                contents: bytemuck::bytes_of(&uniforms),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("helpful-uniform-buffer"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
 
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.helpful_layout,
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: helpful_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -427,25 +479,23 @@ impl GpuAnalyzer {
         });
 
         let contribution_size = (std::mem::size_of::<HelpfulContribution>() * samples.len()) as u64;
-        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("helpful-staging-buffer"),
             size: contribution_size,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("helpful-command-encoder"),
-            });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("helpful-command-encoder"),
+        });
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("helpful-compute-pass"),
                 timestamp_writes: None,
             });
-            compute_pass.set_pipeline(&self.helpful_pipeline);
+            compute_pass.set_pipeline(helpful_pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
             let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
             compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
@@ -459,7 +509,7 @@ impl GpuAnalyzer {
             contribution_size,
         );
 
-        self.queue.submit(Some(encoder.finish()));
+        queue.submit(Some(encoder.finish()));
 
         let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = mpsc::channel();
@@ -468,7 +518,7 @@ impl GpuAnalyzer {
                 .send(result)
                 .expect("Failed to send map_async result");
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        device.poll(wgpu::Maintain::Wait);
 
         match receiver.recv() {
             Ok(Ok(())) => {}
@@ -511,6 +561,27 @@ impl GpuAnalyzer {
             return Ok(HarmfulStats::default());
         }
 
+        if !self.gpu_used {
+            return Ok(cpu_harmful_stats(samples, weight));
+        }
+
+        let device = self
+            .device
+            .as_ref()
+            .context("GPU device not initialised for harmful analysis")?;
+        let queue = self
+            .queue
+            .as_ref()
+            .context("GPU queue not initialised for harmful analysis")?;
+        let harmful_layout = self
+            .harmful_layout
+            .as_ref()
+            .context("GPU layout not initialised for harmful analysis")?;
+        let harmful_pipeline = self
+            .harmful_pipeline
+            .as_ref()
+            .context("GPU pipeline not initialised for harmful analysis")?;
+
         let gpu_samples: Vec<GpuHelpfulSample> = samples
             .iter()
             .copied()
@@ -518,23 +589,19 @@ impl GpuAnalyzer {
             .collect();
         let contributions_zeroed = vec![HarmfulContribution::zeroed(); samples.len()];
 
-        let sample_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("harmful-samples-buffer"),
-                contents: bytemuck::cast_slice(&gpu_samples),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("harmful-samples-buffer"),
+            contents: bytemuck::cast_slice(&gpu_samples),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
 
-        let contributions_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("harmful-contributions-buffer"),
-                    contents: bytemuck::cast_slice(&contributions_zeroed),
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_SRC
-                        | wgpu::BufferUsages::COPY_DST,
-                });
+        let contributions_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("harmful-contributions-buffer"),
+            contents: bytemuck::cast_slice(&contributions_zeroed),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
 
         let uniforms = HarmfulUniforms {
             length: samples.len() as u32,
@@ -542,16 +609,14 @@ impl GpuAnalyzer {
             epsilon: EPSILON,
             weight,
         };
-        let uniform_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("harmful-uniform-buffer"),
-                contents: bytemuck::bytes_of(&uniforms),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("harmful-uniform-buffer"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
 
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.harmful_layout,
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: harmful_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -570,25 +635,23 @@ impl GpuAnalyzer {
         });
 
         let contribution_size = (std::mem::size_of::<HarmfulContribution>() * samples.len()) as u64;
-        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("harmful-staging-buffer"),
             size: contribution_size,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("harmful-command-encoder"),
-            });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("harmful-command-encoder"),
+        });
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("harmful-compute-pass"),
                 timestamp_writes: None,
             });
-            compute_pass.set_pipeline(&self.harmful_pipeline);
+            compute_pass.set_pipeline(harmful_pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
             let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
             compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
@@ -602,7 +665,7 @@ impl GpuAnalyzer {
             contribution_size,
         );
 
-        self.queue.submit(Some(encoder.finish()));
+        queue.submit(Some(encoder.finish()));
 
         let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = mpsc::channel();
@@ -611,7 +674,7 @@ impl GpuAnalyzer {
                 .send(result)
                 .expect("Failed to send map_async result");
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        device.poll(wgpu::Maintain::Wait);
 
         match receiver.recv() {
             Ok(Ok(())) => {}
@@ -1060,4 +1123,64 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
         harmful_synapses: harmful_results,
         gpu_used: analyzer.gpu_used(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering as AtomicOrdering;
+
+    struct ForceGpuFailureGuard;
+
+    impl ForceGpuFailureGuard {
+        fn new() -> Self {
+            FORCE_GPU_ADAPTER_FAILURE.store(true, AtomicOrdering::SeqCst);
+            Self
+        }
+    }
+
+    impl Drop for ForceGpuFailureGuard {
+        fn drop(&mut self) {
+            FORCE_GPU_ADAPTER_FAILURE.store(false, AtomicOrdering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn cpu_fallback_when_gpu_not_required() {
+        let _guard = ForceGpuFailureGuard::new();
+        let analyzer =
+            GpuAnalyzer::new(false).expect("CPU analysis should be available when GPU is optional");
+
+        assert!(
+            !analyzer.gpu_used(),
+            "GPU should not be reported as used when we fall back to CPU analysis"
+        );
+
+        let samples = vec![
+            HelpfulSample {
+                activation: 0.8,
+                avg_error: -0.4,
+            },
+            HelpfulSample {
+                activation: -0.6,
+                avg_error: 0.3,
+            },
+        ];
+
+        let helpful_stats = analyzer
+            .evaluate_helpful(&samples)
+            .expect("CPU helpful analysis should succeed");
+        assert!(
+            helpful_stats.positive_count > 0 || helpful_stats.negative_count > 0,
+            "CPU analysis should produce non-zero helpful counts"
+        );
+
+        let harmful_stats = analyzer
+            .evaluate_harmful(&samples, 0.5)
+            .expect("CPU harmful analysis should succeed");
+        assert!(
+            harmful_stats.harmful_count > 0 || harmful_stats.helpful_count > 0,
+            "CPU analysis should produce non-zero harmful counts"
+        );
+    }
 }

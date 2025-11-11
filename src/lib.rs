@@ -300,13 +300,13 @@ pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut 
 
     let input_str = unsafe {
         if input_json.is_null() {
-            let error = r#"{\"success\":false,\"error\":\"Null input pointer\"}"#;
+            let error = r#"{"success":false,"error":"Null input pointer"}"#;
             return CString::new(error).unwrap().into_raw();
         }
         match CStr::from_ptr(input_json).to_str() {
             Ok(s) => s,
             Err(_) => {
-                let error = r#"{\"success\":false,\"error\":\"Invalid UTF-8 in input\"}"#;
+                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
                 return CString::new(error).unwrap().into_raw();
             }
         }
@@ -350,7 +350,7 @@ pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut 
     match CString::new(json) {
         Ok(result) => result.into_raw(),
         Err(_) => {
-            let error = r#"{\"success\":false,\"error\":\"Failed to create output string\"}"#;
+            let error = r#"{"success":false,"error":"Failed to create output string"}"#;
             CString::new(error).unwrap().into_raw()
         }
     }
