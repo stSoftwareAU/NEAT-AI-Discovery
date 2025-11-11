@@ -32,6 +32,18 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
     // For now, we'll process sequentially to ensure atomicity
     // TODO: Add parallel processing with proper synchronization
     let mut all_records = Vec::new();
+    let non_input_neuron_count = input
+        .creature
+        .neurons
+        .iter()
+        .filter(|n| n.neuron_type != "input")
+        .count();
+
+    if non_input_neuron_count == 0 {
+        return Err(anyhow::anyhow!(
+            "Cannot record discovery data: creature has no non-input neurons. Input neurons are skipped during discovery recording. Discovery recording requires at least one hidden or output neuron to record activations and errors."
+        ));
+    }
 
     // Determine which indices to process
     let indices_to_process: Vec<usize> = if let Some(ref record_indices) = input.record_indices {
@@ -121,26 +133,21 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
                 "No pre-computed neuron_data provided. TypeScript must compute activations and errors before calling Rust."
             ));
         }
+
+        // Record input neuron activations for GPU-assisted analysis
+        for (input_index, value) in training_record.input.iter().enumerate() {
+            let input_uuid = format!("input-{input_index}");
+
+            let record =
+                DiscoverRecord::new(obs_index_u32, input_uuid, Some(*value), *value, Vec::new());
+
+            all_records.push(record);
+        }
     }
 
     // Check if we have any records to write
     // This can happen if the creature only has input neurons (which are skipped)
     if all_records.is_empty() {
-        // Count non-input neurons to provide a helpful error message
-        let non_input_count = input
-            .creature
-            .neurons
-            .iter()
-            .filter(|n| n.neuron_type != "input")
-            .count();
-
-        if non_input_count == 0 {
-            return Err(anyhow::anyhow!(
-                "Cannot record discovery data: creature has no non-input neurons. Input neurons are skipped during discovery recording. Discovery recording requires at least one hidden or output neuron to record activations and errors."
-            ));
-        }
-
-        // This shouldn't happen, but provide a generic error if it does
         return Err(anyhow::anyhow!(
             "No discovery records were generated from the training data"
         ));
@@ -416,10 +423,11 @@ mod tests {
             }
         }
 
-        // Should have 6 records (3 indices * 2 neurons)
+        let per_obs_record_count = input.creature.neurons.len() + input.creature.input;
+        let expected_records = per_obs_record_count * 3;
         assert_eq!(
-            record_count, 6,
-            "Should have 6 records (3 indices * 2 neurons)"
+            record_count as usize, expected_records,
+            "Should have records for each neuron (including inputs) across the selected indices"
         );
         // Should only contain indices 1, 3, 5
         assert_eq!(
@@ -818,7 +826,7 @@ mod tests {
         assert!(parquet_file.exists());
 
         // Read the parquet file and verify only unique obs_index values exist
-        // We have 2 neurons (hidden-1 and output-0), so we should have 6 records total (3 unique indices * 2 neurons)
+        // With input neurons recorded as well, each observation should produce entries for every neuron (including inputs).
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
         let file = File::open(&parquet_file).unwrap();
@@ -842,32 +850,33 @@ mod tests {
             }
         }
 
-        // Should have 6 records (3 unique indices * 2 neurons)
+        let per_obs_record_count = input.creature.neurons.len() + input.creature.input;
+        let expected_records = per_obs_record_count * 3;
         assert_eq!(
-            record_count, 6,
-            "Should have 6 records (3 unique indices * 2 neurons)"
+            record_count as usize,
+            expected_records,
+            "Should have records for every neuron (including inputs) across the deduplicated indices"
         );
-        // Should only contain indices 1, 3, 5 (no duplicates)
         assert_eq!(
             obs_index_counts.len(),
             3,
             "Should have 3 unique obs_index values (duplicates should be removed)"
         );
-        // Each obs_index should appear exactly twice (once per neuron)
+        let expected_per_index = per_obs_record_count as i32;
         assert_eq!(
             obs_index_counts.get(&1),
-            Some(&2),
-            "obs_index 1 should appear exactly twice (once per neuron)"
+            Some(&expected_per_index),
+            "obs_index 1 should appear once per neuron (including inputs)"
         );
         assert_eq!(
             obs_index_counts.get(&3),
-            Some(&2),
-            "obs_index 3 should appear exactly twice (once per neuron)"
+            Some(&expected_per_index),
+            "obs_index 3 should appear once per neuron (including inputs)"
         );
         assert_eq!(
             obs_index_counts.get(&5),
-            Some(&2),
-            "            obs_index 5 should appear exactly twice (once per neuron)"
+            Some(&expected_per_index),
+            "obs_index 5 should appear once per neuron (including inputs)"
         );
     }
 
