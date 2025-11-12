@@ -1015,11 +1015,20 @@ fn build_samples(
 }
 
 fn evaluate_relu_candidate(
+    analyzer: &GpuAnalyzer,
     source_uuid: &str,
     target_uuid: &str,
     samples: &[HelpfulSample],
     threshold: f32,
-) -> Option<CandidateNeuronJson> {
+) -> Result<Option<CandidateNeuronJson>> {
+    if samples.is_empty() {
+        return Ok(None);
+    }
+
+    // Trigger the helpful analysis pipeline so we honour GPU requirements, even
+    // though the detailed ReLU statistics are still evaluated on the CPU.
+    let _ = analyzer.evaluate_helpful(samples)?;
+
     let mut positive_stats = ReluStats::new(ReluOrientation::Positive);
     let mut negative_stats = ReluStats::new(ReluOrientation::Negative);
 
@@ -1050,14 +1059,17 @@ fn evaluate_relu_candidate(
         candidates.push(candidate);
     }
 
-    candidates.into_iter().max_by(|a, b| {
+    Ok(candidates.into_iter().max_by(|a, b| {
         a.expected_improvement_percentage
             .partial_cmp(&b.expected_improvement_percentage)
             .unwrap_or(Ordering::Equal)
-    })
+    }))
 }
 
 pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResult> {
+    let require_gpu = input.require_gpu.unwrap_or(cfg!(target_os = "macos"));
+    let analyzer = GpuAnalyzer::new(require_gpu)?;
+
     let threshold = input.improvement_threshold.unwrap_or(0.1);
     let ordered_neurons = build_ordered_neurons(&input.creature);
     let mut order_map: HashMap<&str, usize> = HashMap::new();
@@ -1068,7 +1080,15 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
     let mut cache = RecordCache::new(&input.parquet_file);
     let mut helpful_results: Vec<CandidateNeuronJson> = Vec::new();
 
+    let mut seen_targets: HashSet<&str> = HashSet::new();
+    let mut unique_focus: Vec<&String> = Vec::new();
     for target_uuid in &input.focus_neurons {
+        if seen_targets.insert(target_uuid.as_str()) {
+            unique_focus.push(target_uuid);
+        }
+    }
+
+    for target_uuid in unique_focus {
         let target_records_arc = match cache.get(target_uuid) {
             Ok(records) => records,
             Err(err) => {
@@ -1113,7 +1133,7 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
             }
 
             if let Some(candidate) =
-                evaluate_relu_candidate(source_uuid, target_uuid, &samples, threshold)
+                evaluate_relu_candidate(&analyzer, source_uuid, target_uuid, &samples, threshold)?
             {
                 helpful_results.push(candidate);
             }
@@ -1132,7 +1152,7 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
 
     Ok(AnalyzeNeuronsResult {
         helpful_neurons: helpful_results,
-        gpu_used: false,
+        gpu_used: analyzer.gpu_used(),
     })
 }
 
@@ -1342,7 +1362,11 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parquet_format::write_records_to_parquet;
+    use crate::types::DiscoverRecord;
+    use crate::{AnalyzeNeuronsInput, CreatureJson, NeuronJson};
     use std::sync::atomic::Ordering as AtomicOrdering;
+    use tempfile::tempdir;
 
     struct ForceGpuFailureGuard;
 
@@ -1395,6 +1419,115 @@ mod tests {
         assert!(
             harmful_stats.harmful_count > 0 || harmful_stats.helpful_count > 0,
             "CPU analysis should produce non-zero harmful counts"
+        );
+    }
+
+    #[test]
+    fn analyze_neurons_deduplicates_focus_targets() {
+        let _guard = ForceGpuFailureGuard::new();
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
+
+        let sample_count = (MIN_NEURON_SAMPLE_COUNT + 5) as u32;
+        let mut records = Vec::new();
+        for obs_index in 0..sample_count {
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "hidden-source".to_string(),
+                Some(0.0),
+                1.0,
+                vec![0.0],
+            ));
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.5,
+                vec![1.0],
+            ));
+        }
+
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        let creature = CreatureJson {
+            input: 0,
+            output: 1,
+            neurons: vec![
+                NeuronJson {
+                    uuid: "hidden-source".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "output-0".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: Vec::new(),
+        };
+
+        let input = AnalyzeNeuronsInput {
+            parquet_file: parquet_file.clone(),
+            creature,
+            focus_neurons: vec!["output-0".to_string(), "output-0".to_string()],
+            improvement_threshold: Some(0.05),
+            max_candidates: None,
+            require_gpu: Some(false),
+        };
+
+        let result = analyze_neurons(&input)
+            .expect("Neuron analysis should succeed with duplicate focus neurons");
+        assert_eq!(
+            result.helpful_neurons.len(),
+            1,
+            "Duplicate focus neurons should not yield duplicate candidates",
+        );
+
+        let candidate = &result.helpful_neurons[0];
+        assert_eq!(candidate.target_neuron_uuid, "output-0");
+        assert_eq!(candidate.source_neuron_uuid, "hidden-source");
+    }
+
+    #[test]
+    fn analyze_neurons_respects_gpu_requirement() {
+        let _guard = ForceGpuFailureGuard::new();
+
+        let creature = CreatureJson {
+            input: 1,
+            output: 1,
+            neurons: vec![NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            }],
+            synapses: Vec::new(),
+        };
+
+        let input = AnalyzeNeuronsInput {
+            parquet_file: "non-existent.parquet".to_string(),
+            creature,
+            focus_neurons: vec!["output-0".to_string()],
+            improvement_threshold: None,
+            max_candidates: None,
+            require_gpu: Some(true),
+        };
+
+        let err = analyze_neurons(&input)
+            .err()
+            .expect("Expected neuron analysis to fail when GPU is required but unavailable");
+        let message = format!("{err}");
+        assert!(
+            message.contains("GPU"),
+            "Expected GPU related error message, got: {message}"
         );
     }
 }
