@@ -121,6 +121,46 @@ pub struct AnalyzeSynapsesOutput {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeNeuronsInput {
+    pub parquet_file: String,
+    pub creature: CreatureJson,
+    pub focus_neurons: Vec<String>,
+    #[serde(default)]
+    pub improvement_threshold: Option<f32>,
+    #[serde(default)]
+    pub max_candidates: Option<usize>,
+    #[serde(default)]
+    pub require_gpu: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CandidateNeuronJson {
+    pub source_neuron_uuid: String,
+    pub target_neuron_uuid: String,
+    pub incoming_weight: f32,
+    pub outgoing_weight: f32,
+    pub squash: String,
+    pub bias: f32,
+    pub expected_improvement_percentage: f32,
+    pub improved_count: u32,
+    pub total_count: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeNeuronsOutput {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_used: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub helpful_neurons: Option<Vec<CandidateNeuronJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// Safely truncate a UTF-8 string at character boundaries
 ///
 /// Returns a string truncated to at most `max_bytes` bytes, ensuring the
@@ -334,6 +374,66 @@ pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut 
             gpu_used: None,
             helpful_synapses: None,
             harmful_synapses: None,
+            error: Some(format!("Failed to parse input JSON: {e}")),
+        },
+    };
+
+    let json = match serde_json::to_string(&output) {
+        Ok(json) => json,
+        Err(e) => {
+            let fallback =
+                format!("{{\"success\":false,\"error\":\"Failed to serialize output: {e}\"}}");
+            return CString::new(fallback).unwrap().into_raw();
+        }
+    };
+
+    match CString::new(json) {
+        Ok(result) => result.into_raw(),
+        Err(_) => {
+            let error = r#"{"success":false,"error":"Failed to create output string"}"#;
+            CString::new(error).unwrap().into_raw()
+        }
+    }
+}
+
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn analyze_neurons(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+
+    let input_str = unsafe {
+        if input_json.is_null() {
+            let error = r#"{"success":false,"error":"Null input pointer"}"#;
+            return CString::new(error).unwrap().into_raw();
+        }
+        match CStr::from_ptr(input_json).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
+                return CString::new(error).unwrap().into_raw();
+            }
+        }
+    };
+
+    let output = match serde_json::from_str::<AnalyzeNeuronsInput>(input_str) {
+        Ok(input) => match analysis::analyze_neurons(&input) {
+            Ok(result) => AnalyzeNeuronsOutput {
+                success: true,
+                gpu_used: Some(result.gpu_used),
+                helpful_neurons: Some(result.helpful_neurons),
+                error: None,
+            },
+            Err(e) => AnalyzeNeuronsOutput {
+                success: false,
+                gpu_used: None,
+                helpful_neurons: None,
+                error: Some(e.to_string()),
+            },
+        },
+        Err(e) => AnalyzeNeuronsOutput {
+            success: false,
+            gpu_used: None,
+            helpful_neurons: None,
             error: Some(format!("Failed to parse input JSON: {e}")),
         },
     };
