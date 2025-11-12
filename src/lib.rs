@@ -161,6 +161,23 @@ pub struct AnalyzeNeuronsOutput {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeParquetInput {
+    pub output_file: String,
+    pub input_files: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeParquetOutput {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// Safely truncate a UTF-8 string at character boundaries
 ///
 /// Returns a string truncated to at most `max_bytes` bytes, ensuring the
@@ -225,6 +242,48 @@ pub fn record_discovery_internal(input_json: &str) -> Result<String> {
     };
 
     Ok(serde_json::to_string(&output)?)
+}
+
+pub fn merge_discovery_parquet_internal(input_json: &str) -> Result<String> {
+    let input: MergeParquetInput = match serde_json::from_str(input_json) {
+        Ok(input) => input,
+        Err(e) => {
+            let output = MergeParquetOutput {
+                success: false,
+                output_file: None,
+                error: Some(format!("Failed to parse input JSON: {e}")),
+            };
+            return Ok(serde_json::to_string(&output)?);
+        }
+    };
+
+    if input.input_files.is_empty() {
+        let output = MergeParquetOutput {
+            success: false,
+            output_file: None,
+            error: Some("No discovery parquet files provided for merge".to_string()),
+        };
+        return Ok(serde_json::to_string(&output)?);
+    }
+
+    match parquet_format::merge_parquet_files(&input.output_file, &input.input_files) {
+        Ok(()) => {
+            let output = MergeParquetOutput {
+                success: true,
+                output_file: Some(input.output_file),
+                error: None,
+            };
+            Ok(serde_json::to_string(&output)?)
+        }
+        Err(e) => {
+            let output = MergeParquetOutput {
+                success: false,
+                output_file: None,
+                error: Some(e.to_string()),
+            };
+            Ok(serde_json::to_string(&output)?)
+        }
+    }
 }
 
 /// FFI export for recording discovery data
@@ -324,6 +383,50 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
     };
 
     // Return as C string
+    match CString::new(result) {
+        Ok(c_string) => c_string.into_raw(),
+        Err(_) => {
+            let error = r#"{"success":false,"error":"Failed to create output string"}"#;
+            CString::new(error).unwrap().into_raw()
+        }
+    }
+}
+
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn merge_discovery_parquet(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+
+    let input_str = unsafe {
+        if input_json.is_null() {
+            let error = r#"{"success":false,"error":"Null input pointer"}"#;
+            return CString::new(error).unwrap().into_raw();
+        }
+        match CStr::from_ptr(input_json).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
+                return CString::new(error).unwrap().into_raw();
+            }
+        }
+    };
+
+    let result = match merge_discovery_parquet_internal(input_str) {
+        Ok(json) => json,
+        Err(e) => {
+            let output = MergeParquetOutput {
+                success: false,
+                output_file: None,
+                error: Some(e.to_string()),
+            };
+            serde_json::to_string(&output).unwrap_or_else(|_| {
+                r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
+            })
+        }
+    };
+
     match CString::new(result) {
         Ok(c_string) => c_string.into_raw(),
         Err(_) => {

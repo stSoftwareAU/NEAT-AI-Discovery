@@ -101,6 +101,47 @@ pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> 
     Ok(())
 }
 
+/// Merge multiple discovery parquet files into a single Parquet file.
+/// Input files are appended in the provided order.
+pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<()> {
+    if input_files.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No discovery parquet files provided for merge"
+        ));
+    }
+
+    let schema = Arc::new(create_schema());
+    let file = File::create(output_file)
+        .with_context(|| format!("Failed to create merged Parquet file: {output_file}"))?;
+    let props = WriterProperties::builder().build();
+    let mut writer = ArrowWriter::try_new(file, schema, Some(props))
+        .context("Failed to create ArrowWriter for merge")?;
+
+    for input_path in input_files {
+        let input_file = File::open(input_path)
+            .with_context(|| format!("Failed to open discovery Parquet file: {input_path}"))?;
+        let builder =
+            parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(input_file)
+                .with_context(|| format!("Failed to create reader for {input_path}"))?;
+        let reader = builder
+            .build()
+            .with_context(|| format!("Failed to build reader for {input_path}"))?;
+
+        for batch_result in reader {
+            let batch =
+                batch_result.with_context(|| format!("Failed to read batch from {input_path}"))?;
+            writer
+                .write(&batch)
+                .with_context(|| format!("Failed to append batch from {input_path}"))?;
+        }
+    }
+
+    writer
+        .close()
+        .context("Failed to close merged Parquet writer")?;
+    Ok(())
+}
+
 /// Read discovery records from a Parquet file, filtered by neuron UUID
 pub fn read_records_from_parquet(
     file_path: &str,

@@ -142,6 +142,7 @@ ensure_lib_built() {
   # Check if library needs rebuilding based on version only
   local needs_rebuild=false
   local rebuild_reason=""
+  local installed_version=""
 
   if [[ ! -f "$lib_path" ]]; then
     needs_rebuild=true
@@ -150,8 +151,6 @@ ensure_lib_built() {
     needs_rebuild=true
     rebuild_reason="Version marker missing for ${PKG}"
   else
-    # Check version from marker file
-    local installed_version
     installed_version="$(cat "$version_marker" 2>/dev/null || echo "")"
     if [[ "$installed_version" != "$DESIRED" ]]; then
       needs_rebuild=true
@@ -160,12 +159,26 @@ ensure_lib_built() {
   fi
 
   if [[ "$needs_rebuild" == "false" ]]; then
-    # Silent when up-to-date - just return the path
+    # Ensure target artifact exists, otherwise trigger a rebuild
+    if [[ ! -f "$target_lib" ]]; then
+      needs_rebuild=true
+      rebuild_reason="Target artifact ${target_lib} missing, rebuilding"
+    fi
+  fi
+
+  if [[ "$needs_rebuild" == "false" ]]; then
+    # Compare installed and target binaries; rebuild/copy if they differ
+    if [[ -f "$target_lib" ]] && ! cmp -s "$target_lib" "$lib_path"; then
+      needs_rebuild=true
+      rebuild_reason="Installed library differs from freshly built artifact"
+    fi
+  fi
+
+  if [[ "$needs_rebuild" == "false" ]]; then
     echo "$lib_path"
     return 0
   fi
 
-  # Show rebuild reason
   >&2 echo "Library crate: $PKG"
   >&2 echo "Library: $lib_file"
   >&2 echo "Version: $DESIRED"
@@ -180,7 +193,6 @@ ensure_lib_built() {
   mkdir -p "$HOME/.cargo/lib" >&2
   cp "$target_lib" "$lib_path" >&2
 
-  # Store version marker for future checks
   echo "$DESIRED" > "$version_marker"
 
   [[ -f "$lib_path" ]] || { >&2 echo "Expected library not found at $lib_path"; exit 1; }
