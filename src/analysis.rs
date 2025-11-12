@@ -1289,7 +1289,17 @@ fn evaluate_activation_candidate(
             if let Some(candidate) = &fallback_candidate {
                 if expected_improvement_percentage > best_score {
                     best_score = expected_improvement_percentage;
-                    best_candidate = Some(candidate.clone());
+                    best_candidate = Some(CandidateNeuronJson {
+                        source_neuron_uuid: candidate.source_neuron_uuid.clone(),
+                        target_neuron_uuid: candidate.target_neuron_uuid.clone(),
+                        incoming_weight: candidate.incoming_weight,
+                        outgoing_weight: candidate.outgoing_weight,
+                        squash: candidate.squash.clone(),
+                        bias: candidate.bias,
+                        expected_improvement_percentage: candidate.expected_improvement_percentage,
+                        improved_count: candidate.improved_count,
+                        total_count: candidate.total_count,
+                    });
                 }
             }
         }
