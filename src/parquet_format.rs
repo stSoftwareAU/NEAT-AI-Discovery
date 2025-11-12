@@ -1,7 +1,7 @@
 //! Parquet file format handling for discovery records
 
 use anyhow::{Context, Result};
-use arrow::array::{Float32Array, ListArray, StringArray, UInt32Array};
+use arrow::array::{Float32Array, LargeStringArray, ListArray, UInt32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
@@ -15,7 +15,7 @@ use crate::types::DiscoverRecord;
 pub fn create_schema() -> Schema {
     Schema::new(vec![
         Field::new("obs_index", DataType::UInt32, false),
-        Field::new("neuron_uuid", DataType::Utf8, false),
+        Field::new("neuron_uuid", DataType::LargeUtf8, false),
         Field::new("value", DataType::Float32, true), // nullable
         Field::new("activation", DataType::Float32, false),
         Field::new(
@@ -65,7 +65,7 @@ pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> 
     }
 
     let obs_index_array = Arc::new(UInt32Array::from(obs_indices));
-    let neuron_uuid_array = Arc::new(StringArray::from(neuron_uuids));
+    let neuron_uuid_array = Arc::new(LargeStringArray::from(neuron_uuids));
     let value_array = Arc::new(Float32Array::from(values));
     let activation_array = Arc::new(Float32Array::from(activations));
 
@@ -106,7 +106,7 @@ pub fn read_records_from_parquet(
     file_path: &str,
     neuron_uuid: &str,
 ) -> Result<Vec<DiscoverRecord>> {
-    use arrow::array::{Array, Float32Array, ListArray, StringArray, UInt32Array};
+    use arrow::array::{Array, Float32Array, LargeStringArray, ListArray, UInt32Array};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use std::fs::File;
 
@@ -132,7 +132,7 @@ pub fn read_records_from_parquet(
         let neuron_uuid_col = batch
             .column(1)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<LargeStringArray>()
             .context("Failed to cast neuron_uuid column")?;
         let value_col = batch
             .column(2)
@@ -202,6 +202,16 @@ mod tests {
         assert_eq!(schema.field(2).name(), "value");
         assert_eq!(schema.field(3).name(), "activation");
         assert_eq!(schema.field(4).name(), "errors");
+    }
+
+    #[test]
+    fn test_create_schema_uses_large_utf8_for_neuron_uuid() {
+        let schema = create_schema();
+        assert_eq!(
+            schema.field(1).data_type(),
+            &DataType::LargeUtf8,
+            "Neuron UUID column should use LargeUtf8 to support large datasets"
+        );
     }
 
     #[test]
