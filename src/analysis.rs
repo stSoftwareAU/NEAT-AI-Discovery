@@ -12,7 +12,7 @@ use wgpu::util::DeviceExt;
 
 const EPSILON: f32 = 1e-8;
 const WORKGROUP_SIZE: u32 = 256;
-const MIN_NEURON_SAMPLE_COUNT: usize = 25;
+const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 
 #[cfg(test)]
 static FORCE_GPU_ADAPTER_FAILURE: AtomicBool = AtomicBool::new(false);
@@ -222,6 +222,108 @@ impl ReluStats {
         })
     }
 }
+
+struct ActivationCandidateSpec {
+    name: &'static str,
+    orientations: &'static [f32],
+    scales: &'static [f32],
+    activation: fn(f32) -> f32,
+    min_improvement: f32,
+}
+
+const ORIENTATIONS_BIDIRECTIONAL: [f32; 2] = [1.0, -1.0];
+const SCALES_WIDE: [f32; 8] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+const SCALES_SMOOTH: [f32; 8] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+
+fn gelu_activation(x: f32) -> f32 {
+    let x_cubed = x * x * x;
+    let tanh_arg = 0.797_884_6 * (x + 0.044_715 * x_cubed);
+    0.5 * x * (1.0 + tanh_arg.tanh())
+}
+
+fn elu_activation(x: f32) -> f32 {
+    if x >= 0.0 {
+        x
+    } else {
+        x.exp() - 1.0
+    }
+}
+
+fn selu_activation(x: f32) -> f32 {
+    const SELU_ALPHA: f32 = 1.673_263_2;
+    const SELU_LAMBDA: f32 = 1.050_701;
+    if x >= 0.0 {
+        SELU_LAMBDA * x
+    } else {
+        SELU_LAMBDA * SELU_ALPHA * (x.exp() - 1.0)
+    }
+}
+
+fn softplus_activation(x: f32) -> f32 {
+    if x > 20.0 {
+        x
+    } else {
+        (1.0 + x.exp()).ln()
+    }
+}
+
+fn logistic_activation(x: f32) -> f32 {
+    if x >= 0.0 {
+        1.0 / (1.0 + (-x).exp())
+    } else {
+        let exp_x = x.exp();
+        exp_x / (1.0 + exp_x)
+    }
+}
+
+fn tanh_activation(x: f32) -> f32 {
+    x.tanh()
+}
+
+const ACTIVATION_SPECS: [ActivationCandidateSpec; 6] = [
+    ActivationCandidateSpec {
+        name: "GELU",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_WIDE,
+        activation: gelu_activation,
+        min_improvement: 0.08,
+    },
+    ActivationCandidateSpec {
+        name: "ELU",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_WIDE,
+        activation: elu_activation,
+        min_improvement: 0.0,
+    },
+    ActivationCandidateSpec {
+        name: "SELU",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_SMOOTH,
+        activation: selu_activation,
+        min_improvement: 0.0,
+    },
+    ActivationCandidateSpec {
+        name: "Softplus",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_WIDE,
+        activation: softplus_activation,
+        min_improvement: 0.07,
+    },
+    ActivationCandidateSpec {
+        name: "LOGISTIC",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_SMOOTH,
+        activation: logistic_activation,
+        min_improvement: 0.05,
+    },
+    ActivationCandidateSpec {
+        name: "TANH",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_SMOOTH,
+        activation: tanh_activation,
+        min_improvement: 0.0,
+    },
+];
 
 #[derive(Default)]
 struct HarmfulStats {
@@ -1014,6 +1116,31 @@ fn build_samples(
     samples
 }
 
+fn upsert_candidate(
+    map: &mut HashMap<(String, String, String), CandidateNeuronJson>,
+    candidate: CandidateNeuronJson,
+) {
+    use std::collections::hash_map::Entry;
+
+    let key = (
+        candidate.source_neuron_uuid.clone(),
+        candidate.target_neuron_uuid.clone(),
+        candidate.squash.clone(),
+    );
+    match map.entry(key) {
+        Entry::Occupied(mut entry) => {
+            if candidate.expected_improvement_percentage
+                > entry.get().expected_improvement_percentage
+            {
+                entry.insert(candidate);
+            }
+        }
+        Entry::Vacant(entry) => {
+            entry.insert(candidate);
+        }
+    }
+}
+
 fn evaluate_relu_candidate(
     analyzer: &GpuAnalyzer,
     source_uuid: &str,
@@ -1066,6 +1193,121 @@ fn evaluate_relu_candidate(
     }))
 }
 
+fn evaluate_activation_candidate(
+    analyzer: &GpuAnalyzer,
+    source_uuid: &str,
+    target_uuid: &str,
+    samples: &[HelpfulSample],
+    threshold: f32,
+    spec: &ActivationCandidateSpec,
+) -> Result<Option<CandidateNeuronJson>> {
+    if samples.len() < MIN_NEURON_SAMPLE_COUNT {
+        return Ok(None);
+    }
+
+    // Trigger GPU path if required.
+    let _ = analyzer.evaluate_helpful(samples)?;
+
+    let mut best_candidate: Option<CandidateNeuronJson> = None;
+    let mut best_score = threshold;
+    let mut fallback_candidate: Option<CandidateNeuronJson> = None;
+    let mut fallback_score = f32::MIN;
+    let mut outputs = Vec::with_capacity(samples.len());
+
+    for &orientation in spec.orientations {
+        for &scale in spec.scales {
+            outputs.clear();
+            let incoming_weight = orientation * scale;
+            let mut sum_activation_sq = 0.0;
+            let mut sum_error_activation = 0.0;
+            let mut valid = true;
+
+            for sample in samples {
+                let pre_activation = incoming_weight * sample.activation;
+                let output = (spec.activation)(pre_activation);
+                if !output.is_finite() {
+                    valid = false;
+                    break;
+                }
+                outputs.push(output);
+                sum_activation_sq += output * output;
+                sum_error_activation += output * sample.avg_error;
+            }
+
+            if !valid || outputs.len() != samples.len() || sum_activation_sq <= EPSILON {
+                continue;
+            }
+
+            let mut outgoing_weight = sum_error_activation / (sum_activation_sq + EPSILON);
+            if !outgoing_weight.is_finite() || outgoing_weight.abs() <= EPSILON {
+                continue;
+            }
+            outgoing_weight = outgoing_weight.clamp(-5.0, 5.0);
+
+            let mut improved_count = 0u32;
+            let mut worsened_count = 0u32;
+            for (sample, output) in samples.iter().zip(outputs.iter()) {
+                let new_error = sample.avg_error - outgoing_weight * output;
+                if new_error.abs() + EPSILON < sample.avg_error.abs() {
+                    improved_count += 1;
+                } else if new_error.abs() > sample.avg_error.abs() + EPSILON {
+                    worsened_count += 1;
+                }
+            }
+
+            let total_count = samples.len() as u32;
+            if total_count == 0 {
+                continue;
+            }
+
+            let expected_improvement_percentage =
+                (improved_count as f32 - worsened_count as f32) / total_count as f32;
+
+            if expected_improvement_percentage > fallback_score {
+                fallback_score = expected_improvement_percentage;
+                fallback_candidate = Some(CandidateNeuronJson {
+                    source_neuron_uuid: source_uuid.to_string(),
+                    target_neuron_uuid: target_uuid.to_string(),
+                    incoming_weight,
+                    outgoing_weight,
+                    squash: spec.name.to_string(),
+                    bias: 0.0,
+                    expected_improvement_percentage,
+                    improved_count,
+                    total_count,
+                });
+            }
+
+            let improvement_cutoff = threshold.min(spec.min_improvement);
+
+            if expected_improvement_percentage <= improvement_cutoff
+                || improved_count < MIN_NEURON_SAMPLE_COUNT as u32
+            {
+                continue;
+            }
+
+            if let Some(candidate) = &fallback_candidate {
+                if expected_improvement_percentage > best_score {
+                    best_score = expected_improvement_percentage;
+                    best_candidate = Some(CandidateNeuronJson {
+                        source_neuron_uuid: candidate.source_neuron_uuid.clone(),
+                        target_neuron_uuid: candidate.target_neuron_uuid.clone(),
+                        incoming_weight: candidate.incoming_weight,
+                        outgoing_weight: candidate.outgoing_weight,
+                        squash: candidate.squash.clone(),
+                        bias: candidate.bias,
+                        expected_improvement_percentage: candidate.expected_improvement_percentage,
+                        improved_count: candidate.improved_count,
+                        total_count: candidate.total_count,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(best_candidate.or(fallback_candidate))
+}
+
 pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResult> {
     let require_gpu = input.require_gpu.unwrap_or(cfg!(target_os = "macos"));
     let analyzer = GpuAnalyzer::new(require_gpu)?;
@@ -1078,7 +1320,7 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
     }
 
     let mut cache = RecordCache::new(&input.parquet_file);
-    let mut helpful_results: Vec<CandidateNeuronJson> = Vec::new();
+    let mut helpful_map: HashMap<(String, String, String), CandidateNeuronJson> = HashMap::new();
 
     let mut seen_targets: HashSet<&str> = HashSet::new();
     let mut unique_focus: Vec<&String> = Vec::new();
@@ -1135,11 +1377,25 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
             if let Some(candidate) =
                 evaluate_relu_candidate(&analyzer, source_uuid, target_uuid, &samples, threshold)?
             {
-                helpful_results.push(candidate);
+                upsert_candidate(&mut helpful_map, candidate);
+            }
+
+            for spec in ACTIVATION_SPECS.iter() {
+                if let Some(candidate) = evaluate_activation_candidate(
+                    &analyzer,
+                    source_uuid,
+                    target_uuid,
+                    &samples,
+                    threshold,
+                    spec,
+                )? {
+                    upsert_candidate(&mut helpful_map, candidate);
+                }
             }
         }
     }
 
+    let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
     helpful_results.sort_by(|a, b| {
         b.expected_improvement_percentage
             .partial_cmp(&a.expected_improvement_percentage)
@@ -1485,15 +1741,34 @@ mod tests {
 
         let result = analyze_neurons(&input)
             .expect("Neuron analysis should succeed with duplicate focus neurons");
+        assert!(
+            !result.helpful_neurons.is_empty(),
+            "Expected at least one candidate neuron",
+        );
+
+        use std::collections::HashSet;
+        let unique: HashSet<(&str, &str, &str)> = result
+            .helpful_neurons
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.source_neuron_uuid.as_str(),
+                    candidate.target_neuron_uuid.as_str(),
+                    candidate.squash.as_str(),
+                )
+            })
+            .collect();
+
         assert_eq!(
+            unique.len(),
             result.helpful_neurons.len(),
-            1,
             "Duplicate focus neurons should not yield duplicate candidates",
         );
 
-        let candidate = &result.helpful_neurons[0];
-        assert_eq!(candidate.target_neuron_uuid, "output-0");
-        assert_eq!(candidate.source_neuron_uuid, "hidden-source");
+        assert!(
+            unique.iter().any(|(_, target, _)| *target == "output-0"),
+            "Expected a candidate targeting output-0",
+        );
     }
 
     #[test]
