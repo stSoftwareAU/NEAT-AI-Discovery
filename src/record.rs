@@ -45,56 +45,59 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
         ));
     }
 
-    // Determine which indices to process
-    let indices_to_process: Vec<usize> = if let Some(ref record_indices) = input.record_indices {
-        // Validate all indices are within bounds
+    // Determine observation indices to assign to each training record
+    let obs_indices: Vec<u32> = if let Some(ref record_indices) = input.record_indices {
+        if record_indices.len() != input.training_data.len() {
+            return Err(anyhow::anyhow!(
+                "record_indices length ({}) must match training_data length ({}) when provided",
+                record_indices.len(),
+                input.training_data.len()
+            ));
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        let mut indices = Vec::with_capacity(record_indices.len());
         for &idx in record_indices {
-            if idx >= input.training_data.len() {
+            if !seen.insert(idx) {
                 return Err(anyhow::anyhow!(
-                    "Record index {} is out of bounds (training data has {} records)",
-                    idx,
-                    input.training_data.len()
+                    "Record index {} is duplicated in record_indices. Discovery recording requires unique indices.",
+                    idx
                 ));
             }
+            let obs_index_u32 = u32::try_from(idx).map_err(|_| {
+                anyhow::anyhow!(
+                    "Record index {} exceeds maximum supported size ({})",
+                    idx,
+                    u32::MAX
+                )
+            })?;
+            indices.push(obs_index_u32);
         }
-        // Deduplicate indices while preserving order to ensure each obs_index
-        // uniquely identifies a training record (atomic write requirement)
-        let mut seen = std::collections::HashSet::new();
-        record_indices
-            .iter()
-            .filter_map(|&idx| if seen.insert(idx) { Some(idx) } else { None })
-            .collect()
+        indices
     } else {
-        // Process all records
-        (0..input.training_data.len()).collect()
-    };
-
-    // Validate that the indices being processed don't exceed u32::MAX
-    // This prevents silent overflow when converting obs_index from usize to u32
-    // When record_indices is provided, we only validate those indices.
-    // When record_indices is not provided, we validate the total training data size.
-    if let Some(max_index) = indices_to_process.iter().max() {
-        if *max_index > u32::MAX as usize {
+        if input.training_data.len() > u32::MAX as usize {
             return Err(anyhow::anyhow!(
-                "Maximum record index ({}) exceeds maximum supported size ({})",
-                max_index,
+                "Training data has {} records which exceeds maximum supported size ({})",
+                input.training_data.len(),
                 u32::MAX
             ));
         }
-    }
 
-    for &obs_index in &indices_to_process {
-        let training_record = &input.training_data[obs_index];
+        (0..input.training_data.len())
+            .map(|idx| {
+                u32::try_from(idx).map_err(|_| {
+                    anyhow::anyhow!(
+                        "Observation index {} exceeds u32::MAX ({})",
+                        idx,
+                        u32::MAX
+                    )
+                })
+            })
+            .collect::<Result<Vec<u32>>>()?
+    };
 
-        // Safely convert obs_index from usize to u32
-        // This will never fail because we validated the length above
-        let obs_index_u32 = u32::try_from(obs_index).map_err(|_| {
-            anyhow::anyhow!(
-                "Observation index {} exceeds u32::MAX ({})",
-                obs_index,
-                u32::MAX
-            )
-        })?;
+    for (relative_idx, training_record) in input.training_data.iter().enumerate() {
+        let obs_index_u32 = obs_indices[relative_idx];
 
         // Use pre-computed neuron_data if available (from TypeScript)
         // Otherwise, we would need to activate the creature here (not implemented)
@@ -362,13 +365,13 @@ mod tests {
 
     #[test]
     fn test_record_discovery_data_respects_record_indices() {
-        // Test that when record_indices is provided, only those indices are processed
+        // Test that when record_indices is provided, those values are used as obs_index
         let temp_dir = TempDir::new().unwrap();
         let mut input = create_test_input();
         input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
 
-        // Create 10 training records
-        input.training_data = (0..10)
+        // Create 3 training records
+        input.training_data = (0..3)
             .map(|i| crate::TrainingRecord {
                 input: vec![i as f32, (i * 2) as f32],
                 output: vec![i as f32],
@@ -389,8 +392,8 @@ mod tests {
             })
             .collect();
 
-        // Only process indices 1, 3, and 5
-        input.record_indices = Some(vec![1, 3, 5]);
+        // Assign non-sequential observation indices
+        input.record_indices = Some(vec![10, 30, 50]);
 
         let result = record_discovery_data(&input).unwrap();
 
@@ -398,8 +401,7 @@ mod tests {
         let parquet_file = Path::new(&result.temp_dir).join(&result.file);
         assert!(parquet_file.exists());
 
-        // Read the parquet file and verify only records with obs_index 1, 3, 5 exist
-        // We have 2 neurons (hidden-1 and output-0), so we should have 6 records total (3 indices * 2 neurons)
+        // Read the parquet file and verify obs_index values match provided indices
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
         let file = File::open(&parquet_file).unwrap();
@@ -423,61 +425,56 @@ mod tests {
             }
         }
 
-        let per_obs_record_count = input.creature.neurons.len() + input.creature.input;
+        let per_obs_record_count =
+            (input.creature.neurons.len() + input.creature.input) as u32;
         let expected_records = per_obs_record_count * 3;
         assert_eq!(
-            record_count as usize, expected_records,
-            "Should have records for each neuron (including inputs) across the selected indices"
+            record_count as u32, expected_records,
+            "Should have records for each neuron (including inputs) across the provided indices"
         );
-        // Should only contain indices 1, 3, 5
-        assert_eq!(
-            found_indices.len(),
-            3,
-            "Should have 3 unique obs_index values"
-        );
-        assert!(found_indices.contains(&1), "Should contain obs_index 1");
-        assert!(found_indices.contains(&3), "Should contain obs_index 3");
-        assert!(found_indices.contains(&5), "Should contain obs_index 5");
+        assert_eq!(found_indices.len(), 3, "Should have 3 unique obs_index values");
+        assert!(found_indices.contains(&10), "Should contain obs_index 10");
+        assert!(found_indices.contains(&30), "Should contain obs_index 30");
+        assert!(found_indices.contains(&50), "Should contain obs_index 50");
     }
 
     #[test]
-    fn test_record_discovery_data_record_indices_out_of_bounds() {
-        // Test that invalid record_indices are rejected
+    fn test_record_discovery_data_record_indices_length_mismatch() {
+        // Test that providing a mismatched number of record_indices is rejected
         let temp_dir = TempDir::new().unwrap();
         let mut input = create_test_input();
         input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
 
-        // Create 5 training records (indices 0-4)
+        // Create 5 training records but only supply 3 record indices
         input.training_data = (0..5)
-            .map(|_| crate::TrainingRecord {
-                input: vec![0.1, 0.2],
-                output: vec![0.5],
+            .map(|i| crate::TrainingRecord {
+                input: vec![i as f32, (i * 2) as f32],
+                output: vec![i as f32],
                 neuron_data: Some(vec![
                     crate::NeuronData {
                         neuron_uuid: "hidden-1".to_string(),
-                        activation: 0.5,
-                        value: Some(0.4),
-                        errors: vec![0.1],
+                        activation: i as f32 * 0.1,
+                        value: Some(i as f32 * 0.1),
+                        errors: vec![i as f32 * 0.01],
                     },
                     crate::NeuronData {
                         neuron_uuid: "output-0".to_string(),
-                        activation: 0.5,
-                        value: Some(0.5),
+                        activation: i as f32,
+                        value: Some(i as f32),
                         errors: vec![0.0],
                     },
                 ]),
             })
             .collect();
 
-        // Try to access index 10 which is out of bounds
-        input.record_indices = Some(vec![0, 2, 10]);
+        input.record_indices = Some(vec![0, 2, 4]);
 
         let result = record_discovery_data(&input);
-        assert!(result.is_err(), "Should reject out-of-bounds indices");
+        assert!(result.is_err(), "Should reject mismatched record_indices lengths");
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("out of bounds"),
-            "Error should mention out of bounds, got: {error_msg}"
+            error_msg.contains("record_indices length"),
+            "Error should mention length mismatch, got: {error_msg}"
         );
     }
 
@@ -658,49 +655,41 @@ mod tests {
     }
 
     #[test]
-    fn test_record_discovery_data_with_record_indices_validates_indices_not_total_size() {
-        // Test that when record_indices is provided, validation checks the indices
-        // being processed, not the total training data size.
-        // This test verifies that a large dataset can be processed if only
-        // small indices are selected via record_indices.
+    fn test_record_discovery_data_supports_large_obs_indices() {
+        // Test that large observation indices (within u32::MAX) are supported
         let temp_dir = TempDir::new().unwrap();
         let mut input = create_test_input();
         input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
 
-        // Create a large training dataset (simulating a case where total size
-        // might be large, but we only want to process a small subset)
-        // We use a reasonable large number (100,000) to simulate the scenario
-        // In real usage, this could be millions, but we can't create that many in tests
-        input.training_data = (0..100_000)
-            .map(|_| crate::TrainingRecord {
-                input: vec![0.1, 0.2],
-                output: vec![0.5],
+        // Provide a few training records
+        input.training_data = (0..3)
+            .map(|i| crate::TrainingRecord {
+                input: vec![i as f32, (i * 2) as f32],
+                output: vec![i as f32],
                 neuron_data: Some(vec![
                     crate::NeuronData {
                         neuron_uuid: "hidden-1".to_string(),
-                        activation: 0.5,
-                        value: Some(0.4),
-                        errors: vec![0.1],
+                        activation: i as f32 * 0.1,
+                        value: Some(i as f32 * 0.1),
+                        errors: vec![i as f32 * 0.01],
                     },
                     crate::NeuronData {
                         neuron_uuid: "output-0".to_string(),
-                        activation: 0.5,
-                        value: Some(0.5),
+                        activation: i as f32,
+                        value: Some(i as f32),
                         errors: vec![0.0],
                     },
                 ]),
             })
             .collect();
 
-        // Only process small indices (0, 1, 2) - all well within u32::MAX
-        input.record_indices = Some(vec![0, 1, 2]);
+        // Use large observation indices (still within u32::MAX)
+        input.record_indices = Some(vec![0, 123_456, 987_654]);
 
-        // This should succeed because we're only processing indices 0, 1, 2,
-        // which are all within u32::MAX, even though the total dataset is large
         let result = record_discovery_data(&input);
         assert!(
             result.is_ok(),
-            "Should succeed when record_indices contains valid indices, even if total dataset is large"
+            "Should succeed when record_indices contains large but valid indices"
         );
 
         // Verify file was created
@@ -708,7 +697,7 @@ mod tests {
             Path::new(&result.as_ref().unwrap().temp_dir).join(&result.as_ref().unwrap().file);
         assert!(parquet_file.exists());
 
-        // Verify only the specified indices were processed
+        // Verify the observation indices match the provided values
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
         let file = File::open(&parquet_file).unwrap();
@@ -730,15 +719,21 @@ mod tests {
             }
         }
 
-        // Should only contain indices 0, 1, 2
+        // Should only contain the provided indices
         assert_eq!(
             found_indices.len(),
             3,
-            "Should have 3 unique obs_index values (0, 1, 2)"
+            "Should have 3 unique obs_index values (0, 123456, 987654)"
         );
         assert!(found_indices.contains(&0), "Should contain obs_index 0");
-        assert!(found_indices.contains(&1), "Should contain obs_index 1");
-        assert!(found_indices.contains(&2), "Should contain obs_index 2");
+        assert!(
+            found_indices.contains(&123_456),
+            "Should contain obs_index 123456"
+        );
+        assert!(
+            found_indices.contains(&987_654),
+            "Should contain obs_index 987654"
+        );
     }
 
     #[test]
@@ -786,15 +781,14 @@ mod tests {
     }
 
     #[test]
-    fn test_record_discovery_data_deduplicates_record_indices() {
-        // Test that duplicate record_indices are deduplicated to ensure each obs_index
-        // uniquely identifies a training record (atomic write requirement)
+    fn test_record_discovery_data_rejects_duplicate_record_indices() {
+        // Test that duplicate record_indices are rejected to maintain unique obs_index values
         let temp_dir = TempDir::new().unwrap();
         let mut input = create_test_input();
         input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
 
-        // Create 10 training records
-        input.training_data = (0..10)
+        // Create 4 training records
+        input.training_data = (0..4)
             .map(|i| crate::TrainingRecord {
                 input: vec![i as f32, (i * 2) as f32],
                 output: vec![i as f32],
@@ -815,68 +809,18 @@ mod tests {
             })
             .collect();
 
-        // Provide duplicate indices: 1, 3, 1, 5, 3
-        // After deduplication, should only process 1, 3, 5
-        input.record_indices = Some(vec![1, 3, 1, 5, 3]);
+        // Provide duplicate indices: 1, 3, 1, 5
+        input.record_indices = Some(vec![1, 3, 1, 5]);
 
-        let result = record_discovery_data(&input).unwrap();
-
-        // Verify file was created
-        let parquet_file = Path::new(&result.temp_dir).join(&result.file);
-        assert!(parquet_file.exists());
-
-        // Read the parquet file and verify only unique obs_index values exist
-        // With input neurons recorded as well, each observation should produce entries for every neuron (including inputs).
-        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-        use std::fs::File;
-        let file = File::open(&parquet_file).unwrap();
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
-        let reader = builder.build().unwrap();
-        let mut record_count = 0;
-        let mut obs_index_counts = std::collections::HashMap::new();
-
-        for batch_result in reader {
-            let batch = batch_result.unwrap();
-            let obs_index_array = batch
-                .column(0)
-                .as_any()
-                .downcast_ref::<arrow::array::UInt32Array>()
-                .unwrap();
-
-            for i in 0..batch.num_rows() {
-                let obs_index = obs_index_array.value(i);
-                *obs_index_counts.entry(obs_index).or_insert(0) += 1;
-                record_count += 1;
-            }
-        }
-
-        let per_obs_record_count = input.creature.neurons.len() + input.creature.input;
-        let expected_records = per_obs_record_count * 3;
-        assert_eq!(
-            record_count as usize,
-            expected_records,
-            "Should have records for every neuron (including inputs) across the deduplicated indices"
+        let result = record_discovery_data(&input);
+        assert!(
+            result.is_err(),
+            "Duplicate record_indices should be rejected to maintain unique obs_index values"
         );
-        assert_eq!(
-            obs_index_counts.len(),
-            3,
-            "Should have 3 unique obs_index values (duplicates should be removed)"
-        );
-        let expected_per_index = per_obs_record_count as i32;
-        assert_eq!(
-            obs_index_counts.get(&1),
-            Some(&expected_per_index),
-            "obs_index 1 should appear once per neuron (including inputs)"
-        );
-        assert_eq!(
-            obs_index_counts.get(&3),
-            Some(&expected_per_index),
-            "obs_index 3 should appear once per neuron (including inputs)"
-        );
-        assert_eq!(
-            obs_index_counts.get(&5),
-            Some(&expected_per_index),
-            "obs_index 5 should appear once per neuron (including inputs)"
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("duplicated"),
+            "Error message should mention duplicates, got: {error_msg}"
         );
     }
 
