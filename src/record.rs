@@ -60,15 +60,13 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
         for &idx in record_indices {
             if !seen.insert(idx) {
                 return Err(anyhow::anyhow!(
-                    "Record index {} is duplicated in record_indices. Discovery recording requires unique indices.",
-                    idx
+                    "Record index {idx} is duplicated in record_indices. Discovery recording requires unique indices."
                 ));
             }
             let obs_index_u32 = u32::try_from(idx).map_err(|_| {
                 anyhow::anyhow!(
-                    "Record index {} exceeds maximum supported size ({})",
-                    idx,
-                    u32::MAX
+                    "Record index {idx} exceeds maximum supported size ({max})",
+                    max = u32::MAX
                 )
             })?;
             indices.push(obs_index_u32);

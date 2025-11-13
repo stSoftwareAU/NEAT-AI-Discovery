@@ -1,7 +1,7 @@
 //! Parquet file format handling for discovery records
 
 use anyhow::{Context, Result};
-use arrow::array::{Float32Array, LargeStringArray, ListArray, UInt32Array};
+use arrow::array::{Float32Array, ListArray, StringArray, UInt32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
@@ -15,7 +15,7 @@ use crate::types::DiscoverRecord;
 pub fn create_schema() -> Schema {
     Schema::new(vec![
         Field::new("obs_index", DataType::UInt32, false),
-        Field::new("neuron_uuid", DataType::LargeUtf8, false),
+        Field::new("neuron_uuid", DataType::Utf8, false),
         Field::new("value", DataType::Float32, true), // nullable
         Field::new("activation", DataType::Float32, false),
         Field::new(
@@ -39,7 +39,6 @@ pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> 
     let props = WriterProperties::builder().build();
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
         .context("Failed to create ArrowWriter")?;
-
     // Prepare arrays
     let obs_indices: Vec<u32> = records.iter().map(|r| r.obs_index).collect();
     let neuron_uuids: Vec<String> = records.iter().map(|r| r.neuron_uuid.clone()).collect();
@@ -65,7 +64,7 @@ pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> 
     }
 
     let obs_index_array = Arc::new(UInt32Array::from(obs_indices));
-    let neuron_uuid_array = Arc::new(LargeStringArray::from(neuron_uuids));
+    let neuron_uuid_array = Arc::new(StringArray::from(neuron_uuids));
     let value_array = Arc::new(Float32Array::from(values));
     let activation_array = Arc::new(Float32Array::from(activations));
 
@@ -93,12 +92,51 @@ pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> 
     )
     .context("Failed to create RecordBatch")?;
 
-    writer
-        .write(&batch)
-        .context("Failed to write RecordBatch")?;
+    if let Err(err) = writer.write(&batch) {
+        let err_msg = err.to_string();
+        if err_msg.contains("Invalid string length") {
+            if let Some((longest_uuid, longest_len)) = records
+                .iter()
+                .map(|r| (r.neuron_uuid.as_str(), r.neuron_uuid.len()))
+                .max_by_key(|(_, len)| *len)
+            {
+                let preview = truncate_utf8(longest_uuid, 120);
+                return Err(anyhow::anyhow!(
+                    "Failed to write discovery data because Arrow rejected a neuron UUID length. Longest observed UUID was \"{preview}\" ({longest_len} bytes). Original error: {err_msg}"
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "Failed to write discovery data because Arrow reported an invalid string length. Original error: {err_msg}"
+            ));
+        } else {
+            return Err(err).context("Failed to write RecordBatch");
+        }
+    }
     writer.close().context("Failed to close Parquet writer")?;
 
     Ok(())
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    if max_bytes == 0 {
+        return "...".to_string();
+    }
+
+    let mut end = max_bytes.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    if end == 0 {
+        return "...".to_string();
+    }
+
+    let slice = &value[..end];
+    format!("{slice}...")
 }
 
 /// Merge multiple discovery parquet files into a single Parquet file.
@@ -147,7 +185,7 @@ pub fn read_records_from_parquet(
     file_path: &str,
     neuron_uuid: &str,
 ) -> Result<Vec<DiscoverRecord>> {
-    use arrow::array::{Array, Float32Array, LargeStringArray, ListArray, UInt32Array};
+    use arrow::array::{Array, Float32Array, ListArray, StringArray, UInt32Array};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use std::fs::File;
 
@@ -173,7 +211,7 @@ pub fn read_records_from_parquet(
         let neuron_uuid_col = batch
             .column(1)
             .as_any()
-            .downcast_ref::<LargeStringArray>()
+            .downcast_ref::<StringArray>()
             .context("Failed to cast neuron_uuid column")?;
         let value_col = batch
             .column(2)
@@ -246,12 +284,12 @@ mod tests {
     }
 
     #[test]
-    fn test_create_schema_uses_large_utf8_for_neuron_uuid() {
+    fn test_create_schema_uses_utf8_for_neuron_uuid() {
         let schema = create_schema();
         assert_eq!(
             schema.field(1).data_type(),
-            &DataType::LargeUtf8,
-            "Neuron UUID column should use LargeUtf8 to support large datasets"
+            &DataType::Utf8,
+            "Neuron UUID column should use Utf8 to ensure Parquet compatibility"
         );
     }
 
