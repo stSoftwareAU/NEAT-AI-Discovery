@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use arrow::array::{Float32Array, ListArray, StringArray, UInt32Array};
+use arrow::array::{Float32Array, ListArray, StringArray, UInt32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
@@ -121,6 +122,7 @@ fn write_records_to_parquet_with_limit(
     }
 
     let obs_index_array = Arc::new(UInt32Array::from(obs_indices));
+    let neuron_uuid_array = Arc::new(StringArray::from(neuron_uuids));
     let neuron_uuid_array = Arc::new(StringArray::from(neuron_uuids));
     let value_array = Arc::new(Float32Array::from(values));
     let activation_array = Arc::new(Float32Array::from(activations));
