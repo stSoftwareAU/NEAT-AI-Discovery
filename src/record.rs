@@ -86,11 +86,7 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
         (0..input.training_data.len())
             .map(|idx| {
                 u32::try_from(idx).map_err(|_| {
-                    anyhow::anyhow!(
-                        "Observation index {} exceeds u32::MAX ({})",
-                        idx,
-                        u32::MAX
-                    )
+                    anyhow::anyhow!("Observation index {} exceeds u32::MAX ({})", idx, u32::MAX)
                 })
             })
             .collect::<Result<Vec<u32>>>()?
@@ -425,14 +421,17 @@ mod tests {
             }
         }
 
-        let per_obs_record_count =
-            (input.creature.neurons.len() + input.creature.input) as u32;
+        let per_obs_record_count = (input.creature.neurons.len() + input.creature.input) as u32;
         let expected_records = per_obs_record_count * 3;
         assert_eq!(
             record_count as u32, expected_records,
             "Should have records for each neuron (including inputs) across the provided indices"
         );
-        assert_eq!(found_indices.len(), 3, "Should have 3 unique obs_index values");
+        assert_eq!(
+            found_indices.len(),
+            3,
+            "Should have 3 unique obs_index values"
+        );
         assert!(found_indices.contains(&10), "Should contain obs_index 10");
         assert!(found_indices.contains(&30), "Should contain obs_index 30");
         assert!(found_indices.contains(&50), "Should contain obs_index 50");
@@ -470,7 +469,10 @@ mod tests {
         input.record_indices = Some(vec![0, 2, 4]);
 
         let result = record_discovery_data(&input);
-        assert!(result.is_err(), "Should reject mismatched record_indices lengths");
+        assert!(
+            result.is_err(),
+            "Should reject mismatched record_indices lengths"
+        );
         let error_msg = result.unwrap_err().to_string();
         assert!(
             error_msg.contains("record_indices length"),
