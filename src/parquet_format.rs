@@ -11,6 +11,8 @@ use std::sync::Arc;
 
 use crate::types::DiscoverRecord;
 
+const MAX_NEURON_UUID_TOTAL_BYTES: usize = i32::MAX as usize;
+
 /// Parquet schema for discovery records
 pub fn create_schema() -> Schema {
     Schema::new(vec![
@@ -28,8 +30,63 @@ pub fn create_schema() -> Schema {
 
 /// Write discovery records to a Parquet file
 pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> Result<()> {
+    write_records_to_parquet_with_limit(file_path, records, MAX_NEURON_UUID_TOTAL_BYTES)
+}
+
+fn write_records_to_parquet_with_limit(
+    file_path: &str,
+    records: &[DiscoverRecord],
+    max_uuid_bytes: usize,
+) -> Result<()> {
     if records.is_empty() {
         return Err(anyhow::anyhow!("No records to write"));
+    }
+
+    if records.len() > i32::MAX as usize {
+        return Err(anyhow::anyhow!(
+            "Neuron UUID count ({}) exceeds maximum supported row count ({}) for Arrow StringArray offsets",
+            records.len(),
+            i32::MAX,
+        ));
+    }
+
+    let mut total_uuid_bytes: usize = 0;
+    let mut longest_uuid: Option<&str> = None;
+    let mut longest_len: usize = 0;
+
+    for record in records {
+        let uuid = record.neuron_uuid.as_str();
+        let len = uuid.len();
+        total_uuid_bytes = total_uuid_bytes.checked_add(len).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Combined neuron UUID byte length overflowed usize while validating Arrow StringArray offsets"
+            )
+        })?;
+
+        if len > longest_len {
+            longest_len = len;
+            longest_uuid = Some(uuid);
+        }
+    }
+
+    if total_uuid_bytes > max_uuid_bytes {
+        let (preview, preview_len) = if let Some(uuid) = longest_uuid {
+            (Some(truncate_utf8(uuid, 120)), longest_len)
+        } else {
+            (None, 0)
+        };
+
+        let mut message = format!(
+            "Total neuron UUID byte length ({total_uuid_bytes}) exceeds maximum allowed ({max_uuid_bytes}) for Arrow StringArray offsets"
+        );
+
+        if let Some(preview_value) = preview {
+            message.push_str(&format!(
+                r#". Longest UUID observed was "{preview_value}" ({preview_len} bytes)"#
+            ));
+        }
+
+        return Err(anyhow::anyhow!(message));
     }
 
     let schema = Arc::new(create_schema());
@@ -102,7 +159,7 @@ pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> 
             {
                 let preview = truncate_utf8(longest_uuid, 120);
                 return Err(anyhow::anyhow!(
-                    "Failed to write discovery data because Arrow rejected a neuron UUID length. Longest observed UUID was \"{preview}\" ({longest_len} bytes). Original error: {err_msg}"
+                    r#"Failed to write discovery data because Arrow rejected a neuron UUID length. Longest observed UUID was "{preview}" ({longest_len} bytes). Original error: {err_msg}"#
                 ));
             }
             return Err(anyhow::anyhow!(
@@ -390,6 +447,23 @@ mod tests {
 
         let result = write_records_to_parquet(file_path, &records);
         assert!(result.is_ok(), "Validation should allow valid error counts");
+    }
+
+    #[test]
+    fn test_write_records_validates_neuron_uuid_total_bytes_overflow() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        let records = vec![
+            DiscoverRecord::new(0, "hidden-0000".to_string(), Some(0.5), 0.7, vec![0.1]),
+            DiscoverRecord::new(1, "hidden-1111".to_string(), Some(0.6), 0.8, vec![0.2]),
+        ];
+
+        let result = write_records_to_parquet_with_limit(file_path, &records, 16);
+        assert!(
+            result.is_err(),
+            "Expected error when total neuron UUID byte length exceeds configured limit"
+        );
     }
 
     #[test]
