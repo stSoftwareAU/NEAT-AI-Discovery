@@ -33,7 +33,10 @@ pub fn create_schema() -> Schema {
 
 /// Write discovery records to a Parquet file
 pub fn write_records_to_parquet(file_path: &str, records: &[DiscoverRecord]) -> Result<()> {
-    write_records_to_parquet_with_limits(file_path, records, MAX_ARROW_OFFSET, MAX_ARROW_OFFSET)
+    let mut writer =
+        ParquetRecordWriter::new(file_path, MAX_ARROW_OFFSET, MAX_ARROW_OFFSET, records.len())?;
+    writer.write_records(records)?;
+    writer.finish()
 }
 
 #[cfg(test)]
@@ -42,42 +45,181 @@ fn write_records_to_parquet_with_limit(
     records: &[DiscoverRecord],
     max_uuid_bytes_per_batch: usize,
 ) -> Result<()> {
-    write_records_to_parquet_with_limits(
+    let mut writer = ParquetRecordWriter::new(
         file_path,
-        records,
         max_uuid_bytes_per_batch,
         MAX_ARROW_OFFSET,
-    )
+        records.len(),
+    )?;
+    writer.write_records(records)?;
+    writer.finish()
 }
 
-fn write_records_to_parquet_with_limits(
-    file_path: &str,
+pub struct ParquetRecordWriter {
+    writer: ArrowWriter<File>,
+    schema: Arc<Schema>,
+    max_uuid_bytes_per_batch: usize,
+    max_error_values_per_batch: usize,
+    longest_uuid: Option<String>,
+    remaining_capacity: usize,
+}
+
+impl ParquetRecordWriter {
+    pub fn new(
+        file_path: &str,
+        max_uuid_bytes_per_batch: usize,
+        max_error_values_per_batch: usize,
+        total_capacity: usize,
+    ) -> Result<Self> {
+        if total_capacity == 0 {
+            anyhow::bail!("No records to write");
+        }
+
+        if max_uuid_bytes_per_batch == 0 {
+            anyhow::bail!("Configured neuron UUID byte limit per batch must be greater than zero");
+        }
+
+        if max_error_values_per_batch == 0 {
+            anyhow::bail!("Configured error value limit per batch must be greater than zero");
+        }
+
+        if total_capacity > MAX_ARROW_OFFSET {
+            anyhow::bail!(
+                "Neuron UUID count ({total_capacity}) exceeds maximum supported row count ({}) for Arrow StringArray offsets",
+                i32::MAX,
+            );
+        }
+
+        let schema = Arc::new(create_schema());
+        let file = File::create(file_path)
+            .with_context(|| format!("Failed to create Parquet file: {file_path}"))?;
+
+        let props = WriterProperties::builder().build();
+        let writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
+            .context("Failed to create ArrowWriter")?;
+
+        Ok(Self {
+            writer,
+            schema,
+            max_uuid_bytes_per_batch,
+            max_error_values_per_batch,
+            longest_uuid: None,
+            remaining_capacity: total_capacity,
+        })
+    }
+
+    pub fn write_records(&mut self, records: &[DiscoverRecord]) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        if records.len() > self.remaining_capacity {
+            anyhow::bail!(
+                "Attempted to write {} records exceeding remaining capacity ({})",
+                records.len(),
+                self.remaining_capacity
+            );
+        }
+
+        validate_records(
+            records,
+            self.max_uuid_bytes_per_batch,
+            self.max_error_values_per_batch,
+            &mut self.longest_uuid,
+        )?;
+
+        let mut start = 0;
+        while start < records.len() {
+            let end = determine_chunk_end(
+                records,
+                start,
+                self.max_uuid_bytes_per_batch,
+                self.max_error_values_per_batch,
+            );
+            let chunk = &records[start..end];
+            self.write_chunk(chunk).with_context(|| {
+                format!("Failed to write chunk covering records {start}..{end}")
+            })?;
+            start = end;
+        }
+
+        self.remaining_capacity -= records.len();
+        Ok(())
+    }
+
+    fn write_chunk(&mut self, chunk: &[DiscoverRecord]) -> Result<()> {
+        let obs_indices: Vec<u32> = chunk.iter().map(|r| r.obs_index).collect();
+        let neuron_uuids: Vec<String> = chunk.iter().map(|r| r.neuron_uuid.clone()).collect();
+        let values: Vec<Option<f32>> = chunk.iter().map(|r| r.value).collect();
+        let activations: Vec<f32> = chunk.iter().map(|r| r.activation).collect();
+
+        let mut error_values = Vec::with_capacity(chunk.iter().map(|r| r.errors.len()).sum());
+        for record in chunk {
+            error_values.extend_from_slice(&record.errors);
+        }
+
+        let obs_index_array = Arc::new(UInt32Array::from(obs_indices));
+        let neuron_uuid_array = Arc::new(StringArray::from(neuron_uuids));
+        let value_array = Arc::new(Float32Array::from(values));
+        let activation_array = Arc::new(Float32Array::from(activations));
+
+        let error_value_array = Arc::new(Float32Array::from(error_values));
+        let offsets =
+            arrow::buffer::OffsetBuffer::<i32>::from_lengths(chunk.iter().map(|r| r.errors.len()));
+        let errors_array = Arc::new(ListArray::try_new(
+            Arc::new(Field::new("item", DataType::Float32, false)),
+            offsets,
+            error_value_array,
+            None, // No nulls - all error lists are non-null
+        )?);
+
+        let batch = RecordBatch::try_new(
+            self.schema.clone(),
+            vec![
+                obs_index_array,
+                neuron_uuid_array,
+                value_array,
+                activation_array,
+                errors_array,
+            ],
+        )
+        .context("Failed to create RecordBatch")?;
+
+        if let Err(err) = self.writer.write(&batch) {
+            let err_msg = err.to_string();
+            if err_msg.contains("Invalid string length") {
+                if let Some(longest_uuid) = self.longest_uuid.as_ref() {
+                    let longest_len = longest_uuid.len();
+                    let preview = truncate_utf8(longest_uuid, 120);
+                    return Err(anyhow::anyhow!(
+                        r#"Failed to write discovery data because Arrow rejected a neuron UUID length. Longest observed UUID was "{preview}" ({longest_len} bytes). Original error: {err_msg}"#
+                    ));
+                }
+                return Err(anyhow::anyhow!(
+                    "Failed to write discovery data because Arrow reported an invalid string length. Original error: {err_msg}"
+                ));
+            } else {
+                return Err(err).context("Failed to write RecordBatch");
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<()> {
+        self.writer
+            .close()
+            .context("Failed to close Parquet writer")?;
+        Ok(())
+    }
+}
+
+fn validate_records(
     records: &[DiscoverRecord],
     max_uuid_bytes_per_batch: usize,
     max_error_values_per_batch: usize,
+    longest_uuid: &mut Option<String>,
 ) -> Result<()> {
-    if records.is_empty() {
-        return Err(anyhow::anyhow!("No records to write"));
-    }
-
-    if max_uuid_bytes_per_batch == 0 {
-        anyhow::bail!("Configured neuron UUID byte limit per batch must be greater than zero");
-    }
-
-    if max_error_values_per_batch == 0 {
-        anyhow::bail!("Configured error value limit per batch must be greater than zero");
-    }
-
-    if records.len() > i32::MAX as usize {
-        return Err(anyhow::anyhow!(
-            "Neuron UUID count ({}) exceeds maximum supported row count ({}) for Arrow StringArray offsets",
-            records.len(),
-            i32::MAX,
-        ));
-    }
-
-    let mut longest_uuid: Option<String> = None;
-
     for record in records {
         let uuid = record.neuron_uuid.as_str();
         validate_neuron_uuid(uuid)?;
@@ -94,7 +236,7 @@ fn write_records_to_parquet_with_limits(
             .as_ref()
             .is_none_or(|existing| len > existing.len())
         {
-            longest_uuid = Some(uuid.to_string());
+            *longest_uuid = Some(uuid.to_string());
         }
 
         let error_len = record.errors.len();
@@ -106,102 +248,37 @@ fn write_records_to_parquet_with_limits(
         }
     }
 
-    let schema = Arc::new(create_schema());
-    let file = File::create(file_path)
-        .with_context(|| format!("Failed to create Parquet file: {file_path}"))?;
+    Ok(())
+}
 
-    let props = WriterProperties::builder().build();
-    let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
-        .context("Failed to create ArrowWriter")?;
+fn determine_chunk_end(
+    records: &[DiscoverRecord],
+    start: usize,
+    max_uuid_bytes_per_batch: usize,
+    max_error_values_per_batch: usize,
+) -> usize {
+    let mut end = start;
+    let mut uuid_bytes = 0_usize;
+    let mut error_value_count = 0_usize;
 
-    let mut start = 0;
-    while start < records.len() {
-        let mut end = start;
-        let mut uuid_bytes = 0_usize;
-        let mut error_value_count = 0_usize;
+    while end < records.len() {
+        let record = &records[end];
+        let uuid_len = record.neuron_uuid.len();
+        let errors_len = record.errors.len();
 
-        while end < records.len() {
-            let record = &records[end];
-            let uuid_len = record.neuron_uuid.len();
-            let errors_len = record.errors.len();
-
-            if end > start
-                && (uuid_bytes + uuid_len > max_uuid_bytes_per_batch
-                    || error_value_count + errors_len > max_error_values_per_batch)
-            {
-                break;
-            }
-
-            uuid_bytes += uuid_len;
-            error_value_count += errors_len;
-            end += 1;
+        if end > start
+            && (uuid_bytes + uuid_len > max_uuid_bytes_per_batch
+                || error_value_count + errors_len > max_error_values_per_batch)
+        {
+            break;
         }
 
-        let chunk = &records[start..end];
-
-        let obs_indices: Vec<u32> = chunk.iter().map(|r| r.obs_index).collect();
-        let neuron_uuids: Vec<String> = chunk.iter().map(|r| r.neuron_uuid.clone()).collect();
-        let values: Vec<Option<f32>> = chunk.iter().map(|r| r.value).collect();
-        let activations: Vec<f32> = chunk.iter().map(|r| r.activation).collect();
-
-        let mut error_values = Vec::with_capacity(error_value_count);
-        for record in chunk {
-            error_values.extend_from_slice(&record.errors);
-        }
-
-        let obs_index_array = Arc::new(UInt32Array::from(obs_indices));
-        let neuron_uuid_array = Arc::new(StringArray::from(neuron_uuids));
-        let value_array = Arc::new(Float32Array::from(values));
-        let activation_array = Arc::new(Float32Array::from(activations));
-
-        // Build ListArray for errors
-        // from_lengths converts lengths to cumulative offsets, which must fit in i32
-        let error_value_array = Arc::new(Float32Array::from(error_values));
-        let offsets =
-            arrow::buffer::OffsetBuffer::<i32>::from_lengths(chunk.iter().map(|r| r.errors.len()));
-        let errors_array = Arc::new(ListArray::try_new(
-            Arc::new(Field::new("item", DataType::Float32, false)),
-            offsets,
-            error_value_array,
-            None, // No nulls - all error lists are non-null
-        )?);
-
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                obs_index_array,
-                neuron_uuid_array,
-                value_array,
-                activation_array,
-                errors_array,
-            ],
-        )
-        .context("Failed to create RecordBatch")?;
-
-        if let Err(err) = writer.write(&batch) {
-            let err_msg = err.to_string();
-            if err_msg.contains("Invalid string length") {
-                if let Some(longest_uuid) = longest_uuid.as_ref() {
-                    let longest_len = longest_uuid.len();
-                    let preview = truncate_utf8(longest_uuid, 120);
-                    return Err(anyhow::anyhow!(
-                        r#"Failed to write discovery data because Arrow rejected a neuron UUID length. Longest observed UUID was "{preview}" ({longest_len} bytes). Original error: {err_msg}"#
-                    ));
-                }
-                return Err(anyhow::anyhow!(
-                    "Failed to write discovery data because Arrow reported an invalid string length. Original error: {err_msg}"
-                ));
-            } else {
-                return Err(err).context("Failed to write RecordBatch");
-            }
-        }
-
-        start = end;
+        uuid_bytes += uuid_len;
+        error_value_count += errors_len;
+        end += 1;
     }
 
-    writer.close().context("Failed to close Parquet writer")?;
-
-    Ok(())
+    end
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {
@@ -704,16 +781,14 @@ mod tests {
             DiscoverRecord::new(1, "hidden-1111".to_string(), Some(0.6), 0.8, vec![0.3, 0.4]),
         ];
 
-        let result = super::write_records_to_parquet_with_limits(
-            file_path,
-            &records,
-            super::MAX_ARROW_OFFSET,
-            3,
-        );
+        let mut writer =
+            super::ParquetRecordWriter::new(file_path, super::MAX_ARROW_OFFSET, 3, records.len())
+                .expect("Writer should construct successfully");
         assert!(
-            result.is_ok(),
+            writer.write_records(&records).is_ok(),
             "Writer should chunk records when total error values exceed the configured per-batch limit"
         );
+        writer.finish().unwrap();
 
         assert!(
             std::path::Path::new(file_path).exists(),
@@ -734,13 +809,12 @@ mod tests {
             vec![0.1, 0.2],
         )];
 
-        let err = super::write_records_to_parquet_with_limits(
-            file_path,
-            &records,
-            super::MAX_ARROW_OFFSET,
-            1,
-        )
-        .expect_err("Single record with more error values than the limit should be rejected");
+        let mut writer =
+            super::ParquetRecordWriter::new(file_path, super::MAX_ARROW_OFFSET, 1, records.len())
+                .expect("Writer should construct successfully");
+        let err = writer
+            .write_records(&records)
+            .expect_err("Single record with more error values than the limit should be rejected");
         assert!(
             err.to_string().contains("error value(s)"),
             "Error message should reference the per-batch error limit"

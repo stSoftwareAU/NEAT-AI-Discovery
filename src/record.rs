@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
-use crate::parquet_format::write_records_to_parquet;
+use crate::parquet_format::ParquetRecordWriter;
 use crate::types::DiscoverRecord;
 use crate::RecordDiscoveryInput;
 
@@ -28,10 +28,6 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
     fs::create_dir_all(temp_dir)
         .with_context(|| format!("Failed to create temp directory: {temp_dir_str}"))?;
 
-    // Collect all discovery records
-    // For now, we'll process sequentially to ensure atomicity
-    // TODO: Add parallel processing with proper synchronization
-    let mut all_records = Vec::new();
     let non_input_neuron_count = input
         .creature
         .neurons
@@ -90,8 +86,39 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
             .collect::<Result<Vec<u32>>>()?
     };
 
+    let records_per_sample = non_input_neuron_count + input.creature.input;
+    if input.training_data.is_empty() || records_per_sample == 0 {
+        return Err(anyhow::anyhow!(
+            "No discovery records were generated from the training data"
+        ));
+    }
+
+    let estimated_total_records = input
+        .training_data
+        .len()
+        .checked_mul(records_per_sample)
+        .ok_or_else(|| anyhow::anyhow!("Discovery record count would overflow usize"))?;
+
+    let parquet_file = temp_dir.join("discovery_data.parquet");
+    let parquet_path = parquet_file
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?;
+
+    let max_arrow_offset = i32::MAX as usize;
+    let mut writer = ParquetRecordWriter::new(
+        parquet_path,
+        max_arrow_offset,
+        max_arrow_offset,
+        estimated_total_records,
+    )
+    .context("Failed to initialise Parquet writer")?;
+
+    let mut wrote_any_records = false;
+
     for (relative_idx, training_record) in input.training_data.iter().enumerate() {
         let obs_index_u32 = obs_indices[relative_idx];
+
+        let mut batch_records = Vec::with_capacity(non_input_neuron_count + input.creature.input);
 
         // Use pre-computed neuron_data if available (from TypeScript)
         // Otherwise, we would need to activate the creature here (not implemented)
@@ -121,7 +148,7 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
                     neuron_info.errors.clone(),
                 );
 
-                all_records.push(record);
+                batch_records.push(record);
             }
         } else {
             // No pre-computed data - this should not happen in normal operation
@@ -138,26 +165,26 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
             let record =
                 DiscoverRecord::new(obs_index_u32, input_uuid, Some(*value), *value, Vec::new());
 
-            all_records.push(record);
+            batch_records.push(record);
+        }
+
+        if !batch_records.is_empty() {
+            writer
+                .write_records(&batch_records)
+                .context("Failed to write discovery batch to Parquet")?;
+            wrote_any_records = true;
         }
     }
 
-    // Check if we have any records to write
-    // This can happen if the creature only has input neurons (which are skipped)
-    if all_records.is_empty() {
+    if !wrote_any_records {
         return Err(anyhow::anyhow!(
             "No discovery records were generated from the training data"
         ));
     }
 
-    // Write all records to Parquet file
-    let parquet_file = temp_dir.join("discovery_data.parquet");
-    let parquet_path = parquet_file
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?;
-
-    write_records_to_parquet(parquet_path, &all_records)
-        .context("Failed to write records to Parquet")?;
+    writer
+        .finish()
+        .context("Failed to finalise Parquet writer")?;
 
     Ok(RecordResult {
         temp_dir: input.temp_dir.clone(),
