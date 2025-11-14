@@ -12,6 +12,9 @@ use std::sync::Arc;
 use crate::types::DiscoverRecord;
 
 const MAX_NEURON_UUID_TOTAL_BYTES: usize = i32::MAX as usize;
+const MIN_NEURON_UUID_LENGTH: usize = 1;
+const MAX_NEURON_UUID_LENGTH: usize = 100;
+const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Parquet schema for discovery records
 pub fn create_schema() -> Schema {
@@ -56,6 +59,7 @@ fn write_records_to_parquet_with_limit(
 
     for record in records {
         let uuid = record.neuron_uuid.as_str();
+        validate_neuron_uuid(uuid)?;
         let len = uuid.len();
         total_uuid_bytes = total_uuid_bytes.checked_add(len).ok_or_else(|| {
             anyhow::anyhow!(
@@ -194,6 +198,35 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
 
     let slice = &value[..end];
     format!("{slice}...")
+}
+
+fn validate_neuron_uuid(uuid: &str) -> Result<()> {
+    let len = uuid.len();
+    let preview = truncate_utf8(uuid, 120);
+
+    if len < MIN_NEURON_UUID_LENGTH {
+        anyhow::bail!(
+            r#"neat_ai_discovery v{CRATE_VERSION} rejected neuron UUID "{preview}" ({len} characters). UUIDs must be between {MIN_NEURON_UUID_LENGTH} and {MAX_NEURON_UUID_LENGTH} characters and use letters, digits, or hyphens."#
+        );
+    }
+
+    if len > MAX_NEURON_UUID_LENGTH {
+        anyhow::bail!(
+            r#"neat_ai_discovery v{CRATE_VERSION} rejected neuron UUID "{preview}" ({len} characters). UUIDs must be between {MIN_NEURON_UUID_LENGTH} and {MAX_NEURON_UUID_LENGTH} characters and use letters, digits, or hyphens."#
+        );
+    }
+
+    if let Some((index, ch)) = uuid
+        .chars()
+        .enumerate()
+        .find(|(_, c)| !matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-'))
+    {
+        anyhow::bail!(
+            r#"neat_ai_discovery v{CRATE_VERSION} rejected neuron UUID "{preview}" because it contains an invalid character '{ch}' at position {index}. UUIDs must be between {MIN_NEURON_UUID_LENGTH} and {MAX_NEURON_UUID_LENGTH} characters and use letters, digits, or hyphens."#
+        );
+    }
+
+    Ok(())
 }
 
 /// Merge multiple discovery parquet files into a single Parquet file.
@@ -463,6 +496,118 @@ mod tests {
         assert!(
             result.is_err(),
             "Expected error when total neuron UUID byte length exceeds configured limit"
+        );
+    }
+
+    #[test]
+    fn test_write_records_rejects_neuron_uuid_too_short() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        let records = vec![DiscoverRecord::new(
+            0,
+            "".to_string(),
+            Some(0.5),
+            0.7,
+            vec![0.1],
+        )];
+
+        let result = write_records_to_parquet(file_path, &records);
+        let err = result.expect_err("Expected empty neuron UUID to be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("neat_ai_discovery v"),
+            "Error message should include crate version: {msg}"
+        );
+        assert!(
+            msg.contains("\"\""),
+            "Error message should include the invalid UUID: {msg}"
+        );
+        assert!(
+            msg.contains("letters, digits, or hyphens"),
+            "Error message should explain valid characters: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_write_records_rejects_neuron_uuid_with_invalid_characters() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        let records = vec![DiscoverRecord::new(
+            0,
+            "invalid_UUID".to_string(),
+            Some(0.5),
+            0.7,
+            vec![0.1],
+        )];
+
+        let result = write_records_to_parquet(file_path, &records);
+        let err = result.expect_err("Expected neuron UUID with invalid characters to be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("neat_ai_discovery v"),
+            "Error message should include crate version: {msg}"
+        );
+        assert!(
+            msg.contains("\"invalid_UUID\""),
+            "Error message should include the invalid UUID: {msg}"
+        );
+        assert!(
+            msg.contains("letters, digits, or hyphens"),
+            "Error message should explain valid characters: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_write_records_rejects_neuron_uuid_too_long() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        let long_uuid = "a".repeat(101);
+
+        let records = vec![DiscoverRecord::new(
+            0,
+            long_uuid.clone(),
+            Some(0.5),
+            0.7,
+            vec![0.1],
+        )];
+
+        let result = write_records_to_parquet(file_path, &records);
+        let err = result.expect_err("Expected overly long neuron UUID to be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("neat_ai_discovery v"),
+            "Error message should include crate version: {msg}"
+        );
+        assert!(
+            msg.contains(&long_uuid[..60]),
+            "Error message should include the invalid UUID preview: {msg}"
+        );
+        assert!(
+            msg.contains("between 1 and 100 characters"),
+            "Error message should explain the valid length range: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_write_records_accepts_single_character_uppercase_neuron_uuid() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        let records = vec![DiscoverRecord::new(
+            0,
+            "A".to_string(),
+            Some(0.5),
+            0.7,
+            vec![0.1],
+        )];
+
+        let result = write_records_to_parquet(file_path, &records);
+        assert!(
+            result.is_ok(),
+            "Single-character uppercase neuron UUID should be accepted"
         );
     }
 
