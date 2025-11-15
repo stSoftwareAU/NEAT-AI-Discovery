@@ -178,26 +178,6 @@ pub struct MergeParquetOutput {
     pub error: Option<String>,
 }
 
-/// Safely truncate a UTF-8 string at character boundaries
-///
-/// Returns a string truncated to at most `max_bytes` bytes, ensuring the
-/// truncation occurs at a valid UTF-8 character boundary to avoid panics.
-fn truncate_utf8_safe(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    // Find the last valid character boundary at or before max_bytes
-    // We iterate through character boundaries and keep the last one <= max_bytes
-    let mut last_valid_boundary = 0;
-    for (idx, _) in s.char_indices() {
-        if idx > max_bytes {
-            break;
-        }
-        last_valid_boundary = idx;
-    }
-    &s[..last_valid_boundary]
-}
-
 /// Main entry point for recording discovery data
 ///
 /// Takes JSON input and returns JSON output for easy integration with TypeScript/DenoJS
@@ -313,60 +293,10 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
         }
     };
 
-    // DEBUG: Log that we're calling the internal function
-    eprintln!("[DEBUG Rust lib] record_discovery FFI called, calling internal function");
-
-    // DEBUG: Log first 500 chars of input JSON to verify structure
-    let input_preview = if input_str.len() > 500 {
-        format!("{}...", truncate_utf8_safe(input_str, 500))
-    } else {
-        input_str.to_string()
-    };
-    eprintln!("[DEBUG Rust lib] Input JSON preview (first 500 chars): {input_preview}");
-
-    // Parse JSON to verify structure (for debugging only)
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(input_str) {
-        eprintln!("[DEBUG Rust lib] JSON parsed successfully");
-        // Log training_data length and first record's neuron_data if available
-        if let Some(training_data) = v.get("training_data").and_then(|td| td.as_array()) {
-            eprintln!(
-                "[DEBUG Rust lib] training_data.length={}",
-                training_data.len()
-            );
-            if let Some(first_record) = training_data.first() {
-                if let Some(neuron_data) = first_record
-                    .get("neuron_data")
-                    .and_then(|neuron_data_val| neuron_data_val.as_array())
-                {
-                    eprintln!(
-                        "[DEBUG Rust lib] First record neuron_data.length={}",
-                        neuron_data.len()
-                    );
-                    if let Some(hidden3) = neuron_data
-                        .iter()
-                        .find(|n| n.get("neuron_uuid").and_then(|u| u.as_str()) == Some("hidden-3"))
-                    {
-                        eprintln!(
-                            "[DEBUG Rust lib] First record hidden-3: activation={:?}, errors={:?}",
-                            hidden3.get("activation"),
-                            hidden3.get("errors")
-                        );
-                    }
-                }
-            }
-        }
-    } else {
-        eprintln!("[DEBUG Rust lib] JSON parse failed (but continuing anyway)");
-    }
-
     // Call the Rust function with original string
     let result = match record_discovery_internal(input_str) {
-        Ok(json) => {
-            eprintln!("[DEBUG Rust lib] record_discovery_internal succeeded");
-            json
-        }
+        Ok(json) => json,
         Err(e) => {
-            eprintln!("[DEBUG Rust lib] record_discovery_internal failed: {e}");
             // Properly serialize error message to avoid JSON injection issues
             let output = RecordDiscoveryOutput {
                 success: false,
@@ -672,17 +602,10 @@ pub extern "C" fn read_discovery_records_ffi(
         }
     };
 
-    // DEBUG: Log that we're calling the internal function
-    eprintln!("[DEBUG Rust lib] read_discovery_records_ffi called, calling internal function");
-
     // Call the Rust function
     let result = match read_discovery_records(input_str) {
-        Ok(json) => {
-            eprintln!("[DEBUG Rust lib] read_discovery_records succeeded");
-            json
-        }
+        Ok(json) => json,
         Err(e) => {
-            eprintln!("[DEBUG Rust lib] read_discovery_records failed: {e}");
             // Properly serialize error message to avoid JSON injection issues
             let output = ReadDiscoveryOutput {
                 success: false,
@@ -726,6 +649,26 @@ pub extern "C" fn free_discovery_result(ptr: *mut std::ffi::c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Safely truncate a UTF-8 string at character boundaries
+    ///
+    /// Returns a string truncated to at most `max_bytes` bytes, ensuring the
+    /// truncation occurs at a valid UTF-8 character boundary to avoid panics.
+    fn truncate_utf8_safe(s: &str, max_bytes: usize) -> &str {
+        if s.len() <= max_bytes {
+            return s;
+        }
+        // Find the last valid character boundary at or before max_bytes
+        // We iterate through character boundaries and keep the last one <= max_bytes
+        let mut last_valid_boundary = 0;
+        for (idx, _) in s.char_indices() {
+            if idx > max_bytes {
+                break;
+            }
+            last_valid_boundary = idx;
+        }
+        &s[..last_valid_boundary]
+    }
 
     #[test]
     fn test_record_discovery_json_interface() {
