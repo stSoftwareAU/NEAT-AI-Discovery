@@ -892,12 +892,7 @@ impl GpuAnalyzer {
         drop(data);
         staging_buffer.unmap();
 
-        if stats.positive_count == 0 && stats.negative_count == 0 {
-            let cpu_stats = cpu_helpful_stats(samples);
-            if cpu_stats.positive_count > 0 || cpu_stats.negative_count > 0 {
-                stats = cpu_stats;
-            }
-        }
+        stats = Self::fallback_helpful_stats(stats, samples);
 
         Ok(stats)
     }
@@ -1055,6 +1050,17 @@ impl GpuAnalyzer {
         Ok(stats)
     }
 
+    fn fallback_helpful_stats(mut stats: HelpfulStats, samples: &[HelpfulSample]) -> HelpfulStats {
+        if (stats.positive_count == 0 && stats.negative_count == 0) && !samples.is_empty() {
+            let cpu_stats = cpu_helpful_stats(samples);
+            if cpu_stats.positive_count > 0 || cpu_stats.negative_count > 0 {
+                stats = cpu_stats;
+            }
+        }
+
+        stats
+    }
+
     fn gpu_used(&self) -> bool {
         self.gpu_used
     }
@@ -1098,16 +1104,21 @@ impl GpuAnalyzer {
         let mut all_results = Vec::with_capacity(samples_batch.len());
 
         for batch_chunk in samples_batch.chunks(GPU_BATCH_SIZE) {
+            let mut empty_flags = Vec::with_capacity(batch_chunk.len());
             let mut batch_encoders = Vec::new();
             let mut batch_staging_buffers = Vec::new();
             let mut batch_contribution_sizes = Vec::new();
+            let mut batch_sample_refs = Vec::new();
 
             // Prepare all operations in this batch
             for samples in batch_chunk {
                 if samples.is_empty() {
-                    all_results.push(HelpfulStats::default());
+                    empty_flags.push(true);
                     continue;
                 }
+                empty_flags.push(false);
+
+                batch_sample_refs.push(*samples);
 
                 let gpu_samples: Vec<GpuHelpfulSample> = samples
                     .iter()
@@ -1201,14 +1212,20 @@ impl GpuAnalyzer {
             }
 
             // Submit all operations in this batch at once
-            let command_buffers: Vec<_> = batch_encoders.into_iter().map(|e| e.finish()).collect();
-            queue.submit(command_buffers);
+            if !batch_encoders.is_empty() {
+                let command_buffers: Vec<_> =
+                    batch_encoders.into_iter().map(|e| e.finish()).collect();
+                queue.submit(command_buffers);
+            }
 
             // Wait for all results (single poll for entire batch)
-            let mut batch_results = Vec::new();
-            for (staging_buffer, (_contribution_size, sample_len)) in batch_staging_buffers
-                .into_iter()
-                .zip(batch_contribution_sizes)
+            let mut batch_results = Vec::with_capacity(batch_contribution_sizes.len());
+            for (staging_buffer, (_contribution_size, _sample_len), samples_ref) in
+                batch_staging_buffers
+                    .into_iter()
+                    .zip(batch_contribution_sizes)
+                    .zip(batch_sample_refs)
+                    .map(|((buffer, size), samples)| (buffer, size, samples))
             {
                 let buffer_slice = staging_buffer.slice(..);
                 let (sender, receiver) = mpsc::channel();
@@ -1255,21 +1272,44 @@ impl GpuAnalyzer {
                 staging_buffer.unmap();
 
                 // Fallback check
-                if stats.positive_count == 0 && stats.negative_count == 0 && sample_len > 0 {
-                    // This shouldn't happen in batch mode, but keep the check
-                    let cpu_stats = cpu_helpful_stats(&[]); // Empty check
-                    if cpu_stats.positive_count > 0 || cpu_stats.negative_count > 0 {
-                        stats = cpu_stats;
-                    }
-                }
+                stats = Self::fallback_helpful_stats(stats, samples_ref);
 
                 batch_results.push(stats);
             }
 
-            all_results.extend(batch_results);
+            let merged_results = Self::merge_batch_results(&empty_flags, batch_results);
+            all_results.extend(merged_results);
         }
 
         Ok(all_results)
+    }
+
+    fn merge_batch_results(
+        empty_flags: &[bool],
+        computed_stats: Vec<HelpfulStats>,
+    ) -> Vec<HelpfulStats> {
+        let expected_non_empty = empty_flags.iter().filter(|flag| !**flag).count();
+        debug_assert_eq!(
+            expected_non_empty,
+            computed_stats.len(),
+            "Computed stats should match number of non-empty sample sets"
+        );
+
+        let mut results = Vec::with_capacity(empty_flags.len());
+        let mut stats_iter = computed_stats.into_iter();
+
+        for &is_empty in empty_flags {
+            if is_empty {
+                results.push(HelpfulStats::default());
+            } else if let Some(stats) = stats_iter.next() {
+                results.push(stats);
+            } else {
+                // Safety guard: if counts mismatch, preserve ordering by inserting default.
+                results.push(HelpfulStats::default());
+            }
+        }
+
+        results
     }
 
     /// GPU-accelerated matching of activations to errors by obs_index
@@ -1467,234 +1507,11 @@ impl GpuAnalyzer {
     }
 }
 
-const HELPFUL_SHADER: &str = r#"
-struct HelpfulSample {
-    activation: f32,
-    avg_error: f32,
-};
+const HELPFUL_SHADER: &str = include_str!("shaders/helpful.wgsl");
 
-struct HelpfulContribution {
-    positive_flag: u32,
-    negative_flag: u32,
-    positive_improvement: f32,
-    negative_improvement: f32,
-    positive_activation: f32,
-    negative_activation: f32,
-    pad0: f32,
-    pad1: f32,
-};
+const HARMFUL_SHADER: &str = include_str!("shaders/harmful.wgsl");
 
-struct HelpfulUniforms {
-    length: u32,
-    pad0: u32,
-    epsilon: f32,
-    pad1: f32,
-};
-
-@group(0) @binding(0)
-var<storage, read> samples: array<HelpfulSample>;
-@group(0) @binding(1)
-var<storage, read_write> contributions: array<HelpfulContribution>;
-@group(0) @binding(2)
-var<uniform> uniforms: HelpfulUniforms;
-
-fn sign_nonzero(value: f32) -> f32 {
-    if (value > 0.0) {
-        return 1.0;
-    }
-    if (value < 0.0) {
-        return -1.0;
-    }
-    return 0.0;
-}
-
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let idx = global_id.x;
-    if (idx >= uniforms.length) {
-        return;
-    }
-    let sample = samples[idx];
-    var contribution: HelpfulContribution;
-    contribution.positive_flag = 0u;
-    contribution.negative_flag = 0u;
-    contribution.positive_improvement = 0.0;
-    contribution.negative_improvement = 0.0;
-    contribution.positive_activation = 0.0;
-    contribution.negative_activation = 0.0;
-    contribution.pad0 = 0.0;
-    contribution.pad1 = 0.0;
-
-    if (abs(sample.activation) > uniforms.epsilon && abs(sample.avg_error) > uniforms.epsilon) {
-        let required_sign = -sign_nonzero(sample.avg_error) * sign_nonzero(sample.activation);
-        let improvement = abs(sample.avg_error);
-        if (required_sign > 0.0) {
-            contribution.positive_flag = 1u;
-            contribution.positive_improvement = improvement;
-            contribution.positive_activation = abs(sample.activation);
-        } else if (required_sign < 0.0) {
-            contribution.negative_flag = 1u;
-            contribution.negative_improvement = improvement;
-            contribution.negative_activation = abs(sample.activation);
-        }
-    }
-
-    contributions[idx] = contribution;
-}
-"#;
-
-const HARMFUL_SHADER: &str = r#"
-struct HarmfulSample {
-    activation: f32,
-    avg_error: f32,
-};
-
-struct HarmfulContribution {
-    harmful_flag: u32,
-    helpful_flag: u32,
-    error_magnitude: f32,
-    pad0: f32,
-};
-
-struct HarmfulUniforms {
-    length: u32,
-    pad0: u32,
-    epsilon: f32,
-    weight: f32,
-};
-
-@group(0) @binding(0)
-var<storage, read> samples: array<HarmfulSample>;
-@group(0) @binding(1)
-var<storage, read_write> contributions: array<HarmfulContribution>;
-@group(0) @binding(2)
-var<uniform> uniforms: HarmfulUniforms;
-
-fn sign_nonzero(value: f32) -> f32 {
-    if (value > 0.0) {
-        return 1.0;
-    }
-    if (value < 0.0) {
-        return -1.0;
-    }
-    return 0.0;
-}
-
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let idx = global_id.x;
-    if (idx >= uniforms.length) {
-        return;
-    }
-    let sample = samples[idx];
-    var contribution: HarmfulContribution;
-    contribution.harmful_flag = 0u;
-    contribution.helpful_flag = 0u;
-    contribution.error_magnitude = 0.0;
-    contribution.pad0 = 0.0;
-
-    if (abs(sample.activation) > uniforms.epsilon && abs(sample.avg_error) > uniforms.epsilon) {
-        let signal = sample.activation * uniforms.weight;
-        let signal_sign = sign_nonzero(signal);
-        let error_sign = sign_nonzero(sample.avg_error);
-        if (signal_sign != 0.0 && error_sign != 0.0 && signal_sign == error_sign) {
-            contribution.harmful_flag = 1u;
-            contribution.error_magnitude = abs(sample.avg_error);
-        } else if (signal_sign != 0.0 && error_sign != 0.0) {
-            contribution.helpful_flag = 1u;
-        }
-    }
-
-    contributions[idx] = contribution;
-}
-"#;
-
-const MATCHING_SHADER: &str = r#"
-struct TargetRecord {
-    obs_index: u32,
-    avg_error: f32,
-};
-
-struct FromRecord {
-    obs_index: u32,
-    activation: f32,
-};
-
-struct HelpfulSample {
-    activation: f32,
-    avg_error: f32,
-};
-
-struct MatchingUniforms {
-    target_count: u32,
-    from_count: u32,
-    pad0: u32,
-    pad1: u32,
-};
-
-@group(0) @binding(0)
-var<storage, read> target_records: array<TargetRecord>;
-@group(0) @binding(1)
-var<storage, read> from_records: array<FromRecord>;
-@group(0) @binding(2)
-var<storage, read_write> samples: array<HelpfulSample>;
-@group(0) @binding(3)
-var<uniform> uniforms: MatchingUniforms;
-
-// Binary search for matching obs_index in sorted target_records
-fn find_target_index(search_obs: u32) -> i32 {
-    var left: i32 = 0;
-    var right: i32 = i32(uniforms.target_count) - 1;
-    
-    while (left <= right) {
-        let mid = (left + right) / 2;
-        let mid_obs = target_records[u32(mid)].obs_index;
-        
-        if (mid_obs == search_obs) {
-            return mid;
-        } else if (mid_obs < search_obs) {
-            left = mid + 1;
-        } else {
-            right = mid - 1;
-        }
-    }
-    
-    return -1; // Not found
-}
-
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let idx = global_id.x;
-    if (idx >= uniforms.from_count) {
-        return;
-    }
-    
-    let from_rec = from_records[idx];
-    
-    // Skip if activation is NaN (NaN != NaN is true)
-    if (from_rec.activation != from_rec.activation) {
-        samples[idx] = HelpfulSample(0.0, 0.0);
-        return;
-    }
-    
-    // Binary search for matching target record
-    let target_idx = find_target_index(from_rec.obs_index);
-    
-    if (target_idx >= 0) {
-        let target_rec = target_records[u32(target_idx)];
-        
-        // Skip if error is NaN
-        if (target_rec.avg_error == target_rec.avg_error) {
-            samples[idx] = HelpfulSample(from_rec.activation, target_rec.avg_error);
-        } else {
-            samples[idx] = HelpfulSample(0.0, 0.0);
-        }
-    } else {
-        // No match found
-        samples[idx] = HelpfulSample(0.0, 0.0);
-    }
-}
-"#;
+const MATCHING_SHADER: &str = include_str!("shaders/matching.wgsl");
 
 fn build_ordered_neurons(creature: &crate::CreatureJson) -> Vec<OrderedNeuron> {
     let mut ordered = Vec::with_capacity(creature.input + creature.neurons.len());
@@ -2353,6 +2170,77 @@ mod tests {
         assert!(
             harmful_stats.harmful_count > 0 || harmful_stats.helpful_count > 0,
             "CPU analysis should produce non-zero harmful counts"
+        );
+    }
+
+    #[test]
+    fn merge_batch_results_preserves_order_with_empty_samples() {
+        let flags = vec![false, true, false, true];
+        let merged = GpuAnalyzer::merge_batch_results(
+            &flags,
+            vec![
+                HelpfulStats {
+                    positive_count: 1,
+                    ..HelpfulStats::default()
+                },
+                HelpfulStats {
+                    positive_count: 2,
+                    ..HelpfulStats::default()
+                },
+            ],
+        );
+
+        assert_eq!(
+            merged.len(),
+            flags.len(),
+            "Merged results should match input batch length"
+        );
+        assert_eq!(
+            merged[0].positive_count, 1,
+            "First non-empty sample should remain first"
+        );
+        assert_eq!(
+            merged[1].positive_count, 0,
+            "Empty samples should produce default stats"
+        );
+        assert_eq!(
+            merged[2].positive_count, 2,
+            "Second non-empty sample should remain in original position"
+        );
+        assert_eq!(
+            merged[3].positive_count, 0,
+            "Trailing empty samples should also produce defaults"
+        );
+    }
+
+    #[test]
+    fn helpful_batch_fallback_uses_original_samples() {
+        let stats = HelpfulStats::default();
+        let samples = vec![
+            HelpfulSample {
+                activation: 0.9,
+                avg_error: -0.3,
+            },
+            HelpfulSample {
+                activation: -0.7,
+                avg_error: 0.6,
+            },
+        ];
+
+        let corrected = GpuAnalyzer::fallback_helpful_stats(stats, &samples);
+        let expected = cpu_helpful_stats(&samples);
+
+        assert!(
+            expected.positive_count > 0 || expected.negative_count > 0,
+            "CPU evaluation should observe helpful samples"
+        );
+        assert_eq!(
+            corrected.positive_count, expected.positive_count,
+            "Fallback should mirror CPU positive count when GPU result is empty"
+        );
+        assert_eq!(
+            corrected.negative_count, expected.negative_count,
+            "Fallback should mirror CPU negative count when GPU result is empty"
         );
     }
 
