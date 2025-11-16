@@ -49,6 +49,33 @@ error. Controllers call into the library via Deno FFI to power
    The guide covers safe-write practices, worker loops, and how to persist the
    improved creatures that this library exports.
 
+## Analysis workflow expectations
+
+- Call `analyze_synapses` once per focused neuron where practical. Passing a
+  single `focus_neurons` entry keeps diagnostics easy to map back to the Deno
+  request and mirrors how NEAT-AI orchestrates discovery.
+- The Rust side now refuses to run if `focus_neurons` is empty or contains
+  duplicates. Controllers **must** validate and de-duplicate targets before
+  calling into FFI so any upstream issues are surfaced promptly.
+- For each focus target the Rust side enumerates **all** upstream neurons (every
+  observation/input slot and every hidden neuron whose index precedes the
+  target) that do **not** already have a synapse. This quickly grows into
+  thousands of potential new synapses for realistic creatures (e.g. 1,486
+  observations × 450+ hidden neurons).
+- Each source/target pair becomes its own GPU job. We batch the jobs in chunks
+  (default 32) so the GPU can chew through aligned samples in parallel while the
+  CPU streams discovery records from Parquet.
+- The GPU kernels (matching + helpful/harmful statistics) produce sufficient
+  aggregates to derive the suggested weight and the expected error reduction.
+  Results are sorted by expected improvement before being returned, so callers
+  can simply read the first entry or pass `max_candidates=1` to receive the best.
+- When no candidate “makes the grade” (e.g. there were no overlapping samples,
+  the GPU observed zero consistent improvements, or every candidate fell under
+  the requested threshold) set `NEAT_AI_DISCOVERY_VERBOSE=1` before launching
+  your Deno worker. The library will emit a single line per focus neuron that
+  summarises why the top candidate was rejected and how many potential synapses
+  were evaluated.
+
 ## Verifying the installation
 
 Use the NEAT-AI helper script after copying the library:
