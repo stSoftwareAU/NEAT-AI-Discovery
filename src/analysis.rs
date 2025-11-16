@@ -23,11 +23,76 @@ pub struct AnalyzeSynapsesResult {
     pub helpful_synapses: Vec<CandidateSynapseJson>,
     pub harmful_synapses: Vec<CandidateSynapseJson>,
     pub gpu_used: bool,
+    pub no_candidate_reasons: Vec<SynapseNoCandidateSummary>,
 }
 
 pub struct AnalyzeNeuronsResult {
     pub helpful_neurons: Vec<CandidateNeuronJson>,
     pub gpu_used: bool,
+    pub no_candidate_reasons: Vec<NeuronNoCandidateSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SynapseNoCandidateReason {
+    NoEligibleSources,
+    NoDiagnostics,
+    NoSamples,
+    ZeroImprovement,
+    BelowThreshold,
+}
+
+#[derive(Debug, Clone)]
+pub struct SynapseNoCandidateDetail {
+    pub source_uuid: Option<String>,
+    pub sample_count: Option<usize>,
+    pub source_record_count: Option<usize>,
+    pub improved_count: Option<u32>,
+    pub worsened_count: Option<u32>,
+    pub expected_improvement: Option<f32>,
+    pub threshold: Option<f32>,
+    pub suggested_weight: Option<f32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SynapseNoCandidateSummary {
+    pub target_uuid: String,
+    pub reason: SynapseNoCandidateReason,
+    pub evaluated_candidates: u32,
+    pub candidates_with_samples: u32,
+    pub target_record_count: usize,
+    pub detail: Option<SynapseNoCandidateDetail>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NeuronNoCandidateReason {
+    NoEligibleSources,
+    NoDiagnostics,
+    NoSamples,
+    NotEnoughActivations,
+    WeightDegenerate,
+    BelowThreshold,
+}
+
+#[derive(Debug, Clone)]
+pub struct NeuronNoCandidateDetail {
+    pub source_uuid: Option<String>,
+    pub orientation: Option<String>,
+    pub sample_count: Option<usize>,
+    pub improved_count: Option<u32>,
+    pub worsened_count: Option<u32>,
+    pub expected_improvement: Option<f32>,
+    pub threshold: Option<f32>,
+    pub outgoing_weight: Option<f32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NeuronNoCandidateSummary {
+    pub target_uuid: String,
+    pub reason: NeuronNoCandidateReason,
+    pub evaluated_sources: u32,
+    pub sources_with_samples: u32,
+    pub target_record_count: usize,
+    pub detail: Option<NeuronNoCandidateDetail>,
 }
 
 struct OrderedNeuron {
@@ -122,20 +187,21 @@ impl TargetDiagnosticEntry {
 }
 
 struct TargetDiagnostics {
-    enabled: bool,
+    log_enabled: bool,
     entries: HashMap<String, TargetDiagnosticEntry>,
 }
 
 impl TargetDiagnostics {
     fn new(targets: &[&String]) -> Self {
-        let enabled = std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok();
+        let log_enabled = std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok();
         let mut entries = HashMap::new();
-        if enabled {
-            for target in targets {
-                entries.insert(target.to_string(), TargetDiagnosticEntry::new(target));
-            }
+        for target in targets {
+            entries.insert(target.to_string(), TargetDiagnosticEntry::new(target));
         }
-        Self { enabled, entries }
+        Self {
+            log_enabled,
+            entries,
+        }
     }
 
     #[cfg(test)]
@@ -145,24 +211,18 @@ impl TargetDiagnostics {
             entries.insert((*target).to_string(), TargetDiagnosticEntry::new(target));
         }
         Self {
-            enabled: true,
+            log_enabled: true,
             entries,
         }
     }
 
     fn set_target_record_count(&mut self, target_uuid: &str, count: usize) {
-        if !self.enabled {
-            return;
-        }
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.target_record_count = count;
         }
     }
 
     fn record_candidate_attempt(&mut self, target_uuid: &str, had_samples: bool) {
-        if !self.enabled {
-            return;
-        }
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.evaluated_candidates += 1;
             if had_samples {
@@ -177,9 +237,6 @@ impl TargetDiagnostics {
         source_uuid: &str,
         source_record_count: usize,
     ) {
-        if !self.enabled {
-            return;
-        }
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.update_best(RejectionDetail {
                 source_uuid: source_uuid.to_string(),
@@ -203,9 +260,6 @@ impl TargetDiagnostics {
         positive_count: u32,
         negative_count: u32,
     ) {
-        if !self.enabled {
-            return;
-        }
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.update_best(RejectionDetail {
                 source_uuid: source_uuid.to_string(),
@@ -227,9 +281,6 @@ impl TargetDiagnostics {
         source_uuid: &str,
         context: ThresholdContext,
     ) {
-        if !self.enabled {
-            return;
-        }
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.update_best(RejectionDetail {
                 source_uuid: source_uuid.to_string(),
@@ -246,16 +297,13 @@ impl TargetDiagnostics {
     }
 
     fn mark_candidate_selected(&mut self, target_uuid: &str) {
-        if !self.enabled {
-            return;
-        }
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.had_candidate = true;
         }
     }
 
     fn emit_logs(&self) {
-        if !self.enabled {
+        if !self.log_enabled {
             return;
         }
 
@@ -335,6 +383,61 @@ impl TargetDiagnostics {
     fn entry_for(&self, target_uuid: &str) -> Option<&TargetDiagnosticEntry> {
         self.entries.get(target_uuid)
     }
+
+    fn no_candidate_summaries(&self) -> Vec<SynapseNoCandidateSummary> {
+        self.entries
+            .values()
+            .filter(|entry| !entry.had_candidate)
+            .map(|entry| {
+                if entry.evaluated_candidates == 0 {
+                    return SynapseNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: SynapseNoCandidateReason::NoEligibleSources,
+                        evaluated_candidates: entry.evaluated_candidates,
+                        candidates_with_samples: entry.candidates_with_samples,
+                        target_record_count: entry.target_record_count,
+                        detail: None,
+                    };
+                }
+
+                if let Some(best) = &entry.best_rejection {
+                    let reason = match best.reason {
+                        RejectionReason::NoSamples => SynapseNoCandidateReason::NoSamples,
+                        RejectionReason::ZeroImprovement => {
+                            SynapseNoCandidateReason::ZeroImprovement
+                        }
+                        RejectionReason::BelowThreshold => SynapseNoCandidateReason::BelowThreshold,
+                    };
+                    return SynapseNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason,
+                        evaluated_candidates: entry.evaluated_candidates,
+                        candidates_with_samples: entry.candidates_with_samples,
+                        target_record_count: entry.target_record_count,
+                        detail: Some(SynapseNoCandidateDetail {
+                            source_uuid: Some(best.source_uuid.clone()),
+                            sample_count: Some(best.sample_count),
+                            source_record_count: Some(best.source_record_count),
+                            improved_count: Some(best.improved_count),
+                            worsened_count: Some(best.worsened_count),
+                            expected_improvement: Some(best.expected_improvement),
+                            threshold: Some(best.threshold),
+                            suggested_weight: best.weight,
+                        }),
+                    };
+                }
+
+                SynapseNoCandidateSummary {
+                    target_uuid: entry.target_uuid.clone(),
+                    reason: SynapseNoCandidateReason::NoDiagnostics,
+                    evaluated_candidates: entry.evaluated_candidates,
+                    candidates_with_samples: entry.candidates_with_samples,
+                    target_record_count: entry.target_record_count,
+                    detail: None,
+                }
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -401,20 +504,21 @@ impl NeuronDiagnosticEntry {
 }
 
 struct NeuronDiagnostics {
-    enabled: bool,
+    log_enabled: bool,
     entries: HashMap<String, NeuronDiagnosticEntry>,
 }
 
 impl NeuronDiagnostics {
     fn new(targets: &[&String]) -> Self {
-        let enabled = std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok();
+        let log_enabled = std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok();
         let mut entries = HashMap::new();
-        if enabled {
-            for target in targets {
-                entries.insert(target.to_string(), NeuronDiagnosticEntry::new(target));
-            }
+        for target in targets {
+            entries.insert(target.to_string(), NeuronDiagnosticEntry::new(target));
         }
-        Self { enabled, entries }
+        Self {
+            log_enabled,
+            entries,
+        }
     }
 
     #[cfg(test)]
@@ -424,24 +528,18 @@ impl NeuronDiagnostics {
             entries.insert((*target).to_string(), NeuronDiagnosticEntry::new(target));
         }
         Self {
-            enabled: true,
+            log_enabled: true,
             entries,
         }
     }
 
     fn set_target_record_count(&mut self, target_uuid: &str, count: usize) {
-        if !self.enabled {
-            return;
-        }
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.target_record_count = count;
         }
     }
 
     fn record_candidate_attempt(&mut self, target_uuid: &str, had_samples: bool) {
-        if !self.enabled {
-            return;
-        }
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.evaluated_sources += 1;
             if had_samples {
@@ -451,9 +549,6 @@ impl NeuronDiagnostics {
     }
 
     fn record_no_samples(&mut self, target_uuid: &str, source_uuid: &str) {
-        if !self.enabled {
-            return;
-        }
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.update_best(NeuronRejectionDetail {
                 source_uuid: source_uuid.to_string(),
@@ -476,9 +571,6 @@ impl NeuronDiagnostics {
         summary: &ReluOrientationSummary,
         threshold: f32,
     ) {
-        if !self.enabled {
-            return;
-        }
         let reason = match summary.failure {
             Some(ReluFailure::NotEnoughSamples) => NeuronRejectionReason::NotEnoughActivations,
             Some(ReluFailure::WeightInvalid) => NeuronRejectionReason::WeightDegenerate,
@@ -500,16 +592,13 @@ impl NeuronDiagnostics {
     }
 
     fn mark_candidate_selected(&mut self, target_uuid: &str) {
-        if !self.enabled {
-            return;
-        }
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.had_candidate = true;
         }
     }
 
     fn emit_logs(&self) {
-        if !self.enabled {
+        if !self.log_enabled {
             return;
         }
 
@@ -598,6 +687,66 @@ impl NeuronDiagnostics {
     #[cfg(test)]
     fn entry_for(&self, target_uuid: &str) -> Option<&NeuronDiagnosticEntry> {
         self.entries.get(target_uuid)
+    }
+
+    fn no_candidate_summaries(&self) -> Vec<NeuronNoCandidateSummary> {
+        self.entries
+            .values()
+            .filter(|entry| !entry.had_candidate)
+            .map(|entry| {
+                if entry.evaluated_sources == 0 {
+                    return NeuronNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: NeuronNoCandidateReason::NoEligibleSources,
+                        evaluated_sources: entry.evaluated_sources,
+                        sources_with_samples: entry.sources_with_samples,
+                        target_record_count: entry.target_record_count,
+                        detail: None,
+                    };
+                }
+
+                if let Some(best) = &entry.best_rejection {
+                    let reason = match best.reason {
+                        NeuronRejectionReason::NoSamples => NeuronNoCandidateReason::NoSamples,
+                        NeuronRejectionReason::NotEnoughActivations => {
+                            NeuronNoCandidateReason::NotEnoughActivations
+                        }
+                        NeuronRejectionReason::WeightDegenerate => {
+                            NeuronNoCandidateReason::WeightDegenerate
+                        }
+                        NeuronRejectionReason::BelowThreshold => {
+                            NeuronNoCandidateReason::BelowThreshold
+                        }
+                    };
+                    return NeuronNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason,
+                        evaluated_sources: entry.evaluated_sources,
+                        sources_with_samples: entry.sources_with_samples,
+                        target_record_count: entry.target_record_count,
+                        detail: Some(NeuronNoCandidateDetail {
+                            source_uuid: Some(best.source_uuid.clone()),
+                            orientation: best.orientation.map(|name| name.to_string()),
+                            sample_count: Some(best.sample_count),
+                            improved_count: Some(best.improved_count),
+                            worsened_count: Some(best.worsened_count),
+                            expected_improvement: Some(best.expected_improvement),
+                            threshold: Some(best.threshold),
+                            outgoing_weight: best.outgoing_weight,
+                        }),
+                    };
+                }
+
+                NeuronNoCandidateSummary {
+                    target_uuid: entry.target_uuid.clone(),
+                    reason: NeuronNoCandidateReason::NoDiagnostics,
+                    evaluated_sources: entry.evaluated_sources,
+                    sources_with_samples: entry.sources_with_samples,
+                    target_record_count: entry.target_record_count,
+                    detail: None,
+                }
+            })
+            .collect()
     }
 }
 
@@ -2611,11 +2760,13 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
         helpful_results.truncate(limit);
     }
 
+    let no_candidate_reasons = diagnostics.no_candidate_summaries();
     diagnostics.emit_logs();
 
     Ok(AnalyzeNeuronsResult {
         helpful_neurons: helpful_results,
         gpu_used: analyzer.gpu_used(),
+        no_candidate_reasons,
     })
 }
 
@@ -2877,12 +3028,14 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
         harmful_results.truncate(limit);
     }
 
+    let no_candidate_reasons = diagnostics.no_candidate_summaries();
     diagnostics.emit_logs();
 
     Ok(AnalyzeSynapsesResult {
         helpful_synapses: helpful_results,
         harmful_synapses: harmful_results,
         gpu_used: analyzer.gpu_used(),
+        no_candidate_reasons,
     })
 }
 
@@ -3248,6 +3401,31 @@ mod tests {
     }
 
     #[test]
+    fn target_diagnostics_reports_no_samples_reason() {
+        let mut diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
+        diagnostics.set_target_record_count("output-0", 25);
+        diagnostics.record_candidate_attempt("output-0", false);
+        diagnostics.record_no_samples("output-0", "input-0", 8);
+
+        let summaries = diagnostics.no_candidate_summaries();
+        assert_eq!(
+            summaries.len(),
+            1,
+            "Expected a single diagnostic summary for target without candidates"
+        );
+
+        let summary = &summaries[0];
+        assert_eq!(
+            summary.target_uuid, "output-0",
+            "Target UUID should be preserved in summary"
+        );
+        assert!(
+            matches!(summary.reason, SynapseNoCandidateReason::NoSamples),
+            "Expected no-samples reason"
+        );
+    }
+
+    #[test]
     fn analyze_neurons_rejects_duplicate_focus_targets() {
         let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
@@ -3425,6 +3603,136 @@ mod tests {
         assert!(
             message.contains("at least one focus neuron"),
             "Expected missing focus error, got: {message}",
+        );
+    }
+
+    #[test]
+    fn analyze_synapses_reports_diagnostics_when_no_candidates() {
+        let _guard = ForceGpuFailureGuard::new();
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
+
+        let mut records = Vec::new();
+        for obs_index in 0..16 {
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.25,
+                vec![0.05],
+            ));
+        }
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        let creature = CreatureJson {
+            input: 0,
+            output: 1,
+            neurons: vec![NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            }],
+            synapses: Vec::new(),
+        };
+
+        let input = AnalyzeSynapsesInput {
+            parquet_file: parquet_file.clone(),
+            creature,
+            focus_neurons: vec!["output-0".to_string()],
+            improvement_threshold: Some(0.05),
+            max_candidates: None,
+            require_gpu: Some(false),
+        };
+
+        let result = analyze_synapses(&input)
+            .expect("Synapse analysis should succeed even without candidates");
+
+        assert!(
+            result.helpful_synapses.is_empty(),
+            "Expected no helpful candidates when there are no eligible sources"
+        );
+        let reason = result
+            .no_candidate_reasons
+            .first()
+            .map(|summary| summary.reason.clone());
+        assert!(
+            matches!(reason, Some(SynapseNoCandidateReason::NoEligibleSources)),
+            "Expected diagnostics to explain missing candidates"
+        );
+    }
+
+    #[test]
+    fn analyze_neurons_reports_diagnostics_when_no_candidates() {
+        let _guard = ForceGpuFailureGuard::new();
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
+
+        let mut records = Vec::new();
+        for obs_index in 0..(MIN_NEURON_SAMPLE_COUNT as u32 + 1) {
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.5,
+                vec![0.2],
+            ));
+        }
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        let creature = CreatureJson {
+            input: 0,
+            output: 1,
+            neurons: vec![
+                NeuronJson {
+                    uuid: "hidden-source".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "output-0".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: Vec::new(),
+        };
+
+        let input = AnalyzeNeuronsInput {
+            parquet_file,
+            creature,
+            focus_neurons: vec!["output-0".to_string()],
+            improvement_threshold: Some(0.05),
+            max_candidates: None,
+            require_gpu: Some(false),
+        };
+
+        let result = analyze_neurons(&input)
+            .expect("Neuron analysis should succeed even without candidates");
+
+        assert!(
+            result.helpful_neurons.is_empty(),
+            "Expected no neuron candidates when the source neuron lacks samples"
+        );
+        let reason = result
+            .no_candidate_reasons
+            .first()
+            .map(|summary| summary.reason.clone());
+        assert!(
+            matches!(reason, Some(NeuronNoCandidateReason::NoSamples)),
+            "Expected diagnostics to explain missing neuron candidates"
         );
     }
 

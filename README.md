@@ -75,6 +75,11 @@ error. Controllers call into the library via Deno FFI to power
   your Deno worker. The library will emit a single line per focus neuron that
   summarises why the top candidate was rejected and how many potential synapses
   were evaluated.
+- The `analyze_synapses` and `analyze_neurons` JSON responses also expose a
+  `diagnostics` array describing each focus neuron that finished without a
+  candidate. These entries summarise the reason (no samples, below threshold,
+  etc.) plus supporting counts so controllers can relay the explanation even
+  when verbose logging is disabled.
 
 ## Verifying the installation
 
