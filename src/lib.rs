@@ -118,6 +118,8 @@ pub struct AnalyzeSynapsesOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub harmful_synapses: Option<Vec<CandidateSynapseJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<Vec<SynapseDiagnosticJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
@@ -158,7 +160,196 @@ pub struct AnalyzeNeuronsOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub helpful_neurons: Option<Vec<CandidateNeuronJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<Vec<NeuronDiagnosticJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SynapseDiagnosticJson {
+    pub target_neuron_uuid: String,
+    pub reason: SynapseDiagnosticReasonJson,
+    pub evaluated_candidates: u32,
+    pub candidates_with_samples: u32,
+    pub target_record_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<SynapseDiagnosticDetailJson>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SynapseDiagnosticReasonJson {
+    NoEligibleSources,
+    NoDiagnostics,
+    NoSamples,
+    ZeroImprovement,
+    BelowThreshold,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SynapseDiagnosticDetailJson {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_neuron_uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_record_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub improved_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worsened_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_improvement_percentage: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_weight: Option<f32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NeuronDiagnosticJson {
+    pub target_neuron_uuid: String,
+    pub reason: NeuronDiagnosticReasonJson,
+    pub evaluated_sources: u32,
+    pub sources_with_samples: u32,
+    pub target_record_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<NeuronDiagnosticDetailJson>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NeuronDiagnosticReasonJson {
+    NoEligibleSources,
+    NoDiagnostics,
+    NoSamples,
+    NotEnoughActivations,
+    WeightDegenerate,
+    BelowThreshold,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NeuronDiagnosticDetailJson {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_neuron_uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub improved_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worsened_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_improvement_percentage: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outgoing_weight: Option<f32>,
+}
+
+fn synapse_diagnostics_json(
+    summaries: &[analysis::SynapseNoCandidateSummary],
+) -> Option<Vec<SynapseDiagnosticJson>> {
+    if summaries.is_empty() {
+        return None;
+    }
+    Some(
+        summaries
+            .iter()
+            .map(|summary| SynapseDiagnosticJson {
+                target_neuron_uuid: summary.target_uuid.clone(),
+                reason: match summary.reason {
+                    analysis::SynapseNoCandidateReason::NoEligibleSources => {
+                        SynapseDiagnosticReasonJson::NoEligibleSources
+                    }
+                    analysis::SynapseNoCandidateReason::NoDiagnostics => {
+                        SynapseDiagnosticReasonJson::NoDiagnostics
+                    }
+                    analysis::SynapseNoCandidateReason::NoSamples => {
+                        SynapseDiagnosticReasonJson::NoSamples
+                    }
+                    analysis::SynapseNoCandidateReason::ZeroImprovement => {
+                        SynapseDiagnosticReasonJson::ZeroImprovement
+                    }
+                    analysis::SynapseNoCandidateReason::BelowThreshold => {
+                        SynapseDiagnosticReasonJson::BelowThreshold
+                    }
+                },
+                evaluated_candidates: summary.evaluated_candidates,
+                candidates_with_samples: summary.candidates_with_samples,
+                target_record_count: summary.target_record_count,
+                detail: summary
+                    .detail
+                    .as_ref()
+                    .map(|detail| SynapseDiagnosticDetailJson {
+                        source_neuron_uuid: detail.source_uuid.clone(),
+                        sample_count: detail.sample_count,
+                        source_record_count: detail.source_record_count,
+                        improved_count: detail.improved_count,
+                        worsened_count: detail.worsened_count,
+                        expected_improvement_percentage: detail.expected_improvement,
+                        threshold: detail.threshold,
+                        suggested_weight: detail.suggested_weight,
+                    }),
+            })
+            .collect(),
+    )
+}
+
+fn neuron_diagnostics_json(
+    summaries: &[analysis::NeuronNoCandidateSummary],
+) -> Option<Vec<NeuronDiagnosticJson>> {
+    if summaries.is_empty() {
+        return None;
+    }
+    Some(
+        summaries
+            .iter()
+            .map(|summary| NeuronDiagnosticJson {
+                target_neuron_uuid: summary.target_uuid.clone(),
+                reason: match summary.reason {
+                    analysis::NeuronNoCandidateReason::NoEligibleSources => {
+                        NeuronDiagnosticReasonJson::NoEligibleSources
+                    }
+                    analysis::NeuronNoCandidateReason::NoDiagnostics => {
+                        NeuronDiagnosticReasonJson::NoDiagnostics
+                    }
+                    analysis::NeuronNoCandidateReason::NoSamples => {
+                        NeuronDiagnosticReasonJson::NoSamples
+                    }
+                    analysis::NeuronNoCandidateReason::NotEnoughActivations => {
+                        NeuronDiagnosticReasonJson::NotEnoughActivations
+                    }
+                    analysis::NeuronNoCandidateReason::WeightDegenerate => {
+                        NeuronDiagnosticReasonJson::WeightDegenerate
+                    }
+                    analysis::NeuronNoCandidateReason::BelowThreshold => {
+                        NeuronDiagnosticReasonJson::BelowThreshold
+                    }
+                },
+                evaluated_sources: summary.evaluated_sources,
+                sources_with_samples: summary.sources_with_samples,
+                target_record_count: summary.target_record_count,
+                detail: summary
+                    .detail
+                    .as_ref()
+                    .map(|detail| NeuronDiagnosticDetailJson {
+                        source_neuron_uuid: detail.source_uuid.clone(),
+                        orientation: detail.orientation.clone(),
+                        sample_count: detail.sample_count,
+                        improved_count: detail.improved_count,
+                        worsened_count: detail.worsened_count,
+                        expected_improvement_percentage: detail.expected_improvement,
+                        threshold: detail.threshold,
+                        outgoing_weight: detail.outgoing_weight,
+                    }),
+            })
+            .collect(),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -392,6 +583,7 @@ pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut 
                 gpu_used: Some(result.gpu_used),
                 helpful_synapses: Some(result.helpful_synapses),
                 harmful_synapses: Some(result.harmful_synapses),
+                diagnostics: synapse_diagnostics_json(&result.no_candidate_reasons),
                 error: None,
             },
             Err(e) => AnalyzeSynapsesOutput {
@@ -399,6 +591,7 @@ pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut 
                 gpu_used: None,
                 helpful_synapses: None,
                 harmful_synapses: None,
+                diagnostics: None,
                 error: Some(e.to_string()),
             },
         },
@@ -407,6 +600,7 @@ pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut 
             gpu_used: None,
             helpful_synapses: None,
             harmful_synapses: None,
+            diagnostics: None,
             error: Some(format!("Failed to parse input JSON: {e}")),
         },
     };
@@ -454,12 +648,14 @@ pub extern "C" fn analyze_neurons(input_json: *const std::ffi::c_char) -> *mut s
                 success: true,
                 gpu_used: Some(result.gpu_used),
                 helpful_neurons: Some(result.helpful_neurons),
+                diagnostics: neuron_diagnostics_json(&result.no_candidate_reasons),
                 error: None,
             },
             Err(e) => AnalyzeNeuronsOutput {
                 success: false,
                 gpu_used: None,
                 helpful_neurons: None,
+                diagnostics: None,
                 error: Some(e.to_string()),
             },
         },
@@ -467,6 +663,7 @@ pub extern "C" fn analyze_neurons(input_json: *const std::ffi::c_char) -> *mut s
             success: false,
             gpu_used: None,
             helpful_neurons: None,
+            diagnostics: None,
             error: Some(format!("Failed to parse input JSON: {e}")),
         },
     };
