@@ -1061,7 +1061,10 @@ impl GpuAnalyzer {
 
     /// Batch evaluate multiple helpful operations to improve GPU utilization
     /// Returns a vector of stats in the same order as the input samples
-    fn evaluate_helpful_batch(&self, samples_batch: &[&[HelpfulSample]]) -> Result<Vec<HelpfulStats>> {
+    fn evaluate_helpful_batch(
+        &self,
+        samples_batch: &[&[HelpfulSample]],
+    ) -> Result<Vec<HelpfulStats>> {
         if samples_batch.is_empty() {
             return Ok(Vec::new());
         }
@@ -1093,7 +1096,7 @@ impl GpuAnalyzer {
 
         // Process in batches to avoid excessive memory usage
         let mut all_results = Vec::with_capacity(samples_batch.len());
-        
+
         for batch_chunk in samples_batch.chunks(GPU_BATCH_SIZE) {
             let mut batch_encoders = Vec::new();
             let mut batch_staging_buffers = Vec::new();
@@ -1119,13 +1122,14 @@ impl GpuAnalyzer {
                     usage: wgpu::BufferUsages::STORAGE,
                 });
 
-                let contributions_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("helpful-contributions-buffer-batch"),
-                    contents: bytemuck::cast_slice(&contributions_zeroed),
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_SRC
-                        | wgpu::BufferUsages::COPY_DST,
-                });
+                let contributions_buffer =
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("helpful-contributions-buffer-batch"),
+                        contents: bytemuck::cast_slice(&contributions_zeroed),
+                        usage: wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::COPY_SRC
+                            | wgpu::BufferUsages::COPY_DST,
+                    });
 
                 let uniforms = HelpfulUniforms {
                     length: samples.len() as u32,
@@ -1158,7 +1162,8 @@ impl GpuAnalyzer {
                     label: Some("helpful-bind-group-batch"),
                 });
 
-                let contribution_size = (std::mem::size_of::<HelpfulContribution>() * samples.len()) as u64;
+                let contribution_size =
+                    (std::mem::size_of::<HelpfulContribution>() * samples.len()) as u64;
                 let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("helpful-staging-buffer-batch"),
                     size: contribution_size,
@@ -1171,10 +1176,11 @@ impl GpuAnalyzer {
                 });
 
                 {
-                    let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("helpful-compute-pass-batch"),
-                        timestamp_writes: None,
-                    });
+                    let mut compute_pass =
+                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("helpful-compute-pass-batch"),
+                            timestamp_writes: None,
+                        });
                     compute_pass.set_pipeline(helpful_pipeline);
                     compute_pass.set_bind_group(0, &bind_group, &[]);
                     let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
@@ -1200,7 +1206,10 @@ impl GpuAnalyzer {
 
             // Wait for all results (single poll for entire batch)
             let mut batch_results = Vec::new();
-            for (staging_buffer, (_contribution_size, sample_len)) in batch_staging_buffers.into_iter().zip(batch_contribution_sizes) {
+            for (staging_buffer, (_contribution_size, sample_len)) in batch_staging_buffers
+                .into_iter()
+                .zip(batch_contribution_sizes)
+            {
                 let buffer_slice = staging_buffer.slice(..);
                 let (sender, receiver) = mpsc::channel();
                 buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -1208,14 +1217,16 @@ impl GpuAnalyzer {
                         .send(result)
                         .expect("Failed to send map_async result");
                 });
-                
+
                 // Poll until this specific buffer is ready
                 loop {
                     device.poll(wgpu::Maintain::Poll);
                     match receiver.try_recv() {
                         Ok(Ok(())) => break,
                         Ok(Err(err)) => {
-                            return Err(anyhow!("Failed to map helpful contributions buffer: {err}"));
+                            return Err(anyhow!(
+                                "Failed to map helpful contributions buffer: {err}"
+                            ));
                         }
                         Err(mpsc::TryRecvError::Empty) => {
                             // Continue polling
@@ -1412,13 +1423,7 @@ impl GpuAnalyzer {
             compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
         }
 
-        encoder.copy_buffer_to_buffer(
-            &samples_buffer,
-            0,
-            &staging_buffer,
-            0,
-            sample_size,
-        );
+        encoder.copy_buffer_to_buffer(&samples_buffer, 0, &staging_buffer, 0, sample_size);
 
         queue.submit(Some(encoder.finish()));
 
@@ -2084,7 +2089,7 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
     let mut harmful_results: Vec<CandidateSynapseJson> = Vec::new();
     let mut helpful_fallback: Option<CandidateSynapseJson> = None;
 
-        let threshold = input.improvement_threshold.unwrap_or(0.1);
+    let threshold = input.improvement_threshold.unwrap_or(0.1);
 
     // Collect all helpful evaluation work first for batching
     struct HelpfulWork {
@@ -2138,7 +2143,10 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
     }
 
     // Process helpful work in batches for better GPU utilization
-    let helpful_samples_refs: Vec<&[HelpfulSample]> = helpful_work_batch.iter().map(|w| w.samples.as_slice()).collect();
+    let helpful_samples_refs: Vec<&[HelpfulSample]> = helpful_work_batch
+        .iter()
+        .map(|w| w.samples.as_slice())
+        .collect();
     let helpful_stats_batch = analyzer.evaluate_helpful_batch(&helpful_samples_refs)?;
 
     // Process results
