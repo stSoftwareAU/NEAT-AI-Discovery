@@ -2340,13 +2340,14 @@ fn evaluate_relu_candidate(
     let mut best_summary_score = f32::NEG_INFINITY;
 
     for eval in evaluations.into_iter() {
-        if eval.summary.expected_improvement > best_summary_score {
+        if best_summary.is_none() || eval.summary.expected_improvement >= best_summary_score {
             best_summary_score = eval.summary.expected_improvement;
             best_summary = Some(eval.summary.clone());
         }
 
         if let Some(candidate) = eval.candidate {
-            if eval.summary.expected_improvement > best_candidate_score {
+            if best_candidate.is_none() || eval.summary.expected_improvement > best_candidate_score
+            {
                 best_candidate_score = eval.summary.expected_improvement;
                 best_candidate = Some(candidate);
             }
