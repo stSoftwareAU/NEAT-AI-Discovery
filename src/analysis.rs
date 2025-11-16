@@ -5,6 +5,7 @@ use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc};
@@ -37,6 +38,567 @@ struct OrderedNeuron {
 struct RecordCache<'a> {
     parquet_file: &'a str,
     cache: HashMap<String, Arc<Vec<DiscoverRecord>>>,
+}
+
+#[derive(Clone, Copy)]
+enum RejectionReason {
+    NoSamples,
+    ZeroImprovement,
+    BelowThreshold,
+}
+
+impl fmt::Display for RejectionReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RejectionReason::NoSamples => write!(f, "no overlapping discovery samples"),
+            RejectionReason::ZeroImprovement => write!(f, "no consistent improvement in GPU stats"),
+            RejectionReason::BelowThreshold => write!(f, "expected improvement below threshold"),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct RejectionDetail {
+    source_uuid: String,
+    reason: RejectionReason,
+    sample_count: usize,
+    source_record_count: usize,
+    improved_count: u32,
+    worsened_count: u32,
+    expected_improvement: f32,
+    threshold: f32,
+    weight: Option<f32>,
+}
+
+impl RejectionDetail {
+    fn score(&self) -> f32 {
+        self.expected_improvement
+    }
+}
+
+struct ThresholdContext {
+    sample_count: usize,
+    expected_improvement: f32,
+    threshold: f32,
+    improved_count: u32,
+    worsened_count: u32,
+    weight: f32,
+}
+
+struct TargetDiagnosticEntry {
+    target_uuid: String,
+    target_record_count: usize,
+    evaluated_candidates: u32,
+    candidates_with_samples: u32,
+    had_candidate: bool,
+    best_rejection: Option<RejectionDetail>,
+}
+
+impl TargetDiagnosticEntry {
+    fn new(target_uuid: &str) -> Self {
+        Self {
+            target_uuid: target_uuid.to_string(),
+            target_record_count: 0,
+            evaluated_candidates: 0,
+            candidates_with_samples: 0,
+            had_candidate: false,
+            best_rejection: None,
+        }
+    }
+
+    fn update_best(&mut self, detail: RejectionDetail) {
+        match &self.best_rejection {
+            Some(current) => {
+                if detail.score() > current.score()
+                    || (detail.score() == current.score()
+                        && detail.sample_count > current.sample_count)
+                {
+                    self.best_rejection = Some(detail);
+                }
+            }
+            None => self.best_rejection = Some(detail),
+        }
+    }
+}
+
+struct TargetDiagnostics {
+    enabled: bool,
+    entries: HashMap<String, TargetDiagnosticEntry>,
+}
+
+impl TargetDiagnostics {
+    fn new(targets: &[&String]) -> Self {
+        let enabled = std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok();
+        let mut entries = HashMap::new();
+        if enabled {
+            for target in targets {
+                entries.insert(target.to_string(), TargetDiagnosticEntry::new(target));
+            }
+        }
+        Self { enabled, entries }
+    }
+
+    #[cfg(test)]
+    fn new_for_tests(targets: &[&str]) -> Self {
+        let mut entries = HashMap::new();
+        for target in targets {
+            entries.insert((*target).to_string(), TargetDiagnosticEntry::new(target));
+        }
+        Self {
+            enabled: true,
+            entries,
+        }
+    }
+
+    fn set_target_record_count(&mut self, target_uuid: &str, count: usize) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.target_record_count = count;
+        }
+    }
+
+    fn record_candidate_attempt(&mut self, target_uuid: &str, had_samples: bool) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.evaluated_candidates += 1;
+            if had_samples {
+                entry.candidates_with_samples += 1;
+            }
+        }
+    }
+
+    fn record_no_samples(
+        &mut self,
+        target_uuid: &str,
+        source_uuid: &str,
+        source_record_count: usize,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.update_best(RejectionDetail {
+                source_uuid: source_uuid.to_string(),
+                reason: RejectionReason::NoSamples,
+                sample_count: 0,
+                source_record_count,
+                improved_count: 0,
+                worsened_count: 0,
+                expected_improvement: f32::NEG_INFINITY,
+                threshold: 0.0,
+                weight: None,
+            });
+        }
+    }
+
+    fn record_zero_improvement(
+        &mut self,
+        target_uuid: &str,
+        source_uuid: &str,
+        sample_count: usize,
+        positive_count: u32,
+        negative_count: u32,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.update_best(RejectionDetail {
+                source_uuid: source_uuid.to_string(),
+                reason: RejectionReason::ZeroImprovement,
+                sample_count,
+                source_record_count: sample_count,
+                improved_count: positive_count.max(negative_count),
+                worsened_count: positive_count.min(negative_count),
+                expected_improvement: 0.0,
+                threshold: 0.0,
+                weight: None,
+            });
+        }
+    }
+
+    fn record_below_threshold(
+        &mut self,
+        target_uuid: &str,
+        source_uuid: &str,
+        context: ThresholdContext,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.update_best(RejectionDetail {
+                source_uuid: source_uuid.to_string(),
+                reason: RejectionReason::BelowThreshold,
+                sample_count: context.sample_count,
+                source_record_count: context.sample_count,
+                improved_count: context.improved_count,
+                worsened_count: context.worsened_count,
+                expected_improvement: context.expected_improvement,
+                threshold: context.threshold,
+                weight: Some(context.weight),
+            });
+        }
+    }
+
+    fn mark_candidate_selected(&mut self, target_uuid: &str) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.had_candidate = true;
+        }
+    }
+
+    fn emit_logs(&self) {
+        if !self.enabled {
+            return;
+        }
+
+        for entry in self.entries.values() {
+            if entry.had_candidate {
+                continue;
+            }
+
+            if entry.evaluated_candidates == 0 {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} had no eligible upstream neurons to evaluate.",
+                    entry.target_uuid
+                );
+                continue;
+            }
+
+            let best = match &entry.best_rejection {
+                Some(detail) => detail,
+                None => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} evaluated {} potential synapses but recorded no diagnostics.",
+                        entry.target_uuid, entry.evaluated_candidates
+                    );
+                    continue;
+                }
+            };
+
+            match best.reason {
+                RejectionReason::NoSamples => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} skipped candidate from {} because no aligned samples were available (source records {}, target records {}).",
+                        entry.target_uuid,
+                        best.source_uuid,
+                        best.source_record_count,
+                        entry.target_record_count
+                    );
+                }
+                RejectionReason::ZeroImprovement => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} saw {} aligned samples from {} but GPU stats reported zero consistent improvements (positive {}, negative {}).",
+                        entry.target_uuid,
+                        best.sample_count,
+                        best.source_uuid,
+                        best.improved_count,
+                        best.worsened_count
+                    );
+                }
+                RejectionReason::BelowThreshold => {
+                    if let Some(weight) = best.weight {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Target {} best candidate from {} improved {:.4} but remained below threshold {:.4} (improved {}, worsened {}, suggested weight {:.4}).",
+                            entry.target_uuid,
+                            best.source_uuid,
+                            best.expected_improvement,
+                            best.threshold,
+                            best.improved_count,
+                            best.worsened_count,
+                            weight
+                        );
+                    } else {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Target {} best candidate from {} improved {:.4} but remained below threshold {:.4} (improved {}, worsened {}).",
+                            entry.target_uuid,
+                            best.source_uuid,
+                            best.expected_improvement,
+                            best.threshold,
+                            best.improved_count,
+                            best.worsened_count
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn entry_for(&self, target_uuid: &str) -> Option<&TargetDiagnosticEntry> {
+        self.entries.get(target_uuid)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum NeuronRejectionReason {
+    NoSamples,
+    NotEnoughActivations,
+    WeightDegenerate,
+    BelowThreshold,
+}
+
+#[derive(Clone)]
+struct NeuronRejectionDetail {
+    source_uuid: String,
+    orientation: Option<&'static str>,
+    reason: NeuronRejectionReason,
+    sample_count: usize,
+    improved_count: u32,
+    worsened_count: u32,
+    expected_improvement: f32,
+    threshold: f32,
+    outgoing_weight: Option<f32>,
+}
+
+impl NeuronRejectionDetail {
+    fn score(&self) -> f32 {
+        self.expected_improvement
+    }
+}
+
+struct NeuronDiagnosticEntry {
+    target_uuid: String,
+    target_record_count: usize,
+    evaluated_sources: u32,
+    sources_with_samples: u32,
+    had_candidate: bool,
+    best_rejection: Option<NeuronRejectionDetail>,
+}
+
+impl NeuronDiagnosticEntry {
+    fn new(target_uuid: &str) -> Self {
+        Self {
+            target_uuid: target_uuid.to_string(),
+            target_record_count: 0,
+            evaluated_sources: 0,
+            sources_with_samples: 0,
+            had_candidate: false,
+            best_rejection: None,
+        }
+    }
+
+    fn update_best(&mut self, detail: NeuronRejectionDetail) {
+        match &self.best_rejection {
+            Some(current) => {
+                if detail.score() > current.score()
+                    || (detail.score() == current.score()
+                        && detail.sample_count > current.sample_count)
+                {
+                    self.best_rejection = Some(detail);
+                }
+            }
+            None => self.best_rejection = Some(detail),
+        }
+    }
+}
+
+struct NeuronDiagnostics {
+    enabled: bool,
+    entries: HashMap<String, NeuronDiagnosticEntry>,
+}
+
+impl NeuronDiagnostics {
+    fn new(targets: &[&String]) -> Self {
+        let enabled = std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok();
+        let mut entries = HashMap::new();
+        if enabled {
+            for target in targets {
+                entries.insert(target.to_string(), NeuronDiagnosticEntry::new(target));
+            }
+        }
+        Self { enabled, entries }
+    }
+
+    #[cfg(test)]
+    fn new_for_tests(targets: &[&str]) -> Self {
+        let mut entries = HashMap::new();
+        for target in targets {
+            entries.insert((*target).to_string(), NeuronDiagnosticEntry::new(target));
+        }
+        Self {
+            enabled: true,
+            entries,
+        }
+    }
+
+    fn set_target_record_count(&mut self, target_uuid: &str, count: usize) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.target_record_count = count;
+        }
+    }
+
+    fn record_candidate_attempt(&mut self, target_uuid: &str, had_samples: bool) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.evaluated_sources += 1;
+            if had_samples {
+                entry.sources_with_samples += 1;
+            }
+        }
+    }
+
+    fn record_no_samples(&mut self, target_uuid: &str, source_uuid: &str) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.update_best(NeuronRejectionDetail {
+                source_uuid: source_uuid.to_string(),
+                orientation: None,
+                reason: NeuronRejectionReason::NoSamples,
+                sample_count: 0,
+                improved_count: 0,
+                worsened_count: 0,
+                expected_improvement: f32::NEG_INFINITY,
+                threshold: 0.0,
+                outgoing_weight: None,
+            });
+        }
+    }
+
+    fn record_rejection(
+        &mut self,
+        target_uuid: &str,
+        source_uuid: &str,
+        summary: &ReluOrientationSummary,
+        threshold: f32,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let reason = match summary.failure {
+            Some(ReluFailure::NotEnoughSamples) => NeuronRejectionReason::NotEnoughActivations,
+            Some(ReluFailure::WeightInvalid) => NeuronRejectionReason::WeightDegenerate,
+            Some(ReluFailure::BelowThreshold) | None => NeuronRejectionReason::BelowThreshold,
+        };
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.update_best(NeuronRejectionDetail {
+                source_uuid: source_uuid.to_string(),
+                orientation: Some(summary.orientation_name()),
+                reason,
+                sample_count: summary.sample_count,
+                improved_count: summary.improved_count,
+                worsened_count: summary.worsened_count,
+                expected_improvement: summary.expected_improvement,
+                threshold,
+                outgoing_weight: summary.outgoing_weight,
+            });
+        }
+    }
+
+    fn mark_candidate_selected(&mut self, target_uuid: &str) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.had_candidate = true;
+        }
+    }
+
+    fn emit_logs(&self) {
+        if !self.enabled {
+            return;
+        }
+
+        for entry in self.entries.values() {
+            if entry.had_candidate {
+                continue;
+            }
+
+            if entry.evaluated_sources == 0 {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} had no upstream neurons to analyse.",
+                    entry.target_uuid
+                );
+                continue;
+            }
+
+            let best = match &entry.best_rejection {
+                Some(detail) => detail,
+                None => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} evaluated {} upstream neurons but recorded no diagnostics.",
+                        entry.target_uuid, entry.evaluated_sources
+                    );
+                    continue;
+                }
+            };
+
+            let orientation = best.orientation.unwrap_or("unknown");
+            match best.reason {
+                NeuronRejectionReason::NoSamples => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} skipped candidate from {} because no overlapping samples were found.",
+                        entry.target_uuid, best.source_uuid
+                    );
+                }
+                NeuronRejectionReason::NotEnoughActivations => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} saw fewer than {} aligned samples for {} ({}) so the ReLU neuron could not be evaluated.",
+                        entry.target_uuid,
+                        MIN_NEURON_SAMPLE_COUNT,
+                        best.source_uuid,
+                        orientation
+                    );
+                }
+                NeuronRejectionReason::WeightDegenerate => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} computed a degenerate weight for {} ({}) so the candidate was discarded (samples {}).",
+                        entry.target_uuid,
+                        best.source_uuid,
+                        orientation,
+                        best.sample_count
+                    );
+                }
+                NeuronRejectionReason::BelowThreshold => {
+                    if let Some(weight) = best.outgoing_weight {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Target {} best ReLU candidate from {} ({}) improved {:.4} but stayed below threshold {:.4} (samples {}, improved {}, worsened {}, weight {:.4}).",
+                            entry.target_uuid,
+                            best.source_uuid,
+                            orientation,
+                            best.expected_improvement,
+                            best.threshold,
+                            best.sample_count,
+                            best.improved_count,
+                            best.worsened_count,
+                            weight
+                        );
+                    } else {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Target {} best ReLU candidate from {} ({}) improved {:.4} but stayed below threshold {:.4} (samples {}, improved {}, worsened {}).",
+                            entry.target_uuid,
+                            best.source_uuid,
+                            orientation,
+                            best.expected_improvement,
+                            best.threshold,
+                            best.sample_count,
+                            best.improved_count,
+                            best.worsened_count
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn entry_for(&self, target_uuid: &str) -> Option<&NeuronDiagnosticEntry> {
+        self.entries.get(target_uuid)
+    }
 }
 
 impl<'a> RecordCache<'a> {
@@ -190,19 +752,26 @@ impl ReluStats {
         self.error_activation_sum += relu_activation * error;
     }
 
-    fn candidate(
+    fn evaluate(
         &self,
         source_uuid: &str,
         target_uuid: &str,
         threshold: f32,
-    ) -> Option<CandidateNeuronJson> {
-        if self.samples.len() < MIN_NEURON_SAMPLE_COUNT || self.activation_sq_sum <= EPSILON {
-            return None;
+    ) -> ReluOrientationEvaluation {
+        let sample_count = self.samples.len();
+        if sample_count < MIN_NEURON_SAMPLE_COUNT || self.activation_sq_sum <= EPSILON {
+            return ReluOrientationEvaluation {
+                summary: ReluOrientationSummary::insufficient(self.orientation, sample_count),
+                candidate: None,
+            };
         }
 
         let mut outgoing_weight = self.error_activation_sum / (self.activation_sq_sum + EPSILON);
         if !outgoing_weight.is_finite() || outgoing_weight.abs() <= EPSILON {
-            return None;
+            return ReluOrientationEvaluation {
+                summary: ReluOrientationSummary::degenerate(self.orientation, sample_count),
+                candidate: None,
+            };
         }
         outgoing_weight = outgoing_weight.clamp(-5.0, 5.0);
 
@@ -218,14 +787,22 @@ impl ReluStats {
         }
 
         let total_count = self.samples.len() as u32;
-        if total_count == 0 {
-            return None;
-        }
+        debug_assert!(total_count > 0);
 
-        let expected_improvement_percentage =
+        let expected_improvement =
             (improved_count as f32 - worsened_count as f32) / total_count as f32;
-        if expected_improvement_percentage <= threshold {
-            return None;
+        if expected_improvement <= threshold {
+            return ReluOrientationEvaluation {
+                summary: ReluOrientationSummary::below_threshold(
+                    self.orientation,
+                    sample_count,
+                    improved_count,
+                    worsened_count,
+                    expected_improvement,
+                    outgoing_weight,
+                ),
+                candidate: None,
+            };
         }
 
         let incoming_weight = match self.orientation {
@@ -233,18 +810,127 @@ impl ReluStats {
             ReluOrientation::Negative => -1.0,
         };
 
-        Some(CandidateNeuronJson {
-            source_neuron_uuid: source_uuid.to_string(),
-            target_neuron_uuid: target_uuid.to_string(),
-            incoming_weight,
-            outgoing_weight,
-            squash: "ReLU".to_string(),
-            bias: 0.0,
-            expected_improvement_percentage,
-            improved_count,
-            total_count,
-        })
+        ReluOrientationEvaluation {
+            summary: ReluOrientationSummary::successful(
+                self.orientation,
+                sample_count,
+                improved_count,
+                worsened_count,
+                expected_improvement,
+                outgoing_weight,
+            ),
+            candidate: Some(CandidateNeuronJson {
+                source_neuron_uuid: source_uuid.to_string(),
+                target_neuron_uuid: target_uuid.to_string(),
+                incoming_weight,
+                outgoing_weight,
+                squash: "ReLU".to_string(),
+                bias: 0.0,
+                expected_improvement_percentage: expected_improvement,
+                improved_count,
+                total_count,
+            }),
+        }
     }
+}
+
+#[derive(Clone, Copy)]
+enum ReluFailure {
+    NotEnoughSamples,
+    WeightInvalid,
+    BelowThreshold,
+}
+
+#[derive(Clone)]
+struct ReluOrientationSummary {
+    orientation: ReluOrientation,
+    sample_count: usize,
+    improved_count: u32,
+    worsened_count: u32,
+    expected_improvement: f32,
+    outgoing_weight: Option<f32>,
+    failure: Option<ReluFailure>,
+}
+
+impl ReluOrientationSummary {
+    fn insufficient(orientation: ReluOrientation, sample_count: usize) -> Self {
+        Self {
+            orientation,
+            sample_count,
+            improved_count: 0,
+            worsened_count: 0,
+            expected_improvement: f32::NEG_INFINITY,
+            outgoing_weight: None,
+            failure: Some(ReluFailure::NotEnoughSamples),
+        }
+    }
+
+    fn degenerate(orientation: ReluOrientation, sample_count: usize) -> Self {
+        Self {
+            orientation,
+            sample_count,
+            improved_count: 0,
+            worsened_count: 0,
+            expected_improvement: f32::NEG_INFINITY,
+            outgoing_weight: None,
+            failure: Some(ReluFailure::WeightInvalid),
+        }
+    }
+
+    fn below_threshold(
+        orientation: ReluOrientation,
+        sample_count: usize,
+        improved_count: u32,
+        worsened_count: u32,
+        expected_improvement: f32,
+        outgoing_weight: f32,
+    ) -> Self {
+        Self {
+            orientation,
+            sample_count,
+            improved_count,
+            worsened_count,
+            expected_improvement,
+            outgoing_weight: Some(outgoing_weight),
+            failure: Some(ReluFailure::BelowThreshold),
+        }
+    }
+
+    fn successful(
+        orientation: ReluOrientation,
+        sample_count: usize,
+        improved_count: u32,
+        worsened_count: u32,
+        expected_improvement: f32,
+        outgoing_weight: f32,
+    ) -> Self {
+        Self {
+            orientation,
+            sample_count,
+            improved_count,
+            worsened_count,
+            expected_improvement,
+            outgoing_weight: Some(outgoing_weight),
+            failure: None,
+        }
+    }
+
+    fn orientation_name(&self) -> &'static str {
+        match self.orientation {
+            ReluOrientation::Positive => "positive",
+            ReluOrientation::Negative => "negative",
+        }
+    }
+}
+
+struct ReluOrientationEvaluation {
+    summary: ReluOrientationSummary,
+    candidate: Option<CandidateNeuronJson>,
+}
+
+struct ReluEvaluationResult {
+    candidate: Option<CandidateNeuronJson>,
+    best_summary: Option<ReluOrientationSummary>,
 }
 
 struct ActivationCandidateSpec {
@@ -1610,9 +2296,12 @@ fn evaluate_relu_candidate(
     target_uuid: &str,
     samples: &[HelpfulSample],
     threshold: f32,
-) -> Result<Option<CandidateNeuronJson>> {
+) -> Result<ReluEvaluationResult> {
     if samples.is_empty() {
-        return Ok(None);
+        return Ok(ReluEvaluationResult {
+            candidate: None,
+            best_summary: None,
+        });
     }
 
     // Trigger the helpful analysis pipeline so we honour GPU requirements, even
@@ -1641,19 +2330,33 @@ fn evaluate_relu_candidate(
         }
     }
 
-    let mut candidates = Vec::new();
-    if let Some(candidate) = positive_stats.candidate(source_uuid, target_uuid, threshold) {
-        candidates.push(candidate);
-    }
-    if let Some(candidate) = negative_stats.candidate(source_uuid, target_uuid, threshold) {
-        candidates.push(candidate);
+    let positive_eval = positive_stats.evaluate(source_uuid, target_uuid, threshold);
+    let negative_eval = negative_stats.evaluate(source_uuid, target_uuid, threshold);
+    let evaluations = [positive_eval, negative_eval];
+
+    let mut best_candidate: Option<CandidateNeuronJson> = None;
+    let mut best_candidate_score = f32::NEG_INFINITY;
+    let mut best_summary: Option<ReluOrientationSummary> = None;
+    let mut best_summary_score = f32::NEG_INFINITY;
+
+    for eval in evaluations.into_iter() {
+        if eval.summary.expected_improvement > best_summary_score {
+            best_summary_score = eval.summary.expected_improvement;
+            best_summary = Some(eval.summary.clone());
+        }
+
+        if let Some(candidate) = eval.candidate {
+            if eval.summary.expected_improvement > best_candidate_score {
+                best_candidate_score = eval.summary.expected_improvement;
+                best_candidate = Some(candidate);
+            }
+        }
     }
 
-    Ok(candidates.into_iter().max_by(|a, b| {
-        a.expected_improvement_percentage
-            .partial_cmp(&b.expected_improvement_percentage)
-            .unwrap_or(Ordering::Equal)
-    }))
+    Ok(ReluEvaluationResult {
+        candidate: best_candidate,
+        best_summary,
+    })
 }
 
 fn evaluate_activation_candidate(
@@ -1793,6 +2496,8 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
         }
     }
 
+    let mut diagnostics = NeuronDiagnostics::new(&unique_focus);
+
     for target_uuid in unique_focus {
         let target_records_arc = match cache.get(target_uuid) {
             Ok(records) => records,
@@ -1804,9 +2509,11 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
             }
         };
         if target_records_arc.is_empty() {
+            diagnostics.set_target_record_count(target_uuid, 0);
             continue;
         }
         let target_records = target_records_arc.as_ref();
+        diagnostics.set_target_record_count(target_uuid, target_records.len());
 
         let target_index = match order_map.get(target_uuid.as_str()) {
             Some(index) => *index,
@@ -1828,19 +2535,27 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
                 }
             };
             if from_records_arc.is_empty() {
+                diagnostics.record_candidate_attempt(target_uuid, false);
+                diagnostics.record_no_samples(target_uuid, source_uuid);
                 continue;
             }
             let from_records = from_records_arc.as_ref();
 
             let samples = analyzer.build_samples_gpu(target_records, from_records)?;
+            diagnostics.record_candidate_attempt(target_uuid, !samples.is_empty());
             if samples.is_empty() {
+                diagnostics.record_no_samples(target_uuid, source_uuid);
                 continue;
             }
 
-            if let Some(candidate) =
-                evaluate_relu_candidate(&analyzer, source_uuid, target_uuid, &samples, threshold)?
-            {
+            let relu_result =
+                evaluate_relu_candidate(&analyzer, source_uuid, target_uuid, &samples, threshold)?;
+
+            if let Some(candidate) = relu_result.candidate {
+                diagnostics.mark_candidate_selected(target_uuid);
                 upsert_candidate(&mut helpful_map, candidate);
+            } else if let Some(summary) = relu_result.best_summary.as_ref() {
+                diagnostics.record_rejection(target_uuid, source_uuid, summary, threshold);
             }
 
             for spec in ACTIVATION_SPECS.iter() {
@@ -1852,6 +2567,7 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
                     threshold,
                     spec,
                 )? {
+                    diagnostics.mark_candidate_selected(target_uuid);
                     upsert_candidate(&mut helpful_map, candidate);
                 }
             }
@@ -1868,6 +2584,8 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
     if let Some(limit) = input.max_candidates {
         helpful_results.truncate(limit);
     }
+
+    diagnostics.emit_logs();
 
     Ok(AnalyzeNeuronsResult {
         helpful_neurons: helpful_results,
@@ -1901,6 +2619,14 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
     }
 
     let mut cache = RecordCache::new(&input.parquet_file);
+    let mut seen_targets: HashSet<&str> = HashSet::new();
+    let mut unique_focus: Vec<&String> = Vec::new();
+    for target_uuid in &input.focus_neurons {
+        if seen_targets.insert(target_uuid.as_str()) {
+            unique_focus.push(target_uuid);
+        }
+    }
+    let mut diagnostics = TargetDiagnostics::new(&unique_focus);
 
     let mut helpful_results: Vec<CandidateSynapseJson> = Vec::new();
     let mut harmful_results: Vec<CandidateSynapseJson> = Vec::new();
@@ -1917,12 +2643,14 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 
     let mut helpful_work_batch: Vec<HelpfulWork> = Vec::new();
 
-    for target_uuid in &input.focus_neurons {
+    for target_uuid in &unique_focus {
         let target_records_arc = cache.get(target_uuid)?;
         if target_records_arc.is_empty() {
+            diagnostics.set_target_record_count(target_uuid, 0);
             continue;
         }
         let target_records = target_records_arc.as_ref();
+        diagnostics.set_target_record_count(target_uuid, target_records.len());
 
         let target_index = match order_map.get(target_uuid.as_str()) {
             Some(index) => *index,
@@ -1936,24 +2664,28 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
         {
             let source_uuid = source.uuid.as_str();
 
-            if existing_synapses.contains(&(source_uuid.to_string(), target_uuid.clone())) {
+            if existing_synapses.contains(&(source_uuid.to_string(), target_uuid.to_string())) {
                 continue;
             }
 
             let from_records_arc = cache.get(source_uuid)?;
             if from_records_arc.is_empty() {
+                diagnostics.record_candidate_attempt(target_uuid, false);
+                diagnostics.record_no_samples(target_uuid, source_uuid, 0);
                 continue;
             }
             let from_records = from_records_arc.as_ref();
 
             let samples = analyzer.build_samples_gpu(target_records, from_records)?;
+            diagnostics.record_candidate_attempt(target_uuid, !samples.is_empty());
             if samples.is_empty() {
+                diagnostics.record_no_samples(target_uuid, source_uuid, from_records.len());
                 continue;
             }
 
             helpful_work_batch.push(HelpfulWork {
                 source_uuid: source_uuid.to_string(),
-                target_uuid: target_uuid.clone(),
+                target_uuid: target_uuid.to_string(),
                 samples,
             });
         }
@@ -1975,6 +2707,13 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
             stats.negative_count
         };
         if improved_count == 0 {
+            diagnostics.record_zero_improvement(
+                &work.target_uuid,
+                &work.source_uuid,
+                work.samples.len(),
+                stats.positive_count,
+                stats.negative_count,
+            );
             continue;
         }
 
@@ -2015,6 +2754,18 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
             (improved_count as f32 - worsen_count as f32) / total_count as f32;
 
         if expected_improvement_percentage <= threshold {
+            diagnostics.record_below_threshold(
+                &work.target_uuid,
+                &work.source_uuid,
+                ThresholdContext {
+                    sample_count: work.samples.len(),
+                    expected_improvement: expected_improvement_percentage,
+                    threshold,
+                    improved_count,
+                    worsened_count: worsen_count,
+                    weight,
+                },
+            );
             if helpful_fallback.as_ref().is_none_or(|existing| {
                 existing.expected_improvement_percentage < expected_improvement_percentage
             }) {
@@ -2030,6 +2781,7 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
             continue;
         }
 
+        diagnostics.mark_candidate_selected(&work.target_uuid);
         helpful_results.push(CandidateSynapseJson {
             from_neuron_uuid: work.source_uuid.clone(),
             to_neuron_uuid: work.target_uuid.clone(),
@@ -2084,6 +2836,7 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 
     if helpful_results.is_empty() {
         if let Some(candidate) = helpful_fallback.take() {
+            diagnostics.mark_candidate_selected(&candidate.to_neuron_uuid);
             helpful_results.push(candidate);
         }
     }
@@ -2102,6 +2855,8 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
         helpful_results.truncate(limit);
         harmful_results.truncate(limit);
     }
+
+    diagnostics.emit_logs();
 
     Ok(AnalyzeSynapsesResult {
         helpful_synapses: helpful_results,
@@ -2331,6 +3086,100 @@ mod tests {
         assert_eq!(
             corrected.negative_count, expected.negative_count,
             "Fallback should mirror CPU negative count when GPU result is empty"
+        );
+    }
+
+    #[test]
+    fn diagnostics_prefers_higher_expected_improvement() {
+        let mut diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
+        diagnostics.set_target_record_count("output-0", 1_500);
+        diagnostics.record_candidate_attempt("output-0", false);
+        diagnostics.record_no_samples("output-0", "input-0", 0);
+
+        diagnostics.record_candidate_attempt("output-0", true);
+        diagnostics.record_below_threshold(
+            "output-0",
+            "hidden-1",
+            ThresholdContext {
+                sample_count: 42,
+                expected_improvement: 0.05,
+                threshold: 0.1,
+                improved_count: 30,
+                worsened_count: 12,
+                weight: -0.25,
+            },
+        );
+
+        let entry = diagnostics
+            .entry_for("output-0")
+            .expect("diagnostics entry should exist");
+        let reason = entry.best_rejection.as_ref().map(|detail| detail.reason);
+        assert!(
+            matches!(reason, Some(RejectionReason::BelowThreshold)),
+            "Expected below-threshold reason to persist when it has the highest score"
+        );
+    }
+
+    #[test]
+    fn diagnostics_marks_candidate_selection() {
+        let mut diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
+        diagnostics.mark_candidate_selected("output-0");
+        let entry = diagnostics
+            .entry_for("output-0")
+            .expect("diagnostics entry should exist");
+        assert!(
+            entry.had_candidate,
+            "Entry should record that a candidate was selected"
+        );
+    }
+
+    #[test]
+    fn relu_evaluation_identifies_below_threshold_reason() {
+        let mut stats = ReluStats::new(ReluOrientation::Positive);
+        for _ in 0..(MIN_NEURON_SAMPLE_COUNT + 2) {
+            stats.push(1.0, 0.05);
+        }
+        let evaluation = stats.evaluate("source", "target", 2.0);
+        assert!(
+            evaluation.candidate.is_none(),
+            "Expected candidate to fall below the threshold"
+        );
+        assert!(
+            matches!(
+                evaluation.summary.failure,
+                Some(ReluFailure::BelowThreshold)
+            ),
+            "Summary should record the below-threshold failure"
+        );
+    }
+
+    #[test]
+    fn neuron_diagnostics_records_relu_rejection() {
+        let mut diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
+        let summary = ReluOrientationSummary::below_threshold(
+            ReluOrientation::Positive,
+            MIN_NEURON_SAMPLE_COUNT,
+            12,
+            4,
+            0.05,
+            0.25,
+        );
+        diagnostics.record_rejection("output-0", "hidden-1", &summary, 0.1);
+        let entry = diagnostics
+            .entry_for("output-0")
+            .expect("diagnostics entry should exist");
+        let detail = entry
+            .best_rejection
+            .as_ref()
+            .expect("best rejection should be recorded");
+        assert!(
+            matches!(detail.reason, NeuronRejectionReason::BelowThreshold),
+            "Expected below-threshold reason"
+        );
+        assert_eq!(
+            detail.orientation,
+            Some("positive"),
+            "Orientation should be preserved"
         );
     }
 
