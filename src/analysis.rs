@@ -1489,10 +1489,10 @@ impl GpuAnalyzer {
         let data = buffer_slice.get_mapped_range();
         let gpu_samples: &[GpuHelpfulSample] = bytemuck::cast_slice(&data);
 
-        // Filter out zero samples (no match or invalid)
+        // Retain only finite samples; GPU matching emits NaN for invalid rows
         let mut samples = Vec::new();
         for gpu_sample in gpu_samples {
-            if gpu_sample.activation != 0.0 || gpu_sample.avg_error != 0.0 {
+            if gpu_sample.activation.is_finite() && gpu_sample.avg_error.is_finite() {
                 samples.push(HelpfulSample {
                     activation: gpu_sample.activation,
                     avg_error: gpu_sample.avg_error,
@@ -2170,6 +2170,96 @@ mod tests {
         assert!(
             harmful_stats.harmful_count > 0 || harmful_stats.helpful_count > 0,
             "CPU analysis should produce non-zero harmful counts"
+        );
+    }
+
+    #[test]
+    fn gpu_matching_filters_non_finite_values() {
+        let analyzer =
+            GpuAnalyzer::new(false).expect("GPU analyser creation should succeed in tests");
+
+        if !analyzer.gpu_used() {
+            eprintln!("Skipping GPU filtering test because the GPU is unavailable");
+            return;
+        }
+
+        let huge = f32::MAX;
+        let target_records = vec![
+            DiscoverRecord::new(0, "target".to_string(), None, 0.0, vec![0.5, -0.25]),
+            DiscoverRecord::new(1, "target".to_string(), None, 0.0, vec![huge, huge]),
+        ];
+        let from_records = vec![
+            DiscoverRecord::new(0, "from".to_string(), None, f32::INFINITY, Vec::new()),
+            DiscoverRecord::new(1, "from".to_string(), None, 1.0, Vec::new()),
+        ];
+
+        let cpu_samples = build_samples(&target_records, &from_records);
+        assert!(
+            cpu_samples.is_empty(),
+            "CPU matching should exclude non-finite samples"
+        );
+
+        let gpu_samples = analyzer
+            .build_samples_gpu(&target_records, &from_records)
+            .expect("GPU matching should succeed");
+
+        assert!(
+            gpu_samples.is_empty(),
+            "GPU matching should exclude non-finite samples"
+        );
+    }
+
+    #[test]
+    fn gpu_matching_retains_legitimate_zero_samples() {
+        let analyzer =
+            GpuAnalyzer::new(false).expect("GPU analyser creation should succeed in tests");
+
+        if !analyzer.gpu_used() {
+            eprintln!("Skipping zero sample retention test because the GPU is unavailable");
+            return;
+        }
+
+        let target_records = vec![DiscoverRecord::new(
+            42,
+            "target".to_string(),
+            None,
+            0.0,
+            vec![0.0, 0.0],
+        )];
+        let from_records = vec![DiscoverRecord::new(
+            42,
+            "from".to_string(),
+            None,
+            0.0,
+            Vec::new(),
+        )];
+
+        let cpu_samples = build_samples(&target_records, &from_records);
+        assert_eq!(
+            cpu_samples.len(),
+            1,
+            "CPU matching should include legitimate zero-valued samples"
+        );
+
+        let gpu_samples = analyzer
+            .build_samples_gpu(&target_records, &from_records)
+            .expect("GPU matching should succeed");
+
+        assert_eq!(
+            gpu_samples.len(),
+            cpu_samples.len(),
+            "GPU matching should retain legitimate zero-valued samples"
+        );
+
+        let cpu_sample = cpu_samples[0];
+        let gpu_sample = gpu_samples[0];
+        assert_eq!(
+            cpu_sample.activation, gpu_sample.activation,
+            "Zero activation should be preserved by GPU matching"
+        );
+        assert_eq!(
+            cpu_sample.avg_error, gpu_sample.avg_error,
+            "Zero average error should be preserved by GPU matching"
         );
     }
 

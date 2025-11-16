@@ -29,6 +29,20 @@ var<storage, read_write> samples: array<HelpfulSample>;
 @group(0) @binding(3)
 var<uniform> uniforms: MatchingUniforms;
 
+const MAX_F32: f32 = 3.402823466e+38;
+const QUIET_NAN_BITS: u32 = 0x7fc00000u;
+
+fn is_finite_value(value: f32) -> bool {
+    if (value != value) {
+        return false;
+    }
+    return abs(value) <= MAX_F32;
+}
+
+fn quiet_nan() -> f32 {
+    return bitcast<f32>(QUIET_NAN_BITS);
+}
+
 // Binary search for matching obs_index in sorted target_records
 fn find_target_index(search_obs: u32) -> i32 {
     var left: i32 = 0;
@@ -59,9 +73,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let from_rec = from_records[idx];
 
-    // Skip if activation is NaN (NaN != NaN is true)
-    if (from_rec.activation != from_rec.activation) {
-        samples[idx] = HelpfulSample(0.0, 0.0);
+    // Skip if activation is not finite
+    if (!is_finite_value(from_rec.activation)) {
+        samples[idx] = HelpfulSample(0.0, quiet_nan());
         return;
     }
 
@@ -71,15 +85,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (target_idx >= 0) {
         let target_rec = target_records[u32(target_idx)];
 
-        // Skip if error is NaN
-        if (target_rec.avg_error == target_rec.avg_error) {
+        // Skip if the averaged error is not finite
+        if (is_finite_value(target_rec.avg_error)) {
             samples[idx] = HelpfulSample(from_rec.activation, target_rec.avg_error);
         } else {
-            samples[idx] = HelpfulSample(0.0, 0.0);
+            samples[idx] = HelpfulSample(0.0, quiet_nan());
         }
     } else {
         // No match found
-        samples[idx] = HelpfulSample(0.0, 0.0);
+        samples[idx] = HelpfulSample(0.0, quiet_nan());
     }
 }
 
