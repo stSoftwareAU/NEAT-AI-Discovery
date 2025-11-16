@@ -54,6 +54,9 @@ error. Controllers call into the library via Deno FFI to power
 - Call `analyze_synapses` once per focused neuron where practical. Passing a
   single `focus_neurons` entry keeps diagnostics easy to map back to the Deno
   request and mirrors how NEAT-AI orchestrates discovery.
+- The Rust side now refuses to run if `focus_neurons` is empty or contains
+  duplicates. Controllers **must** validate and de-duplicate targets before
+  calling into FFI so any upstream issues are surfaced promptly.
 - For each focus target the Rust side enumerates **all** upstream neurons (every
   observation/input slot and every hidden neuron whose index precedes the
   target) that do **not** already have a synapse. This quickly grows into

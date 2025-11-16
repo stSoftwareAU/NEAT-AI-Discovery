@@ -628,6 +628,37 @@ impl<'a> RecordCache<'a> {
     }
 }
 
+fn require_unique_focus<'a>(focus_neurons: &'a [String], context: &str) -> Result<Vec<&'a String>> {
+    if focus_neurons.is_empty() {
+        return Err(anyhow!(
+            "{context} needs at least one focus neuron. The Deno controller supplied an empty `focus_neurons` array, so there is nothing to analyse. Please fix the upstream request and retry after setting `NEAT_AI_DISCOVERY_VERBOSE=1` if you need extra logging."
+        ));
+    }
+
+    let mut seen_targets: HashSet<&str> = HashSet::new();
+    let mut unique_focus: Vec<&String> = Vec::new();
+    let mut duplicates: Vec<String> = Vec::new();
+
+    for target_uuid in focus_neurons {
+        if seen_targets.insert(target_uuid.as_str()) {
+            unique_focus.push(target_uuid);
+        } else {
+            duplicates.push(target_uuid.clone());
+        }
+    }
+
+    if !duplicates.is_empty() {
+        duplicates.sort();
+        duplicates.dedup();
+        let joined = duplicates.join(", ");
+        return Err(anyhow!(
+            "{context} received duplicate focus neurons ({joined}). Each target must be unique so we can map diagnostics back to the Deno request. We are refusing to continue so the upstream behaviour can be corrected."
+        ));
+    }
+
+    Ok(unique_focus)
+}
+
 #[derive(Clone, Copy)]
 struct HelpfulSample {
     activation: f32,
@@ -2340,7 +2371,7 @@ fn evaluate_relu_candidate(
     let mut best_summary_score = f32::NEG_INFINITY;
 
     for eval in evaluations.into_iter() {
-        if best_summary.is_none() || eval.summary.expected_improvement >= best_summary_score {
+        if best_summary.is_none() || eval.summary.expected_improvement > best_summary_score {
             best_summary_score = eval.summary.expected_improvement;
             best_summary = Some(eval.summary.clone());
         }
@@ -2486,16 +2517,10 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
         order_map.insert(neuron.uuid.as_str(), neuron.index);
     }
 
+    let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_neurons")?;
+
     let mut cache = RecordCache::new(&input.parquet_file);
     let mut helpful_map: HashMap<(String, String, String), CandidateNeuronJson> = HashMap::new();
-
-    let mut seen_targets: HashSet<&str> = HashSet::new();
-    let mut unique_focus: Vec<&String> = Vec::new();
-    for target_uuid in &input.focus_neurons {
-        if seen_targets.insert(target_uuid.as_str()) {
-            unique_focus.push(target_uuid);
-        }
-    }
 
     let mut diagnostics = NeuronDiagnostics::new(&unique_focus);
 
@@ -2619,14 +2644,9 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
             .push(synapse);
     }
 
+    let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_synapses")?;
+
     let mut cache = RecordCache::new(&input.parquet_file);
-    let mut seen_targets: HashSet<&str> = HashSet::new();
-    let mut unique_focus: Vec<&String> = Vec::new();
-    for target_uuid in &input.focus_neurons {
-        if seen_targets.insert(target_uuid.as_str()) {
-            unique_focus.push(target_uuid);
-        }
-    }
     let mut diagnostics = TargetDiagnostics::new(&unique_focus);
 
     let mut helpful_results: Vec<CandidateSynapseJson> = Vec::new();
@@ -2794,7 +2814,7 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
     }
 
     // Harmful synapses (existing connections) - process per target
-    for target_uuid in &input.focus_neurons {
+    for target_uuid in &unique_focus {
         let target_records_arc = cache.get(target_uuid)?;
         if target_records_arc.is_empty() {
             continue;
@@ -2871,7 +2891,7 @@ mod tests {
     use super::*;
     use crate::parquet_format::write_records_to_parquet;
     use crate::types::DiscoverRecord;
-    use crate::{AnalyzeNeuronsInput, CreatureJson, NeuronJson};
+    use crate::{AnalyzeNeuronsInput, AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};
     use std::sync::atomic::Ordering as AtomicOrdering;
     use tempfile::tempdir;
 
@@ -3155,6 +3175,49 @@ mod tests {
     }
 
     #[test]
+    fn relu_evaluation_keeps_summary_and_candidate_in_sync_on_ties() {
+        let _guard = ForceGpuFailureGuard::new();
+        let analyzer =
+            GpuAnalyzer::new(false).expect("CPU analysis should be available when GPU is optional");
+
+        let mut samples = Vec::new();
+        for _ in 0..MIN_NEURON_SAMPLE_COUNT {
+            samples.push(HelpfulSample {
+                activation: 1.0,
+                avg_error: -1.0,
+            });
+        }
+        for _ in 0..MIN_NEURON_SAMPLE_COUNT {
+            samples.push(HelpfulSample {
+                activation: -1.0,
+                avg_error: 1.0,
+            });
+        }
+
+        let result = evaluate_relu_candidate(&analyzer, "input-0", "output-0", &samples, 0.0)
+            .expect("ReLU evaluation should succeed with balanced samples");
+
+        let summary = result
+            .best_summary
+            .expect("Expected a summary for the best orientation");
+        let candidate = result
+            .candidate
+            .expect("Expected a candidate neuron for tied orientations");
+
+        let summary_orientation = summary.orientation_name();
+        let candidate_orientation = if candidate.incoming_weight > 0.0 {
+            "positive"
+        } else {
+            "negative"
+        };
+
+        assert_eq!(
+            summary_orientation, candidate_orientation,
+            "Summary orientation should match the selected candidate orientation when scores tie",
+        );
+    }
+
+    #[test]
     fn neuron_diagnostics_records_relu_rejection() {
         let mut diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
         let summary = ReluOrientationSummary::below_threshold(
@@ -3185,7 +3248,7 @@ mod tests {
     }
 
     #[test]
-    fn analyze_neurons_deduplicates_focus_targets() {
+    fn analyze_neurons_rejects_duplicate_focus_targets() {
         let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
@@ -3245,35 +3308,123 @@ mod tests {
             require_gpu: Some(false),
         };
 
-        let result = analyze_neurons(&input)
-            .expect("Neuron analysis should succeed with duplicate focus neurons");
+        let err = analyze_neurons(&input)
+            .err()
+            .expect("Neuron analysis should refuse duplicate focus neurons");
+        let message = format!("{err}");
         assert!(
-            !result.helpful_neurons.is_empty(),
-            "Expected at least one candidate neuron",
+            message.contains("duplicate focus neurons"),
+            "Expected duplicate focus error, got: {message}",
         );
+    }
 
-        use std::collections::HashSet;
-        let unique: HashSet<(&str, &str, &str)> = result
-            .helpful_neurons
-            .iter()
-            .map(|candidate| {
-                (
-                    candidate.source_neuron_uuid.as_str(),
-                    candidate.target_neuron_uuid.as_str(),
-                    candidate.squash.as_str(),
-                )
-            })
-            .collect();
+    #[test]
+    fn analyze_synapses_rejects_duplicate_focus_targets() {
+        let _guard = ForceGpuFailureGuard::new();
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
 
-        assert_eq!(
-            unique.len(),
-            result.helpful_neurons.len(),
-            "Duplicate focus neurons should not yield duplicate candidates",
-        );
+        let sample_count = 16;
+        let mut records = Vec::new();
+        for obs_index in 0..sample_count {
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-0".to_string(),
+                Some(0.0),
+                0.25,
+                vec![0.1],
+            ));
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.5,
+                vec![-0.05],
+            ));
+        }
 
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        let creature = CreatureJson {
+            input: 1,
+            output: 1,
+            neurons: vec![
+                NeuronJson {
+                    uuid: "input-0".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "output-0".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![SynapseJson {
+                from_uuid: "input-0".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 0.4,
+            }],
+        };
+
+        let input = AnalyzeSynapsesInput {
+            parquet_file,
+            creature,
+            focus_neurons: vec!["output-0".to_string(), "output-0".to_string()],
+            improvement_threshold: Some(0.05),
+            max_candidates: None,
+            require_gpu: Some(false),
+        };
+
+        let err = analyze_synapses(&input)
+            .err()
+            .expect("Synapse analysis should refuse duplicate focus neurons");
+        let message = format!("{err}");
         assert!(
-            unique.iter().any(|(_, target, _)| *target == "output-0"),
-            "Expected a candidate targeting output-0",
+            message.contains("duplicate focus neurons"),
+            "Expected duplicate focus error, got: {message}",
+        );
+    }
+
+    #[test]
+    fn analyze_synapses_requires_focus_targets() {
+        let _guard = ForceGpuFailureGuard::new();
+
+        let creature = CreatureJson {
+            input: 0,
+            output: 1,
+            neurons: vec![NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            }],
+            synapses: Vec::new(),
+        };
+
+        let input = AnalyzeSynapsesInput {
+            parquet_file: "unused.parquet".to_string(),
+            creature,
+            focus_neurons: Vec::new(),
+            improvement_threshold: None,
+            max_candidates: None,
+            require_gpu: Some(false),
+        };
+
+        let err = analyze_synapses(&input)
+            .err()
+            .expect("Synapse analysis should refuse empty focus lists");
+        let message = format!("{err}");
+        assert!(
+            message.contains("at least one focus neuron"),
+            "Expected missing focus error, got: {message}",
         );
     }
 
