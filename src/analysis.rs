@@ -13,6 +13,7 @@ use wgpu::util::DeviceExt;
 const EPSILON: f32 = 1e-8;
 const WORKGROUP_SIZE: u32 = 256;
 const MIN_NEURON_SAMPLE_COUNT: usize = 10;
+const GPU_BATCH_SIZE: usize = 32; // Batch multiple GPU operations together for better utilization
 
 #[cfg(test)]
 static FORCE_GPU_ADAPTER_FAILURE: AtomicBool = AtomicBool::new(false);
@@ -76,6 +77,29 @@ struct HelpfulSample {
 struct GpuHelpfulSample {
     activation: f32,
     avg_error: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuTargetRecord {
+    obs_index: u32,
+    avg_error: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuFromRecord {
+    obs_index: u32,
+    activation: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct MatchingUniforms {
+    target_count: u32,
+    from_count: u32,
+    pad0: u32,
+    pad1: u32,
 }
 
 impl From<HelpfulSample> for GpuHelpfulSample {
@@ -391,6 +415,8 @@ struct GpuAnalyzer {
     helpful_pipeline: Option<wgpu::ComputePipeline>,
     harmful_layout: Option<wgpu::BindGroupLayout>,
     harmful_pipeline: Option<wgpu::ComputePipeline>,
+    matching_layout: Option<wgpu::BindGroupLayout>,
+    matching_pipeline: Option<wgpu::ComputePipeline>,
     gpu_used: bool,
 }
 
@@ -403,6 +429,8 @@ impl GpuAnalyzer {
             helpful_pipeline: None,
             harmful_layout: None,
             harmful_pipeline: None,
+            matching_layout: None,
+            matching_pipeline: None,
             gpu_used: false,
         }
     }
@@ -428,8 +456,33 @@ impl GpuAnalyzer {
         }));
 
         let adapter = match adapter {
-            Some(adapter) => adapter,
+            Some(adapter) => {
+                #[cfg(not(test))]
+                {
+                    // Log adapter info for diagnostics (only in non-test builds)
+                    if std::env::var("NEAT_AI_DISCOVERY_GPU_DEBUG").is_ok() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery] GPU adapter found: {:?}",
+                            adapter.get_info()
+                        );
+                    }
+                }
+                adapter
+            }
             None => {
+                #[cfg(not(test))]
+                {
+                    if std::env::var("NEAT_AI_DISCOVERY_GPU_DEBUG").is_ok() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery] No GPU adapter available, {}",
+                            if require_gpu {
+                                "failing (GPU required)"
+                            } else {
+                                "falling back to CPU"
+                            }
+                        );
+                    }
+                }
                 if require_gpu {
                     return Err(anyhow!("No GPU adapter available for discovery analysis"));
                 }
@@ -445,8 +498,32 @@ impl GpuAnalyzer {
             },
             None,
         )) {
-            Ok(result) => result,
+            Ok(result) => {
+                #[cfg(not(test))]
+                {
+                    if std::env::var("NEAT_AI_DISCOVERY_GPU_DEBUG").is_ok() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery] GPU device initialised successfully: {:?}",
+                            result.0.features()
+                        );
+                    }
+                }
+                result
+            }
             Err(err) => {
+                #[cfg(not(test))]
+                {
+                    if std::env::var("NEAT_AI_DISCOVERY_GPU_DEBUG").is_ok() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery] GPU device initialisation failed: {err}, {}",
+                            if require_gpu {
+                                "failing (GPU required)"
+                            } else {
+                                "falling back to CPU"
+                            }
+                        );
+                    }
+                }
                 if require_gpu {
                     return Err(anyhow!(
                         "Failed to initialise GPU device for discovery analysis: {err}"
@@ -460,6 +537,8 @@ impl GpuAnalyzer {
             Self::build_helpful_pipeline(&device, "helpful-synapse-pipeline");
         let (harmful_layout, harmful_pipeline) =
             Self::build_harmful_pipeline(&device, "harmful-synapse-pipeline");
+        let (matching_layout, matching_pipeline) =
+            Self::build_matching_pipeline(&device, "matching-pipeline");
 
         Ok(Self {
             device: Some(device),
@@ -468,6 +547,8 @@ impl GpuAnalyzer {
             helpful_pipeline: Some(helpful_pipeline),
             harmful_layout: Some(harmful_layout),
             harmful_pipeline: Some(harmful_pipeline),
+            matching_layout: Some(matching_layout),
+            matching_pipeline: Some(matching_pipeline),
             gpu_used: true,
         })
     }
@@ -567,6 +648,77 @@ impl GpuAnalyzer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
+        });
+
+        (layout, pipeline)
+    }
+
+    fn build_matching_pipeline(
+        device: &wgpu::Device,
+        label: &str,
+    ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("matching-shader"),
+            source: wgpu::ShaderSource::Wgsl(MATCHING_SHADER.into()),
+        });
+
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("matching-bind-group"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -906,6 +1058,408 @@ impl GpuAnalyzer {
     fn gpu_used(&self) -> bool {
         self.gpu_used
     }
+
+    /// Batch evaluate multiple helpful operations to improve GPU utilization
+    /// Returns a vector of stats in the same order as the input samples
+    fn evaluate_helpful_batch(&self, samples_batch: &[&[HelpfulSample]]) -> Result<Vec<HelpfulStats>> {
+        if samples_batch.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if !self.gpu_used {
+            // CPU fallback - process sequentially
+            return Ok(samples_batch
+                .iter()
+                .map(|samples| cpu_helpful_stats(samples))
+                .collect());
+        }
+
+        let device = self
+            .device
+            .as_ref()
+            .context("GPU device not initialised for batched helpful analysis")?;
+        let queue = self
+            .queue
+            .as_ref()
+            .context("GPU queue not initialised for batched helpful analysis")?;
+        let helpful_layout = self
+            .helpful_layout
+            .as_ref()
+            .context("GPU layout not initialised for batched helpful analysis")?;
+        let helpful_pipeline = self
+            .helpful_pipeline
+            .as_ref()
+            .context("GPU pipeline not initialised for batched helpful analysis")?;
+
+        // Process in batches to avoid excessive memory usage
+        let mut all_results = Vec::with_capacity(samples_batch.len());
+        
+        for batch_chunk in samples_batch.chunks(GPU_BATCH_SIZE) {
+            let mut batch_encoders = Vec::new();
+            let mut batch_staging_buffers = Vec::new();
+            let mut batch_contribution_sizes = Vec::new();
+
+            // Prepare all operations in this batch
+            for samples in batch_chunk {
+                if samples.is_empty() {
+                    all_results.push(HelpfulStats::default());
+                    continue;
+                }
+
+                let gpu_samples: Vec<GpuHelpfulSample> = samples
+                    .iter()
+                    .copied()
+                    .map(GpuHelpfulSample::from)
+                    .collect();
+                let contributions_zeroed = vec![HelpfulContribution::zeroed(); samples.len()];
+
+                let sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("helpful-samples-buffer-batch"),
+                    contents: bytemuck::cast_slice(&gpu_samples),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
+
+                let contributions_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("helpful-contributions-buffer-batch"),
+                    contents: bytemuck::cast_slice(&contributions_zeroed),
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_SRC
+                        | wgpu::BufferUsages::COPY_DST,
+                });
+
+                let uniforms = HelpfulUniforms {
+                    length: samples.len() as u32,
+                    pad0: 0,
+                    epsilon: EPSILON,
+                    pad1: 0.0,
+                };
+                let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("helpful-uniform-buffer-batch"),
+                    contents: bytemuck::bytes_of(&uniforms),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: helpful_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: sample_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: contributions_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: uniform_buffer.as_entire_binding(),
+                        },
+                    ],
+                    label: Some("helpful-bind-group-batch"),
+                });
+
+                let contribution_size = (std::mem::size_of::<HelpfulContribution>() * samples.len()) as u64;
+                let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("helpful-staging-buffer-batch"),
+                    size: contribution_size,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("helpful-command-encoder-batch"),
+                });
+
+                {
+                    let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("helpful-compute-pass-batch"),
+                        timestamp_writes: None,
+                    });
+                    compute_pass.set_pipeline(helpful_pipeline);
+                    compute_pass.set_bind_group(0, &bind_group, &[]);
+                    let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
+                    compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+                }
+
+                encoder.copy_buffer_to_buffer(
+                    &contributions_buffer,
+                    0,
+                    &staging_buffer,
+                    0,
+                    contribution_size,
+                );
+
+                batch_encoders.push(encoder);
+                batch_staging_buffers.push(staging_buffer);
+                batch_contribution_sizes.push((contribution_size, samples.len()));
+            }
+
+            // Submit all operations in this batch at once
+            let command_buffers: Vec<_> = batch_encoders.into_iter().map(|e| e.finish()).collect();
+            queue.submit(command_buffers);
+
+            // Wait for all results (single poll for entire batch)
+            let mut batch_results = Vec::new();
+            for (staging_buffer, (_contribution_size, sample_len)) in batch_staging_buffers.into_iter().zip(batch_contribution_sizes) {
+                let buffer_slice = staging_buffer.slice(..);
+                let (sender, receiver) = mpsc::channel();
+                buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                    sender
+                        .send(result)
+                        .expect("Failed to send map_async result");
+                });
+                
+                // Poll until this specific buffer is ready
+                loop {
+                    device.poll(wgpu::Maintain::Poll);
+                    match receiver.try_recv() {
+                        Ok(Ok(())) => break,
+                        Ok(Err(err)) => {
+                            return Err(anyhow!("Failed to map helpful contributions buffer: {err}"));
+                        }
+                        Err(mpsc::TryRecvError::Empty) => {
+                            // Continue polling
+                            continue;
+                        }
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            return Err(anyhow!("Failed to receive helpful map_async completion"));
+                        }
+                    }
+                }
+
+                let data = buffer_slice.get_mapped_range();
+                let contributions: &[HelpfulContribution] = bytemuck::cast_slice(&data);
+
+                let mut stats = HelpfulStats::default();
+                for contribution in contributions {
+                    stats.positive_count += contribution.positive_flag;
+                    stats.negative_count += contribution.negative_flag;
+                    stats.positive_improvement_sum += contribution.positive_improvement;
+                    stats.negative_improvement_sum += contribution.negative_improvement;
+                    stats.positive_activation_sum += contribution.positive_activation;
+                    stats.negative_activation_sum += contribution.negative_activation;
+                }
+
+                drop(data);
+                staging_buffer.unmap();
+
+                // Fallback check
+                if stats.positive_count == 0 && stats.negative_count == 0 && sample_len > 0 {
+                    // This shouldn't happen in batch mode, but keep the check
+                    let cpu_stats = cpu_helpful_stats(&[]); // Empty check
+                    if cpu_stats.positive_count > 0 || cpu_stats.negative_count > 0 {
+                        stats = cpu_stats;
+                    }
+                }
+
+                batch_results.push(stats);
+            }
+
+            all_results.extend(batch_results);
+        }
+
+        Ok(all_results)
+    }
+
+    /// GPU-accelerated matching of activations to errors by obs_index
+    /// This replaces the CPU-based build_samples function for better GPU utilization
+    fn build_samples_gpu(
+        &self,
+        target_records: &[DiscoverRecord],
+        from_records: &[DiscoverRecord],
+    ) -> Result<Vec<HelpfulSample>> {
+        if target_records.is_empty() || from_records.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if !self.gpu_used {
+            // CPU fallback
+            return Ok(build_samples(target_records, from_records));
+        }
+
+        let device = self
+            .device
+            .as_ref()
+            .context("GPU device not initialised for sample matching")?;
+        let queue = self
+            .queue
+            .as_ref()
+            .context("GPU queue not initialised for sample matching")?;
+        let matching_layout = self
+            .matching_layout
+            .as_ref()
+            .context("GPU matching layout not initialised")?;
+        let matching_pipeline = self
+            .matching_pipeline
+            .as_ref()
+            .context("GPU matching pipeline not initialised")?;
+
+        // Prepare target records: compute avg_error and create GPU structures
+        let mut gpu_targets: Vec<GpuTargetRecord> = Vec::new();
+        for record in target_records {
+            if record.errors.is_empty() {
+                continue;
+            }
+            let mut sum = 0.0;
+            let mut count = 0;
+            for error in &record.errors {
+                if error.is_finite() {
+                    sum += *error;
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                gpu_targets.push(GpuTargetRecord {
+                    obs_index: record.obs_index,
+                    avg_error: sum / count as f32,
+                });
+            }
+        }
+
+        if gpu_targets.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Sort by obs_index for binary search (should already be sorted, but ensure it)
+        gpu_targets.sort_by_key(|r| r.obs_index);
+
+        // Prepare from records
+        let gpu_froms: Vec<GpuFromRecord> = from_records
+            .iter()
+            .map(|r| GpuFromRecord {
+                obs_index: r.obs_index,
+                activation: r.activation,
+            })
+            .collect();
+
+        // Create GPU buffers
+        let target_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("matching-target-buffer"),
+            contents: bytemuck::cast_slice(&gpu_targets),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let from_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("matching-from-buffer"),
+            contents: bytemuck::cast_slice(&gpu_froms),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let samples_zeroed = vec![GpuHelpfulSample::zeroed(); from_records.len()];
+        let samples_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("matching-samples-buffer"),
+            contents: bytemuck::cast_slice(&samples_zeroed),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let uniforms = MatchingUniforms {
+            target_count: gpu_targets.len() as u32,
+            from_count: from_records.len() as u32,
+            pad0: 0,
+            pad1: 0,
+        };
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("matching-uniform-buffer"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: matching_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: target_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: from_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: samples_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("matching-bind-group"),
+        });
+
+        let sample_size = (std::mem::size_of::<GpuHelpfulSample>() * from_records.len()) as u64;
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("matching-staging-buffer"),
+            size: sample_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("matching-command-encoder"),
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("matching-compute-pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(matching_pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            let workgroups = (from_records.len() as u32).div_ceil(WORKGROUP_SIZE);
+            compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+        }
+
+        encoder.copy_buffer_to_buffer(
+            &samples_buffer,
+            0,
+            &staging_buffer,
+            0,
+            sample_size,
+        );
+
+        queue.submit(Some(encoder.finish()));
+
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender
+                .send(result)
+                .expect("Failed to send map_async result");
+        });
+        device.poll(wgpu::Maintain::Wait);
+
+        match receiver.recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                return Err(anyhow!("Failed to map matching samples buffer: {err}"));
+            }
+            Err(_) => {
+                return Err(anyhow!("Failed to receive matching map_async completion"));
+            }
+        }
+
+        let data = buffer_slice.get_mapped_range();
+        let gpu_samples: &[GpuHelpfulSample] = bytemuck::cast_slice(&data);
+
+        // Filter out zero samples (no match or invalid)
+        let mut samples = Vec::new();
+        for gpu_sample in gpu_samples {
+            if gpu_sample.activation != 0.0 || gpu_sample.avg_error != 0.0 {
+                samples.push(HelpfulSample {
+                    activation: gpu_sample.activation,
+                    avg_error: gpu_sample.avg_error,
+                });
+            }
+        }
+
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok(samples)
+    }
 }
 
 const HELPFUL_SHADER: &str = r#"
@@ -1047,6 +1601,93 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     contributions[idx] = contribution;
+}
+"#;
+
+const MATCHING_SHADER: &str = r#"
+struct TargetRecord {
+    obs_index: u32,
+    avg_error: f32,
+};
+
+struct FromRecord {
+    obs_index: u32,
+    activation: f32,
+};
+
+struct HelpfulSample {
+    activation: f32,
+    avg_error: f32,
+};
+
+struct MatchingUniforms {
+    target_count: u32,
+    from_count: u32,
+    pad0: u32,
+    pad1: u32,
+};
+
+@group(0) @binding(0)
+var<storage, read> target_records: array<TargetRecord>;
+@group(0) @binding(1)
+var<storage, read> from_records: array<FromRecord>;
+@group(0) @binding(2)
+var<storage, read_write> samples: array<HelpfulSample>;
+@group(0) @binding(3)
+var<uniform> uniforms: MatchingUniforms;
+
+// Binary search for matching obs_index in sorted target_records
+fn find_target_index(search_obs: u32) -> i32 {
+    var left: i32 = 0;
+    var right: i32 = i32(uniforms.target_count) - 1;
+    
+    while (left <= right) {
+        let mid = (left + right) / 2;
+        let mid_obs = target_records[u32(mid)].obs_index;
+        
+        if (mid_obs == search_obs) {
+            return mid;
+        } else if (mid_obs < search_obs) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+    
+    return -1; // Not found
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let idx = global_id.x;
+    if (idx >= uniforms.from_count) {
+        return;
+    }
+    
+    let from_rec = from_records[idx];
+    
+    // Skip if activation is NaN (NaN != NaN is true)
+    if (from_rec.activation != from_rec.activation) {
+        samples[idx] = HelpfulSample(0.0, 0.0);
+        return;
+    }
+    
+    // Binary search for matching target record
+    let target_idx = find_target_index(from_rec.obs_index);
+    
+    if (target_idx >= 0) {
+        let target_rec = target_records[u32(target_idx)];
+        
+        // Skip if error is NaN
+        if (target_rec.avg_error == target_rec.avg_error) {
+            samples[idx] = HelpfulSample(from_rec.activation, target_rec.avg_error);
+        } else {
+            samples[idx] = HelpfulSample(0.0, 0.0);
+        }
+    } else {
+        // No match found
+        samples[idx] = HelpfulSample(0.0, 0.0);
+    }
 }
 "#;
 
@@ -1369,7 +2010,7 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
             }
             let from_records = from_records_arc.as_ref();
 
-            let samples = build_samples(target_records, from_records);
+            let samples = analyzer.build_samples_gpu(target_records, from_records)?;
             if samples.is_empty() {
                 continue;
             }
@@ -1443,7 +2084,16 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
     let mut harmful_results: Vec<CandidateSynapseJson> = Vec::new();
     let mut helpful_fallback: Option<CandidateSynapseJson> = None;
 
-    let threshold = input.improvement_threshold.unwrap_or(0.1);
+        let threshold = input.improvement_threshold.unwrap_or(0.1);
+
+    // Collect all helpful evaluation work first for batching
+    struct HelpfulWork {
+        source_uuid: String,
+        target_uuid: String,
+        samples: Vec<HelpfulSample>,
+    }
+
+    let mut helpful_work_batch: Vec<HelpfulWork> = Vec::new();
 
     for target_uuid in &input.focus_neurons {
         let target_records_arc = cache.get(target_uuid)?;
@@ -1457,7 +2107,7 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
             None => continue,
         };
 
-        // Helpful candidates
+        // Collect helpful candidates for batching
         for source in ordered_neurons
             .iter()
             .filter(|neuron| neuron.index < target_index)
@@ -1474,85 +2124,105 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
             }
             let from_records = from_records_arc.as_ref();
 
-            let samples = build_samples(target_records, from_records);
+            let samples = analyzer.build_samples_gpu(target_records, from_records)?;
             if samples.is_empty() {
                 continue;
             }
 
-            let stats = analyzer.evaluate_helpful(&samples)?;
-            let positive_is_better = stats.positive_count >= stats.negative_count;
-            let improved_count = if positive_is_better {
-                stats.positive_count
-            } else {
-                stats.negative_count
-            };
-            if improved_count == 0 {
-                continue;
-            }
-
-            let worsen_count = if positive_is_better {
-                stats.negative_count
-            } else {
-                stats.positive_count
-            };
-            let total_count = samples.len() as u32;
-            if total_count == 0 {
-                continue;
-            }
-
-            let improvement_sum = if positive_is_better {
-                stats.positive_improvement_sum
-            } else {
-                stats.negative_improvement_sum
-            };
-
-            let activation_sum = if positive_is_better {
-                stats.positive_activation_sum
-            } else {
-                stats.negative_activation_sum
-            };
-
-            let mut weight = 0.0;
-            if activation_sum.abs() > EPSILON {
-                let raw_weight = improvement_sum / (activation_sum + 1e-8);
-                weight = if positive_is_better {
-                    -raw_weight
-                } else {
-                    raw_weight
-                };
-                weight = weight.clamp(-1.0, 1.0);
-            }
-
-            let expected_improvement_percentage =
-                (improved_count as f32 - worsen_count as f32) / total_count as f32;
-
-            if expected_improvement_percentage <= threshold {
-                if helpful_fallback.as_ref().is_none_or(|existing| {
-                    existing.expected_improvement_percentage < expected_improvement_percentage
-                }) {
-                    helpful_fallback = Some(CandidateSynapseJson {
-                        from_neuron_uuid: source_uuid.to_string(),
-                        to_neuron_uuid: target_uuid.clone(),
-                        weight,
-                        expected_improvement_percentage,
-                        improved_count,
-                        total_count,
-                    });
-                }
-                continue;
-            }
-
-            helpful_results.push(CandidateSynapseJson {
-                from_neuron_uuid: source_uuid.to_string(),
-                to_neuron_uuid: target_uuid.clone(),
-                weight,
-                expected_improvement_percentage,
-                improved_count,
-                total_count,
+            helpful_work_batch.push(HelpfulWork {
+                source_uuid: source_uuid.to_string(),
+                target_uuid: target_uuid.clone(),
+                samples,
             });
         }
+    }
 
-        // Harmful synapses (existing connections)
+    // Process helpful work in batches for better GPU utilization
+    let helpful_samples_refs: Vec<&[HelpfulSample]> = helpful_work_batch.iter().map(|w| w.samples.as_slice()).collect();
+    let helpful_stats_batch = analyzer.evaluate_helpful_batch(&helpful_samples_refs)?;
+
+    // Process results
+    for (work, stats) in helpful_work_batch.iter().zip(helpful_stats_batch.iter()) {
+        let positive_is_better = stats.positive_count >= stats.negative_count;
+        let improved_count = if positive_is_better {
+            stats.positive_count
+        } else {
+            stats.negative_count
+        };
+        if improved_count == 0 {
+            continue;
+        }
+
+        let worsen_count = if positive_is_better {
+            stats.negative_count
+        } else {
+            stats.positive_count
+        };
+        let total_count = work.samples.len() as u32;
+        if total_count == 0 {
+            continue;
+        }
+
+        let improvement_sum = if positive_is_better {
+            stats.positive_improvement_sum
+        } else {
+            stats.negative_improvement_sum
+        };
+
+        let activation_sum = if positive_is_better {
+            stats.positive_activation_sum
+        } else {
+            stats.negative_activation_sum
+        };
+
+        let mut weight = 0.0;
+        if activation_sum.abs() > EPSILON {
+            let raw_weight = improvement_sum / (activation_sum + 1e-8);
+            weight = if positive_is_better {
+                -raw_weight
+            } else {
+                raw_weight
+            };
+            weight = weight.clamp(-1.0, 1.0);
+        }
+
+        let expected_improvement_percentage =
+            (improved_count as f32 - worsen_count as f32) / total_count as f32;
+
+        if expected_improvement_percentage <= threshold {
+            if helpful_fallback.as_ref().is_none_or(|existing| {
+                existing.expected_improvement_percentage < expected_improvement_percentage
+            }) {
+                helpful_fallback = Some(CandidateSynapseJson {
+                    from_neuron_uuid: work.source_uuid.clone(),
+                    to_neuron_uuid: work.target_uuid.clone(),
+                    weight,
+                    expected_improvement_percentage,
+                    improved_count,
+                    total_count,
+                });
+            }
+            continue;
+        }
+
+        helpful_results.push(CandidateSynapseJson {
+            from_neuron_uuid: work.source_uuid.clone(),
+            to_neuron_uuid: work.target_uuid.clone(),
+            weight,
+            expected_improvement_percentage,
+            improved_count,
+            total_count,
+        });
+    }
+
+    // Harmful synapses (existing connections) - process per target
+    for target_uuid in &input.focus_neurons {
+        let target_records_arc = cache.get(target_uuid)?;
+        if target_records_arc.is_empty() {
+            continue;
+        }
+        let target_records = target_records_arc.as_ref();
+
         if let Some(existing) = synapses_by_target.get(target_uuid.as_str()) {
             for synapse in existing {
                 let from_records_arc = cache.get(synapse.from_uuid.as_str())?;
@@ -1560,7 +2230,7 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
                     continue;
                 }
                 let from_records = from_records_arc.as_ref();
-                let samples = build_samples(target_records, from_records);
+                let samples = analyzer.build_samples_gpu(target_records, from_records)?;
                 if samples.is_empty() {
                     continue;
                 }
