@@ -95,6 +95,8 @@ pub struct AnalyzeSynapsesInput {
     pub max_candidates: Option<usize>,
     #[serde(default)]
     pub require_gpu: Option<bool>,
+    #[serde(default)]
+    pub analysis_deadline_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -136,6 +138,8 @@ pub struct AnalyzeNeuronsInput {
     pub max_candidates: Option<usize>,
     #[serde(default)]
     pub require_gpu: Option<bool>,
+    #[serde(default)]
+    pub analysis_deadline_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
