@@ -5,6 +5,7 @@
 //! beneficial new synapses/neurons that would reduce error.
 
 pub mod analysis;
+pub mod focus;
 pub mod parquet_format;
 pub mod record;
 pub mod types;
@@ -161,6 +162,41 @@ pub struct AnalyzeNeuronsOutput {
     pub helpful_neurons: Option<Vec<CandidateNeuronJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<Vec<NeuronDiagnosticJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankFocusNeuronsInput {
+    pub parquet_file: String,
+    pub creature: CreatureJson,
+    #[serde(default)]
+    pub max_results: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankedNeuronJson {
+    pub neuron_uuid: String,
+    pub total_error: f32,
+    pub impact: f32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankFocusNeuronsOutput {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub neurons: Option<Vec<RankedNeuronJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_error: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub processed_neurons: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_neurons: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -457,6 +493,60 @@ pub fn merge_discovery_parquet_internal(input_json: &str) -> Result<String> {
     }
 }
 
+pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
+    let input: RankFocusNeuronsInput = match serde_json::from_str(input_json) {
+        Ok(value) => value,
+        Err(e) => {
+            let output = RankFocusNeuronsOutput {
+                success: false,
+                neurons: None,
+                max_output_error: None,
+                processed_neurons: None,
+                total_neurons: None,
+                duration_ms: None,
+                error: Some(format!("Failed to parse input JSON: {e}")),
+            };
+            return Ok(serde_json::to_string(&output)?);
+        }
+    };
+
+    match focus::rank_focus_neurons(&input.parquet_file, &input.creature, input.max_results) {
+        Ok(stats) => {
+            let neurons: Vec<RankedNeuronJson> = stats
+                .neurons
+                .into_iter()
+                .map(|neuron| RankedNeuronJson {
+                    neuron_uuid: neuron.neuron_uuid,
+                    total_error: neuron.total_error,
+                    impact: neuron.impact,
+                })
+                .collect();
+            let output = RankFocusNeuronsOutput {
+                success: true,
+                neurons: Some(neurons),
+                max_output_error: Some(stats.max_output_error),
+                processed_neurons: Some(stats.processed_neurons),
+                total_neurons: Some(stats.total_neurons),
+                duration_ms: Some(stats.duration_ms.min(u64::MAX as u128) as u64),
+                error: None,
+            };
+            Ok(serde_json::to_string(&output)?)
+        }
+        Err(e) => {
+            let output = RankFocusNeuronsOutput {
+                success: false,
+                neurons: None,
+                max_output_error: None,
+                processed_neurons: None,
+                total_neurons: None,
+                duration_ms: None,
+                error: Some(e.to_string()),
+            };
+            Ok(serde_json::to_string(&output)?)
+        }
+    }
+}
+
 /// FFI export for recording discovery data
 ///
 /// # Safety
@@ -544,6 +634,52 @@ pub extern "C" fn merge_discovery_parquet(
             };
             serde_json::to_string(&output).unwrap_or_else(|_| {
                 r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
+            })
+        }
+    };
+
+    match CString::new(result) {
+        Ok(c_string) => c_string.into_raw(),
+        Err(_) => {
+            let error = r#"{"success":false,"error":"Failed to create output string"}"#;
+            CString::new(error).unwrap().into_raw()
+        }
+    }
+}
+
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+
+    let input_str = unsafe {
+        if input_json.is_null() {
+            let error = r#"{"success":false,"error":"Null input pointer"}"#;
+            return CString::new(error).unwrap().into_raw();
+        }
+        match CStr::from_ptr(input_json).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
+                return CString::new(error).unwrap().into_raw();
+            }
+        }
+    };
+
+    let result = match rank_focus_neurons_internal(input_str) {
+        Ok(json) => json,
+        Err(e) => {
+            let output = RankFocusNeuronsOutput {
+                success: false,
+                neurons: None,
+                max_output_error: None,
+                processed_neurons: None,
+                total_neurons: None,
+                duration_ms: None,
+                error: Some(e.to_string()),
+            };
+            serde_json::to_string(&output).unwrap_or_else(|_| {
+                r#"{"success":false,"error":"Failed to serialize output"}"#.to_string()
             })
         }
     };
