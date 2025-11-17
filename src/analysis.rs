@@ -3,18 +3,49 @@ use crate::types::DiscoverRecord;
 use crate::{AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson, CandidateSynapseJson};
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use wgpu::util::DeviceExt;
 
 const EPSILON: f32 = 1e-8;
 const WORKGROUP_SIZE: u32 = 256;
 const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 const GPU_BATCH_SIZE: usize = 32; // Batch multiple GPU operations together for better utilization
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn build_deadline(deadline_ms: Option<u64>) -> Option<Instant> {
+    deadline_ms.map(|target_ms| {
+        let now = Instant::now();
+        let current_ms = now_millis();
+        if target_ms <= current_ms {
+            now
+        } else {
+            let diff = target_ms - current_ms;
+            now + Duration::from_millis(diff)
+        }
+    })
+}
+
+fn deadline_passed(deadline: &Option<Instant>) -> bool {
+    matches!(deadline, Some(limit) if Instant::now() >= *limit)
+}
+
+fn verbose_enabled() -> bool {
+    std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok()
+}
 
 #[cfg(test)]
 static FORCE_GPU_ADAPTER_FAILURE: AtomicBool = AtomicBool::new(false);
@@ -100,9 +131,9 @@ struct OrderedNeuron {
     index: usize,
 }
 
-struct RecordCache<'a> {
-    parquet_file: &'a str,
-    cache: HashMap<String, Arc<Vec<DiscoverRecord>>>,
+struct RecordCache {
+    parquet_file: String,
+    cache: Mutex<HashMap<String, Arc<Vec<DiscoverRecord>>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -750,30 +781,37 @@ impl NeuronDiagnostics {
     }
 }
 
-impl<'a> RecordCache<'a> {
-    fn new(parquet_file: &'a str) -> Self {
+impl RecordCache {
+    fn new(parquet_file: &str) -> Self {
         Self {
-            parquet_file,
-            cache: HashMap::new(),
+            parquet_file: parquet_file.to_string(),
+            cache: Mutex::new(HashMap::new()),
         }
     }
 
-    fn get(&mut self, neuron_uuid: &str) -> Result<Arc<Vec<DiscoverRecord>>> {
-        use std::collections::hash_map::Entry;
-
-        match self.cache.entry(neuron_uuid.to_string()) {
-            Entry::Occupied(entry) => Ok(Arc::clone(entry.get())),
-            Entry::Vacant(entry) => {
-                let mut records = read_records_from_parquet(self.parquet_file, neuron_uuid)
-                    .with_context(|| {
-                        format!("Failed to read discovery records for neuron {neuron_uuid}")
-                    })?;
-                records.sort_by_key(|record| record.obs_index);
-                let arc = Arc::new(records);
-                entry.insert(Arc::clone(&arc));
-                Ok(arc)
-            }
+    fn get(&self, neuron_uuid: &str) -> Result<Arc<Vec<DiscoverRecord>>> {
+        if let Some(records) = self
+            .cache
+            .lock()
+            .expect("record cache mutex poisoned")
+            .get(neuron_uuid)
+            .cloned()
+        {
+            return Ok(records);
         }
+
+        let mut records =
+            read_records_from_parquet(&self.parquet_file, neuron_uuid).with_context(|| {
+                format!("Failed to read discovery records for neuron {neuron_uuid}")
+            })?;
+        records.sort_by_key(|record| record.obs_index);
+        let arc = Arc::new(records);
+
+        let mut cache = self.cache.lock().expect("record cache mutex poisoned");
+        let entry = cache
+            .entry(neuron_uuid.to_string())
+            .or_insert_with(|| Arc::clone(&arc));
+        Ok(Arc::clone(entry))
     }
 }
 
@@ -2668,12 +2706,23 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
 
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_neurons")?;
 
-    let mut cache = RecordCache::new(&input.parquet_file);
+    let cache = RecordCache::new(&input.parquet_file);
     let mut helpful_map: HashMap<(String, String, String), CandidateNeuronJson> = HashMap::new();
 
     let mut diagnostics = NeuronDiagnostics::new(&unique_focus);
 
-    for target_uuid in unique_focus {
+    let deadline = build_deadline(input.analysis_deadline_ms);
+    let mut rng = thread_rng();
+    let mut focus_order = unique_focus.clone();
+    focus_order.shuffle(&mut rng);
+    let mut analysis_timed_out = false;
+
+    for target_uuid in focus_order {
+        if deadline_passed(&deadline) {
+            analysis_timed_out = true;
+            break;
+        }
+
         let target_records_arc = match cache.get(target_uuid) {
             Ok(records) => records,
             Err(err) => {
@@ -2695,10 +2744,18 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
             None => continue,
         };
 
-        for source in ordered_neurons
+        let mut eligible_sources: Vec<&OrderedNeuron> = ordered_neurons
             .iter()
             .filter(|neuron| neuron.index < target_index)
-        {
+            .collect();
+        eligible_sources.shuffle(&mut rng);
+
+        for source in eligible_sources {
+            if deadline_passed(&deadline) {
+                analysis_timed_out = true;
+                break;
+            }
+
             let source_uuid = source.uuid.as_str();
             let from_records_arc = match cache.get(source_uuid) {
                 Ok(records) => records,
@@ -2747,6 +2804,14 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
                 }
             }
         }
+
+        if analysis_timed_out {
+            break;
+        }
+    }
+
+    if analysis_timed_out && verbose_enabled() {
+        eprintln!("[NEAT-AI-Discovery][verbose] analyse_neurons reached analysis deadline; returning partial results.");
     }
 
     let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
@@ -2797,8 +2862,14 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_synapses")?;
 
-    let mut cache = RecordCache::new(&input.parquet_file);
+    let cache = RecordCache::new(&input.parquet_file);
     let mut diagnostics = TargetDiagnostics::new(&unique_focus);
+
+    let deadline = build_deadline(input.analysis_deadline_ms);
+    let mut rng = thread_rng();
+    let mut focus_order = unique_focus.clone();
+    focus_order.shuffle(&mut rng);
+    let mut analysis_timed_out = false;
 
     let mut helpful_results: Vec<CandidateSynapseJson> = Vec::new();
     let mut harmful_results: Vec<CandidateSynapseJson> = Vec::new();
@@ -2815,7 +2886,14 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 
     let mut helpful_work_batch: Vec<HelpfulWork> = Vec::new();
 
-    for target_uuid in &unique_focus {
+    'target_loop: for target_uuid in focus_order.iter() {
+        if deadline_passed(&deadline) {
+            analysis_timed_out = true;
+            break;
+        }
+
+        let target_uuid = *target_uuid;
+
         let target_records_arc = cache.get(target_uuid)?;
         if target_records_arc.is_empty() {
             diagnostics.set_target_record_count(target_uuid, 0);
@@ -2829,11 +2907,19 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
             None => continue,
         };
 
-        // Collect helpful candidates for batching
-        for source in ordered_neurons
+        let mut eligible_sources: Vec<&OrderedNeuron> = ordered_neurons
             .iter()
             .filter(|neuron| neuron.index < target_index)
-        {
+            .collect();
+        eligible_sources.shuffle(&mut rng);
+
+        // Collect helpful candidates for batching
+        for source in eligible_sources {
+            if deadline_passed(&deadline) {
+                analysis_timed_out = true;
+                break 'target_loop;
+            }
+
             let source_uuid = source.uuid.as_str();
 
             if existing_synapses.contains(&(source_uuid.to_string(), target_uuid.to_string())) {
@@ -2964,46 +3050,65 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
         });
     }
 
-    // Harmful synapses (existing connections) - process per target
-    for target_uuid in &unique_focus {
-        let target_records_arc = cache.get(target_uuid)?;
-        if target_records_arc.is_empty() {
-            continue;
-        }
-        let target_records = target_records_arc.as_ref();
+    if !analysis_timed_out {
+        // Harmful synapses (existing connections) - process per target
+        for target_uuid in focus_order.iter() {
+            if deadline_passed(&deadline) {
+                analysis_timed_out = true;
+                break;
+            }
 
-        if let Some(existing) = synapses_by_target.get(target_uuid.as_str()) {
-            for synapse in existing {
-                let from_records_arc = cache.get(synapse.from_uuid.as_str())?;
-                if from_records_arc.is_empty() {
-                    continue;
+            let target_uuid = *target_uuid;
+
+            let target_records_arc = cache.get(target_uuid)?;
+            if target_records_arc.is_empty() {
+                continue;
+            }
+            let target_records = target_records_arc.as_ref();
+
+            if let Some(existing) = synapses_by_target.get(target_uuid.as_str()) {
+                for synapse in existing {
+                    if deadline_passed(&deadline) {
+                        analysis_timed_out = true;
+                        break;
+                    }
+
+                    let from_records_arc = cache.get(synapse.from_uuid.as_str())?;
+                    if from_records_arc.is_empty() {
+                        continue;
+                    }
+                    let from_records = from_records_arc.as_ref();
+                    let samples = analyzer.build_samples_gpu(target_records, from_records)?;
+                    if samples.is_empty() {
+                        continue;
+                    }
+
+                    let stats = analyzer.evaluate_harmful(&samples, synapse.weight)?;
+                    let total_count = samples.len() as u32;
+                    if total_count == 0 {
+                        continue;
+                    }
+
+                    let expected_improvement_percentage = (stats.harmful_count as f32
+                        - stats.helpful_count as f32)
+                        / total_count as f32;
+
+                    let candidate = CandidateSynapseJson {
+                        from_neuron_uuid: synapse.from_uuid.clone(),
+                        to_neuron_uuid: synapse.to_uuid.clone(),
+                        weight: synapse.weight,
+                        expected_improvement_percentage,
+                        improved_count: stats.harmful_count,
+                        total_count,
+                    };
+                    harmful_results.push(candidate);
                 }
-                let from_records = from_records_arc.as_ref();
-                let samples = analyzer.build_samples_gpu(target_records, from_records)?;
-                if samples.is_empty() {
-                    continue;
-                }
-
-                let stats = analyzer.evaluate_harmful(&samples, synapse.weight)?;
-                let total_count = samples.len() as u32;
-                if total_count == 0 {
-                    continue;
-                }
-
-                let expected_improvement_percentage =
-                    (stats.harmful_count as f32 - stats.helpful_count as f32) / total_count as f32;
-
-                let candidate = CandidateSynapseJson {
-                    from_neuron_uuid: synapse.from_uuid.clone(),
-                    to_neuron_uuid: synapse.to_uuid.clone(),
-                    weight: synapse.weight,
-                    expected_improvement_percentage,
-                    improved_count: stats.harmful_count,
-                    total_count,
-                };
-                harmful_results.push(candidate);
             }
         }
+    }
+
+    if analysis_timed_out && verbose_enabled() {
+        eprintln!("[NEAT-AI-Discovery][verbose] analyse_synapses reached analysis deadline; returning partial results.");
     }
 
     if helpful_results.is_empty() {
@@ -3484,6 +3589,7 @@ mod tests {
             improvement_threshold: Some(0.05),
             max_candidates: None,
             require_gpu: Some(false),
+            analysis_deadline_ms: None,
         };
 
         let err = analyze_neurons(&input)
@@ -3559,6 +3665,7 @@ mod tests {
             improvement_threshold: Some(0.05),
             max_candidates: None,
             require_gpu: Some(false),
+            analysis_deadline_ms: None,
         };
 
         let err = analyze_synapses(&input)
@@ -3594,6 +3701,7 @@ mod tests {
             improvement_threshold: None,
             max_candidates: None,
             require_gpu: Some(false),
+            analysis_deadline_ms: None,
         };
 
         let err = analyze_synapses(&input)
@@ -3648,6 +3756,7 @@ mod tests {
             improvement_threshold: Some(0.05),
             max_candidates: None,
             require_gpu: Some(false),
+            analysis_deadline_ms: None,
         };
 
         let result = analyze_synapses(&input)
@@ -3717,6 +3826,7 @@ mod tests {
             improvement_threshold: Some(0.05),
             max_candidates: None,
             require_gpu: Some(false),
+            analysis_deadline_ms: None,
         };
 
         let result = analyze_neurons(&input)
@@ -3759,6 +3869,7 @@ mod tests {
             improvement_threshold: None,
             max_candidates: None,
             require_gpu: Some(true),
+            analysis_deadline_ms: None,
         };
 
         let err = analyze_neurons(&input)
