@@ -3,6 +3,7 @@ use crate::types::DiscoverRecord;
 use crate::{AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson, CandidateSynapseJson};
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
+use once_cell::sync::OnceCell;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::cmp::Ordering;
@@ -203,9 +204,13 @@ struct OrderedNeuron {
     index: usize,
 }
 
+type RecordCacheLoader = dyn Fn(&str, &str) -> Result<Vec<DiscoverRecord>> + Send + Sync + 'static;
+type CachedNeuronRecords = OnceCell<Arc<Vec<DiscoverRecord>>>;
+
 struct RecordCache {
     parquet_file: String,
-    cache: Mutex<HashMap<String, Arc<Vec<DiscoverRecord>>>>,
+    cache: Mutex<HashMap<String, Arc<CachedNeuronRecords>>>,
+    loader: Arc<RecordCacheLoader>,
 }
 
 #[derive(Clone, Copy)]
@@ -855,35 +860,45 @@ impl NeuronDiagnostics {
 
 impl RecordCache {
     fn new(parquet_file: &str) -> Self {
+        Self::with_loader(
+            parquet_file,
+            Arc::new(|file: &str, neuron_uuid: &str| read_records_from_parquet(file, neuron_uuid)),
+        )
+    }
+
+    fn with_loader(parquet_file: &str, loader: Arc<RecordCacheLoader>) -> Self {
         Self {
             parquet_file: parquet_file.to_string(),
             cache: Mutex::new(HashMap::new()),
+            loader,
         }
     }
 
     fn get(&self, neuron_uuid: &str) -> Result<Arc<Vec<DiscoverRecord>>> {
-        if let Some(records) = self
-            .cache
-            .lock()
-            .expect("record cache mutex poisoned")
-            .get(neuron_uuid)
-            .cloned()
-        {
-            return Ok(records);
-        }
+        let cache_entry = {
+            let mut cache = self.cache.lock().expect("record cache mutex poisoned");
+            cache
+                .entry(neuron_uuid.to_string())
+                .or_insert_with(|| Arc::new(OnceCell::new()))
+                .clone()
+        };
 
-        let mut records =
-            read_records_from_parquet(&self.parquet_file, neuron_uuid).with_context(|| {
-                format!("Failed to read discovery records for neuron {neuron_uuid}")
+        let loader = Arc::clone(&self.loader);
+        let parquet_file = self.parquet_file.clone();
+        let context_uuid = neuron_uuid.to_string();
+        let load_uuid = context_uuid.clone();
+
+        let arc_records = cache_entry
+            .get_or_try_init(move || -> Result<Arc<Vec<DiscoverRecord>>> {
+                let mut records = loader(&parquet_file, &load_uuid)?;
+                records.sort_by_key(|record| record.obs_index);
+                Ok(Arc::new(records))
+            })
+            .with_context(|| {
+                format!("Failed to read discovery records for neuron {context_uuid}")
             })?;
-        records.sort_by_key(|record| record.obs_index);
-        let arc = Arc::new(records);
 
-        let mut cache = self.cache.lock().expect("record cache mutex poisoned");
-        let entry = cache
-            .entry(neuron_uuid.to_string())
-            .or_insert_with(|| Arc::clone(&arc));
-        Ok(Arc::clone(entry))
+        Ok(Arc::clone(arc_records))
     }
 }
 
@@ -3223,7 +3238,9 @@ mod tests {
     use crate::parquet_format::write_records_to_parquet;
     use crate::types::DiscoverRecord;
     use crate::{AnalyzeNeuronsInput, AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};
-    use std::sync::atomic::Ordering as AtomicOrdering;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::Barrier;
+    use std::thread;
     use tempfile::tempdir;
 
     struct ForceGpuFailureGuard;
@@ -3283,6 +3300,50 @@ mod tests {
         assert!(
             !deadline_passed(&None),
             "missing deadlines should behave as if no timeout was requested"
+        );
+    }
+
+    #[test]
+    fn record_cache_loads_once_per_neuron_under_contention() {
+        let load_counter = Arc::new(AtomicUsize::new(0));
+        let loader_counter = Arc::clone(&load_counter);
+        let loader = Arc::new(
+            move |_file: &str, neuron_uuid: &str| -> Result<Vec<DiscoverRecord>> {
+                loader_counter.fetch_add(1, AtomicOrdering::SeqCst);
+                thread::sleep(Duration::from_millis(50));
+                Ok(vec![DiscoverRecord::new(
+                    0,
+                    neuron_uuid.to_string(),
+                    None,
+                    0.0,
+                    Vec::new(),
+                )])
+            },
+        );
+
+        let cache = Arc::new(RecordCache::with_loader("unused.parquet", loader));
+        let worker_count = 4;
+        let barrier = Arc::new(Barrier::new(worker_count));
+        let mut handles = Vec::new();
+        for _ in 0..worker_count {
+            let cache_clone = Arc::clone(&cache);
+            let barrier_clone = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier_clone.wait();
+                cache_clone
+                    .get("neuron-1")
+                    .expect("cache should load neuron records");
+            }));
+        }
+
+        for handle in handles {
+            handle.join().expect("worker thread should exit cleanly");
+        }
+
+        assert_eq!(
+            load_counter.load(AtomicOrdering::SeqCst),
+            1,
+            "record cache should only hit the loader once even when multiple threads request the same neuron"
         );
     }
 
