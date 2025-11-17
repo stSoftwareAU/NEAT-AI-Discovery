@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.1.27"
+version = "0.1.28"
 edition = "2021"
 
 [lib]
@@ -16,6 +16,7 @@ arrow = { version = "57.0", default-features = false }  # Arrow arrays for Parqu
 wgpu = "0.19"
 pollster = "0.3"
 bytemuck = { version = "1.14", features = ["derive"] }
+rayon = "1.8"
 
 [dev-dependencies]
 tempfile = "3.8"
