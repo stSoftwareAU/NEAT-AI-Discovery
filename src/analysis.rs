@@ -11,7 +11,7 @@ use std::fmt;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wgpu::util::DeviceExt;
 
 const EPSILON: f32 = 1e-8;
@@ -19,28 +19,100 @@ const WORKGROUP_SIZE: u32 = 256;
 const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 const GPU_BATCH_SIZE: usize = 32; // Batch multiple GPU operations together for better utilization
 
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-fn build_deadline(deadline_ms: Option<u64>) -> Option<Instant> {
-    deadline_ms.map(|target_ms| {
-        let now = Instant::now();
-        let current_ms = now_millis();
-        if target_ms <= current_ms {
-            now
-        } else {
-            let diff = target_ms - current_ms;
-            now + Duration::from_millis(diff)
-        }
+fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
+    deadline_ms.and_then(|target_ms| {
+        let since_epoch = Duration::from_millis(target_ms);
+        UNIX_EPOCH.checked_add(since_epoch)
     })
 }
 
-fn deadline_passed(deadline: &Option<Instant>) -> bool {
-    matches!(deadline, Some(limit) if Instant::now() >= *limit)
+fn deadline_passed(deadline: &Option<SystemTime>) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(value) = deadline_override::next_override_value() {
+            return value;
+        }
+    }
+
+    matches!(deadline, Some(limit) if SystemTime::now() >= *limit)
+}
+
+#[cfg(test)]
+mod deadline_override {
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+    use std::sync::{Mutex, MutexGuard};
+    use std::thread::ThreadId;
+
+    static OVERRIDE_LOCK: Mutex<()> = Mutex::new(());
+    static OVERRIDE_SEQUENCE: Mutex<VecDeque<bool>> = Mutex::new(VecDeque::new());
+    static OVERRIDE_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static OVERRIDE_THREAD: Mutex<Option<ThreadId>> = Mutex::new(None);
+
+    pub(super) struct DeadlineOverrideGuard {
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl DeadlineOverrideGuard {
+        pub(super) fn with_sequence(sequence: Vec<bool>) -> Self {
+            let lock = OVERRIDE_LOCK
+                .lock()
+                .expect("Deadline override lock should not be poisoned");
+            {
+                let mut queue = OVERRIDE_SEQUENCE
+                    .lock()
+                    .expect("Deadline override queue should not be poisoned");
+                queue.clear();
+                for value in sequence.into_iter() {
+                    queue.push_back(value);
+                }
+            }
+            {
+                let mut thread_slot = OVERRIDE_THREAD
+                    .lock()
+                    .expect("Deadline override thread slot should not be poisoned");
+                *thread_slot = Some(std::thread::current().id());
+            }
+            OVERRIDE_ACTIVE.store(true, AtomicOrdering::SeqCst);
+            Self { _lock: lock }
+        }
+    }
+
+    impl Drop for DeadlineOverrideGuard {
+        fn drop(&mut self) {
+            OVERRIDE_ACTIVE.store(false, AtomicOrdering::SeqCst);
+            {
+                let mut thread_slot = OVERRIDE_THREAD
+                    .lock()
+                    .expect("Deadline override thread slot should not be poisoned");
+                *thread_slot = None;
+            }
+            let mut queue = OVERRIDE_SEQUENCE
+                .lock()
+                .expect("Deadline override queue should not be poisoned");
+            queue.clear();
+        }
+    }
+
+    pub(super) fn next_override_value() -> Option<bool> {
+        if !OVERRIDE_ACTIVE.load(AtomicOrdering::SeqCst) {
+            return None;
+        }
+        let current_thread = std::thread::current().id();
+        {
+            let thread_slot = OVERRIDE_THREAD
+                .lock()
+                .expect("Deadline override thread slot should not be poisoned");
+            if thread_slot.as_ref() != Some(&current_thread) {
+                return None;
+            }
+        }
+
+        let mut queue = OVERRIDE_SEQUENCE
+            .lock()
+            .expect("Deadline override queue should not be poisoned");
+        queue.pop_front()
+    }
 }
 
 fn verbose_enabled() -> bool {
@@ -3052,10 +3124,10 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 
     if !analysis_timed_out {
         // Harmful synapses (existing connections) - process per target
-        for target_uuid in focus_order.iter() {
+        'harmful_targets: for target_uuid in focus_order.iter() {
             if deadline_passed(&deadline) {
                 analysis_timed_out = true;
-                break;
+                break 'harmful_targets;
             }
 
             let target_uuid = *target_uuid;
@@ -3070,7 +3142,7 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
                 for synapse in existing {
                     if deadline_passed(&deadline) {
                         analysis_timed_out = true;
-                        break;
+                        break 'harmful_targets;
                     }
 
                     let from_records_arc = cache.get(synapse.from_uuid.as_str())?;
@@ -3146,6 +3218,7 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 
 #[cfg(test)]
 mod tests {
+    use super::deadline_override;
     use super::*;
     use crate::parquet_format::write_records_to_parquet;
     use crate::types::DiscoverRecord;
@@ -3166,6 +3239,51 @@ mod tests {
         fn drop(&mut self) {
             FORCE_GPU_ADAPTER_FAILURE.store(false, AtomicOrdering::SeqCst);
         }
+    }
+
+    #[test]
+    fn build_deadline_returns_wall_clock_deadline() {
+        let future_wall_clock = SystemTime::now() + Duration::from_millis(200);
+        let deadline_ms = future_wall_clock
+            .duration_since(UNIX_EPOCH)
+            .expect("future wall clock timestamp should convert to epoch duration")
+            .as_millis() as u64;
+
+        let deadline = build_deadline(Some(deadline_ms)).expect("deadline should be constructed");
+
+        let target_millis = future_wall_clock
+            .duration_since(UNIX_EPOCH)
+            .expect("future wall clock timestamp should convert to epoch duration")
+            .as_millis();
+        let computed_millis = deadline
+            .duration_since(UNIX_EPOCH)
+            .expect("deadline should be convertible back to epoch duration")
+            .as_millis();
+
+        assert_eq!(
+            computed_millis, target_millis,
+            "deadline should preserve the original wall clock timestamp"
+        );
+    }
+
+    #[test]
+    fn deadline_passed_detects_elapsed_wall_clock_deadline() {
+        let past_deadline = SystemTime::now() - Duration::from_millis(25);
+        assert!(
+            deadline_passed(&Some(past_deadline)),
+            "past deadlines should be treated as expired immediately"
+        );
+
+        let future_deadline = SystemTime::now() + Duration::from_millis(200);
+        assert!(
+            !deadline_passed(&Some(future_deadline)),
+            "future deadlines should not be marked as expired"
+        );
+
+        assert!(
+            !deadline_passed(&None),
+            "missing deadlines should behave as if no timeout was requested"
+        );
     }
 
     #[test]
@@ -3773,6 +3891,97 @@ mod tests {
         assert!(
             matches!(reason, Some(SynapseNoCandidateReason::NoEligibleSources)),
             "Expected diagnostics to explain missing candidates"
+        );
+    }
+
+    #[test]
+    fn analyze_synapses_stops_harmful_processing_after_deadline() {
+        let _gpu_guard = ForceGpuFailureGuard::new();
+        let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence(vec![
+            false, false, false, false, false, false, true, false, false, false,
+        ]);
+
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
+
+        let mut records = Vec::new();
+        for obs_index in 0..16 {
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-0".to_string(),
+                Some(0.0),
+                1.0,
+                vec![0.0],
+            ));
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.5,
+                vec![0.2],
+            ));
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-1".to_string(),
+                Some(0.0),
+                0.5,
+                vec![0.2],
+            ));
+        }
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        let creature = CreatureJson {
+            input: 1,
+            output: 2,
+            neurons: vec![
+                NeuronJson {
+                    uuid: "output-0".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "output-1".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![
+                SynapseJson {
+                    from_uuid: "input-0".to_string(),
+                    to_uuid: "output-0".to_string(),
+                    weight: 0.8,
+                },
+                SynapseJson {
+                    from_uuid: "input-0".to_string(),
+                    to_uuid: "output-1".to_string(),
+                    weight: 0.6,
+                },
+            ],
+        };
+
+        let input = AnalyzeSynapsesInput {
+            parquet_file,
+            creature,
+            focus_neurons: vec!["output-0".to_string(), "output-1".to_string()],
+            improvement_threshold: Some(0.05),
+            max_candidates: None,
+            require_gpu: Some(false),
+            analysis_deadline_ms: None,
+        };
+
+        let result = analyze_synapses(&input)
+            .expect("Synapse analysis should complete even when the deadline triggers");
+
+        assert!(
+            result.harmful_synapses.is_empty(),
+            "Harmful synapses should not be evaluated after the deadline is exceeded"
         );
     }
 
