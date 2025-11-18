@@ -99,7 +99,7 @@ pub struct AnalyzeSynapsesInput {
     pub analysis_deadline_ms: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CandidateSynapseJson {
     pub from_neuron_uuid: String,
@@ -142,7 +142,7 @@ pub struct AnalyzeNeuronsInput {
     pub analysis_deadline_ms: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CandidateNeuronJson {
     pub source_neuron_uuid: String,
@@ -202,6 +202,48 @@ pub struct AnalyzeAllOutput {
     pub synapse: Option<AnalyzeSynapsesOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neuron: Option<AnalyzeNeuronsOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeParallelInput {
+    pub parquet_file: String,
+    pub creature: CreatureJson,
+    pub focus_neurons: Vec<String>,
+    #[serde(default)]
+    pub improvement_threshold: Option<f32>,
+    #[serde(default)]
+    pub harmful_threshold: Option<f32>,
+    #[serde(default)]
+    pub max_synapse_candidates: Option<usize>,
+    #[serde(default)]
+    pub max_neuron_candidates: Option<usize>,
+    #[serde(default)]
+    pub require_gpu: Option<bool>,
+    #[serde(default)]
+    pub analysis_deadline_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeParallelOutput {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub helpful_synapses: Option<Vec<CandidateSynapseJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harmful_synapses: Option<Vec<CandidateSynapseJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synapse_diagnostics: Option<Vec<SynapseDiagnosticJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synapse_gpu_used: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub helpful_neurons: Option<Vec<CandidateNeuronJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub neuron_diagnostics: Option<Vec<NeuronDiagnosticJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub neuron_gpu_used: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -533,6 +575,77 @@ pub fn merge_discovery_parquet_internal(input_json: &str) -> Result<String> {
     }
 }
 
+pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
+    let input: AnalyzeParallelInput = match serde_json::from_str(input_json) {
+        Ok(value) => value,
+        Err(e) => {
+            let output = AnalyzeParallelOutput {
+                success: false,
+                helpful_synapses: None,
+                harmful_synapses: None,
+                synapse_diagnostics: None,
+                synapse_gpu_used: None,
+                helpful_neurons: None,
+                neuron_diagnostics: None,
+                neuron_gpu_used: None,
+                error: Some(format!("Failed to parse input JSON: {e}")),
+            };
+            return Ok(serde_json::to_string(&output)?);
+        }
+    };
+
+    let combined_input = AnalyzeAllInput {
+        parquet_file: input.parquet_file,
+        creature: input.creature,
+        focus_neurons: input.focus_neurons,
+        improvement_threshold: input.improvement_threshold,
+        harmful_threshold: input.harmful_threshold,
+        max_synapse_candidates: input.max_synapse_candidates,
+        max_neuron_candidates: input.max_neuron_candidates,
+        require_gpu: input.require_gpu,
+        analysis_deadline_ms: input.analysis_deadline_ms,
+        include_synapse_analysis: Some(true),
+        include_neuron_analysis: Some(true),
+    };
+
+    match analysis::analyze_all(&combined_input) {
+        Ok(result) => {
+            let synapse = result.synapse;
+            let neuron = result.neuron;
+            let output = AnalyzeParallelOutput {
+                success: true,
+                helpful_synapses: synapse.as_ref().map(|s| s.helpful_synapses.clone()),
+                harmful_synapses: synapse.as_ref().map(|s| s.harmful_synapses.clone()),
+                synapse_diagnostics: synapse
+                    .as_ref()
+                    .and_then(|s| synapse_diagnostics_json(&s.no_candidate_reasons)),
+                synapse_gpu_used: synapse.as_ref().map(|s| s.gpu_used),
+                helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
+                neuron_diagnostics: neuron
+                    .as_ref()
+                    .and_then(|n| neuron_diagnostics_json(&n.no_candidate_reasons)),
+                neuron_gpu_used: neuron.as_ref().map(|n| n.gpu_used),
+                error: None,
+            };
+            Ok(serde_json::to_string(&output)?)
+        }
+        Err(e) => {
+            let output = AnalyzeParallelOutput {
+                success: false,
+                helpful_synapses: None,
+                harmful_synapses: None,
+                synapse_diagnostics: None,
+                synapse_gpu_used: None,
+                helpful_neurons: None,
+                neuron_diagnostics: None,
+                neuron_gpu_used: None,
+                error: Some(e.to_string()),
+            };
+            Ok(serde_json::to_string(&output)?)
+        }
+    }
+}
+
 pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     let input: RankFocusNeuronsInput = match serde_json::from_str(input_json) {
         Ok(value) => value,
@@ -792,6 +905,43 @@ pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut 
 
     match CString::new(json) {
         Ok(result) => result.into_raw(),
+        Err(_) => {
+            let error = r#"{"success":false,"error":"Failed to create output string"}"#;
+            CString::new(error).unwrap().into_raw()
+        }
+    }
+}
+
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+
+    let input_str = unsafe {
+        if input_json.is_null() {
+            let error = r#"{"success":false,"error":"Null input pointer"}"#;
+            return CString::new(error).unwrap().into_raw();
+        }
+        match CStr::from_ptr(input_json).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
+                return CString::new(error).unwrap().into_raw();
+            }
+        }
+    };
+
+    let result = match analyze_parallel_internal(input_str) {
+        Ok(json) => json,
+        Err(e) => {
+            let fallback =
+                format!("{{\"success\":false,\"error\":\"Failed to serialize output: {e}\"}}");
+            fallback
+        }
+    };
+
+    match CString::new(result) {
+        Ok(c_string) => c_string.into_raw(),
         Err(_) => {
             let error = r#"{"success":false,"error":"Failed to create output string"}"#;
             CString::new(error).unwrap().into_raw()
@@ -1090,6 +1240,9 @@ pub extern "C" fn free_discovery_result(ptr: *mut std::ffi::c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parquet_format::write_records_to_parquet;
+    use crate::types::DiscoverRecord;
+    use tempfile::tempdir;
 
     /// Safely truncate a UTF-8 string at character boundaries
     ///
@@ -1229,5 +1382,85 @@ mod tests {
         let truncated = truncate_utf8_safe(s, 5);
         assert_eq!(truncated, "Hello");
         assert_eq!(truncated.len(), 5);
+    }
+
+    #[test]
+    fn analyze_parallel_internal_returns_combined_payload() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let parquet_file = temp_dir
+            .path()
+            .join("records.parquet")
+            .to_str()
+            .expect("temp path should be valid UTF-8")
+            .to_string();
+
+        let mut records = Vec::new();
+        for obs_index in 0..12u32 {
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-0".to_string(),
+                Some(0.0),
+                1.0,
+                vec![0.0],
+            ));
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.5,
+                vec![0.2],
+            ));
+        }
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to persist discovery records");
+
+        let input_json = serde_json::json!({
+            "parquetFile": parquet_file,
+            "creature": {
+                "neurons": [{
+                    "uuid": "output-0",
+                    "type": "output",
+                    "squash": "IDENTITY",
+                    "bias": 0.0
+                }],
+                "synapses": [{
+                    "from_uuid": "input-0",
+                    "to_uuid": "output-0",
+                    "weight": 0.4
+                }],
+                "input": 1,
+                "output": 1
+            },
+            "focusNeurons": ["output-0"],
+            "improvementThreshold": 0.01,
+            "harmfulThreshold": -0.05,
+            "maxSynapseCandidates": 5,
+            "maxNeuronCandidates": 5,
+            "requireGpu": false
+        })
+        .to_string();
+
+        let output_json =
+            analyze_parallel_internal(&input_json).expect("parallel analysis should return JSON");
+        let output: serde_json::Value =
+            serde_json::from_str(&output_json).expect("output should be valid JSON");
+
+        assert_eq!(output["success"], true);
+        assert!(
+            output["helpfulSynapses"].is_array(),
+            "parallel analysis should include helpful synapse array"
+        );
+        assert!(
+            output["helpfulNeurons"].is_array(),
+            "parallel analysis should include helpful neuron array"
+        );
+        assert!(
+            output["synapseGpuUsed"].is_boolean(),
+            "parallel analysis should report GPU usage for synapses"
+        );
+        assert!(
+            output["neuronGpuUsed"].is_boolean(),
+            "parallel analysis should report GPU usage for neurons"
+        );
     }
 }
