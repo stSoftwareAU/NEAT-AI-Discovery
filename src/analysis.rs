@@ -1,11 +1,16 @@
 use crate::parquet_format::read_records_from_parquet;
 use crate::types::DiscoverRecord;
-use crate::{AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson, CandidateSynapseJson};
+use crate::{
+    AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson,
+    CandidateSynapseJson,
+};
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use once_cell::sync::OnceCell;
+use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use rand::{RngCore, SeedableRng};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -14,6 +19,9 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wgpu::util::DeviceExt;
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 const EPSILON: f32 = 1e-8;
 const WORKGROUP_SIZE: u32 = 256;
@@ -120,6 +128,60 @@ fn verbose_enabled() -> bool {
     std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok()
 }
 
+fn deterministic_shuffle_seed(label: &str, focus: &[String]) -> Option<u64> {
+    if std::env::var("NEAT_AI_DISCOVERY_DETERMINISTIC").is_ok() {
+        let mut hasher = DefaultHasher::new();
+        label.hash(&mut hasher);
+        focus.hash(&mut hasher);
+        Some(hasher.finish())
+    } else {
+        None
+    }
+}
+
+enum ShuffleRng {
+    Thread(rand::rngs::ThreadRng),
+    Std(Box<StdRng>),
+}
+
+impl RngCore for ShuffleRng {
+    fn next_u32(&mut self) -> u32 {
+        match self {
+            ShuffleRng::Thread(rng) => rng.next_u32(),
+            ShuffleRng::Std(rng) => rng.next_u32(),
+        }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        match self {
+            ShuffleRng::Thread(rng) => rng.next_u64(),
+            ShuffleRng::Std(rng) => rng.next_u64(),
+        }
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        match self {
+            ShuffleRng::Thread(rng) => rng.fill_bytes(dest),
+            ShuffleRng::Std(rng) => rng.fill_bytes(dest),
+        }
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        match self {
+            ShuffleRng::Thread(rng) => rng.try_fill_bytes(dest),
+            ShuffleRng::Std(rng) => rng.try_fill_bytes(dest),
+        }
+    }
+}
+
+fn build_shuffle_rng(label: &str, focus: &[String]) -> ShuffleRng {
+    if let Some(seed) = deterministic_shuffle_seed(label, focus) {
+        ShuffleRng::Std(Box::new(StdRng::seed_from_u64(seed)))
+    } else {
+        ShuffleRng::Thread(thread_rng())
+    }
+}
+
 #[cfg(test)]
 static FORCE_GPU_ADAPTER_FAILURE: AtomicBool = AtomicBool::new(false);
 
@@ -134,6 +196,11 @@ pub struct AnalyzeNeuronsResult {
     pub helpful_neurons: Vec<CandidateNeuronJson>,
     pub gpu_used: bool,
     pub no_candidate_reasons: Vec<NeuronNoCandidateSummary>,
+}
+
+pub struct AnalyzeAllResult {
+    pub synapse: Option<AnalyzeSynapsesResult>,
+    pub neuron: Option<AnalyzeNeuronsResult>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2780,7 +2847,10 @@ fn evaluate_activation_candidate(
     Ok(best_candidate.or(fallback_candidate))
 }
 
-pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResult> {
+fn analyze_neurons_with_cache(
+    input: &AnalyzeNeuronsInput,
+    cache: Arc<RecordCache>,
+) -> Result<AnalyzeNeuronsResult> {
     let require_gpu = input.require_gpu.unwrap_or(cfg!(target_os = "macos"));
     let analyzer = GpuAnalyzer::new(require_gpu)?;
 
@@ -2793,13 +2863,12 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
 
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_neurons")?;
 
-    let cache = RecordCache::new(&input.parquet_file);
     let mut helpful_map: HashMap<(String, String, String), CandidateNeuronJson> = HashMap::new();
 
     let mut diagnostics = NeuronDiagnostics::new(&unique_focus);
 
     let deadline = build_deadline(input.analysis_deadline_ms);
-    let mut rng = thread_rng();
+    let mut rng = build_shuffle_rng("analyze_synapses", &input.focus_neurons);
     let mut focus_order = unique_focus.clone();
     focus_order.shuffle(&mut rng);
     let mut analysis_timed_out = false;
@@ -2922,7 +2991,79 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
     })
 }
 
-pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesResult> {
+pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResult> {
+    let cache = Arc::new(RecordCache::new(&input.parquet_file));
+    analyze_neurons_with_cache(input, cache)
+}
+
+pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
+    let include_synapse = input.include_synapse_analysis.unwrap_or(true);
+    let include_neuron = input.include_neuron_analysis.unwrap_or(true);
+
+    if !include_synapse && !include_neuron {
+        return Ok(AnalyzeAllResult {
+            synapse: None,
+            neuron: None,
+        });
+    }
+
+    let shared_cache = Arc::new(RecordCache::new(&input.parquet_file));
+
+    let synapse_input = if include_synapse {
+        Some(AnalyzeSynapsesInput {
+            parquet_file: input.parquet_file.clone(),
+            creature: input.creature.clone(),
+            focus_neurons: input.focus_neurons.clone(),
+            improvement_threshold: input.improvement_threshold,
+            max_candidates: input.max_synapse_candidates,
+            require_gpu: input.require_gpu,
+            analysis_deadline_ms: input.analysis_deadline_ms,
+        })
+    } else {
+        None
+    };
+
+    let neuron_input = if include_neuron {
+        Some(AnalyzeNeuronsInput {
+            parquet_file: input.parquet_file.clone(),
+            creature: input.creature.clone(),
+            focus_neurons: input.focus_neurons.clone(),
+            improvement_threshold: input.improvement_threshold,
+            max_candidates: input.max_neuron_candidates,
+            require_gpu: input.require_gpu,
+            analysis_deadline_ms: input.analysis_deadline_ms,
+        })
+    } else {
+        None
+    };
+
+    let (synapse_result, neuron_result) = rayon::join(
+        || -> Result<Option<AnalyzeSynapsesResult>> {
+            if let Some(inner) = synapse_input.clone() {
+                analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache)).map(Some)
+            } else {
+                Ok(None)
+            }
+        },
+        || -> Result<Option<AnalyzeNeuronsResult>> {
+            if let Some(inner) = neuron_input.clone() {
+                analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache)).map(Some)
+            } else {
+                Ok(None)
+            }
+        },
+    );
+
+    Ok(AnalyzeAllResult {
+        synapse: synapse_result?,
+        neuron: neuron_result?,
+    })
+}
+
+fn analyze_synapses_with_cache(
+    input: &AnalyzeSynapsesInput,
+    cache: Arc<RecordCache>,
+) -> Result<AnalyzeSynapsesResult> {
     let require_gpu = input.require_gpu.unwrap_or(cfg!(target_os = "macos"));
     let analyzer = GpuAnalyzer::new(require_gpu)?;
 
@@ -2949,11 +3090,10 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_synapses")?;
 
-    let cache = RecordCache::new(&input.parquet_file);
     let mut diagnostics = TargetDiagnostics::new(&unique_focus);
 
     let deadline = build_deadline(input.analysis_deadline_ms);
-    let mut rng = thread_rng();
+    let mut rng = build_shuffle_rng("analyze_neurons", &input.focus_neurons);
     let mut focus_order = unique_focus.clone();
     focus_order.shuffle(&mut rng);
     let mut analysis_timed_out = false;
@@ -3229,6 +3369,11 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
         gpu_used: analyzer.gpu_used(),
         no_candidate_reasons,
     })
+}
+
+pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesResult> {
+    let cache = Arc::new(RecordCache::new(&input.parquet_file));
+    analyze_synapses_with_cache(input, cache)
 }
 
 #[cfg(test)]
@@ -4044,6 +4189,71 @@ mod tests {
             result.harmful_synapses.is_empty(),
             "Harmful synapses should not be evaluated after the deadline is exceeded"
         );
+    }
+
+    #[test]
+    fn analyze_all_runs_synapse_and_neuron_phases() {
+        let _guard = ForceGpuFailureGuard::new();
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
+
+        let mut records = Vec::new();
+        for obs_index in 0..(MIN_NEURON_SAMPLE_COUNT as u32 + 1) {
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-0".to_string(),
+                Some(0.0),
+                1.0,
+                vec![0.0],
+            ));
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.5,
+                vec![0.2],
+            ));
+        }
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        let creature = CreatureJson {
+            input: 1,
+            output: 1,
+            neurons: vec![NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            }],
+            synapses: vec![SynapseJson {
+                from_uuid: "input-0".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 0.4,
+            }],
+        };
+
+        let input = AnalyzeAllInput {
+            parquet_file,
+            creature,
+            focus_neurons: vec!["output-0".to_string()],
+            improvement_threshold: Some(0.05),
+            harmful_threshold: Some(-0.05),
+            max_synapse_candidates: Some(5),
+            max_neuron_candidates: Some(5),
+            require_gpu: Some(false),
+            analysis_deadline_ms: None,
+            include_synapse_analysis: Some(true),
+            include_neuron_analysis: Some(true),
+        };
+
+        let result = analyze_all(&input).expect("Combined analysis should succeed");
+        assert!(result.synapse.is_some(), "Synapse phase should run");
+        assert!(result.neuron.is_some(), "Neuron phase should run");
     }
 
     #[test]
