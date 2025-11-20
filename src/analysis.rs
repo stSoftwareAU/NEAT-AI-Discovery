@@ -1374,7 +1374,31 @@ fn tanh_activation(x: f32) -> f32 {
     x.tanh()
 }
 
-const ACTIVATION_SPECS: [ActivationCandidateSpec; 6] = [
+fn identity_activation(x: f32) -> f32 {
+    x
+}
+
+fn bipolar_activation(x: f32) -> f32 {
+    if x > 0.0 {
+        1.0
+    } else {
+        -1.0
+    }
+}
+
+fn clipped_activation(x: f32) -> f32 {
+    x.clamp(-1.0, 1.0)
+}
+
+fn absolute_activation(x: f32) -> f32 {
+    x.abs()
+}
+
+fn inverse_activation(x: f32) -> f32 {
+    1.0 - x
+}
+
+const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
     ActivationCandidateSpec {
         name: "GELU",
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
@@ -1415,6 +1439,41 @@ const ACTIVATION_SPECS: [ActivationCandidateSpec; 6] = [
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_SMOOTH,
         activation: tanh_activation,
+        min_improvement: 0.0,
+    },
+    ActivationCandidateSpec {
+        name: "IDENTITY",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_WIDE,
+        activation: identity_activation,
+        min_improvement: 0.0,
+    },
+    ActivationCandidateSpec {
+        name: "BIPOLAR",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_WIDE,
+        activation: bipolar_activation,
+        min_improvement: 0.0,
+    },
+    ActivationCandidateSpec {
+        name: "CLIPPED",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_SMOOTH,
+        activation: clipped_activation,
+        min_improvement: 0.0,
+    },
+    ActivationCandidateSpec {
+        name: "ABSOLUTE",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_WIDE,
+        activation: absolute_activation,
+        min_improvement: 0.0,
+    },
+    ActivationCandidateSpec {
+        name: "INVERSE",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_WIDE,
+        activation: inverse_activation,
         min_improvement: 0.0,
     },
 ];
@@ -3026,6 +3085,61 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
     analyze_neurons_with_cache(input, cache)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::ACTIVATION_SPECS;
+
+    #[test]
+    fn test_identity_activation() {
+        assert_eq!(identity_activation(1.0), 1.0);
+        assert_eq!(identity_activation(-1.0), -1.0);
+        assert_eq!(identity_activation(0.0), 0.0);
+    }
+
+    #[test]
+    fn test_bipolar_activation() {
+        assert_eq!(bipolar_activation(1.0), 1.0);
+        assert_eq!(bipolar_activation(0.0001), 1.0);
+        assert_eq!(bipolar_activation(0.0), -1.0);
+        assert_eq!(bipolar_activation(-1.0), -1.0);
+        assert_eq!(bipolar_activation(-0.0001), -1.0);
+    }
+
+    #[test]
+    fn test_clipped_activation() {
+        assert_eq!(clipped_activation(1.5), 1.0);
+        assert_eq!(clipped_activation(0.5), 0.5);
+        assert_eq!(clipped_activation(-0.5), -0.5);
+        assert_eq!(clipped_activation(-1.5), -1.0);
+    }
+
+    #[test]
+    fn test_absolute_activation() {
+        assert_eq!(absolute_activation(1.0), 1.0);
+        assert_eq!(absolute_activation(-1.0), 1.0);
+        assert_eq!(absolute_activation(0.0), 0.0);
+    }
+
+    #[test]
+    fn test_inverse_activation() {
+        assert_eq!(inverse_activation(1.0), 0.0);
+        assert_eq!(inverse_activation(0.0), 1.0);
+        assert_eq!(inverse_activation(-1.0), 2.0);
+    }
+
+    #[test]
+    fn test_specs_include_new_activations() {
+        let names: Vec<&str> = ACTIVATION_SPECS.iter().map(|s| s.name).collect();
+        assert!(names.contains(&"IDENTITY"));
+        assert!(!names.contains(&"LeakyReLU"));
+        assert!(names.contains(&"BIPOLAR"));
+        assert!(names.contains(&"CLIPPED"));
+        assert!(names.contains(&"ABSOLUTE"));
+        assert!(names.contains(&"INVERSE"));
+    }
+}
+
 pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     let include_synapse = input.include_synapse_analysis.unwrap_or(true);
     let include_neuron = input.include_neuron_analysis.unwrap_or(true);
@@ -3407,15 +3521,14 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 }
 
 #[cfg(test)]
-mod tests {
-    use super::deadline_override;
+mod tests_synapses {
     use super::*;
     use crate::parquet_format::write_records_to_parquet;
-    use crate::types::DiscoverRecord;
-    use crate::{AnalyzeNeuronsInput, AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-    use std::sync::Barrier;
+    use std::sync::{Arc, Barrier};
     use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use tempfile::tempdir;
 
     struct ForceGpuFailureGuard;
