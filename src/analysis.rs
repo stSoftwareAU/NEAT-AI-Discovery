@@ -1129,6 +1129,7 @@ impl ReluStats {
         source_uuid: &str,
         target_uuid: &str,
         threshold: f32,
+        total_baseline_error_sq: f32,
     ) -> ReluOrientationEvaluation {
         let sample_count = self.samples.len();
         if sample_count < MIN_NEURON_SAMPLE_COUNT || self.activation_sq_sum <= EPSILON {
@@ -1161,8 +1162,19 @@ impl ReluStats {
         let total_count = self.samples.len() as u32;
         debug_assert!(total_count > 0);
 
-        let expected_improvement =
-            (improved_count as f32 - worsened_count as f32) / total_count as f32;
+        // Calculate improvement based on magnitude (reduction in squared error)
+        // improvement = baseline_sq - new_sq
+        // = 2*w*sum(ea) - w^2*sum(aa)
+        let improvement_magnitude = 2.0 * outgoing_weight * self.error_activation_sum
+            - outgoing_weight * outgoing_weight * self.activation_sq_sum;
+
+        // Normalize by total baseline error of ALL samples (not just active ones)
+        let expected_improvement = if total_baseline_error_sq > EPSILON {
+            improvement_magnitude / total_baseline_error_sq
+        } else {
+            0.0
+        };
+
         if expected_improvement <= threshold {
             return ReluOrientationEvaluation {
                 summary: ReluOrientationSummary::below_threshold(
@@ -2682,11 +2694,14 @@ fn evaluate_relu_candidate(
 
     let mut positive_stats = ReluStats::new(ReluOrientation::Positive);
     let mut negative_stats = ReluStats::new(ReluOrientation::Negative);
+    let mut total_baseline_error_sq = 0.0;
 
     for sample in samples {
         if !sample.activation.is_finite() || !sample.avg_error.is_finite() {
             continue;
         }
+
+        total_baseline_error_sq += sample.avg_error * sample.avg_error;
 
         let activation = sample.activation;
         let error = sample.avg_error;
@@ -2702,8 +2717,10 @@ fn evaluate_relu_candidate(
         }
     }
 
-    let positive_eval = positive_stats.evaluate(source_uuid, target_uuid, threshold);
-    let negative_eval = negative_stats.evaluate(source_uuid, target_uuid, threshold);
+    let positive_eval =
+        positive_stats.evaluate(source_uuid, target_uuid, threshold, total_baseline_error_sq);
+    let negative_eval =
+        negative_stats.evaluate(source_uuid, target_uuid, threshold, total_baseline_error_sq);
     let evaluations = [positive_eval, negative_eval];
 
     let mut best_candidate: Option<CandidateNeuronJson> = None;
@@ -2753,6 +2770,13 @@ fn evaluate_activation_candidate(
     let mut fallback_score = f32::MIN;
     let mut outputs = Vec::with_capacity(samples.len());
 
+    let mut total_baseline_error_sq = 0.0;
+    for sample in samples {
+        if sample.avg_error.is_finite() {
+            total_baseline_error_sq += sample.avg_error * sample.avg_error;
+        }
+    }
+
     for &orientation in spec.orientations {
         for &scale in spec.scales {
             outputs.clear();
@@ -2784,13 +2808,10 @@ fn evaluate_activation_candidate(
             outgoing_weight = outgoing_weight.clamp(-5.0, 5.0);
 
             let mut improved_count = 0u32;
-            let mut worsened_count = 0u32;
             for (sample, output) in samples.iter().zip(outputs.iter()) {
                 let new_error = sample.avg_error - outgoing_weight * output;
                 if new_error.abs() + EPSILON < sample.avg_error.abs() {
                     improved_count += 1;
-                } else if new_error.abs() > sample.avg_error.abs() + EPSILON {
-                    worsened_count += 1;
                 }
             }
 
@@ -2799,8 +2820,17 @@ fn evaluate_activation_candidate(
                 continue;
             }
 
-            let expected_improvement_percentage =
-                (improved_count as f32 - worsened_count as f32) / total_count as f32;
+            // Calculate improvement based on magnitude (reduction in squared error)
+            // improvement = baseline_sq - new_sq
+            // = 2*w*sum(ea) - w^2*sum(aa)
+            let improvement_magnitude = 2.0 * outgoing_weight * sum_error_activation
+                - outgoing_weight * outgoing_weight * sum_activation_sq;
+
+            let expected_improvement_percentage = if total_baseline_error_sq > EPSILON {
+                improvement_magnitude / total_baseline_error_sq
+            } else {
+                0.0
+            };
 
             if expected_improvement_percentage > fallback_score {
                 fallback_score = expected_improvement_percentage;
@@ -3742,7 +3772,7 @@ mod tests {
         for _ in 0..(MIN_NEURON_SAMPLE_COUNT + 2) {
             stats.push(1.0, 0.05);
         }
-        let evaluation = stats.evaluate("source", "target", 2.0);
+        let evaluation = stats.evaluate("source", "target", 2.0, 1.0);
         assert!(
             evaluation.candidate.is_none(),
             "Expected candidate to fall below the threshold"
