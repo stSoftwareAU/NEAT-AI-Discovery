@@ -13,6 +13,7 @@ use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+#[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -2138,7 +2139,6 @@ impl GpuAnalyzer {
         stats
     }
 
-    #[cfg(test)]
     fn gpu_used(&self) -> bool {
         self.gpu_used
     }
@@ -2921,10 +2921,10 @@ fn analyze_neurons_with_cache(
 
     // Validate GPU requirement early (before parallel processing)
     // This ensures errors are propagated immediately if GPU is required but unavailable
-    let _gpu_validator = GpuAnalyzer::new(require_gpu)?;
+    let gpu_validator = GpuAnalyzer::new(require_gpu)?;
+    let gpu_used = gpu_validator.gpu_used();
 
     let analysis_timed_out = Arc::new(Mutex::new(false));
-    let gpu_used_flag = Arc::new(AtomicBool::new(false));
 
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
@@ -3091,9 +3091,6 @@ fn analyze_neurons_with_cache(
 
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
     diagnostics.emit_logs();
-
-    // Determine if GPU was used (tracked across all threads)
-    let gpu_used = gpu_used_flag.load(AtomicOrdering::Relaxed);
 
     Ok(AnalyzeNeuronsResult {
         helpful_neurons: helpful_results,
@@ -3275,13 +3272,13 @@ fn analyze_synapses_with_cache(
     // Process focus neurons in parallel
     // Validate GPU requirement early (before parallel processing)
     // This ensures errors are propagated immediately if GPU is required but unavailable
-    let _gpu_validator = GpuAnalyzer::new(require_gpu)?;
+    let gpu_validator = GpuAnalyzer::new(require_gpu)?;
+    let gpu_used = gpu_validator.gpu_used();
 
     let helpful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
     let harmful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
     let helpful_fallback = Arc::new(Mutex::new(Option::<CandidateSynapseJson>::None));
     let analysis_timed_out = Arc::new(Mutex::new(false));
-    let gpu_used_flag = Arc::new(AtomicBool::new(false));
 
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
@@ -3690,9 +3687,6 @@ fn analyze_synapses_with_cache(
 
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
     diagnostics.emit_logs();
-
-    // Determine if GPU was used (tracked across all threads)
-    let gpu_used = gpu_used_flag.load(AtomicOrdering::Relaxed);
 
     Ok(AnalyzeSynapsesResult {
         helpful_synapses: helpful_results,
