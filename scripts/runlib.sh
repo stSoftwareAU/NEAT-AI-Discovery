@@ -167,14 +167,6 @@ ensure_lib_built() {
   fi
 
   if [[ "$needs_rebuild" == "false" ]]; then
-    # Compare installed and target binaries; rebuild/copy if they differ
-    if [[ -f "$target_lib" ]] && ! cmp -s "$target_lib" "$lib_path"; then
-      needs_rebuild=true
-      rebuild_reason="Installed library differs from freshly built artifact"
-    fi
-  fi
-
-  if [[ "$needs_rebuild" == "false" ]]; then
     echo "$lib_path"
     return 0
   fi
@@ -188,14 +180,25 @@ ensure_lib_built() {
   >&2 echo "Building ${PKG} v${DESIRED}"
   cargo build --release --lib >&2
 
+  # Verify build succeeded - target library must exist
+  [[ -f "$target_lib" ]] || { >&2 echo "Build failed: expected library not found at $target_lib"; exit 1; }
+
+  # Sign the target binary for macOS (required for Deno FFI to load it without SIGKILL)
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    >&2 echo "Signing ${lib_file} for macOS compatibility"
+    codesign --force --sign - --timestamp=none --preserve-metadata=entitlements "$target_lib" >&2 2>/dev/null || true
+  fi
+
   # Copy to cargo lib directory
   >&2 echo "Installing ${lib_file} → ${lib_path}"
   mkdir -p "$HOME/.cargo/lib" >&2
   cp "$target_lib" "$lib_path" >&2
 
-  echo "$DESIRED" > "$version_marker"
+  # Verify copy succeeded - installed library must exist
+  [[ -f "$lib_path" ]] || { >&2 echo "Installation failed: expected library not found at $lib_path"; exit 1; }
 
-  [[ -f "$lib_path" ]] || { >&2 echo "Expected library not found at $lib_path"; exit 1; }
+  # Only write version marker after successful build, signing, and installation
+  echo "$DESIRED" > "$version_marker"
 
   # IMPORTANT: stdout must contain ONLY the path (no extra text)
   echo "$lib_path"
