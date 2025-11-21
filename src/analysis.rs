@@ -4590,51 +4590,60 @@ mod tests_synapses {
         // Test case: samples with substantial activation but negligible error (below EPSILON)
         // CPU computes activation_sq_sum and error_activation_sum when activation > epsilon
         // GPU should match this behavior (fixed in shader)
-        
+
         let samples = vec![
             HelpfulSample {
-                activation: 1.0,  // Substantial activation
-                avg_error: 1e-9,  // Negligible error (below EPSILON = 1e-8)
+                activation: 1.0, // Substantial activation
+                avg_error: 1e-9, // Negligible error (below EPSILON = 1e-8)
             },
             HelpfulSample {
-                activation: -2.0,  // Substantial activation
-                avg_error: 0.0,    // Zero error
+                activation: -2.0, // Substantial activation
+                avg_error: 0.0,   // Zero error
             },
             HelpfulSample {
-                activation: 3.0,   // Substantial activation
-                avg_error: -1e-9,  // Negligible error (below EPSILON)
+                activation: 3.0,  // Substantial activation
+                avg_error: -1e-9, // Negligible error (below EPSILON)
             },
         ];
 
         let cpu_stats = cpu_helpful_stats(&samples);
-        
+
         // CPU computes activation stats even when error is negligible or zero
         // activation_sq_sum = 1.0^2 + (-2.0)^2 + 3.0^2 = 1 + 4 + 9 = 14.0
         assert!((cpu_stats.activation_sq_sum - 14.0).abs() < 1e-6,
             "CPU should compute activation_sq_sum when activation > epsilon, even if error <= epsilon");
-        
+
         // error_activation_sum should be computed (even if very small)
         // For sample 1: 1.0 * 1e-9 = 1e-9
         // For sample 2: -2.0 * 0.0 = 0.0
         // For sample 3: 3.0 * (-1e-9) = -3e-9
         // Total: -2e-9
-        assert!(cpu_stats.error_activation_sum.abs() < 1e-6,
-            "error_activation_sum should be computed (very small but non-zero)");
-        
+        assert!(
+            cpu_stats.error_activation_sum.abs() < 1e-6,
+            "error_activation_sum should be computed (very small but non-zero)"
+        );
+
         // Now test GPU (if available) - should match CPU after fix
         let analyzer = GpuAnalyzer::new(false);
         if let Ok(analyzer) = analyzer {
             if analyzer.gpu_used() {
-                let gpu_stats = analyzer.evaluate_helpful(&samples)
+                let gpu_stats = analyzer
+                    .evaluate_helpful(&samples)
                     .expect("GPU evaluation should succeed");
-                
+
                 // GPU should match CPU behavior after fix
-                assert!((gpu_stats.activation_sq_sum - cpu_stats.activation_sq_sum).abs() < 1e-6,
-                    "GPU activation_sq_sum should match CPU: CPU={}, GPU={}", 
-                    cpu_stats.activation_sq_sum, gpu_stats.activation_sq_sum);
-                assert!((gpu_stats.error_activation_sum - cpu_stats.error_activation_sum).abs() < 1e-6,
-                    "GPU error_activation_sum should match CPU: CPU={}, GPU={}", 
-                    cpu_stats.error_activation_sum, gpu_stats.error_activation_sum);
+                assert!(
+                    (gpu_stats.activation_sq_sum - cpu_stats.activation_sq_sum).abs() < 1e-6,
+                    "GPU activation_sq_sum should match CPU: CPU={}, GPU={}",
+                    cpu_stats.activation_sq_sum,
+                    gpu_stats.activation_sq_sum
+                );
+                assert!(
+                    (gpu_stats.error_activation_sum - cpu_stats.error_activation_sum).abs() < 1e-6,
+                    "GPU error_activation_sum should match CPU: CPU={}, GPU={}",
+                    cpu_stats.error_activation_sum,
+                    gpu_stats.error_activation_sum
+                );
             }
         }
     }
