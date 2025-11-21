@@ -1509,18 +1509,21 @@ fn cpu_helpful_stats(samples: &[HelpfulSample]) -> HelpfulStats {
             stats.activation_sq_sum += sample.activation * sample.activation;
             stats.error_activation_sum += sample.avg_error * sample.activation;
 
-            let required_sign = -sample.avg_error.signum() * sample.activation.signum();
-            let improvement = sample.avg_error.abs();
-            let activation_mag = sample.activation.abs();
+            // Positive/negative counts are only computed when BOTH activation AND error exceed epsilon
+            if sample.avg_error.abs() > EPSILON {
+                let required_sign = -sample.avg_error.signum() * sample.activation.signum();
+                let improvement = sample.avg_error.abs();
+                let activation_mag = sample.activation.abs();
 
-            if required_sign > 0.0 {
-                stats.positive_count += 1;
-                stats.positive_improvement_sum += improvement;
-                stats.positive_activation_sum += activation_mag;
-            } else if required_sign < 0.0 {
-                stats.negative_count += 1;
-                stats.negative_improvement_sum += improvement;
-                stats.negative_activation_sum += activation_mag;
+                if required_sign > 0.0 {
+                    stats.positive_count += 1;
+                    stats.positive_improvement_sum += improvement;
+                    stats.positive_activation_sum += activation_mag;
+                } else if required_sign < 0.0 {
+                    stats.negative_count += 1;
+                    stats.negative_improvement_sum += improvement;
+                    stats.negative_activation_sum += activation_mag;
+                }
             }
         }
     }
@@ -4643,6 +4646,67 @@ mod tests_synapses {
                     "GPU error_activation_sum should match CPU: CPU={}, GPU={}",
                     cpu_stats.error_activation_sum,
                     gpu_stats.error_activation_sum
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_cpu_gpu_positive_negative_count_divergence() {
+        // Test case: samples with substantial activation but negligible error (below EPSILON)
+        // Both CPU and GPU should NOT compute positive/negative counts when error <= epsilon,
+        // even if activation > epsilon. This matches the GPU shader behavior.
+
+        let samples = vec![
+            HelpfulSample {
+                activation: 1.0, // Substantial activation
+                avg_error: 1e-9, // Negligible error (below EPSILON = 1e-8)
+            },
+            HelpfulSample {
+                activation: -2.0, // Substantial activation
+                avg_error: 0.0,   // Zero error
+            },
+            HelpfulSample {
+                activation: 3.0,  // Substantial activation
+                avg_error: -1e-9, // Negligible error (below EPSILON)
+            },
+        ];
+
+        let cpu_stats = cpu_helpful_stats(&samples);
+
+        // CPU should NOT compute positive/negative counts when error <= epsilon
+        // even though activation > epsilon
+        assert_eq!(cpu_stats.positive_count, 0,
+            "CPU should not compute positive_count when error <= epsilon, even if activation > epsilon");
+        assert_eq!(cpu_stats.negative_count, 0,
+            "CPU should not compute negative_count when error <= epsilon, even if activation > epsilon");
+        assert_eq!(
+            cpu_stats.positive_improvement_sum, 0.0,
+            "CPU should not compute positive_improvement_sum when error <= epsilon"
+        );
+        assert_eq!(
+            cpu_stats.negative_improvement_sum, 0.0,
+            "CPU should not compute negative_improvement_sum when error <= epsilon"
+        );
+
+        // Now test GPU (if available) - should match CPU
+        let analyzer = GpuAnalyzer::new(false);
+        if let Ok(analyzer) = analyzer {
+            if analyzer.gpu_used() {
+                let gpu_stats = analyzer
+                    .evaluate_helpful(&samples)
+                    .expect("GPU evaluation should succeed");
+
+                // GPU should match CPU behavior
+                assert_eq!(
+                    gpu_stats.positive_count, cpu_stats.positive_count,
+                    "GPU positive_count should match CPU: CPU={}, GPU={}",
+                    cpu_stats.positive_count, gpu_stats.positive_count
+                );
+                assert_eq!(
+                    gpu_stats.negative_count, cpu_stats.negative_count,
+                    "GPU negative_count should match CPU: CPU={}, GPU={}",
+                    cpu_stats.negative_count, gpu_stats.negative_count
                 );
             }
         }
