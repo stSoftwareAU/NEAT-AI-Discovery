@@ -4496,13 +4496,13 @@ mod tests_synapses {
         // approximate - once any thread detects the deadline, analysis_timed_out is set
         // and processing should stop. However, some threads may have already started
         // processing harmful synapses before the deadline was detected.
-        // 
+        //
         // The key requirement is that the analysis completes successfully and respects
         // the deadline approximately. Since timeout is approximate, we verify that:
         // 1. The analysis completes without panicking
         // 2. The result structure is valid
         // 3. We don't process more harmful synapses than exist (sanity check)
-        // 
+        //
         // In this test setup, we have 2 focus neurons, each with 1 harmful synapse (2 total).
         // The deadline sequence [false x6, true, ...] should cause early termination,
         // but with parallel processing, the exact point of termination is non-deterministic.
