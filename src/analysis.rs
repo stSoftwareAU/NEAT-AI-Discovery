@@ -2,7 +2,7 @@ use crate::parquet_format::read_records_from_parquet;
 use crate::types::DiscoverRecord;
 use crate::{
     AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson,
-    CandidateSynapseJson,
+    CandidateSynapseJson, SynapseJson,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wgpu::util::DeviceExt;
+use rayon::prelude::*;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -2977,63 +2978,78 @@ fn analyze_neurons_with_cache(
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeNeuronsResult> {
     let require_gpu = input.require_gpu.unwrap_or(cfg!(target_os = "macos"));
-    let analyzer = GpuAnalyzer::new(require_gpu)?;
 
     let threshold = input.improvement_threshold.unwrap_or(0.1);
     let ordered_neurons = build_ordered_neurons(&input.creature);
-    let mut order_map: HashMap<&str, usize> = HashMap::new();
-    for neuron in &ordered_neurons {
-        order_map.insert(neuron.uuid.as_str(), neuron.index);
-    }
+    let order_map: HashMap<String, usize> = ordered_neurons
+        .iter()
+        .map(|neuron| (neuron.uuid.clone(), neuron.index))
+        .collect();
 
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_neurons")?;
 
-    let mut helpful_map: HashMap<(String, String, String), CandidateNeuronJson> = HashMap::new();
+    let helpful_map = Arc::new(Mutex::new(HashMap::<(String, String, String), CandidateNeuronJson>::new()));
 
-    let mut diagnostics = NeuronDiagnostics::new(&unique_focus);
+    let diagnostics = Arc::new(Mutex::new(NeuronDiagnostics::new(&unique_focus)));
 
     let deadline = build_deadline(input.analysis_deadline_ms);
     let mut rng = build_shuffle_rng("analyze_synapses", &input.focus_neurons);
     let mut focus_order = unique_focus.clone();
     focus_order.shuffle(&mut rng);
-    let mut analysis_timed_out = false;
 
-    for target_uuid in focus_order {
-        if deadline_passed(&deadline) {
-            analysis_timed_out = true;
-            break;
+    let analysis_timed_out = Arc::new(Mutex::new(false));
+
+    let focus_order_arc = Arc::new(focus_order);
+    let ordered_neurons_arc = Arc::new(ordered_neurons);
+    let order_map_arc = Arc::new(order_map);
+
+    // Process each focus neuron in parallel
+    focus_order_arc.par_iter().try_for_each(|target_uuid| -> Result<()> {
+        if *analysis_timed_out.lock().expect("Mutex poisoned") || deadline_passed(&deadline) {
+            *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+            return Ok(());
         }
 
-        let target_records_arc = match cache.get(target_uuid) {
+        // Each thread gets its own GpuAnalyzer (wgpu devices are not thread-safe)
+        let analyzer = GpuAnalyzer::new(require_gpu)?;
+
+        let target_records_arc = match cache.get(*target_uuid) {
             Ok(records) => records,
             Err(err) => {
                 if cfg!(debug_assertions) {
                     eprintln!("Failed to load target neuron records for {target_uuid}: {err}");
                 }
-                continue;
+                return Ok(());
             }
         };
         if target_records_arc.is_empty() {
-            diagnostics.set_target_record_count(target_uuid, 0);
-            continue;
+            diagnostics
+                .lock()
+                .expect("Mutex poisoned: diagnostics")
+                .set_target_record_count(*target_uuid, 0);
+            return Ok(());
         }
         let target_records = target_records_arc.as_ref();
-        diagnostics.set_target_record_count(target_uuid, target_records.len());
+        diagnostics
+            .lock()
+            .expect("Mutex poisoned: diagnostics")
+            .set_target_record_count(*target_uuid, target_records.len());
 
-        let target_index = match order_map.get(target_uuid.as_str()) {
+        let target_index = match order_map_arc.get(*target_uuid) {
             Some(index) => *index,
-            None => continue,
+            None => return Ok(()),
         };
 
-        let mut eligible_sources: Vec<&OrderedNeuron> = ordered_neurons
+        let mut eligible_sources: Vec<&OrderedNeuron> = ordered_neurons_arc
             .iter()
             .filter(|neuron| neuron.index < target_index)
             .collect();
+        let mut rng = thread_rng();
         eligible_sources.shuffle(&mut rng);
 
         for source in eligible_sources {
-            if deadline_passed(&deadline) {
-                analysis_timed_out = true;
+            if *analysis_timed_out.lock().expect("Mutex poisoned") || deadline_passed(&deadline) {
+                *analysis_timed_out.lock().expect("Mutex poisoned") = true;
                 break;
             }
 
@@ -3048,48 +3064,73 @@ fn analyze_neurons_with_cache(
                 }
             };
             if from_records_arc.is_empty() {
-                diagnostics.record_candidate_attempt(target_uuid, false);
-                diagnostics.record_no_samples(target_uuid, source_uuid);
+                diagnostics
+                    .lock()
+                    .expect("Mutex poisoned: diagnostics")
+                    .record_candidate_attempt(*target_uuid, false);
+                diagnostics
+                    .lock()
+                    .expect("Mutex poisoned: diagnostics")
+                    .record_no_samples(*target_uuid, source_uuid);
                 continue;
             }
             let from_records = from_records_arc.as_ref();
 
             let samples = analyzer.build_samples_gpu(target_records, from_records)?;
-            diagnostics.record_candidate_attempt(target_uuid, !samples.is_empty());
+            diagnostics
+                .lock()
+                .expect("Mutex poisoned: diagnostics")
+                .record_candidate_attempt(*target_uuid, !samples.is_empty());
             if samples.is_empty() {
-                diagnostics.record_no_samples(target_uuid, source_uuid);
+                diagnostics
+                    .lock()
+                    .expect("Mutex poisoned: diagnostics")
+                    .record_no_samples(*target_uuid, source_uuid);
                 continue;
             }
 
             let relu_result =
-                evaluate_relu_candidate(&analyzer, source_uuid, target_uuid, &samples, threshold)?;
+                evaluate_relu_candidate(&analyzer, source_uuid, *target_uuid, &samples, threshold)?;
 
             if let Some(candidate) = relu_result.candidate {
-                diagnostics.mark_candidate_selected(target_uuid);
-                upsert_candidate(&mut helpful_map, candidate);
+                diagnostics
+                    .lock()
+                    .expect("Mutex poisoned: diagnostics")
+                    .mark_candidate_selected(*target_uuid);
+                let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
+                upsert_candidate(&mut map, candidate);
             } else if let Some(summary) = relu_result.best_summary.as_ref() {
-                diagnostics.record_rejection(target_uuid, source_uuid, summary, threshold);
+                diagnostics
+                    .lock()
+                    .expect("Mutex poisoned: diagnostics")
+                    .record_rejection(*target_uuid, source_uuid, summary, threshold);
             }
 
             for spec in ACTIVATION_SPECS.iter() {
                 if let Some(candidate) = evaluate_activation_candidate(
                     &analyzer,
                     source_uuid,
-                    target_uuid,
+                    *target_uuid,
                     &samples,
                     threshold,
                     spec,
                 )? {
-                    diagnostics.mark_candidate_selected(target_uuid);
-                    upsert_candidate(&mut helpful_map, candidate);
+                    diagnostics
+                        .lock()
+                        .expect("Mutex poisoned: diagnostics")
+                        .mark_candidate_selected(*target_uuid);
+                    let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
+                    upsert_candidate(&mut map, candidate);
                 }
             }
         }
 
-        if analysis_timed_out {
-            break;
-        }
-    }
+        Ok(())
+    })?;
+
+    let analysis_timed_out = *analysis_timed_out.lock().expect("Mutex poisoned: analysis_timed_out");
+    let helpful_map = helpful_map.lock().expect("Mutex poisoned: helpful_map").clone();
+    let diagnostics = diagnostics.lock().expect("Mutex poisoned: diagnostics");
 
     if analysis_timed_out && verbose_enabled() {
         eprintln!("[NEAT-AI-Discovery][verbose] analyse_neurons reached analysis deadline; returning partial results.");
@@ -3109,9 +3150,18 @@ fn analyze_neurons_with_cache(
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
     diagnostics.emit_logs();
 
+    // Determine if GPU was used
+    let gpu_used = if require_gpu {
+        GpuAnalyzer::new(require_gpu)
+            .map(|a| a.gpu_used())
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
     Ok(AnalyzeNeuronsResult {
         helpful_neurons: helpful_results,
-        gpu_used: analyzer.gpu_used(),
+        gpu_used,
         no_candidate_reasons,
     })
 }
@@ -3245,13 +3295,12 @@ fn analyze_synapses_with_cache(
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeSynapsesResult> {
     let require_gpu = input.require_gpu.unwrap_or(cfg!(target_os = "macos"));
-    let analyzer = GpuAnalyzer::new(require_gpu)?;
 
     let ordered_neurons = build_ordered_neurons(&input.creature);
-    let mut order_map: HashMap<&str, usize> = HashMap::new();
-    for neuron in &ordered_neurons {
-        order_map.insert(neuron.uuid.as_str(), neuron.index);
-    }
+    let order_map: HashMap<String, usize> = ordered_neurons
+        .iter()
+        .map(|neuron| (neuron.uuid.clone(), neuron.index))
+        .collect();
 
     let existing_synapses: HashSet<(String, String)> = input
         .creature
@@ -3260,27 +3309,24 @@ fn analyze_synapses_with_cache(
         .map(|synapse| (synapse.from_uuid.clone(), synapse.to_uuid.clone()))
         .collect();
 
-    let mut synapses_by_target: HashMap<&str, Vec<&crate::SynapseJson>> = HashMap::new();
-    for synapse in &input.creature.synapses {
-        synapses_by_target
-            .entry(synapse.to_uuid.as_str())
-            .or_default()
-            .push(synapse);
-    }
+    let synapses_by_target: HashMap<String, Vec<SynapseJson>> = input
+        .creature
+        .synapses
+        .iter()
+        .map(|synapse| (synapse.to_uuid.clone(), synapse.clone()))
+        .fold(HashMap::new(), |mut acc, (key, val)| {
+            acc.entry(key).or_insert_with(Vec::new).push(val);
+            acc
+        });
 
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_synapses")?;
 
-    let mut diagnostics = TargetDiagnostics::new(&unique_focus);
+    let diagnostics = Arc::new(Mutex::new(TargetDiagnostics::new(&unique_focus)));
 
     let deadline = build_deadline(input.analysis_deadline_ms);
     let mut rng = build_shuffle_rng("analyze_neurons", &input.focus_neurons);
     let mut focus_order = unique_focus.clone();
     focus_order.shuffle(&mut rng);
-    let mut analysis_timed_out = false;
-
-    let mut helpful_results: Vec<CandidateSynapseJson> = Vec::new();
-    let mut harmful_results: Vec<CandidateSynapseJson> = Vec::new();
-    let mut helpful_fallback: Option<CandidateSynapseJson> = None;
 
     let threshold = input.improvement_threshold.unwrap_or(0.1);
 
@@ -3291,161 +3337,276 @@ fn analyze_synapses_with_cache(
         samples: Vec<HelpfulSample>,
     }
 
-    let mut helpful_work_batch: Vec<HelpfulWork> = Vec::new();
+    // Process focus neurons in parallel
+    let helpful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
+    let harmful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
+    let helpful_fallback = Arc::new(Mutex::new(Option::<CandidateSynapseJson>::None));
+    let analysis_timed_out = Arc::new(Mutex::new(false));
 
-    'target_loop: for target_uuid in focus_order.iter() {
-        if deadline_passed(&deadline) {
-            analysis_timed_out = true;
-            break;
+    let focus_order_arc = Arc::new(focus_order);
+    let ordered_neurons_arc = Arc::new(ordered_neurons);
+    let existing_synapses_arc = Arc::new(existing_synapses);
+    let synapses_by_target_arc = Arc::new(synapses_by_target);
+    let order_map_arc = Arc::new(order_map);
+
+    // Process each focus neuron in parallel
+    focus_order_arc.par_iter().try_for_each(|target_uuid| -> Result<()> {
+        if *analysis_timed_out.lock().expect("Mutex poisoned") || deadline_passed(&deadline) {
+            *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+            return Ok(());
         }
 
-        let target_uuid = *target_uuid;
+        // Each thread gets its own GpuAnalyzer (wgpu devices are not thread-safe)
+        let analyzer = GpuAnalyzer::new(require_gpu)?;
 
-        let target_records_arc = cache.get(target_uuid)?;
+        let target_records_arc = cache.get(*target_uuid)?;
         if target_records_arc.is_empty() {
-            diagnostics.set_target_record_count(target_uuid, 0);
-            continue;
+            diagnostics
+                .lock()
+                .expect("Mutex poisoned: diagnostics")
+                .set_target_record_count(*target_uuid, 0);
+            return Ok(());
         }
         let target_records = target_records_arc.as_ref();
-        diagnostics.set_target_record_count(target_uuid, target_records.len());
+        diagnostics
+            .lock()
+            .expect("Mutex poisoned: diagnostics")
+            .set_target_record_count(*target_uuid, target_records.len());
 
-        let target_index = match order_map.get(target_uuid.as_str()) {
+        let target_index = match order_map_arc.get(*target_uuid) {
             Some(index) => *index,
-            None => continue,
+            None => return Ok(()),
         };
 
-        let mut eligible_sources: Vec<&OrderedNeuron> = ordered_neurons
+        let mut eligible_sources: Vec<&OrderedNeuron> = ordered_neurons_arc
             .iter()
             .filter(|neuron| neuron.index < target_index)
             .collect();
+        let mut rng = thread_rng();
         eligible_sources.shuffle(&mut rng);
 
-        // Collect helpful candidates for batching
-        for source in eligible_sources {
-            if deadline_passed(&deadline) {
-                analysis_timed_out = true;
-                break 'target_loop;
-            }
-
-            let source_uuid = source.uuid.as_str();
-
-            if existing_synapses.contains(&(source_uuid.to_string(), target_uuid.to_string())) {
-                continue;
-            }
-
-            let from_records_arc = cache.get(source_uuid)?;
-            if from_records_arc.is_empty() {
-                diagnostics.record_candidate_attempt(target_uuid, false);
-                diagnostics.record_no_samples(target_uuid, source_uuid, 0);
-                continue;
-            }
-            let from_records = from_records_arc.as_ref();
-
-            let samples = analyzer.build_samples_gpu(target_records, from_records)?;
-            diagnostics.record_candidate_attempt(target_uuid, !samples.is_empty());
-            if samples.is_empty() {
-                diagnostics.record_no_samples(target_uuid, source_uuid, from_records.len());
-                continue;
-            }
-
-            helpful_work_batch.push(HelpfulWork {
-                source_uuid: source_uuid.to_string(),
-                target_uuid: target_uuid.to_string(),
-                samples,
-            });
-        }
-    }
-
-    // Process helpful work in batches for better GPU utilization
-    let helpful_samples_refs: Vec<&[HelpfulSample]> = helpful_work_batch
-        .iter()
-        .map(|w| w.samples.as_slice())
-        .collect();
-    let helpful_stats_batch = analyzer.evaluate_helpful_batch(&helpful_samples_refs)?;
-
-    // Process results
-    for (work, stats) in helpful_work_batch.iter().zip(helpful_stats_batch.iter()) {
-        let positive_is_better = stats.positive_count >= stats.negative_count;
-        let improved_count = if positive_is_better {
-            stats.positive_count
-        } else {
-            stats.negative_count
-        };
-        if improved_count == 0 {
-            diagnostics.record_zero_improvement(
-                &work.target_uuid,
-                &work.source_uuid,
-                work.samples.len(),
-                stats.positive_count,
-                stats.negative_count,
-            );
-            continue;
+        // Check timeout once before parallel processing
+        if deadline_passed(&deadline) {
+            *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+            return Ok(());
         }
 
-        let worsen_count = if positive_is_better {
-            stats.negative_count
-        } else {
-            stats.positive_count
-        };
-        let total_count = work.samples.len() as u32;
-        if total_count == 0 {
-            continue;
+        // Parallelize source neuron collection for maximum performance
+        // Collect work and diagnostics info in parallel
+        struct SourceWorkResult {
+            work: Option<HelpfulWork>,
+            had_samples: bool,
+            source_uuid: String,
+            record_count: usize,
         }
 
-        let improvement_sum = if positive_is_better {
-            stats.positive_improvement_sum
-        } else {
-            stats.negative_improvement_sum
-        };
+        let source_results: Result<Vec<SourceWorkResult>> = eligible_sources
+            .par_iter()
+            .map(|source| -> Result<SourceWorkResult> {
+                // Check timeout periodically
+                if deadline_passed(&deadline) {
+                    return Ok(SourceWorkResult {
+                        work: None,
+                        had_samples: false,
+                        source_uuid: source.uuid.clone(),
+                        record_count: 0,
+                    });
+                }
 
-        let activation_sum = if positive_is_better {
-            stats.positive_activation_sum
-        } else {
-            stats.negative_activation_sum
-        };
+                let source_uuid = source.uuid.as_str();
 
-        let mut weight = 0.0;
-        if activation_sum.abs() > EPSILON {
-            let raw_weight = improvement_sum / (activation_sum + 1e-8);
-            weight = if positive_is_better {
-                -raw_weight
-            } else {
-                raw_weight
-            };
-            weight = weight.clamp(-1.0, 1.0);
-        }
+                if existing_synapses_arc.contains(&(source_uuid.to_string(), target_uuid.to_string())) {
+                    return Ok(SourceWorkResult {
+                        work: None,
+                        had_samples: false,
+                        source_uuid: source_uuid.to_string(),
+                        record_count: 0,
+                    });
+                }
 
-        let improvement_magnitude =
-            2.0 * weight * stats.error_activation_sum - weight * weight * stats.activation_sq_sum;
+                let from_records_arc = match cache.get(source_uuid) {
+                    Ok(records) => records,
+                    Err(_) => {
+                        return Ok(SourceWorkResult {
+                            work: None,
+                            had_samples: false,
+                            source_uuid: source_uuid.to_string(),
+                            record_count: 0,
+                        });
+                    }
+                };
+                let record_count = from_records_arc.len();
+                if from_records_arc.is_empty() {
+                    return Ok(SourceWorkResult {
+                        work: None,
+                        had_samples: false,
+                        source_uuid: source_uuid.to_string(),
+                        record_count: 0,
+                    });
+                }
+                let from_records = from_records_arc.as_ref();
 
-        let expected_improvement_percentage = if stats.error_sq_sum > EPSILON {
-            let result = improvement_magnitude / stats.error_sq_sum;
-            if result.is_finite() {
-                result
-            } else {
-                0.0
+                let samples = analyzer.build_samples_gpu(target_records, from_records)?;
+                let had_samples = !samples.is_empty();
+                
+                let work = if had_samples {
+                    Some(HelpfulWork {
+                        source_uuid: source_uuid.to_string(),
+                        target_uuid: target_uuid.to_string(),
+                        samples,
+                    })
+                } else {
+                    None
+                };
+
+                Ok(SourceWorkResult {
+                    work,
+                    had_samples,
+                    source_uuid: source_uuid.to_string(),
+                    record_count,
+                })
+            })
+            .collect();
+
+        let source_results = source_results?;
+        
+        // Extract work batch and batch diagnostics updates
+        let mut helpful_work_batch: Vec<HelpfulWork> = Vec::new();
+        let mut diagnostics_updates: Vec<(String, String, bool, usize)> = Vec::new();
+        
+        for result in source_results {
+            if let Some(work) = result.work {
+                helpful_work_batch.push(work);
             }
-        } else {
-            0.0
-        };
+            diagnostics_updates.push((
+                (*target_uuid).clone(),
+                result.source_uuid,
+                result.had_samples,
+                result.record_count,
+            ));
+        }
+        
+        // Apply all diagnostics updates in a single lock (reduces contention)
+        if !diagnostics_updates.is_empty() {
+            let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
+            for (target, source, had_samples, record_count) in diagnostics_updates {
+                diag.record_candidate_attempt(&target, had_samples);
+                if !had_samples {
+                    diag.record_no_samples(&target, &source, record_count);
+                }
+            }
+        }
 
-        if expected_improvement_percentage <= threshold {
-            diagnostics.record_below_threshold(
-                &work.target_uuid,
-                &work.source_uuid,
-                ThresholdContext {
-                    sample_count: work.samples.len(),
-                    expected_improvement: expected_improvement_percentage,
-                    threshold,
-                    improved_count,
-                    worsened_count: worsen_count,
-                    weight,
-                },
-            );
-            if helpful_fallback.as_ref().is_none_or(|existing| {
-                existing.expected_improvement_percentage < expected_improvement_percentage
-            }) {
-                helpful_fallback = Some(CandidateSynapseJson {
+        // Process helpful work in batches for better GPU utilization
+        if !helpful_work_batch.is_empty() {
+            let helpful_samples_refs: Vec<&[HelpfulSample]> = helpful_work_batch
+                .iter()
+                .map(|w| w.samples.as_slice())
+                .collect();
+            let helpful_stats_batch = analyzer.evaluate_helpful_batch(&helpful_samples_refs)?;
+
+            // Process results - collect all updates first, then apply in batches (reduces mutex contention)
+            let mut candidates_to_add = Vec::new();
+            let mut diagnostics_zero_improvements = Vec::new();
+            let mut diagnostics_below_threshold = Vec::new();
+            let mut diagnostics_selected = Vec::new();
+            let mut best_fallback: Option<CandidateSynapseJson> = None;
+
+            for (work, stats) in helpful_work_batch.iter().zip(helpful_stats_batch.iter()) {
+                let positive_is_better = stats.positive_count >= stats.negative_count;
+                let improved_count = if positive_is_better {
+                    stats.positive_count
+                } else {
+                    stats.negative_count
+                };
+                if improved_count == 0 {
+                    diagnostics_zero_improvements.push((
+                        work.target_uuid.clone(),
+                        work.source_uuid.clone(),
+                        work.samples.len(),
+                        stats.positive_count,
+                        stats.negative_count,
+                    ));
+                    continue;
+                }
+
+                let worsen_count = if positive_is_better {
+                    stats.negative_count
+                } else {
+                    stats.positive_count
+                };
+                let total_count = work.samples.len() as u32;
+                if total_count == 0 {
+                    continue;
+                }
+
+                let improvement_sum = if positive_is_better {
+                    stats.positive_improvement_sum
+                } else {
+                    stats.negative_improvement_sum
+                };
+
+                let activation_sum = if positive_is_better {
+                    stats.positive_activation_sum
+                } else {
+                    stats.negative_activation_sum
+                };
+
+                let mut weight = 0.0;
+                if activation_sum.abs() > EPSILON {
+                    let raw_weight = improvement_sum / (activation_sum + 1e-8);
+                    weight = if positive_is_better {
+                        -raw_weight
+                    } else {
+                        raw_weight
+                    };
+                    weight = weight.clamp(-1.0, 1.0);
+                }
+
+                let improvement_magnitude =
+                    2.0 * weight * stats.error_activation_sum - weight * weight * stats.activation_sq_sum;
+
+                let expected_improvement_percentage = if stats.error_sq_sum > EPSILON {
+                    let result = improvement_magnitude / stats.error_sq_sum;
+                    if result.is_finite() {
+                        result
+                    } else {
+                        0.0
+                    }
+                } else {
+                    0.0
+                };
+
+                if expected_improvement_percentage <= threshold {
+                    diagnostics_below_threshold.push((
+                        work.target_uuid.clone(),
+                        work.source_uuid.clone(),
+                        ThresholdContext {
+                            sample_count: work.samples.len(),
+                            expected_improvement: expected_improvement_percentage,
+                            threshold,
+                            improved_count,
+                            worsened_count: worsen_count,
+                            weight,
+                        },
+                    ));
+                    if best_fallback.as_ref().is_none_or(|existing| {
+                        existing.expected_improvement_percentage < expected_improvement_percentage
+                    }) {
+                        best_fallback = Some(CandidateSynapseJson {
+                            from_neuron_uuid: work.source_uuid.clone(),
+                            to_neuron_uuid: work.target_uuid.clone(),
+                            weight,
+                            expected_improvement_percentage,
+                            improved_count,
+                            total_count,
+                        });
+                    }
+                    continue;
+                }
+
+                diagnostics_selected.push(work.target_uuid.clone());
+                candidates_to_add.push(CandidateSynapseJson {
                     from_neuron_uuid: work.source_uuid.clone(),
                     to_neuron_uuid: work.target_uuid.clone(),
                     weight,
@@ -3454,44 +3615,55 @@ fn analyze_synapses_with_cache(
                     total_count,
                 });
             }
-            continue;
+
+            // Apply all diagnostics updates in batches (minimizes mutex contention)
+            if !diagnostics_zero_improvements.is_empty() {
+                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
+                for (target, source, sample_count, pos, neg) in diagnostics_zero_improvements {
+                    diag.record_zero_improvement(&target, &source, sample_count, pos, neg);
+                }
+            }
+            if !diagnostics_below_threshold.is_empty() {
+                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
+                for (target, source, context) in diagnostics_below_threshold {
+                    diag.record_below_threshold(&target, &source, context);
+                }
+            }
+            if !diagnostics_selected.is_empty() {
+                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
+                for target in diagnostics_selected {
+                    diag.mark_candidate_selected(&target);
+                }
+            }
+            if let Some(fallback) = best_fallback {
+                let mut fallback_guard = helpful_fallback.lock().expect("Mutex poisoned: helpful_fallback");
+                if fallback_guard.as_ref().is_none_or(|existing| {
+                    existing.expected_improvement_percentage < fallback.expected_improvement_percentage
+                }) {
+                    *fallback_guard = Some(fallback);
+                }
+            }
+            if !candidates_to_add.is_empty() {
+                let mut results = helpful_results.lock().expect("Mutex poisoned: helpful_results");
+                results.extend(candidates_to_add);
+            }
         }
 
-        diagnostics.mark_candidate_selected(&work.target_uuid);
-        helpful_results.push(CandidateSynapseJson {
-            from_neuron_uuid: work.source_uuid.clone(),
-            to_neuron_uuid: work.target_uuid.clone(),
-            weight,
-            expected_improvement_percentage,
-            improved_count,
-            total_count,
-        });
-    }
-
-    if !analysis_timed_out {
-        // Harmful synapses (existing connections) - process per target
-        'harmful_targets: for target_uuid in focus_order.iter() {
-            if deadline_passed(&deadline) {
-                analysis_timed_out = true;
-                break 'harmful_targets;
-            }
-
-            let target_uuid = *target_uuid;
-
-            let target_records_arc = cache.get(target_uuid)?;
-            if target_records_arc.is_empty() {
-                continue;
-            }
-            let target_records = target_records_arc.as_ref();
-
-            if let Some(existing) = synapses_by_target.get(target_uuid.as_str()) {
+        // Process harmful synapses for this target - batch results to reduce mutex contention
+        if !*analysis_timed_out.lock().expect("Mutex poisoned") {
+            if let Some(existing) = synapses_by_target_arc.get(*target_uuid) {
+                let mut harmful_candidates = Vec::new();
+                
                 for synapse in existing {
                     if deadline_passed(&deadline) {
-                        analysis_timed_out = true;
-                        break 'harmful_targets;
+                        *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+                        break;
                     }
 
-                    let from_records_arc = cache.get(synapse.from_uuid.as_str())?;
+                    let from_records_arc = match cache.get(&synapse.from_uuid) {
+                        Ok(records) => records,
+                        Err(_) => continue,
+                    };
                     if from_records_arc.is_empty() {
                         continue;
                     }
@@ -3511,19 +3683,32 @@ fn analyze_synapses_with_cache(
                         - stats.helpful_count as f32)
                         / total_count as f32;
 
-                    let candidate = CandidateSynapseJson {
+                    harmful_candidates.push(CandidateSynapseJson {
                         from_neuron_uuid: synapse.from_uuid.clone(),
                         to_neuron_uuid: synapse.to_uuid.clone(),
                         weight: synapse.weight,
                         expected_improvement_percentage,
                         improved_count: stats.harmful_count,
                         total_count,
-                    };
-                    harmful_results.push(candidate);
+                    });
+                }
+                
+                // Batch push all harmful candidates (single lock)
+                if !harmful_candidates.is_empty() {
+                    let mut results = harmful_results.lock().expect("Mutex poisoned: harmful_results");
+                    results.extend(harmful_candidates);
                 }
             }
         }
-    }
+
+        Ok(())
+    })?;
+
+    let analysis_timed_out = *analysis_timed_out.lock().expect("Mutex poisoned");
+    let mut helpful_results = helpful_results.lock().expect("Mutex poisoned").clone();
+    let mut harmful_results = harmful_results.lock().expect("Mutex poisoned").clone();
+    let mut helpful_fallback = helpful_fallback.lock().expect("Mutex poisoned").take();
+    let mut diagnostics = diagnostics.lock().expect("Mutex poisoned");
 
     if analysis_timed_out && verbose_enabled() {
         eprintln!("[NEAT-AI-Discovery][verbose] analyse_synapses reached analysis deadline; returning partial results.");
@@ -3554,10 +3739,21 @@ fn analyze_synapses_with_cache(
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
     diagnostics.emit_logs();
 
+    // Determine if GPU was used (check if any analyzer used GPU)
+    // Since we create analyzers per thread, we need to check if GPU is available
+    // Try creating an analyzer to see if GPU is available and used
+    let gpu_used = if require_gpu {
+        GpuAnalyzer::new(require_gpu)
+            .map(|a| a.gpu_used())
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
     Ok(AnalyzeSynapsesResult {
         helpful_synapses: helpful_results,
         harmful_synapses: harmful_results,
-        gpu_used: analyzer.gpu_used(),
+        gpu_used,
         no_candidate_reasons,
     })
 }
