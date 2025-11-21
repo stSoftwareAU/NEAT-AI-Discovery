@@ -1177,7 +1177,12 @@ impl ReluStats {
 
         // Normalize by total baseline error of ALL samples (not just active ones)
         let expected_improvement = if total_baseline_error_sq > EPSILON {
-            improvement_magnitude / total_baseline_error_sq
+            let result = improvement_magnitude / total_baseline_error_sq;
+            if result.is_finite() {
+                result
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
@@ -2912,7 +2917,12 @@ fn evaluate_activation_candidate(
                 - outgoing_weight * outgoing_weight * sum_activation_sq;
 
             let expected_improvement_percentage = if total_baseline_error_sq > EPSILON {
-                improvement_magnitude / total_baseline_error_sq
+                let result = improvement_magnitude / total_baseline_error_sq;
+                if result.is_finite() {
+                    result
+                } else {
+                    0.0
+                }
             } else {
                 0.0
             };
@@ -3409,7 +3419,12 @@ fn analyze_synapses_with_cache(
             2.0 * weight * stats.error_activation_sum - weight * weight * stats.activation_sq_sum;
 
         let expected_improvement_percentage = if stats.error_sq_sum > EPSILON {
-            improvement_magnitude / stats.error_sq_sum
+            let result = improvement_magnitude / stats.error_sq_sum;
+            if result.is_finite() {
+                result
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
