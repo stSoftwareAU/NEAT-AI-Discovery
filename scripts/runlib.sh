@@ -193,6 +193,12 @@ ensure_lib_built() {
   mkdir -p "$HOME/.cargo/lib" >&2
   cp "$target_lib" "$lib_path" >&2
 
+  # Re-sign the library for macOS (required for Deno FFI to load it without SIGKILL)
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    >&2 echo "Re-signing ${lib_file} for macOS compatibility"
+    codesign --force --sign - --timestamp=none --preserve-metadata=entitlements "$lib_path" >&2 2>/dev/null || true
+  fi
+
   echo "$DESIRED" > "$version_marker"
 
   [[ -f "$lib_path" ]] || { >&2 echo "Expected library not found at $lib_path"; exit 1; }
