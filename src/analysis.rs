@@ -1054,8 +1054,12 @@ struct HelpfulContribution {
     negative_improvement: f32,
     positive_activation: f32,
     negative_activation: f32,
+    error_squared: f32,
+    activation_squared: f32,
+    error_activation: f32,
     pad0: f32,
     pad1: f32,
+    pad2: f32,
 }
 
 #[repr(C)]
@@ -1093,6 +1097,9 @@ struct HelpfulStats {
     negative_improvement_sum: f32,
     positive_activation_sum: f32,
     negative_activation_sum: f32,
+    error_sq_sum: f32,
+    activation_sq_sum: f32,
+    error_activation_sum: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -1489,22 +1496,32 @@ fn cpu_helpful_stats(samples: &[HelpfulSample]) -> HelpfulStats {
     let mut stats = HelpfulStats::default();
 
     for sample in samples {
-        if sample.activation.abs() <= EPSILON || sample.avg_error.abs() <= EPSILON {
+        if sample.activation.abs() <= EPSILON && sample.avg_error.abs() <= EPSILON {
             continue;
         }
 
-        let required_sign = -sample.avg_error.signum() * sample.activation.signum();
-        let improvement = sample.avg_error.abs();
-        let activation_mag = sample.activation.abs();
+        // Always accumulate error stats if there is any error, even if activation is small
+        if sample.avg_error.abs() > EPSILON {
+            stats.error_sq_sum += sample.avg_error * sample.avg_error;
+        }
 
-        if required_sign > 0.0 {
-            stats.positive_count += 1;
-            stats.positive_improvement_sum += improvement;
-            stats.positive_activation_sum += activation_mag;
-        } else if required_sign < 0.0 {
-            stats.negative_count += 1;
-            stats.negative_improvement_sum += improvement;
-            stats.negative_activation_sum += activation_mag;
+        if sample.activation.abs() > EPSILON {
+            stats.activation_sq_sum += sample.activation * sample.activation;
+            stats.error_activation_sum += sample.avg_error * sample.activation;
+
+            let required_sign = -sample.avg_error.signum() * sample.activation.signum();
+            let improvement = sample.avg_error.abs();
+            let activation_mag = sample.activation.abs();
+
+            if required_sign > 0.0 {
+                stats.positive_count += 1;
+                stats.positive_improvement_sum += improvement;
+                stats.positive_activation_sum += activation_mag;
+            } else if required_sign < 0.0 {
+                stats.negative_count += 1;
+                stats.negative_improvement_sum += improvement;
+                stats.negative_activation_sum += activation_mag;
+            }
         }
     }
 
@@ -2016,6 +2033,9 @@ impl GpuAnalyzer {
             stats.negative_improvement_sum += contribution.negative_improvement;
             stats.positive_activation_sum += contribution.positive_activation;
             stats.negative_activation_sum += contribution.negative_activation;
+            stats.error_sq_sum += contribution.error_squared;
+            stats.activation_sq_sum += contribution.activation_squared;
+            stats.error_activation_sum += contribution.error_activation;
         }
 
         drop(data);
@@ -2395,6 +2415,9 @@ impl GpuAnalyzer {
                     stats.negative_improvement_sum += contribution.negative_improvement;
                     stats.positive_activation_sum += contribution.positive_activation;
                     stats.negative_activation_sum += contribution.negative_activation;
+                    stats.error_sq_sum += contribution.error_squared;
+                    stats.activation_sq_sum += contribution.activation_squared;
+                    stats.error_activation_sum += contribution.error_activation;
                 }
 
                 drop(data);
@@ -3379,8 +3402,14 @@ fn analyze_synapses_with_cache(
             weight = weight.clamp(-1.0, 1.0);
         }
 
-        let expected_improvement_percentage =
-            (improved_count as f32 - worsen_count as f32) / total_count as f32;
+        let improvement_magnitude =
+            2.0 * weight * stats.error_activation_sum - weight * weight * stats.activation_sq_sum;
+
+        let expected_improvement_percentage = if stats.error_sq_sum > EPSILON {
+            improvement_magnitude / stats.error_sq_sum
+        } else {
+            0.0
+        };
 
         if expected_improvement_percentage <= threshold {
             diagnostics.record_below_threshold(
@@ -4503,5 +4532,56 @@ mod tests_synapses {
             message.contains("GPU"),
             "Expected GPU related error message, got: {message}"
         );
+    }
+
+    #[test]
+    fn test_divergence_between_count_and_magnitude() {
+        // This test reproduces the scenario where a high percentage of samples improve (count),
+        // but one large failure causes the net error reduction (magnitude) to be negative.
+        // Old Logic would report positive improvement (e.g. > 80%)
+        // New Logic should report negative improvement (e.g. < 0%)
+
+        let mut samples = Vec::new();
+
+        // 10 samples that improve slightly
+        for _ in 0..10 {
+            samples.push(HelpfulSample {
+                activation: 0.1,
+                avg_error: 0.1,
+            });
+        }
+
+        // 1 sample that worsens drastically
+        // Activation -10.0. Error 10.0.
+        samples.push(HelpfulSample {
+            activation: -10.0,
+            avg_error: 10.0,
+        });
+
+        let stats = cpu_helpful_stats(&samples);
+
+        // Check stats calculation
+        assert_eq!(stats.negative_count, 10);
+        assert_eq!(stats.positive_count, 1);
+
+        let positive_is_better = stats.positive_count >= stats.negative_count;
+        assert!(!positive_is_better);
+
+        let weight = 1.0;
+
+        let improvement_magnitude =
+            2.0 * weight * stats.error_activation_sum - weight * weight * stats.activation_sq_sum;
+
+        assert!((stats.error_activation_sum - (-99.9)).abs() < 1e-4);
+        assert!((stats.activation_sq_sum - 100.1).abs() < 1e-4);
+
+        assert!(improvement_magnitude < -200.0);
+
+        let expected_improvement_percentage = improvement_magnitude / stats.error_sq_sum;
+
+        assert!((stats.error_sq_sum - 100.1).abs() < 1e-4);
+        assert!(expected_improvement_percentage < -2.0); // Should be around -3.0 (-300%)
+
+        println!("Expected improvement (Magnitude): {expected_improvement_percentage}");
     }
 }
