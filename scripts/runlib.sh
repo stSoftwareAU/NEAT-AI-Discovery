@@ -167,14 +167,6 @@ ensure_lib_built() {
   fi
 
   if [[ "$needs_rebuild" == "false" ]]; then
-    # Compare installed and target binaries; rebuild/copy if they differ
-    if [[ -f "$target_lib" ]] && ! cmp -s "$target_lib" "$lib_path"; then
-      needs_rebuild=true
-      rebuild_reason="Installed library differs from freshly built artifact"
-    fi
-  fi
-
-  if [[ "$needs_rebuild" == "false" ]]; then
     echo "$lib_path"
     return 0
   fi
@@ -188,16 +180,17 @@ ensure_lib_built() {
   >&2 echo "Building ${PKG} v${DESIRED}"
   cargo build --release --lib >&2
 
+  # Sign the target binary for macOS (required for Deno FFI to load it without SIGKILL)
+  # This must be done before copying so that binary comparisons work correctly
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    >&2 echo "Signing ${lib_file} for macOS compatibility"
+    codesign --force --sign - --timestamp=none --preserve-metadata=entitlements "$target_lib" >&2 2>/dev/null || true
+  fi
+
   # Copy to cargo lib directory
   >&2 echo "Installing ${lib_file} → ${lib_path}"
   mkdir -p "$HOME/.cargo/lib" >&2
   cp "$target_lib" "$lib_path" >&2
-
-  # Re-sign the library for macOS (required for Deno FFI to load it without SIGKILL)
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    >&2 echo "Re-signing ${lib_file} for macOS compatibility"
-    codesign --force --sign - --timestamp=none --preserve-metadata=entitlements "$lib_path" >&2 2>/dev/null || true
-  fi
 
   echo "$DESIRED" > "$version_marker"
 
