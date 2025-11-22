@@ -3044,23 +3044,23 @@ fn evaluate_activation_candidate(
                 continue;
             }
 
-            if let Some(candidate) = &fallback_candidate {
-                if expected_improvement_percentage > best_score {
-                    best_score = expected_improvement_percentage;
-                    let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
-                    best_candidate = Some(CandidateNeuronJson {
-                        source_neuron_uuid: candidate.source_neuron_uuid.clone(),
-                        target_neuron_uuid: candidate.target_neuron_uuid.clone(),
-                        incoming_weight: candidate.incoming_weight,
-                        outgoing_weight: candidate.outgoing_weight,
-                        squash: candidate.squash.clone(),
-                        bias: candidate.bias,
-                        expected_improvement_percentage: candidate.expected_improvement_percentage,
-                        improved_count: candidate.improved_count,
-                        total_count: candidate.total_count,
-                        target_neuron_stats: target_stats,
-                    });
-                }
+            // Current iteration passed threshold - create best_candidate with current iteration's values
+            if expected_improvement_percentage > best_score {
+                best_score = expected_improvement_percentage;
+                let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
+                // Use current iteration's values, not fallback candidate's values
+                best_candidate = Some(CandidateNeuronJson {
+                    source_neuron_uuid: source_uuid.to_string(),
+                    target_neuron_uuid: target_uuid.to_string(),
+                    incoming_weight,
+                    outgoing_weight,
+                    squash: spec.name.to_string(),
+                    bias: 0.0,
+                    expected_improvement_percentage, // Use current iteration's value
+                    improved_count,                  // Use current iteration's value
+                    total_count,                     // Use current iteration's value
+                    target_neuron_stats: target_stats,
+                });
             }
         }
     }
