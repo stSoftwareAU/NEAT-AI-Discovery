@@ -3694,7 +3694,6 @@ fn evaluate_activation_candidate(
                         final_improved_count += 1;
                     }
                 }
-                count
             }
 
             let total_count = samples.len() as u32;
