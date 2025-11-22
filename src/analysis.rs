@@ -2911,7 +2911,6 @@ impl GpuAnalyzer {
         let mut sum_activation_sq = 0.0;
         let mut sum_error_activation = 0.0;
         let mut total_baseline_error_sq = 0.0;
-        let mut improved_count = 0u32;
 
         for (idx, output) in outputs.iter().enumerate() {
             if idx < samples.len() {
@@ -2926,20 +2925,9 @@ impl GpuAnalyzer {
             }
         }
 
-        // Calculate improved_count - need outgoing_weight first
-        if sum_activation_sq > EPSILON {
-            let outgoing_weight =
-                (sum_error_activation / (sum_activation_sq + EPSILON)).clamp(-5.0, 5.0);
-            for (idx, output) in outputs.iter().enumerate() {
-                if idx < samples.len() && output.valid > 0 {
-                    let sample = &samples[idx];
-                    let new_error = sample.avg_error - outgoing_weight * output.output;
-                    if new_error.abs() + EPSILON < sample.avg_error.abs() {
-                        improved_count += 1;
-                    }
-                }
-            }
-        }
+        // Note: improved_count is not calculated here because it requires weight validation
+        // that happens in the caller. The caller will calculate improved_count after
+        // validating and clamping the outgoing_weight.
 
         drop(data);
         staging_buffer.unmap();
@@ -2948,7 +2936,7 @@ impl GpuAnalyzer {
             sum_activation_sq,
             sum_error_activation,
             total_baseline_error_sq,
-            improved_count,
+            0, // improved_count calculated by caller after weight validation
         ))
     }
 
@@ -3626,7 +3614,7 @@ fn evaluate_activation_candidate(
                 sum_activation_sq,
                 sum_error_activation,
                 gpu_baseline_sq,
-                gpu_improved_count,
+                _gpu_improved_count, // Ignored - calculated after weight validation
                 gpu_succeeded,
             ) = if use_gpu {
                 // Use GPU-accelerated evaluation
@@ -3692,24 +3680,21 @@ fn evaluate_activation_candidate(
             }
             outgoing_weight = outgoing_weight.clamp(-5.0, 5.0);
 
-            // Calculate improved_count if not provided by GPU
-            let final_improved_count = if gpu_succeeded {
-                gpu_improved_count
-            } else {
-                // CPU fallback: calculate improved_count
-                let mut count = 0u32;
-                for sample in samples {
-                    let pre_activation = incoming_weight * sample.activation;
-                    let output = (spec.activation)(pre_activation);
-                    if output.is_finite() {
-                        let new_error = sample.avg_error - outgoing_weight * output;
-                        if new_error.abs() + EPSILON < sample.avg_error.abs() {
-                            count += 1;
-                        }
+            // Always calculate improved_count after weight validation to ensure it uses
+            // the same validated and clamped weight that will be used in the final candidate.
+            // This must be done after validation because the GPU may have calculated it
+            // with a different weight (before validation checks).
+            let mut final_improved_count = 0u32;
+            for sample in samples {
+                let pre_activation = incoming_weight * sample.activation;
+                let output = (spec.activation)(pre_activation);
+                if output.is_finite() {
+                    let new_error = sample.avg_error - outgoing_weight * output;
+                    if new_error.abs() + EPSILON < sample.avg_error.abs() {
+                        final_improved_count += 1;
                     }
                 }
-                count
-            };
+            }
 
             let total_count = samples.len() as u32;
             if total_count == 0 {
@@ -4643,7 +4628,9 @@ mod tests_synapses {
 
     #[test]
     fn deadline_passed_detects_elapsed_wall_clock_deadline() {
-        let past_deadline = SystemTime::now() - Duration::from_millis(25);
+        // Use a larger duration to ensure the deadline is definitely in the past,
+        // even in fast CI environments where timing can be tight
+        let past_deadline = SystemTime::now() - Duration::from_millis(100);
         assert!(
             deadline_passed(&Some(past_deadline)),
             "past deadlines should be treated as expired immediately"
