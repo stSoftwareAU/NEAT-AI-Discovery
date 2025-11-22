@@ -3622,58 +3622,61 @@ fn evaluate_activation_candidate(
     for &orientation in spec.orientations {
         for &scale in spec.scales {
             let incoming_weight = orientation * scale;
-            let (sum_activation_sq, sum_error_activation, gpu_baseline_sq, gpu_improved_count) =
-                if use_gpu {
-                    // Use GPU-accelerated evaluation
-                    match analyzer.evaluate_activation_gpu(
-                        samples,
-                        activation_type,
-                        orientation,
-                        scale,
-                    ) {
-                        Ok(result) => result,
-                        Err(_) => {
-                            // Fall back to CPU if GPU fails
-                            let mut sum_activation_sq = 0.0;
-                            let mut sum_error_activation = 0.0;
-                            for sample in samples {
-                                let pre_activation = incoming_weight * sample.activation;
-                                let output = (spec.activation)(pre_activation);
-                                if output.is_finite() {
-                                    sum_activation_sq += output * output;
-                                    sum_error_activation += output * sample.avg_error;
-                                }
+            let (
+                sum_activation_sq,
+                sum_error_activation,
+                gpu_baseline_sq,
+                gpu_improved_count,
+                gpu_succeeded,
+            ) = if use_gpu {
+                // Use GPU-accelerated evaluation
+                match analyzer.evaluate_activation_gpu(samples, activation_type, orientation, scale)
+                {
+                    Ok(result) => (result.0, result.1, result.2, result.3, true),
+                    Err(_) => {
+                        // Fall back to CPU if GPU fails
+                        let mut sum_activation_sq = 0.0;
+                        let mut sum_error_activation = 0.0;
+                        for sample in samples {
+                            let pre_activation = incoming_weight * sample.activation;
+                            let output = (spec.activation)(pre_activation);
+                            if output.is_finite() {
+                                sum_activation_sq += output * output;
+                                sum_error_activation += output * sample.avg_error;
                             }
-                            (
-                                sum_activation_sq,
-                                sum_error_activation,
-                                total_baseline_error_sq,
-                                0,
-                            )
                         }
+                        (
+                            sum_activation_sq,
+                            sum_error_activation,
+                            total_baseline_error_sq,
+                            0,
+                            false,
+                        )
                     }
-                } else {
-                    // CPU path
-                    let mut sum_activation_sq = 0.0;
-                    let mut sum_error_activation = 0.0;
-                    for sample in samples {
-                        let pre_activation = incoming_weight * sample.activation;
-                        let output = (spec.activation)(pre_activation);
-                        if output.is_finite() {
-                            sum_activation_sq += output * output;
-                            sum_error_activation += output * sample.avg_error;
-                        }
+                }
+            } else {
+                // CPU path
+                let mut sum_activation_sq = 0.0;
+                let mut sum_error_activation = 0.0;
+                for sample in samples {
+                    let pre_activation = incoming_weight * sample.activation;
+                    let output = (spec.activation)(pre_activation);
+                    if output.is_finite() {
+                        sum_activation_sq += output * output;
+                        sum_error_activation += output * sample.avg_error;
                     }
-                    (
-                        sum_activation_sq,
-                        sum_error_activation,
-                        total_baseline_error_sq,
-                        0,
-                    )
-                };
+                }
+                (
+                    sum_activation_sq,
+                    sum_error_activation,
+                    total_baseline_error_sq,
+                    0,
+                    false,
+                )
+            };
 
             // Use GPU baseline if available, otherwise use CPU baseline
-            let baseline_sq = if use_gpu && gpu_baseline_sq > 0.0 {
+            let baseline_sq = if use_gpu && gpu_succeeded {
                 gpu_baseline_sq
             } else {
                 total_baseline_error_sq
@@ -3690,7 +3693,7 @@ fn evaluate_activation_candidate(
             outgoing_weight = outgoing_weight.clamp(-5.0, 5.0);
 
             // Calculate improved_count if not provided by GPU
-            let final_improved_count = if use_gpu && gpu_improved_count > 0u32 {
+            let final_improved_count = if gpu_succeeded {
                 gpu_improved_count
             } else {
                 // CPU fallback: calculate improved_count
