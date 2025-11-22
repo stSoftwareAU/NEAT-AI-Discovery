@@ -1,6 +1,8 @@
 struct TargetRecord {
     obs_index: u32,
-    avg_error: f32,
+    error_start_index: u32,
+    error_count: u32,
+    pad0: u32,
 };
 
 struct FromRecord {
@@ -16,17 +18,19 @@ struct HelpfulSample {
 struct MatchingUniforms {
     target_count: u32,
     from_count: u32,
+    total_errors: u32,
     pad0: u32,
-    pad1: u32,
 };
 
 @group(0) @binding(0)
 var<storage, read> target_records: array<TargetRecord>;
 @group(0) @binding(1)
-var<storage, read> from_records: array<FromRecord>;
+var<storage, read> errors: array<f32>;
 @group(0) @binding(2)
-var<storage, read_write> samples: array<HelpfulSample>;
+var<storage, read> from_records: array<FromRecord>;
 @group(0) @binding(3)
+var<storage, read_write> samples: array<HelpfulSample>;
+@group(0) @binding(4)
 var<uniform> uniforms: MatchingUniforms;
 
 const MAX_F32: f32 = 3.402823466e+38;
@@ -85,9 +89,32 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (target_idx >= 0) {
         let target_rec = target_records[u32(target_idx)];
 
+        // Compute avg_error on GPU from error array
+        var error_sum: f32 = 0.0;
+        var error_count: u32 = 0u;
+        
+        for (var i: u32 = 0u; i < target_rec.error_count; i++) {
+            let error_idx = target_rec.error_start_index + i;
+            if (error_idx < uniforms.total_errors) {
+                let error_val = errors[error_idx];
+                if (is_finite_value(error_val)) {
+                    error_sum += error_val;
+                    error_count += 1u;
+                }
+            }
+        }
+
+        // Compute average error
+        var avg_error: f32;
+        if (error_count > 0u) {
+            avg_error = error_sum / f32(error_count);
+        } else {
+            avg_error = quiet_nan();
+        }
+
         // Skip if the averaged error is not finite
-        if (is_finite_value(target_rec.avg_error)) {
-            samples[idx] = HelpfulSample(from_rec.activation, target_rec.avg_error);
+        if (is_finite_value(avg_error)) {
+            samples[idx] = HelpfulSample(from_rec.activation, avg_error);
         } else {
             samples[idx] = HelpfulSample(0.0, quiet_nan());
         }

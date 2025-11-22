@@ -13,8 +13,6 @@ use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-#[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wgpu::util::DeviceExt;
@@ -104,7 +102,29 @@ fn verbose_enabled() -> bool {
 }
 
 #[cfg(test)]
-static FORCE_GPU_ADAPTER_FAILURE: AtomicBool = AtomicBool::new(false);
+mod test_gpu_control {
+    use std::sync::Mutex;
+
+    // Use a mutex to prevent race conditions when tests run in parallel
+    static FORCE_GPU_ADAPTER_FAILURE: Mutex<bool> = Mutex::new(false);
+
+    pub fn should_force_failure() -> bool {
+        *FORCE_GPU_ADAPTER_FAILURE.lock().unwrap_or_else(|e| {
+            eprintln!("Mutex poisoned in FORCE_GPU_ADAPTER_FAILURE: {e}");
+            std::process::exit(1);
+        })
+    }
+
+    pub fn set_force_failure(value: bool) {
+        *FORCE_GPU_ADAPTER_FAILURE.lock().unwrap_or_else(|e| {
+            eprintln!("Mutex poisoned in FORCE_GPU_ADAPTER_FAILURE: {e}");
+            std::process::exit(1);
+        }) = value;
+    }
+}
+
+#[cfg(test)]
+use test_gpu_control::{set_force_failure, should_force_failure};
 
 pub struct AnalyzeSynapsesResult {
     pub helpful_synapses: Vec<CandidateSynapseJson>,
@@ -1095,7 +1115,9 @@ struct GpuHelpfulSample {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GpuTargetRecord {
     obs_index: u32,
-    avg_error: f32,
+    error_start_index: u32,
+    error_count: u32,
+    pad0: u32,
 }
 
 #[repr(C)]
@@ -1110,8 +1132,8 @@ struct GpuFromRecord {
 struct MatchingUniforms {
     target_count: u32,
     from_count: u32,
+    total_errors: u32,
     pad0: u32,
-    pad1: u32,
 }
 
 impl From<HelpfulSample> for GpuHelpfulSample {
@@ -1165,6 +1187,56 @@ struct HarmfulUniforms {
     pad0: u32,
     epsilon: f32,
     weight: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ReluContribution {
+    positive_activation_sq: f32,
+    positive_error_activation: f32,
+    positive_count: u32,
+    negative_activation_sq: f32,
+    negative_error_activation: f32,
+    negative_count: u32,
+    error_sq: f32,
+    pad0: f32,
+    pad1: u32,
+    pad2: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ReluUniforms {
+    length: u32,
+    threshold: f32,
+    epsilon: f32,
+    pad0: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[allow(dead_code)] // Framework for future GPU activation evaluation
+struct ActivationOutput {
+    output: f32,
+    output_sq: f32,
+    error_output: f32,
+    valid: u32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[allow(dead_code)] // Framework for future GPU activation evaluation
+struct ActivationUniforms {
+    sample_count: u32,
+    orientation: f32,
+    scale: f32,
+    activation_type: u32,
+    epsilon: f32,
+    pad0: f32,
+    pad1: f32,
 }
 
 #[derive(Default)]
@@ -1492,6 +1564,23 @@ fn inverse_activation(x: f32) -> f32 {
     1.0 - x
 }
 
+fn activation_name_to_gpu_id(name: &str) -> u32 {
+    match name {
+        "GELU" => 0,
+        "ELU" => 1,
+        "SELU" => 2,
+        "Softplus" => 3,
+        "LOGISTIC" => 4,
+        "TANH" => 5,
+        "IDENTITY" => 6,
+        "BIPOLAR" => 7,
+        "CLIPPED" => 8,
+        "ABSOLUTE" => 9,
+        "INVERSE" => 10,
+        _ => 6, // Default to IDENTITY
+    }
+}
+
 const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
     ActivationCandidateSpec {
         name: "GELU",
@@ -1653,6 +1742,12 @@ struct GpuAnalyzer {
     harmful_pipeline: Option<wgpu::ComputePipeline>,
     matching_layout: Option<wgpu::BindGroupLayout>,
     matching_pipeline: Option<wgpu::ComputePipeline>,
+    relu_layout: Option<wgpu::BindGroupLayout>,
+    relu_pipeline: Option<wgpu::ComputePipeline>,
+    #[allow(dead_code)] // Framework for future GPU activation evaluation
+    activation_layout: Option<wgpu::BindGroupLayout>,
+    #[allow(dead_code)] // Framework for future GPU activation evaluation
+    activation_pipeline: Option<wgpu::ComputePipeline>,
     gpu_used: bool,
 }
 
@@ -1667,6 +1762,10 @@ impl GpuAnalyzer {
             harmful_pipeline: None,
             matching_layout: None,
             matching_pipeline: None,
+            relu_layout: None,
+            relu_pipeline: None,
+            activation_layout: None,
+            activation_pipeline: None,
             gpu_used: false,
         }
     }
@@ -1674,7 +1773,7 @@ impl GpuAnalyzer {
     fn new(require_gpu: bool) -> Result<Self> {
         let instance = wgpu::Instance::default();
         #[cfg(test)]
-        let adapter = if FORCE_GPU_ADAPTER_FAILURE.load(AtomicOrdering::SeqCst) {
+        let adapter = if should_force_failure() {
             None
         } else {
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -1775,6 +1874,9 @@ impl GpuAnalyzer {
             Self::build_harmful_pipeline(&device, "harmful-synapse-pipeline");
         let (matching_layout, matching_pipeline) =
             Self::build_matching_pipeline(&device, "matching-pipeline");
+        let (relu_layout, relu_pipeline) = Self::build_relu_pipeline(&device, "relu-pipeline");
+        let (activation_layout, activation_pipeline) =
+            Self::build_activation_pipeline(&device, "activation-pipeline");
 
         Ok(Self {
             device: Some(device),
@@ -1785,6 +1887,10 @@ impl GpuAnalyzer {
             harmful_pipeline: Some(harmful_pipeline),
             matching_layout: Some(matching_layout),
             matching_pipeline: Some(matching_pipeline),
+            relu_layout: Some(relu_layout),
+            relu_pipeline: Some(relu_pipeline),
+            activation_layout: Some(activation_layout),
+            activation_pipeline: Some(activation_pipeline),
             gpu_used: true,
         })
     }
@@ -1947,7 +2053,7 @@ impl GpuAnalyzer {
                     binding: 2,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -1955,6 +2061,16 @@ impl GpuAnalyzer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -1982,6 +2098,129 @@ impl GpuAnalyzer {
         (layout, pipeline)
     }
 
+    fn build_relu_pipeline(
+        device: &wgpu::Device,
+        label: &str,
+    ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("relu-shader"),
+            source: wgpu::ShaderSource::Wgsl(RELU_SHADER.into()),
+        });
+
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("relu-bind-group"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
+        });
+
+        (layout, pipeline)
+    }
+
+    fn build_activation_pipeline(
+        device: &wgpu::Device,
+        label: &str,
+    ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("activation-shader"),
+            source: wgpu::ShaderSource::Wgsl(ACTIVATION_SHADER.into()),
+        });
+
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("activation-bind-group"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
+        });
+
+        (layout, pipeline)
+    }
+
+    #[allow(dead_code)] // Used in tests and may be useful for single evaluations
     fn evaluate_helpful(&self, samples: &[HelpfulSample]) -> Result<HelpfulStats> {
         if samples.is_empty() {
             return Ok(HelpfulStats::default());
@@ -2289,6 +2528,430 @@ impl GpuAnalyzer {
         Ok(stats)
     }
 
+    fn evaluate_relu_gpu(
+        &self,
+        samples: &[HelpfulSample],
+        threshold: f32,
+    ) -> Result<(ReluStats, ReluStats, f32)> {
+        if samples.is_empty() {
+            return Ok((
+                ReluStats::new(ReluOrientation::Positive),
+                ReluStats::new(ReluOrientation::Negative),
+                0.0,
+            ));
+        }
+
+        if !self.gpu_used {
+            // CPU fallback - compute stats manually
+            let mut positive_stats = ReluStats::new(ReluOrientation::Positive);
+            let mut negative_stats = ReluStats::new(ReluOrientation::Negative);
+            let mut total_baseline_error_sq = 0.0;
+
+            for sample in samples {
+                if !sample.activation.is_finite() || !sample.avg_error.is_finite() {
+                    continue;
+                }
+                total_baseline_error_sq += sample.avg_error * sample.avg_error;
+                let relu_positive = sample.activation.max(0.0);
+                if relu_positive > EPSILON {
+                    positive_stats.push(relu_positive, sample.avg_error);
+                }
+                let relu_negative = (-sample.activation).max(0.0);
+                if relu_negative > EPSILON {
+                    negative_stats.push(relu_negative, sample.avg_error);
+                }
+            }
+            return Ok((positive_stats, negative_stats, total_baseline_error_sq));
+        }
+
+        let device = self
+            .device
+            .as_ref()
+            .context("GPU device not initialised for ReLU analysis")?;
+        let queue = self
+            .queue
+            .as_ref()
+            .context("GPU queue not initialised for ReLU analysis")?;
+        let relu_layout = self
+            .relu_layout
+            .as_ref()
+            .context("GPU ReLU layout not initialised")?;
+        let relu_pipeline = self
+            .relu_pipeline
+            .as_ref()
+            .context("GPU ReLU pipeline not initialised")?;
+
+        let gpu_samples: Vec<GpuHelpfulSample> = samples
+            .iter()
+            .copied()
+            .map(GpuHelpfulSample::from)
+            .collect();
+        let contributions_zeroed = vec![ReluContribution::zeroed(); samples.len()];
+
+        let sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("relu-samples-buffer"),
+            contents: bytemuck::cast_slice(&gpu_samples),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let contributions_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("relu-contributions-buffer"),
+            contents: bytemuck::cast_slice(&contributions_zeroed),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let uniforms = ReluUniforms {
+            length: samples.len() as u32,
+            threshold,
+            epsilon: EPSILON,
+            pad0: 0.0,
+        };
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("relu-uniform-buffer"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: relu_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: sample_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: contributions_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("relu-bind-group"),
+        });
+
+        let contribution_size = (std::mem::size_of::<ReluContribution>() * samples.len()) as u64;
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("relu-staging-buffer"),
+            size: contribution_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("relu-command-encoder"),
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("relu-compute-pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(relu_pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
+            compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+        }
+
+        encoder.copy_buffer_to_buffer(
+            &contributions_buffer,
+            0,
+            &staging_buffer,
+            0,
+            contribution_size,
+        );
+
+        queue.submit(Some(encoder.finish()));
+
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender
+                .send(result)
+                .expect("Failed to send map_async result");
+        });
+        device.poll(wgpu::Maintain::Wait);
+
+        match receiver.recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                return Err(anyhow!("Failed to map ReLU contributions buffer: {err}"));
+            }
+            Err(_) => {
+                return Err(anyhow!("Failed to receive ReLU map_async completion"));
+            }
+        }
+
+        let data = buffer_slice.get_mapped_range();
+        let contributions: &[ReluContribution] = bytemuck::cast_slice(&data);
+
+        let mut positive_stats = ReluStats::new(ReluOrientation::Positive);
+        let mut negative_stats = ReluStats::new(ReluOrientation::Negative);
+        let mut total_baseline_error_sq = 0.0;
+
+        // Accumulate statistics from GPU contributions
+        for (idx, contribution) in contributions.iter().enumerate() {
+            if idx < samples.len() {
+                total_baseline_error_sq += contribution.error_sq;
+
+                // For positive ReLU, accumulate activation_sq and error_activation
+                if contribution.positive_count > 0 {
+                    positive_stats.activation_sq_sum += contribution.positive_activation_sq;
+                    positive_stats.error_activation_sum += contribution.positive_error_activation;
+                    // Reconstruct the activation and error for the samples vector
+                    let activation = (contribution.positive_activation_sq).sqrt();
+                    let error = if activation > EPSILON {
+                        contribution.positive_error_activation / activation
+                    } else {
+                        0.0
+                    };
+                    positive_stats.samples.push((activation, error));
+                }
+
+                // For negative ReLU, accumulate activation_sq and error_activation
+                if contribution.negative_count > 0 {
+                    negative_stats.activation_sq_sum += contribution.negative_activation_sq;
+                    negative_stats.error_activation_sum += contribution.negative_error_activation;
+                    // Reconstruct the activation and error for the samples vector
+                    let activation = (contribution.negative_activation_sq).sqrt();
+                    let error = if activation > EPSILON {
+                        contribution.negative_error_activation / activation
+                    } else {
+                        0.0
+                    };
+                    negative_stats.samples.push((activation, error));
+                }
+            }
+        }
+
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok((positive_stats, negative_stats, total_baseline_error_sq))
+    }
+
+    fn evaluate_activation_gpu(
+        &self,
+        samples: &[HelpfulSample],
+        activation_type: u32,
+        orientation: f32,
+        scale: f32,
+    ) -> Result<(f32, f32, f32, u32)> {
+        // Returns: (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count)
+        if samples.is_empty() {
+            return Ok((0.0, 0.0, 0.0, 0));
+        }
+
+        if !self.gpu_used {
+            // CPU fallback - simplified version
+            let incoming_weight = orientation * scale;
+            let mut sum_activation_sq = 0.0;
+            let mut sum_error_activation = 0.0;
+            let mut total_baseline_error_sq = 0.0;
+
+            let activation_fn: fn(f32) -> f32 = match activation_type {
+                0 => gelu_activation,
+                1 => elu_activation,
+                2 => selu_activation,
+                3 => softplus_activation,
+                4 => logistic_activation,
+                5 => tanh_activation,
+                6 => identity_activation,
+                7 => bipolar_activation,
+                8 => clipped_activation,
+                9 => absolute_activation,
+                10 => inverse_activation,
+                _ => identity_activation,
+            };
+
+            for sample in samples {
+                if sample.avg_error.is_finite() {
+                    total_baseline_error_sq += sample.avg_error * sample.avg_error;
+                }
+                let pre_activation = incoming_weight * sample.activation;
+                let output = activation_fn(pre_activation);
+                if output.is_finite() {
+                    sum_activation_sq += output * output;
+                    sum_error_activation += output * sample.avg_error;
+                }
+            }
+
+            return Ok((
+                sum_activation_sq,
+                sum_error_activation,
+                total_baseline_error_sq,
+                0,
+            ));
+        }
+
+        let device = self
+            .device
+            .as_ref()
+            .context("GPU device not initialised for activation analysis")?;
+        let queue = self
+            .queue
+            .as_ref()
+            .context("GPU queue not initialised for activation analysis")?;
+        let activation_layout = self
+            .activation_layout
+            .as_ref()
+            .context("GPU activation layout not initialised")?;
+        let activation_pipeline = self
+            .activation_pipeline
+            .as_ref()
+            .context("GPU activation pipeline not initialised")?;
+
+        let gpu_samples: Vec<GpuHelpfulSample> = samples
+            .iter()
+            .copied()
+            .map(GpuHelpfulSample::from)
+            .collect();
+        let outputs_zeroed = vec![ActivationOutput::zeroed(); samples.len()];
+
+        let sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("activation-samples-buffer"),
+            contents: bytemuck::cast_slice(&gpu_samples),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let outputs_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("activation-outputs-buffer"),
+            contents: bytemuck::cast_slice(&outputs_zeroed),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let uniforms = ActivationUniforms {
+            sample_count: samples.len() as u32,
+            orientation,
+            scale,
+            activation_type,
+            epsilon: EPSILON,
+            pad0: 0.0,
+            pad1: 0.0,
+        };
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("activation-uniform-buffer"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: activation_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: sample_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: outputs_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("activation-bind-group"),
+        });
+
+        let output_size = (std::mem::size_of::<ActivationOutput>() * samples.len()) as u64;
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("activation-staging-buffer"),
+            size: output_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("activation-command-encoder"),
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("activation-compute-pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(activation_pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
+            compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+        }
+
+        encoder.copy_buffer_to_buffer(&outputs_buffer, 0, &staging_buffer, 0, output_size);
+
+        queue.submit(Some(encoder.finish()));
+
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender
+                .send(result)
+                .expect("Failed to send map_async result");
+        });
+        device.poll(wgpu::Maintain::Wait);
+
+        match receiver.recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                return Err(anyhow!("Failed to map activation outputs buffer: {err}"));
+            }
+            Err(_) => {
+                return Err(anyhow!("Failed to receive activation map_async completion"));
+            }
+        }
+
+        let data = buffer_slice.get_mapped_range();
+        let outputs: &[ActivationOutput] = bytemuck::cast_slice(&data);
+
+        let mut sum_activation_sq = 0.0;
+        let mut sum_error_activation = 0.0;
+        let mut total_baseline_error_sq = 0.0;
+        let mut improved_count = 0u32;
+
+        for (idx, output) in outputs.iter().enumerate() {
+            if idx < samples.len() {
+                let sample = &samples[idx];
+                if sample.avg_error.is_finite() {
+                    total_baseline_error_sq += sample.avg_error * sample.avg_error;
+                }
+                if output.valid > 0 {
+                    sum_activation_sq += output.output_sq;
+                    sum_error_activation += output.error_output;
+                }
+            }
+        }
+
+        // Calculate improved_count - need outgoing_weight first
+        if sum_activation_sq > EPSILON {
+            let outgoing_weight =
+                (sum_error_activation / (sum_activation_sq + EPSILON)).clamp(-5.0, 5.0);
+            for (idx, output) in outputs.iter().enumerate() {
+                if idx < samples.len() && output.valid > 0 {
+                    let sample = &samples[idx];
+                    let new_error = sample.avg_error - outgoing_weight * output.output;
+                    if new_error.abs() + EPSILON < sample.avg_error.abs() {
+                        improved_count += 1;
+                    }
+                }
+            }
+        }
+
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok((
+            sum_activation_sq,
+            sum_error_activation,
+            total_baseline_error_sq,
+            improved_count,
+        ))
+    }
+
     fn fallback_helpful_stats(mut stats: HelpfulStats, samples: &[HelpfulSample]) -> HelpfulStats {
         if (stats.positive_count == 0 && stats.negative_count == 0) && !samples.is_empty() {
             let cpu_stats = cpu_helpful_stats(samples);
@@ -2587,25 +3250,33 @@ impl GpuAnalyzer {
             .as_ref()
             .context("GPU matching pipeline not initialised")?;
 
-        // Prepare target records: compute avg_error and create GPU structures
+        // Prepare target records: flatten error arrays and create GPU structures
         let mut gpu_targets: Vec<GpuTargetRecord> = Vec::new();
+        let mut all_errors: Vec<f32> = Vec::new();
+        let mut error_start_index = 0u32;
+
         for record in target_records {
             if record.errors.is_empty() {
                 continue;
             }
-            let mut sum = 0.0;
-            let mut count = 0;
+
+            // Count finite errors and add them to the flattened array
+            let mut finite_error_count = 0u32;
             for error in &record.errors {
                 if error.is_finite() {
-                    sum += *error;
-                    count += 1;
+                    all_errors.push(*error);
+                    finite_error_count += 1;
                 }
             }
-            if count > 0 {
+
+            if finite_error_count > 0 {
                 gpu_targets.push(GpuTargetRecord {
                     obs_index: record.obs_index,
-                    avg_error: sum / count as f32,
+                    error_start_index,
+                    error_count: finite_error_count,
+                    pad0: 0,
                 });
+                error_start_index += finite_error_count;
             }
         }
 
@@ -2632,6 +3303,12 @@ impl GpuAnalyzer {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
+        let errors_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("matching-errors-buffer"),
+            contents: bytemuck::cast_slice(&all_errors),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
         let from_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("matching-from-buffer"),
             contents: bytemuck::cast_slice(&gpu_froms),
@@ -2650,8 +3327,8 @@ impl GpuAnalyzer {
         let uniforms = MatchingUniforms {
             target_count: gpu_targets.len() as u32,
             from_count: from_records.len() as u32,
+            total_errors: all_errors.len() as u32,
             pad0: 0,
-            pad1: 0,
         };
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("matching-uniform-buffer"),
@@ -2668,14 +3345,18 @@ impl GpuAnalyzer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: from_buffer.as_entire_binding(),
+                    resource: errors_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: samples_buffer.as_entire_binding(),
+                    resource: from_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
+                    resource: samples_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
                     resource: uniform_buffer.as_entire_binding(),
                 },
             ],
@@ -2754,6 +3435,10 @@ const HELPFUL_SHADER: &str = include_str!("shaders/helpful.wgsl");
 const HARMFUL_SHADER: &str = include_str!("shaders/harmful.wgsl");
 
 const MATCHING_SHADER: &str = include_str!("shaders/matching.wgsl");
+
+const RELU_SHADER: &str = include_str!("shaders/relu.wgsl");
+
+const ACTIVATION_SHADER: &str = include_str!("shaders/activation.wgsl");
 
 fn build_ordered_neurons(creature: &crate::CreatureJson) -> Vec<OrderedNeuron> {
     let mut ordered = Vec::with_capacity(creature.input + creature.neurons.len());
@@ -2860,34 +3545,9 @@ fn evaluate_relu_candidate(
         });
     }
 
-    // Trigger the helpful analysis pipeline so we honour GPU requirements, even
-    // though the detailed ReLU statistics are still evaluated on the CPU.
-    let _ = analyzer.evaluate_helpful(samples)?;
-
-    let mut positive_stats = ReluStats::new(ReluOrientation::Positive);
-    let mut negative_stats = ReluStats::new(ReluOrientation::Negative);
-    let mut total_baseline_error_sq = 0.0;
-
-    for sample in samples {
-        if !sample.activation.is_finite() || !sample.avg_error.is_finite() {
-            continue;
-        }
-
-        total_baseline_error_sq += sample.avg_error * sample.avg_error;
-
-        let activation = sample.activation;
-        let error = sample.avg_error;
-
-        let relu_positive = activation.max(0.0);
-        if relu_positive > EPSILON {
-            positive_stats.push(relu_positive, error);
-        }
-
-        let relu_negative = (-activation).max(0.0);
-        if relu_negative > EPSILON {
-            negative_stats.push(relu_negative, error);
-        }
-    }
+    // Use GPU-accelerated ReLU evaluation
+    let (positive_stats, negative_stats, total_baseline_error_sq) =
+        analyzer.evaluate_relu_gpu(samples, threshold)?;
 
     let positive_eval = positive_stats.evaluate(
         source_uuid,
@@ -2943,15 +3603,15 @@ fn evaluate_activation_candidate(
         return Ok(None);
     }
 
-    // Trigger GPU path if required.
-    let _ = analyzer.evaluate_helpful(samples)?;
+    let activation_type = activation_name_to_gpu_id(spec.name);
+    let use_gpu = analyzer.gpu_used();
 
     let mut best_candidate: Option<CandidateNeuronJson> = None;
     let mut best_score = threshold;
     let mut fallback_candidate: Option<CandidateNeuronJson> = None;
     let mut fallback_score = f32::MIN;
-    let mut outputs = Vec::with_capacity(samples.len());
 
+    // Compute total_baseline_error_sq once
     let mut total_baseline_error_sq = 0.0;
     for sample in samples {
         if sample.avg_error.is_finite() {
@@ -2961,25 +3621,65 @@ fn evaluate_activation_candidate(
 
     for &orientation in spec.orientations {
         for &scale in spec.scales {
-            outputs.clear();
             let incoming_weight = orientation * scale;
-            let mut sum_activation_sq = 0.0;
-            let mut sum_error_activation = 0.0;
-            let mut valid = true;
+            let (sum_activation_sq, sum_error_activation, gpu_baseline_sq, gpu_improved_count) =
+                if use_gpu {
+                    // Use GPU-accelerated evaluation
+                    match analyzer.evaluate_activation_gpu(
+                        samples,
+                        activation_type,
+                        orientation,
+                        scale,
+                    ) {
+                        Ok(result) => result,
+                        Err(_) => {
+                            // Fall back to CPU if GPU fails
+                            let mut sum_activation_sq = 0.0;
+                            let mut sum_error_activation = 0.0;
+                            for sample in samples {
+                                let pre_activation = incoming_weight * sample.activation;
+                                let output = (spec.activation)(pre_activation);
+                                if output.is_finite() {
+                                    sum_activation_sq += output * output;
+                                    sum_error_activation += output * sample.avg_error;
+                                }
+                            }
+                            (
+                                sum_activation_sq,
+                                sum_error_activation,
+                                total_baseline_error_sq,
+                                0,
+                            )
+                        }
+                    }
+                } else {
+                    // CPU path
+                    let mut sum_activation_sq = 0.0;
+                    let mut sum_error_activation = 0.0;
+                    for sample in samples {
+                        let pre_activation = incoming_weight * sample.activation;
+                        let output = (spec.activation)(pre_activation);
+                        if output.is_finite() {
+                            sum_activation_sq += output * output;
+                            sum_error_activation += output * sample.avg_error;
+                        }
+                    }
+                    (
+                        sum_activation_sq,
+                        sum_error_activation,
+                        total_baseline_error_sq,
+                        0,
+                    )
+                };
 
-            for sample in samples {
-                let pre_activation = incoming_weight * sample.activation;
-                let output = (spec.activation)(pre_activation);
-                if !output.is_finite() {
-                    valid = false;
-                    break;
-                }
-                outputs.push(output);
-                sum_activation_sq += output * output;
-                sum_error_activation += output * sample.avg_error;
-            }
+            // Use GPU baseline if available, otherwise use CPU baseline
+            let baseline_sq = if use_gpu && gpu_baseline_sq > 0.0 {
+                gpu_baseline_sq
+            } else {
+                total_baseline_error_sq
+            };
 
-            if !valid || outputs.len() != samples.len() || sum_activation_sq <= EPSILON {
+            if sum_activation_sq <= EPSILON {
                 continue;
             }
 
@@ -2989,13 +3689,24 @@ fn evaluate_activation_candidate(
             }
             outgoing_weight = outgoing_weight.clamp(-5.0, 5.0);
 
-            let mut improved_count = 0u32;
-            for (sample, output) in samples.iter().zip(outputs.iter()) {
-                let new_error = sample.avg_error - outgoing_weight * output;
-                if new_error.abs() + EPSILON < sample.avg_error.abs() {
-                    improved_count += 1;
+            // Calculate improved_count if not provided by GPU
+            let final_improved_count = if use_gpu && gpu_improved_count > 0u32 {
+                gpu_improved_count
+            } else {
+                // CPU fallback: calculate improved_count
+                let mut count = 0u32;
+                for sample in samples {
+                    let pre_activation = incoming_weight * sample.activation;
+                    let output = (spec.activation)(pre_activation);
+                    if output.is_finite() {
+                        let new_error = sample.avg_error - outgoing_weight * output;
+                        if new_error.abs() + EPSILON < sample.avg_error.abs() {
+                            count += 1;
+                        }
+                    }
                 }
-            }
+                count
+            };
 
             let total_count = samples.len() as u32;
             if total_count == 0 {
@@ -3008,8 +3719,8 @@ fn evaluate_activation_candidate(
             let improvement_magnitude = 2.0 * outgoing_weight * sum_error_activation
                 - outgoing_weight * outgoing_weight * sum_activation_sq;
 
-            let expected_improvement_percentage = if total_baseline_error_sq > EPSILON {
-                let result = improvement_magnitude / total_baseline_error_sq;
+            let expected_improvement_percentage = if baseline_sq > EPSILON {
+                let result = improvement_magnitude / baseline_sq;
                 if result.is_finite() {
                     result
                 } else {
@@ -3030,7 +3741,7 @@ fn evaluate_activation_candidate(
                     squash: spec.name.to_string(),
                     bias: 0.0,
                     expected_improvement_percentage,
-                    improved_count,
+                    improved_count: final_improved_count,
                     total_count,
                     target_neuron_stats: target_stats,
                 });
@@ -3039,7 +3750,7 @@ fn evaluate_activation_candidate(
             let improvement_cutoff = threshold.min(spec.min_improvement);
 
             if expected_improvement_percentage <= improvement_cutoff
-                || improved_count < MIN_NEURON_SAMPLE_COUNT as u32
+                || final_improved_count < MIN_NEURON_SAMPLE_COUNT as u32
             {
                 continue;
             }
@@ -3057,7 +3768,7 @@ fn evaluate_activation_candidate(
                     squash: spec.name.to_string(),
                     bias: 0.0,
                     expected_improvement_percentage, // Use current iteration's value
-                    improved_count,                  // Use current iteration's value
+                    improved_count: final_improved_count, // Use current iteration's value
                     total_count,                     // Use current iteration's value
                     target_neuron_stats: target_stats,
                 });
@@ -3891,14 +4602,14 @@ mod tests_synapses {
 
     impl ForceGpuFailureGuard {
         fn new() -> Self {
-            FORCE_GPU_ADAPTER_FAILURE.store(true, AtomicOrdering::SeqCst);
+            set_force_failure(true);
             Self
         }
     }
 
     impl Drop for ForceGpuFailureGuard {
         fn drop(&mut self) {
-            FORCE_GPU_ADAPTER_FAILURE.store(false, AtomicOrdering::SeqCst);
+            set_force_failure(false);
         }
     }
 
