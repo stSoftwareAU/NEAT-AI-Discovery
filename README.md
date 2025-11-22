@@ -32,6 +32,28 @@ error. Controllers call into the library via Deno FFI to power
    ./quality.sh
    ```
 
+## Deployment Checklist
+
+Before committing code changes, ensure you complete the following steps:
+
+1. **Run quality checks in both repositories:**
+   ```bash
+   # In NEAT-AI-Discovery
+   ./quality.sh
+   
+   # In NEAT-AI
+   cd ../NEAT-AI
+   ./quality.sh
+   ```
+
+2. **Increment version numbers:**
+   - **NEAT-AI-Discovery**: Update `Cargo.toml` version field (e.g., `0.1.41` → `0.1.42`)
+   - **NEAT-AI**: Update `deno.json` version field (e.g., `0.204.1` → `0.204.2`)
+
+3. **Verify all tests pass** in both repositories before committing.
+
+These steps ensure code quality, proper versioning, and that all tests pass before deployment.
+
 ## Using the library with NEAT-AI
 
 1. Place the compiled artefact where Deno can load it:
