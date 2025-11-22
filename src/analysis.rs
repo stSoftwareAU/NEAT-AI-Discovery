@@ -927,6 +927,163 @@ struct HelpfulSample {
     avg_error: f32,
 }
 
+/// Statistics computed from neuron error and activation samples
+#[derive(Debug, Clone)]
+struct NeuronStats {
+    mean_error: f32,
+    error_variance: f32,
+    mean_activation: f32,
+    activation_variance: f32,
+    error_spike_count: u32,
+    activation_spike_count: u32,
+    activation_min: f32,
+    activation_max: f32,
+}
+
+impl NeuronStats {
+    /// Compute statistics from a slice of discovery records (for target neurons)
+    fn from_records(records: &[DiscoverRecord]) -> Option<Self> {
+        if records.is_empty() {
+            return None;
+        }
+
+        let mut samples = Vec::new();
+        for record in records {
+            if record.errors.is_empty() {
+                continue;
+            }
+            // Compute average error for this record
+            let mut error_sum = 0.0;
+            let mut error_count = 0;
+            for &err in &record.errors {
+                if err.is_finite() {
+                    error_sum += err;
+                    error_count += 1;
+                }
+            }
+            if error_count > 0 && record.activation.is_finite() {
+                let avg_error = error_sum / error_count as f32;
+                samples.push(HelpfulSample {
+                    activation: record.activation,
+                    avg_error,
+                });
+            }
+        }
+
+        Self::from_samples(&samples)
+    }
+
+    /// Compute statistics from a slice of samples
+    fn from_samples(samples: &[HelpfulSample]) -> Option<Self> {
+        if samples.is_empty() {
+            return None;
+        }
+
+        let mut error_sum = 0.0;
+        let mut error_sq_sum = 0.0;
+        let mut activation_sum = 0.0;
+        let mut activation_sq_sum = 0.0;
+        let mut error_spike_count = 0u32;
+        let mut activation_spike_count = 0u32;
+        let mut activation_min = f32::INFINITY;
+        let mut activation_max = f32::NEG_INFINITY;
+        let mut valid_count = 0usize;
+
+        // Spike thresholds: 2 standard deviations (we'll approximate with mean + 2*mean for now)
+        // We'll compute proper thresholds after we have the mean
+        let mut error_abs_sum = 0.0;
+        let mut activation_abs_sum = 0.0;
+
+        for sample in samples {
+            if !sample.avg_error.is_finite() || !sample.activation.is_finite() {
+                continue;
+            }
+            valid_count += 1;
+            let error_abs = sample.avg_error.abs();
+            let activation_abs = sample.activation.abs();
+
+            error_sum += sample.avg_error;
+            error_sq_sum += sample.avg_error * sample.avg_error;
+            error_abs_sum += error_abs;
+
+            activation_sum += sample.activation;
+            activation_sq_sum += sample.activation * sample.activation;
+            activation_abs_sum += activation_abs;
+
+            if activation_min > sample.activation {
+                activation_min = sample.activation;
+            }
+            if activation_max < sample.activation {
+                activation_max = sample.activation;
+            }
+        }
+
+        if valid_count == 0 {
+            return None;
+        }
+
+        let count_f = valid_count as f32;
+        let mean_error = error_sum / count_f;
+        let mean_activation = activation_sum / count_f;
+        let mean_error_abs = error_abs_sum / count_f;
+        let mean_activation_abs = activation_abs_sum / count_f;
+
+        // Compute variance using E[X^2] - E[X]^2
+        let error_variance = (error_sq_sum / count_f) - (mean_error * mean_error);
+        let activation_variance =
+            (activation_sq_sum / count_f) - (mean_activation * mean_activation);
+
+        // Spike detection: count samples where error/activation exceeds 2x the mean absolute value
+        // This is a simple heuristic; more sophisticated methods could use actual std dev
+        let error_spike_threshold = mean_error_abs * 2.0;
+        let activation_spike_threshold = mean_activation_abs * 2.0;
+
+        for sample in samples {
+            if !sample.avg_error.is_finite() || !sample.activation.is_finite() {
+                continue;
+            }
+            if sample.avg_error.abs() > error_spike_threshold {
+                error_spike_count += 1;
+            }
+            if sample.activation.abs() > activation_spike_threshold {
+                activation_spike_count += 1;
+            }
+        }
+
+        Some(Self {
+            mean_error,
+            error_variance: error_variance.max(0.0), // Variance should be non-negative
+            mean_activation,
+            activation_variance: activation_variance.max(0.0),
+            error_spike_count,
+            activation_spike_count,
+            activation_min: if activation_min.is_finite() {
+                activation_min
+            } else {
+                0.0
+            },
+            activation_max: if activation_max.is_finite() {
+                activation_max
+            } else {
+                0.0
+            },
+        })
+    }
+
+    fn to_json(&self) -> crate::NeuronStatsJson {
+        crate::NeuronStatsJson {
+            mean_error: self.mean_error,
+            error_variance: self.error_variance,
+            mean_activation: self.mean_activation,
+            activation_variance: self.activation_variance,
+            error_spike_count: self.error_spike_count,
+            activation_spike_count: self.activation_spike_count,
+            activation_min: self.activation_min,
+            activation_max: self.activation_max,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GpuHelpfulSample {
@@ -1058,6 +1215,7 @@ impl ReluStats {
         target_uuid: &str,
         threshold: f32,
         total_baseline_error_sq: f32,
+        original_samples: &[HelpfulSample],
     ) -> ReluOrientationEvaluation {
         let sample_count = self.samples.len();
         if sample_count < MIN_NEURON_SAMPLE_COUNT || self.activation_sq_sum <= EPSILON {
@@ -1127,6 +1285,8 @@ impl ReluStats {
             ReluOrientation::Negative => -1.0,
         };
 
+        let target_stats = NeuronStats::from_samples(original_samples).map(|s| s.to_json());
+
         ReluOrientationEvaluation {
             summary: ReluOrientationSummary::successful(
                 self.orientation,
@@ -1146,6 +1306,7 @@ impl ReluStats {
                 expected_improvement_percentage: expected_improvement,
                 improved_count,
                 total_count,
+                target_neuron_stats: target_stats,
             }),
         }
     }
@@ -2728,10 +2889,20 @@ fn evaluate_relu_candidate(
         }
     }
 
-    let positive_eval =
-        positive_stats.evaluate(source_uuid, target_uuid, threshold, total_baseline_error_sq);
-    let negative_eval =
-        negative_stats.evaluate(source_uuid, target_uuid, threshold, total_baseline_error_sq);
+    let positive_eval = positive_stats.evaluate(
+        source_uuid,
+        target_uuid,
+        threshold,
+        total_baseline_error_sq,
+        samples,
+    );
+    let negative_eval = negative_stats.evaluate(
+        source_uuid,
+        target_uuid,
+        threshold,
+        total_baseline_error_sq,
+        samples,
+    );
     let evaluations = [positive_eval, negative_eval];
 
     let mut best_candidate: Option<CandidateNeuronJson> = None;
@@ -2850,6 +3021,7 @@ fn evaluate_activation_candidate(
 
             if expected_improvement_percentage > fallback_score {
                 fallback_score = expected_improvement_percentage;
+                let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
                 fallback_candidate = Some(CandidateNeuronJson {
                     source_neuron_uuid: source_uuid.to_string(),
                     target_neuron_uuid: target_uuid.to_string(),
@@ -2860,6 +3032,7 @@ fn evaluate_activation_candidate(
                     expected_improvement_percentage,
                     improved_count,
                     total_count,
+                    target_neuron_stats: target_stats,
                 });
             }
 
@@ -2871,21 +3044,23 @@ fn evaluate_activation_candidate(
                 continue;
             }
 
-            if let Some(candidate) = &fallback_candidate {
-                if expected_improvement_percentage > best_score {
-                    best_score = expected_improvement_percentage;
-                    best_candidate = Some(CandidateNeuronJson {
-                        source_neuron_uuid: candidate.source_neuron_uuid.clone(),
-                        target_neuron_uuid: candidate.target_neuron_uuid.clone(),
-                        incoming_weight: candidate.incoming_weight,
-                        outgoing_weight: candidate.outgoing_weight,
-                        squash: candidate.squash.clone(),
-                        bias: candidate.bias,
-                        expected_improvement_percentage: candidate.expected_improvement_percentage,
-                        improved_count: candidate.improved_count,
-                        total_count: candidate.total_count,
-                    });
-                }
+            // Current iteration passed threshold - create best_candidate with current iteration's values
+            if expected_improvement_percentage > best_score {
+                best_score = expected_improvement_percentage;
+                let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
+                // Use current iteration's values, not fallback candidate's values
+                best_candidate = Some(CandidateNeuronJson {
+                    source_neuron_uuid: source_uuid.to_string(),
+                    target_neuron_uuid: target_uuid.to_string(),
+                    incoming_weight,
+                    outgoing_weight,
+                    squash: spec.name.to_string(),
+                    bias: 0.0,
+                    expected_improvement_percentage, // Use current iteration's value
+                    improved_count,                  // Use current iteration's value
+                    total_count,                     // Use current iteration's value
+                    target_neuron_stats: target_stats,
+                });
             }
         }
     }
@@ -3515,6 +3690,11 @@ fn analyze_synapses_with_cache(
                             existing.expected_improvement_percentage
                                 < expected_improvement_percentage
                         }) {
+                            let target_stats = cache
+                                .get(&work.target_uuid)
+                                .ok()
+                                .and_then(|records| NeuronStats::from_records(records.as_ref()))
+                                .map(|s| s.to_json());
                             best_fallback = Some(CandidateSynapseJson {
                                 from_neuron_uuid: work.source_uuid.clone(),
                                 to_neuron_uuid: work.target_uuid.clone(),
@@ -3522,12 +3702,18 @@ fn analyze_synapses_with_cache(
                                 expected_improvement_percentage,
                                 improved_count,
                                 total_count,
+                                target_neuron_stats: target_stats,
                             });
                         }
                         continue;
                     }
 
                     diagnostics_selected.push(work.target_uuid.clone());
+                    let target_stats = cache
+                        .get(&work.target_uuid)
+                        .ok()
+                        .and_then(|records| NeuronStats::from_records(records.as_ref()))
+                        .map(|s| s.to_json());
                     candidates_to_add.push(CandidateSynapseJson {
                         from_neuron_uuid: work.source_uuid.clone(),
                         to_neuron_uuid: work.target_uuid.clone(),
@@ -3535,6 +3721,7 @@ fn analyze_synapses_with_cache(
                         expected_improvement_percentage,
                         improved_count,
                         total_count,
+                        target_neuron_stats: target_stats,
                     });
                 }
 
@@ -3612,6 +3799,11 @@ fn analyze_synapses_with_cache(
                             - stats.helpful_count as f32)
                             / total_count as f32;
 
+                        let target_stats = cache
+                            .get(target_uuid.as_str())
+                            .ok()
+                            .and_then(|records| NeuronStats::from_records(records.as_ref()))
+                            .map(|s| s.to_json());
                         harmful_candidates.push(CandidateSynapseJson {
                             from_neuron_uuid: synapse.from_uuid.clone(),
                             to_neuron_uuid: synapse.to_uuid.clone(),
@@ -3619,6 +3811,7 @@ fn analyze_synapses_with_cache(
                             expected_improvement_percentage,
                             improved_count: stats.harmful_count,
                             total_count,
+                            target_neuron_stats: target_stats,
                         });
                     }
 
@@ -4045,10 +4238,15 @@ mod tests_synapses {
     #[test]
     fn relu_evaluation_identifies_below_threshold_reason() {
         let mut stats = ReluStats::new(ReluOrientation::Positive);
+        let mut original_samples = Vec::new();
         for _ in 0..(MIN_NEURON_SAMPLE_COUNT + 2) {
             stats.push(1.0, 0.05);
+            original_samples.push(HelpfulSample {
+                activation: 1.0,
+                avg_error: 0.05,
+            });
         }
-        let evaluation = stats.evaluate("source", "target", 2.0, 1.0);
+        let evaluation = stats.evaluate("source", "target", 2.0, 1.0, &original_samples);
         assert!(
             evaluation.candidate.is_none(),
             "Expected candidate to fall below the threshold"

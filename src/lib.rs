@@ -108,6 +108,21 @@ pub struct CandidateSynapseJson {
     pub expected_improvement_percentage: f32,
     pub improved_count: u32,
     pub total_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_neuron_stats: Option<NeuronStatsJson>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NeuronStatsJson {
+    pub mean_error: f32,
+    pub error_variance: f32,
+    pub mean_activation: f32,
+    pub activation_variance: f32,
+    pub error_spike_count: u32,
+    pub activation_spike_count: u32,
+    pub activation_min: f32,
+    pub activation_max: f32,
 }
 
 #[derive(Debug, Serialize)]
@@ -154,6 +169,8 @@ pub struct CandidateNeuronJson {
     pub expected_improvement_percentage: f32,
     pub improved_count: u32,
     pub total_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_neuron_stats: Option<NeuronStatsJson>,
 }
 
 #[derive(Debug, Serialize)]
