@@ -170,6 +170,102 @@ fn test_record_discovery_returns_json_error_on_failure() {
 }
 
 #[test]
+fn test_impact_with_very_small_incoming_weight_is_not_zeroed() {
+    // Test that impact is not forced to zero when the only path to an output
+    // uses a very small but non-zero weight (regression around near-zero totals)
+
+    let creature = CreatureJson {
+        neurons: vec![
+            NeuronJson {
+                uuid: "hidden-1".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: vec![SynapseJson {
+            from_uuid: "hidden-1".to_string(),
+            to_uuid: "output-0".to_string(),
+            // Very small but non-zero weight so the total inbound is below
+            // any practical threshold, but still represents a valid path.
+            weight: 1e-12,
+        }],
+        input: 0,
+        output: 1,
+    };
+
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    // Write minimal data to the parquet file
+    let input_json = serde_json::json!({
+        "creature": creature.clone(),
+        "training_data": [{
+            "input": [],
+            "output": [0.5],
+            "neuron_data": [
+                {"neuron_uuid": "hidden-1", "activation": 0.5, "value": 0.5, "errors": [0.1]},
+                {"neuron_uuid": "output-0", "activation": 0.5, "value": 0.5, "errors": [0.2]}
+            ]
+        }],
+        "temp_dir": temp_path.to_str().unwrap()
+    });
+
+    let record_input = serde_json::to_string(&input_json).unwrap();
+    let record_output_json = record_discovery_internal(&record_input).unwrap();
+    let record_output: serde_json::Value = serde_json::from_str(&record_output_json).unwrap();
+    assert_eq!(
+        record_output["success"], true,
+        "Failed to record discovery data"
+    );
+
+    let parquet_file = temp_path.join(record_output["file"].as_str().unwrap());
+
+    use neat_ai_discovery::rank_focus_neurons_internal;
+    let rank_input = serde_json::json!({
+        "parquetFile": parquet_file.to_str().unwrap(),
+        "creature": creature,
+        "maxResults": 10
+    })
+    .to_string();
+
+    let result_json = rank_focus_neurons_internal(&rank_input).unwrap();
+    let result: serde_json::Value = serde_json::from_str(&result_json).unwrap();
+
+    if result["success"] != true {
+        panic!(
+            "Rank focus neurons failed: {}",
+            result["error"].as_str().unwrap_or("unknown error")
+        );
+    }
+
+    let neurons = result["neurons"]
+        .as_array()
+        .expect("neurons should be an array");
+    let hidden_1 = neurons
+        .iter()
+        .find(|n| n["neuronUuid"] == "hidden-1")
+        .expect("hidden-1 should be in results");
+
+    let impact = hidden_1["impact"]
+        .as_f64()
+        .expect("impact should be a number") as f32;
+
+    // With a single non-zero connection to an output, impact should be close to 1.0,
+    // not forced to zero just because the weight is very small.
+    assert!(
+        impact > 0.5,
+        "hidden-1 impact should be significant for the only path to an output, got {impact}",
+    );
+}
+
+#[test]
 fn test_impact_calculation_with_multiple_incoming_connections() {
     // Test that impact is properly normalized when a neuron has multiple incoming connections
     // This tests the fix for the bug where impact was using absolute weights instead of normalized shares

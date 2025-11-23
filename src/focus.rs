@@ -136,13 +136,16 @@ fn compute_impact_recursive(
                 continue;
             }
 
-            // Normalize contribution by the total incoming weight to the target neuron
-            // This ensures that impact is properly diluted across multiple paths
+            // Normalise contribution by the total incoming weight to the target neuron.
+            // This ensures that impact is properly shared across multiple paths and that
+            // connections with genuinely zero total inbound weight (all weights zero)
+            // do not contribute spurious impact.
             let total_inbound = inbound_weights.get(to_uuid).copied().unwrap_or(0.0);
-            let normalized_weight = if total_inbound > 1e-9 {
+            let normalized_weight = if total_inbound > 0.0 {
                 weight.abs() / total_inbound
             } else {
-                // If total inbound weight is near zero, treat all connections equally
+                // If there is no effective inbound signal (all weights zero), treat the
+                // connection as having no impact to avoid division-by-zero artefacts.
                 0.0
             };
 
