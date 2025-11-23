@@ -2219,6 +2219,13 @@ impl GpuAnalyzer {
             return Ok(HelpfulStats::default());
         }
 
+        // When no GPU device is available, fall back to the CPU implementation.
+        // This mirrors the behaviour of `evaluate_helpful_batch` and `evaluate_harmful`,
+        // ensuring callers (and tests) can always obtain stats even on CPU-only hosts.
+        if self.device.is_none() {
+            return Ok(cpu_helpful_stats(samples));
+        }
+
         let device = self
             .device
             .as_ref()
@@ -3777,10 +3784,17 @@ fn analyze_neurons_with_cache(
     let mut focus_order = unique_focus.clone();
     focus_order.shuffle(&mut thread_rng());
 
+    let require_gpu = input.require_gpu.unwrap_or(cfg!(target_os = "macos"));
     // Probe GPU availability once so we can report whether analysis was GPU-accelerated.
-    // The actual computation paths will transparently fall back to CPU when no device is
-    // available, but `gpu_used` will remain `false` in that case.
-    let gpu_used = GpuAnalyzer::gpu_is_available();
+    // When GPU is required but unavailable, fail fast rather than silently falling back
+    // to CPU-only behaviour.
+    let gpu_available = GpuAnalyzer::gpu_is_available();
+    if require_gpu && !gpu_available {
+        return Err(anyhow!(
+            "GPU is required for neuron discovery analysis but is not available"
+        ));
+    }
+    let gpu_used = gpu_available;
     let analysis_timed_out = Arc::new(Mutex::new(false));
 
     let focus_order_arc = Arc::new(focus_order);
@@ -4124,11 +4138,19 @@ fn analyze_synapses_with_cache(
         samples: Vec<HelpfulSample>,
     }
 
+    let require_gpu = input.require_gpu.unwrap_or(cfg!(target_os = "macos"));
+
     // Process focus neurons in parallel
     // Probe GPU availability once so we can report whether analysis was GPU-accelerated.
-    // The actual computation paths will transparently fall back to CPU when no device is
-    // available, but `gpu_used` will remain `false` in that case.
-    let gpu_used = GpuAnalyzer::gpu_is_available();
+    // When GPU is required but unavailable, fail fast rather than silently falling back
+    // to CPU-only behaviour.
+    let gpu_available = GpuAnalyzer::gpu_is_available();
+    if require_gpu && !gpu_available {
+        return Err(anyhow!(
+            "GPU is required for synapse discovery analysis but is not available"
+        ));
+    }
+    let gpu_used = gpu_available;
 
     let helpful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
     let harmful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
@@ -4561,18 +4583,26 @@ mod tests_synapses {
     use super::*;
     use crate::parquet_format::write_records_to_parquet;
     use crate::{CreatureJson, NeuronJson, SynapseJson};
+    use once_cell::sync::Lazy;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{Arc, Barrier, Mutex, MutexGuard};
     use std::thread;
     use std::time::{Duration, SystemTime};
     use tempfile::tempdir;
 
-    struct ForceGpuFailureGuard;
+    static GPU_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    struct ForceGpuFailureGuard {
+        _lock: MutexGuard<'static, ()>,
+    }
 
     impl ForceGpuFailureGuard {
         fn new() -> Self {
+            let lock = GPU_TEST_LOCK
+                .lock()
+                .expect("GPU test lock should not be poisoned");
             set_force_failure(true);
-            Self
+            Self { _lock: lock }
         }
     }
 
@@ -4733,6 +4763,80 @@ mod tests_synapses {
         assert_eq!(
             cpu_sample.avg_error, gpu_sample.avg_error,
             "Zero average error should be preserved by GPU matching"
+        );
+    }
+
+    #[test]
+    fn analyze_neurons_respects_gpu_requirement() {
+        // Force GPU failure so that analysis must fall back to CPU when allowed.
+        let _guard = ForceGpuFailureGuard::new();
+
+        let creature = CreatureJson {
+            input: 1,
+            output: 1,
+            neurons: vec![NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            }],
+            synapses: Vec::new(),
+        };
+
+        let input = AnalyzeNeuronsInput {
+            parquet_file: "non-existent.parquet".to_string(),
+            creature,
+            focus_neurons: vec!["output-0".to_string()],
+            improvement_threshold: None,
+            max_candidates: None,
+            require_gpu: Some(true),
+            analysis_deadline_ms: None,
+        };
+
+        let err = analyze_neurons(&input)
+            .err()
+            .expect("Expected neuron analysis to fail when GPU is required but unavailable");
+        let message = format!("{err}");
+        assert!(
+            message.contains("GPU"),
+            "Expected GPU related error message, got: {message}"
+        );
+    }
+
+    #[test]
+    fn analyze_synapses_respects_gpu_requirement() {
+        // Force GPU failure so that analysis must fall back to CPU when allowed.
+        let _guard = ForceGpuFailureGuard::new();
+
+        let creature = CreatureJson {
+            input: 1,
+            output: 1,
+            neurons: vec![NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            }],
+            synapses: Vec::new(),
+        };
+
+        let input = AnalyzeSynapsesInput {
+            parquet_file: "non-existent.parquet".to_string(),
+            creature,
+            focus_neurons: vec!["output-0".to_string()],
+            improvement_threshold: None,
+            max_candidates: None,
+            require_gpu: Some(true),
+            analysis_deadline_ms: None,
+        };
+
+        let err = analyze_synapses(&input)
+            .err()
+            .expect("Expected synapse analysis to fail when GPU is required but unavailable");
+        let message = format!("{err}");
+        assert!(
+            message.contains("GPU"),
+            "Expected GPU related error message, got: {message}"
         );
     }
 
@@ -5032,7 +5136,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string(), "output-0".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: None,
+            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -5108,7 +5212,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string(), "output-0".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: None,
+            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -5144,7 +5248,7 @@ mod tests_synapses {
             focus_neurons: Vec::new(),
             improvement_threshold: None,
             max_candidates: None,
-            require_gpu: None,
+            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -5199,7 +5303,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: None,
+            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -5297,7 +5401,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string(), "output-1".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: None,
+            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -5385,7 +5489,7 @@ mod tests_synapses {
             harmful_threshold: Some(-0.05),
             max_synapse_candidates: Some(5),
             max_neuron_candidates: Some(5),
-            require_gpu: None,
+            require_gpu: Some(false),
             analysis_deadline_ms: None,
             include_synapse_analysis: Some(true),
             include_neuron_analysis: Some(true),
@@ -5447,7 +5551,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: None,
+            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
