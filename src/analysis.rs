@@ -4206,14 +4206,6 @@ fn analyze_synapses_with_cache(
             let mut rng = thread_rng();
             eligible_sources.shuffle(&mut rng);
 
-            // Check timeout once before processing sources
-            // Use analysis_timed_out flag to avoid nested deadline_passed() calls that would
-            // cause race conditions with the test override mechanism (VecDeque pop order)
-            if *analysis_timed_out.lock().expect("Mutex poisoned") || deadline_passed(&deadline) {
-                *analysis_timed_out.lock().expect("Mutex poisoned") = true;
-                return Ok(());
-            }
-
             // Process source neurons sequentially to avoid race conditions with deadline checking
             // The outer loop already parallelizes across focus neurons, so sequential processing
             // of sources per target is acceptable and ensures deterministic test behavior
@@ -5684,6 +5676,122 @@ mod tests_synapses {
         );
         assert!(
             first_summary.reason != NeuronNoCandidateReason::NoEligibleSources,
+            "First focus neuron should not be reported as having no eligible sources when a timeout occurs"
+        );
+    }
+
+    #[test]
+    fn analyze_synapses_uses_vertical_timeout_and_preserves_priority_order() {
+        use rayon::ThreadPoolBuilder;
+
+        // Force GPU failure so this test exercises the CPU analysis path and
+        // avoids non-determinism from GPU scheduling.
+        let _gpu_guard = ForceGpuFailureGuard::new();
+        // Simulate a deadline that allows the first focus neuron to start, but
+        // triggers before the second begins. The override sequence is consumed
+        // by calls to `deadline_passed` in order.
+        let _deadline_guard =
+            deadline_override::DeadlineOverrideGuard::with_sequence(vec![false, true]);
+
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
+
+        // Provide discovery records for an input neuron and two output neurons.
+        // Records use disjoint obs_index ranges so that each potential synapse
+        // has discovery data but no aligned samples, guaranteeing that the
+        // diagnostics machinery records a `NoSamples` style rejection rather
+        // than treating the target as having no eligible sources.
+        let mut records = Vec::new();
+        for obs_index in 0..16u32 {
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-0".to_string(),
+                Some(0.0),
+                1.0,
+                vec![0.0],
+            ));
+        }
+        for obs_index in 100..116u32 {
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.5,
+                vec![0.2],
+            ));
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-1".to_string(),
+                Some(0.0),
+                0.5,
+                vec![0.2],
+            ));
+        }
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        let creature = CreatureJson {
+            input: 1,
+            output: 2,
+            neurons: vec![
+                NeuronJson {
+                    uuid: "output-0".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "output-1".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: Vec::new(),
+        };
+
+        let input = AnalyzeSynapsesInput {
+            parquet_file,
+            creature,
+            focus_neurons: vec!["output-0".to_string(), "output-1".to_string()],
+            improvement_threshold: Some(0.05),
+            max_candidates: None,
+            require_gpu: Some(false),
+            // Any non-None deadline value will exercise the override sequence.
+            analysis_deadline_ms: None,
+        };
+
+        // Use a single-threaded Rayon pool so the focus neurons are processed in
+        // the supplied order and the deadline override sequence remains
+        // deterministic for this test.
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("Failed to build single-threaded Rayon pool");
+
+        let result = pool
+            .install(|| analyze_synapses(&input))
+            .expect("Synapse analysis should succeed even when the deadline triggers");
+
+        // The first focus neuron should have evaluated at least one upstream
+        // source before the deadline, so it must not be reported as having no
+        // eligible sources.
+        let first_summary = result
+            .no_candidate_reasons
+            .iter()
+            .find(|summary| summary.target_uuid == "output-0")
+            .expect("Expected diagnostics for first focus neuron (output-0)");
+
+        assert!(
+            first_summary.evaluated_candidates > 0,
+            "First focus neuron should evaluate at least one upstream source before timeout"
+        );
+        assert!(
+            first_summary.reason != SynapseNoCandidateReason::NoEligibleSources,
             "First focus neuron should not be reported as having no eligible sources when a timeout occurs"
         );
     }
