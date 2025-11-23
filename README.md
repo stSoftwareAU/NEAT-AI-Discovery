@@ -102,6 +102,12 @@ These steps ensure code quality, proper versioning, and that all tests pass befo
   candidate. These entries summarise the reason (no samples, below threshold,
   etc.) plus supporting counts so controllers can relay the explanation even
   when verbose logging is disabled.
+- When an analysis deadline is supplied, discovery honours it **vertically**:
+  focus neurons are processed in priority order and each neuron is analysed
+  completely (including upstream candidates) where possible before moving to
+  the next. If the timeout is reached mid-run you will still receive completed
+  results for earlier focus neurons, and later targets may be skipped or only
+  partially analysed.
 
 ## Verifying the installation
 
