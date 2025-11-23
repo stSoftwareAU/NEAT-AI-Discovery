@@ -3777,10 +3777,10 @@ fn analyze_neurons_with_cache(
     let mut focus_order = unique_focus.clone();
     focus_order.shuffle(&mut thread_rng());
 
-    // Attempt GPU initialisation once; any failure will propagate as an error
-    // and discovery should be disabled by the controller.
-    let _gpu_validator = GpuAnalyzer::new()?;
-    let gpu_used = true;
+    // Probe GPU availability once so we can report whether analysis was GPU-accelerated.
+    // The actual computation paths will transparently fall back to CPU when no device is
+    // available, but `gpu_used` will remain `false` in that case.
+    let gpu_used = GpuAnalyzer::gpu_is_available();
     let analysis_timed_out = Arc::new(Mutex::new(false));
 
     let focus_order_arc = Arc::new(focus_order);
@@ -4125,10 +4125,10 @@ fn analyze_synapses_with_cache(
     }
 
     // Process focus neurons in parallel
-    // Validate GPU availability once; any failure will propagate as an error
-    // and discovery should be disabled by the controller.
-    let _gpu_validator = GpuAnalyzer::new()?;
-    let gpu_used = true;
+    // Probe GPU availability once so we can report whether analysis was GPU-accelerated.
+    // The actual computation paths will transparently fall back to CPU when no device is
+    // available, but `gpu_used` will remain `false` in that case.
+    let gpu_used = GpuAnalyzer::gpu_is_available();
 
     let helpful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
     let harmful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
@@ -5205,7 +5205,6 @@ mod tests_synapses {
 
         let result = analyze_synapses(&input)
             .expect("Synapse analysis should succeed even without candidates");
-
         assert!(
             result.helpful_synapses.is_empty(),
             "Expected no helpful candidates when there are no eligible sources"
@@ -5454,7 +5453,6 @@ mod tests_synapses {
 
         let result = analyze_neurons(&input)
             .expect("Neuron analysis should succeed even without candidates");
-
         assert!(
             result.helpful_neurons.is_empty(),
             "Expected no neuron candidates when the source neuron lacks samples"
