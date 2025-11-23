@@ -265,6 +265,15 @@ pub struct AnalyzeParallelOutput {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckGpuOutput {
+    pub success: bool,
+    pub gpu_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RankFocusNeuronsInput {
@@ -663,6 +672,16 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
     }
 }
 
+pub fn check_gpu_available_internal() -> Result<String> {
+    let available = analysis::GpuAnalyzer::gpu_is_available();
+    let output = CheckGpuOutput {
+        success: true,
+        gpu_available: available,
+        error: None,
+    };
+    Ok(serde_json::to_string(&output)?)
+}
+
 pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     let input: RankFocusNeuronsInput = match serde_json::from_str(input_json) {
         Ok(value) => value,
@@ -961,6 +980,29 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
         Ok(c_string) => c_string.into_raw(),
         Err(_) => {
             let error = r#"{"success":false,"error":"Failed to create output string"}"#;
+            CString::new(error).unwrap().into_raw()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
+    use std::ffi::CString;
+
+    let result = match check_gpu_available_internal() {
+        Ok(json) => json,
+        Err(e) => {
+            let fallback = format!(
+                "{{\"success\":false,\"gpuAvailable\":false,\"error\":\"Failed to probe GPU: {e}\"}}"
+            );
+            fallback
+        }
+    };
+
+    match CString::new(result) {
+        Ok(c_string) => c_string.into_raw(),
+        Err(_) => {
+            let error = r#"{"success":false,"gpuAvailable":false,"error":"Failed to create output string"}"#;
             CString::new(error).unwrap().into_raw()
         }
     }
@@ -1399,6 +1441,21 @@ mod tests {
         let truncated = truncate_utf8_safe(s, 5);
         assert_eq!(truncated, "Hello");
         assert_eq!(truncated.len(), 5);
+    }
+
+    #[test]
+    fn check_gpu_available_internal_returns_well_formed_json() {
+        let json =
+            check_gpu_available_internal().expect("GPU availability probe should return JSON");
+        let value: serde_json::Value =
+            serde_json::from_str(&json).expect("GPU availability output should be valid JSON");
+
+        assert_eq!(value["success"], true);
+        assert!(
+            value["gpuAvailable"].is_boolean(),
+            "gpuAvailable flag should be a boolean"
+        );
+        // error field is optional and may be null or a string; no strict assertion here
     }
 
     #[test]

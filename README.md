@@ -116,6 +116,34 @@ If the script reports that discovery is enabled, you are ready to schedule
 `Creature.discoveryDir()` jobs against your sampled datasets. Otherwise revisit
 `NEAT_AI_DISCOVERY_LIB_PATH` and the permissions passed to `deno run`.
 
+### Checking for a usable GPU from NEAT-AI
+
+Discovery analysis is designed as a GPU-accelerated extension. On machines
+without a suitable GPU, controllers should disable discovery rather than
+falling back to a separate CPU-only implementation.
+
+The library exposes a lightweight FFI entry point to allow NEAT-AI to decide
+whether discovery should be enabled:
+
+- **Symbol**: `check_gpu_available`
+- **Input**: no arguments (the function takes no parameters)
+- **Output**: JSON string:
+
+  ```json
+  {
+    "success": true,
+    "gpuAvailable": true
+  }
+  ```
+
+- When `"gpuAvailable"` is `false`, controllers should treat discovery as
+  disabled on that worker, in the same way discovery is disabled when the
+  Rust FFI module cannot be loaded (for example, when `--allow-ffi` is
+  missing).
+- When `"gpuAvailable"` is `true`, controllers may safely schedule discovery
+  jobs. If a later GPU initialisation error occurs, the Rust side will return
+  a structured error and mark the JSON `success` flag as `false`.
+
 ## Troubleshooting
 
 - **Library not found**: Double-check the artefact path, file extension (e.g.
