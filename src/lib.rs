@@ -28,7 +28,7 @@ pub struct RecordDiscoveryInput {
 }
 
 /// JSON representation of Creature
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CreatureJson {
     pub neurons: Vec<NeuronJson>,
     pub synapses: Vec<SynapseJson>,
@@ -36,7 +36,7 @@ pub struct CreatureJson {
     pub output: usize,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NeuronJson {
     pub uuid: String,
     #[serde(rename = "type")]
@@ -45,7 +45,7 @@ pub struct NeuronJson {
     pub bias: f32,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SynapseJson {
     pub from_uuid: String,
     pub to_uuid: String,
