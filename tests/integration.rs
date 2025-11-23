@@ -3,6 +3,7 @@
 mod common;
 
 use neat_ai_discovery::record_discovery_internal;
+use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use tempfile::TempDir;
 
 #[test]
@@ -165,5 +166,160 @@ fn test_record_discovery_returns_json_error_on_failure() {
             || error_msg.contains("No discovery records")
             || error_msg.contains("No pre-computed neuron_data"),
         "Error message should explain the issue. Got: {error_msg}"
+    );
+}
+
+#[test]
+fn test_impact_calculation_with_multiple_incoming_connections() {
+    // Test that impact is properly normalized when a neuron has multiple incoming connections
+    // This tests the fix for the bug where impact was using absolute weights instead of normalized shares
+
+    let creature = CreatureJson {
+        neurons: vec![
+            NeuronJson {
+                uuid: "input-0".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "input-1".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "hidden-a".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "hidden-b".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: vec![
+            SynapseJson {
+                from_uuid: "input-0".to_string(),
+                to_uuid: "hidden-a".to_string(),
+                weight: 1.0,
+            },
+            SynapseJson {
+                from_uuid: "input-1".to_string(),
+                to_uuid: "hidden-b".to_string(),
+                weight: 1.0,
+            },
+            // Both hidden neurons connect to output with different weights
+            // Total incoming weight to output-0 = 10.0 + 5.0 = 15.0
+            SynapseJson {
+                from_uuid: "hidden-a".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 10.0,
+            },
+            SynapseJson {
+                from_uuid: "hidden-b".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 5.0,
+            },
+        ],
+        input: 2,
+        output: 1,
+    };
+
+    // Create a temporary parquet file with some data
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    // Write minimal data to the parquet file
+    let input_json = serde_json::json!({
+        "creature": creature.clone(),
+        "training_data": [{
+            "input": [0.1, 0.2],
+            "output": [0.5],
+            "neuron_data": [
+                {"neuron_uuid": "hidden-a", "activation": 0.5, "value": 0.5, "errors": [0.1]},
+                {"neuron_uuid": "hidden-b", "activation": 0.5, "value": 0.5, "errors": [0.1]},
+                {"neuron_uuid": "output-0", "activation": 0.5, "value": 0.5, "errors": [0.2]}
+            ]
+        }],
+        "temp_dir": temp_path.to_str().unwrap()
+    });
+
+    // Create the parquet file
+    let record_input = serde_json::to_string(&input_json).unwrap();
+    let record_output_json = record_discovery_internal(&record_input).unwrap();
+    let record_output: serde_json::Value = serde_json::from_str(&record_output_json).unwrap();
+    assert_eq!(
+        record_output["success"], true,
+        "Failed to record discovery data"
+    );
+
+    // Get the actual parquet file path
+    let parquet_file = temp_path.join(record_output["file"].as_str().unwrap());
+
+    // Now test impact calculation using the public API
+    use neat_ai_discovery::rank_focus_neurons_internal;
+    let rank_input = serde_json::json!({
+        "parquetFile": parquet_file.to_str().unwrap(),
+        "creature": creature,
+        "maxResults": 10
+    })
+    .to_string();
+
+    let result_json = rank_focus_neurons_internal(&rank_input).unwrap();
+    let result: serde_json::Value = serde_json::from_str(&result_json).unwrap();
+
+    if result["success"] != true {
+        panic!(
+            "Rank focus neurons failed: {}",
+            result["error"].as_str().unwrap_or("unknown error")
+        );
+    }
+    let neurons = result["neurons"]
+        .as_array()
+        .expect("neurons should be an array");
+
+    // Find the impacts for our test neurons
+    let hidden_a = neurons
+        .iter()
+        .find(|n| n["neuronUuid"] == "hidden-a")
+        .expect("hidden-a should be in results");
+    let hidden_b = neurons
+        .iter()
+        .find(|n| n["neuronUuid"] == "hidden-b")
+        .expect("hidden-b should be in results");
+
+    let impact_a = hidden_a["impact"]
+        .as_f64()
+        .expect("impact should be a number") as f32;
+    let impact_b = hidden_b["impact"]
+        .as_f64()
+        .expect("impact should be a number") as f32;
+
+    // hidden-a has weight 10.0 to output-0, total incoming is 15.0, so impact should be 10.0/15.0 = 0.6667
+    // hidden-b has weight 5.0 to output-0, total incoming is 15.0, so impact should be 5.0/15.0 = 0.3333
+    assert!(
+        (impact_a - 0.6667).abs() < 0.01,
+        "hidden-a impact should be ~0.667, got {impact_a}",
+    );
+    assert!(
+        (impact_b - 0.3333).abs() < 0.01,
+        "hidden-b impact should be ~0.333, got {impact_b}",
+    );
+
+    // Also verify that hidden-a has about 2x the impact of hidden-b (since it has 2x the weight)
+    assert!(
+        (impact_a / impact_b - 2.0).abs() < 0.1,
+        "hidden-a should have ~2x impact of hidden-b, got ratio {}",
+        impact_a / impact_b
     );
 }

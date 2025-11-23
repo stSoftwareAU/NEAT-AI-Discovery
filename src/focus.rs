@@ -61,8 +61,21 @@ fn build_adjacency(creature: &CreatureJson) -> HashMap<String, Vec<(String, f32)
     adjacency
 }
 
+/// Build a map of total incoming absolute weights for each neuron.
+/// This is used to normalize connection contributions when calculating impact.
+fn build_inbound_weights(creature: &CreatureJson) -> HashMap<String, f32> {
+    let mut inbound_weights: HashMap<String, f32> = HashMap::new();
+    for synapse in &creature.synapses {
+        *inbound_weights
+            .entry(synapse.to_uuid.clone())
+            .or_insert(0.0) += synapse.weight.abs();
+    }
+    inbound_weights
+}
+
 fn compute_impacts(creature: &CreatureJson) -> HashMap<String, f32> {
     let adjacency = build_adjacency(creature);
+    let inbound_weights = build_inbound_weights(creature);
     let output_neurons: HashSet<String> = creature
         .neurons
         .iter()
@@ -79,6 +92,7 @@ fn compute_impacts(creature: &CreatureJson) -> HashMap<String, f32> {
         compute_impact_recursive(
             &neuron.uuid,
             &adjacency,
+            &inbound_weights,
             &output_neurons,
             &mut cache,
             &mut visiting,
@@ -91,6 +105,7 @@ fn compute_impacts(creature: &CreatureJson) -> HashMap<String, f32> {
 fn compute_impact_recursive(
     uuid: &str,
     adjacency: &HashMap<String, Vec<(String, f32)>>,
+    inbound_weights: &HashMap<String, f32>,
     outputs: &HashSet<String>,
     cache: &mut HashMap<String, f32>,
     visiting: &mut HashSet<String>,
@@ -109,12 +124,29 @@ fn compute_impact_recursive(
     } else if let Some(edges) = adjacency.get(uuid) {
         let mut max_value = 0.0;
         for (to_uuid, weight) in edges {
-            let child_impact =
-                compute_impact_recursive(to_uuid, adjacency, outputs, cache, visiting);
+            let child_impact = compute_impact_recursive(
+                to_uuid,
+                adjacency,
+                inbound_weights,
+                outputs,
+                cache,
+                visiting,
+            );
             if child_impact <= 0.0 {
                 continue;
             }
-            let contribution = (weight.abs() * child_impact).min(child_impact);
+
+            // Normalize contribution by the total incoming weight to the target neuron
+            // This ensures that impact is properly diluted across multiple paths
+            let total_inbound = inbound_weights.get(to_uuid).copied().unwrap_or(0.0);
+            let normalized_weight = if total_inbound > 1e-9 {
+                weight.abs() / total_inbound
+            } else {
+                // If total inbound weight is near zero, treat all connections equally
+                0.0
+            };
+
+            let contribution = normalized_weight * child_impact;
             if contribution > max_value {
                 max_value = contribution;
             }
