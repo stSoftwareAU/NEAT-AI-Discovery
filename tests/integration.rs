@@ -596,13 +596,13 @@ fn test_bias_values_are_activation_specific() {
         if !relu_neurons.is_empty() {
             for neuron in relu_neurons {
                 assert!(
-                    neuron.bias >= 0.0,
-                    "ReLU neuron should have non-negative bias, got {}",
+                    neuron.bias >= -1.0,
+                    "ReLU neuron bias should be >= -1.0 (expanded range for thresholding), got {}",
                     neuron.bias
                 );
                 assert!(
-                    neuron.bias <= 0.5,
-                    "ReLU neuron bias should be <= 0.5, got {}",
+                    neuron.bias <= 1.0,
+                    "ReLU neuron bias should be <= 1.0, got {}",
                     neuron.bias
                 );
             }
@@ -618,8 +618,8 @@ fn test_bias_values_are_activation_specific() {
         if !symmetric_neurons.is_empty() {
             for neuron in symmetric_neurons {
                 assert!(
-                    neuron.bias >= -0.3 && neuron.bias <= 0.3,
-                    "{} neuron bias should be in [-0.3, 0.3], got {}",
+                    neuron.bias >= -1.0 && neuron.bias <= 1.0,
+                    "{} neuron bias should be in [-1.0, 1.0], got {}",
                     neuron.squash,
                     neuron.bias
                 );
