@@ -11,7 +11,21 @@ pub mod record;
 pub mod types;
 
 use anyhow::Result;
+use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
+
+// Library version from Cargo.toml
+const LIB_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// Static flag to ensure version is logged only once
+static VERSION_LOGGED: OnceCell<()> = OnceCell::new();
+
+/// Log library version on first initialization
+fn log_version_once() {
+    VERSION_LOGGED.get_or_init(|| {
+        eprintln!("[NEAT-AI-Discovery] Library version {LIB_VERSION} initialized");
+    });
+}
 
 /// JSON input for record_discovery function
 #[derive(Debug, Deserialize, Clone)]
@@ -746,6 +760,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+    log_version_once();
     use std::ffi::{CStr, CString};
 
     // Read input C string
@@ -797,6 +812,7 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
 pub extern "C" fn merge_discovery_parquet(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
+    log_version_once();
     use std::ffi::{CStr, CString};
 
     let input_str = unsafe {
@@ -839,6 +855,7 @@ pub extern "C" fn merge_discovery_parquet(
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+    log_version_once();
     use std::ffi::{CStr, CString};
 
     let input_str = unsafe {
@@ -885,6 +902,7 @@ pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mu
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+    log_version_once();
     use std::ffi::{CStr, CString};
 
     let input_str = unsafe {
@@ -951,6 +969,7 @@ pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+    log_version_once();
     use std::ffi::{CStr, CString};
 
     let input_str = unsafe {
@@ -987,6 +1006,7 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
 
 #[no_mangle]
 pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
+    log_version_once();
     use std::ffi::CString;
 
     let result = match check_gpu_available_internal() {
@@ -1011,6 +1031,7 @@ pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn analyze_neurons(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+    log_version_once();
     use std::ffi::{CStr, CString};
 
     let input_str = unsafe {
@@ -1074,6 +1095,7 @@ pub extern "C" fn analyze_neurons(input_json: *const std::ffi::c_char) -> *mut s
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn analyze_all(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+    log_version_once();
     use std::ffi::{CStr, CString};
 
     let input_str = unsafe {
@@ -1235,6 +1257,7 @@ pub fn read_discovery_records(input_json: &str) -> Result<String> {
 pub extern "C" fn read_discovery_records_ffi(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
+    log_version_once();
     use std::ffi::{CStr, CString};
 
     // Read input C string

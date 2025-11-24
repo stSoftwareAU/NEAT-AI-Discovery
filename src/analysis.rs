@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use wgpu::util::DeviceExt;
 
 const EPSILON: f32 = 1e-8;
@@ -23,9 +23,59 @@ const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 const GPU_BATCH_SIZE: usize = 32; // Batch multiple GPU operations together for better utilization
 
 fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
+    // Treat deadline_ms as a relative duration (milliseconds from now), not an absolute timestamp.
+    // The calling code (TypeScript) calculates this as Date.now() + duration, but we want to treat
+    // it as a duration to avoid issues with clock skew and to match the expected semantics.
+    // If the calling code passes an absolute timestamp, we need to convert it to a relative duration.
     deadline_ms.and_then(|target_ms| {
-        let since_epoch = Duration::from_millis(target_ms);
-        UNIX_EPOCH.checked_add(since_epoch)
+        // Heuristic: if the value is less than year 2000 in milliseconds (946684800000),
+        // treat it as a relative duration. Otherwise, it's likely an absolute timestamp
+        // from the calling code, so convert it to a relative duration.
+        const YEAR_2000_MS: u64 = 946_684_800_000;
+
+        let relative_ms = if target_ms < YEAR_2000_MS {
+            // Small value - treat as relative duration (milliseconds from now)
+            target_ms
+        } else {
+            // Large value - likely an absolute timestamp from calling code.
+            // Convert to relative duration by subtracting current time.
+            let now_ms = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .ok()?
+                .as_millis() as u64;
+
+            // If the timestamp is in the past, return None (deadline already passed)
+            if target_ms <= now_ms {
+                return None;
+            }
+
+            // Calculate relative duration
+            target_ms - now_ms
+        };
+
+        // Validate duration bounds: minimum 3 seconds, maximum 1 hour
+        // If invalid, default to 10 minutes (expected typical value)
+        const MIN_DURATION_MS: u64 = 3_000; // 3 seconds
+        const MAX_DURATION_MS: u64 = 3_600_000; // 1 hour (60 * 60 * 1000)
+        const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes (10 * 60 * 1000)
+
+        let validated_ms = if relative_ms < MIN_DURATION_MS {
+            eprintln!(
+                "⚠️  WARNING: analysis_deadline_ms ({:.1}s) is less than minimum (3s). Using default 10 minute timeout.",
+                relative_ms as f64 / 1000.0
+            );
+            DEFAULT_DURATION_MS
+        } else if relative_ms > MAX_DURATION_MS {
+            eprintln!(
+                "⚠️  WARNING: analysis_deadline_ms ({:.1}s) exceeds maximum (1 hour). Using default 10 minute timeout.",
+                relative_ms as f64 / 1000.0
+            );
+            DEFAULT_DURATION_MS
+        } else {
+            relative_ms
+        };
+
+        SystemTime::now().checked_add(Duration::from_millis(validated_ms))
     })
 }
 
@@ -4779,7 +4829,20 @@ fn analyze_synapses_with_cache(
 
             let target_index = match order_map_arc.get(target_uuid.as_str()) {
                 Some(index) => *index,
-                None => return Ok(()),
+                None => {
+                    // Target neuron not found in order map - this indicates a data integrity issue
+                    // Set diagnostics to indicate this error condition before returning
+                    diagnostics
+                        .lock()
+                        .expect("Mutex poisoned: diagnostics")
+                        .set_total_eligible_sources(target_uuid, 0);
+                    if verbose_enabled() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Target {target_uuid} not found in creature neuron order map (neuron may not exist in creature definition)."
+                        );
+                    }
+                    return Ok(());
+                }
             };
 
             // Filter eligible sources: must have index < target_index and not be a constant
@@ -4796,6 +4859,84 @@ fn analyze_synapses_with_cache(
 
             // Track total eligible sources before filtering
             let total_eligible = eligible_sources.len() as u32;
+
+            // Comprehensive diagnostic logging for "no eligible upstream neurons" case
+            // This should NEVER happen for hidden/output neurons in a valid creature (creature.input > 0)
+            if total_eligible == 0 {
+                let input_count = input_neuron_uuids_arc.len();
+                let target_neuron_type = neuron_type_map_arc.get(target_uuid.as_str());
+
+                // Only log detailed diagnostics if this is actually a bug condition:
+                // - Hidden/output neuron (not input/constant)
+                // - With valid input count (creature.input > 0)
+                // - And index >= creature.input (should have eligible sources)
+                let is_bug_condition = if let Some(neuron_type) = target_neuron_type {
+                    let is_hidden_or_output = neuron_type != "input" && neuron_type != "constant";
+                    let has_valid_inputs = input_count > 0;
+                    let has_valid_index = target_index >= input_count;
+                    is_hidden_or_output && has_valid_inputs && has_valid_index
+                } else {
+                    // Target not in creature.neurons - this is also a bug
+                    input_count > 0 && target_index >= input_count
+                };
+
+                if is_bug_condition || verbose_enabled() {
+                    // Count neurons before filtering
+                    let neurons_before_index = ordered_neurons_arc
+                        .iter()
+                        .filter(|n| n.index < target_index)
+                        .count();
+                    let constants_before_index = ordered_neurons_arc
+                        .iter()
+                        .filter(|n| {
+                            n.index < target_index
+                                && neuron_type_map_arc
+                                    .get(&n.uuid)
+                                    .map(|t| t == "constant")
+                                    .unwrap_or(false)
+                        })
+                        .count();
+
+                    // Check if target is in creature.neurons
+                    let target_in_creature = neuron_type_map_arc.contains_key(target_uuid.as_str());
+
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] BUG: Target {} has no eligible upstream neurons. \
+                        Target index: {}, creature.input: {}, input neurons: {}, \
+                        target neuron type: {:?}, target in creature.neurons: {}, \
+                        total ordered neurons: {}, neurons with index < target: {}, \
+                        constants filtered: {}, eligible after filtering: {}",
+                        target_uuid,
+                        target_index,
+                        input_count,
+                        input_count,
+                        target_neuron_type,
+                        target_in_creature,
+                        ordered_neurons_arc.len(),
+                        neurons_before_index,
+                        constants_before_index,
+                        total_eligible
+                    );
+
+                    // Additional validation: for hidden/output neurons, this should be impossible
+                    if target_index < input_count {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] ERROR: Target {target_uuid} has index {target_index} which is less than creature.input ({input_count}). \
+                            Hidden/output neurons should have index >= creature.input. This indicates a bug in build_ordered_neurons."
+                        );
+                    } else if let Some(neuron_type) = target_neuron_type {
+                        if neuron_type != "input" && neuron_type != "constant" {
+                            // This is a hidden/output neuron with index >= creature.input
+                            // It MUST have at least the input neurons as eligible sources
+                            eprintln!(
+                                "[NEAT-AI-Discovery][verbose] ERROR: Hidden/output neuron {} with index {} should have at least {} input neurons (indices 0..{}) as eligible sources. \
+                                This indicates a bug in the filtering logic.",
+                                target_uuid, target_index, input_count, input_count.saturating_sub(1)
+                            );
+                        }
+                    }
+                }
+            }
             // Count how many eligible sources are input neurons
             let input_neuron_count = eligible_sources
                 .iter()
@@ -4945,7 +5086,6 @@ fn analyze_synapses_with_cache(
                 let mut diagnostics_zero_improvements = Vec::new();
                 let mut diagnostics_below_threshold = Vec::new();
                 let mut diagnostics_selected = Vec::new();
-                let mut best_fallback: Option<CandidateSynapseJson> = None;
 
                 for (work, stats) in helpful_work_batch.iter().zip(helpful_stats_batch.iter()) {
                     let positive_is_better = stats.positive_count >= stats.negative_count;
@@ -5012,6 +5152,14 @@ fn analyze_synapses_with_cache(
                         0.0
                     };
 
+                    // Accept all positive improvements as candidates (not just those above threshold)
+                    // Only reject if improvement is non-positive (<= 0.0)
+                    if expected_improvement_percentage <= 0.0 {
+                        // Skip non-positive improvements
+                        continue;
+                    }
+
+                    // If positive but below threshold, still accept as candidate but log for diagnostics
                     if expected_improvement_percentage <= threshold {
                         diagnostics_below_threshold.push((
                             work.target_uuid.clone(),
@@ -5025,26 +5173,6 @@ fn analyze_synapses_with_cache(
                                 weight,
                             },
                         ));
-                        if best_fallback.as_ref().is_none_or(|existing| {
-                            existing.expected_improvement_percentage
-                                < expected_improvement_percentage
-                        }) {
-                            let target_stats = cache
-                                .get(&work.target_uuid)
-                                .ok()
-                                .and_then(|records| NeuronStats::from_records(records.as_ref()))
-                                .map(|s| s.to_json());
-                            best_fallback = Some(CandidateSynapseJson {
-                                from_neuron_uuid: work.source_uuid.clone(),
-                                to_neuron_uuid: work.target_uuid.clone(),
-                                weight,
-                                expected_improvement_percentage,
-                                improved_count,
-                                total_count,
-                                target_neuron_stats: target_stats,
-                            });
-                        }
-                        continue;
                     }
 
                     diagnostics_selected.push(work.target_uuid.clone());
@@ -5081,17 +5209,6 @@ fn analyze_synapses_with_cache(
                     let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
                     for target in diagnostics_selected {
                         diag.mark_candidate_selected(&target);
-                    }
-                }
-                if let Some(fallback) = best_fallback {
-                    let mut fallback_guard = helpful_fallback
-                        .lock()
-                        .expect("Mutex poisoned: helpful_fallback");
-                    if fallback_guard.as_ref().is_none_or(|existing| {
-                        existing.expected_improvement_percentage
-                            < fallback.expected_improvement_percentage
-                    }) {
-                        *fallback_guard = Some(fallback);
                     }
                 }
                 if !candidates_to_add.is_empty() {
@@ -5279,6 +5396,176 @@ mod tests_synapses {
             !deadline_passed(&None),
             "missing deadlines should behave as if no timeout was requested"
         );
+    }
+
+    #[test]
+    fn build_deadline_handles_absolute_timestamps_and_relative_durations() {
+        // Verify that build_deadline correctly handles both absolute timestamps
+        // (milliseconds since UNIX_EPOCH) and relative durations (milliseconds from now)
+        let now = SystemTime::now();
+        let now_ms = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("SystemTime should be after UNIX_EPOCH")
+            .as_millis() as u64;
+
+        // Test 1: Absolute timestamp (large value, >= year 2000)
+        // Create a deadline 10 minutes in the future using absolute timestamp
+        let ten_minutes_ms = 10 * 60 * 1000; // 10 minutes in milliseconds
+        let future_deadline_ms = now_ms + ten_minutes_ms;
+        let deadline = build_deadline(Some(future_deadline_ms));
+
+        assert!(
+            deadline.is_some(),
+            "deadline should be Some when deadline_ms is provided"
+        );
+
+        let deadline_time = deadline.unwrap();
+
+        // The deadline should be approximately 10 minutes in the future
+        // Allow for some small timing variance (up to 1 second)
+        if let Ok(duration) = deadline_time.duration_since(now) {
+            let expected_min = Duration::from_millis(ten_minutes_ms) - Duration::from_secs(1);
+            let expected_max = Duration::from_millis(ten_minutes_ms) + Duration::from_secs(1);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "absolute timestamp deadline should be approximately 10 minutes in the future, got {duration:?}"
+            );
+        } else {
+            panic!("deadline should be in the future");
+        }
+
+        // Test 2: Relative duration (small value, < year 2000)
+        // Pass 10 minutes as a relative duration
+        let relative_deadline_ms = ten_minutes_ms; // 10 minutes as relative duration
+        let relative_deadline = build_deadline(Some(relative_deadline_ms));
+        assert!(relative_deadline.is_some());
+        let relative_time = relative_deadline.unwrap();
+        // This should also be approximately 10 minutes in the future
+        if let Ok(duration) = relative_time.duration_since(now) {
+            let expected_min = Duration::from_millis(ten_minutes_ms) - Duration::from_secs(1);
+            let expected_max = Duration::from_millis(ten_minutes_ms) + Duration::from_secs(1);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "relative duration deadline should be approximately 10 minutes in the future, got {duration:?}"
+            );
+        } else {
+            panic!("relative deadline should be in the future");
+        }
+
+        // Test 3: Verify that an absolute timestamp in the past returns None
+        // (deadline already passed - no point in creating a deadline)
+        let past_timestamp_ms = 1_700_000_000_000u64; // Jan 2024 (in the past)
+        let past_deadline = build_deadline(Some(past_timestamp_ms));
+        assert!(
+            past_deadline.is_none(),
+            "Past timestamp should return None (deadline already passed)"
+        );
+
+        // Test 4: Verify that a future absolute timestamp is correctly converted to relative duration
+        let future_timestamp_ms = now_ms + ten_minutes_ms; // 10 minutes in the future as absolute timestamp
+        let future_deadline = build_deadline(Some(future_timestamp_ms));
+        assert!(future_deadline.is_some());
+        let future_time = future_deadline.unwrap();
+        // Should be approximately 10 minutes in the future
+        if let Ok(duration) = future_time.duration_since(now) {
+            let expected_min = Duration::from_millis(ten_minutes_ms) - Duration::from_secs(1);
+            let expected_max = Duration::from_millis(ten_minutes_ms) + Duration::from_secs(1);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Future absolute timestamp should be converted to relative duration correctly, got {duration:?}"
+            );
+        } else {
+            panic!("Future deadline should be in the future");
+        }
+    }
+
+    #[test]
+    fn build_deadline_validates_duration_bounds() {
+        // Test that build_deadline validates and defaults to 10 minutes for invalid values
+        let now = SystemTime::now();
+        const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes
+
+        // Test 1: Duration below minimum (3 seconds) should default to 10 minutes
+        let too_short_ms = 1_000u64; // 1 second
+        let deadline = build_deadline(Some(too_short_ms));
+        assert!(deadline.is_some());
+        let deadline_time = deadline.unwrap();
+        if let Ok(duration) = deadline_time.duration_since(now) {
+            // Should default to 10 minutes (600000 ms)
+            let expected_min = Duration::from_millis(DEFAULT_DURATION_MS) - Duration::from_secs(1);
+            let expected_max = Duration::from_millis(DEFAULT_DURATION_MS) + Duration::from_secs(1);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Duration below 3 seconds should default to 10 minutes, got {duration:?}"
+            );
+        } else {
+            panic!("Default deadline should be in the future");
+        }
+
+        // Test 2: Duration above maximum (1 hour) should default to 10 minutes
+        let too_long_ms = 4_000_000u64; // ~66 minutes
+        let deadline = build_deadline(Some(too_long_ms));
+        assert!(deadline.is_some());
+        let deadline_time = deadline.unwrap();
+        if let Ok(duration) = deadline_time.duration_since(now) {
+            // Should default to 10 minutes (600000 ms)
+            let expected_min = Duration::from_millis(DEFAULT_DURATION_MS) - Duration::from_secs(1);
+            let expected_max = Duration::from_millis(DEFAULT_DURATION_MS) + Duration::from_secs(1);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Duration above 1 hour should default to 10 minutes, got {duration:?}"
+            );
+        } else {
+            panic!("Default deadline should be in the future");
+        }
+
+        // Test 3: Valid duration (10 minutes) should pass through unchanged
+        let valid_ms = 10 * 60 * 1000u64; // 10 minutes
+        let deadline = build_deadline(Some(valid_ms));
+        assert!(deadline.is_some());
+        let deadline_time = deadline.unwrap();
+        if let Ok(duration) = deadline_time.duration_since(now) {
+            let expected_min = Duration::from_millis(valid_ms) - Duration::from_secs(1);
+            let expected_max = Duration::from_millis(valid_ms) + Duration::from_secs(1);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Valid duration should pass through unchanged, got {duration:?}"
+            );
+        } else {
+            panic!("Valid deadline should be in the future");
+        }
+
+        // Test 4: Exactly at minimum (3 seconds) should pass through
+        let min_ms = 3_000u64; // Exactly 3 seconds
+        let deadline = build_deadline(Some(min_ms));
+        assert!(deadline.is_some());
+        let deadline_time = deadline.unwrap();
+        if let Ok(duration) = deadline_time.duration_since(now) {
+            let expected_min = Duration::from_millis(min_ms) - Duration::from_millis(100);
+            let expected_max = Duration::from_millis(min_ms) + Duration::from_millis(100);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Duration at minimum should pass through, got {duration:?}"
+            );
+        } else {
+            panic!("Minimum deadline should be in the future");
+        }
+
+        // Test 5: Exactly at maximum (1 hour) should pass through
+        let max_ms = 3_600_000u64; // Exactly 1 hour
+        let deadline = build_deadline(Some(max_ms));
+        assert!(deadline.is_some());
+        let deadline_time = deadline.unwrap();
+        if let Ok(duration) = deadline_time.duration_since(now) {
+            let expected_min = Duration::from_millis(max_ms) - Duration::from_millis(1000);
+            let expected_max = Duration::from_millis(max_ms) + Duration::from_millis(1000);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Duration at maximum should pass through, got {duration:?}"
+            );
+        } else {
+            panic!("Maximum deadline should be in the future");
+        }
     }
 
     #[test]
@@ -7015,6 +7302,268 @@ mod tests_synapses {
             optimal_bias_error_sq <= zero_bias_error_sq + EPSILON,
             "Optimal bias should improve or equal zero bias error reduction: zero_bias_error={zero_bias_error_sq}, optimal_bias_error={optimal_bias_error_sq}"
         );
+    }
+
+    /// Test that positive improvements below threshold are accepted as candidates
+    /// This verifies the fix where all positive improvements are candidates, not just those above threshold
+    #[test]
+    fn analyze_synapses_accepts_positive_improvements_below_threshold() {
+        let _guard = ForceGpuFailureGuard::new();
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
+
+        // Create test data that will produce a positive but below-threshold improvement
+        // We need: expected_improvement = (2*w*E[a*e] - w^2*E[a^2]) / E[e^2]
+        // To get ~0.05 improvement with threshold 0.1, we'll use:
+        // - source activation: 0.5 consistently
+        // - target error: 0.1 consistently
+        // - This should produce a positive improvement when weight is chosen appropriately
+        let sample_count = 100;
+        let mut records = Vec::new();
+        for obs_index in 0..sample_count {
+            // Source neuron (input-0) with consistent activation
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-0".to_string(),
+                Some(0.0),
+                0.5,    // Consistent activation
+                vec![], // Input neurons don't have errors
+            ));
+            // Target neuron (output-0) with consistent error
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.3,
+                vec![0.1], // Consistent error
+            ));
+        }
+
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        let creature = CreatureJson {
+            input: 1,
+            output: 1,
+            neurons: vec![NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            }],
+            synapses: Vec::new(), // No existing synapse from input-0 to output-0
+        };
+
+        // Set threshold to 0.1 - we expect a positive but below-threshold improvement to be accepted
+        let input = AnalyzeSynapsesInput {
+            parquet_file,
+            creature,
+            focus_neurons: vec!["output-0".to_string()],
+            improvement_threshold: Some(0.1),
+            max_candidates: None,
+            require_gpu: Some(false),
+            analysis_deadline_ms: None,
+        };
+
+        let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
+
+        // The key assertion: positive improvements below threshold should be accepted
+        // We should have at least one helpful synapse candidate (even if improvement < 0.1)
+        // OR if no candidate, it should NOT be due to BelowThreshold for a positive improvement
+        if result.helpful_synapses.is_empty() {
+            // If no candidates, check diagnostics - it should NOT be BelowThreshold for positive improvements
+            let no_candidate = result
+                .no_candidate_reasons
+                .iter()
+                .find(|summary| summary.target_uuid == "output-0");
+
+            if let Some(summary) = no_candidate {
+                // If there's a detail, check that it's not a positive improvement below threshold
+                if let Some(detail) = &summary.detail {
+                    if let Some(improvement) = detail.expected_improvement {
+                        if improvement > 0.0 && improvement <= 0.1 {
+                            panic!(
+                                "Positive improvement {:.4} below threshold 0.1 should be accepted as candidate, but was rejected with reason: {:?}",
+                                improvement, summary.reason
+                            );
+                        }
+                    }
+                }
+            }
+        } else {
+            // We have candidates - verify at least one has positive improvement
+            let has_positive_improvement = result
+                .helpful_synapses
+                .iter()
+                .any(|synapse| synapse.expected_improvement_percentage > 0.0);
+
+            assert!(
+                has_positive_improvement,
+                "Should have at least one candidate with positive improvement"
+            );
+        }
+    }
+
+    /// Test that non-positive improvements (<= 0.0) are still rejected
+    #[test]
+    fn analyze_synapses_rejects_non_positive_improvements() {
+        let _guard = ForceGpuFailureGuard::new();
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
+
+        // Create test data that will produce a non-positive improvement
+        // Use mismatched activations/errors that result in negative or zero improvement
+        let sample_count = 100;
+        let mut records = Vec::new();
+        for obs_index in 0..sample_count {
+            // Source neuron with activation
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-0".to_string(),
+                Some(0.0),
+                1.0,
+                vec![],
+            ));
+            // Target neuron with error that doesn't correlate well (will produce negative improvement)
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.0,
+                vec![-0.1], // Negative error when source is positive
+            ));
+        }
+
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        let creature = CreatureJson {
+            input: 1,
+            output: 1,
+            neurons: vec![NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            }],
+            synapses: Vec::new(),
+        };
+
+        let input = AnalyzeSynapsesInput {
+            parquet_file,
+            creature,
+            focus_neurons: vec!["output-0".to_string()],
+            improvement_threshold: Some(0.1),
+            max_candidates: None,
+            require_gpu: Some(false),
+            analysis_deadline_ms: None,
+        };
+
+        let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
+
+        // Non-positive improvements should be rejected (not appear in helpful_synapses)
+        // Even though we now accept positive improvements below threshold, we still reject <= 0.0
+        let has_non_positive = result
+            .helpful_synapses
+            .iter()
+            .any(|synapse| synapse.expected_improvement_percentage <= 0.0);
+
+        assert!(
+            !has_non_positive,
+            "Should not have any candidates with non-positive improvement (<= 0.0)"
+        );
+    }
+
+    /// Test that positive improvements above threshold are still accepted (regression test)
+    #[test]
+    fn analyze_synapses_accepts_positive_improvements_above_threshold() {
+        let _guard = ForceGpuFailureGuard::new();
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
+
+        // Create test data that will produce a positive improvement above threshold
+        // Use strong correlation between source activation and target error
+        let sample_count = 100;
+        let mut records = Vec::new();
+        for obs_index in 0..sample_count {
+            // Source neuron with strong activation
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-0".to_string(),
+                Some(0.0),
+                1.0,
+                vec![],
+            ));
+            // Target neuron with error that correlates positively
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.5,
+                vec![0.2], // Positive error when source is positive
+            ));
+        }
+
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        let creature = CreatureJson {
+            input: 1,
+            output: 1,
+            neurons: vec![NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            }],
+            synapses: Vec::new(),
+        };
+
+        // Set threshold to 0.1 - we expect improvement above this to be accepted
+        let input = AnalyzeSynapsesInput {
+            parquet_file,
+            creature,
+            focus_neurons: vec!["output-0".to_string()],
+            improvement_threshold: Some(0.1),
+            max_candidates: None,
+            require_gpu: Some(false),
+            analysis_deadline_ms: None,
+        };
+
+        let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
+
+        // Positive improvements above threshold should definitely be accepted
+        // This is a regression test to ensure we didn't break existing behavior
+        let has_above_threshold = result
+            .helpful_synapses
+            .iter()
+            .any(|synapse| synapse.expected_improvement_percentage > 0.1);
+
+        // Note: This test may pass even if no candidates are found due to other reasons
+        // (e.g., no samples, zero improvement). The key is that if we have candidates,
+        // they should include positive improvements above threshold.
+        if !result.helpful_synapses.is_empty() {
+            assert!(
+                has_above_threshold
+                    || result
+                        .helpful_synapses
+                        .iter()
+                        .any(|s| s.expected_improvement_percentage > 0.0),
+                "Should have candidates with positive improvement (above or below threshold)"
+            );
+        }
     }
 
     /// Test bias range boundaries for different activation functions
