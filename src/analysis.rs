@@ -32,7 +32,7 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
         // treat it as a relative duration. Otherwise, it's likely an absolute timestamp
         // from the calling code, so convert it to a relative duration.
         const YEAR_2000_MS: u64 = 946_684_800_000;
-        
+
         let relative_ms = if target_ms < YEAR_2000_MS {
             // Small value - treat as relative duration (milliseconds from now)
             target_ms
@@ -43,22 +43,22 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .ok()?
                 .as_millis() as u64;
-            
+
             // If the timestamp is in the past, return None (deadline already passed)
             if target_ms <= now_ms {
                 return None;
             }
-            
+
             // Calculate relative duration
             target_ms - now_ms
         };
-        
+
         // Validate duration bounds: minimum 3 seconds, maximum 1 hour
         // If invalid, default to 10 minutes (expected typical value)
         const MIN_DURATION_MS: u64 = 3_000; // 3 seconds
         const MAX_DURATION_MS: u64 = 3_600_000; // 1 hour (60 * 60 * 1000)
         const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes (10 * 60 * 1000)
-        
+
         let validated_ms = if relative_ms < MIN_DURATION_MS {
             eprintln!(
                 "⚠️  WARNING: analysis_deadline_ms ({:.1}s) is less than minimum (3s). Using default 10 minute timeout.",
@@ -74,7 +74,7 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
         } else {
             relative_ms
         };
-        
+
         SystemTime::now().checked_add(Duration::from_millis(validated_ms))
     })
 }
