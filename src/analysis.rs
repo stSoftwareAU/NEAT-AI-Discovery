@@ -23,8 +23,60 @@ const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 const GPU_BATCH_SIZE: usize = 32; // Batch multiple GPU operations together for better utilization
 
 fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
-    deadline_ms
-        .and_then(|target_ms| SystemTime::now().checked_add(Duration::from_millis(target_ms)))
+    // Treat deadline_ms as a relative duration (milliseconds from now), not an absolute timestamp.
+    // The calling code (TypeScript) calculates this as Date.now() + duration, but we want to treat
+    // it as a duration to avoid issues with clock skew and to match the expected semantics.
+    // If the calling code passes an absolute timestamp, we need to convert it to a relative duration.
+    deadline_ms.and_then(|target_ms| {
+        // Heuristic: if the value is less than year 2000 in milliseconds (946684800000),
+        // treat it as a relative duration. Otherwise, it's likely an absolute timestamp
+        // from the calling code, so convert it to a relative duration.
+        const YEAR_2000_MS: u64 = 946_684_800_000;
+        
+        let relative_ms = if target_ms < YEAR_2000_MS {
+            // Small value - treat as relative duration (milliseconds from now)
+            target_ms
+        } else {
+            // Large value - likely an absolute timestamp from calling code.
+            // Convert to relative duration by subtracting current time.
+            let now_ms = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .ok()?
+                .as_millis() as u64;
+            
+            // If the timestamp is in the past, return None (deadline already passed)
+            if target_ms <= now_ms {
+                return None;
+            }
+            
+            // Calculate relative duration
+            target_ms - now_ms
+        };
+        
+        // Validate duration bounds: minimum 3 seconds, maximum 1 hour
+        // If invalid, default to 10 minutes (expected typical value)
+        const MIN_DURATION_MS: u64 = 3_000; // 3 seconds
+        const MAX_DURATION_MS: u64 = 3_600_000; // 1 hour (60 * 60 * 1000)
+        const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes (10 * 60 * 1000)
+        
+        let validated_ms = if relative_ms < MIN_DURATION_MS {
+            eprintln!(
+                "⚠️  WARNING: analysis_deadline_ms ({:.1}s) is less than minimum (3s). Using default 10 minute timeout.",
+                relative_ms as f64 / 1000.0
+            );
+            DEFAULT_DURATION_MS
+        } else if relative_ms > MAX_DURATION_MS {
+            eprintln!(
+                "⚠️  WARNING: analysis_deadline_ms ({:.1}s) exceeds maximum (1 hour). Using default 10 minute timeout.",
+                relative_ms as f64 / 1000.0
+            );
+            DEFAULT_DURATION_MS
+        } else {
+            relative_ms
+        };
+        
+        SystemTime::now().checked_add(Duration::from_millis(validated_ms))
+    })
 }
 
 fn deadline_passed(deadline: &Option<SystemTime>) -> bool {
@@ -5347,10 +5399,20 @@ mod tests_synapses {
     }
 
     #[test]
-    fn build_deadline_adds_duration_to_current_time() {
-        // Verify that build_deadline treats deadline_ms as a relative duration, not an absolute timestamp
+    fn build_deadline_handles_absolute_timestamps_and_relative_durations() {
+        // Verify that build_deadline correctly handles both absolute timestamps
+        // (milliseconds since UNIX_EPOCH) and relative durations (milliseconds from now)
+        let now = SystemTime::now();
+        let now_ms = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("SystemTime should be after UNIX_EPOCH")
+            .as_millis() as u64;
+
+        // Test 1: Absolute timestamp (large value, >= year 2000)
+        // Create a deadline 10 minutes in the future using absolute timestamp
         let ten_minutes_ms = 10 * 60 * 1000; // 10 minutes in milliseconds
-        let deadline = build_deadline(Some(ten_minutes_ms));
+        let future_deadline_ms = now_ms + ten_minutes_ms;
+        let deadline = build_deadline(Some(future_deadline_ms));
 
         assert!(
             deadline.is_some(),
@@ -5358,7 +5420,6 @@ mod tests_synapses {
         );
 
         let deadline_time = deadline.unwrap();
-        let now = SystemTime::now();
 
         // The deadline should be approximately 10 minutes in the future
         // Allow for some small timing variance (up to 1 second)
@@ -5367,23 +5428,143 @@ mod tests_synapses {
             let expected_max = Duration::from_millis(ten_minutes_ms) + Duration::from_secs(1);
             assert!(
                 duration >= expected_min && duration <= expected_max,
-                "deadline should be approximately 10 minutes in the future, got {duration:?}"
+                "absolute timestamp deadline should be approximately 10 minutes in the future, got {duration:?}"
             );
         } else {
             panic!("deadline should be in the future");
         }
 
-        // Verify that a small duration (100ms) creates a deadline very soon
-        let short_deadline = build_deadline(Some(100));
-        assert!(short_deadline.is_some());
-        let short_time = short_deadline.unwrap();
-        if let Ok(duration) = short_time.duration_since(now) {
+        // Test 2: Relative duration (small value, < year 2000)
+        // Pass 10 minutes as a relative duration
+        let relative_deadline_ms = ten_minutes_ms; // 10 minutes as relative duration
+        let relative_deadline = build_deadline(Some(relative_deadline_ms));
+        assert!(relative_deadline.is_some());
+        let relative_time = relative_deadline.unwrap();
+        // This should also be approximately 10 minutes in the future
+        if let Ok(duration) = relative_time.duration_since(now) {
+            let expected_min = Duration::from_millis(ten_minutes_ms) - Duration::from_secs(1);
+            let expected_max = Duration::from_millis(ten_minutes_ms) + Duration::from_secs(1);
             assert!(
-                duration <= Duration::from_millis(200),
-                "100ms deadline should be very soon, got {duration:?}"
+                duration >= expected_min && duration <= expected_max,
+                "relative duration deadline should be approximately 10 minutes in the future, got {duration:?}"
             );
         } else {
-            panic!("short deadline should be in the future");
+            panic!("relative deadline should be in the future");
+        }
+
+        // Test 3: Verify that an absolute timestamp in the past returns None
+        // (deadline already passed - no point in creating a deadline)
+        let past_timestamp_ms = 1_700_000_000_000u64; // Jan 2024 (in the past)
+        let past_deadline = build_deadline(Some(past_timestamp_ms));
+        assert!(
+            past_deadline.is_none(),
+            "Past timestamp should return None (deadline already passed)"
+        );
+        
+        // Test 4: Verify that a future absolute timestamp is correctly converted to relative duration
+        let future_timestamp_ms = now_ms + ten_minutes_ms; // 10 minutes in the future as absolute timestamp
+        let future_deadline = build_deadline(Some(future_timestamp_ms));
+        assert!(future_deadline.is_some());
+        let future_time = future_deadline.unwrap();
+        // Should be approximately 10 minutes in the future
+        if let Ok(duration) = future_time.duration_since(now) {
+            let expected_min = Duration::from_millis(ten_minutes_ms) - Duration::from_secs(1);
+            let expected_max = Duration::from_millis(ten_minutes_ms) + Duration::from_secs(1);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Future absolute timestamp should be converted to relative duration correctly, got {duration:?}"
+            );
+        } else {
+            panic!("Future deadline should be in the future");
+        }
+    }
+
+    #[test]
+    fn build_deadline_validates_duration_bounds() {
+        // Test that build_deadline validates and defaults to 10 minutes for invalid values
+        let now = SystemTime::now();
+        const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes
+
+        // Test 1: Duration below minimum (3 seconds) should default to 10 minutes
+        let too_short_ms = 1_000u64; // 1 second
+        let deadline = build_deadline(Some(too_short_ms));
+        assert!(deadline.is_some());
+        let deadline_time = deadline.unwrap();
+        if let Ok(duration) = deadline_time.duration_since(now) {
+            // Should default to 10 minutes (600000 ms)
+            let expected_min = Duration::from_millis(DEFAULT_DURATION_MS) - Duration::from_secs(1);
+            let expected_max = Duration::from_millis(DEFAULT_DURATION_MS) + Duration::from_secs(1);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Duration below 3 seconds should default to 10 minutes, got {duration:?}"
+            );
+        } else {
+            panic!("Default deadline should be in the future");
+        }
+
+        // Test 2: Duration above maximum (1 hour) should default to 10 minutes
+        let too_long_ms = 4_000_000u64; // ~66 minutes
+        let deadline = build_deadline(Some(too_long_ms));
+        assert!(deadline.is_some());
+        let deadline_time = deadline.unwrap();
+        if let Ok(duration) = deadline_time.duration_since(now) {
+            // Should default to 10 minutes (600000 ms)
+            let expected_min = Duration::from_millis(DEFAULT_DURATION_MS) - Duration::from_secs(1);
+            let expected_max = Duration::from_millis(DEFAULT_DURATION_MS) + Duration::from_secs(1);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Duration above 1 hour should default to 10 minutes, got {duration:?}"
+            );
+        } else {
+            panic!("Default deadline should be in the future");
+        }
+
+        // Test 3: Valid duration (10 minutes) should pass through unchanged
+        let valid_ms = 10 * 60 * 1000u64; // 10 minutes
+        let deadline = build_deadline(Some(valid_ms));
+        assert!(deadline.is_some());
+        let deadline_time = deadline.unwrap();
+        if let Ok(duration) = deadline_time.duration_since(now) {
+            let expected_min = Duration::from_millis(valid_ms) - Duration::from_secs(1);
+            let expected_max = Duration::from_millis(valid_ms) + Duration::from_secs(1);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Valid duration should pass through unchanged, got {duration:?}"
+            );
+        } else {
+            panic!("Valid deadline should be in the future");
+        }
+
+        // Test 4: Exactly at minimum (3 seconds) should pass through
+        let min_ms = 3_000u64; // Exactly 3 seconds
+        let deadline = build_deadline(Some(min_ms));
+        assert!(deadline.is_some());
+        let deadline_time = deadline.unwrap();
+        if let Ok(duration) = deadline_time.duration_since(now) {
+            let expected_min = Duration::from_millis(min_ms) - Duration::from_millis(100);
+            let expected_max = Duration::from_millis(min_ms) + Duration::from_millis(100);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Duration at minimum should pass through, got {duration:?}"
+            );
+        } else {
+            panic!("Minimum deadline should be in the future");
+        }
+
+        // Test 5: Exactly at maximum (1 hour) should pass through
+        let max_ms = 3_600_000u64; // Exactly 1 hour
+        let deadline = build_deadline(Some(max_ms));
+        assert!(deadline.is_some());
+        let deadline_time = deadline.unwrap();
+        if let Ok(duration) = deadline_time.duration_since(now) {
+            let expected_min = Duration::from_millis(max_ms) - Duration::from_millis(1000);
+            let expected_max = Duration::from_millis(max_ms) + Duration::from_millis(1000);
+            assert!(
+                duration >= expected_min && duration <= expected_max,
+                "Duration at maximum should pass through, got {duration:?}"
+            );
+        } else {
+            panic!("Maximum deadline should be in the future");
         }
     }
 
