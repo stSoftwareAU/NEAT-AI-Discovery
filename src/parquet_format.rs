@@ -373,6 +373,88 @@ pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<
     Ok(())
 }
 
+/// Read all discovery records from a Parquet file, grouped by neuron UUID.
+/// This is more efficient than calling read_records_from_parquet multiple times
+/// when you need records for multiple neurons.
+pub fn read_all_records_grouped_by_neuron(
+    file_path: &str,
+) -> Result<std::collections::HashMap<String, Vec<DiscoverRecord>>> {
+    use arrow::array::{Array, Float32Array, ListArray, StringArray, UInt32Array};
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use std::collections::HashMap;
+    use std::fs::File;
+
+    let file = File::open(file_path)
+        .with_context(|| format!("Failed to open Parquet file: {file_path}"))?;
+
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        .context("Failed to create Parquet reader builder")?;
+
+    let reader = builder.build().context("Failed to build Parquet reader")?;
+
+    let mut grouped_records: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
+
+    for batch_result in reader {
+        let batch = batch_result.context("Failed to read record batch")?;
+
+        // Get columns - use schema field names to find correct columns instead of hardcoded indices
+        let obs_index_col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .context("Failed to cast obs_index column")?;
+        let neuron_uuid_col = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("Failed to cast neuron_uuid column")?;
+        let value_col = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .context("Failed to cast value column")?;
+        let activation_col = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .context("Failed to cast activation column")?;
+        let errors_col = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .context("Failed to cast errors column")?;
+
+        // Collect all records and group by neuron UUID
+        for i in 0..batch.num_rows() {
+            let uuid = neuron_uuid_col.value(i).to_string();
+            let obs_index = obs_index_col.value(i);
+            let value = if value_col.is_null(i) {
+                None
+            } else {
+                Some(value_col.value(i))
+            };
+            let activation = activation_col.value(i);
+
+            // Extract errors array
+            let errors_list = errors_col.value(i);
+            let errors_array = errors_list
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .context("Failed to cast errors array")?;
+            let errors: Vec<f32> = (0..errors_array.len())
+                .map(|j| errors_array.value(j))
+                .collect();
+
+            let record = DiscoverRecord::new(obs_index, uuid.clone(), value, activation, errors);
+            grouped_records.entry(uuid).or_default().push(record);
+        }
+    }
+
+    // Note: Records are returned in Parquet read order (not sorted by obs_index)
+    // TypeScript sorts records by obs_index after reading for cross-neuron matching
+    Ok(grouped_records)
+}
+
 /// Read discovery records from a Parquet file, filtered by neuron UUID
 pub fn read_records_from_parquet(
     file_path: &str,
@@ -818,6 +900,55 @@ mod tests {
         assert!(
             err.to_string().contains("error value(s)"),
             "Error message should reference the per-batch error limit"
+        );
+    }
+
+    #[test]
+    fn test_read_all_records_grouped_by_neuron() {
+        // Test that read_all_records_grouped_by_neuron correctly groups records by neuron UUID
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        // Write records for multiple neurons
+        let records = vec![
+            DiscoverRecord::new(0, "neuron-1".to_string(), Some(0.5), 0.7, vec![0.1, 0.2]),
+            DiscoverRecord::new(1, "neuron-1".to_string(), Some(0.6), 0.8, vec![0.15, 0.25]),
+            DiscoverRecord::new(0, "neuron-2".to_string(), Some(0.3), 0.5, vec![0.05]),
+            DiscoverRecord::new(1, "neuron-2".to_string(), Some(0.4), 0.6, vec![0.1]),
+            DiscoverRecord::new(2, "neuron-2".to_string(), Some(0.5), 0.7, vec![0.15]),
+        ];
+
+        write_records_to_parquet(file_path, &records).unwrap();
+
+        // Read all records grouped by neuron
+        let grouped = read_all_records_grouped_by_neuron(file_path).unwrap();
+
+        // Verify neuron-1 has 2 records
+        let neuron1_records = grouped.get("neuron-1").expect("neuron-1 should exist");
+        assert_eq!(neuron1_records.len(), 2, "neuron-1 should have 2 records");
+        assert_eq!(neuron1_records[0].obs_index, 0);
+        assert_eq!(neuron1_records[1].obs_index, 1);
+
+        // Verify neuron-2 has 3 records
+        let neuron2_records = grouped.get("neuron-2").expect("neuron-2 should exist");
+        assert_eq!(neuron2_records.len(), 3, "neuron-2 should have 3 records");
+        assert_eq!(neuron2_records[0].obs_index, 0);
+        assert_eq!(neuron2_records[1].obs_index, 1);
+        assert_eq!(neuron2_records[2].obs_index, 2);
+
+        // Verify that read_records_from_parquet returns the same data for each neuron
+        let neuron1_single = read_records_from_parquet(file_path, "neuron-1").unwrap();
+        assert_eq!(
+            neuron1_single.len(),
+            neuron1_records.len(),
+            "Single read should return same number of records as grouped read"
+        );
+
+        let neuron2_single = read_records_from_parquet(file_path, "neuron-2").unwrap();
+        assert_eq!(
+            neuron2_single.len(),
+            neuron2_records.len(),
+            "Single read should return same number of records as grouped read"
         );
     }
 }

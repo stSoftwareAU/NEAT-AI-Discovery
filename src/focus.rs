@@ -1,8 +1,7 @@
-use crate::parquet_format::read_records_from_parquet;
+use crate::parquet_format::{read_all_records_grouped_by_neuron, read_records_from_parquet};
 use crate::types::DiscoverRecord;
 use crate::{CreatureJson, NeuronJson};
 use anyhow::{Context, Result};
-use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -27,15 +26,20 @@ fn is_selectable_type(neuron_type: &str) -> bool {
     neuron_type != "input" && neuron_type != "constant"
 }
 
+#[allow(dead_code)]
 fn average_absolute_error(parquet_file: &str, neuron_uuid: &str) -> Result<f32> {
     let records: Vec<DiscoverRecord> = read_records_from_parquet(parquet_file, neuron_uuid)
         .with_context(|| format!("Failed to read discovery records for neuron {neuron_uuid}"))?;
 
+    Ok(average_absolute_error_from_records(&records))
+}
+
+fn average_absolute_error_from_records(records: &[DiscoverRecord]) -> f32 {
     let mut sum = 0.0f32;
     let mut count: u32 = 0;
 
     for record in records {
-        for err in record.errors {
+        for err in &record.errors {
             if err.is_finite() {
                 sum += err.abs();
                 count += 1;
@@ -44,9 +48,9 @@ fn average_absolute_error(parquet_file: &str, neuron_uuid: &str) -> Result<f32> 
     }
 
     if count == 0 {
-        Ok(0.0)
+        0.0
     } else {
-        Ok(sum / count as f32)
+        sum / count as f32
     }
 }
 
@@ -187,6 +191,11 @@ pub fn rank_focus_neurons(
         });
     }
 
+    // Read all records once and group by neuron UUID for efficient access
+    // This avoids reading the parquet file 460+ times (once per neuron)
+    let grouped_records = read_all_records_grouped_by_neuron(parquet_file)
+        .context("Failed to read discovery records from parquet file")?;
+
     let output_neurons: Vec<&NeuronJson> = creature
         .neurons
         .iter()
@@ -197,32 +206,36 @@ pub fn rank_focus_neurons(
         0.0
     } else {
         output_neurons
-            .par_iter()
-            .map(|neuron| average_absolute_error(parquet_file, &neuron.uuid))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
+            .iter()
+            .filter_map(|neuron| {
+                grouped_records
+                    .get(&neuron.uuid)
+                    .map(|records| average_absolute_error_from_records(records))
+            })
             .fold(0.0, f32::max)
     };
 
     let impact_map = compute_impacts(creature);
 
     let mut neurons = selectable
-        .par_iter()
-        .map(|neuron| -> Result<RankedNeuron> {
-            let avg_error = average_absolute_error(parquet_file, &neuron.uuid)?;
-            let impact = *impact_map.get(&neuron.uuid).unwrap_or(&0.0);
-            let total_error = if max_output_error > 0.0 {
-                avg_error.min(max_output_error)
-            } else {
-                avg_error
-            };
-            Ok(RankedNeuron {
-                neuron_uuid: neuron.uuid.clone(),
-                total_error,
-                impact,
+        .iter()
+        .filter_map(|neuron| {
+            grouped_records.get(&neuron.uuid).map(|records| {
+                let avg_error = average_absolute_error_from_records(records);
+                let impact = *impact_map.get(&neuron.uuid).unwrap_or(&0.0);
+                let total_error = if max_output_error > 0.0 {
+                    avg_error.min(max_output_error)
+                } else {
+                    avg_error
+                };
+                RankedNeuron {
+                    neuron_uuid: neuron.uuid.clone(),
+                    total_error,
+                    impact,
+                }
             })
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Vec<_>>();
 
     neurons.sort_by(|a, b| {
         b.total_error
