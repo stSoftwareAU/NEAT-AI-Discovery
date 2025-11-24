@@ -511,12 +511,19 @@ impl TargetDiagnostics {
             }
 
             if entry.total_eligible_sources == 0 {
-                // Note: Detailed diagnostics are already logged above during analysis
-                // This is just a summary for the log output
+                // Log detailed diagnostics here since they may not be visible from parallel processing
+                // or may not have been logged if the target wasn't found in the order map
                 eprintln!(
                     "[NEAT-AI-Discovery][verbose] Target {} had no eligible upstream neurons to evaluate. \
-                    See detailed diagnostics above for explanation.",
-                    entry.target_uuid
+                    Target record count: {}, input neuron count: {}, already connected: {}, record load failures: {}. \
+                    This typically occurs when: (1) the target is an input/constant neuron (no upstream sources), \
+                    (2) all upstream neurons are constants (filtered out), (3) the target has an invalid index, \
+                    or (4) the target was not found in the creature neuron order map.",
+                    entry.target_uuid,
+                    entry.target_record_count,
+                    entry.input_neuron_count,
+                    entry.already_connected_count,
+                    entry.record_load_failures
                 );
                 continue;
             }
@@ -4839,6 +4846,22 @@ fn analyze_synapses_with_cache(
                         .lock()
                         .expect("Mutex poisoned: diagnostics")
                         .set_total_eligible_sources(target_uuid, 0);
+                    // Log detailed diagnostics for this case
+                    let input_count = input_neuron_uuids_arc.len();
+                    let target_neuron_type = neuron_type_map_arc.get(target_uuid.as_str());
+                    let target_in_creature = neuron_type_map_arc.contains_key(target_uuid.as_str());
+                    eprintln!(
+                        "[NEAT-AI-Discovery] Target {} has no eligible upstream neurons to evaluate. \
+                        Target not found in creature neuron order map. \
+                        Target neuron type: {:?}, target in creature.neurons: {}, \
+                        creature.input: {}, total ordered neurons: {}. \
+                        This indicates the neuron may not exist in the creature definition or has an invalid configuration.",
+                        target_uuid,
+                        target_neuron_type,
+                        target_in_creature,
+                        input_count,
+                        ordered_neurons_arc.len()
+                    );
                     if verbose_enabled() {
                         eprintln!(
                             "[NEAT-AI-Discovery][verbose] Target {target_uuid} not found in creature neuron order map (neuron may not exist in creature definition)."
