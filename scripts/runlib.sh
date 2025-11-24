@@ -138,6 +138,13 @@ ensure_lib_built() {
   local lib_path="$HOME/.cargo/lib/${lib_file}"
   local version_marker="$HOME/.cargo/lib/.${PKG}.version"
   local target_lib="$project_root/target/release/${lib_file}"
+  local deps_lib="$project_root/target/release/deps/${lib_file}"
+  
+  # Prefer deps version if it exists (it's usually self-contained)
+  # Otherwise use the target/release version
+  if [[ -f "$deps_lib" ]]; then
+    target_lib="$deps_lib"
+  fi
 
   # Check if library needs rebuilding based on version only
   local needs_rebuild=false
@@ -183,7 +190,7 @@ ensure_lib_built() {
   # Verify build succeeded - target library must exist
   [[ -f "$target_lib" ]] || { >&2 echo "Build failed: expected library not found at $target_lib"; exit 1; }
 
-  # Sign the target binary for macOS (required for Deno FFI to load it without SIGKILL)
+  # On macOS, sign the library (required for Deno FFI to load it without SIGKILL)
   if [[ "$(uname -s)" == "Darwin" ]]; then
     >&2 echo "Signing ${lib_file} for macOS compatibility"
     codesign --force --sign - --timestamp=none --preserve-metadata=entitlements "$target_lib" >&2 2>/dev/null || true
@@ -193,6 +200,18 @@ ensure_lib_built() {
   >&2 echo "Installing ${lib_file} → ${lib_path}"
   mkdir -p "$HOME/.cargo/lib" >&2
   cp "$target_lib" "$lib_path" >&2
+
+  # On macOS, fix install_name and re-sign after copying
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    >&2 echo "Fixing library install_name for macOS"
+    # Fix the install_name to be relative to the library location
+    # This prevents issues when the library is loaded from ~/.cargo/lib/
+    install_name_tool -id "@rpath/${lib_file}" "$lib_path" >&2 2>/dev/null || {
+      >&2 echo "Warning: install_name_tool failed, but continuing..."
+    }
+    # Re-sign after fixing install_name
+    codesign --force --sign - --timestamp=none --preserve-metadata=entitlements "$lib_path" >&2 2>/dev/null || true
+  fi
 
   # Verify copy succeeded - installed library must exist
   [[ -f "$lib_path" ]] || { >&2 echo "Installation failed: expected library not found at $lib_path"; exit 1; }
