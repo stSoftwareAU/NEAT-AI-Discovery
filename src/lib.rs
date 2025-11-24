@@ -21,9 +21,10 @@ const LIB_VERSION: &str = env!("CARGO_PKG_VERSION");
 static VERSION_LOGGED: OnceCell<()> = OnceCell::new();
 
 /// Log library version on first initialization
+/// This shows the ACTUAL compiled version embedded in the binary at build time
 fn log_version_once() {
     VERSION_LOGGED.get_or_init(|| {
-        eprintln!("[NEAT-AI-Discovery] Library version {LIB_VERSION} initialized");
+        eprintln!("[NEAT-AI-Discovery] Library version {LIB_VERSION} initialized (compiled version embedded in binary)");
     });
 }
 
@@ -284,6 +285,15 @@ pub struct AnalyzeParallelOutput {
 pub struct CheckGpuOutput {
     pub success: bool,
     pub gpu_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetVersionOutput {
+    pub success: bool,
+    pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -696,6 +706,15 @@ pub fn check_gpu_available_internal() -> Result<String> {
     Ok(serde_json::to_string(&output)?)
 }
 
+pub fn get_library_version_internal() -> Result<String> {
+    let output = GetVersionOutput {
+        success: true,
+        version: LIB_VERSION.to_string(),
+        error: None,
+    };
+    Ok(serde_json::to_string(&output)?)
+}
+
 pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     let input: RankFocusNeuronsInput = match serde_json::from_str(input_json) {
         Ok(value) => value,
@@ -1023,6 +1042,38 @@ pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
         Ok(c_string) => c_string.into_raw(),
         Err(_) => {
             let error = r#"{"success":false,"gpuAvailable":false,"error":"Failed to create output string"}"#;
+            CString::new(error).unwrap().into_raw()
+        }
+    }
+}
+
+/// FFI export for querying the library version
+///
+/// Returns the version string that was embedded in the binary at compile time.
+/// This allows callers to verify they're using the expected version.
+///
+/// # Safety
+/// The returned pointer must be freed using free_discovery_result
+#[no_mangle]
+pub extern "C" fn get_library_version() -> *mut std::ffi::c_char {
+    log_version_once();
+    use std::ffi::CString;
+
+    let result = match get_library_version_internal() {
+        Ok(json) => json,
+        Err(e) => {
+            let fallback = format!(
+                "{{\"success\":false,\"version\":\"\",\"error\":\"Failed to get version: {e}\"}}"
+            );
+            fallback
+        }
+    };
+
+    match CString::new(result) {
+        Ok(c_string) => c_string.into_raw(),
+        Err(_) => {
+            let error =
+                r#"{"success":false,"version":"","error":"Failed to create output string"}"#;
             CString::new(error).unwrap().into_raw()
         }
     }
@@ -1479,6 +1530,22 @@ mod tests {
             "gpuAvailable flag should be a boolean"
         );
         // error field is optional and may be null or a string; no strict assertion here
+    }
+
+    #[test]
+    fn get_library_version_internal_returns_well_formed_json() {
+        let json = get_library_version_internal().expect("Version query should return JSON");
+        let value: serde_json::Value =
+            serde_json::from_str(&json).expect("Version output should be valid JSON");
+
+        assert_eq!(value["success"], true);
+        assert_eq!(
+            value["version"]
+                .as_str()
+                .expect("version should be a string"),
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(value["error"].is_null(), "error should be null on success");
     }
 
     #[test]
