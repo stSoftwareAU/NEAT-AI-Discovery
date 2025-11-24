@@ -271,6 +271,9 @@ struct TargetDiagnosticEntry {
     target_record_count: usize,
     evaluated_candidates: u32,
     candidates_with_samples: u32,
+    total_eligible_sources: u32,
+    already_connected_count: u32,
+    record_load_failures: u32,
     had_candidate: bool,
     best_rejection: Option<RejectionDetail>,
 }
@@ -282,6 +285,9 @@ impl TargetDiagnosticEntry {
             target_record_count: 0,
             evaluated_candidates: 0,
             candidates_with_samples: 0,
+            total_eligible_sources: 0,
+            already_connected_count: 0,
+            record_load_failures: 0,
             had_candidate: false,
             best_rejection: None,
         }
@@ -335,6 +341,24 @@ impl TargetDiagnostics {
     fn set_target_record_count(&mut self, target_uuid: &str, count: usize) {
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.target_record_count = count;
+        }
+    }
+
+    fn set_total_eligible_sources(&mut self, target_uuid: &str, count: u32) {
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.total_eligible_sources = count;
+        }
+    }
+
+    fn record_already_connected(&mut self, target_uuid: &str) {
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.already_connected_count += 1;
+        }
+    }
+
+    fn record_load_failure(&mut self, target_uuid: &str) {
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.record_load_failures += 1;
         }
     }
 
@@ -428,10 +452,38 @@ impl TargetDiagnostics {
                 continue;
             }
 
-            if entry.evaluated_candidates == 0 {
+            if entry.total_eligible_sources == 0 {
                 eprintln!(
                     "[NEAT-AI-Discovery][verbose] Target {} had no eligible upstream neurons to evaluate.",
                     entry.target_uuid
+                );
+                continue;
+            }
+
+            // Check if neuron is fully connected (all eligible sources already have synapses)
+            // Eligible sources include: ALL input neurons (input-0 through input-(creature.input-1))
+            // AND ALL prior hidden/output neurons (with index < target_index, excluding constants)
+            // This condition is rare - only occurs when neuron is connected to all possible sources
+            if entry.already_connected_count == entry.total_eligible_sources {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} is fully connected: all {} eligible upstream sources already have synapses (all {} input neurons and all prior hidden/output neurons). This is a rare condition.",
+                    entry.target_uuid, entry.total_eligible_sources, entry.total_eligible_sources
+                );
+                continue;
+            }
+
+            // Check for record loading failures (this indicates a bug)
+            if entry.record_load_failures > 0 {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} had {} record loading failures (this may indicate a bug - records exist but couldn't be loaded).",
+                    entry.target_uuid, entry.record_load_failures
+                );
+            }
+
+            if entry.evaluated_candidates == 0 {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream neurons but none were evaluated ({} already connected, {} record load failures).",
+                    entry.target_uuid, entry.total_eligible_sources, entry.already_connected_count, entry.record_load_failures
                 );
                 continue;
             }
@@ -505,7 +557,30 @@ impl TargetDiagnostics {
             .values()
             .filter(|entry| !entry.had_candidate)
             .map(|entry| {
-                if entry.evaluated_candidates == 0 {
+                // Only report "no eligible sources" if both total_eligible_sources and evaluated_candidates are 0
+                // This handles the case where total_eligible_sources might be 0 in tests but evaluated_candidates > 0
+                if entry.total_eligible_sources == 0 && entry.evaluated_candidates == 0 {
+                    return SynapseNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: SynapseNoCandidateReason::NoEligibleSources,
+                        evaluated_candidates: entry.evaluated_candidates,
+                        candidates_with_samples: entry.candidates_with_samples,
+                        target_record_count: entry.target_record_count,
+                        detail: None,
+                    };
+                }
+
+                // Check if neuron is fully connected (all eligible sources already have synapses)
+                // Eligible sources include: ALL input neurons (input-0 through input-(creature.input-1))
+                // AND ALL prior hidden/output neurons (with index < target_index, excluding constants)
+                // This condition is rare - only occurs when neuron is connected to all possible sources
+                if entry.total_eligible_sources > 0
+                    && entry.already_connected_count == entry.total_eligible_sources
+                    && entry.evaluated_candidates == 0
+                {
+                    // Neuron is fully connected - all eligible sources (all inputs + all prior hidden neurons) already have synapses
+                    // This is legitimate but rare, and we report it as "no eligible sources"
+                    // since there are no NEW sources to evaluate
                     return SynapseNoCandidateSummary {
                         target_uuid: entry.target_uuid.clone(),
                         reason: SynapseNoCandidateReason::NoEligibleSources,
@@ -4651,6 +4726,23 @@ fn analyze_synapses_with_cache(
     let synapses_by_target_arc = Arc::new(synapses_by_target);
     let order_map_arc = Arc::new(order_map);
 
+    // Build a map of neuron UUIDs to their types for filtering constants
+    // Note: Input neurons are NOT in creature.neurons - they're represented by creature.input count
+    let neuron_type_map: HashMap<String, String> = input
+        .creature
+        .neurons
+        .iter()
+        .map(|neuron| (neuron.uuid.clone(), neuron.neuron_type.clone()))
+        .collect();
+    let neuron_type_map_arc = Arc::new(neuron_type_map);
+
+    // Create a set of input neuron UUIDs for proper identification
+    // Input neurons use format "input-{index}" where index is 0..creature.input
+    let input_neuron_uuids: HashSet<String> = (0..input.creature.input)
+        .map(|i| format!("input-{i}"))
+        .collect();
+    let input_neuron_uuids_arc = Arc::new(input_neuron_uuids);
+
     // Process each focus neuron in parallel
     focus_order_arc
         .par_iter()
@@ -4682,10 +4774,25 @@ fn analyze_synapses_with_cache(
                 None => return Ok(()),
             };
 
+            // Filter eligible sources: must have index < target_index and not be a constant
             let mut eligible_sources: Vec<&OrderedNeuron> = ordered_neurons_arc
                 .iter()
-                .filter(|neuron| neuron.index < target_index)
+                .filter(|neuron| {
+                    neuron.index < target_index
+                        && !neuron_type_map_arc
+                            .get(&neuron.uuid)
+                            .map(|t| t == "constant")
+                            .unwrap_or(false)
+                })
                 .collect();
+
+            // Track total eligible sources before filtering
+            let total_eligible = eligible_sources.len() as u32;
+            diagnostics
+                .lock()
+                .expect("Mutex poisoned: diagnostics")
+                .set_total_eligible_sources(target_uuid, total_eligible);
+
             let mut rng = thread_rng();
             eligible_sources.shuffle(&mut rng);
 
@@ -4712,17 +4819,50 @@ fn analyze_synapses_with_cache(
                 if existing_synapses_arc
                     .contains(&(source_uuid.to_string(), target_uuid.to_string()))
                 {
+                    // Already connected - track this but skip evaluation
+                    diagnostics
+                        .lock()
+                        .expect("Mutex poisoned: diagnostics")
+                        .record_already_connected(target_uuid);
                     continue;
                 }
 
                 let from_records_arc = match cache.get(source_uuid) {
                     Ok(records) => records,
-                    Err(_) => {
+                    Err(err) => {
+                        // Record loading failure - this is a bug if records exist in parquet
+                        // Surface the error in verbose mode and track the failure
+                        if verbose_enabled() {
+                            eprintln!(
+                                "[NEAT-AI-Discovery][verbose] Failed to load records for source {source_uuid} (target {target_uuid}): {err}"
+                            );
+                        }
+                        diagnostics
+                            .lock()
+                            .expect("Mutex poisoned: diagnostics")
+                            .record_load_failure(target_uuid);
+                        // Continue to next source rather than failing the entire analysis
                         continue;
                     }
                 };
                 let record_count = from_records_arc.len();
                 if from_records_arc.is_empty() {
+                    // Empty records - this is legitimate for input neurons (they don't have records)
+                    // but suspicious for hidden/output neurons if records were recorded
+                    let is_input_neuron = input_neuron_uuids_arc.contains(source_uuid);
+                    if verbose_enabled() && !is_input_neuron {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Source {source_uuid} (target {target_uuid}) has no records in parquet file (this may indicate a recording issue)."
+                        );
+                    }
+                    diagnostics
+                        .lock()
+                        .expect("Mutex poisoned: diagnostics")
+                        .record_candidate_attempt(target_uuid, false);
+                    diagnostics
+                        .lock()
+                        .expect("Mutex poisoned: diagnostics")
+                        .record_no_samples(target_uuid, source_uuid, record_count);
                     continue;
                 }
                 let from_records = from_records_arc.as_ref();
@@ -5704,6 +5844,272 @@ mod tests_synapses {
             message.contains("duplicate focus neurons"),
             "Expected duplicate focus error, got: {message}",
         );
+    }
+
+    #[test]
+    fn analyze_synapses_reports_eligible_sources_correctly_for_non_input_neurons() {
+        // Test that non-input neurons with valid creature structure always report
+        // eligible sources correctly, not "no eligible sources" when sources exist
+        let _guard = ForceGpuFailureGuard::new();
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
+
+        let sample_count = 100;
+        let mut records = Vec::new();
+        for obs_index in 0..sample_count {
+            // Input neuron records (observations)
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-0".to_string(),
+                Some(0.0),
+                0.25,
+                vec![0.1],
+            ));
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-1".to_string(),
+                Some(0.0),
+                0.3,
+                vec![0.2],
+            ));
+            // Hidden neuron records
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "hidden-0".to_string(),
+                Some(0.0),
+                0.5,
+                vec![0.15],
+            ));
+            // Output neuron records
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.6,
+                vec![0.05],
+            ));
+        }
+
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        let creature = CreatureJson {
+            input: 2,
+            output: 1,
+            neurons: vec![
+                NeuronJson {
+                    uuid: "hidden-0".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "constant-0".to_string(),
+                    neuron_type: "constant".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 1.0,
+                },
+                NeuronJson {
+                    uuid: "output-0".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![
+                // Hidden neuron already connected to input-0
+                SynapseJson {
+                    from_uuid: "input-0".to_string(),
+                    to_uuid: "hidden-0".to_string(),
+                    weight: 0.4,
+                },
+                // Output neuron already connected to hidden-0
+                SynapseJson {
+                    from_uuid: "hidden-0".to_string(),
+                    to_uuid: "output-0".to_string(),
+                    weight: 0.5,
+                },
+            ],
+        };
+
+        let input = AnalyzeSynapsesInput {
+            parquet_file,
+            creature,
+            focus_neurons: vec!["hidden-0".to_string(), "output-0".to_string()],
+            improvement_threshold: Some(0.05),
+            max_candidates: None,
+            require_gpu: Some(false),
+            analysis_deadline_ms: None,
+        };
+
+        let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
+
+        // Check diagnostics for hidden-0
+        // hidden-0 should have eligible sources (input-1 is not connected yet)
+        // So it should NOT report "no eligible sources"
+        let hidden_diag = result
+            .no_candidate_reasons
+            .iter()
+            .find(|summary| summary.target_uuid == "hidden-0");
+
+        if let Some(diag) = hidden_diag {
+            assert!(
+                diag.reason != SynapseNoCandidateReason::NoEligibleSources,
+                "hidden-0 should have eligible sources (input-1 is available), but got: {:?}",
+                diag.reason
+            );
+            assert!(
+                diag.evaluated_candidates > 0,
+                "hidden-0 should have evaluated at least one candidate (input-1), but evaluated_candidates is {}",
+                diag.evaluated_candidates
+            );
+        }
+
+        // Check diagnostics for output-0
+        // output-0 should have eligible sources (input-0, input-1 are available)
+        // So it should NOT report "no eligible sources"
+        let output_diag = result
+            .no_candidate_reasons
+            .iter()
+            .find(|summary| summary.target_uuid == "output-0");
+
+        if let Some(diag) = output_diag {
+            assert!(
+                diag.reason != SynapseNoCandidateReason::NoEligibleSources,
+                "output-0 should have eligible sources (input-0, input-1 are available), but got: {:?}",
+                diag.reason
+            );
+            assert!(
+                diag.evaluated_candidates > 0,
+                "output-0 should have evaluated at least one candidate, but evaluated_candidates is {}",
+                diag.evaluated_candidates
+            );
+        }
+    }
+
+    #[test]
+    fn analyze_synapses_reports_fully_connected_neuron_explicitly() {
+        // Test that a neuron connected to ALL eligible sources is explicitly reported
+        let _guard = ForceGpuFailureGuard::new();
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let parquet_path = temp_dir.path().join("records.parquet");
+        let parquet_file = parquet_path
+            .to_str()
+            .expect("Temporary path should be valid UTF-8")
+            .to_string();
+
+        let sample_count = 100;
+        let mut records = Vec::new();
+        for obs_index in 0..sample_count {
+            // Input neuron records (observations)
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-0".to_string(),
+                Some(0.0),
+                0.25,
+                vec![0.1],
+            ));
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "input-1".to_string(),
+                Some(0.0),
+                0.3,
+                vec![0.2],
+            ));
+            // Hidden neuron records
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "hidden-0".to_string(),
+                Some(0.0),
+                0.5,
+                vec![0.15],
+            ));
+            // Output neuron records
+            records.push(DiscoverRecord::new(
+                obs_index,
+                "output-0".to_string(),
+                Some(0.0),
+                0.6,
+                vec![0.05],
+            ));
+        }
+
+        write_records_to_parquet(&parquet_file, &records)
+            .expect("Failed to write discovery records");
+
+        // Create a creature where hidden-0 is connected to ALL eligible sources
+        // (both input-0 and input-1)
+        let creature = CreatureJson {
+            input: 2,
+            output: 1,
+            neurons: vec![
+                NeuronJson {
+                    uuid: "hidden-0".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "output-0".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![
+                // hidden-0 is connected to ALL eligible sources (input-0 and input-1)
+                SynapseJson {
+                    from_uuid: "input-0".to_string(),
+                    to_uuid: "hidden-0".to_string(),
+                    weight: 0.4,
+                },
+                SynapseJson {
+                    from_uuid: "input-1".to_string(),
+                    to_uuid: "hidden-0".to_string(),
+                    weight: 0.5,
+                },
+            ],
+        };
+
+        let input = AnalyzeSynapsesInput {
+            parquet_file,
+            creature,
+            focus_neurons: vec!["hidden-0".to_string()],
+            improvement_threshold: Some(0.05),
+            max_candidates: None,
+            require_gpu: Some(false),
+            analysis_deadline_ms: None,
+        };
+
+        let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
+
+        // hidden-0 should be reported as having no eligible sources
+        // because it's connected to ALL eligible sources (both inputs)
+        let hidden_diag = result
+            .no_candidate_reasons
+            .iter()
+            .find(|summary| summary.target_uuid == "hidden-0");
+
+        assert!(
+            hidden_diag.is_some(),
+            "hidden-0 should have diagnostics since it's fully connected"
+        );
+
+        if let Some(diag) = hidden_diag {
+            assert_eq!(
+                diag.reason,
+                SynapseNoCandidateReason::NoEligibleSources,
+                "hidden-0 should report NoEligibleSources since it's connected to all eligible sources"
+            );
+            assert_eq!(
+                diag.evaluated_candidates, 0,
+                "hidden-0 should have 0 evaluated candidates since all sources are already connected"
+            );
+        }
     }
 
     #[test]
