@@ -5460,7 +5460,7 @@ mod tests_synapses {
             past_deadline.is_none(),
             "Past timestamp should return None (deadline already passed)"
         );
-        
+
         // Test 4: Verify that a future absolute timestamp is correctly converted to relative duration
         let future_timestamp_ms = now_ms + ten_minutes_ms; // 10 minutes in the future as absolute timestamp
         let future_deadline = build_deadline(Some(future_timestamp_ms));
