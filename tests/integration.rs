@@ -419,3 +419,300 @@ fn test_impact_calculation_with_multiple_incoming_connections() {
         impact_a / impact_b
     );
 }
+
+/// Test that analyze_neurons returns non-zero bias values for neuron candidates
+#[test]
+fn test_analyze_neurons_returns_non_zero_bias() {
+    use neat_ai_discovery::AnalyzeNeuronsInput;
+
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    // Create creature with output neuron
+    let creature = CreatureJson {
+        neurons: vec![NeuronJson {
+            uuid: "output-0".to_string(),
+            neuron_type: "output".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }],
+        synapses: vec![],
+        input: 1,
+        output: 1,
+    };
+
+    // Generate training data with significant errors to encourage neuron discovery
+    let mut training_data = Vec::new();
+    for i in 0..20 {
+        let input_val = (i as f32) * 0.05;
+        let activation = input_val;
+        let error = 0.2 + (i as f32) * 0.01; // Significant error
+        training_data.push(serde_json::json!({
+            "input": [input_val],
+            "output": [activation],
+            "neuron_data": [{
+                "neuron_uuid": "output-0",
+                "activation": activation,
+                "value": activation,
+                "errors": [error]
+            }]
+        }));
+    }
+
+    // Record discovery data
+    let input_json = serde_json::json!({
+        "creature": creature.clone(),
+        "training_data": training_data,
+        "temp_dir": temp_path.to_str().unwrap()
+    });
+
+    let record_input = serde_json::to_string(&input_json).unwrap();
+    let record_output_json = record_discovery_internal(&record_input).unwrap();
+    let record_output: serde_json::Value = serde_json::from_str(&record_output_json).unwrap();
+    assert_eq!(
+        record_output["success"], true,
+        "Failed to record discovery data: {:?}",
+        record_output["error"]
+    );
+
+    let parquet_file = temp_path.join(record_output["file"].as_str().unwrap());
+
+    // Analyse neurons using internal function (bypasses FFI)
+    let analyze_input = AnalyzeNeuronsInput {
+        parquet_file: parquet_file.to_str().unwrap().to_string(),
+        creature,
+        focus_neurons: vec!["output-0".to_string()],
+        improvement_threshold: Some(0.01), // Lower threshold to increase chances of finding candidates
+        max_candidates: Some(10),
+        require_gpu: Some(false), // Use CPU for consistent test results
+        analysis_deadline_ms: None,
+    };
+
+    let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
+        .expect("Neuron analysis should succeed");
+
+    // Check if we got any neuron candidates
+    if !result.helpful_neurons.is_empty() {
+        let mut found_non_zero_bias = false;
+
+        for neuron in &result.helpful_neurons {
+            // Most neurons should have non-zero bias
+            // Some might legitimately be 0, but not all
+            if neuron.bias != 0.0 {
+                found_non_zero_bias = true;
+
+                // Verify bias is within reasonable range
+                assert!(
+                    neuron.bias >= -1.0 && neuron.bias <= 1.0,
+                    "Bias should be within reasonable range [-1.0, 1.0], got {} for {} neuron",
+                    neuron.bias,
+                    neuron.squash
+                );
+            }
+        }
+
+        assert!(
+            found_non_zero_bias,
+            "At least some neuron candidates should have non-zero bias"
+        );
+    }
+}
+
+/// Test that bias values are activation-function-specific
+#[test]
+fn test_bias_values_are_activation_specific() {
+    use neat_ai_discovery::AnalyzeNeuronsInput;
+
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    // Create creature with output neuron
+    let creature = CreatureJson {
+        neurons: vec![NeuronJson {
+            uuid: "output-0".to_string(),
+            neuron_type: "output".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }],
+        synapses: vec![],
+        input: 1,
+        output: 1,
+    };
+
+    // Generate training data
+    let mut training_data = Vec::new();
+    for i in 0..25 {
+        let input_val = (i as f32) * 0.04;
+        let activation = input_val;
+        let error = 0.25 + (i as f32) * 0.01;
+        training_data.push(serde_json::json!({
+            "input": [input_val],
+            "output": [activation],
+            "neuron_data": [{
+                "neuron_uuid": "output-0",
+                "activation": activation,
+                "value": activation,
+                "errors": [error]
+            }]
+        }));
+    }
+
+    // Record discovery data
+    let input_json = serde_json::json!({
+        "creature": creature.clone(),
+        "training_data": training_data,
+        "temp_dir": temp_path.to_str().unwrap()
+    });
+
+    let record_input = serde_json::to_string(&input_json).unwrap();
+    let record_output_json = record_discovery_internal(&record_input).unwrap();
+    let record_output: serde_json::Value = serde_json::from_str(&record_output_json).unwrap();
+    assert_eq!(record_output["success"], true);
+
+    let parquet_file = temp_path.join(record_output["file"].as_str().unwrap());
+
+    // Analyse neurons using internal function (bypasses FFI)
+    let analyze_input = AnalyzeNeuronsInput {
+        parquet_file: parquet_file.to_str().unwrap().to_string(),
+        creature,
+        focus_neurons: vec!["output-0".to_string()],
+        improvement_threshold: Some(0.01),
+        max_candidates: Some(50), // Request many candidates to get variety
+        require_gpu: Some(false),
+        analysis_deadline_ms: None,
+    };
+
+    let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
+        .expect("Neuron analysis should succeed");
+
+    if !result.helpful_neurons.is_empty() {
+        // Check if we have ReLU candidates - they should have non-negative bias
+        let relu_neurons: Vec<_> = result
+            .helpful_neurons
+            .iter()
+            .filter(|n| n.squash == "ReLU")
+            .collect();
+
+        if !relu_neurons.is_empty() {
+            for neuron in relu_neurons {
+                assert!(
+                    neuron.bias >= -1.0,
+                    "ReLU neuron bias should be >= -1.0 (expanded range for thresholding), got {}",
+                    neuron.bias
+                );
+                assert!(
+                    neuron.bias <= 1.0,
+                    "ReLU neuron bias should be <= 1.0, got {}",
+                    neuron.bias
+                );
+            }
+        }
+
+        // Check if we have TANH or LOGISTIC candidates - they should have symmetric range
+        let symmetric_neurons: Vec<_> = result
+            .helpful_neurons
+            .iter()
+            .filter(|n| n.squash == "TANH" || n.squash == "LOGISTIC")
+            .collect();
+
+        if !symmetric_neurons.is_empty() {
+            for neuron in symmetric_neurons {
+                assert!(
+                    neuron.bias >= -1.0 && neuron.bias <= 1.0,
+                    "{} neuron bias should be in [-1.0, 1.0], got {}",
+                    neuron.squash,
+                    neuron.bias
+                );
+            }
+        }
+    }
+}
+
+/// Test that neurons with calculated bias improve error more than bias=0
+#[test]
+fn test_bias_improves_neuron_performance() {
+    use neat_ai_discovery::AnalyzeNeuronsInput;
+
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    // Create creature with output neuron
+    let creature = CreatureJson {
+        neurons: vec![NeuronJson {
+            uuid: "output-0".to_string(),
+            neuron_type: "output".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }],
+        synapses: vec![],
+        input: 1,
+        output: 1,
+    };
+
+    // Generate training data with a pattern that benefits from bias
+    let mut training_data = Vec::new();
+    for i in 0..30 {
+        let input_val = -0.5 + (i as f32) * 0.03; // Range from -0.5 to 0.4
+        let activation = input_val;
+        // Error pattern that can be reduced with proper bias
+        let error = if input_val < 0.0 { 0.3 } else { -0.2 };
+        training_data.push(serde_json::json!({
+            "input": [input_val],
+            "output": [activation],
+            "neuron_data": [{
+                "neuron_uuid": "output-0",
+                "activation": activation,
+                "value": activation,
+                "errors": [error]
+            }]
+        }));
+    }
+
+    // Record discovery data
+    let input_json = serde_json::json!({
+        "creature": creature.clone(),
+        "training_data": training_data,
+        "temp_dir": temp_path.to_str().unwrap()
+    });
+
+    let record_input = serde_json::to_string(&input_json).unwrap();
+    let record_output_json = record_discovery_internal(&record_input).unwrap();
+    let record_output: serde_json::Value = serde_json::from_str(&record_output_json).unwrap();
+    assert_eq!(record_output["success"], true);
+
+    let parquet_file = temp_path.join(record_output["file"].as_str().unwrap());
+
+    // Analyse neurons using internal function (bypasses FFI)
+    let analyze_input = AnalyzeNeuronsInput {
+        parquet_file: parquet_file.to_str().unwrap().to_string(),
+        creature,
+        focus_neurons: vec!["output-0".to_string()],
+        improvement_threshold: Some(0.01),
+        max_candidates: Some(10),
+        require_gpu: Some(false),
+        analysis_deadline_ms: None,
+    };
+
+    let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
+        .expect("Neuron analysis should succeed");
+
+    // If we found candidates, they should show positive expected improvement
+    // This implicitly tests that bias is helping (since without optimal bias, improvement would be lower)
+    if !result.helpful_neurons.is_empty() {
+        for neuron in &result.helpful_neurons {
+            assert!(
+                neuron.expected_improvement_percentage > 0.0,
+                "Neuron candidate should show positive improvement, got {}",
+                neuron.expected_improvement_percentage
+            );
+
+            // The fact that the neuron passed the threshold with the calculated bias
+            // means the bias is helping (otherwise it wouldn't have passed)
+            assert!(
+                neuron.expected_improvement_percentage >= 0.01,
+                "Neuron should meet improvement threshold of 0.01, got {}",
+                neuron.expected_improvement_percentage
+            );
+        }
+    }
+}

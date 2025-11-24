@@ -1215,6 +1215,39 @@ struct ReluUniforms {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct BiasResult {
+    bias_value: f32,
+    error_reduction: f32,
+    valid_sample_count: u32,
+    pad0: u32,
+}
+
+impl BiasResult {
+    fn zeroed() -> Self {
+        Self {
+            bias_value: 0.0,
+            error_reduction: 0.0,
+            valid_sample_count: 0,
+            pad0: 0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct BiasUniforms {
+    sample_count: u32,
+    bias_count: u32,
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    activation_type: u32,
+    epsilon: f32,
+    min_sample_count: u32,
+    pad0: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 #[allow(dead_code)] // Framework for future GPU activation evaluation
 struct ActivationOutput {
     output: f32,
@@ -1357,6 +1390,17 @@ impl ReluStats {
             ReluOrientation::Negative => -1.0,
         };
 
+        // Calculate optimal bias for ReLU neuron
+        // TODO: Pass GpuAnalyzer reference for GPU-accelerated bias search
+        let optimal_bias = calculate_optimal_bias(
+            original_samples,
+            incoming_weight,
+            outgoing_weight,
+            |x| x.max(0.0), // ReLU activation function
+            "ReLU",
+            None, // CPU fallback for now
+        );
+
         let target_stats = NeuronStats::from_samples(original_samples).map(|s| s.to_json());
 
         ReluOrientationEvaluation {
@@ -1374,7 +1418,7 @@ impl ReluStats {
                 incoming_weight,
                 outgoing_weight,
                 squash: "ReLU".to_string(),
-                bias: 0.0,
+                bias: optimal_bias,
                 expected_improvement_percentage: expected_improvement,
                 improved_count,
                 total_count,
@@ -1661,6 +1705,150 @@ const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
     },
 ];
 
+/// Get activation-function-specific bias range (min, max, step).
+///
+/// Different activation functions benefit from different bias ranges:
+/// - ReLU/ELU: Can use negative bias for thresholding (e.g., activate when input > X)
+/// - TANH/LOGISTIC: Symmetric range to shift operating point
+/// - Others: Wide range for general adjustment
+///
+/// Ranges are expanded compared to minimal version to leverage GPU parallel search
+/// and capture edge cases like negative ReLU bias for threshold shifting.
+fn get_bias_range(squash: &str) -> (f32, f32, f32) {
+    match squash {
+        // ReLU can benefit from negative bias for threshold shifting
+        // E.g., bias=-1.5 with weight=1.0 activates only when input > 1.5
+        "ReLU" | "ELU" | "SELU" => (-1.0, 1.0, 0.05),
+        // Symmetric activation functions benefit from wider symmetric range
+        "TANH" | "LOGISTIC" => (-1.0, 1.0, 0.05),
+        // IDENTITY can use widest range as it's linear
+        "IDENTITY" => (-2.0, 2.0, 0.1),
+        // Other activation functions get expanded range
+        "INVERSE" | "ABSOLUTE" | "CLIPPED" => (-1.0, 1.0, 0.05),
+        "GELU" | "Softplus" => (-1.0, 1.0, 0.05),
+        "BIPOLAR" => (-1.0, 1.0, 0.1),
+        _ => (-1.0, 1.0, 0.05), // More generous default
+    }
+}
+
+/// Calculate optimal bias for a neuron candidate using grid search.
+///
+/// This function finds the bias value that maximises error reduction when combined
+/// with the given weights and activation function. It tests multiple bias values
+/// across an activation-function-specific range and selects the one that gives
+/// the best improvement.
+///
+/// Uses GPU-accelerated parallel search when analyzer is provided and GPU is available,
+/// otherwise falls back to CPU sequential search.
+///
+/// # Arguments
+/// * `samples` - Training samples (source activations and target errors)
+/// * `incoming_weight` - Weight from source to new neuron
+/// * `outgoing_weight` - Weight from new neuron to target
+/// * `activation_fn` - Activation function to apply (used for CPU fallback)
+/// * `squash` - Activation function name (for bias range selection and GPU)
+/// * `analyzer` - Optional GPU analyzer for accelerated search
+///
+/// # Returns
+/// Optimal bias value that maximises error reduction
+fn calculate_optimal_bias(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    activation_fn: fn(f32) -> f32,
+    squash: &str,
+    analyzer: Option<&GpuAnalyzer>,
+) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+
+    let bias_range = get_bias_range(squash);
+
+    // Try GPU-accelerated search first if analyzer available
+    if let Some(gpu_analyzer) = analyzer {
+        if gpu_analyzer.device.is_some() {
+            let activation_type = activation_name_to_gpu_id(squash);
+            if let Ok(optimal_bias) = gpu_analyzer.evaluate_bias_gpu(
+                samples,
+                incoming_weight,
+                outgoing_weight,
+                activation_type,
+                bias_range,
+            ) {
+                return optimal_bias;
+            }
+            // If GPU fails, fall through to CPU
+        }
+    }
+
+    // CPU fallback: sequential grid search
+    let (min_bias, max_bias, step) = bias_range;
+
+    // Calculate baseline error (no new neuron)
+    let mut total_baseline_error_sq = 0.0;
+    for sample in samples {
+        if sample.avg_error.is_finite() {
+            total_baseline_error_sq += sample.avg_error * sample.avg_error;
+        }
+    }
+
+    if total_baseline_error_sq <= EPSILON {
+        return 0.0;
+    }
+
+    let mut best_bias = 0.0;
+    let mut best_error_reduction = f32::NEG_INFINITY;
+
+    // Grid search over bias range
+    let num_steps = ((max_bias - min_bias) / step).ceil() as i32 + 1;
+    for i in 0..num_steps {
+        let bias = min_bias + (i as f32 * step).min(max_bias - min_bias);
+
+        // Calculate error with this bias
+        let mut total_new_error_sq = 0.0;
+        let mut valid_samples = 0;
+
+        for sample in samples {
+            if !sample.avg_error.is_finite() || !sample.activation.is_finite() {
+                continue;
+            }
+
+            // Calculate new neuron's activation with bias
+            let pre_activation = incoming_weight * sample.activation + bias;
+            let new_neuron_activation = activation_fn(pre_activation);
+
+            if !new_neuron_activation.is_finite() {
+                continue;
+            }
+
+            // Calculate new error at target neuron
+            let correction = outgoing_weight * new_neuron_activation;
+            let new_error = sample.avg_error - correction;
+
+            if new_error.is_finite() {
+                total_new_error_sq += new_error * new_error;
+                valid_samples += 1;
+            }
+        }
+
+        // Only consider if we have valid samples
+        if valid_samples < MIN_NEURON_SAMPLE_COUNT {
+            continue;
+        }
+
+        // Calculate error reduction (positive is good)
+        let error_reduction = total_baseline_error_sq - total_new_error_sq;
+
+        if error_reduction > best_error_reduction {
+            best_error_reduction = error_reduction;
+            best_bias = bias;
+        }
+    }
+
+    best_bias
+}
+
 #[derive(Default)]
 struct HarmfulStats {
     harmful_count: u32,
@@ -1748,6 +1936,8 @@ pub struct GpuAnalyzer {
     activation_layout: Option<wgpu::BindGroupLayout>,
     #[allow(dead_code)] // Framework for future GPU activation evaluation
     activation_pipeline: Option<wgpu::ComputePipeline>,
+    bias_layout: Option<wgpu::BindGroupLayout>,
+    bias_pipeline: Option<wgpu::ComputePipeline>,
 }
 
 impl GpuAnalyzer {
@@ -1830,6 +2020,8 @@ impl GpuAnalyzer {
                     relu_pipeline: None,
                     activation_layout: None,
                     activation_pipeline: None,
+                    bias_layout: None,
+                    bias_pipeline: None,
                 });
             }
         };
@@ -1858,6 +2050,8 @@ impl GpuAnalyzer {
                     relu_pipeline: None,
                     activation_layout: None,
                     activation_pipeline: None,
+                    bias_layout: None,
+                    bias_pipeline: None,
                 });
             }
         };
@@ -1871,6 +2065,7 @@ impl GpuAnalyzer {
         let (relu_layout, relu_pipeline) = Self::build_relu_pipeline(&device, "relu-pipeline");
         let (activation_layout, activation_pipeline) =
             Self::build_activation_pipeline(&device, "activation-pipeline");
+        let (bias_layout, bias_pipeline) = Self::build_bias_pipeline(&device, "bias-pipeline");
 
         Ok(Self {
             device: Some(device),
@@ -1885,6 +2080,8 @@ impl GpuAnalyzer {
             relu_pipeline: Some(relu_pipeline),
             activation_layout: Some(activation_layout),
             activation_pipeline: Some(activation_pipeline),
+            bias_layout: Some(bias_layout),
+            bias_pipeline: Some(bias_pipeline),
         })
     }
 
@@ -2186,6 +2383,81 @@ impl GpuAnalyzer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
+        });
+
+        (layout, pipeline)
+    }
+
+    fn build_bias_pipeline(
+        device: &wgpu::Device,
+        label: &str,
+    ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bias-shader"),
+            source: wgpu::ShaderSource::Wgsl(BIAS_SHADER.into()),
+        });
+
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bias-bind-group"),
+            entries: &[
+                // Binding 0: samples (read-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 1: bias_candidates (read-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 2: results (read-write)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 3: uniforms
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -2937,6 +3209,191 @@ impl GpuAnalyzer {
         ))
     }
 
+    /// GPU-accelerated bias grid search
+    /// Tests all bias values in parallel and returns the optimal bias
+    fn evaluate_bias_gpu(
+        &self,
+        samples: &[HelpfulSample],
+        incoming_weight: f32,
+        outgoing_weight: f32,
+        activation_type: u32,
+        bias_range: (f32, f32, f32),
+    ) -> Result<f32> {
+        // Returns: optimal bias value
+        if samples.is_empty() {
+            return Ok(0.0);
+        }
+
+        let (min_bias, max_bias, step) = bias_range;
+
+        // CPU fallback if no GPU
+        if self.device.is_none() {
+            // Use CPU implementation (original calculate_optimal_bias logic)
+            return Ok(0.0); // Caller will handle CPU fallback
+        }
+
+        let device = self
+            .device
+            .as_ref()
+            .context("GPU device not initialised for bias analysis")?;
+        let queue = self
+            .queue
+            .as_ref()
+            .context("GPU queue not initialised for bias analysis")?;
+        let bias_layout = self
+            .bias_layout
+            .as_ref()
+            .context("GPU bias layout not initialised")?;
+        let bias_pipeline = self
+            .bias_pipeline
+            .as_ref()
+            .context("GPU bias pipeline not initialised")?;
+
+        // Generate bias candidates
+        let num_steps = ((max_bias - min_bias) / step).ceil() as i32 + 1;
+        let bias_candidates: Vec<f32> = (0..num_steps)
+            .map(|i| min_bias + (i as f32 * step).min(max_bias - min_bias))
+            .collect();
+
+        if bias_candidates.is_empty() {
+            return Ok(0.0);
+        }
+
+        // Prepare GPU buffers
+        let gpu_samples: Vec<GpuHelpfulSample> = samples
+            .iter()
+            .copied()
+            .map(GpuHelpfulSample::from)
+            .collect();
+        let results_zeroed = vec![BiasResult::zeroed(); bias_candidates.len()];
+
+        let sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("bias-samples-buffer"),
+            contents: bytemuck::cast_slice(&gpu_samples),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let bias_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("bias-candidates-buffer"),
+            contents: bytemuck::cast_slice(&bias_candidates),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let results_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("bias-results-buffer"),
+            contents: bytemuck::cast_slice(&results_zeroed),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let uniforms = BiasUniforms {
+            sample_count: samples.len() as u32,
+            bias_count: bias_candidates.len() as u32,
+            incoming_weight,
+            outgoing_weight,
+            activation_type,
+            epsilon: EPSILON,
+            min_sample_count: MIN_NEURON_SAMPLE_COUNT as u32,
+            pad0: 0,
+        };
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("bias-uniform-buffer"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: bias_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: sample_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: bias_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: results_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("bias-bind-group"),
+        });
+
+        let output_size = (std::mem::size_of::<BiasResult>() * bias_candidates.len()) as u64;
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bias-staging-buffer"),
+            size: output_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("bias-command-encoder"),
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("bias-compute-pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(bias_pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            let workgroups = (bias_candidates.len() as u32).div_ceil(WORKGROUP_SIZE);
+            compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+        }
+
+        encoder.copy_buffer_to_buffer(&results_buffer, 0, &staging_buffer, 0, output_size);
+
+        queue.submit(Some(encoder.finish()));
+
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender
+                .send(result)
+                .expect("Failed to send map_async result");
+        });
+        device.poll(wgpu::Maintain::Wait);
+
+        match receiver.recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                return Err(anyhow!("Failed to map bias results buffer: {err}"));
+            }
+            Err(_) => {
+                return Err(anyhow!("Failed to receive bias map_async completion"));
+            }
+        }
+
+        let data = buffer_slice.get_mapped_range();
+        let results: &[BiasResult] = bytemuck::cast_slice(&data);
+
+        // Find bias with best error reduction
+        let mut best_bias = 0.0;
+        let mut best_error_reduction = f32::NEG_INFINITY;
+
+        for result in results {
+            if result.valid_sample_count >= MIN_NEURON_SAMPLE_COUNT as u32
+                && result.error_reduction > best_error_reduction
+            {
+                best_error_reduction = result.error_reduction;
+                best_bias = result.bias_value;
+            }
+        }
+
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok(best_bias)
+    }
+
     fn fallback_helpful_stats(mut stats: HelpfulStats, samples: &[HelpfulSample]) -> HelpfulStats {
         if (stats.positive_count == 0 && stats.negative_count == 0) && !samples.is_empty() {
             let cpu_stats = cpu_helpful_stats(samples);
@@ -3421,6 +3878,8 @@ const RELU_SHADER: &str = include_str!("shaders/relu.wgsl");
 
 const ACTIVATION_SHADER: &str = include_str!("shaders/activation.wgsl");
 
+const BIAS_SHADER: &str = include_str!("shaders/bias.wgsl");
+
 fn build_ordered_neurons(creature: &crate::CreatureJson) -> Vec<OrderedNeuron> {
     let mut ordered = Vec::with_capacity(creature.input + creature.neurons.len());
 
@@ -3713,6 +4172,18 @@ fn evaluate_activation_candidate(
 
             if expected_improvement_percentage > fallback_score {
                 fallback_score = expected_improvement_percentage;
+
+                // Calculate optimal bias for fallback candidate
+                // TODO: Pass GpuAnalyzer reference for GPU-accelerated bias search
+                let optimal_bias = calculate_optimal_bias(
+                    samples,
+                    incoming_weight,
+                    outgoing_weight,
+                    spec.activation,
+                    spec.name,
+                    None, // CPU fallback for now
+                );
+
                 let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
                 fallback_candidate = Some(CandidateNeuronJson {
                     source_neuron_uuid: source_uuid.to_string(),
@@ -3720,7 +4191,7 @@ fn evaluate_activation_candidate(
                     incoming_weight,
                     outgoing_weight,
                     squash: spec.name.to_string(),
-                    bias: 0.0,
+                    bias: optimal_bias,
                     expected_improvement_percentage,
                     improved_count: final_improved_count,
                     total_count,
@@ -3739,6 +4210,18 @@ fn evaluate_activation_candidate(
             // Current iteration passed threshold - create best_candidate with current iteration's values
             if expected_improvement_percentage > best_score {
                 best_score = expected_improvement_percentage;
+
+                // Calculate optimal bias for best candidate
+                // TODO: Pass GpuAnalyzer reference for GPU-accelerated bias search
+                let optimal_bias = calculate_optimal_bias(
+                    samples,
+                    incoming_weight,
+                    outgoing_weight,
+                    spec.activation,
+                    spec.name,
+                    None, // CPU fallback for now
+                );
+
                 let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
                 // Use current iteration's values, not fallback candidate's values
                 best_candidate = Some(CandidateNeuronJson {
@@ -3747,7 +4230,7 @@ fn evaluate_activation_candidate(
                     incoming_weight,
                     outgoing_weight,
                     squash: spec.name.to_string(),
-                    bias: 0.0,
+                    bias: optimal_bias,
                     expected_improvement_percentage, // Use current iteration's value
                     improved_count: final_improved_count, // Use current iteration's value
                     total_count,                     // Use current iteration's value
@@ -5914,5 +6397,402 @@ mod tests_synapses {
                 cpu_stats.negative_count, gpu_stats.negative_count
             );
         }
+    }
+
+    /// Test bias calculation for TANH activation function
+    #[test]
+    fn test_bias_calculation_tanh() {
+        let samples = vec![
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: 0.2,
+            },
+            HelpfulSample {
+                activation: -0.3,
+                avg_error: -0.15,
+            },
+            HelpfulSample {
+                activation: 0.8,
+                avg_error: 0.25,
+            },
+            HelpfulSample {
+                activation: -0.6,
+                avg_error: -0.1,
+            },
+            HelpfulSample {
+                activation: 0.4,
+                avg_error: 0.18,
+            },
+            HelpfulSample {
+                activation: -0.2,
+                avg_error: -0.08,
+            },
+            HelpfulSample {
+                activation: 0.7,
+                avg_error: 0.22,
+            },
+            HelpfulSample {
+                activation: -0.5,
+                avg_error: -0.12,
+            },
+            HelpfulSample {
+                activation: 0.6,
+                avg_error: 0.19,
+            },
+            HelpfulSample {
+                activation: -0.4,
+                avg_error: -0.09,
+            },
+        ];
+
+        let bias = calculate_optimal_bias(&samples, 1.0, -0.5, tanh_activation, "TANH", None);
+
+        // Bias should be in expanded TANH range
+        assert!(
+            (-1.0..=1.0).contains(&bias),
+            "Bias for TANH should be in range [-1.0, 1.0], got {bias}"
+        );
+    }
+
+    /// Test bias calculation for ReLU activation function
+    #[test]
+    fn test_bias_calculation_relu() {
+        let samples = vec![
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: 0.2,
+            },
+            HelpfulSample {
+                activation: -0.3,
+                avg_error: -0.15,
+            },
+            HelpfulSample {
+                activation: 0.8,
+                avg_error: 0.25,
+            },
+            HelpfulSample {
+                activation: -0.6,
+                avg_error: -0.1,
+            },
+            HelpfulSample {
+                activation: 0.4,
+                avg_error: 0.18,
+            },
+            HelpfulSample {
+                activation: -0.2,
+                avg_error: -0.08,
+            },
+            HelpfulSample {
+                activation: 0.7,
+                avg_error: 0.22,
+            },
+            HelpfulSample {
+                activation: -0.5,
+                avg_error: -0.12,
+            },
+            HelpfulSample {
+                activation: 0.6,
+                avg_error: 0.19,
+            },
+            HelpfulSample {
+                activation: -0.4,
+                avg_error: -0.09,
+            },
+        ];
+
+        let relu_fn = |x: f32| x.max(0.0);
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, relu_fn, "ReLU", None);
+
+        // ReLU can now use negative bias for threshold shifting (expanded range)
+        assert!(bias >= -1.0, "Bias for ReLU should be >= -1.0, got {bias}");
+        assert!(bias <= 1.0, "Bias for ReLU should be <= 1.0, got {bias}");
+    }
+
+    /// Test bias improves error reduction compared to zero bias
+    #[test]
+    fn test_bias_improves_error_reduction() {
+        let samples = vec![
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: 0.2,
+            },
+            HelpfulSample {
+                activation: -0.3,
+                avg_error: -0.15,
+            },
+            HelpfulSample {
+                activation: 0.8,
+                avg_error: 0.25,
+            },
+            HelpfulSample {
+                activation: -0.6,
+                avg_error: -0.1,
+            },
+            HelpfulSample {
+                activation: 0.4,
+                avg_error: 0.18,
+            },
+            HelpfulSample {
+                activation: -0.2,
+                avg_error: -0.08,
+            },
+            HelpfulSample {
+                activation: 0.7,
+                avg_error: 0.22,
+            },
+            HelpfulSample {
+                activation: -0.5,
+                avg_error: -0.12,
+            },
+            HelpfulSample {
+                activation: 0.6,
+                avg_error: 0.19,
+            },
+            HelpfulSample {
+                activation: -0.4,
+                avg_error: -0.09,
+            },
+        ];
+
+        let incoming = 1.5;
+        let outgoing = -0.18;
+
+        // Calculate error with zero bias
+        let mut zero_bias_error_sq = 0.0;
+        for sample in &samples {
+            let pre_activation = incoming * sample.activation;
+            let new_neuron_activation = inverse_activation(pre_activation);
+            let correction = outgoing * new_neuron_activation;
+            let new_error = sample.avg_error - correction;
+            zero_bias_error_sq += new_error * new_error;
+        }
+
+        // Calculate optimal bias
+        let optimal_bias = calculate_optimal_bias(
+            &samples,
+            incoming,
+            outgoing,
+            inverse_activation,
+            "INVERSE",
+            None,
+        );
+
+        // Calculate error with optimal bias
+        let mut optimal_bias_error_sq = 0.0;
+        for sample in &samples {
+            let pre_activation = incoming * sample.activation + optimal_bias;
+            let new_neuron_activation = inverse_activation(pre_activation);
+            let correction = outgoing * new_neuron_activation;
+            let new_error = sample.avg_error - correction;
+            optimal_bias_error_sq += new_error * new_error;
+        }
+
+        // Optimal bias should give equal or better error reduction than zero bias
+        assert!(
+            optimal_bias_error_sq <= zero_bias_error_sq + EPSILON,
+            "Optimal bias should improve or equal zero bias error reduction: zero_bias_error={zero_bias_error_sq}, optimal_bias_error={optimal_bias_error_sq}"
+        );
+    }
+
+    /// Test bias range boundaries for different activation functions
+    #[test]
+    fn test_bias_within_reasonable_range() {
+        let samples = vec![
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: 0.2,
+            },
+            HelpfulSample {
+                activation: -0.3,
+                avg_error: -0.15,
+            },
+            HelpfulSample {
+                activation: 0.8,
+                avg_error: 0.25,
+            },
+            HelpfulSample {
+                activation: -0.6,
+                avg_error: -0.1,
+            },
+            HelpfulSample {
+                activation: 0.4,
+                avg_error: 0.18,
+            },
+            HelpfulSample {
+                activation: -0.2,
+                avg_error: -0.08,
+            },
+            HelpfulSample {
+                activation: 0.7,
+                avg_error: 0.22,
+            },
+            HelpfulSample {
+                activation: -0.5,
+                avg_error: -0.12,
+            },
+            HelpfulSample {
+                activation: 0.6,
+                avg_error: 0.19,
+            },
+            HelpfulSample {
+                activation: -0.4,
+                avg_error: -0.09,
+            },
+        ];
+
+        type ActivationTestCase = (&'static str, fn(f32) -> f32, f32, f32);
+        let test_cases: Vec<ActivationTestCase> = vec![
+            ("TANH", tanh_activation as fn(f32) -> f32, -1.0, 1.0),
+            ("LOGISTIC", logistic_activation as fn(f32) -> f32, -1.0, 1.0),
+            ("IDENTITY", identity_activation as fn(f32) -> f32, -2.0, 2.0),
+        ];
+
+        for (name, activation_fn, min_expected, max_expected) in test_cases {
+            let bias = calculate_optimal_bias(&samples, 1.0, 1.0, activation_fn, name, None);
+            assert!(
+                bias >= min_expected && bias <= max_expected,
+                "Bias for {name} should be in range [{min_expected}, {max_expected}], got {bias}"
+            );
+        }
+    }
+
+    /// Test bias calculation handles empty samples
+    #[test]
+    fn test_bias_calculation_empty_samples() {
+        let samples: Vec<HelpfulSample> = vec![];
+
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None);
+
+        // Should return 0.0 for empty samples
+        assert_eq!(bias, 0.0, "Empty samples should return bias of 0.0");
+    }
+
+    /// Test bias calculation handles insufficient samples
+    #[test]
+    fn test_bias_calculation_insufficient_samples() {
+        // Only 5 samples (less than MIN_NEURON_SAMPLE_COUNT of 10)
+        let samples = vec![
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: 0.2,
+            },
+            HelpfulSample {
+                activation: -0.3,
+                avg_error: -0.15,
+            },
+            HelpfulSample {
+                activation: 0.8,
+                avg_error: 0.25,
+            },
+            HelpfulSample {
+                activation: -0.6,
+                avg_error: -0.1,
+            },
+            HelpfulSample {
+                activation: 0.4,
+                avg_error: 0.18,
+            },
+        ];
+
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None);
+
+        // Should still return a valid bias in range (though may be 0.0 if no bias tested has sufficient samples)
+        assert!(
+            (-1.0..=1.0).contains(&bias),
+            "Bias should be in reasonable range, got {bias}"
+        );
+    }
+
+    /// Test get_bias_range returns correct ranges for different activation functions
+    #[test]
+    fn test_get_bias_range() {
+        // Test ReLU range (expanded to include negative bias for thresholding)
+        let (min, max, step) = get_bias_range("ReLU");
+        assert_eq!(min, -1.0);
+        assert_eq!(max, 1.0);
+        assert_eq!(step, 0.05);
+
+        // Test TANH range (expanded symmetric)
+        let (min, max, step) = get_bias_range("TANH");
+        assert_eq!(min, -1.0);
+        assert_eq!(max, 1.0);
+        assert_eq!(step, 0.05);
+
+        // Test LOGISTIC range (expanded symmetric)
+        let (min, max, step) = get_bias_range("LOGISTIC");
+        assert_eq!(min, -1.0);
+        assert_eq!(max, 1.0);
+        assert_eq!(step, 0.05);
+
+        // Test IDENTITY range (widest)
+        let (min, max, step) = get_bias_range("IDENTITY");
+        assert_eq!(min, -2.0);
+        assert_eq!(max, 2.0);
+        assert_eq!(step, 0.1);
+
+        // Test default range for unknown activation (expanded)
+        let (min, max, step) = get_bias_range("UNKNOWN");
+        assert_eq!(min, -1.0);
+        assert_eq!(max, 1.0);
+        assert_eq!(step, 0.05);
+    }
+
+    /// Test bias calculation with non-finite values
+    #[test]
+    fn test_bias_calculation_with_non_finite_values() {
+        let samples = vec![
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: 0.2,
+            },
+            HelpfulSample {
+                activation: f32::NAN,
+                avg_error: -0.15,
+            },
+            HelpfulSample {
+                activation: 0.8,
+                avg_error: f32::INFINITY,
+            },
+            HelpfulSample {
+                activation: -0.6,
+                avg_error: -0.1,
+            },
+            HelpfulSample {
+                activation: 0.4,
+                avg_error: 0.18,
+            },
+            HelpfulSample {
+                activation: -0.2,
+                avg_error: -0.08,
+            },
+            HelpfulSample {
+                activation: 0.7,
+                avg_error: 0.22,
+            },
+            HelpfulSample {
+                activation: -0.5,
+                avg_error: -0.12,
+            },
+            HelpfulSample {
+                activation: 0.6,
+                avg_error: 0.19,
+            },
+            HelpfulSample {
+                activation: -0.4,
+                avg_error: -0.09,
+            },
+        ];
+
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None);
+
+        // Should handle non-finite values gracefully and return a finite bias
+        assert!(
+            bias.is_finite(),
+            "Bias should be finite even with non-finite input values"
+        );
+        assert!(
+            (-1.0..=1.0).contains(&bias),
+            "Bias should be in reasonable range, got {bias}"
+        );
     }
 }
