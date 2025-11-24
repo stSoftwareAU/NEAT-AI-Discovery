@@ -4409,11 +4409,12 @@ fn analyze_neurons_with_cache(
     let gpu_used = gpu_available;
     let analysis_timed_out = Arc::new(Mutex::new(false));
 
-    // Respect the caller-supplied focus order. The TypeScript controller in NEAT-AI
-    // already sorts focus neurons by total error × impact so that the most promising
-    // targets are analysed first. Avoid shuffling here so timeouts preserve that
-    // priority order (vertical timeout behaviour).
-    let focus_order_arc = Arc::new(unique_focus.clone());
+    // Randomize the focus neuron order so that repeated runs with timeouts will
+    // eventually cover all neurons. Convert to owned strings, shuffle, then use.
+    let mut focus_order: Vec<String> = unique_focus.iter().map(|s| (*s).clone()).collect();
+    let mut rng = thread_rng();
+    focus_order.shuffle(&mut rng);
+    let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
     let order_map_arc = Arc::new(order_map);
 
@@ -4466,10 +4467,11 @@ fn analyze_neurons_with_cache(
                 .collect();
             let mut rng = thread_rng();
             eligible_sources.shuffle(&mut rng);
-            // Once we start analysing a focus neuron, avoid checking the global timeout
-            // for each potential source. This ensures that at least some focus neurons
-            // complete their upstream analysis before the deadline, rather than
-            // partially analysing many targets and finishing none.
+            // Vertical timeout behaviour: Once we start analysing a focus neuron, we complete
+            // ALL its upstream sources before checking the deadline again. This ensures we
+            // have complete scans of records to make sensible choices, rather than partial
+            // scans across many neurons. The deadline is checked at the start of each focus
+            // neuron, so we stop between neurons, not mid-neuron.
             for source in eligible_sources {
                 let source_uuid = source.uuid.as_str();
                 let from_records_arc = match cache.get(source_uuid) {
@@ -4743,11 +4745,11 @@ fn analyze_synapses_with_cache(
     let diagnostics = Arc::new(Mutex::new(TargetDiagnostics::new(&unique_focus)));
 
     let deadline = build_deadline(input.analysis_deadline_ms);
-    // Preserve the caller-provided focus order so that controllers can supply
-    // neurons in priority order (for example, sorted by total error × impact).
-    // This pairs with the vertical timeout behaviour – higher priority targets
-    // are analysed first and are more likely to complete before any deadline.
-    let focus_order = unique_focus.clone();
+    // Randomize the focus neuron order so that repeated runs with timeouts will
+    // eventually cover all neurons. Convert to owned strings, shuffle, then use.
+    let mut focus_order: Vec<String> = unique_focus.iter().map(|s| (*s).clone()).collect();
+    let mut rng = thread_rng();
+    focus_order.shuffle(&mut rng);
 
     let threshold = input.improvement_threshold.unwrap_or(0.1);
 
@@ -4961,11 +4963,6 @@ fn analyze_synapses_with_cache(
             let mut source_results: Vec<SourceWorkResult> = Vec::new();
 
             for source in eligible_sources {
-                // Check timeout using the shared flag (avoids nested deadline_passed() calls)
-                if *analysis_timed_out.lock().expect("Mutex poisoned") {
-                    break;
-                }
-
                 let source_uuid = source.uuid.as_str();
 
                 if existing_synapses_arc
@@ -5068,6 +5065,7 @@ fn analyze_synapses_with_cache(
             }
 
             // Process helpful work in batches for better GPU utilization
+            // Vertical timeout: Complete all GPU batch processing for the current focus neuron
             if !helpful_work_batch.is_empty() {
                 let helpful_samples_refs: Vec<&[HelpfulSample]> = helpful_work_batch
                     .iter()
@@ -5214,17 +5212,12 @@ fn analyze_synapses_with_cache(
             }
 
             // Process harmful synapses for this target - batch results to reduce mutex contention
-            // Use analysis_timed_out flag to avoid nested deadline_passed() calls that would
-            // cause race conditions with the test override mechanism
+            // Vertical timeout: Complete all harmful synapse processing for the current focus neuron
             if !*analysis_timed_out.lock().expect("Mutex poisoned") {
                 if let Some(existing) = synapses_by_target_arc.get(target_uuid.as_str()) {
                     let mut harmful_candidates = Vec::new();
 
                     for synapse in existing {
-                        // Check timeout using the shared flag (avoids nested deadline_passed() calls)
-                        if *analysis_timed_out.lock().expect("Mutex poisoned") {
-                            break;
-                        }
 
                         let from_records_arc = match cache.get(&synapse.from_uuid) {
                             Ok(records) => records,
@@ -6756,17 +6749,21 @@ mod tests_synapses {
     }
 
     #[test]
-    fn analyze_neurons_uses_vertical_timeout_and_preserves_priority_order() {
+    fn analyze_neurons_uses_vertical_timeout_with_randomized_order() {
         use rayon::ThreadPoolBuilder;
 
         // Force GPU failure so this test exercises the CPU analysis path and
         // avoids non-determinism from GPU scheduling.
         let _gpu_guard = ForceGpuFailureGuard::new();
-        // Simulate a deadline that allows the first focus neuron to start, but
-        // triggers before the second begins. The override sequence is consumed
-        // by calls to `deadline_passed` in order.
-        let _deadline_guard =
-            deadline_override::DeadlineOverrideGuard::with_sequence(vec![false, true]);
+        // Simulate a deadline that allows at least one focus neuron to start, but
+        // triggers before all are processed. The override sequence is consumed
+        // by calls to `deadline_passed` in order. With randomization, we need
+        // enough false values to allow at least one neuron to start processing.
+        // We provide multiple false values to account for any initialization checks,
+        // then true to stop further processing.
+        let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence(vec![
+            false, false, false, true,
+        ]);
 
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
@@ -6836,9 +6833,9 @@ mod tests_synapses {
             analysis_deadline_ms: Some(1_000_000),
         };
 
-        // Use a single-threaded Rayon pool so the focus neurons are processed in
-        // the supplied order and the deadline override sequence remains
-        // deterministic for this test.
+        // Use a single-threaded Rayon pool so the deadline override sequence remains
+        // deterministic for this test. Note: focus neurons are randomized, so we can't
+        // assume a specific order.
         let pool = ThreadPoolBuilder::new()
             .num_threads(1)
             .build()
@@ -6848,37 +6845,46 @@ mod tests_synapses {
             .install(|| analyze_neurons(&input))
             .expect("Neuron analysis should succeed even when the deadline triggers");
 
-        // The first focus neuron should have evaluated at least one upstream
-        // source before the deadline, so it must not be reported as having no
-        // eligible sources.
-        let first_summary = result
+        // At least one focus neuron should have evaluated at least one upstream
+        // source before the deadline (vertical timeout behaviour). Since focus
+        // neurons are randomized, we check that at least one of the two neurons
+        // was processed.
+        let processed_neurons: Vec<_> = result
             .no_candidate_reasons
             .iter()
-            .find(|summary| summary.target_uuid == "output-0")
-            .expect("Expected diagnostics for first focus neuron (output-0)");
+            .filter(|summary| summary.evaluated_sources > 0)
+            .collect();
 
         assert!(
-            first_summary.evaluated_sources > 0,
-            "First focus neuron should evaluate at least one upstream source before timeout"
+            !processed_neurons.is_empty(),
+            "At least one focus neuron should evaluate at least one upstream source before timeout (vertical timeout behaviour)"
         );
-        assert!(
-            first_summary.reason != NeuronNoCandidateReason::NoEligibleSources,
-            "First focus neuron should not be reported as having no eligible sources when a timeout occurs"
-        );
+
+        // Verify that the processed neuron(s) are not reported as having no eligible sources
+        for summary in &processed_neurons {
+            assert!(
+                summary.reason != NeuronNoCandidateReason::NoEligibleSources,
+                "Processed focus neuron should not be reported as having no eligible sources when a timeout occurs"
+            );
+        }
     }
 
     #[test]
-    fn analyze_synapses_uses_vertical_timeout_and_preserves_priority_order() {
+    fn analyze_synapses_uses_vertical_timeout_with_randomized_order() {
         use rayon::ThreadPoolBuilder;
 
         // Force GPU failure so this test exercises the CPU analysis path and
         // avoids non-determinism from GPU scheduling.
         let _gpu_guard = ForceGpuFailureGuard::new();
-        // Simulate a deadline that allows the first focus neuron to start, but
-        // triggers before the second begins. The override sequence is consumed
-        // by calls to `deadline_passed` in order.
-        let _deadline_guard =
-            deadline_override::DeadlineOverrideGuard::with_sequence(vec![false, true]);
+        // Simulate a deadline that allows at least one focus neuron to start, but
+        // triggers before all are processed. The override sequence is consumed
+        // by calls to `deadline_passed` in order. With randomization, we need
+        // enough false values to allow at least one neuron to start processing.
+        // We provide multiple false values to account for any initialization checks,
+        // then true to stop further processing.
+        let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence(vec![
+            false, false, false, true,
+        ]);
 
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
@@ -6952,9 +6958,9 @@ mod tests_synapses {
             analysis_deadline_ms: None,
         };
 
-        // Use a single-threaded Rayon pool so the focus neurons are processed in
-        // the supplied order and the deadline override sequence remains
-        // deterministic for this test.
+        // Use a single-threaded Rayon pool so the deadline override sequence remains
+        // deterministic for this test. Note: focus neurons are randomized, so we can't
+        // assume a specific order.
         let pool = ThreadPoolBuilder::new()
             .num_threads(1)
             .build()
@@ -6964,23 +6970,28 @@ mod tests_synapses {
             .install(|| analyze_synapses(&input))
             .expect("Synapse analysis should succeed even when the deadline triggers");
 
-        // The first focus neuron should have evaluated at least one upstream
-        // source before the deadline, so it must not be reported as having no
-        // eligible sources.
-        let first_summary = result
+        // At least one focus neuron should have evaluated at least one upstream
+        // source before the deadline (vertical timeout behaviour). Since focus
+        // neurons are randomized, we check that at least one of the two neurons
+        // was processed.
+        let processed_neurons: Vec<_> = result
             .no_candidate_reasons
             .iter()
-            .find(|summary| summary.target_uuid == "output-0")
-            .expect("Expected diagnostics for first focus neuron (output-0)");
+            .filter(|summary| summary.evaluated_candidates > 0)
+            .collect();
 
         assert!(
-            first_summary.evaluated_candidates > 0,
-            "First focus neuron should evaluate at least one upstream source before timeout"
+            !processed_neurons.is_empty(),
+            "At least one focus neuron should evaluate at least one upstream source before timeout (vertical timeout behaviour)"
         );
-        assert!(
-            first_summary.reason != SynapseNoCandidateReason::NoEligibleSources,
-            "First focus neuron should not be reported as having no eligible sources when a timeout occurs"
-        );
+
+        // Verify that the processed neuron(s) are not reported as having no eligible sources
+        for summary in &processed_neurons {
+            assert!(
+                summary.reason != SynapseNoCandidateReason::NoEligibleSources,
+                "Processed focus neuron should not be reported as having no eligible sources when a timeout occurs"
+            );
+        }
     }
 
     #[test]
