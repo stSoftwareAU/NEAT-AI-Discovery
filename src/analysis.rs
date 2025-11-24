@@ -272,6 +272,7 @@ struct TargetDiagnosticEntry {
     evaluated_candidates: u32,
     candidates_with_samples: u32,
     total_eligible_sources: u32,
+    input_neuron_count: u32,
     already_connected_count: u32,
     record_load_failures: u32,
     had_candidate: bool,
@@ -286,6 +287,7 @@ impl TargetDiagnosticEntry {
             evaluated_candidates: 0,
             candidates_with_samples: 0,
             total_eligible_sources: 0,
+            input_neuron_count: 0,
             already_connected_count: 0,
             record_load_failures: 0,
             had_candidate: false,
@@ -347,6 +349,12 @@ impl TargetDiagnostics {
     fn set_total_eligible_sources(&mut self, target_uuid: &str, count: u32) {
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.total_eligible_sources = count;
+        }
+    }
+
+    fn set_input_neuron_count(&mut self, target_uuid: &str, count: u32) {
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.input_neuron_count = count;
         }
     }
 
@@ -467,7 +475,7 @@ impl TargetDiagnostics {
             if entry.already_connected_count == entry.total_eligible_sources {
                 eprintln!(
                     "[NEAT-AI-Discovery][verbose] Target {} is fully connected: all {} eligible upstream sources already have synapses (all {} input neurons and all prior hidden/output neurons). This is a rare condition.",
-                    entry.target_uuid, entry.total_eligible_sources, entry.total_eligible_sources
+                    entry.target_uuid, entry.total_eligible_sources, entry.input_neuron_count
                 );
                 continue;
             }
@@ -4788,10 +4796,19 @@ fn analyze_synapses_with_cache(
 
             // Track total eligible sources before filtering
             let total_eligible = eligible_sources.len() as u32;
+            // Count how many eligible sources are input neurons
+            let input_neuron_count = eligible_sources
+                .iter()
+                .filter(|neuron| input_neuron_uuids_arc.contains(&neuron.uuid))
+                .count() as u32;
             diagnostics
                 .lock()
                 .expect("Mutex poisoned: diagnostics")
                 .set_total_eligible_sources(target_uuid, total_eligible);
+            diagnostics
+                .lock()
+                .expect("Mutex poisoned: diagnostics")
+                .set_input_neuron_count(target_uuid, input_neuron_count);
 
             let mut rng = thread_rng();
             eligible_sources.shuffle(&mut rng);
