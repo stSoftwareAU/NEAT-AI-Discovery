@@ -185,8 +185,24 @@ ensure_lib_built() {
   fi
 
   if [[ "$needs_rebuild" == "false" ]]; then
-    echo "$lib_path"
-    return 0
+    # Verify version marker matches expected version (double-check)
+    if [[ -f "$version_marker" ]]; then
+      local marker_version
+      marker_version="$(cat "$version_marker" 2>/dev/null || echo "")"
+      if [[ "$marker_version" == "$DESIRED" ]]; then
+        >&2 echo "Library v${DESIRED} already installed and up to date at $lib_path"
+        >&2 echo "To verify the running version, call get_library_version() FFI function"
+      else
+        >&2 echo "WARNING: Version marker mismatch (marker: ${marker_version}, expected: ${DESIRED}), rebuilding"
+        needs_rebuild=true
+        rebuild_reason="Version marker mismatch"
+      fi
+    fi
+    
+    if [[ "$needs_rebuild" == "false" ]]; then
+      echo "$lib_path"
+      return 0
+    fi
   fi
 
   >&2 echo "Library crate: $PKG"
@@ -236,6 +252,12 @@ ensure_lib_built() {
 
   # Only write version marker after successful build, signing, and installation
   echo "$DESIRED" > "$version_marker"
+
+  # Verify the installed library matches the expected version
+  # This is a sanity check to ensure the version marker is accurate
+  >&2 echo "Version marker written: $DESIRED"
+  >&2 echo "Installed library: $lib_path"
+  >&2 echo "To verify the running version, call get_library_version() FFI function"
 
   # IMPORTANT: stdout must contain ONLY the path (no extra text)
   echo "$lib_path"
