@@ -511,20 +511,9 @@ impl TargetDiagnostics {
             }
 
             if entry.total_eligible_sources == 0 {
-                // Log detailed diagnostics here since they may not be visible from parallel processing
-                // or may not have been logged if the target wasn't found in the order map
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} had no eligible upstream neurons to evaluate. \
-                    Target record count: {}, input neuron count: {}, already connected: {}, record load failures: {}. \
-                    This typically occurs when: (1) the target is an input/constant neuron (no upstream sources), \
-                    (2) all upstream neurons are constants (filtered out), (3) the target has an invalid index, \
-                    or (4) the target was not found in the creature neuron order map.",
-                    entry.target_uuid,
-                    entry.target_record_count,
-                    entry.input_neuron_count,
-                    entry.already_connected_count,
-                    entry.record_load_failures
-                );
+                // This should never happen - input/constant neurons are skipped early
+                // and hidden/output neurons should always have at least input neurons as eligible sources
+                // Skip logging to avoid cluttering logs with impossible conditions
                 continue;
             }
 
@@ -4794,18 +4783,24 @@ fn analyze_synapses_with_cache(
     let synapses_by_target_arc = Arc::new(synapses_by_target);
     let order_map_arc = Arc::new(order_map);
 
-    // Build a map of neuron UUIDs to their types for filtering constants
-    // Note: Input neurons are NOT in creature.neurons - they're represented by creature.input count
-    let neuron_type_map: HashMap<String, String> = input
-        .creature
-        .neurons
-        .iter()
-        .map(|neuron| (neuron.uuid.clone(), neuron.neuron_type.clone()))
-        .collect();
+    // Build a comprehensive map of ALL neuron UUIDs to their types
+    // This includes: input neurons, and all neurons from creature.neurons (hidden, output, constant)
+    // If a UUID is not in this map, it's an invalid UUID (bug)
+    let mut neuron_type_map: HashMap<String, String> = HashMap::new();
+
+    // Add input neurons (they're not in creature.neurons, only represented by creature.input count)
+    for input_index in 0..input.creature.input {
+        neuron_type_map.insert(format!("input-{input_index}"), "input".to_string());
+    }
+
+    // Add all neurons from creature.neurons (hidden, output, constant)
+    for neuron in &input.creature.neurons {
+        neuron_type_map.insert(neuron.uuid.clone(), neuron.neuron_type.clone());
+    }
+
     let neuron_type_map_arc = Arc::new(neuron_type_map);
 
-    // Create a set of input neuron UUIDs for proper identification
-    // Input neurons use format "input-{index}" where index is 0..creature.input
+    // Keep input neuron UUIDs set for quick checks (backwards compatibility)
     let input_neuron_uuids: HashSet<String> = (0..input.creature.input)
         .map(|i| format!("input-{i}"))
         .collect();
@@ -4841,58 +4836,73 @@ fn analyze_synapses_with_cache(
                 Some(index) => *index,
                 None => {
                     // Target neuron not found in order map - this indicates a data integrity issue
-                    // Set diagnostics to indicate this error condition before returning
-                    diagnostics
-                        .lock()
-                        .expect("Mutex poisoned: diagnostics")
-                        .set_total_eligible_sources(target_uuid, 0);
-                    // Log detailed diagnostics for this case
-                    let input_count = input_neuron_uuids_arc.len();
-                    let target_neuron_type = neuron_type_map_arc.get(target_uuid.as_str());
-                    let target_in_creature = neuron_type_map_arc.contains_key(target_uuid.as_str());
-                    eprintln!(
-                        "[NEAT-AI-Discovery] Target {} has no eligible upstream neurons to evaluate. \
-                        Target not found in creature neuron order map. \
-                        Target neuron type: {:?}, target in creature.neurons: {}, \
-                        creature.input: {}, total ordered neurons: {}. \
-                        This indicates the neuron may not exist in the creature definition or has an invalid configuration.",
-                        target_uuid,
-                        target_neuron_type,
-                        target_in_creature,
-                        input_count,
-                        ordered_neurons_arc.len()
-                    );
+                    // This should never happen for valid hidden/output neurons
                     if verbose_enabled() {
                         eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Target {target_uuid} not found in creature neuron order map (neuron may not exist in creature definition)."
+                            "[NEAT-AI-Discovery][verbose] Target {target_uuid} not found in creature neuron order map (neuron may not exist in creature definition). Skipping."
                         );
                     }
                     return Ok(());
                 }
             };
 
+            // Early validation: skip input and constant neurons (they have no upstream sources)
+            // Validate target UUID exists in comprehensive neuron type map
+            let target_neuron_type = neuron_type_map_arc.get(target_uuid.as_str())
+                .ok_or_else(|| anyhow!(
+                    "Invalid target neuron UUID '{}': not found in neuron type map. \
+                    This indicates a serious data integrity bug. All valid neurons must be in the type map \
+                    (input neurons: input-0..input-{}, or neurons from creature.neurons array).",
+                    target_uuid,
+                    input_neuron_uuids_arc.len().saturating_sub(1)
+                ))?;
+
+            let input_count = input_neuron_uuids_arc.len();
+            let is_input_neuron = target_neuron_type == "input";
+            let is_constant_neuron = target_neuron_type == "constant";
+
+            // Skip actual input/constant neurons (expected - they have no upstream sources)
+            // Only skip by UUID check, not by index, to avoid incorrectly skipping hidden neurons
+            // that might have been assigned incorrect indices due to ordering bugs
+            if is_input_neuron || is_constant_neuron {
+                return Ok(());
+            }
+
             // Filter eligible sources: must have index < target_index and not be a constant
+            // All neurons should be in the comprehensive neuron_type_map
             let mut eligible_sources: Vec<&OrderedNeuron> = ordered_neurons_arc
                 .iter()
                 .filter(|neuron| {
                     neuron.index < target_index
-                        && !neuron_type_map_arc
-                            .get(&neuron.uuid)
-                            .map(|t| t == "constant")
-                            .unwrap_or(false)
+                        && {
+                            // Look up neuron type - if missing, it's a serious bug
+                            match neuron_type_map_arc.get(&neuron.uuid) {
+                                Some(neuron_type) => {
+                                    // Valid neuron - exclude constants, include everything else (input, hidden, output)
+                                    neuron_type != "constant"
+                                }
+                                None => {
+                                    // Invalid UUID - serious data integrity bug
+                                    eprintln!(
+                                        "[NEAT-AI-Discovery] ERROR: Invalid neuron UUID '{}' found in ordered_neurons. \
+                                        Not found in comprehensive neuron type map. This indicates a serious data integrity bug.",
+                                        neuron.uuid
+                                    );
+                                    false // Exclude invalid neurons
+                                }
+                            }
+                        }
                 })
                 .collect();
 
             // Track total eligible sources before filtering
             let total_eligible = eligible_sources.len() as u32;
 
-            // Comprehensive diagnostic logging for "no eligible upstream neurons" case
-            // This should NEVER happen for hidden/output neurons in a valid creature (creature.input > 0)
+            // For hidden/output neurons with index >= input_count, there should always be at least the input neurons as eligible sources
+            // If total_eligible == 0, this indicates a serious bug
             if total_eligible == 0 {
-                let input_count = input_neuron_uuids_arc.len();
-                let target_neuron_type = neuron_type_map_arc.get(target_uuid.as_str());
-
-                // Count neurons before filtering
+                // This should be impossible - we've already filtered out input/constant neurons
+                // Log detailed diagnostics to help debug
                 let neurons_before_index = ordered_neurons_arc
                     .iter()
                     .filter(|n| n.index < target_index)
@@ -4907,83 +4917,19 @@ fn analyze_synapses_with_cache(
                                 .unwrap_or(false)
                     })
                     .count();
+                let input_neurons_before_index = ordered_neurons_arc
+                    .iter()
+                    .filter(|n| n.index < target_index && input_neuron_uuids_arc.contains(&n.uuid))
+                    .count();
 
-                // Check if target is in creature.neurons
-                let target_in_creature = neuron_type_map_arc.contains_key(target_uuid.as_str());
-
-                // Always log detailed explanation for "no eligible upstream neurons" case
-                // This is an important diagnostic that should always be visible
                 eprintln!(
-                    "[NEAT-AI-Discovery] Target {} has no eligible upstream neurons to evaluate. \
-                    Target index: {}, creature.input: {}, input neurons: {}, \
-                    target neuron type: {:?}, target in creature.neurons: {}, \
-                    total ordered neurons: {}, neurons with index < target: {}, \
-                    constants filtered: {}, eligible after filtering: {}",
-                    target_uuid,
-                    target_index,
-                    input_count,
-                    input_count,
-                    target_neuron_type,
-                    target_in_creature,
-                    ordered_neurons_arc.len(),
-                    neurons_before_index,
-                    constants_before_index,
-                    total_eligible
+                    "[NEAT-AI-Discovery] BUG: Target {target_uuid} (type: {target_neuron_type}, index: {target_index}) has no eligible upstream neurons. \
+                    creature.input: {input_count}, neurons before target: {neurons_before_index}, constants before target: {constants_before_index}, \
+                    input neurons before target: {input_neurons_before_index}. This should not happen for hidden/output neurons with index >= creature.input."
                 );
 
-                // Provide explanation based on the situation
-                if target_index < input_count {
-                    eprintln!(
-                        "[NEAT-AI-Discovery] Explanation: Target {target_uuid} has index {target_index} which is less than creature.input ({input_count}). \
-                        This means it's an input neuron or has an invalid index. Input neurons have no upstream neurons."
-                    );
-                } else if neurons_before_index == 0 {
-                    eprintln!(
-                        "[NEAT-AI-Discovery] Explanation: No neurons exist with index < {target_index} (target index). \
-                        This should not happen for hidden/output neurons - they should have at least input neurons as upstream sources."
-                    );
-                } else if neurons_before_index == constants_before_index {
-                    eprintln!(
-                        "[NEAT-AI-Discovery] Explanation: All {neurons_before_index} neurons with index < {target_index} are constants, which are filtered out. \
-                        Constants cannot be upstream sources for synapses."
-                    );
-                } else if let Some(neuron_type) = target_neuron_type {
-                    if neuron_type != "input" && neuron_type != "constant" {
-                        // This is a hidden/output neuron with index >= creature.input
-                        // It MUST have at least the input neurons as eligible sources
-                        eprintln!(
-                            "[NEAT-AI-Discovery] Explanation: Hidden/output neuron {target_uuid} with index {target_index} should have at least {input_count} input neurons (indices 0..{}) as eligible sources. \
-                            This indicates a potential bug in the neuron ordering or filtering logic.",
-                            input_count.saturating_sub(1)
-                        );
-                    } else {
-                        eprintln!(
-                            "[NEAT-AI-Discovery] Explanation: Target {target_uuid} is a {neuron_type} neuron. {neuron_type} neurons have no upstream sources."
-                        );
-                    }
-                } else {
-                    eprintln!(
-                        "[NEAT-AI-Discovery] Explanation: Target {target_uuid} not found in creature.neurons map. \
-                        This may indicate the neuron doesn't exist in the creature definition."
-                    );
-                }
-
-                // Check if this is a bug condition for additional validation
-                let is_bug_condition = if let Some(neuron_type) = target_neuron_type {
-                    let is_hidden_or_output = neuron_type != "input" && neuron_type != "constant";
-                    let has_valid_inputs = input_count > 0;
-                    let has_valid_index = target_index >= input_count;
-                    is_hidden_or_output && has_valid_inputs && has_valid_index
-                } else {
-                    // Target not in creature.neurons - this is also a bug
-                    input_count > 0 && target_index >= input_count
-                };
-
-                if is_bug_condition && verbose_enabled() {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] BUG DETECTED: This condition should not occur for hidden/output neurons with valid inputs."
-                    );
-                }
+                // Still skip to avoid crashing, but log the bug
+                return Ok(());
             }
             // Count how many eligible sources are input neurons
             let input_neuron_count = eligible_sources
