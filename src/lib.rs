@@ -109,8 +109,6 @@ pub struct AnalyzeSynapsesInput {
     #[serde(default)]
     pub max_candidates: Option<usize>,
     #[serde(default)]
-    pub require_gpu: Option<bool>,
-    #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
 }
 
@@ -167,8 +165,6 @@ pub struct AnalyzeNeuronsInput {
     #[serde(default)]
     pub max_candidates: Option<usize>,
     #[serde(default)]
-    pub require_gpu: Option<bool>,
-    #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
 }
 
@@ -217,8 +213,6 @@ pub struct AnalyzeAllInput {
     #[serde(default)]
     pub max_neuron_candidates: Option<usize>,
     #[serde(default)]
-    pub require_gpu: Option<bool>,
-    #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
     #[serde(default)]
     pub include_synapse_analysis: Option<bool>,
@@ -252,8 +246,6 @@ pub struct AnalyzeParallelInput {
     pub max_synapse_candidates: Option<usize>,
     #[serde(default)]
     pub max_neuron_candidates: Option<usize>,
-    #[serde(default)]
-    pub require_gpu: Option<bool>,
     #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
 }
@@ -626,8 +618,16 @@ pub fn merge_discovery_parquet_internal(input_json: &str) -> Result<String> {
 }
 
 pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
-    let input: AnalyzeParallelInput = match serde_json::from_str(input_json) {
-        Ok(value) => value,
+    let input: AnalyzeParallelInput = match serde_json::from_str::<AnalyzeParallelInput>(input_json)
+    {
+        Ok(value) => {
+            // Log the received timeout value for debugging
+            match value.analysis_deadline_ms {
+                None => eprintln!("[NEAT-AI-Discovery] analyze_parallel_internal: Received analysis_deadline_ms=None"),
+                Some(ms) => eprintln!("[NEAT-AI-Discovery] analyze_parallel_internal: Received analysis_deadline_ms={} ({:.1} minutes)", ms, ms as f64 / 60_000.0),
+            }
+            value
+        }
         Err(e) => {
             let output = AnalyzeParallelOutput {
                 success: false,
@@ -652,7 +652,6 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
         harmful_threshold: input.harmful_threshold,
         max_synapse_candidates: input.max_synapse_candidates,
         max_neuron_candidates: input.max_neuron_candidates,
-        require_gpu: input.require_gpu,
         analysis_deadline_ms: input.analysis_deadline_ms,
         include_synapse_analysis: Some(true),
         include_neuron_analysis: Some(true),
@@ -939,24 +938,31 @@ pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut 
     };
 
     let output = match serde_json::from_str::<AnalyzeSynapsesInput>(input_str) {
-        Ok(input) => match analysis::analyze_synapses(&input) {
-            Ok(result) => AnalyzeSynapsesOutput {
-                success: true,
-                gpu_used: Some(result.gpu_used),
-                helpful_synapses: Some(result.helpful_synapses),
-                harmful_synapses: Some(result.harmful_synapses),
-                diagnostics: synapse_diagnostics_json(&result.no_candidate_reasons),
-                error: None,
-            },
-            Err(e) => AnalyzeSynapsesOutput {
-                success: false,
-                gpu_used: None,
-                helpful_synapses: None,
-                harmful_synapses: None,
-                diagnostics: None,
-                error: Some(e.to_string()),
-            },
-        },
+        Ok(input) => {
+            // Log the received timeout value for debugging
+            match input.analysis_deadline_ms {
+                None => eprintln!("[NEAT-AI-Discovery] analyze_synapses FFI: Received analysis_deadline_ms=None"),
+                Some(ms) => eprintln!("[NEAT-AI-Discovery] analyze_synapses FFI: Received analysis_deadline_ms={} ({:.1} minutes)", ms, ms as f64 / 60_000.0),
+            }
+            match analysis::analyze_synapses(&input) {
+                Ok(result) => AnalyzeSynapsesOutput {
+                    success: true,
+                    gpu_used: Some(result.gpu_used),
+                    helpful_synapses: Some(result.helpful_synapses),
+                    harmful_synapses: Some(result.harmful_synapses),
+                    diagnostics: synapse_diagnostics_json(&result.no_candidate_reasons),
+                    error: None,
+                },
+                Err(e) => AnalyzeSynapsesOutput {
+                    success: false,
+                    gpu_used: None,
+                    helpful_synapses: None,
+                    harmful_synapses: None,
+                    diagnostics: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
         Err(e) => AnalyzeSynapsesOutput {
             success: false,
             gpu_used: None,
@@ -1100,22 +1106,29 @@ pub extern "C" fn analyze_neurons(input_json: *const std::ffi::c_char) -> *mut s
     };
 
     let output = match serde_json::from_str::<AnalyzeNeuronsInput>(input_str) {
-        Ok(input) => match analysis::analyze_neurons(&input) {
-            Ok(result) => AnalyzeNeuronsOutput {
-                success: true,
-                gpu_used: Some(result.gpu_used),
-                helpful_neurons: Some(result.helpful_neurons),
-                diagnostics: neuron_diagnostics_json(&result.no_candidate_reasons),
-                error: None,
-            },
-            Err(e) => AnalyzeNeuronsOutput {
-                success: false,
-                gpu_used: None,
-                helpful_neurons: None,
-                diagnostics: None,
-                error: Some(e.to_string()),
-            },
-        },
+        Ok(input) => {
+            // Log the received timeout value for debugging
+            match input.analysis_deadline_ms {
+                None => eprintln!("[NEAT-AI-Discovery] analyze_neurons FFI: Received analysis_deadline_ms=None"),
+                Some(ms) => eprintln!("[NEAT-AI-Discovery] analyze_neurons FFI: Received analysis_deadline_ms={} ({:.1} minutes)", ms, ms as f64 / 60_000.0),
+            }
+            match analysis::analyze_neurons(&input) {
+                Ok(result) => AnalyzeNeuronsOutput {
+                    success: true,
+                    gpu_used: Some(result.gpu_used),
+                    helpful_neurons: Some(result.helpful_neurons),
+                    diagnostics: neuron_diagnostics_json(&result.no_candidate_reasons),
+                    error: None,
+                },
+                Err(e) => AnalyzeNeuronsOutput {
+                    success: false,
+                    gpu_used: None,
+                    helpful_neurons: None,
+                    diagnostics: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
         Err(e) => AnalyzeNeuronsOutput {
             success: false,
             gpu_used: None,

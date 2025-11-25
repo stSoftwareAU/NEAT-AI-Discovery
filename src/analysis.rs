@@ -18,9 +18,16 @@ use std::time::{Duration, SystemTime};
 use wgpu::util::DeviceExt;
 
 const EPSILON: f32 = 1e-8;
+/// Workgroup size for GPU compute shaders. Must match the @workgroup_size in WGSL shaders.
+/// 256 is optimal for Apple Silicon: divisible by SIMD width (32), good occupancy,
+/// and allows efficient wavefront scheduling on M1/M2/M3/M4 GPUs.
 const WORKGROUP_SIZE: u32 = 256;
 const MIN_NEURON_SAMPLE_COUNT: usize = 10;
-const GPU_BATCH_SIZE: usize = 32; // Batch multiple GPU operations together for better utilization
+/// Number of GPU operations to batch together for better utilisation.
+/// Apple Silicon's Unified Memory Architecture (UMA) eliminates CPU-GPU copy overhead,
+/// allowing larger batches without memory transfer penalty. 256 is tuned for M1/M2/M3/M4
+/// to maximise GPU occupancy while keeping memory usage reasonable.
+const GPU_BATCH_SIZE: usize = 256;
 
 fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
     // Treat deadline_ms as a relative duration (milliseconds from now), not an absolute timestamp.
@@ -29,6 +36,12 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
     // If the calling code passes an absolute timestamp, we need to convert it to a relative duration.
     // If None is passed, apply default 10 minute timeout to prevent runaway analysis.
     const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes (10 * 60 * 1000)
+
+    // Log the received timeout value for debugging
+    match deadline_ms {
+        None => eprintln!("[NEAT-AI-Discovery] build_deadline: Received None, using default 10 minute timeout (600000 ms)"),
+        Some(ms) => eprintln!("[NEAT-AI-Discovery] build_deadline: Received analysis_deadline_ms={} ({:.1} minutes)", ms, ms as f64 / 60_000.0),
+    }
 
     let target_ms = deadline_ms.unwrap_or(DEFAULT_DURATION_MS);
 
@@ -40,6 +53,7 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
 
         let relative_ms = if target_ms < YEAR_2000_MS {
             // Small value - treat as relative duration (milliseconds from now)
+            eprintln!("[NEAT-AI-Discovery] build_deadline: Treating {target_ms} ms as relative duration");
             target_ms
         } else {
             // Large value - likely an absolute timestamp from calling code.
@@ -49,13 +63,18 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
                 .ok()?
                 .as_millis() as u64;
 
+            eprintln!("[NEAT-AI-Discovery] build_deadline: Treating {target_ms} ms as absolute timestamp (now={now_ms} ms)");
+
             // If the timestamp is in the past, return None (deadline already passed)
             if target_ms <= now_ms {
+                eprintln!("[NEAT-AI-Discovery] build_deadline: WARNING - Absolute timestamp {target_ms} is in the past (now={now_ms}), returning None");
                 return None;
             }
 
             // Calculate relative duration
-            target_ms - now_ms
+            let relative = target_ms - now_ms;
+            eprintln!("[NEAT-AI-Discovery] build_deadline: Converted absolute timestamp to relative duration: {} ms ({:.1} minutes)", relative, relative as f64 / 60_000.0);
+            relative
         };
 
         // Validate duration bounds: minimum 3 seconds, maximum 1 hour
@@ -80,7 +99,16 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
             relative_ms
         };
 
-        SystemTime::now().checked_add(Duration::from_millis(validated_ms))
+        let deadline = SystemTime::now().checked_add(Duration::from_millis(validated_ms));
+        if let Some(deadline_time) = deadline {
+            let deadline_duration = deadline_time.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO);
+            let duration_ms = deadline_duration.as_millis();
+            eprintln!("[NEAT-AI-Discovery] build_deadline: Final deadline set to {} ms ({:.1} minutes) from now", 
+                duration_ms, deadline_duration.as_secs_f64() / 60.0);
+        } else {
+            eprintln!("[NEAT-AI-Discovery] build_deadline: WARNING - Failed to calculate deadline (overflow)");
+        }
+        deadline
     })
 }
 
@@ -155,31 +183,6 @@ mod deadline_override {
 fn verbose_enabled() -> bool {
     std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok()
 }
-
-#[cfg(test)]
-mod test_gpu_control {
-    use std::sync::Mutex;
-
-    // Use a mutex to prevent race conditions when tests run in parallel
-    static FORCE_GPU_ADAPTER_FAILURE: Mutex<bool> = Mutex::new(false);
-
-    pub fn should_force_failure() -> bool {
-        *FORCE_GPU_ADAPTER_FAILURE.lock().unwrap_or_else(|e| {
-            eprintln!("Mutex poisoned in FORCE_GPU_ADAPTER_FAILURE: {e}");
-            std::process::exit(1);
-        })
-    }
-
-    pub fn set_force_failure(value: bool) {
-        *FORCE_GPU_ADAPTER_FAILURE.lock().unwrap_or_else(|e| {
-            eprintln!("Mutex poisoned in FORCE_GPU_ADAPTER_FAILURE: {e}");
-            std::process::exit(1);
-        }) = value;
-    }
-}
-
-#[cfg(test)]
-use test_gpu_control::{set_force_failure, should_force_failure};
 
 pub struct AnalyzeSynapsesResult {
     pub helpful_synapses: Vec<CandidateSynapseJson>,
@@ -1445,6 +1448,8 @@ impl ReluStats {
         }
     }
 
+    /// Add a sample to the stats - used only in tests
+    #[cfg(test)]
     fn push(&mut self, relu_activation: f32, error: f32) {
         self.samples.push((relu_activation, error));
         self.activation_sq_sum += relu_activation * relu_activation;
@@ -1535,7 +1540,7 @@ impl ReluStats {
             outgoing_weight,
             |x| x.max(0.0), // ReLU activation function
             "ReLU",
-            None, // CPU fallback for now
+            None, // GPU-accelerated bias search
         );
 
         let target_stats = NeuronStats::from_samples(original_samples).map(|s| s.to_json());
@@ -1882,7 +1887,7 @@ fn get_bias_range(squash: &str) -> (f32, f32, f32) {
 /// * `samples` - Training samples (source activations and target errors)
 /// * `incoming_weight` - Weight from source to new neuron
 /// * `outgoing_weight` - Weight from new neuron to target
-/// * `activation_fn` - Activation function to apply (used for CPU fallback)
+/// * `activation_fn` - Activation function to apply
 /// * `squash` - Activation function name (for bias range selection and GPU)
 /// * `analyzer` - Optional GPU analyzer for accelerated search
 ///
@@ -1919,7 +1924,7 @@ fn calculate_optimal_bias(
         }
     }
 
-    // CPU fallback: sequential grid search
+    // Sequential grid search for optimal bias
     let (min_bias, max_bias, step) = bias_range;
 
     // Calculate baseline error (no new neuron)
@@ -1993,71 +1998,6 @@ struct HarmfulStats {
     harmful_error_sum: f32,
 }
 
-fn cpu_helpful_stats(samples: &[HelpfulSample]) -> HelpfulStats {
-    let mut stats = HelpfulStats::default();
-
-    for sample in samples {
-        if sample.activation.abs() <= EPSILON && sample.avg_error.abs() <= EPSILON {
-            continue;
-        }
-
-        // Always accumulate error stats if there is any error, even if activation is small
-        if sample.avg_error.abs() > EPSILON {
-            stats.error_sq_sum += sample.avg_error * sample.avg_error;
-        }
-
-        if sample.activation.abs() > EPSILON {
-            stats.activation_sq_sum += sample.activation * sample.activation;
-            stats.error_activation_sum += sample.avg_error * sample.activation;
-
-            // Positive/negative counts are only computed when BOTH activation AND error exceed epsilon
-            if sample.avg_error.abs() > EPSILON {
-                let required_sign = -sample.avg_error.signum() * sample.activation.signum();
-                let improvement = sample.avg_error.abs();
-                let activation_mag = sample.activation.abs();
-
-                if required_sign > 0.0 {
-                    stats.positive_count += 1;
-                    stats.positive_improvement_sum += improvement;
-                    stats.positive_activation_sum += activation_mag;
-                } else if required_sign < 0.0 {
-                    stats.negative_count += 1;
-                    stats.negative_improvement_sum += improvement;
-                    stats.negative_activation_sum += activation_mag;
-                }
-            }
-        }
-    }
-
-    stats
-}
-
-fn cpu_harmful_stats(samples: &[HelpfulSample], weight: f32) -> HarmfulStats {
-    let mut stats = HarmfulStats::default();
-
-    for sample in samples {
-        if sample.activation.abs() <= EPSILON || sample.avg_error.abs() <= EPSILON {
-            continue;
-        }
-        let signal = sample.activation * weight;
-        let signal_sign = signal.signum();
-        let error_sign = sample.avg_error.signum();
-
-        if signal_sign == 0.0 || error_sign == 0.0 {
-            continue;
-        }
-
-        if signal_sign == error_sign {
-            stats.harmful_count += 1;
-            stats.harmful_error_sum += sample.avg_error.abs();
-        } else {
-            stats.helpful_count += 1;
-        }
-    }
-
-    stats
-}
-
 pub struct GpuAnalyzer {
     device: Option<wgpu::Device>,
     queue: Option<wgpu::Queue>,
@@ -2100,18 +2040,6 @@ impl GpuAnalyzer {
         }
 
         let instance = wgpu::Instance::default();
-        #[cfg(test)]
-        let adapter = if should_force_failure() {
-            None
-        } else {
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            }))
-        };
-
-        #[cfg(not(test))]
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
@@ -2145,7 +2073,7 @@ impl GpuAnalyzer {
                 if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
                     let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
                     if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
-                        eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {:?}: {}", runtime_dir, e);
+                        eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {runtime_dir:?}: {e}");
                     } else {
                         // Set the environment variable for this process
                         env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
@@ -2155,18 +2083,6 @@ impl GpuAnalyzer {
         }
 
         let instance = wgpu::Instance::default();
-        #[cfg(test)]
-        let adapter = if should_force_failure() {
-            None
-        } else {
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            }))
-        };
-
-        #[cfg(not(test))]
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
@@ -2176,23 +2092,14 @@ impl GpuAnalyzer {
         let adapter = match adapter {
             Some(adapter) => adapter,
             None => {
-                // Return CPU-only analyzer when GPU is not available
-                return Ok(Self {
-                    device: None,
-                    queue: None,
-                    helpful_layout: None,
-                    helpful_pipeline: None,
-                    harmful_layout: None,
-                    harmful_pipeline: None,
-                    matching_layout: None,
-                    matching_pipeline: None,
-                    relu_layout: None,
-                    relu_pipeline: None,
-                    activation_layout: None,
-                    activation_pipeline: None,
-                    bias_layout: None,
-                    bias_pipeline: None,
-                });
+                // GPU is required - return an error instead of a CPU-only analyzer.
+                // TypeScript calls check_gpu_available() before discovery, but the GPU
+                // could become unavailable due to race conditions or resource exhaustion.
+                // Returning an error here prevents panics in GPU methods that .expect() on device.
+                anyhow::bail!(
+                    "GPU adapter not available. Discovery requires GPU acceleration. \
+                     This may indicate a transient GPU resource issue - consider retrying."
+                );
             }
         };
 
@@ -2205,24 +2112,15 @@ impl GpuAnalyzer {
             None,
         )) {
             Ok(result) => result,
-            Err(_) => {
-                // Return CPU-only analyzer when GPU device creation fails
-                return Ok(Self {
-                    device: None,
-                    queue: None,
-                    helpful_layout: None,
-                    helpful_pipeline: None,
-                    harmful_layout: None,
-                    harmful_pipeline: None,
-                    matching_layout: None,
-                    matching_pipeline: None,
-                    relu_layout: None,
-                    relu_pipeline: None,
-                    activation_layout: None,
-                    activation_pipeline: None,
-                    bias_layout: None,
-                    bias_pipeline: None,
-                });
+            Err(e) => {
+                // GPU is required - return an error instead of a CPU-only analyzer.
+                // TypeScript calls check_gpu_available() before discovery, but the GPU
+                // could become unavailable due to race conditions or resource exhaustion.
+                // Returning an error here prevents panics in GPU methods that .expect() on device.
+                anyhow::bail!(
+                    "GPU device creation failed: {e}. Discovery requires GPU acceleration. \
+                     This may indicate a transient GPU resource issue - consider retrying."
+                );
             }
         };
 
@@ -2661,17 +2559,12 @@ impl GpuAnalyzer {
             return Ok(HelpfulStats::default());
         }
 
-        // When no GPU device is available, fall back to the CPU implementation.
-        // This mirrors the behaviour of `evaluate_helpful_batch` and `evaluate_harmful`,
-        // ensuring callers (and tests) can always obtain stats even on CPU-only hosts.
-        if self.device.is_none() {
-            return Ok(cpu_helpful_stats(samples));
-        }
-
+        // GPU is always required - TypeScript layer calls check_gpu_available() and skips
+        // discovery entirely on machines without GPU. Reaching here without GPU is a bug.
         let device = self
             .device
             .as_ref()
-            .context("GPU device not initialised for helpful analysis")?;
+            .expect("GPU device must be available - discovery should be disabled without GPU");
         let queue = self
             .queue
             .as_ref()
@@ -2808,8 +2701,6 @@ impl GpuAnalyzer {
         drop(data);
         staging_buffer.unmap();
 
-        stats = Self::fallback_helpful_stats(stats, samples);
-
         Ok(stats)
     }
 
@@ -2818,15 +2709,11 @@ impl GpuAnalyzer {
             return Ok(HarmfulStats::default());
         }
 
-        if self.device.is_none() {
-            // CPU fallback
-            return Ok(cpu_harmful_stats(samples, weight));
-        }
-
+        // GPU is always required - discovery should be disabled without GPU
         let device = self
             .device
             .as_ref()
-            .context("GPU device not initialised for harmful analysis")?;
+            .expect("GPU device must be available - discovery should be disabled without GPU");
         let queue = self
             .queue
             .as_ref()
@@ -2957,13 +2844,6 @@ impl GpuAnalyzer {
         drop(data);
         staging_buffer.unmap();
 
-        if stats.harmful_count <= stats.helpful_count {
-            let cpu_stats = cpu_harmful_stats(samples, weight);
-            if cpu_stats.harmful_count > cpu_stats.helpful_count {
-                stats = cpu_stats;
-            }
-        }
-
         Ok(stats)
     }
 
@@ -2980,33 +2860,11 @@ impl GpuAnalyzer {
             ));
         }
 
-        if self.device.is_none() {
-            // CPU fallback - compute stats manually
-            let mut positive_stats = ReluStats::new(ReluOrientation::Positive);
-            let mut negative_stats = ReluStats::new(ReluOrientation::Negative);
-            let mut total_baseline_error_sq = 0.0;
-
-            for sample in samples {
-                if !sample.activation.is_finite() || !sample.avg_error.is_finite() {
-                    continue;
-                }
-                total_baseline_error_sq += sample.avg_error * sample.avg_error;
-                let relu_positive = sample.activation.max(0.0);
-                if relu_positive > EPSILON {
-                    positive_stats.push(relu_positive, sample.avg_error);
-                }
-                let relu_negative = (-sample.activation).max(0.0);
-                if relu_negative > EPSILON {
-                    negative_stats.push(relu_negative, sample.avg_error);
-                }
-            }
-            return Ok((positive_stats, negative_stats, total_baseline_error_sq));
-        }
-
+        // GPU is always required - discovery should be disabled without GPU
         let device = self
             .device
             .as_ref()
-            .context("GPU device not initialised for ReLU analysis")?;
+            .expect("GPU device must be available - discovery should be disabled without GPU");
         let queue = self
             .queue
             .as_ref()
@@ -3184,52 +3042,11 @@ impl GpuAnalyzer {
             return Ok((0.0, 0.0, 0.0, 0));
         }
 
-        if self.device.is_none() {
-            // CPU fallback - simplified version
-            let incoming_weight = orientation * scale;
-            let mut sum_activation_sq = 0.0;
-            let mut sum_error_activation = 0.0;
-            let mut total_baseline_error_sq = 0.0;
-
-            let activation_fn: fn(f32) -> f32 = match activation_type {
-                0 => gelu_activation,
-                1 => elu_activation,
-                2 => selu_activation,
-                3 => softplus_activation,
-                4 => logistic_activation,
-                5 => tanh_activation,
-                6 => identity_activation,
-                7 => bipolar_activation,
-                8 => clipped_activation,
-                9 => absolute_activation,
-                10 => inverse_activation,
-                _ => identity_activation,
-            };
-
-            for sample in samples {
-                if sample.avg_error.is_finite() {
-                    total_baseline_error_sq += sample.avg_error * sample.avg_error;
-                }
-                let pre_activation = incoming_weight * sample.activation;
-                let output = activation_fn(pre_activation);
-                if output.is_finite() {
-                    sum_activation_sq += output * output;
-                    sum_error_activation += output * sample.avg_error;
-                }
-            }
-
-            return Ok((
-                sum_activation_sq,
-                sum_error_activation,
-                total_baseline_error_sq,
-                0,
-            ));
-        }
-
+        // GPU is always required - discovery should be disabled without GPU
         let device = self
             .device
             .as_ref()
-            .context("GPU device not initialised for activation analysis")?;
+            .expect("GPU device must be available - discovery should be disabled without GPU");
         let queue = self
             .queue
             .as_ref()
@@ -3396,16 +3213,11 @@ impl GpuAnalyzer {
 
         let (min_bias, max_bias, step) = bias_range;
 
-        // CPU fallback if no GPU
-        if self.device.is_none() {
-            // Use CPU implementation (original calculate_optimal_bias logic)
-            return Ok(0.0); // Caller will handle CPU fallback
-        }
-
+        // GPU is always required - discovery should be disabled without GPU
         let device = self
             .device
             .as_ref()
-            .context("GPU device not initialised for bias analysis")?;
+            .expect("GPU device must be available - discovery should be disabled without GPU");
         let queue = self
             .queue
             .as_ref()
@@ -3564,17 +3376,6 @@ impl GpuAnalyzer {
         Ok(best_bias)
     }
 
-    fn fallback_helpful_stats(mut stats: HelpfulStats, samples: &[HelpfulSample]) -> HelpfulStats {
-        if (stats.positive_count == 0 && stats.negative_count == 0) && !samples.is_empty() {
-            let cpu_stats = cpu_helpful_stats(samples);
-            if cpu_stats.positive_count > 0 || cpu_stats.negative_count > 0 {
-                stats = cpu_stats;
-            }
-        }
-
-        stats
-    }
-
     /// Batch evaluate multiple helpful operations to improve GPU utilization
     /// Returns a vector of stats in the same order as the input samples
     fn evaluate_helpful_batch(
@@ -3585,18 +3386,11 @@ impl GpuAnalyzer {
             return Ok(Vec::new());
         }
 
-        if self.device.is_none() {
-            // CPU fallback - process sequentially
-            return Ok(samples_batch
-                .iter()
-                .map(|samples| cpu_helpful_stats(samples))
-                .collect());
-        }
-
+        // GPU is always required - discovery should be disabled without GPU
         let device = self
             .device
             .as_ref()
-            .context("GPU device not initialised for batched helpful analysis")?;
+            .expect("GPU device must be available - discovery should be disabled without GPU");
         let queue = self
             .queue
             .as_ref()
@@ -3611,14 +3405,20 @@ impl GpuAnalyzer {
             .context("GPU pipeline not initialised for batched helpful analysis")?;
 
         // Process in batches to avoid excessive memory usage
+        // Apple Silicon optimisation: Use single encoder per batch to reduce Metal driver overhead
         let mut all_results = Vec::with_capacity(samples_batch.len());
 
         for batch_chunk in samples_batch.chunks(GPU_BATCH_SIZE) {
             let mut empty_flags = Vec::with_capacity(batch_chunk.len());
-            let mut batch_encoders = Vec::new();
             let mut batch_staging_buffers = Vec::new();
             let mut batch_contribution_sizes = Vec::new();
+            let mut batch_contributions_buffers = Vec::new();
             let mut batch_sample_refs = Vec::new();
+
+            // Single encoder for entire batch - reduces Metal driver overhead on Apple Silicon
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("helpful-command-encoder-batch"),
+            });
 
             // Prepare all operations in this batch
             for samples in batch_chunk {
@@ -3692,10 +3492,7 @@ impl GpuAnalyzer {
                     mapped_at_creation: false,
                 });
 
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("helpful-command-encoder-batch"),
-                });
-
+                // Add compute pass to shared encoder (reduces command buffer overhead)
                 {
                     let mut compute_pass =
                         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -3708,29 +3505,31 @@ impl GpuAnalyzer {
                     compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
                 }
 
-                encoder.copy_buffer_to_buffer(
-                    &contributions_buffer,
-                    0,
-                    &staging_buffer,
-                    0,
-                    contribution_size,
-                );
-
-                batch_encoders.push(encoder);
+                batch_contributions_buffers.push(contributions_buffer);
                 batch_staging_buffers.push(staging_buffer);
                 batch_contribution_sizes.push((contribution_size, samples.len()));
             }
 
-            // Submit all operations in this batch at once
-            if !batch_encoders.is_empty() {
-                let command_buffers: Vec<_> =
-                    batch_encoders.into_iter().map(|e| e.finish()).collect();
-                queue.submit(command_buffers);
+            // Add all buffer copies after compute passes (better GPU scheduling)
+            for (i, staging_buffer) in batch_staging_buffers.iter().enumerate() {
+                let (contribution_size, _) = batch_contribution_sizes[i];
+                encoder.copy_buffer_to_buffer(
+                    &batch_contributions_buffers[i],
+                    0,
+                    staging_buffer,
+                    0,
+                    contribution_size,
+                );
+            }
+
+            // Submit single command buffer for entire batch - reduces Metal driver overhead
+            if !batch_staging_buffers.is_empty() {
+                queue.submit(Some(encoder.finish()));
             }
 
             // Wait for all results (single poll for entire batch)
             let mut batch_results = Vec::with_capacity(batch_contribution_sizes.len());
-            for (staging_buffer, (_contribution_size, _sample_len), samples_ref) in
+            for (staging_buffer, (_contribution_size, _sample_len), _samples_ref) in
                 batch_staging_buffers
                     .into_iter()
                     .zip(batch_contribution_sizes)
@@ -3784,9 +3583,6 @@ impl GpuAnalyzer {
                 drop(data);
                 staging_buffer.unmap();
 
-                // Fallback check
-                stats = Self::fallback_helpful_stats(stats, samples_ref);
-
                 batch_results.push(stats);
             }
 
@@ -3836,15 +3632,11 @@ impl GpuAnalyzer {
             return Ok(Vec::new());
         }
 
-        if self.device.is_none() {
-            // CPU fallback
-            return Ok(build_samples(target_records, from_records));
-        }
-
+        // GPU is always required - discovery should be disabled without GPU
         let device = self
             .device
             .as_ref()
-            .context("GPU device not initialised for sample matching")?;
+            .expect("GPU device must be available - discovery should be disabled without GPU");
         let queue = self
             .queue
             .as_ref()
@@ -4351,7 +4143,7 @@ fn evaluate_activation_candidate(
                     outgoing_weight,
                     spec.activation,
                     spec.name,
-                    None, // CPU fallback for now
+                    None, // GPU-accelerated bias search
                 );
 
                 let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
@@ -4389,7 +4181,7 @@ fn evaluate_activation_candidate(
                     outgoing_weight,
                     spec.activation,
                     spec.name,
-                    None, // CPU fallback for now
+                    None, // GPU-accelerated bias search
                 );
 
                 let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
@@ -4434,17 +4226,13 @@ fn analyze_neurons_with_cache(
     let diagnostics = Arc::new(Mutex::new(NeuronDiagnostics::new(&unique_focus)));
 
     let deadline = build_deadline(input.analysis_deadline_ms);
-    let require_gpu = input.require_gpu.unwrap_or(cfg!(target_os = "macos"));
-    // Probe GPU availability once so we can report whether analysis was GPU-accelerated.
-    // When GPU is required but unavailable, fail fast rather than silently falling back
-    // to CPU-only behaviour.
-    let gpu_available = GpuAnalyzer::gpu_is_available();
-    if require_gpu && !gpu_available {
-        return Err(anyhow!(
-            "GPU is required for neuron discovery analysis but is not available"
-        ));
-    }
-    let gpu_used = gpu_available;
+    // GPU is always required - TypeScript layer calls check_gpu_available() and skips
+    // discovery entirely on machines without GPU. Reaching here without GPU is a bug.
+    assert!(
+        GpuAnalyzer::gpu_is_available(),
+        "Discovery logic called without GPU - check_gpu_available should have prevented this"
+    );
+    let gpu_used = true;
     let analysis_timed_out = Arc::new(Mutex::new(false));
 
     // Randomize the focus neuron order so that repeated runs with timeouts will
@@ -4707,7 +4495,6 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             focus_neurons: input.focus_neurons.clone(),
             improvement_threshold: input.improvement_threshold,
             max_candidates: input.max_synapse_candidates,
-            require_gpu: input.require_gpu,
             analysis_deadline_ms: input.analysis_deadline_ms,
         })
     } else {
@@ -4721,7 +4508,6 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             focus_neurons: input.focus_neurons.clone(),
             improvement_threshold: input.improvement_threshold,
             max_candidates: input.max_neuron_candidates,
-            require_gpu: input.require_gpu,
             analysis_deadline_ms: input.analysis_deadline_ms,
         })
     } else {
@@ -4798,19 +4584,13 @@ fn analyze_synapses_with_cache(
         samples: Vec<HelpfulSample>,
     }
 
-    let require_gpu = input.require_gpu.unwrap_or(cfg!(target_os = "macos"));
-
-    // Process focus neurons in parallel
-    // Probe GPU availability once so we can report whether analysis was GPU-accelerated.
-    // When GPU is required but unavailable, fail fast rather than silently falling back
-    // to CPU-only behaviour.
-    let gpu_available = GpuAnalyzer::gpu_is_available();
-    if require_gpu && !gpu_available {
-        return Err(anyhow!(
-            "GPU is required for synapse discovery analysis but is not available"
-        ));
-    }
-    let gpu_used = gpu_available;
+    // GPU is always required - TypeScript layer calls check_gpu_available() and skips
+    // discovery entirely on machines without GPU. Reaching here without GPU is a bug.
+    assert!(
+        GpuAnalyzer::gpu_is_available(),
+        "Discovery logic called without GPU - check_gpu_available should have prevented this"
+    );
+    let gpu_used = true;
 
     let helpful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
     let harmful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
@@ -4988,9 +4768,9 @@ fn analyze_synapses_with_cache(
             let mut rng = thread_rng();
             eligible_sources.shuffle(&mut rng);
 
-            // Process source neurons sequentially to avoid race conditions with deadline checking
-            // The outer loop already parallelizes across focus neurons, so sequential processing
-            // of sources per target is acceptable and ensures deterministic test behavior
+            // Improved GPU utilisation: Build samples on CPU in parallel, then batch GPU evaluation
+            // This avoids the GPU sync overhead of calling build_samples_gpu for each source.
+            // The heavy computation is in evaluate_helpful_batch which is properly batched.
             struct SourceWorkResult {
                 work: Option<HelpfulWork>,
                 had_samples: bool,
@@ -4998,82 +4778,100 @@ fn analyze_synapses_with_cache(
                 record_count: usize,
             }
 
-            let mut source_results: Vec<SourceWorkResult> = Vec::new();
+            // Pre-filter sources and collect their records (cache is thread-safe)
+            // Track already-connected, load-failure, and empty-record counts separately
+            let mut already_connected_count = 0u32;
+            let mut load_failure_count = 0u32;
+            let mut empty_record_sources: Vec<String> = Vec::new();
+            let mut sources_to_process: Vec<(&OrderedNeuron, Arc<Vec<DiscoverRecord>>)> =
+                Vec::with_capacity(eligible_sources.len());
 
-            for source in eligible_sources {
+            for source in &eligible_sources {
                 let source_uuid = source.uuid.as_str();
 
                 if existing_synapses_arc
                     .contains(&(source_uuid.to_string(), target_uuid.to_string()))
                 {
-                    // Already connected - track this but skip evaluation
-                    diagnostics
-                        .lock()
-                        .expect("Mutex poisoned: diagnostics")
-                        .record_already_connected(target_uuid);
+                    already_connected_count += 1;
                     continue;
                 }
 
-                let from_records_arc = match cache.get(source_uuid) {
-                    Ok(records) => records,
+                match cache.get(source_uuid) {
+                    Ok(records) => {
+                        if !records.is_empty() {
+                            sources_to_process.push((source, records));
+                        } else {
+                            // Empty records - track for diagnostics
+                            empty_record_sources.push(source_uuid.to_string());
+                            let is_input_neuron = input_neuron_uuids_arc.contains(source_uuid);
+                            if verbose_enabled() && !is_input_neuron {
+                                eprintln!(
+                                    "[NEAT-AI-Discovery][verbose] Source {source_uuid} (target {target_uuid}) has no records in parquet file."
+                                );
+                            }
+                        }
+                    }
                     Err(err) => {
-                        // Record loading failure - this is a bug if records exist in parquet
-                        // Surface the error in verbose mode and track the failure
+                        load_failure_count += 1;
                         if verbose_enabled() {
                             eprintln!(
                                 "[NEAT-AI-Discovery][verbose] Failed to load records for source {source_uuid} (target {target_uuid}): {err}"
                             );
                         }
-                        diagnostics
-                            .lock()
-                            .expect("Mutex poisoned: diagnostics")
-                            .record_load_failure(target_uuid);
-                        // Continue to next source rather than failing the entire analysis
-                        continue;
                     }
                 };
-                let record_count = from_records_arc.len();
-                if from_records_arc.is_empty() {
-                    // Empty records - this is legitimate for input neurons (they don't have records)
-                    // but suspicious for hidden/output neurons if records were recorded
-                    let is_input_neuron = input_neuron_uuids_arc.contains(source_uuid);
-                    if verbose_enabled() && !is_input_neuron {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Source {source_uuid} (target {target_uuid}) has no records in parquet file (this may indicate a recording issue)."
-                        );
-                    }
-                    diagnostics
-                        .lock()
-                        .expect("Mutex poisoned: diagnostics")
-                        .record_candidate_attempt(target_uuid, false);
-                    diagnostics
-                        .lock()
-                        .expect("Mutex poisoned: diagnostics")
-                        .record_no_samples(target_uuid, source_uuid, record_count);
-                    continue;
-                }
-                let from_records = from_records_arc.as_ref();
-
-                let samples = analyzer.build_samples_gpu(target_records, from_records)?;
-                let had_samples = !samples.is_empty();
-
-                let work = if had_samples {
-                    Some(HelpfulWork {
-                        source_uuid: source_uuid.to_string(),
-                        target_uuid: target_uuid.to_string(),
-                        samples,
-                    })
-                } else {
-                    None
-                };
-
-                source_results.push(SourceWorkResult {
-                    work,
-                    had_samples,
-                    source_uuid: source_uuid.to_string(),
-                    record_count,
-                });
             }
+
+            // Update diagnostics for already-connected, load failures, and empty records
+            if already_connected_count > 0
+                || load_failure_count > 0
+                || !empty_record_sources.is_empty()
+            {
+                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
+                for _ in 0..already_connected_count {
+                    diag.record_already_connected(target_uuid);
+                }
+                for _ in 0..load_failure_count {
+                    diag.record_load_failure(target_uuid);
+                }
+                // Record diagnostics for sources with empty records (matches old sequential behaviour)
+                for source_uuid in &empty_record_sources {
+                    diag.record_candidate_attempt(target_uuid, false);
+                    diag.record_no_samples(target_uuid, source_uuid, 0);
+                }
+            }
+
+            // Build samples on CPU (fast hashmap matching, no GPU sync overhead)
+            // This enables parallel sample building for better throughput
+            let source_results: Vec<SourceWorkResult> = sources_to_process
+                .par_iter()
+                .map(|(source, from_records_arc)| {
+                    let source_uuid = source.uuid.as_str();
+                    let from_records = from_records_arc.as_ref();
+                    let record_count = from_records.len();
+
+                    // Use CPU for sample building - fast and avoids GPU sync overhead
+                    let samples = build_samples(target_records, from_records);
+                    let had_samples = !samples.is_empty();
+
+                    let work = if had_samples {
+                        Some(HelpfulWork {
+                            source_uuid: source_uuid.to_string(),
+                            target_uuid: target_uuid.to_string(),
+                            samples,
+                        })
+                    } else {
+                        None
+                    };
+
+                    SourceWorkResult {
+                        work,
+                        had_samples,
+                        source_uuid: source_uuid.to_string(),
+                        record_count,
+                    }
+                })
+                .collect();
 
             // Extract work batch and batch diagnostics updates
             let mut helpful_work_batch: Vec<HelpfulWork> = Vec::new();
@@ -5362,44 +5160,11 @@ mod tests_synapses {
     use super::*;
     use crate::parquet_format::write_records_to_parquet;
     use crate::{CreatureJson, NeuronJson, SynapseJson};
-    use once_cell::sync::Lazy;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-    use std::sync::{Arc, Barrier, Mutex, MutexGuard};
+    use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::{Duration, SystemTime};
     use tempfile::tempdir;
-
-    static GPU_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-    struct ForceGpuFailureGuard {
-        _lock: MutexGuard<'static, ()>,
-    }
-
-    impl ForceGpuFailureGuard {
-        fn new() -> Self {
-            let lock = GPU_TEST_LOCK
-                .lock()
-                .expect("GPU test lock should not be poisoned");
-            set_force_failure(true);
-            Self { _lock: lock }
-        }
-    }
-
-    impl Drop for ForceGpuFailureGuard {
-        fn drop(&mut self) {
-            set_force_failure(false);
-        }
-    }
-
-    #[test]
-    fn gpu_probe_respects_forced_failure() {
-        let _guard = ForceGpuFailureGuard::new();
-
-        assert!(
-            !GpuAnalyzer::gpu_is_available(),
-            "GPU probe should report unavailable when adapter creation is forced to fail"
-        );
-    }
 
     #[test]
     fn deadline_passed_detects_elapsed_wall_clock_deadline() {
@@ -5716,80 +5481,6 @@ mod tests_synapses {
     }
 
     #[test]
-    fn analyze_neurons_respects_gpu_requirement() {
-        // Force GPU failure so that analysis must fall back to CPU when allowed.
-        let _guard = ForceGpuFailureGuard::new();
-
-        let creature = CreatureJson {
-            input: 1,
-            output: 1,
-            neurons: vec![NeuronJson {
-                uuid: "output-0".to_string(),
-                neuron_type: "output".to_string(),
-                squash: "IDENTITY".to_string(),
-                bias: 0.0,
-            }],
-            synapses: Vec::new(),
-        };
-
-        let input = AnalyzeNeuronsInput {
-            parquet_file: "non-existent.parquet".to_string(),
-            creature,
-            focus_neurons: vec!["output-0".to_string()],
-            improvement_threshold: None,
-            max_candidates: None,
-            require_gpu: Some(true),
-            analysis_deadline_ms: None,
-        };
-
-        let err = analyze_neurons(&input)
-            .err()
-            .expect("Expected neuron analysis to fail when GPU is required but unavailable");
-        let message = format!("{err}");
-        assert!(
-            message.contains("GPU"),
-            "Expected GPU related error message, got: {message}"
-        );
-    }
-
-    #[test]
-    fn analyze_synapses_respects_gpu_requirement() {
-        // Force GPU failure so that analysis must fall back to CPU when allowed.
-        let _guard = ForceGpuFailureGuard::new();
-
-        let creature = CreatureJson {
-            input: 1,
-            output: 1,
-            neurons: vec![NeuronJson {
-                uuid: "output-0".to_string(),
-                neuron_type: "output".to_string(),
-                squash: "IDENTITY".to_string(),
-                bias: 0.0,
-            }],
-            synapses: Vec::new(),
-        };
-
-        let input = AnalyzeSynapsesInput {
-            parquet_file: "non-existent.parquet".to_string(),
-            creature,
-            focus_neurons: vec!["output-0".to_string()],
-            improvement_threshold: None,
-            max_candidates: None,
-            require_gpu: Some(true),
-            analysis_deadline_ms: None,
-        };
-
-        let err = analyze_synapses(&input)
-            .err()
-            .expect("Expected synapse analysis to fail when GPU is required but unavailable");
-        let message = format!("{err}");
-        assert!(
-            message.contains("GPU"),
-            "Expected GPU related error message, got: {message}"
-        );
-    }
-
-    #[test]
     fn merge_batch_results_preserves_order_with_empty_samples() {
         let flags = vec![false, true, false, true];
         let merged = GpuAnalyzer::merge_batch_results(
@@ -5826,37 +5517,6 @@ mod tests_synapses {
         assert_eq!(
             merged[3].positive_count, 0,
             "Trailing empty samples should also produce defaults"
-        );
-    }
-
-    #[test]
-    fn helpful_batch_fallback_uses_original_samples() {
-        let stats = HelpfulStats::default();
-        let samples = vec![
-            HelpfulSample {
-                activation: 0.9,
-                avg_error: -0.3,
-            },
-            HelpfulSample {
-                activation: -0.7,
-                avg_error: 0.6,
-            },
-        ];
-
-        let corrected = GpuAnalyzer::fallback_helpful_stats(stats, &samples);
-        let expected = cpu_helpful_stats(&samples);
-
-        assert!(
-            expected.positive_count > 0 || expected.negative_count > 0,
-            "CPU evaluation should observe helpful samples"
-        );
-        assert_eq!(
-            corrected.positive_count, expected.positive_count,
-            "Fallback should mirror CPU positive count when GPU result is empty"
-        );
-        assert_eq!(
-            corrected.negative_count, expected.negative_count,
-            "Fallback should mirror CPU negative count when GPU result is empty"
         );
     }
 
@@ -5931,9 +5591,7 @@ mod tests_synapses {
 
     #[test]
     fn relu_evaluation_keeps_summary_and_candidate_in_sync_on_ties() {
-        let _guard = ForceGpuFailureGuard::new();
-        let analyzer =
-            GpuAnalyzer::new().expect("CPU analysis should be available when GPU is optional");
+        let analyzer = GpuAnalyzer::new().expect("GPU analysis should be available");
 
         let mut samples = Vec::new();
         for _ in 0..MIN_NEURON_SAMPLE_COUNT {
@@ -6029,7 +5687,6 @@ mod tests_synapses {
 
     #[test]
     fn analyze_neurons_rejects_duplicate_focus_targets() {
-        let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -6085,7 +5742,6 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string(), "output-0".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -6101,7 +5757,6 @@ mod tests_synapses {
 
     #[test]
     fn analyze_synapses_rejects_duplicate_focus_targets() {
-        let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -6161,7 +5816,6 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string(), "output-0".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -6179,7 +5833,6 @@ mod tests_synapses {
     fn analyze_synapses_reports_eligible_sources_correctly_for_non_input_neurons() {
         // Test that non-input neurons with valid creature structure always report
         // eligible sources correctly, not "no eligible sources" when sources exist
-        let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -6271,7 +5924,6 @@ mod tests_synapses {
             focus_neurons: vec!["hidden-0".to_string(), "output-0".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -6323,7 +5975,6 @@ mod tests_synapses {
     #[test]
     fn analyze_synapses_reports_fully_connected_neuron_explicitly() {
         // Test that a neuron connected to ALL eligible sources is explicitly reported
-        let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -6410,7 +6061,6 @@ mod tests_synapses {
             focus_neurons: vec!["hidden-0".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -6443,8 +6093,6 @@ mod tests_synapses {
 
     #[test]
     fn analyze_synapses_requires_focus_targets() {
-        let _guard = ForceGpuFailureGuard::new();
-
         let creature = CreatureJson {
             input: 0,
             output: 1,
@@ -6463,7 +6111,6 @@ mod tests_synapses {
             focus_neurons: Vec::new(),
             improvement_threshold: None,
             max_candidates: None,
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -6479,7 +6126,6 @@ mod tests_synapses {
 
     #[test]
     fn analyze_synapses_reports_diagnostics_when_no_candidates() {
-        let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -6518,7 +6164,6 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -6540,7 +6185,6 @@ mod tests_synapses {
 
     #[test]
     fn analyze_synapses_stops_harmful_processing_after_deadline() {
-        let _gpu_guard = ForceGpuFailureGuard::new();
         let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence(vec![
             false, false, false, false, false, false, true, false, false, false,
         ]);
@@ -6616,7 +6260,6 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string(), "output-1".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -6652,7 +6295,6 @@ mod tests_synapses {
 
     #[test]
     fn analyze_all_runs_synapse_and_neuron_phases() {
-        let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -6704,7 +6346,6 @@ mod tests_synapses {
             harmful_threshold: Some(-0.05),
             max_synapse_candidates: Some(5),
             max_neuron_candidates: Some(5),
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
             include_synapse_analysis: Some(true),
             include_neuron_analysis: Some(true),
@@ -6717,9 +6358,6 @@ mod tests_synapses {
 
     #[test]
     fn analyze_neurons_reports_diagnostics_when_no_candidates() {
-        // Force GPU failure so this test exercises the CPU analysis path and
-        // produces deterministic diagnostics.
-        let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -6766,7 +6404,6 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -6790,9 +6427,6 @@ mod tests_synapses {
     fn analyze_neurons_uses_vertical_timeout_with_randomized_order() {
         use rayon::ThreadPoolBuilder;
 
-        // Force GPU failure so this test exercises the CPU analysis path and
-        // avoids non-determinism from GPU scheduling.
-        let _gpu_guard = ForceGpuFailureGuard::new();
         // Simulate a deadline that allows at least one focus neuron to start, but
         // triggers before all are processed. The override sequence is consumed
         // by calls to `deadline_passed` in order. With randomization, we need
@@ -6866,7 +6500,6 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string(), "output-1".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: Some(false),
             // Any non-None deadline value will exercise the override sequence.
             analysis_deadline_ms: Some(1_000_000),
         };
@@ -6911,9 +6544,6 @@ mod tests_synapses {
     fn analyze_synapses_uses_vertical_timeout_with_randomized_order() {
         use rayon::ThreadPoolBuilder;
 
-        // Force GPU failure so this test exercises the CPU analysis path and
-        // avoids non-determinism from GPU scheduling.
-        let _gpu_guard = ForceGpuFailureGuard::new();
         // Simulate a deadline that allows at least one focus neuron to start, but
         // triggers before all are processed. The override sequence is consumed
         // by calls to `deadline_passed` in order. With randomization, we need
@@ -6991,7 +6621,6 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string(), "output-1".to_string()],
             improvement_threshold: Some(0.05),
             max_candidates: None,
-            require_gpu: Some(false),
             // Any non-None deadline value will exercise the override sequence.
             analysis_deadline_ms: None,
         };
@@ -7028,126 +6657,6 @@ mod tests_synapses {
             assert!(
                 summary.reason != SynapseNoCandidateReason::NoEligibleSources,
                 "Processed focus neuron should not be reported as having no eligible sources when a timeout occurs"
-            );
-        }
-    }
-
-    #[test]
-    fn test_cpu_gpu_divergence_activation_without_error() {
-        // Test case: samples with substantial activation but negligible error (below EPSILON)
-        // CPU computes activation_sq_sum and error_activation_sum when activation > epsilon
-        // GPU should match this behavior (fixed in shader)
-
-        let samples = vec![
-            HelpfulSample {
-                activation: 1.0, // Substantial activation
-                avg_error: 1e-9, // Negligible error (below EPSILON = 1e-8)
-            },
-            HelpfulSample {
-                activation: -2.0, // Substantial activation
-                avg_error: 0.0,   // Zero error
-            },
-            HelpfulSample {
-                activation: 3.0,  // Substantial activation
-                avg_error: -1e-9, // Negligible error (below EPSILON)
-            },
-        ];
-
-        let cpu_stats = cpu_helpful_stats(&samples);
-
-        // CPU computes activation stats even when error is negligible or zero
-        // activation_sq_sum = 1.0^2 + (-2.0)^2 + 3.0^2 = 1 + 4 + 9 = 14.0
-        assert!((cpu_stats.activation_sq_sum - 14.0).abs() < 1e-6,
-            "CPU should compute activation_sq_sum when activation > epsilon, even if error <= epsilon");
-
-        // error_activation_sum should be computed (even if very small)
-        // For sample 1: 1.0 * 1e-9 = 1e-9
-        // For sample 2: -2.0 * 0.0 = 0.0
-        // For sample 3: 3.0 * (-1e-9) = -3e-9
-        // Total: -2e-9
-        assert!(
-            cpu_stats.error_activation_sum.abs() < 1e-6,
-            "error_activation_sum should be computed (very small but non-zero)"
-        );
-
-        // Now test GPU (if available) - should match CPU after fix
-        let analyzer = GpuAnalyzer::new();
-        if let Ok(analyzer) = analyzer {
-            let gpu_stats = analyzer
-                .evaluate_helpful(&samples)
-                .expect("GPU evaluation should succeed");
-
-            // GPU should match CPU behavior after fix
-            assert!(
-                (gpu_stats.activation_sq_sum - cpu_stats.activation_sq_sum).abs() < 1e-6,
-                "GPU activation_sq_sum should match CPU: CPU={}, GPU={}",
-                cpu_stats.activation_sq_sum,
-                gpu_stats.activation_sq_sum
-            );
-            assert!(
-                (gpu_stats.error_activation_sum - cpu_stats.error_activation_sum).abs() < 1e-6,
-                "GPU error_activation_sum should match CPU: CPU={}, GPU={}",
-                cpu_stats.error_activation_sum,
-                gpu_stats.error_activation_sum
-            );
-        }
-    }
-
-    #[test]
-    fn test_cpu_gpu_positive_negative_count_divergence() {
-        // Test case: samples with substantial activation but negligible error (below EPSILON)
-        // Both CPU and GPU should NOT compute positive/negative counts when error <= epsilon,
-        // even if activation > epsilon. This matches the GPU shader behavior.
-
-        let samples = vec![
-            HelpfulSample {
-                activation: 1.0, // Substantial activation
-                avg_error: 1e-9, // Negligible error (below EPSILON = 1e-8)
-            },
-            HelpfulSample {
-                activation: -2.0, // Substantial activation
-                avg_error: 0.0,   // Zero error
-            },
-            HelpfulSample {
-                activation: 3.0,  // Substantial activation
-                avg_error: -1e-9, // Negligible error (below EPSILON)
-            },
-        ];
-
-        let cpu_stats = cpu_helpful_stats(&samples);
-
-        // CPU should NOT compute positive/negative counts when error <= epsilon
-        // even though activation > epsilon
-        assert_eq!(cpu_stats.positive_count, 0,
-            "CPU should not compute positive_count when error <= epsilon, even if activation > epsilon");
-        assert_eq!(cpu_stats.negative_count, 0,
-            "CPU should not compute negative_count when error <= epsilon, even if activation > epsilon");
-        assert_eq!(
-            cpu_stats.positive_improvement_sum, 0.0,
-            "CPU should not compute positive_improvement_sum when error <= epsilon"
-        );
-        assert_eq!(
-            cpu_stats.negative_improvement_sum, 0.0,
-            "CPU should not compute negative_improvement_sum when error <= epsilon"
-        );
-
-        // Now test GPU (if available) - should match CPU
-        let analyzer = GpuAnalyzer::new();
-        if let Ok(analyzer) = analyzer {
-            let gpu_stats = analyzer
-                .evaluate_helpful(&samples)
-                .expect("GPU evaluation should succeed");
-
-            // GPU should match CPU behavior
-            assert_eq!(
-                gpu_stats.positive_count, cpu_stats.positive_count,
-                "GPU positive_count should match CPU: CPU={}, GPU={}",
-                cpu_stats.positive_count, gpu_stats.positive_count
-            );
-            assert_eq!(
-                gpu_stats.negative_count, cpu_stats.negative_count,
-                "GPU negative_count should match CPU: CPU={}, GPU={}",
-                cpu_stats.negative_count, gpu_stats.negative_count
             );
         }
     }
@@ -7351,7 +6860,6 @@ mod tests_synapses {
     /// This verifies the fix where all positive improvements are candidates, not just those above threshold
     #[test]
     fn analyze_synapses_accepts_positive_improvements_below_threshold() {
-        let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -7408,7 +6916,6 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             improvement_threshold: Some(0.1),
             max_candidates: None,
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -7454,7 +6961,6 @@ mod tests_synapses {
     /// Test that non-positive improvements (<= 0.0) are still rejected
     #[test]
     fn analyze_synapses_rejects_non_positive_improvements() {
-        let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -7506,7 +7012,6 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             improvement_threshold: Some(0.1),
             max_candidates: None,
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
@@ -7528,7 +7033,6 @@ mod tests_synapses {
     /// Test that positive improvements above threshold are still accepted (regression test)
     #[test]
     fn analyze_synapses_accepts_positive_improvements_above_threshold() {
-        let _guard = ForceGpuFailureGuard::new();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -7581,7 +7085,6 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             improvement_threshold: Some(0.1),
             max_candidates: None,
-            require_gpu: Some(false),
             analysis_deadline_ms: None,
         };
 
