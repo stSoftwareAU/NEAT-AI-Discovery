@@ -955,7 +955,22 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
         match analyze_parallel_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
-                format!("{{\"success\":false,\"error\":\"Failed to serialize output: {e}\"}}")
+                // Properly serialize error message to avoid JSON injection issues
+                let output = AnalyzeParallelOutput {
+                    success: false,
+                    helpful_synapses: None,
+                    harmful_synapses: None,
+                    synapse_diagnostics: None,
+                    synapse_gpu_used: None,
+                    helpful_neurons: None,
+                    neuron_diagnostics: None,
+                    neuron_gpu_used: None,
+                    error: Some(format!("Failed to serialize output: {e}")),
+                };
+                serde_json::to_string(&output).unwrap_or_else(|_| {
+                    // Fallback if serialization fails (shouldn't happen)
+                    r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
+                })
             }
         }
     }));
@@ -998,9 +1013,16 @@ pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
         match check_gpu_available_internal() {
             Ok(json) => json,
             Err(e) => {
-                format!(
-                    "{{\"success\":false,\"gpuAvailable\":false,\"error\":\"Failed to probe GPU: {e}\"}}"
-                )
+                // Properly serialize error message to avoid JSON injection issues
+                let output = CheckGpuOutput {
+                    success: false,
+                    gpu_available: false,
+                    error: Some(format!("Failed to probe GPU: {e}")),
+                };
+                serde_json::to_string(&output).unwrap_or_else(|_| {
+                    // Fallback if serialization fails (shouldn't happen)
+                    r#"{"success":false,"gpuAvailable":false,"error":"Failed to serialize error message"}"#.to_string()
+                })
             }
         }
     }));
@@ -1050,9 +1072,17 @@ pub extern "C" fn get_library_version() -> *mut std::ffi::c_char {
         match get_library_version_internal() {
             Ok(json) => json,
             Err(e) => {
-                format!(
-                    "{{\"success\":false,\"version\":\"\",\"error\":\"Failed to get version: {e}\"}}"
-                )
+                // Properly serialize error message to avoid JSON injection issues
+                let output = GetVersionOutput {
+                    success: false,
+                    version: String::new(),
+                    error: Some(format!("Failed to get version: {e}")),
+                };
+                serde_json::to_string(&output).unwrap_or_else(|_| {
+                    // Fallback if serialization fails (shouldn't happen)
+                    r#"{"success":false,"version":"","error":"Failed to serialize error message"}"#
+                        .to_string()
+                })
             }
         }
     }));
