@@ -27,7 +27,12 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
     // The calling code (TypeScript) calculates this as Date.now() + duration, but we want to treat
     // it as a duration to avoid issues with clock skew and to match the expected semantics.
     // If the calling code passes an absolute timestamp, we need to convert it to a relative duration.
-    deadline_ms.and_then(|target_ms| {
+    // If None is passed, apply default 10 minute timeout to prevent runaway analysis.
+    const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes (10 * 60 * 1000)
+
+    let target_ms = deadline_ms.unwrap_or(DEFAULT_DURATION_MS);
+
+    Some(target_ms).and_then(|target_ms| {
         // Heuristic: if the value is less than year 2000 in milliseconds (946684800000),
         // treat it as a relative duration. Otherwise, it's likely an absolute timestamp
         // from the calling code, so convert it to a relative duration.
@@ -57,7 +62,7 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
         // If invalid, default to 10 minutes (expected typical value)
         const MIN_DURATION_MS: u64 = 3_000; // 3 seconds
         const MAX_DURATION_MS: u64 = 3_600_000; // 1 hour (60 * 60 * 1000)
-        const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes (10 * 60 * 1000)
+        // Note: DEFAULT_DURATION_MS is defined at function scope above
 
         let validated_ms = if relative_ms < MIN_DURATION_MS {
             eprintln!(
@@ -2080,6 +2085,20 @@ impl GpuAnalyzer {
     /// falling back to CPU – if the adapter or device cannot be created, the
     /// probe reports `false`.
     pub fn gpu_is_available() -> bool {
+        // Set XDG_RUNTIME_DIR if not already set (required by wgpu on Linux/Wayland)
+        #[cfg(target_os = "linux")]
+        {
+            use std::env;
+            if env::var("XDG_RUNTIME_DIR").is_err() {
+                if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
+                    let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
+                    if std::fs::create_dir_all(&runtime_dir).is_ok() {
+                        env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
+                    }
+                }
+            }
+        }
+
         let instance = wgpu::Instance::default();
         #[cfg(test)]
         let adapter = if should_force_failure() {
@@ -2116,6 +2135,25 @@ impl GpuAnalyzer {
     }
 
     fn new() -> Result<Self> {
+        // Set XDG_RUNTIME_DIR if not already set (required by wgpu on Linux/Wayland)
+        // This prevents "error: XDG_RUNTIME_DIR not set in the environment" warnings
+        #[cfg(target_os = "linux")]
+        {
+            use std::env;
+            if env::var("XDG_RUNTIME_DIR").is_err() {
+                // Create a temporary runtime directory if XDG_RUNTIME_DIR is not set
+                if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
+                    let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
+                    if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
+                        eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {:?}: {}", runtime_dir, e);
+                    } else {
+                        // Set the environment variable for this process
+                        env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
+                    }
+                }
+            }
+        }
+
         let instance = wgpu::Instance::default();
         #[cfg(test)]
         let adapter = if should_force_failure() {

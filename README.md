@@ -160,6 +160,20 @@ whether discovery should be enabled:
 - **Empty Parquet output**: Confirm the caller supplies the sampled discovery
   dataset and that each record bundles observations, activations, and errors for
   the same training index.
+- **XDG_RUNTIME_DIR warnings on Linux**: The library automatically sets
+  `XDG_RUNTIME_DIR` to a temporary directory if it's not already set. This is
+  required by wgpu (WebGPU) on Linux systems using Wayland. The warnings are
+  harmless and the library handles this automatically. On macOS, this variable
+  is not needed.
+- **Out of memory errors**: If the Deno process is killed due to memory
+  exhaustion, increase the `--max-old-space-size` flag. For example:
+  `--v8-flags=--max-old-space-size=16384` for 16GB. The Rust library itself is
+  memory-efficient and streams data from Parquet files, but the TypeScript
+  controller may need more memory for large datasets.
+- **Analysis timeout**: The analysis phase has a default 10-minute timeout when
+  `analysis_deadline_ms` is not provided. If a timeout is explicitly provided
+  but is less than 3 seconds or greater than 1 hour, it will be clamped to the
+  10-minute default with a warning message.
 
 ## Existing reference material
 
