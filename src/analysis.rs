@@ -25,9 +25,10 @@ const WORKGROUP_SIZE: u32 = 256;
 const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 /// Number of GPU operations to batch together for better utilisation.
 /// Apple Silicon's Unified Memory Architecture (UMA) eliminates CPU-GPU copy overhead,
-/// allowing larger batches without memory transfer penalty. 256 is tuned for M1/M2/M3/M4
-/// to maximise GPU occupancy while keeping memory usage reasonable.
-const GPU_BATCH_SIZE: usize = 256;
+/// allowing larger batches without memory transfer penalty. 512 is tuned for M3/M4
+/// which have more GPU cores than earlier chips. Larger batches improve GPU occupancy
+/// by reducing per-batch overhead and keeping the GPU busy longer.
+const GPU_BATCH_SIZE: usize = 512;
 
 fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
     // Treat deadline_ms as a relative duration (milliseconds from now), not an absolute timestamp.
@@ -36,12 +37,6 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
     // If the calling code passes an absolute timestamp, we need to convert it to a relative duration.
     // If None is passed, apply default 10 minute timeout to prevent runaway analysis.
     const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes (10 * 60 * 1000)
-
-    // Log the received timeout value for debugging (note: value may be an absolute timestamp)
-    match deadline_ms {
-        None => eprintln!("[NEAT-AI-Discovery] build_deadline: Received None, using default 10 minute timeout (600000 ms)"),
-        Some(ms) => eprintln!("[NEAT-AI-Discovery] build_deadline: Received analysis_deadline_ms={ms}"),
-    }
 
     let target_ms = deadline_ms.unwrap_or(DEFAULT_DURATION_MS);
 
@@ -53,7 +48,6 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
 
         let relative_ms = if target_ms < YEAR_2000_MS {
             // Small value - treat as relative duration (milliseconds from now)
-            eprintln!("[NEAT-AI-Discovery] build_deadline: Treating {target_ms} ms as relative duration");
             target_ms
         } else {
             // Large value - likely an absolute timestamp from calling code.
@@ -63,25 +57,19 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
                 .ok()?
                 .as_millis() as u64;
 
-            eprintln!("[NEAT-AI-Discovery] build_deadline: Treating {target_ms} ms as absolute timestamp (now={now_ms} ms)");
-
             // If the timestamp is in the past, return None (deadline already passed)
             if target_ms <= now_ms {
-                eprintln!("[NEAT-AI-Discovery] build_deadline: WARNING - Absolute timestamp {target_ms} is in the past (now={now_ms}), returning None");
                 return None;
             }
 
             // Calculate relative duration
-            let relative = target_ms - now_ms;
-            eprintln!("[NEAT-AI-Discovery] build_deadline: Converted absolute timestamp to relative duration: {} ms ({:.1} minutes)", relative, relative as f64 / 60_000.0);
-            relative
+            target_ms - now_ms
         };
 
         // Validate duration bounds: minimum 3 seconds, maximum 1 hour
         // If invalid, default to 10 minutes (expected typical value)
         const MIN_DURATION_MS: u64 = 3_000; // 3 seconds
         const MAX_DURATION_MS: u64 = 3_600_000; // 1 hour (60 * 60 * 1000)
-        // Note: DEFAULT_DURATION_MS is defined at function scope above
 
         let validated_ms = if relative_ms < MIN_DURATION_MS {
             eprintln!(
@@ -99,16 +87,7 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
             relative_ms
         };
 
-        let deadline = SystemTime::now().checked_add(Duration::from_millis(validated_ms));
-        if let Some(deadline_time) = deadline {
-            let deadline_duration = deadline_time.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO);
-            let duration_ms = deadline_duration.as_millis();
-            eprintln!("[NEAT-AI-Discovery] build_deadline: Final deadline set to {} ms ({:.1} minutes) from now", 
-                duration_ms, deadline_duration.as_secs_f64() / 60.0);
-        } else {
-            eprintln!("[NEAT-AI-Discovery] build_deadline: WARNING - Failed to calculate deadline (overflow)");
-        }
-        deadline
+        SystemTime::now().checked_add(Duration::from_millis(validated_ms))
     })
 }
 
@@ -4293,55 +4272,102 @@ fn analyze_neurons_with_cache(
                 .collect();
             let mut rng = thread_rng();
             eligible_sources.shuffle(&mut rng);
-            // Vertical timeout behaviour: Once we start analysing a focus neuron, we complete
-            // ALL its upstream sources before checking the deadline again. This ensures we
-            // have complete scans of records to make sensible choices, rather than partial
-            // scans across many neurons. The deadline is checked at the start of each focus
-            // neuron, so we stop between neurons, not mid-neuron.
-            for source in eligible_sources {
+
+            // Phase 1: Pre-filter sources and collect their records (with deadline checks)
+            // This mirrors the synapse analysis approach for better parallelism
+            let mut sources_to_process: Vec<(&OrderedNeuron, Arc<Vec<DiscoverRecord>>)> =
+                Vec::with_capacity(eligible_sources.len());
+            let mut empty_record_sources: Vec<String> = Vec::new();
+
+            for source in &eligible_sources {
+                // Check deadline during pre-filtering
+                if deadline_passed(&deadline) {
+                    *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+                    break;
+                }
                 let source_uuid = source.uuid.as_str();
-                let from_records_arc = match cache.get(source_uuid) {
-                    Ok(records) => records,
+                match cache.get(source_uuid) {
+                    Ok(records) => {
+                        if !records.is_empty() {
+                            sources_to_process.push((source, records));
+                        } else {
+                            empty_record_sources.push(source_uuid.to_string());
+                        }
+                    }
                     Err(err) => {
                         if cfg!(debug_assertions) {
                             eprintln!(
                                 "Failed to load source neuron records for {source_uuid}: {err}"
                             );
                         }
-                        continue;
                     }
-                };
-                if from_records_arc.is_empty() {
-                    diagnostics
-                        .lock()
-                        .expect("Mutex poisoned: diagnostics")
-                        .record_candidate_attempt(target_uuid, false);
-                    diagnostics
-                        .lock()
-                        .expect("Mutex poisoned: diagnostics")
-                        .record_no_samples(target_uuid, source_uuid);
-                    continue;
                 }
-                let from_records = from_records_arc.as_ref();
+            }
 
-                let samples = analyzer.build_samples_gpu(target_records, from_records)?;
-                diagnostics
-                    .lock()
-                    .expect("Mutex poisoned: diagnostics")
-                    .record_candidate_attempt(target_uuid, !samples.is_empty());
-                if samples.is_empty() {
-                    diagnostics
-                        .lock()
-                        .expect("Mutex poisoned: diagnostics")
-                        .record_no_samples(target_uuid, source_uuid);
+            // Batch diagnostics for empty record sources
+            if !empty_record_sources.is_empty() {
+                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
+                for source_uuid in &empty_record_sources {
+                    diag.record_candidate_attempt(target_uuid, false);
+                    diag.record_no_samples(target_uuid, source_uuid);
+                }
+            }
+
+            // Check if timed out during pre-filtering
+            if *analysis_timed_out.lock().expect("Mutex poisoned") {
+                return Ok(());
+            }
+
+            // Phase 2: Build samples in parallel using CPU (much faster than sequential GPU calls)
+            // This is the key optimization - parallel sample building on CPU cores
+            struct NeuronWorkResult {
+                source_uuid: String,
+                samples: Vec<HelpfulSample>,
+            }
+
+            let work_results: Vec<NeuronWorkResult> = sources_to_process
+                .par_iter()
+                .map(|(source, from_records_arc)| {
+                    let source_uuid = source.uuid.as_str();
+                    let from_records = from_records_arc.as_ref();
+                    // Use CPU for sample building - enables true parallelism
+                    let samples = build_samples(target_records, from_records);
+                    NeuronWorkResult {
+                        source_uuid: source_uuid.to_string(),
+                        samples,
+                    }
+                })
+                .collect();
+
+            // Phase 3: Batch diagnostics updates for sample building results
+            {
+                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
+                for result in &work_results {
+                    diag.record_candidate_attempt(target_uuid, !result.samples.is_empty());
+                    if result.samples.is_empty() {
+                        diag.record_no_samples(target_uuid, &result.source_uuid);
+                    }
+                }
+            }
+
+            // Phase 4: Process evaluations - GPU work is done here
+            // Filter to only sources with samples, then evaluate
+            for result in work_results {
+                // Check deadline before each evaluation batch
+                if deadline_passed(&deadline) {
+                    *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+                    break;
+                }
+
+                if result.samples.is_empty() {
                     continue;
                 }
 
                 let relu_result = evaluate_relu_candidate(
                     &analyzer,
-                    source_uuid,
+                    &result.source_uuid,
                     target_uuid,
-                    &samples,
+                    &result.samples,
                     threshold,
                 )?;
 
@@ -4356,15 +4382,15 @@ fn analyze_neurons_with_cache(
                     diagnostics
                         .lock()
                         .expect("Mutex poisoned: diagnostics")
-                        .record_rejection(target_uuid, source_uuid, summary, threshold);
+                        .record_rejection(target_uuid, &result.source_uuid, summary, threshold);
                 }
 
                 for spec in ACTIVATION_SPECS.iter() {
                     if let Some(candidate) = evaluate_activation_candidate(
                         &analyzer,
-                        source_uuid,
+                        &result.source_uuid,
                         target_uuid,
-                        &samples,
+                        &result.samples,
                         threshold,
                         spec,
                     )? {

@@ -620,13 +620,7 @@ pub fn merge_discovery_parquet_internal(input_json: &str) -> Result<String> {
 pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
     let input: AnalyzeParallelInput = match serde_json::from_str::<AnalyzeParallelInput>(input_json)
     {
-        Ok(value) => {
-            // Log the received timeout value for debugging (note: value may be an absolute timestamp)
-            if let Some(ms) = value.analysis_deadline_ms {
-                eprintln!("[NEAT-AI-Discovery] analyze_parallel_internal: Received analysis_deadline_ms={ms}");
-            }
-            value
-        }
+        Ok(value) => value,
         Err(e) => {
             let output = AnalyzeParallelOutput {
                 success: false,
