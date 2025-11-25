@@ -2073,7 +2073,7 @@ impl GpuAnalyzer {
                 if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
                     let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
                     if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
-                        eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {:?}: {}", runtime_dir, e);
+                        eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {runtime_dir:?}: {e}");
                     } else {
                         // Set the environment variable for this process
                         env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
