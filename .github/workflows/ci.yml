@@ -142,11 +142,10 @@ jobs:
 
   quality:
     name: Quality Checks
-    # Allow running tests on a GPU-capable runner when available.
-    # Set the repository or organisation variable `NEAT_CI_RUNNER`
-    # to the desired runner label (for example, a GPU-enabled runner),
-    # otherwise default to the standard GitHub-hosted linux image.
-    runs-on: ${{ vars.NEAT_CI_RUNNER || 'ubuntu-latest' }}
+    # GPU REQUIRED: This library uses GPU acceleration for discovery analysis.
+    # Tests will fail without GPU access. Use a self-hosted runner with GPU
+    # or configure NEAT_CI_RUNNER to point to a GPU-enabled runner.
+    runs-on: ${{ vars.NEAT_CI_RUNNER || fromJSON('["self-hosted", "gpu"]') }}
     needs: [version-increment, auto-format]
     env:
       RUSTFLAGS: "-D warnings"
