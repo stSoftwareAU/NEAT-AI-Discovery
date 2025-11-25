@@ -92,6 +92,16 @@ _require_tools() {
     echo "ERROR: rustup installation appears incomplete. Please check Rust installation." >&2
     exit 1
   }
+  
+  # Ensure a default toolchain is set (required for cargo to work)
+  # Check if cargo can run (which requires a default toolchain)
+  if ! cargo --version >/dev/null 2>&1; then
+    echo "No default Rust toolchain configured. Setting default to stable..." >&2
+    rustup default stable >&2 || {
+      echo "ERROR: Failed to set default Rust toolchain. Please run 'rustup default stable' manually." >&2
+      exit 1
+    }
+  fi
 }
 
 # Must be run from the crate dir (where Cargo.toml lives).
