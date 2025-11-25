@@ -4852,7 +4852,7 @@ fn analyze_synapses_with_cache(
             // Build samples on CPU (fast hashmap matching, no GPU sync overhead)
             // This enables parallel sample building for better throughput
             let source_results: Vec<SourceWorkResult> = sources_to_process
-                .iter()
+                .par_iter()
                 .map(|(source, from_records_arc)| {
                     let source_uuid = source.uuid.as_str();
                     let from_records = from_records_arc.as_ref();
