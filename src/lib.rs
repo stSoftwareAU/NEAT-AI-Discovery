@@ -621,10 +621,9 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
     let input: AnalyzeParallelInput = match serde_json::from_str::<AnalyzeParallelInput>(input_json)
     {
         Ok(value) => {
-            // Log the received timeout value for debugging
-            match value.analysis_deadline_ms {
-                None => eprintln!("[NEAT-AI-Discovery] analyze_parallel_internal: Received analysis_deadline_ms=None"),
-                Some(ms) => eprintln!("[NEAT-AI-Discovery] analyze_parallel_internal: Received analysis_deadline_ms={} ({:.1} minutes)", ms, ms as f64 / 60_000.0),
+            // Log the received timeout value for debugging (note: value may be an absolute timestamp)
+            if let Some(ms) = value.analysis_deadline_ms {
+                eprintln!("[NEAT-AI-Discovery] analyze_parallel_internal: Received analysis_deadline_ms={ms}");
             }
             value
         }
@@ -939,10 +938,11 @@ pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut 
 
     let output = match serde_json::from_str::<AnalyzeSynapsesInput>(input_str) {
         Ok(input) => {
-            // Log the received timeout value for debugging
-            match input.analysis_deadline_ms {
-                None => eprintln!("[NEAT-AI-Discovery] analyze_synapses FFI: Received analysis_deadline_ms=None"),
-                Some(ms) => eprintln!("[NEAT-AI-Discovery] analyze_synapses FFI: Received analysis_deadline_ms={} ({:.1} minutes)", ms, ms as f64 / 60_000.0),
+            // Log the received timeout value for debugging (note: value may be an absolute timestamp)
+            if let Some(ms) = input.analysis_deadline_ms {
+                eprintln!(
+                    "[NEAT-AI-Discovery] analyze_synapses FFI: Received analysis_deadline_ms={ms}"
+                );
             }
             match analysis::analyze_synapses(&input) {
                 Ok(result) => AnalyzeSynapsesOutput {
@@ -1107,10 +1107,11 @@ pub extern "C" fn analyze_neurons(input_json: *const std::ffi::c_char) -> *mut s
 
     let output = match serde_json::from_str::<AnalyzeNeuronsInput>(input_str) {
         Ok(input) => {
-            // Log the received timeout value for debugging
-            match input.analysis_deadline_ms {
-                None => eprintln!("[NEAT-AI-Discovery] analyze_neurons FFI: Received analysis_deadline_ms=None"),
-                Some(ms) => eprintln!("[NEAT-AI-Discovery] analyze_neurons FFI: Received analysis_deadline_ms={} ({:.1} minutes)", ms, ms as f64 / 60_000.0),
+            // Log the received timeout value for debugging (note: value may be an absolute timestamp)
+            if let Some(ms) = input.analysis_deadline_ms {
+                eprintln!(
+                    "[NEAT-AI-Discovery] analyze_neurons FFI: Received analysis_deadline_ms={ms}"
+                );
             }
             match analysis::analyze_neurons(&input) {
                 Ok(result) => AnalyzeNeuronsOutput {

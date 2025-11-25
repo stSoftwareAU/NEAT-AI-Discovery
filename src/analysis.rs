@@ -37,10 +37,10 @@ fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
     // If None is passed, apply default 10 minute timeout to prevent runaway analysis.
     const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes (10 * 60 * 1000)
 
-    // Log the received timeout value for debugging
+    // Log the received timeout value for debugging (note: value may be an absolute timestamp)
     match deadline_ms {
         None => eprintln!("[NEAT-AI-Discovery] build_deadline: Received None, using default 10 minute timeout (600000 ms)"),
-        Some(ms) => eprintln!("[NEAT-AI-Discovery] build_deadline: Received analysis_deadline_ms={} ({:.1} minutes)", ms, ms as f64 / 60_000.0),
+        Some(ms) => eprintln!("[NEAT-AI-Discovery] build_deadline: Received analysis_deadline_ms={ms}"),
     }
 
     let target_ms = deadline_ms.unwrap_or(DEFAULT_DURATION_MS);
