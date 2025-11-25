@@ -484,7 +484,6 @@ fn test_analyze_neurons_returns_non_zero_bias() {
         focus_neurons: vec!["output-0".to_string()],
         improvement_threshold: Some(0.01), // Lower threshold to increase chances of finding candidates
         max_candidates: Some(10),
-        require_gpu: Some(false), // Use CPU for consistent test results
         analysis_deadline_ms: None,
     };
 
@@ -578,7 +577,6 @@ fn test_bias_values_are_activation_specific() {
         focus_neurons: vec!["output-0".to_string()],
         improvement_threshold: Some(0.01),
         max_candidates: Some(50), // Request many candidates to get variety
-        require_gpu: Some(false),
         analysis_deadline_ms: None,
     };
 
@@ -689,7 +687,6 @@ fn test_bias_improves_neuron_performance() {
         focus_neurons: vec!["output-0".to_string()],
         improvement_threshold: Some(0.01),
         max_candidates: Some(10),
-        require_gpu: Some(false),
         analysis_deadline_ms: None,
     };
 
