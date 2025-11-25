@@ -5179,7 +5179,8 @@ mod tests_synapses {
 
     #[test]
     fn deadline_passed_detects_elapsed_wall_clock_deadline() {
-        skip_if_no_gpu!();
+        // Note: This test does NOT require GPU - it only tests the deadline_passed
+        // function which performs simple time comparisons. Do not add skip_if_no_gpu!()
         // Use the deadline override mechanism in tests so behaviour is deterministic
         let _guard = deadline_override::DeadlineOverrideGuard::with_sequence(vec![true, false]);
 
