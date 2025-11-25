@@ -423,6 +423,7 @@ fn test_impact_calculation_with_multiple_incoming_connections() {
 /// Test that analyze_neurons returns non-zero bias values for neuron candidates
 #[test]
 fn test_analyze_neurons_returns_non_zero_bias() {
+    skip_without_gpu!();
     use neat_ai_discovery::AnalyzeNeuronsInput;
 
     let temp_dir = TempDir::new().unwrap();
@@ -520,6 +521,7 @@ fn test_analyze_neurons_returns_non_zero_bias() {
 /// Test that bias values are activation-function-specific
 #[test]
 fn test_bias_values_are_activation_specific() {
+    skip_without_gpu!();
     use neat_ai_discovery::AnalyzeNeuronsInput;
 
     let temp_dir = TempDir::new().unwrap();
@@ -629,6 +631,7 @@ fn test_bias_values_are_activation_specific() {
 /// Test that neurons with calculated bias improve error more than bias=0
 #[test]
 fn test_bias_improves_neuron_performance() {
+    skip_without_gpu!();
     use neat_ai_discovery::AnalyzeNeuronsInput;
 
     let temp_dir = TempDir::new().unwrap();

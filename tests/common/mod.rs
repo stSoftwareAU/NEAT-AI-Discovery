@@ -11,3 +11,15 @@ pub fn test_data_dir() -> PathBuf {
     path.push("data");
     path
 }
+
+/// Macro to skip tests that require a GPU when no GPU is available.
+/// Place this at the start of any test that calls GPU-accelerated analysis functions.
+#[macro_export]
+macro_rules! skip_without_gpu {
+    () => {
+        if !neat_ai_discovery::analysis::GpuAnalyzer::gpu_is_available() {
+            eprintln!("Skipping test: no GPU available");
+            return;
+        }
+    };
+}
