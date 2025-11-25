@@ -98,20 +98,6 @@ pub struct RecordDiscoveryOutput {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalyzeSynapsesInput {
-    pub parquet_file: String,
-    pub creature: CreatureJson,
-    pub focus_neurons: Vec<String>,
-    #[serde(default)]
-    pub improvement_threshold: Option<f32>,
-    #[serde(default)]
-    pub max_candidates: Option<usize>,
-    #[serde(default)]
-    pub analysis_deadline_ms: Option<u64>,
-}
-
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CandidateSynapseJson {
@@ -138,36 +124,6 @@ pub struct NeuronStatsJson {
     pub activation_max: f32,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalyzeSynapsesOutput {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gpu_used: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub helpful_synapses: Option<Vec<CandidateSynapseJson>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub harmful_synapses: Option<Vec<CandidateSynapseJson>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostics: Option<Vec<SynapseDiagnosticJson>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalyzeNeuronsInput {
-    pub parquet_file: String,
-    pub creature: CreatureJson,
-    pub focus_neurons: Vec<String>,
-    #[serde(default)]
-    pub improvement_threshold: Option<f32>,
-    #[serde(default)]
-    pub max_candidates: Option<usize>,
-    #[serde(default)]
-    pub analysis_deadline_ms: Option<u64>,
-}
-
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CandidateNeuronJson {
@@ -182,54 +138,6 @@ pub struct CandidateNeuronJson {
     pub total_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_neuron_stats: Option<NeuronStatsJson>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalyzeNeuronsOutput {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gpu_used: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub helpful_neurons: Option<Vec<CandidateNeuronJson>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostics: Option<Vec<NeuronDiagnosticJson>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalyzeAllInput {
-    pub parquet_file: String,
-    pub creature: CreatureJson,
-    pub focus_neurons: Vec<String>,
-    #[serde(default)]
-    pub improvement_threshold: Option<f32>,
-    #[serde(default)]
-    pub harmful_threshold: Option<f32>,
-    #[serde(default)]
-    pub max_synapse_candidates: Option<usize>,
-    #[serde(default)]
-    pub max_neuron_candidates: Option<usize>,
-    #[serde(default)]
-    pub analysis_deadline_ms: Option<u64>,
-    #[serde(default)]
-    pub include_synapse_analysis: Option<bool>,
-    #[serde(default)]
-    pub include_neuron_analysis: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalyzeAllOutput {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub synapse: Option<AnalyzeSynapsesOutput>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub neuron: Option<AnalyzeNeuronsOutput>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -270,6 +178,59 @@ pub struct AnalyzeParallelOutput {
     pub neuron_gpu_used: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// Internal input structure for synapse analysis (used by analyze_all)
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeSynapsesInput {
+    pub parquet_file: String,
+    pub creature: CreatureJson,
+    pub focus_neurons: Vec<String>,
+    #[serde(default)]
+    pub improvement_threshold: Option<f32>,
+    #[serde(default)]
+    pub max_candidates: Option<usize>,
+    #[serde(default)]
+    pub analysis_deadline_ms: Option<u64>,
+}
+
+/// Internal input structure for neuron analysis (used by analyze_all)
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeNeuronsInput {
+    pub parquet_file: String,
+    pub creature: CreatureJson,
+    pub focus_neurons: Vec<String>,
+    #[serde(default)]
+    pub improvement_threshold: Option<f32>,
+    #[serde(default)]
+    pub max_candidates: Option<usize>,
+    #[serde(default)]
+    pub analysis_deadline_ms: Option<u64>,
+}
+
+/// Internal input structure for combined analysis (used by analyze_parallel)
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeAllInput {
+    pub parquet_file: String,
+    pub creature: CreatureJson,
+    pub focus_neurons: Vec<String>,
+    #[serde(default)]
+    pub improvement_threshold: Option<f32>,
+    #[serde(default)]
+    pub harmful_threshold: Option<f32>,
+    #[serde(default)]
+    pub max_synapse_candidates: Option<usize>,
+    #[serde(default)]
+    pub max_neuron_candidates: Option<usize>,
+    #[serde(default)]
+    pub analysis_deadline_ms: Option<u64>,
+    #[serde(default)]
+    pub include_synapse_analysis: Option<bool>,
+    #[serde(default)]
+    pub include_neuron_analysis: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -771,45 +732,64 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
-    log_version_once();
     use std::ffi::{CStr, CString};
+    use std::panic;
 
-    // Read input C string
-    let input_str = unsafe {
-        if input_json.is_null() {
-            let error = r#"{"success":false,"error":"Null input pointer"}"#;
-            return CString::new(error).unwrap().into_raw();
-        }
-        match CStr::from_ptr(input_json).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
-                return CString::new(error).unwrap().into_raw();
+    // Catch any panics to prevent unwinding across FFI boundary
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        log_version_once();
+
+        // Read input C string
+        let input_str = unsafe {
+            if input_json.is_null() {
+                return r#"{"success":false,"error":"Null input pointer"}"#.to_string();
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    return r#"{"success":false,"error":"Invalid UTF-8 in input"}"#.to_string();
+                }
+            }
+        };
+
+        // Call the Rust function with original string
+        match record_discovery_internal(input_str) {
+            Ok(json) => json,
+            Err(e) => {
+                // Properly serialize error message to avoid JSON injection issues
+                let output = RecordDiscoveryOutput {
+                    success: false,
+                    temp_dir: None,
+                    file: None,
+                    error: Some(e.to_string()),
+                };
+                serde_json::to_string(&output).unwrap_or_else(|_| {
+                    // Fallback if serialization fails (shouldn't happen)
+                    r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
+                })
             }
         }
-    };
+    }));
 
-    // Call the Rust function with original string
-    let result = match record_discovery_internal(input_str) {
+    let json_result = match result {
         Ok(json) => json,
-        Err(e) => {
-            // Properly serialize error message to avoid JSON injection issues
-            let output = RecordDiscoveryOutput {
-                success: false,
-                temp_dir: None,
-                file: None,
-                error: Some(e.to_string()),
+        Err(panic_info) => {
+            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic".to_string()
             };
-            let error_json = serde_json::to_string(&output).unwrap_or_else(|_| {
-                // Fallback if serialization fails (shouldn't happen)
-                r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
-            });
-            return CString::new(error_json).unwrap().into_raw();
+            format!(
+                "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
+                msg.replace('\\', "\\\\").replace('"', "\\\"")
+            )
         }
     };
 
     // Return as C string
-    match CString::new(result) {
+    match CString::new(json_result) {
         Ok(c_string) => c_string.into_raw(),
         Err(_) => {
             let error = r#"{"success":false,"error":"Failed to create output string"}"#;
@@ -823,38 +803,58 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
 pub extern "C" fn merge_discovery_parquet(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    log_version_once();
     use std::ffi::{CStr, CString};
+    use std::panic;
 
-    let input_str = unsafe {
-        if input_json.is_null() {
-            let error = r#"{"success":false,"error":"Null input pointer"}"#;
-            return CString::new(error).unwrap().into_raw();
-        }
-        match CStr::from_ptr(input_json).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
-                return CString::new(error).unwrap().into_raw();
+    // Catch any panics to prevent unwinding across FFI boundary
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        log_version_once();
+
+        let input_str = unsafe {
+            if input_json.is_null() {
+                return r#"{"success":false,"error":"Null input pointer"}"#.to_string();
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    return r#"{"success":false,"error":"Invalid UTF-8 in input"}"#.to_string();
+                }
+            }
+        };
+
+        match merge_discovery_parquet_internal(input_str) {
+            Ok(json) => json,
+            Err(e) => {
+                let output = MergeParquetOutput {
+                    success: false,
+                    output_file: None,
+                    error: Some(e.to_string()),
+                };
+                serde_json::to_string(&output).unwrap_or_else(|_| {
+                    r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
+                })
             }
         }
-    };
+    }));
 
-    let result = match merge_discovery_parquet_internal(input_str) {
+    let json_result = match result {
         Ok(json) => json,
-        Err(e) => {
-            let output = MergeParquetOutput {
-                success: false,
-                output_file: None,
-                error: Some(e.to_string()),
+        Err(panic_info) => {
+            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic".to_string()
             };
-            serde_json::to_string(&output).unwrap_or_else(|_| {
-                r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
-            })
+            format!(
+                "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
+                msg.replace('\\', "\\\\").replace('"', "\\\"")
+            )
         }
     };
 
-    match CString::new(result) {
+    match CString::new(json_result) {
         Ok(c_string) => c_string.into_raw(),
         Err(_) => {
             let error = r#"{"success":false,"error":"Failed to create output string"}"#;
@@ -866,118 +866,63 @@ pub extern "C" fn merge_discovery_parquet(
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
-    log_version_once();
     use std::ffi::{CStr, CString};
+    use std::panic;
 
-    let input_str = unsafe {
-        if input_json.is_null() {
-            let error = r#"{"success":false,"error":"Null input pointer"}"#;
-            return CString::new(error).unwrap().into_raw();
-        }
-        match CStr::from_ptr(input_json).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
-                return CString::new(error).unwrap().into_raw();
+    // Catch any panics to prevent unwinding across FFI boundary
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        log_version_once();
+
+        let input_str = unsafe {
+            if input_json.is_null() {
+                return r#"{"success":false,"error":"Null input pointer"}"#.to_string();
             }
-        }
-    };
-
-    let result = match rank_focus_neurons_internal(input_str) {
-        Ok(json) => json,
-        Err(e) => {
-            let output = RankFocusNeuronsOutput {
-                success: false,
-                neurons: None,
-                max_output_error: None,
-                processed_neurons: None,
-                total_neurons: None,
-                duration_ms: None,
-                error: Some(e.to_string()),
-            };
-            serde_json::to_string(&output).unwrap_or_else(|_| {
-                r#"{"success":false,"error":"Failed to serialize output"}"#.to_string()
-            })
-        }
-    };
-
-    match CString::new(result) {
-        Ok(c_string) => c_string.into_raw(),
-        Err(_) => {
-            let error = r#"{"success":false,"error":"Failed to create output string"}"#;
-            CString::new(error).unwrap().into_raw()
-        }
-    }
-}
-
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
-pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
-    log_version_once();
-    use std::ffi::{CStr, CString};
-
-    let input_str = unsafe {
-        if input_json.is_null() {
-            let error = r#"{"success":false,"error":"Null input pointer"}"#;
-            return CString::new(error).unwrap().into_raw();
-        }
-        match CStr::from_ptr(input_json).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
-                return CString::new(error).unwrap().into_raw();
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    return r#"{"success":false,"error":"Invalid UTF-8 in input"}"#.to_string();
+                }
             }
-        }
-    };
+        };
 
-    let output = match serde_json::from_str::<AnalyzeSynapsesInput>(input_str) {
-        Ok(input) => {
-            // Log the received timeout value for debugging (note: value may be an absolute timestamp)
-            if let Some(ms) = input.analysis_deadline_ms {
-                eprintln!(
-                    "[NEAT-AI-Discovery] analyze_synapses FFI: Received analysis_deadline_ms={ms}"
-                );
-            }
-            match analysis::analyze_synapses(&input) {
-                Ok(result) => AnalyzeSynapsesOutput {
-                    success: true,
-                    gpu_used: Some(result.gpu_used),
-                    helpful_synapses: Some(result.helpful_synapses),
-                    harmful_synapses: Some(result.harmful_synapses),
-                    diagnostics: synapse_diagnostics_json(&result.no_candidate_reasons),
-                    error: None,
-                },
-                Err(e) => AnalyzeSynapsesOutput {
+        match rank_focus_neurons_internal(input_str) {
+            Ok(json) => json,
+            Err(e) => {
+                let output = RankFocusNeuronsOutput {
                     success: false,
-                    gpu_used: None,
-                    helpful_synapses: None,
-                    harmful_synapses: None,
-                    diagnostics: None,
+                    neurons: None,
+                    max_output_error: None,
+                    processed_neurons: None,
+                    total_neurons: None,
+                    duration_ms: None,
                     error: Some(e.to_string()),
-                },
+                };
+                serde_json::to_string(&output).unwrap_or_else(|_| {
+                    r#"{"success":false,"error":"Failed to serialize output"}"#.to_string()
+                })
             }
         }
-        Err(e) => AnalyzeSynapsesOutput {
-            success: false,
-            gpu_used: None,
-            helpful_synapses: None,
-            harmful_synapses: None,
-            diagnostics: None,
-            error: Some(format!("Failed to parse input JSON: {e}")),
-        },
-    };
+    }));
 
-    let json = match serde_json::to_string(&output) {
+    let json_result = match result {
         Ok(json) => json,
-        Err(e) => {
-            let fallback =
-                format!("{{\"success\":false,\"error\":\"Failed to serialize output: {e}\"}}");
-            return CString::new(fallback).unwrap().into_raw();
+        Err(panic_info) => {
+            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic".to_string()
+            };
+            format!(
+                "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
+                msg.replace('\\', "\\\\").replace('"', "\\\"")
+            )
         }
     };
 
-    match CString::new(json) {
-        Ok(result) => result.into_raw(),
+    match CString::new(json_result) {
+        Ok(c_string) => c_string.into_raw(),
         Err(_) => {
             let error = r#"{"success":false,"error":"Failed to create output string"}"#;
             CString::new(error).unwrap().into_raw()
@@ -988,33 +933,51 @@ pub extern "C" fn analyze_synapses(input_json: *const std::ffi::c_char) -> *mut 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
-    log_version_once();
     use std::ffi::{CStr, CString};
+    use std::panic;
 
-    let input_str = unsafe {
-        if input_json.is_null() {
-            let error = r#"{"success":false,"error":"Null input pointer"}"#;
-            return CString::new(error).unwrap().into_raw();
-        }
-        match CStr::from_ptr(input_json).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
-                return CString::new(error).unwrap().into_raw();
+    // Catch any panics to prevent unwinding across FFI boundary
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        log_version_once();
+
+        let input_str = unsafe {
+            if input_json.is_null() {
+                return r#"{"success":false,"error":"Null input pointer"}"#.to_string();
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    return r#"{"success":false,"error":"Invalid UTF-8 in input"}"#.to_string();
+                }
+            }
+        };
+
+        match analyze_parallel_internal(input_str) {
+            Ok(json) => json,
+            Err(e) => {
+                format!("{{\"success\":false,\"error\":\"Failed to serialize output: {e}\"}}")
             }
         }
-    };
+    }));
 
-    let result = match analyze_parallel_internal(input_str) {
+    let json_result = match result {
         Ok(json) => json,
-        Err(e) => {
-            let fallback =
-                format!("{{\"success\":false,\"error\":\"Failed to serialize output: {e}\"}}");
-            fallback
+        Err(panic_info) => {
+            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic".to_string()
+            };
+            format!(
+                "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
+                msg.replace('\\', "\\\\").replace('"', "\\\"")
+            )
         }
     };
 
-    match CString::new(result) {
+    match CString::new(json_result) {
         Ok(c_string) => c_string.into_raw(),
         Err(_) => {
             let error = r#"{"success":false,"error":"Failed to create output string"}"#;
@@ -1025,20 +988,41 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
 
 #[no_mangle]
 pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
-    log_version_once();
     use std::ffi::CString;
+    use std::panic;
 
-    let result = match check_gpu_available_internal() {
+    // Catch any panics to prevent unwinding across FFI boundary
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        log_version_once();
+
+        match check_gpu_available_internal() {
+            Ok(json) => json,
+            Err(e) => {
+                format!(
+                    "{{\"success\":false,\"gpuAvailable\":false,\"error\":\"Failed to probe GPU: {e}\"}}"
+                )
+            }
+        }
+    }));
+
+    let json_result = match result {
         Ok(json) => json,
-        Err(e) => {
-            let fallback = format!(
-                "{{\"success\":false,\"gpuAvailable\":false,\"error\":\"Failed to probe GPU: {e}\"}}"
-            );
-            fallback
+        Err(panic_info) => {
+            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic".to_string()
+            };
+            format!(
+                "{{\"success\":false,\"gpuAvailable\":false,\"error\":\"Internal panic caught: {}\"}}",
+                msg.replace('\\', "\\\\").replace('"', "\\\"")
+            )
         }
     };
 
-    match CString::new(result) {
+    match CString::new(json_result) {
         Ok(c_string) => c_string.into_raw(),
         Err(_) => {
             let error = r#"{"success":false,"gpuAvailable":false,"error":"Failed to create output string"}"#;
@@ -1056,165 +1040,45 @@ pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
 /// The returned pointer must be freed using free_discovery_result
 #[no_mangle]
 pub extern "C" fn get_library_version() -> *mut std::ffi::c_char {
-    log_version_once();
     use std::ffi::CString;
+    use std::panic;
 
-    let result = match get_library_version_internal() {
+    // Catch any panics to prevent unwinding across FFI boundary
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        log_version_once();
+
+        match get_library_version_internal() {
+            Ok(json) => json,
+            Err(e) => {
+                format!(
+                    "{{\"success\":false,\"version\":\"\",\"error\":\"Failed to get version: {e}\"}}"
+                )
+            }
+        }
+    }));
+
+    let json_result = match result {
         Ok(json) => json,
-        Err(e) => {
-            let fallback = format!(
-                "{{\"success\":false,\"version\":\"\",\"error\":\"Failed to get version: {e}\"}}"
-            );
-            fallback
+        Err(panic_info) => {
+            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic".to_string()
+            };
+            format!(
+                "{{\"success\":false,\"version\":\"\",\"error\":\"Internal panic caught: {}\"}}",
+                msg.replace('\\', "\\\\").replace('"', "\\\"")
+            )
         }
     };
 
-    match CString::new(result) {
+    match CString::new(json_result) {
         Ok(c_string) => c_string.into_raw(),
         Err(_) => {
             let error =
                 r#"{"success":false,"version":"","error":"Failed to create output string"}"#;
-            CString::new(error).unwrap().into_raw()
-        }
-    }
-}
-
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
-pub extern "C" fn analyze_neurons(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
-    log_version_once();
-    use std::ffi::{CStr, CString};
-
-    let input_str = unsafe {
-        if input_json.is_null() {
-            let error = r#"{"success":false,"error":"Null input pointer"}"#;
-            return CString::new(error).unwrap().into_raw();
-        }
-        match CStr::from_ptr(input_json).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
-                return CString::new(error).unwrap().into_raw();
-            }
-        }
-    };
-
-    let output = match serde_json::from_str::<AnalyzeNeuronsInput>(input_str) {
-        Ok(input) => {
-            // Log the received timeout value for debugging (note: value may be an absolute timestamp)
-            if let Some(ms) = input.analysis_deadline_ms {
-                eprintln!(
-                    "[NEAT-AI-Discovery] analyze_neurons FFI: Received analysis_deadline_ms={ms}"
-                );
-            }
-            match analysis::analyze_neurons(&input) {
-                Ok(result) => AnalyzeNeuronsOutput {
-                    success: true,
-                    gpu_used: Some(result.gpu_used),
-                    helpful_neurons: Some(result.helpful_neurons),
-                    diagnostics: neuron_diagnostics_json(&result.no_candidate_reasons),
-                    error: None,
-                },
-                Err(e) => AnalyzeNeuronsOutput {
-                    success: false,
-                    gpu_used: None,
-                    helpful_neurons: None,
-                    diagnostics: None,
-                    error: Some(e.to_string()),
-                },
-            }
-        }
-        Err(e) => AnalyzeNeuronsOutput {
-            success: false,
-            gpu_used: None,
-            helpful_neurons: None,
-            diagnostics: None,
-            error: Some(format!("Failed to parse input JSON: {e}")),
-        },
-    };
-
-    let json = match serde_json::to_string(&output) {
-        Ok(json) => json,
-        Err(e) => {
-            let fallback =
-                format!("{{\"success\":false,\"error\":\"Failed to serialize output: {e}\"}}");
-            return CString::new(fallback).unwrap().into_raw();
-        }
-    };
-
-    match CString::new(json) {
-        Ok(result) => result.into_raw(),
-        Err(_) => {
-            let error = r#"{"success":false,"error":"Failed to create output string"}"#;
-            CString::new(error).unwrap().into_raw()
-        }
-    }
-}
-
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
-pub extern "C" fn analyze_all(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
-    log_version_once();
-    use std::ffi::{CStr, CString};
-
-    let input_str = unsafe {
-        if input_json.is_null() {
-            let error = r#"{"success":false,"error":"Null input pointer"}"#;
-            return CString::new(error).unwrap().into_raw();
-        }
-        match CStr::from_ptr(input_json).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
-                return CString::new(error).unwrap().into_raw();
-            }
-        }
-    };
-
-    let output = match serde_json::from_str::<AnalyzeAllInput>(input_str) {
-        Ok(input) => match analysis::analyze_all(&input) {
-            Ok(result) => AnalyzeAllOutput {
-                success: true,
-                synapse: result.synapse.map(|synapse| AnalyzeSynapsesOutput {
-                    success: true,
-                    gpu_used: Some(synapse.gpu_used),
-                    helpful_synapses: Some(synapse.helpful_synapses),
-                    harmful_synapses: Some(synapse.harmful_synapses),
-                    diagnostics: synapse_diagnostics_json(&synapse.no_candidate_reasons),
-                    error: None,
-                }),
-                neuron: result.neuron.map(|neuron| AnalyzeNeuronsOutput {
-                    success: true,
-                    gpu_used: Some(neuron.gpu_used),
-                    helpful_neurons: Some(neuron.helpful_neurons),
-                    diagnostics: neuron_diagnostics_json(&neuron.no_candidate_reasons),
-                    error: None,
-                }),
-                error: None,
-            },
-            Err(e) => AnalyzeAllOutput {
-                success: false,
-                synapse: None,
-                neuron: None,
-                error: Some(e.to_string()),
-            },
-        },
-        Err(e) => AnalyzeAllOutput {
-            success: false,
-            synapse: None,
-            neuron: None,
-            error: Some(e.to_string()),
-        },
-    };
-
-    let result = serde_json::to_string(&output).unwrap_or_else(|_| {
-        r#"{"success":false,"error":"Failed to serialize output"}"#.to_string()
-    });
-
-    match CString::new(result) {
-        Ok(c_string) => c_string.into_raw(),
-        Err(_) => {
-            let error = r#"{"success":false,"error":"Failed to create output string"}"#;
             CString::new(error).unwrap().into_raw()
         }
     }
@@ -1316,44 +1180,63 @@ pub fn read_discovery_records(input_json: &str) -> Result<String> {
 pub extern "C" fn read_discovery_records_ffi(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    log_version_once();
     use std::ffi::{CStr, CString};
+    use std::panic;
 
-    // Read input C string
-    let input_str = unsafe {
-        if input_json.is_null() {
-            let error = r#"{"success":false,"error":"Null input pointer"}"#;
-            return CString::new(error).unwrap().into_raw();
-        }
-        match CStr::from_ptr(input_json).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
-                return CString::new(error).unwrap().into_raw();
+    // Catch any panics to prevent unwinding across FFI boundary
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        log_version_once();
+
+        // Read input C string
+        let input_str = unsafe {
+            if input_json.is_null() {
+                return r#"{"success":false,"error":"Null input pointer"}"#.to_string();
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    return r#"{"success":false,"error":"Invalid UTF-8 in input"}"#.to_string();
+                }
+            }
+        };
+
+        // Call the Rust function
+        match read_discovery_records(input_str) {
+            Ok(json) => json,
+            Err(e) => {
+                // Properly serialize error message to avoid JSON injection issues
+                let output = ReadDiscoveryOutput {
+                    success: false,
+                    records: None,
+                    error: Some(e.to_string()),
+                };
+                serde_json::to_string(&output).unwrap_or_else(|_| {
+                    // Fallback if serialization fails (shouldn't happen)
+                    r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
+                })
             }
         }
-    };
+    }));
 
-    // Call the Rust function
-    let result = match read_discovery_records(input_str) {
+    let json_result = match result {
         Ok(json) => json,
-        Err(e) => {
-            // Properly serialize error message to avoid JSON injection issues
-            let output = ReadDiscoveryOutput {
-                success: false,
-                records: None,
-                error: Some(e.to_string()),
+        Err(panic_info) => {
+            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic".to_string()
             };
-            let error_json = serde_json::to_string(&output).unwrap_or_else(|_| {
-                // Fallback if serialization fails (shouldn't happen)
-                r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
-            });
-            return CString::new(error_json).unwrap().into_raw();
+            format!(
+                "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
+                msg.replace('\\', "\\\\").replace('"', "\\\"")
+            )
         }
     };
 
     // Return as C string
-    match CString::new(result) {
+    match CString::new(json_result) {
         Ok(c_string) => c_string.into_raw(),
         Err(_) => {
             let error = r#"{"success":false,"error":"Failed to create output string"}"#;
@@ -1371,11 +1254,17 @@ pub extern "C" fn read_discovery_records_ffi(
 #[no_mangle]
 pub extern "C" fn free_discovery_result(ptr: *mut std::ffi::c_char) {
     use std::ffi::CString;
-    if !ptr.is_null() {
-        unsafe {
-            let _ = CString::from_raw(ptr);
+    use std::panic;
+
+    // Catch any panics to prevent unwinding across FFI boundary
+    // This is unlikely to panic, but we protect it anyway for safety
+    let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        if !ptr.is_null() {
+            unsafe {
+                let _ = CString::from_raw(ptr);
+            }
         }
-    }
+    }));
 }
 
 #[cfg(test)]
