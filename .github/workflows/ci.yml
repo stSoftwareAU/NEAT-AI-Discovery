@@ -142,10 +142,8 @@ jobs:
 
   quality:
     name: Quality Checks
-    # Allow running tests on a GPU-capable runner when available.
-    # Set the repository or organisation variable `NEAT_CI_RUNNER`
-    # to the desired runner label (for example, a GPU-enabled runner),
-    # otherwise default to the standard GitHub-hosted linux image.
+    # GPU tests are skipped automatically when no GPU is available.
+    # Set NEAT_CI_RUNNER to a GPU-enabled runner label for full test coverage.
     runs-on: ${{ vars.NEAT_CI_RUNNER || 'ubuntu-latest' }}
     needs: [version-increment, auto-format]
     env:
