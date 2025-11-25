@@ -2092,23 +2092,14 @@ impl GpuAnalyzer {
         let adapter = match adapter {
             Some(adapter) => adapter,
             None => {
-                // Return CPU-only analyzer when GPU is not available
-                return Ok(Self {
-                    device: None,
-                    queue: None,
-                    helpful_layout: None,
-                    helpful_pipeline: None,
-                    harmful_layout: None,
-                    harmful_pipeline: None,
-                    matching_layout: None,
-                    matching_pipeline: None,
-                    relu_layout: None,
-                    relu_pipeline: None,
-                    activation_layout: None,
-                    activation_pipeline: None,
-                    bias_layout: None,
-                    bias_pipeline: None,
-                });
+                // GPU is required - return an error instead of a CPU-only analyzer.
+                // TypeScript calls check_gpu_available() before discovery, but the GPU
+                // could become unavailable due to race conditions or resource exhaustion.
+                // Returning an error here prevents panics in GPU methods that .expect() on device.
+                anyhow::bail!(
+                    "GPU adapter not available. Discovery requires GPU acceleration. \
+                     This may indicate a transient GPU resource issue - consider retrying."
+                );
             }
         };
 
@@ -2121,24 +2112,15 @@ impl GpuAnalyzer {
             None,
         )) {
             Ok(result) => result,
-            Err(_) => {
-                // Return CPU-only analyzer when GPU device creation fails
-                return Ok(Self {
-                    device: None,
-                    queue: None,
-                    helpful_layout: None,
-                    helpful_pipeline: None,
-                    harmful_layout: None,
-                    harmful_pipeline: None,
-                    matching_layout: None,
-                    matching_pipeline: None,
-                    relu_layout: None,
-                    relu_pipeline: None,
-                    activation_layout: None,
-                    activation_pipeline: None,
-                    bias_layout: None,
-                    bias_pipeline: None,
-                });
+            Err(e) => {
+                // GPU is required - return an error instead of a CPU-only analyzer.
+                // TypeScript calls check_gpu_available() before discovery, but the GPU
+                // could become unavailable due to race conditions or resource exhaustion.
+                // Returning an error here prevents panics in GPU methods that .expect() on device.
+                anyhow::bail!(
+                    "GPU device creation failed: {e}. Discovery requires GPU acceleration. \
+                     This may indicate a transient GPU resource issue - consider retrying."
+                );
             }
         };
 
