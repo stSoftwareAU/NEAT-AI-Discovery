@@ -4813,11 +4813,6 @@ fn analyze_synapses_with_cache(
                 Vec::with_capacity(eligible_sources.len());
 
             for source in &eligible_sources {
-                // Check deadline at start of each source to prevent runaway analysis
-                if deadline_passed(&deadline) {
-                    *analysis_timed_out.lock().expect("Mutex poisoned") = true;
-                    break;
-                }
                 let source_uuid = source.uuid.as_str();
 
                 if existing_synapses_arc
