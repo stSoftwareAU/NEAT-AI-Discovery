@@ -4797,9 +4797,10 @@ fn analyze_synapses_with_cache(
             }
 
             // Pre-filter sources and collect their records (cache is thread-safe)
-            // Track already-connected and load-failure counts separately
+            // Track already-connected, load-failure, and empty-record counts separately
             let mut already_connected_count = 0u32;
             let mut load_failure_count = 0u32;
+            let mut empty_record_sources: Vec<String> = Vec::new();
             let mut sources_to_process: Vec<(&OrderedNeuron, Arc<Vec<DiscoverRecord>>)> =
                 Vec::with_capacity(eligible_sources.len());
 
@@ -4818,7 +4819,8 @@ fn analyze_synapses_with_cache(
                         if !records.is_empty() {
                             sources_to_process.push((source, records));
                         } else {
-                            // Empty records - log in verbose mode
+                            // Empty records - track for diagnostics
+                            empty_record_sources.push(source_uuid.to_string());
                             let is_input_neuron = input_neuron_uuids_arc.contains(source_uuid);
                             if verbose_enabled() && !is_input_neuron {
                                 eprintln!(
@@ -4838,14 +4840,22 @@ fn analyze_synapses_with_cache(
                 };
             }
 
-            // Update diagnostics for already-connected and load failures
-            if already_connected_count > 0 || load_failure_count > 0 {
+            // Update diagnostics for already-connected, load failures, and empty records
+            if already_connected_count > 0
+                || load_failure_count > 0
+                || !empty_record_sources.is_empty()
+            {
                 let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
                 for _ in 0..already_connected_count {
                     diag.record_already_connected(target_uuid);
                 }
                 for _ in 0..load_failure_count {
                     diag.record_load_failure(target_uuid);
+                }
+                // Record diagnostics for sources with empty records (matches old sequential behaviour)
+                for source_uuid in &empty_record_sources {
+                    diag.record_candidate_attempt(target_uuid, false);
+                    diag.record_no_samples(target_uuid, source_uuid, 0);
                 }
             }
 
