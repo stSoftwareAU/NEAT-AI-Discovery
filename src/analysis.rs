@@ -5166,8 +5166,20 @@ mod tests_synapses {
     use std::time::{Duration, SystemTime};
     use tempfile::tempdir;
 
+    /// Helper macro to skip tests that require GPU when no GPU is available.
+    /// This allows tests to pass gracefully in CI environments without GPUs.
+    macro_rules! skip_if_no_gpu {
+        () => {
+            if !GpuAnalyzer::gpu_is_available() {
+                eprintln!("⚠️  Skipping test: GPU not available");
+                return;
+            }
+        };
+    }
+
     #[test]
     fn deadline_passed_detects_elapsed_wall_clock_deadline() {
+        skip_if_no_gpu!();
         // Use the deadline override mechanism in tests so behaviour is deterministic
         let _guard = deadline_override::DeadlineOverrideGuard::with_sequence(vec![true, false]);
 
@@ -5404,6 +5416,7 @@ mod tests_synapses {
 
     #[test]
     fn gpu_matching_filters_non_finite_values() {
+        skip_if_no_gpu!();
         let analyzer = GpuAnalyzer::new().expect("GPU analyser creation should succeed in tests");
 
         let huge = f32::MAX;
@@ -5434,6 +5447,7 @@ mod tests_synapses {
 
     #[test]
     fn gpu_matching_retains_legitimate_zero_samples() {
+        skip_if_no_gpu!();
         let analyzer = GpuAnalyzer::new().expect("GPU analyser creation should succeed in tests");
 
         let target_records = vec![DiscoverRecord::new(
@@ -5591,6 +5605,7 @@ mod tests_synapses {
 
     #[test]
     fn relu_evaluation_keeps_summary_and_candidate_in_sync_on_ties() {
+        skip_if_no_gpu!();
         let analyzer = GpuAnalyzer::new().expect("GPU analysis should be available");
 
         let mut samples = Vec::new();
@@ -5831,6 +5846,7 @@ mod tests_synapses {
 
     #[test]
     fn analyze_synapses_reports_eligible_sources_correctly_for_non_input_neurons() {
+        skip_if_no_gpu!();
         // Test that non-input neurons with valid creature structure always report
         // eligible sources correctly, not "no eligible sources" when sources exist
         let temp_dir = tempdir().expect("Failed to create temporary directory");
@@ -5974,6 +5990,7 @@ mod tests_synapses {
 
     #[test]
     fn analyze_synapses_reports_fully_connected_neuron_explicitly() {
+        skip_if_no_gpu!();
         // Test that a neuron connected to ALL eligible sources is explicitly reported
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
@@ -6126,6 +6143,7 @@ mod tests_synapses {
 
     #[test]
     fn analyze_synapses_reports_diagnostics_when_no_candidates() {
+        skip_if_no_gpu!();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -6185,6 +6203,7 @@ mod tests_synapses {
 
     #[test]
     fn analyze_synapses_stops_harmful_processing_after_deadline() {
+        skip_if_no_gpu!();
         let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence(vec![
             false, false, false, false, false, false, true, false, false, false,
         ]);
@@ -6295,6 +6314,7 @@ mod tests_synapses {
 
     #[test]
     fn analyze_all_runs_synapse_and_neuron_phases() {
+        skip_if_no_gpu!();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -6358,6 +6378,7 @@ mod tests_synapses {
 
     #[test]
     fn analyze_neurons_reports_diagnostics_when_no_candidates() {
+        skip_if_no_gpu!();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -6425,6 +6446,7 @@ mod tests_synapses {
 
     #[test]
     fn analyze_neurons_uses_vertical_timeout_with_randomized_order() {
+        skip_if_no_gpu!();
         use rayon::ThreadPoolBuilder;
 
         // Simulate a deadline that allows at least one focus neuron to start, but
@@ -6542,6 +6564,7 @@ mod tests_synapses {
 
     #[test]
     fn analyze_synapses_uses_vertical_timeout_with_randomized_order() {
+        skip_if_no_gpu!();
         use rayon::ThreadPoolBuilder;
 
         // Simulate a deadline that allows at least one focus neuron to start, but
@@ -6860,6 +6883,7 @@ mod tests_synapses {
     /// This verifies the fix where all positive improvements are candidates, not just those above threshold
     #[test]
     fn analyze_synapses_accepts_positive_improvements_below_threshold() {
+        skip_if_no_gpu!();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -6961,6 +6985,7 @@ mod tests_synapses {
     /// Test that non-positive improvements (<= 0.0) are still rejected
     #[test]
     fn analyze_synapses_rejects_non_positive_improvements() {
+        skip_if_no_gpu!();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
@@ -7033,6 +7058,7 @@ mod tests_synapses {
     /// Test that positive improvements above threshold are still accepted (regression test)
     #[test]
     fn analyze_synapses_accepts_positive_improvements_above_threshold() {
+        skip_if_no_gpu!();
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
         let parquet_file = parquet_path
