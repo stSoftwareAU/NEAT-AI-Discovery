@@ -207,6 +207,43 @@ fn suppress_mesa_warnings_if_requested() {
     // No-op on non-Linux platforms
 }
 
+/// Ensure XDG_RUNTIME_DIR is set on Linux (required by wgpu on Wayland).
+///
+/// This function uses `Once` for thread-safe one-time initialisation. It's safe to
+/// call from multiple threads concurrently - only the first call will set the
+/// environment variable, and subsequent calls are no-ops.
+///
+/// Must be called before any GPU initialisation (wgpu Instance creation).
+#[cfg(target_os = "linux")]
+fn ensure_xdg_runtime_dir() {
+    use std::env;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        if env::var("XDG_RUNTIME_DIR").is_err() {
+            // Create a temporary runtime directory if XDG_RUNTIME_DIR is not set
+            if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
+                let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
+                if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
+                    eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {runtime_dir:?}: {e}");
+                } else {
+                    // SAFETY: Inside Once::call_once, so guaranteed single-threaded execution.
+                    // Called before any GPU init.
+                    unsafe {
+                        env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn ensure_xdg_runtime_dir() {
+    // No-op on non-Linux platforms
+}
+
 pub struct AnalyzeSynapsesResult {
     pub helpful_synapses: Vec<CandidateSynapseJson>,
     pub harmful_synapses: Vec<CandidateSynapseJson>,
@@ -2176,21 +2213,8 @@ impl GpuAnalyzer {
         suppress_mesa_warnings_if_requested();
 
         // Set XDG_RUNTIME_DIR if not already set (required by wgpu on Linux/Wayland)
-        #[cfg(target_os = "linux")]
-        {
-            use std::env;
-            if env::var("XDG_RUNTIME_DIR").is_err() {
-                if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
-                    let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
-                    if std::fs::create_dir_all(&runtime_dir).is_ok() {
-                        // SAFETY: Called before GPU init, single-threaded context
-                        unsafe {
-                            env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
-                        }
-                    }
-                }
-            }
-        }
+        // Uses Once internally for thread-safe one-time initialisation
+        ensure_xdg_runtime_dir();
 
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -2268,25 +2292,8 @@ impl GpuAnalyzer {
         suppress_mesa_warnings_if_requested();
 
         // Set XDG_RUNTIME_DIR if not already set (required by wgpu on Linux/Wayland)
-        // This prevents "error: XDG_RUNTIME_DIR not set in the environment" warnings
-        #[cfg(target_os = "linux")]
-        {
-            use std::env;
-            if env::var("XDG_RUNTIME_DIR").is_err() {
-                // Create a temporary runtime directory if XDG_RUNTIME_DIR is not set
-                if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
-                    let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
-                    if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
-                        eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {runtime_dir:?}: {e}");
-                    } else {
-                        // SAFETY: Called before GPU init, single-threaded context
-                        unsafe {
-                            env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
-                        }
-                    }
-                }
-            }
-        }
+        // Uses Once internally for thread-safe one-time initialisation
+        ensure_xdg_runtime_dir();
 
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
