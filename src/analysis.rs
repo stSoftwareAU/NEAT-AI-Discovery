@@ -164,6 +164,86 @@ fn verbose_enabled() -> bool {
     true
 }
 
+/// Suppress Mesa/libEGL debug warnings on Linux.
+///
+/// When wgpu initialises on Linux, it probes multiple GPU backends (EGL, Vulkan, etc.).
+/// If the user lacks permission to access `/dev/dri/renderD*` or `/dev/dri/card*` devices,
+/// libEGL emits warnings like "failed to open /dev/dri/renderD128: Permission denied".
+///
+/// These warnings are often benign if wgpu finds an alternative backend (e.g., Vulkan via
+/// a different ICD loader). This function suppresses the warnings by setting environment
+/// variables that quiet Mesa's debug output.
+///
+/// Set `NEAT_AI_DISCOVERY_QUIET_GPU=1` to enable suppression.
+#[cfg(target_os = "linux")]
+fn suppress_mesa_warnings_if_requested() {
+    use std::env;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        if env::var("NEAT_AI_DISCOVERY_QUIET_GPU").is_ok() {
+            // Suppress EGL debug messages (these cause "failed to open /dev/dri/..." warnings)
+            if env::var("EGL_LOG_LEVEL").is_err() {
+                // SAFETY: single-threaded at this point (Once guard) and before GPU init
+                unsafe { env::set_var("EGL_LOG_LEVEL", "fatal") };
+            }
+
+            // Suppress Mesa GLSL shader cache warnings
+            if env::var("MESA_GLSL_CACHE_DISABLE").is_err() {
+                unsafe { env::set_var("MESA_GLSL_CACHE_DISABLE", "true") };
+            }
+
+            // Suppress general Mesa debug output
+            if env::var("MESA_DEBUG").is_err() {
+                unsafe { env::set_var("MESA_DEBUG", "silent") };
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn suppress_mesa_warnings_if_requested() {
+    // No-op on non-Linux platforms
+}
+
+/// Ensure XDG_RUNTIME_DIR is set on Linux (required by wgpu on Wayland).
+///
+/// This function uses `Once` for thread-safe one-time initialisation. It's safe to
+/// call from multiple threads concurrently - only the first call will set the
+/// environment variable, and subsequent calls are no-ops.
+///
+/// Must be called before any GPU initialisation (wgpu Instance creation).
+#[cfg(target_os = "linux")]
+fn ensure_xdg_runtime_dir() {
+    use std::env;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        if env::var("XDG_RUNTIME_DIR").is_err() {
+            // Create a temporary runtime directory if XDG_RUNTIME_DIR is not set
+            if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
+                let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
+                if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
+                    eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {runtime_dir:?}: {e}");
+                } else {
+                    // SAFETY: Inside Once::call_once, so guaranteed single-threaded execution.
+                    // Called before any GPU init.
+                    unsafe {
+                        env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn ensure_xdg_runtime_dir() {
+    // No-op on non-Linux platforms
+}
+
 pub struct AnalyzeSynapsesResult {
     pub helpful_synapses: Vec<CandidateSynapseJson>,
     pub harmful_synapses: Vec<CandidateSynapseJson>,
@@ -2097,6 +2177,16 @@ pub struct GpuAnalyzer {
     bias_pipeline: Option<wgpu::ComputePipeline>,
 }
 
+/// Result of GPU availability check with detailed diagnostics.
+pub struct GpuAvailabilityResult {
+    /// Whether a GPU is available for use.
+    pub available: bool,
+    /// Human-readable reason for the availability status.
+    pub reason: Option<String>,
+    /// Whether this is an error condition (true on macOS when GPU unavailable).
+    pub is_error: bool,
+}
+
 impl GpuAnalyzer {
     /// Lightweight probe to determine whether a usable GPU device is available.
     ///
@@ -2104,20 +2194,27 @@ impl GpuAnalyzer {
     /// enable the Rust discovery extension at all. It deliberately avoids
     /// falling back to CPU – if the adapter or device cannot be created, the
     /// probe reports `false`.
+    ///
+    /// Platform-specific behaviour:
+    /// - **macOS**: GPU should always be available (Metal). Missing GPU is an error.
+    /// - **Linux**: GPU may not be available on headless servers without GPU hardware
+    ///   or proper permissions. Missing GPU gracefully disables discovery.
     pub fn gpu_is_available() -> bool {
+        Self::check_gpu_availability().available
+    }
+
+    /// Check GPU availability with detailed diagnostics.
+    ///
+    /// Returns availability status, reason, and whether it's an error condition.
+    /// On macOS, missing GPU is treated as an error (Metal should always work).
+    /// On Linux, missing GPU gracefully disables discovery (common on headless servers).
+    pub fn check_gpu_availability() -> GpuAvailabilityResult {
+        // Suppress Mesa/libEGL warnings if requested (must be called before GPU init)
+        suppress_mesa_warnings_if_requested();
+
         // Set XDG_RUNTIME_DIR if not already set (required by wgpu on Linux/Wayland)
-        #[cfg(target_os = "linux")]
-        {
-            use std::env;
-            if env::var("XDG_RUNTIME_DIR").is_err() {
-                if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
-                    let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
-                    if std::fs::create_dir_all(&runtime_dir).is_ok() {
-                        env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
-                    }
-                }
-            }
-        }
+        // Uses Once internally for thread-safe one-time initialisation
+        ensure_xdg_runtime_dir();
 
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -2127,7 +2224,7 @@ impl GpuAnalyzer {
         }));
 
         let Some(adapter) = adapter else {
-            return false;
+            return Self::no_gpu_result("No GPU adapter found");
         };
 
         let device_result = pollster::block_on(adapter.request_device(
@@ -2139,28 +2236,64 @@ impl GpuAnalyzer {
             None,
         ));
 
-        device_result.is_ok()
+        match device_result {
+            Ok(_) => GpuAvailabilityResult {
+                available: true,
+                reason: None,
+                is_error: false,
+            },
+            Err(e) => Self::no_gpu_result(&format!("GPU device creation failed: {e}")),
+        }
+    }
+
+    /// Create a result for when GPU is not available.
+    /// On macOS this is an error; on Linux it gracefully disables discovery.
+    fn no_gpu_result(reason: &str) -> GpuAvailabilityResult {
+        #[cfg(target_os = "macos")]
+        {
+            // On macOS, Metal should always be available - missing GPU is an error
+            GpuAvailabilityResult {
+                available: false,
+                reason: Some(format!(
+                    "{reason}. On macOS, GPU (Metal) should always be available. \
+                     This may indicate a system configuration issue."
+                )),
+                is_error: true,
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            // On Linux, GPU may not be available on headless servers - gracefully disable
+            GpuAvailabilityResult {
+                available: false,
+                reason: Some(format!(
+                    "{reason}. Discovery disabled on this machine. \
+                     This is normal for headless Linux servers without GPU hardware or \
+                     without proper permissions to access /dev/dri devices."
+                )),
+                is_error: false,
+            }
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            // For other platforms, treat as non-error (graceful disable)
+            GpuAvailabilityResult {
+                available: false,
+                reason: Some(format!("{reason}. Discovery disabled on this platform.")),
+                is_error: false,
+            }
+        }
     }
 
     fn new() -> Result<Self> {
+        // Suppress Mesa/libEGL warnings if requested (must be called before GPU init)
+        suppress_mesa_warnings_if_requested();
+
         // Set XDG_RUNTIME_DIR if not already set (required by wgpu on Linux/Wayland)
-        // This prevents "error: XDG_RUNTIME_DIR not set in the environment" warnings
-        #[cfg(target_os = "linux")]
-        {
-            use std::env;
-            if env::var("XDG_RUNTIME_DIR").is_err() {
-                // Create a temporary runtime directory if XDG_RUNTIME_DIR is not set
-                if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
-                    let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
-                    if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
-                        eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {runtime_dir:?}: {e}");
-                    } else {
-                        // Set the environment variable for this process
-                        env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
-                    }
-                }
-            }
-        }
+        // Uses Once internally for thread-safe one-time initialisation
+        ensure_xdg_runtime_dir();
 
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {

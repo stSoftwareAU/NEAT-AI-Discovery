@@ -417,4 +417,6 @@ jobs:
         check_filenames: true
         check_hidden: true
         skip: "./target,./.git,./tests/data"
+        # renderD is a Linux GPU device node name (/dev/dri/renderD128), not a typo
+        ignore_words_list: renderD
 

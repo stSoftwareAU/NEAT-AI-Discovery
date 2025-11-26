@@ -138,7 +138,18 @@ whether discovery should be enabled:
   ```json
   {
     "success": true,
-    "gpuAvailable": true
+    "gpuAvailable": true,
+    "reason": null
+  }
+  ```
+
+  When GPU is unavailable, the response includes a diagnostic reason:
+
+  ```json
+  {
+    "success": true,
+    "gpuAvailable": false,
+    "reason": "No GPU adapter found. Discovery disabled on this machine..."
   }
   ```
 
@@ -149,6 +160,16 @@ whether discovery should be enabled:
 - When `"gpuAvailable"` is `true`, controllers may safely schedule discovery
   jobs. If a later GPU initialisation error occurs, the Rust side will return
   a structured error and mark the JSON `success` flag as `false`.
+
+#### Platform-specific GPU behaviour
+
+- **macOS**: GPU (Metal) should always be available. If `gpuAvailable` is
+  `false`, this is treated as an error (`success: false`) indicating a system
+  configuration issue that should be investigated.
+- **Linux**: GPU may not be available on headless servers without GPU hardware
+  or without proper permissions to access `/dev/dri` devices. If `gpuAvailable`
+  is `false`, this is **not** an error (`success: true`) - discovery is simply
+  disabled on that machine. This is normal for older headless Linux servers.
 
 ## Troubleshooting
 
@@ -165,6 +186,42 @@ whether discovery should be enabled:
   required by wgpu (WebGPU) on Linux systems using Wayland. The warnings are
   harmless and the library handles this automatically. On macOS, this variable
   is not needed.
+- **EGL/DRI permission denied warnings on Linux**: If you see warnings like
+  `libEGL warning: failed to open /dev/dri/renderD128: Permission denied` or
+  similar for `/dev/dri/card0`, the user running the process needs access to
+  the GPU device nodes. These warnings typically appear when wgpu probes for
+  available GPU backends.
+  
+  **Solutions (choose one):**
+  1. **Add user to the render/video groups** (recommended for dedicated GPU
+     access):
+     ```bash
+     sudo usermod -a -G render $USER
+     sudo usermod -a -G video $USER
+     # Log out and back in for group changes to take effect
+     ```
+  2. **Set device permissions** (temporary fix):
+     ```bash
+     sudo chmod 666 /dev/dri/renderD128 /dev/dri/card0
+     ```
+  3. **Suppress warnings** (if wgpu finds an alternative backend and discovery
+     still works): Set `NEAT_AI_DISCOVERY_QUIET_GPU=1` to suppress Mesa/libEGL
+     debug output. This sets `EGL_LOG_LEVEL=fatal` and `MESA_DEBUG=silent`
+     internally before GPU initialisation.
+  
+  **Diagnosing GPU access:**
+  ```bash
+  # Check which groups own the DRI devices
+  ls -la /dev/dri/
+  # Check your current groups
+  groups
+  # Test GPU availability directly
+  vulkaninfo --summary 2>/dev/null || echo "Vulkan not available"
+  ```
+  
+  If the warnings appear but discovery still proceeds successfully (you see
+  "Training ... with N binary file" after the warnings), wgpu has found an
+  alternative GPU backend and the warnings can be safely ignored.
 - **Out of memory errors**: If the Deno process is killed due to memory
   exhaustion, increase the `--max-old-space-size` flag. For example:
   `--v8-flags=--max-old-space-size=16384` for 16GB. The Rust library itself is
