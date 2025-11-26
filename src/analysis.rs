@@ -1838,8 +1838,14 @@ struct ActivationCandidateSpec {
 }
 
 const ORIENTATIONS_BIDIRECTIONAL: [f32; 2] = [1.0, -1.0];
-const SCALES_WIDE: [f32; 8] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
-const SCALES_SMOOTH: [f32; 8] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+/// Log-spaced scale range for incoming weights - covers multiple orders of magnitude
+/// efficiently. Evolution will fine-tune the exact values after discovery.
+/// Values roughly follow powers: 0.1, ~0.2, ~0.35, 0.5, 1.0, 2.0, 3.5, 5.0, 10.0
+/// This gives good coverage without wasting time on nearby linear values.
+const SCALES_WIDE: [f32; 9] = [0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 3.5, 5.0, 10.0];
+/// Log-spaced scales for smooth activation functions (TANH, LOGISTIC, SELU) that
+/// saturate at large inputs. Smaller max scale since large values just saturate.
+const SCALES_SMOOTH: [f32; 8] = [0.1, 0.2, 0.35, 0.5, 1.0, 1.5, 2.5, 4.0];
 
 fn gelu_activation(x: f32) -> f32 {
     let x_cubed = x * x * x;
@@ -2008,29 +2014,66 @@ const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
 ];
 
 /// Get activation-function-specific bias range (min, max, step).
+/// This is still used by the GPU bias search for compatibility.
 ///
 /// Different activation functions benefit from different bias ranges:
-/// - ReLU/ELU: Can use negative bias for thresholding (e.g., activate when input > X)
-/// - TANH/LOGISTIC: Symmetric range to shift operating point
-/// - Others: Wide range for general adjustment
-///
-/// Ranges are expanded compared to minimal version to leverage GPU parallel search
-/// and capture edge cases like negative ReLU bias for threshold shifting.
+/// - ReLU/ELU: Larger negative bias for thresholding (e.g., activate when input > X)
+/// - TANH/LOGISTIC: Wide symmetric range to shift operating point
+/// - Others: Extended range for general adjustment
 fn get_bias_range(squash: &str) -> (f32, f32, f32) {
     match squash {
-        // ReLU can benefit from negative bias for threshold shifting
-        // E.g., bias=-1.5 with weight=1.0 activates only when input > 1.5
-        "ReLU" | "ELU" | "SELU" => (-1.0, 1.0, 0.05),
+        // ReLU/ELU can benefit from larger negative bias for threshold shifting
+        "ReLU" | "ELU" | "SELU" => (-3.0, 2.0, 0.1),
         // Symmetric activation functions benefit from wider symmetric range
-        "TANH" | "LOGISTIC" => (-1.0, 1.0, 0.05),
-        // IDENTITY can use widest range as it's linear
-        "IDENTITY" => (-2.0, 2.0, 0.1),
+        "TANH" | "LOGISTIC" => (-2.5, 2.5, 0.1),
+        // IDENTITY can use widest range as it's linear - acts as offset
+        "IDENTITY" => (-5.0, 5.0, 0.2),
+        // Softplus and GELU benefit from negative bias for thresholding
+        "Softplus" | "GELU" => (-2.5, 2.0, 0.1),
         // Other activation functions get expanded range
-        "INVERSE" | "ABSOLUTE" | "CLIPPED" => (-1.0, 1.0, 0.05),
-        "GELU" | "Softplus" => (-1.0, 1.0, 0.05),
-        "BIPOLAR" => (-1.0, 1.0, 0.1),
-        _ => (-1.0, 1.0, 0.05), // More generous default
+        "INVERSE" | "ABSOLUTE" | "CLIPPED" => (-2.0, 2.0, 0.1),
+        "BIPOLAR" => (-2.0, 2.0, 0.2),
+        _ => (-2.0, 2.0, 0.1), // Generous default
     }
+}
+
+/// Get log-spaced bias values for a given activation function.
+/// Uses sinh-like spacing: denser near 0, sparser at extremes.
+/// This is more efficient than linear spacing since evolution will fine-tune
+/// the exact bias value after discovery finds a viable candidate.
+fn get_bias_values(squash: &str) -> Vec<f32> {
+    // Base log-spaced positive values (denser near 0)
+    // Roughly: 0, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0
+    let base_positive: &[f32] = match squash {
+        // ReLU/ELU: larger negative range for thresholding, moderate positive
+        "ReLU" | "ELU" | "SELU" => &[0.0, 0.1, 0.25, 0.5, 1.0, 2.0],
+        // Symmetric activations: equal positive and negative range
+        "TANH" | "LOGISTIC" => &[0.0, 0.1, 0.25, 0.5, 1.0, 1.5, 2.5],
+        // IDENTITY: widest range (pure offset)
+        "IDENTITY" => &[0.0, 0.2, 0.5, 1.0, 2.0, 3.5, 5.0],
+        // Softplus/GELU: benefit from negative thresholds
+        "Softplus" | "GELU" => &[0.0, 0.1, 0.25, 0.5, 1.0, 2.0],
+        // Others: moderate symmetric range
+        _ => &[0.0, 0.1, 0.25, 0.5, 1.0, 2.0],
+    };
+
+    let base_negative: &[f32] = match squash {
+        // ReLU/ELU: larger negative range for thresholding
+        "ReLU" | "ELU" | "SELU" => &[-0.1, -0.25, -0.5, -1.0, -1.5, -2.0, -3.0],
+        // Symmetric: mirror of positive
+        "TANH" | "LOGISTIC" => &[-0.1, -0.25, -0.5, -1.0, -1.5, -2.5],
+        // IDENTITY: widest range
+        "IDENTITY" => &[-0.2, -0.5, -1.0, -2.0, -3.5, -5.0],
+        // Softplus/GELU: need negative thresholds
+        "Softplus" | "GELU" => &[-0.1, -0.25, -0.5, -1.0, -1.5, -2.5],
+        // Others: moderate
+        _ => &[-0.1, -0.25, -0.5, -1.0, -2.0],
+    };
+
+    let mut values: Vec<f32> = base_negative.to_vec();
+    values.extend_from_slice(base_positive);
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    values
 }
 
 /// Calculate optimal bias for a neuron candidate using grid search.
@@ -2084,8 +2127,9 @@ fn calculate_optimal_bias(
         }
     }
 
-    // Sequential grid search for optimal bias
-    let (min_bias, max_bias, step) = bias_range;
+    // Use log-spaced bias values for efficient search
+    // Evolution will fine-tune the exact value after discovery
+    let bias_values = get_bias_values(squash);
 
     // Calculate baseline error (no new neuron)
     let mut total_baseline_error_sq = 0.0;
@@ -2102,11 +2146,8 @@ fn calculate_optimal_bias(
     let mut best_bias = 0.0;
     let mut best_error_reduction = f32::NEG_INFINITY;
 
-    // Grid search over bias range
-    let num_steps = ((max_bias - min_bias) / step).ceil() as i32 + 1;
-    for i in 0..num_steps {
-        let bias = min_bias + (i as f32 * step).min(max_bias - min_bias);
-
+    // Search over log-spaced bias values
+    for &bias in &bias_values {
         // Calculate error with this bias
         let mut total_new_error_sq = 0.0;
         let mut valid_samples = 0;
@@ -7660,9 +7701,9 @@ mod tests_synapses {
 
         type ActivationTestCase = (&'static str, fn(f32) -> f32, f32, f32);
         let test_cases: Vec<ActivationTestCase> = vec![
-            ("TANH", tanh_activation as fn(f32) -> f32, -1.0, 1.0),
-            ("LOGISTIC", logistic_activation as fn(f32) -> f32, -1.0, 1.0),
-            ("IDENTITY", identity_activation as fn(f32) -> f32, -2.0, 2.0),
+            ("TANH", tanh_activation as fn(f32) -> f32, -2.5, 2.5),
+            ("LOGISTIC", logistic_activation as fn(f32) -> f32, -2.5, 2.5),
+            ("IDENTITY", identity_activation as fn(f32) -> f32, -5.0, 5.0),
         ];
 
         for (name, activation_fn, min_expected, max_expected) in test_cases {
@@ -7716,43 +7757,79 @@ mod tests_synapses {
 
         // Should still return a valid bias in range (though may be 0.0 if no bias tested has sufficient samples)
         assert!(
-            (-1.0..=1.0).contains(&bias),
+            (-2.5..=2.5).contains(&bias),
             "Bias should be in reasonable range, got {bias}"
         );
     }
 
     /// Test get_bias_range returns correct ranges for different activation functions
+    /// Note: get_bias_range is used by GPU, get_bias_values is used by CPU
     #[test]
     fn test_get_bias_range() {
-        // Test ReLU range (expanded to include negative bias for thresholding)
+        // Test ReLU range (large negative for thresholding, positive for offset)
         let (min, max, step) = get_bias_range("ReLU");
-        assert_eq!(min, -1.0);
-        assert_eq!(max, 1.0);
-        assert_eq!(step, 0.05);
-
-        // Test TANH range (expanded symmetric)
-        let (min, max, step) = get_bias_range("TANH");
-        assert_eq!(min, -1.0);
-        assert_eq!(max, 1.0);
-        assert_eq!(step, 0.05);
-
-        // Test LOGISTIC range (expanded symmetric)
-        let (min, max, step) = get_bias_range("LOGISTIC");
-        assert_eq!(min, -1.0);
-        assert_eq!(max, 1.0);
-        assert_eq!(step, 0.05);
-
-        // Test IDENTITY range (widest)
-        let (min, max, step) = get_bias_range("IDENTITY");
-        assert_eq!(min, -2.0);
+        assert_eq!(min, -3.0);
         assert_eq!(max, 2.0);
         assert_eq!(step, 0.1);
 
-        // Test default range for unknown activation (expanded)
+        // Test TANH range (wide symmetric for shifting operating point)
+        let (min, max, step) = get_bias_range("TANH");
+        assert_eq!(min, -2.5);
+        assert_eq!(max, 2.5);
+        assert_eq!(step, 0.1);
+
+        // Test LOGISTIC range (wide symmetric)
+        let (min, max, step) = get_bias_range("LOGISTIC");
+        assert_eq!(min, -2.5);
+        assert_eq!(max, 2.5);
+        assert_eq!(step, 0.1);
+
+        // Test IDENTITY range (widest - acts as pure offset)
+        let (min, max, step) = get_bias_range("IDENTITY");
+        assert_eq!(min, -5.0);
+        assert_eq!(max, 5.0);
+        assert_eq!(step, 0.2);
+
+        // Test default range for unknown activation (generous)
         let (min, max, step) = get_bias_range("UNKNOWN");
-        assert_eq!(min, -1.0);
-        assert_eq!(max, 1.0);
-        assert_eq!(step, 0.05);
+        assert_eq!(min, -2.0);
+        assert_eq!(max, 2.0);
+        assert_eq!(step, 0.1);
+    }
+
+    /// Test get_bias_values returns log-spaced values for efficient search
+    #[test]
+    fn test_get_bias_values() {
+        // ReLU should have larger negative range
+        let relu_values = get_bias_values("ReLU");
+        assert!(relu_values.contains(&0.0), "Should include 0");
+        assert!(
+            relu_values.iter().any(|&v| v <= -2.0),
+            "ReLU should have large negative bias"
+        );
+        assert!(
+            relu_values.len() < 20,
+            "Should be efficient (log-spaced, not linear)"
+        );
+
+        // IDENTITY should have widest range
+        let identity_values = get_bias_values("IDENTITY");
+        assert!(
+            identity_values.iter().any(|&v| v >= 5.0),
+            "IDENTITY should reach 5.0"
+        );
+        assert!(
+            identity_values.iter().any(|&v| v <= -5.0),
+            "IDENTITY should reach -5.0"
+        );
+
+        // All values should be sorted
+        for squash in &["ReLU", "TANH", "IDENTITY", "GELU"] {
+            let values = get_bias_values(squash);
+            let mut sorted = values.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            assert_eq!(values, sorted, "Values for {squash} should be sorted");
+        }
     }
 
     /// Test bias calculation with non-finite values
