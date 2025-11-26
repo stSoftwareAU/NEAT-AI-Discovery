@@ -501,10 +501,11 @@ fn test_analyze_neurons_returns_non_zero_bias() {
             if neuron.bias != 0.0 {
                 found_non_zero_bias = true;
 
-                // Verify bias is within reasonable range
+                // Verify bias is within reasonable range (expanded for better discovery)
+                // Range varies by activation: widest is IDENTITY at [-5.0, 5.0]
                 assert!(
-                    neuron.bias >= -1.0 && neuron.bias <= 1.0,
-                    "Bias should be within reasonable range [-1.0, 1.0], got {} for {} neuron",
+                    neuron.bias >= -5.0 && neuron.bias <= 5.0,
+                    "Bias should be within reasonable range [-5.0, 5.0], got {} for {} neuron",
                     neuron.bias,
                     neuron.squash
                 );
