@@ -239,6 +239,8 @@ pub struct CheckGpuOutput {
     pub success: bool,
     pub gpu_available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
