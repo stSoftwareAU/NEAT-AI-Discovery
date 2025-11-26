@@ -1,4 +1,3 @@
-use crate::parquet_format::read_records_from_parquet;
 use crate::types::DiscoverRecord;
 use crate::{
     AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson,
@@ -877,10 +876,16 @@ impl NeuronDiagnostics {
                         "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream sources but all {} failed to load from parquet file.",
                         entry.target_uuid, entry.total_eligible_sources, entry.record_load_failures
                     );
-                } else if entry.total_eligible_sources > 0 {
-                    // Some sources exist but none were evaluated - likely empty records
+                } else if entry.total_eligible_sources > 0 && entry.record_load_failures == 0 {
+                    // Sources exist, no load failures, but none evaluated - likely timeout before sources could be checked
                     eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream sources but none were evaluated ({} load failures, remainder had empty records).",
+                        "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream sources but none were evaluated (0 load failures). Likely analysis TIMEOUT before source loading could start.",
+                        entry.target_uuid, entry.total_eligible_sources
+                    );
+                } else if entry.total_eligible_sources > 0 {
+                    // Some sources exist, some failures, none evaluated
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream sources but none were evaluated ({} load failures).",
                         entry.target_uuid, entry.total_eligible_sources, entry.record_load_failures
                     );
                 } else {
@@ -1045,13 +1050,50 @@ impl NeuronDiagnostics {
 }
 
 impl RecordCache {
-    fn new(parquet_file: &str) -> Self {
-        Self::with_loader(
-            parquet_file,
-            Arc::new(|file: &str, neuron_uuid: &str| read_records_from_parquet(file, neuron_uuid)),
-        )
+    /// Create a pre-loaded cache that reads the entire parquet file once.
+    /// This is MUCH faster when you need records for many neurons (e.g., ~2000),
+    /// as it avoids scanning the file 2000 times.
+    fn new_preloaded(parquet_file: &str) -> Result<Self> {
+        use crate::parquet_format::read_all_records_grouped_by_neuron;
+        use std::time::Instant;
+
+        let start = Instant::now();
+        let grouped_records = read_all_records_grouped_by_neuron(parquet_file)
+            .with_context(|| format!("Failed to pre-load records from {parquet_file}"))?;
+
+        let neuron_count = grouped_records.len();
+        let total_records: usize = grouped_records.values().map(|v| v.len()).sum();
+
+        // Pre-populate the cache with all loaded records
+        let mut cache_map: HashMap<String, Arc<CachedNeuronRecords>> = HashMap::new();
+        for (uuid, mut records) in grouped_records {
+            records.sort_by_key(|r| r.obs_index);
+            let cell = OnceCell::new();
+            let _ = cell.set(Arc::new(records));
+            cache_map.insert(uuid, Arc::new(cell));
+        }
+
+        let elapsed = start.elapsed();
+        if verbose_enabled() {
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Pre-loaded {} neurons with {} total records from parquet in {:.2}s",
+                neuron_count,
+                total_records,
+                elapsed.as_secs_f64()
+            );
+        }
+
+        Ok(Self {
+            parquet_file: parquet_file.to_string(),
+            cache: Mutex::new(cache_map),
+            loader: Arc::new(|_file: &str, _neuron_uuid: &str| {
+                // This loader should never be called for pre-loaded cache
+                Ok(Vec::new())
+            }),
+        })
     }
 
+    #[cfg(test)]
     fn with_loader(parquet_file: &str, loader: Arc<RecordCacheLoader>) -> Self {
         Self {
             parquet_file: parquet_file.to_string(),
@@ -4465,15 +4507,24 @@ fn analyze_neurons_with_cache(
             }
 
             // Log summary of source loading results for debugging
-            if verbose_enabled() && (sources_to_process.is_empty() || load_failure_count > 0 || !empty_record_sources.is_empty()) {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} source loading: {} eligible -> {} with records, {} empty records, {} load failures",
-                    target_uuid,
-                    total_eligible,
-                    sources_to_process.len(),
-                    empty_record_sources.len(),
-                    load_failure_count
-                );
+            let sources_checked = sources_to_process.len() + empty_record_sources.len() + load_failure_count as usize;
+            let timed_out_during_loading = *analysis_timed_out.lock().expect("Mutex poisoned");
+            if verbose_enabled() && (sources_to_process.is_empty() || load_failure_count > 0 || !empty_record_sources.is_empty() || timed_out_during_loading) {
+                let sources_with_records = sources_to_process.len();
+                let empty_count = empty_record_sources.len();
+                if timed_out_during_loading && sources_checked == 0 {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {target_uuid} source loading: TIMEOUT before any of {total_eligible} eligible sources could be checked"
+                    );
+                } else if timed_out_during_loading {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {target_uuid} source loading: TIMEOUT after checking {sources_checked}/{total_eligible} eligible sources ({sources_with_records} with records, {empty_count} empty, {load_failure_count} failures)"
+                    );
+                } else {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {target_uuid} source loading: {total_eligible} eligible -> {sources_with_records} with records, {empty_count} empty records, {load_failure_count} load failures"
+                    );
+                }
             }
 
             // Batch diagnostics for empty record sources
@@ -4614,7 +4665,11 @@ fn analyze_neurons_with_cache(
 }
 
 pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResult> {
-    let cache = Arc::new(RecordCache::new(&input.parquet_file));
+    // Validate focus_neurons before expensive pre-loading
+    require_unique_focus(&input.focus_neurons, "Neuron analysis")?;
+
+    // Pre-load all records for faster analysis (1 scan vs ~2000 scans)
+    let cache = Arc::new(RecordCache::new_preloaded(&input.parquet_file)?);
     analyze_neurons_with_cache(input, cache)
 }
 
@@ -4684,7 +4739,9 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         });
     }
 
-    let shared_cache = Arc::new(RecordCache::new(&input.parquet_file));
+    // Pre-load ALL records from parquet in one pass. This is MUCH faster than
+    // lazy-loading each neuron separately (1 scan vs ~2000 scans for large creatures).
+    let shared_cache = Arc::new(RecordCache::new_preloaded(&input.parquet_file)?);
 
     let synapse_input = if include_synapse {
         Some(AnalyzeSynapsesInput {
@@ -4712,26 +4769,30 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         None
     };
 
-    let (synapse_result, neuron_result) = rayon::join(
-        || -> Result<Option<AnalyzeSynapsesResult>> {
-            if let Some(inner) = synapse_input.clone() {
-                analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache)).map(Some)
-            } else {
-                Ok(None)
-            }
-        },
-        || -> Result<Option<AnalyzeNeuronsResult>> {
-            if let Some(inner) = neuron_input.clone() {
-                analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache)).map(Some)
-            } else {
-                Ok(None)
-            }
-        },
-    );
+    // Run neuron analysis FIRST (priority), then synapse analysis.
+    // Neuron discovery is more valuable as it can create new network structure.
+    // With pre-loaded cache, both run fast, but neurons get priority if timeout approaches.
+    let neuron_result = if let Some(inner) = neuron_input.clone() {
+        Some(analyze_neurons_with_cache(
+            &inner,
+            Arc::clone(&shared_cache),
+        )?)
+    } else {
+        None
+    };
+
+    let synapse_result = if let Some(inner) = synapse_input.clone() {
+        Some(analyze_synapses_with_cache(
+            &inner,
+            Arc::clone(&shared_cache),
+        )?)
+    } else {
+        None
+    };
 
     Ok(AnalyzeAllResult {
-        synapse: synapse_result?,
-        neuron: neuron_result?,
+        synapse: synapse_result,
+        neuron: neuron_result,
     })
 }
 
@@ -5367,7 +5428,11 @@ fn analyze_synapses_with_cache(
 }
 
 pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesResult> {
-    let cache = Arc::new(RecordCache::new(&input.parquet_file));
+    // Validate focus_neurons before expensive pre-loading
+    require_unique_focus(&input.focus_neurons, "Synapse analysis")?;
+
+    // Pre-load all records for faster analysis (1 scan vs ~2000 scans)
+    let cache = Arc::new(RecordCache::new_preloaded(&input.parquet_file)?);
     analyze_synapses_with_cache(input, cache)
 }
 
