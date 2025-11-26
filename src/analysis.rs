@@ -163,6 +163,49 @@ fn verbose_enabled() -> bool {
     std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok()
 }
 
+/// Suppress Mesa/libEGL debug warnings on Linux.
+///
+/// When wgpu initialises on Linux, it probes multiple GPU backends (EGL, Vulkan, etc.).
+/// If the user lacks permission to access `/dev/dri/renderD*` or `/dev/dri/card*` devices,
+/// libEGL emits warnings like "failed to open /dev/dri/renderD128: Permission denied".
+///
+/// These warnings are often benign if wgpu finds an alternative backend (e.g., Vulkan via
+/// a different ICD loader). This function suppresses the warnings by setting environment
+/// variables that quiet Mesa's debug output.
+///
+/// Set `NEAT_AI_DISCOVERY_QUIET_GPU=1` to enable suppression.
+#[cfg(target_os = "linux")]
+fn suppress_mesa_warnings_if_requested() {
+    use std::env;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        if env::var("NEAT_AI_DISCOVERY_QUIET_GPU").is_ok() {
+            // Suppress EGL debug messages (these cause "failed to open /dev/dri/..." warnings)
+            if env::var("EGL_LOG_LEVEL").is_err() {
+                // SAFETY: single-threaded at this point (Once guard) and before GPU init
+                unsafe { env::set_var("EGL_LOG_LEVEL", "fatal") };
+            }
+
+            // Suppress Mesa GLSL shader cache warnings
+            if env::var("MESA_GLSL_CACHE_DISABLE").is_err() {
+                unsafe { env::set_var("MESA_GLSL_CACHE_DISABLE", "true") };
+            }
+
+            // Suppress general Mesa debug output
+            if env::var("MESA_DEBUG").is_err() {
+                unsafe { env::set_var("MESA_DEBUG", "silent") };
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn suppress_mesa_warnings_if_requested() {
+    // No-op on non-Linux platforms
+}
+
 pub struct AnalyzeSynapsesResult {
     pub helpful_synapses: Vec<CandidateSynapseJson>,
     pub harmful_synapses: Vec<CandidateSynapseJson>,
@@ -2004,6 +2047,9 @@ impl GpuAnalyzer {
     /// falling back to CPU – if the adapter or device cannot be created, the
     /// probe reports `false`.
     pub fn gpu_is_available() -> bool {
+        // Suppress Mesa/libEGL warnings if requested (must be called before GPU init)
+        suppress_mesa_warnings_if_requested();
+
         // Set XDG_RUNTIME_DIR if not already set (required by wgpu on Linux/Wayland)
         #[cfg(target_os = "linux")]
         {
@@ -2012,7 +2058,10 @@ impl GpuAnalyzer {
                 if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
                     let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
                     if std::fs::create_dir_all(&runtime_dir).is_ok() {
-                        env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
+                        // SAFETY: Called before GPU init, single-threaded context
+                        unsafe {
+                            env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
+                        }
                     }
                 }
             }
@@ -2042,6 +2091,9 @@ impl GpuAnalyzer {
     }
 
     fn new() -> Result<Self> {
+        // Suppress Mesa/libEGL warnings if requested (must be called before GPU init)
+        suppress_mesa_warnings_if_requested();
+
         // Set XDG_RUNTIME_DIR if not already set (required by wgpu on Linux/Wayland)
         // This prevents "error: XDG_RUNTIME_DIR not set in the environment" warnings
         #[cfg(target_os = "linux")]
@@ -2054,8 +2106,10 @@ impl GpuAnalyzer {
                     if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
                         eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {runtime_dir:?}: {e}");
                     } else {
-                        // Set the environment variable for this process
-                        env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
+                        // SAFETY: Called before GPU init, single-threaded context
+                        unsafe {
+                            env::set_var("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
+                        }
                     }
                 }
             }
