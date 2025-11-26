@@ -160,7 +160,9 @@ mod deadline_override {
 }
 
 fn verbose_enabled() -> bool {
-    std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok()
+    // TODO: Remove this temporary default-on after debugging the "no eligible sources" issue
+    // Original: std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok()
+    true
 }
 
 pub struct AnalyzeSynapsesResult {
@@ -705,6 +707,8 @@ impl NeuronRejectionDetail {
 struct NeuronDiagnosticEntry {
     target_uuid: String,
     target_record_count: usize,
+    total_eligible_sources: u32,
+    record_load_failures: u32,
     evaluated_sources: u32,
     sources_with_samples: u32,
     had_candidate: bool,
@@ -716,6 +720,8 @@ impl NeuronDiagnosticEntry {
         Self {
             target_uuid: target_uuid.to_string(),
             target_record_count: 0,
+            total_eligible_sources: 0,
+            record_load_failures: 0,
             evaluated_sources: 0,
             sources_with_samples: 0,
             had_candidate: false,
@@ -771,6 +777,18 @@ impl NeuronDiagnostics {
     fn set_target_record_count(&mut self, target_uuid: &str, count: usize) {
         if let Some(entry) = self.entries.get_mut(target_uuid) {
             entry.target_record_count = count;
+        }
+    }
+
+    fn set_total_eligible_sources(&mut self, target_uuid: &str, count: u32) {
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.total_eligible_sources = count;
+        }
+    }
+
+    fn record_load_failure(&mut self, target_uuid: &str) {
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.record_load_failures += 1;
         }
     }
 
@@ -842,11 +860,36 @@ impl NeuronDiagnostics {
                 continue;
             }
 
-            if entry.evaluated_sources == 0 {
+            // Check for record loading failures (this indicates a bug or data issue)
+            if entry.record_load_failures > 0 {
                 eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} had no upstream neurons to analyse.",
-                    entry.target_uuid
+                    "[NEAT-AI-Discovery][verbose] Target {} had {} record loading failures out of {} eligible sources (this may indicate a data integrity issue - records exist but couldn't be loaded).",
+                    entry.target_uuid, entry.record_load_failures, entry.total_eligible_sources
                 );
+            }
+
+            if entry.evaluated_sources == 0 {
+                if entry.total_eligible_sources > 0
+                    && entry.record_load_failures == entry.total_eligible_sources
+                {
+                    // All eligible sources failed to load - this is a data/bug issue, not "no sources"
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream sources but all {} failed to load from parquet file.",
+                        entry.target_uuid, entry.total_eligible_sources, entry.record_load_failures
+                    );
+                } else if entry.total_eligible_sources > 0 {
+                    // Some sources exist but none were evaluated - likely empty records
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream sources but none were evaluated ({} load failures, remainder had empty records).",
+                        entry.target_uuid, entry.total_eligible_sources, entry.record_load_failures
+                    );
+                } else {
+                    // Genuinely no eligible sources (e.g., target is first neuron)
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} had no upstream neurons to analyse.",
+                        entry.target_uuid
+                    );
+                }
                 continue;
             }
 
@@ -929,10 +972,26 @@ impl NeuronDiagnostics {
             .values()
             .filter(|entry| !entry.had_candidate)
             .map(|entry| {
-                if entry.evaluated_sources == 0 {
+                // Only report "no eligible sources" if there were genuinely no eligible sources
+                // AND no evaluated candidates. If there were eligible sources but they all failed
+                // to load or had empty records, report that as NoSamples with context.
+                if entry.evaluated_sources == 0 && entry.total_eligible_sources == 0 {
                     return NeuronNoCandidateSummary {
                         target_uuid: entry.target_uuid.clone(),
                         reason: NeuronNoCandidateReason::NoEligibleSources,
+                        evaluated_sources: entry.evaluated_sources,
+                        sources_with_samples: entry.sources_with_samples,
+                        target_record_count: entry.target_record_count,
+                        detail: None,
+                    };
+                }
+
+                // If evaluated_sources is 0 but total_eligible_sources > 0, sources existed
+                // but all failed to load or had empty records - report as NoSamples
+                if entry.evaluated_sources == 0 && entry.total_eligible_sources > 0 {
+                    return NeuronNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: NeuronNoCandidateReason::NoSamples,
                         evaluated_sources: entry.evaluated_sources,
                         sources_with_samples: entry.sources_with_samples,
                         target_record_count: entry.target_record_count,
@@ -4190,6 +4249,64 @@ fn analyze_neurons_with_cache(
 ) -> Result<AnalyzeNeuronsResult> {
     let threshold = input.improvement_threshold.unwrap_or(0.1);
     let ordered_neurons = build_ordered_neurons(&input.creature);
+
+    // Log creature configuration for debugging data issues
+    if verbose_enabled() {
+        let non_input_count = input.creature.neurons.len();
+        let total_neurons = input.creature.input + non_input_count;
+        eprintln!(
+            "[NEAT-AI-Discovery][verbose] Neuron analysis creature config: {} input neurons (input-0 to input-{}), {} non-input neurons, {} total ordered neurons",
+            input.creature.input,
+            input.creature.input.saturating_sub(1),
+            non_input_count,
+            total_neurons
+        );
+
+        // Verify input neurons exist in parquet by checking a sample
+        if input.creature.input > 0 {
+            match cache.get("input-0") {
+                Ok(records) => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Parquet data check: input-0 has {} records",
+                        records.len()
+                    );
+                    if !records.is_empty() {
+                        let first = &records[0];
+                        let last = &records[records.len() - 1];
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Parquet data check: input-0 obs_index range [{}, {}], first activation={:.4}",
+                            first.obs_index,
+                            last.obs_index,
+                            first.activation
+                        );
+                    }
+                }
+                Err(err) => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Parquet data check FAILED: input-0 error: {err}"
+                    );
+                }
+            }
+
+            // Also check a middle input neuron
+            let mid_input = input.creature.input / 2;
+            let mid_uuid = format!("input-{mid_input}");
+            match cache.get(&mid_uuid) {
+                Ok(records) => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Parquet data check: {mid_uuid} has {} records",
+                        records.len()
+                    );
+                }
+                Err(err) => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Parquet data check FAILED: {mid_uuid} error: {err}"
+                    );
+                }
+            }
+        }
+    }
+
     let order_map: HashMap<String, usize> = ordered_neurons
         .iter()
         .map(|neuron| (neuron.uuid.clone(), neuron.index))
@@ -4261,6 +4378,21 @@ fn analyze_neurons_with_cache(
                 .expect("Mutex poisoned: diagnostics")
                 .set_target_record_count(target_uuid, target_records.len());
 
+            // Log target neuron obs_index range for debugging sample matching
+            if verbose_enabled() && !target_records.is_empty() {
+                let first_obs = target_records.first().map(|r| r.obs_index).unwrap_or(0);
+                let last_obs = target_records.last().map(|r| r.obs_index).unwrap_or(0);
+                let has_errors = target_records.iter().any(|r| !r.errors.is_empty());
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} has {} records, obs_index range [{}, {}], has_errors={}",
+                    target_uuid,
+                    target_records.len(),
+                    first_obs,
+                    last_obs,
+                    has_errors
+                );
+            }
+
             let target_index = match order_map_arc.get(target_uuid.as_str()) {
                 Some(index) => *index,
                 None => return Ok(()),
@@ -4273,11 +4405,30 @@ fn analyze_neurons_with_cache(
             let mut rng = thread_rng();
             eligible_sources.shuffle(&mut rng);
 
+            // Track total eligible sources for diagnostics
+            let total_eligible = eligible_sources.len() as u32;
+            diagnostics
+                .lock()
+                .expect("Mutex poisoned: diagnostics")
+                .set_total_eligible_sources(target_uuid, total_eligible);
+
+            // Log focus neuron details for debugging
+            if verbose_enabled() && total_eligible == 0 {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} (index {}) has 0 eligible upstream sources. creature.input={}, so input neurons span indices 0-{}. This indicates target_index <= 0 or a creature configuration mismatch.",
+                    target_uuid,
+                    target_index,
+                    ordered_neurons_arc.len().saturating_sub(input.creature.neurons.len()),
+                    ordered_neurons_arc.len().saturating_sub(input.creature.neurons.len()).saturating_sub(1)
+                );
+            }
+
             // Phase 1: Pre-filter sources and collect their records (with deadline checks)
             // This mirrors the synapse analysis approach for better parallelism
             let mut sources_to_process: Vec<(&OrderedNeuron, Arc<Vec<DiscoverRecord>>)> =
                 Vec::with_capacity(eligible_sources.len());
             let mut empty_record_sources: Vec<String> = Vec::new();
+            let mut load_failure_count = 0u32;
 
             for source in &eligible_sources {
                 // Check deadline during pre-filtering
@@ -4295,13 +4446,34 @@ fn analyze_neurons_with_cache(
                         }
                     }
                     Err(err) => {
-                        if cfg!(debug_assertions) {
+                        load_failure_count += 1;
+                        if verbose_enabled() {
                             eprintln!(
-                                "Failed to load source neuron records for {source_uuid}: {err}"
+                                "[NEAT-AI-Discovery][verbose] Failed to load source neuron records for {source_uuid} (target {target_uuid}): {err}"
                             );
                         }
                     }
                 }
+            }
+
+            // Record load failures in diagnostics
+            if load_failure_count > 0 {
+                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
+                for _ in 0..load_failure_count {
+                    diag.record_load_failure(target_uuid);
+                }
+            }
+
+            // Log summary of source loading results for debugging
+            if verbose_enabled() && (sources_to_process.is_empty() || load_failure_count > 0 || !empty_record_sources.is_empty()) {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} source loading: {} eligible -> {} with records, {} empty records, {} load failures",
+                    target_uuid,
+                    total_eligible,
+                    sources_to_process.len(),
+                    empty_record_sources.len(),
+                    load_failure_count
+                );
             }
 
             // Batch diagnostics for empty record sources
@@ -4830,6 +5002,7 @@ fn analyze_synapses_with_cache(
                             // Empty records - track for diagnostics
                             empty_record_sources.push(source_uuid.to_string());
                             let is_input_neuron = input_neuron_uuids_arc.contains(source_uuid);
+                            // Log non-input neurons with empty records (input neurons are logged as summary below)
                             if verbose_enabled() && !is_input_neuron {
                                 eprintln!(
                                     "[NEAT-AI-Discovery][verbose] Source {source_uuid} (target {target_uuid}) has no records in parquet file."
@@ -4846,6 +5019,23 @@ fn analyze_synapses_with_cache(
                         }
                     }
                 };
+            }
+
+            // Count how many empty record sources are input neurons (helps diagnose parquet data issues)
+            let empty_input_neuron_count = empty_record_sources
+                .iter()
+                .filter(|uuid| input_neuron_uuids_arc.contains(uuid.as_str()))
+                .count();
+            let empty_non_input_count = empty_record_sources.len() - empty_input_neuron_count;
+
+            // Log summary if many input neurons have empty records (indicates data issue)
+            if verbose_enabled() && empty_input_neuron_count > 0 {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {target_uuid}: {} of {} input neurons have no records in parquet file (plus {} non-input sources). This may indicate incomplete parquet data.",
+                    empty_input_neuron_count,
+                    input_neuron_uuids_arc.len(),
+                    empty_non_input_count
+                );
             }
 
             // Update diagnostics for already-connected, load failures, and empty records
@@ -5700,6 +5890,65 @@ mod tests_synapses {
             Some("positive"),
             "Orientation should be preserved"
         );
+    }
+
+    #[test]
+    fn neuron_diagnostics_tracks_load_failures() {
+        // Test that when eligible sources exist but all fail to load, we report
+        // NoSamples rather than NoEligibleSources
+        let mut diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
+        diagnostics.set_target_record_count("output-0", 100);
+        diagnostics.set_total_eligible_sources("output-0", 10); // 10 eligible sources exist
+                                                                // All 10 sources fail to load
+        for _ in 0..10 {
+            diagnostics.record_load_failure("output-0");
+        }
+        // No record_candidate_attempt calls (because all failed to load)
+
+        let summaries = diagnostics.no_candidate_summaries();
+        assert_eq!(summaries.len(), 1);
+        let summary = &summaries[0];
+
+        // Should NOT report "no eligible sources" - sources existed but failed to load
+        assert!(
+            !matches!(summary.reason, NeuronNoCandidateReason::NoEligibleSources),
+            "Should not report NoEligibleSources when sources existed but failed to load"
+        );
+        // Should report NoSamples (as a catchall for sources existing but not being usable)
+        assert!(
+            matches!(summary.reason, NeuronNoCandidateReason::NoSamples),
+            "Should report NoSamples when eligible sources exist but none were evaluated"
+        );
+
+        // Verify entry tracking
+        let entry = diagnostics.entry_for("output-0").unwrap();
+        assert_eq!(entry.total_eligible_sources, 10);
+        assert_eq!(entry.record_load_failures, 10);
+        assert_eq!(entry.evaluated_sources, 0);
+    }
+
+    #[test]
+    fn neuron_diagnostics_reports_genuine_no_eligible_sources() {
+        // Test that when there are genuinely no eligible sources, we correctly report that
+        let mut diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
+        diagnostics.set_target_record_count("output-0", 100);
+        diagnostics.set_total_eligible_sources("output-0", 0); // No eligible sources
+
+        let summaries = diagnostics.no_candidate_summaries();
+        assert_eq!(summaries.len(), 1);
+        let summary = &summaries[0];
+
+        // Should correctly report no eligible sources
+        assert!(
+            matches!(summary.reason, NeuronNoCandidateReason::NoEligibleSources),
+            "Should report NoEligibleSources when genuinely no sources exist"
+        );
+
+        // Verify entry tracking
+        let entry = diagnostics.entry_for("output-0").unwrap();
+        assert_eq!(entry.total_eligible_sources, 0);
+        assert_eq!(entry.record_load_failures, 0);
+        assert_eq!(entry.evaluated_sources, 0);
     }
 
     #[test]
