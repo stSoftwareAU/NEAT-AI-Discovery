@@ -652,11 +652,24 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
 }
 
 pub fn check_gpu_available_internal() -> Result<String> {
-    let available = analysis::GpuAnalyzer::gpu_is_available();
-    let output = CheckGpuOutput {
-        success: true,
-        gpu_available: available,
-        error: None,
+    let result = analysis::GpuAnalyzer::check_gpu_availability();
+
+    // On macOS, missing GPU is an error (Metal should always work).
+    // On Linux, missing GPU gracefully disables discovery (common on headless servers).
+    let output = if result.is_error {
+        CheckGpuOutput {
+            success: false,
+            gpu_available: false,
+            reason: result.reason,
+            error: Some("GPU required but not available".to_string()),
+        }
+    } else {
+        CheckGpuOutput {
+            success: true,
+            gpu_available: result.available,
+            reason: result.reason,
+            error: None,
+        }
     };
     Ok(serde_json::to_string(&output)?)
 }
@@ -1048,6 +1061,7 @@ pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
                 let output = CheckGpuOutput {
                     success: false,
                     gpu_available: false,
+                    reason: None,
                     error: Some(format!("Failed to probe GPU: {e}")),
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
@@ -1509,12 +1523,25 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_str(&json).expect("GPU availability output should be valid JSON");
 
-        assert_eq!(value["success"], true);
+        assert!(
+            value["success"].is_boolean(),
+            "success flag should be a boolean"
+        );
         assert!(
             value["gpuAvailable"].is_boolean(),
             "gpuAvailable flag should be a boolean"
         );
-        // error field is optional and may be null or a string; no strict assertion here
+
+        // Platform-specific behaviour:
+        // - On macOS: success=false when GPU unavailable (error condition)
+        // - On Linux: success=true when GPU unavailable (graceful disable)
+        // - reason field provides diagnostic information when GPU is unavailable
+        if !value["gpuAvailable"].as_bool().unwrap_or(false) {
+            assert!(
+                value["reason"].is_string(),
+                "reason should be provided when GPU is unavailable"
+            );
+        }
     }
 
     #[test]

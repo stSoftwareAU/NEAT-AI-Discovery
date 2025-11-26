@@ -138,7 +138,18 @@ whether discovery should be enabled:
   ```json
   {
     "success": true,
-    "gpuAvailable": true
+    "gpuAvailable": true,
+    "reason": null
+  }
+  ```
+
+  When GPU is unavailable, the response includes a diagnostic reason:
+
+  ```json
+  {
+    "success": true,
+    "gpuAvailable": false,
+    "reason": "No GPU adapter found. Discovery disabled on this machine..."
   }
   ```
 
@@ -149,6 +160,16 @@ whether discovery should be enabled:
 - When `"gpuAvailable"` is `true`, controllers may safely schedule discovery
   jobs. If a later GPU initialisation error occurs, the Rust side will return
   a structured error and mark the JSON `success` flag as `false`.
+
+#### Platform-specific GPU behaviour
+
+- **macOS**: GPU (Metal) should always be available. If `gpuAvailable` is
+  `false`, this is treated as an error (`success: false`) indicating a system
+  configuration issue that should be investigated.
+- **Linux**: GPU may not be available on headless servers without GPU hardware
+  or without proper permissions to access `/dev/dri` devices. If `gpuAvailable`
+  is `false`, this is **not** an error (`success: true`) - discovery is simply
+  disabled on that machine. This is normal for older headless Linux servers.
 
 ## Troubleshooting
 
