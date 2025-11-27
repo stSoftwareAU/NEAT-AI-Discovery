@@ -270,12 +270,27 @@ pub struct RankedNeuronJson {
     pub impact: f32,
 }
 
+/// A neuron with high error but very low impact - candidate for removal.
+/// These neurons consume compute but contribute almost nothing to outputs.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemovalCandidateJson {
+    pub neuron_uuid: String,
+    pub total_error: f32,
+    pub impact: f32,
+    /// High error neurons far from outputs are wasteful
+    pub reason: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RankFocusNeuronsOutput {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neurons: Option<Vec<RankedNeuronJson>>,
+    /// Neurons with high error but very low impact - candidates for removal
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub removal_candidates: Option<Vec<RemovalCandidateJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_error: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -690,6 +705,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
             let output = RankFocusNeuronsOutput {
                 success: false,
                 neurons: None,
+                removal_candidates: None,
                 max_output_error: None,
                 processed_neurons: None,
                 total_neurons: None,
@@ -711,9 +727,24 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                     impact: neuron.impact,
                 })
                 .collect();
+            let removal_candidates: Vec<RemovalCandidateJson> = stats
+                .removal_candidates
+                .into_iter()
+                .map(|c| RemovalCandidateJson {
+                    neuron_uuid: c.neuron_uuid,
+                    total_error: c.total_error,
+                    impact: c.impact,
+                    reason: c.reason,
+                })
+                .collect();
             let output = RankFocusNeuronsOutput {
                 success: true,
                 neurons: Some(neurons),
+                removal_candidates: if removal_candidates.is_empty() {
+                    None
+                } else {
+                    Some(removal_candidates)
+                },
                 max_output_error: Some(stats.max_output_error),
                 processed_neurons: Some(stats.processed_neurons),
                 total_neurons: Some(stats.total_neurons),
@@ -726,6 +757,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
             let output = RankFocusNeuronsOutput {
                 success: false,
                 neurons: None,
+                removal_candidates: None,
                 max_output_error: None,
                 processed_neurons: None,
                 total_neurons: None,
@@ -923,6 +955,7 @@ pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mu
                 let output = RankFocusNeuronsOutput {
                     success: false,
                     neurons: None,
+                    removal_candidates: None,
                     max_output_error: None,
                     processed_neurons: None,
                     total_neurons: None,
