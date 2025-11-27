@@ -244,6 +244,88 @@ fn ensure_xdg_runtime_dir() {
     // No-op on non-Linux platforms
 }
 
+/// Safely create a wgpu Instance, avoiding panics from backend probing.
+///
+/// On Linux with old hardware or missing GPU drivers, wgpu's EGL/OpenGL backend
+/// can panic during initialisation (e.g., "BadDisplay" errors). This function:
+///
+/// - On Linux: Disables the GL backend entirely, using only Vulkan to avoid EGL panics
+/// - On macOS: Uses Metal (the default and only backend on macOS)
+/// - On all platforms: Wraps instance creation in `catch_unwind` as a safety net
+///
+/// Returns `None` if instance creation fails or panics, allowing callers to handle
+/// the failure gracefully (e.g., treating missing GPU as discovery-disabled on Linux).
+fn create_wgpu_instance_safely() -> Option<wgpu::Instance> {
+    use std::panic;
+
+    // On Linux, avoid GL/GLES backend which can panic on EGL initialisation
+    // when /dev/dri devices are missing or inaccessible.
+    #[cfg(target_os = "linux")]
+    let backends = wgpu::Backends::VULKAN;
+
+    // On macOS, Metal is the only backend and should always work
+    #[cfg(target_os = "macos")]
+    let backends = wgpu::Backends::METAL;
+
+    // On other platforms, use all available backends
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let backends = wgpu::Backends::all();
+
+    // Wrap in catch_unwind to handle any remaining panics from backend probing
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends,
+            flags: wgpu::InstanceFlags::default(),
+            dx12_shader_compiler: wgpu::Dx12Compiler::default(),
+            gles_minor_version: wgpu::Gles3MinorVersion::default(),
+        })
+    }));
+
+    match result {
+        Ok(instance) => Some(instance),
+        Err(panic_info) => {
+            // Log the panic but don't propagate it
+            let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic during wgpu instance creation".to_string()
+            };
+
+            #[cfg(target_os = "linux")]
+            {
+                // On Linux, this is expected on headless servers without GPU
+                if verbose_enabled() {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] wgpu instance creation failed: {panic_msg}. \
+                         Discovery will be disabled on this machine."
+                    );
+                }
+            }
+
+            #[cfg(target_os = "macos")]
+            {
+                // On macOS, this is unexpected - Metal should always be available
+                eprintln!(
+                    "[NEAT-AI-Discovery] ERROR: wgpu instance creation failed on macOS: {panic_msg}. \
+                     This indicates a system configuration issue."
+                );
+            }
+
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                eprintln!(
+                    "[NEAT-AI-Discovery] wgpu instance creation failed: {panic_msg}. \
+                     Discovery will be disabled on this machine."
+                );
+            }
+
+            None
+        }
+    }
+}
+
 pub struct AnalyzeSynapsesResult {
     pub helpful_synapses: Vec<CandidateSynapseJson>,
     pub harmful_synapses: Vec<CandidateSynapseJson>,
@@ -2260,7 +2342,10 @@ impl GpuAnalyzer {
         // Uses Once internally for thread-safe one-time initialisation
         ensure_xdg_runtime_dir();
 
-        let instance = wgpu::Instance::default();
+        // Use safe instance creation to avoid panics from EGL/GL backend probing on Linux
+        let Some(instance) = create_wgpu_instance_safely() else {
+            return Self::no_gpu_result("wgpu instance creation failed (GPU backend unavailable)");
+        };
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
@@ -2339,7 +2424,13 @@ impl GpuAnalyzer {
         // Uses Once internally for thread-safe one-time initialisation
         ensure_xdg_runtime_dir();
 
-        let instance = wgpu::Instance::default();
+        // Use safe instance creation to avoid panics from EGL/GL backend probing on Linux
+        let instance = create_wgpu_instance_safely().ok_or_else(|| {
+            anyhow::anyhow!(
+                "wgpu instance creation failed (GPU backend unavailable). \
+                 Discovery requires GPU acceleration."
+            )
+        })?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
