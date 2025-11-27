@@ -1639,7 +1639,7 @@ impl ReluStats {
                 candidate: None,
             };
         }
-        outgoing_weight = outgoing_weight.clamp(-5.0, 5.0);
+        outgoing_weight = outgoing_weight.clamp(-10.0, 10.0);
 
         let mut improved_count = 0u32;
         let mut worsened_count = 0u32;
@@ -1840,12 +1840,15 @@ struct ActivationCandidateSpec {
 const ORIENTATIONS_BIDIRECTIONAL: [f32; 2] = [1.0, -1.0];
 /// Log-spaced scale range for incoming weights - covers multiple orders of magnitude
 /// efficiently. Evolution will fine-tune the exact values after discovery.
-/// Values roughly follow powers: 0.1, ~0.2, ~0.35, 0.5, 1.0, 2.0, 3.5, 5.0, 10.0
-/// This gives good coverage without wasting time on nearby linear values.
-const SCALES_WIDE: [f32; 9] = [0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 3.5, 5.0, 10.0];
+/// Extended to very large scales (50, 100) for aggressive signal amplification.
+/// Note: Very large scales may cause numerical instability with some activations.
+const SCALES_WIDE: [f32; 12] = [
+    0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0,
+];
 /// Log-spaced scales for smooth activation functions (TANH, LOGISTIC, SELU) that
-/// saturate at large inputs. Smaller max scale since large values just saturate.
-const SCALES_SMOOTH: [f32; 8] = [0.1, 0.2, 0.35, 0.5, 1.0, 1.5, 2.5, 4.0];
+/// saturate at large inputs. Larger scales included but will saturate the output,
+/// which may still be useful for binary-like thresholding behaviour.
+const SCALES_SMOOTH: [f32; 10] = [0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 4.0, 10.0, 25.0, 50.0];
 
 fn gelu_activation(x: f32) -> f32 {
     let x_cubed = x * x * x;
@@ -2015,59 +2018,59 @@ const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
 
 /// Get activation-function-specific bias range (min, max, step).
 /// This is still used by the GPU bias search for compatibility.
+/// Extended ranges to work with large incoming weights (up to 200).
 ///
 /// Different activation functions benefit from different bias ranges:
-/// - ReLU/ELU: Larger negative bias for thresholding (e.g., activate when input > X)
+/// - ReLU/ELU: Large negative bias for high-threshold neurons
 /// - TANH/LOGISTIC: Wide symmetric range to shift operating point
-/// - Others: Extended range for general adjustment
+/// - IDENTITY: Widest range as pure offset (scales with large weights)
 fn get_bias_range(squash: &str) -> (f32, f32, f32) {
     match squash {
-        // ReLU/ELU can benefit from larger negative bias for threshold shifting
-        "ReLU" | "ELU" | "SELU" => (-3.0, 2.0, 0.1),
-        // Symmetric activation functions benefit from wider symmetric range
-        "TANH" | "LOGISTIC" => (-2.5, 2.5, 0.1),
-        // IDENTITY can use widest range as it's linear - acts as offset
-        "IDENTITY" => (-5.0, 5.0, 0.2),
-        // Softplus and GELU benefit from negative bias for thresholding
-        "Softplus" | "GELU" => (-2.5, 2.0, 0.1),
+        // ReLU/ELU: extended negative for high-threshold neurons with large weights
+        "ReLU" | "ELU" | "SELU" => (-25.0, 10.0, 0.5),
+        // Symmetric activation functions: extended for large weight configurations
+        "TANH" | "LOGISTIC" => (-10.0, 10.0, 0.5),
+        // IDENTITY: widest range - acts as offset, scales with incoming weights
+        "IDENTITY" => (-50.0, 50.0, 1.0),
+        // Softplus and GELU: extended negative thresholds
+        "Softplus" | "GELU" => (-10.0, 10.0, 0.5),
         // Other activation functions get expanded range
-        "INVERSE" | "ABSOLUTE" | "CLIPPED" => (-2.0, 2.0, 0.1),
-        "BIPOLAR" => (-2.0, 2.0, 0.2),
-        _ => (-2.0, 2.0, 0.1), // Generous default
+        "INVERSE" | "ABSOLUTE" | "CLIPPED" => (-10.0, 10.0, 0.5),
+        "BIPOLAR" => (-10.0, 10.0, 1.0),
+        _ => (-10.0, 10.0, 0.5), // Generous default
     }
 }
 
 /// Get log-spaced bias values for a given activation function.
 /// Uses sinh-like spacing: denser near 0, sparser at extremes.
-/// This is more efficient than linear spacing since evolution will fine-tune
-/// the exact bias value after discovery finds a viable candidate.
+/// Extended ranges to work with large incoming weights (up to 200).
+/// Evolution will fine-tune the exact bias value after discovery.
 fn get_bias_values(squash: &str) -> Vec<f32> {
-    // Base log-spaced positive values (denser near 0)
-    // Roughly: 0, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0
+    // Base log-spaced positive values (denser near 0, extended to larger values)
     let base_positive: &[f32] = match squash {
-        // ReLU/ELU: larger negative range for thresholding, moderate positive
-        "ReLU" | "ELU" | "SELU" => &[0.0, 0.1, 0.25, 0.5, 1.0, 2.0],
-        // Symmetric activations: equal positive and negative range
-        "TANH" | "LOGISTIC" => &[0.0, 0.1, 0.25, 0.5, 1.0, 1.5, 2.5],
-        // IDENTITY: widest range (pure offset)
-        "IDENTITY" => &[0.0, 0.2, 0.5, 1.0, 2.0, 3.5, 5.0],
-        // Softplus/GELU: benefit from negative thresholds
-        "Softplus" | "GELU" => &[0.0, 0.1, 0.25, 0.5, 1.0, 2.0],
-        // Others: moderate symmetric range
-        _ => &[0.0, 0.1, 0.25, 0.5, 1.0, 2.0],
+        // ReLU/ELU: extended for large weight thresholding
+        "ReLU" | "ELU" | "SELU" => &[0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
+        // Symmetric activations: extended range for shifting operating point
+        "TANH" | "LOGISTIC" => &[0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
+        // IDENTITY: widest range (pure offset, scales with large weights)
+        "IDENTITY" => &[0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0],
+        // Softplus/GELU: extended for large weight configurations
+        "Softplus" | "GELU" => &[0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
+        // Others: moderate extended range
+        _ => &[0.0, 0.1, 0.5, 1.0, 2.0, 5.0],
     };
 
     let base_negative: &[f32] = match squash {
-        // ReLU/ELU: larger negative range for thresholding
-        "ReLU" | "ELU" | "SELU" => &[-0.1, -0.25, -0.5, -1.0, -1.5, -2.0, -3.0],
-        // Symmetric: mirror of positive
-        "TANH" | "LOGISTIC" => &[-0.1, -0.25, -0.5, -1.0, -1.5, -2.5],
-        // IDENTITY: widest range
-        "IDENTITY" => &[-0.2, -0.5, -1.0, -2.0, -3.5, -5.0],
-        // Softplus/GELU: need negative thresholds
-        "Softplus" | "GELU" => &[-0.1, -0.25, -0.5, -1.0, -1.5, -2.5],
-        // Others: moderate
-        _ => &[-0.1, -0.25, -0.5, -1.0, -2.0],
+        // ReLU/ELU: extended negative for high-threshold neurons
+        "ReLU" | "ELU" | "SELU" => &[-0.1, -0.5, -1.0, -2.0, -5.0, -10.0, -25.0],
+        // Symmetric: mirror of positive for operating point shift
+        "TANH" | "LOGISTIC" => &[-0.1, -0.5, -1.0, -2.0, -5.0, -10.0],
+        // IDENTITY: widest range to match large weights
+        "IDENTITY" => &[-0.5, -1.0, -2.0, -5.0, -10.0, -25.0, -50.0],
+        // Softplus/GELU: extended negative thresholds
+        "Softplus" | "GELU" => &[-0.1, -0.5, -1.0, -2.0, -5.0, -10.0],
+        // Others: moderate extended
+        _ => &[-0.1, -0.5, -1.0, -2.0, -5.0],
     };
 
     let mut values: Vec<f32> = base_negative.to_vec();
@@ -4346,7 +4349,7 @@ fn evaluate_activation_candidate(
             if !outgoing_weight.is_finite() || outgoing_weight.abs() <= EPSILON {
                 continue;
             }
-            outgoing_weight = outgoing_weight.clamp(-5.0, 5.0);
+            outgoing_weight = outgoing_weight.clamp(-10.0, 10.0);
 
             // Always calculate improved_count after weight validation to ensure it uses
             // the same validated and clamped weight that will be used in the final candidate.
@@ -7701,9 +7704,19 @@ mod tests_synapses {
 
         type ActivationTestCase = (&'static str, fn(f32) -> f32, f32, f32);
         let test_cases: Vec<ActivationTestCase> = vec![
-            ("TANH", tanh_activation as fn(f32) -> f32, -2.5, 2.5),
-            ("LOGISTIC", logistic_activation as fn(f32) -> f32, -2.5, 2.5),
-            ("IDENTITY", identity_activation as fn(f32) -> f32, -5.0, 5.0),
+            ("TANH", tanh_activation as fn(f32) -> f32, -10.0, 10.0),
+            (
+                "LOGISTIC",
+                logistic_activation as fn(f32) -> f32,
+                -10.0,
+                10.0,
+            ),
+            (
+                "IDENTITY",
+                identity_activation as fn(f32) -> f32,
+                -50.0,
+                50.0,
+            ),
         ];
 
         for (name, activation_fn, min_expected, max_expected) in test_cases {
@@ -7757,7 +7770,7 @@ mod tests_synapses {
 
         // Should still return a valid bias in range (though may be 0.0 if no bias tested has sufficient samples)
         assert!(
-            (-2.5..=2.5).contains(&bias),
+            (-10.0..=10.0).contains(&bias),
             "Bias should be in reasonable range, got {bias}"
         );
     }
@@ -7766,61 +7779,61 @@ mod tests_synapses {
     /// Note: get_bias_range is used by GPU, get_bias_values is used by CPU
     #[test]
     fn test_get_bias_range() {
-        // Test ReLU range (large negative for thresholding, positive for offset)
+        // Test ReLU range (extended negative for high-threshold neurons)
         let (min, max, step) = get_bias_range("ReLU");
-        assert_eq!(min, -3.0);
-        assert_eq!(max, 2.0);
-        assert_eq!(step, 0.1);
+        assert_eq!(min, -25.0);
+        assert_eq!(max, 10.0);
+        assert_eq!(step, 0.5);
 
-        // Test TANH range (wide symmetric for shifting operating point)
+        // Test TANH range (extended symmetric for large weight configurations)
         let (min, max, step) = get_bias_range("TANH");
-        assert_eq!(min, -2.5);
-        assert_eq!(max, 2.5);
-        assert_eq!(step, 0.1);
+        assert_eq!(min, -10.0);
+        assert_eq!(max, 10.0);
+        assert_eq!(step, 0.5);
 
-        // Test LOGISTIC range (wide symmetric)
+        // Test LOGISTIC range (extended symmetric)
         let (min, max, step) = get_bias_range("LOGISTIC");
-        assert_eq!(min, -2.5);
-        assert_eq!(max, 2.5);
-        assert_eq!(step, 0.1);
+        assert_eq!(min, -10.0);
+        assert_eq!(max, 10.0);
+        assert_eq!(step, 0.5);
 
-        // Test IDENTITY range (widest - acts as pure offset)
+        // Test IDENTITY range (widest - acts as pure offset, scales with large weights)
         let (min, max, step) = get_bias_range("IDENTITY");
-        assert_eq!(min, -5.0);
-        assert_eq!(max, 5.0);
-        assert_eq!(step, 0.2);
+        assert_eq!(min, -50.0);
+        assert_eq!(max, 50.0);
+        assert_eq!(step, 1.0);
 
         // Test default range for unknown activation (generous)
         let (min, max, step) = get_bias_range("UNKNOWN");
-        assert_eq!(min, -2.0);
-        assert_eq!(max, 2.0);
-        assert_eq!(step, 0.1);
+        assert_eq!(min, -10.0);
+        assert_eq!(max, 10.0);
+        assert_eq!(step, 0.5);
     }
 
     /// Test get_bias_values returns log-spaced values for efficient search
     #[test]
     fn test_get_bias_values() {
-        // ReLU should have larger negative range
+        // ReLU should have extended negative range for high-threshold neurons
         let relu_values = get_bias_values("ReLU");
         assert!(relu_values.contains(&0.0), "Should include 0");
         assert!(
-            relu_values.iter().any(|&v| v <= -2.0),
-            "ReLU should have large negative bias"
+            relu_values.iter().any(|&v| v <= -10.0),
+            "ReLU should have large negative bias for high thresholds"
         );
         assert!(
-            relu_values.len() < 20,
+            relu_values.len() < 25,
             "Should be efficient (log-spaced, not linear)"
         );
 
-        // IDENTITY should have widest range
+        // IDENTITY should have widest range (scales with large weights)
         let identity_values = get_bias_values("IDENTITY");
         assert!(
-            identity_values.iter().any(|&v| v >= 5.0),
-            "IDENTITY should reach 5.0"
+            identity_values.iter().any(|&v| v >= 25.0),
+            "IDENTITY should reach 25.0 for large weight configurations"
         );
         assert!(
-            identity_values.iter().any(|&v| v <= -5.0),
-            "IDENTITY should reach -5.0"
+            identity_values.iter().any(|&v| v <= -25.0),
+            "IDENTITY should reach -25.0"
         );
 
         // All values should be sorted
