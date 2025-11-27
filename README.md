@@ -170,6 +170,11 @@ whether discovery should be enabled:
   or without proper permissions to access `/dev/dri` devices. If `gpuAvailable`
   is `false`, this is **not** an error (`success: true`) - discovery is simply
   disabled on that machine. This is normal for older headless Linux servers.
+  
+  **Note:** On Linux, the library only probes the Vulkan backend (not OpenGL/EGL)
+  to avoid panics from EGL initialisation errors on systems without proper GPU
+  drivers. This is intentional - old hardware without Vulkan support will simply
+  have discovery disabled rather than causing crashes.
 
 ## Troubleshooting
 
