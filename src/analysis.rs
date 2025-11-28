@@ -22,6 +22,21 @@ const EPSILON: f32 = 1e-8;
 /// and allows efficient wavefront scheduling on M1/M2/M3/M4 GPUs.
 const WORKGROUP_SIZE: u32 = 256;
 const MIN_NEURON_SAMPLE_COUNT: usize = 10;
+
+/// Check if a target neuron's activation function is discrete/non-differentiable.
+/// For discrete functions like STEP and BIPOLAR, the linear error reduction model
+/// used by discovery completely fails because small input changes either:
+/// 1. Do nothing (if threshold not crossed)
+/// 2. Cause a binary flip (massive discrete change)
+///
+/// The discovery formula `new_error ≈ old_error - weight × activation` assumes
+/// continuous, differentiable behaviour, which doesn't apply to these functions.
+fn is_discrete_activation(squash: &str) -> bool {
+    matches!(
+        squash.to_uppercase().as_str(),
+        "STEP" | "BIPOLAR" | "HARD_TANH" | "BENT_IDENTITY"
+    )
+}
 /// Number of GPU operations to batch together for better utilisation.
 /// Apple Silicon's Unified Memory Architecture (UMA) eliminates CPU-GPU copy overhead,
 /// allowing larger batches without memory transfer penalty. 512 is tuned for M3/M4
@@ -4560,6 +4575,14 @@ fn analyze_neurons_with_cache(
     let threshold = input.improvement_threshold.unwrap_or(0.1);
     let ordered_neurons = build_ordered_neurons(&input.creature);
 
+    // Build a lookup map for neuron squash functions to identify discrete targets
+    let neuron_squash_map: HashMap<String, String> = input
+        .creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.clone(), n.squash.clone()))
+        .collect();
+
     // Log creature configuration for debugging data issues
     if verbose_enabled() {
         let non_input_count = input.creature.neurons.len();
@@ -4643,7 +4666,32 @@ fn analyze_neurons_with_cache(
 
     // Randomize the focus neuron order so that repeated runs with timeouts will
     // eventually cover all neurons. Convert to owned strings, shuffle, then use.
-    let mut focus_order: Vec<String> = unique_focus.iter().map(|s| (*s).clone()).collect();
+    // Also filter out neurons with discrete activation functions (STEP, BIPOLAR, etc.)
+    // because the linear error model used by discovery completely fails for them.
+    let mut skipped_discrete: Vec<String> = Vec::new();
+    let mut focus_order: Vec<String> = unique_focus
+        .iter()
+        .filter(|uuid| {
+            if let Some(squash) = neuron_squash_map.get(**uuid) {
+                if is_discrete_activation(squash) {
+                    skipped_discrete.push((**uuid).clone());
+                    return false;
+                }
+            }
+            true
+        })
+        .map(|s| (*s).clone())
+        .collect();
+
+    // Log skipped discrete neurons for visibility
+    if verbose_enabled() && !skipped_discrete.is_empty() {
+        eprintln!(
+            "[NEAT-AI-Discovery][verbose] Skipped {} focus neurons with discrete activations (STEP/BIPOLAR): {:?}",
+            skipped_discrete.len(),
+            skipped_discrete.iter().take(5).collect::<Vec<_>>()
+        );
+    }
+
     let mut rng = thread_rng();
     focus_order.shuffle(&mut rng);
     let focus_order_arc = Arc::new(focus_order);
@@ -5091,6 +5139,14 @@ fn analyze_synapses_with_cache(
             acc
         });
 
+    // Build a lookup map for neuron squash functions to identify discrete targets
+    let neuron_squash_map: HashMap<String, String> = input
+        .creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.clone(), n.squash.clone()))
+        .collect();
+
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_synapses")?;
 
     let diagnostics = Arc::new(Mutex::new(TargetDiagnostics::new(&unique_focus)));
@@ -5098,7 +5154,32 @@ fn analyze_synapses_with_cache(
     let deadline = build_deadline(input.analysis_deadline_ms);
     // Randomize the focus neuron order so that repeated runs with timeouts will
     // eventually cover all neurons. Convert to owned strings, shuffle, then use.
-    let mut focus_order: Vec<String> = unique_focus.iter().map(|s| (*s).clone()).collect();
+    // Also filter out neurons with discrete activation functions (STEP, BIPOLAR, etc.)
+    // because the linear error model used by discovery completely fails for them.
+    let mut skipped_discrete: Vec<String> = Vec::new();
+    let mut focus_order: Vec<String> = unique_focus
+        .iter()
+        .filter(|uuid| {
+            if let Some(squash) = neuron_squash_map.get(**uuid) {
+                if is_discrete_activation(squash) {
+                    skipped_discrete.push((**uuid).clone());
+                    return false;
+                }
+            }
+            true
+        })
+        .map(|s| (*s).clone())
+        .collect();
+
+    // Log skipped discrete neurons for visibility
+    if verbose_enabled() && !skipped_discrete.is_empty() {
+        eprintln!(
+            "[NEAT-AI-Discovery][verbose] Synapse analysis skipped {} focus neurons with discrete activations: {:?}",
+            skipped_discrete.len(),
+            skipped_discrete.iter().take(5).collect::<Vec<_>>()
+        );
+    }
+
     let mut rng = thread_rng();
     focus_order.shuffle(&mut rng);
 
@@ -7899,6 +7980,51 @@ mod tests_synapses {
         assert_eq!(min, -10.0);
         assert_eq!(max, 10.0);
         assert_eq!(step, 0.5);
+    }
+
+    /// Test is_discrete_activation correctly identifies discrete activation functions
+    /// Discrete functions like STEP and BIPOLAR have zero gradient everywhere except
+    /// at the threshold, making the linear error model used by discovery invalid.
+    #[test]
+    fn test_is_discrete_activation() {
+        // Discrete activations (should be filtered out from discovery targets)
+        assert!(is_discrete_activation("STEP"), "STEP is discrete");
+        assert!(is_discrete_activation("step"), "case insensitive");
+        assert!(is_discrete_activation("BIPOLAR"), "BIPOLAR is discrete");
+        assert!(
+            is_discrete_activation("HARD_TANH"),
+            "HARD_TANH has discrete boundaries"
+        );
+        assert!(
+            is_discrete_activation("BENT_IDENTITY"),
+            "BENT_IDENTITY has discrete regions"
+        );
+
+        // Continuous activations (should NOT be filtered)
+        assert!(!is_discrete_activation("TANH"), "TANH is continuous");
+        assert!(
+            !is_discrete_activation("LOGISTIC"),
+            "LOGISTIC is continuous"
+        );
+        assert!(
+            !is_discrete_activation("ReLU"),
+            "ReLU is continuous (piecewise)"
+        );
+        assert!(!is_discrete_activation("ELU"), "ELU is continuous");
+        assert!(!is_discrete_activation("SELU"), "SELU is continuous");
+        assert!(!is_discrete_activation("GELU"), "GELU is continuous");
+        assert!(
+            !is_discrete_activation("IDENTITY"),
+            "IDENTITY is continuous"
+        );
+        assert!(
+            !is_discrete_activation("Softplus"),
+            "Softplus is continuous"
+        );
+        assert!(
+            !is_discrete_activation("UNKNOWN"),
+            "Unknown defaults to continuous"
+        );
     }
 
     /// Test get_bias_values returns log-spaced values for efficient search

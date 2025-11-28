@@ -109,6 +109,36 @@ These steps ensure code quality, proper versioning, and that all tests pass befo
   results for earlier focus neurons, and later targets may be skipped or only
   partially analysed.
 
+### Discrete activation function limitations
+
+The discovery algorithm uses a **linear error model** to predict improvement:
+
+```
+expected_improvement ≈ (2×w×Σ(error×activation) - w²×Σ(activation²)) / Σ(error²)
+```
+
+This formula assumes the relationship between a neuron's input and error is
+**continuous and differentiable**. For neurons with **discrete activation
+functions** (STEP, BIPOLAR, HARD_TANH, BENT_IDENTITY), this model completely
+fails because:
+
+1. Small input changes either do **nothing** (if threshold not crossed)
+2. Or cause a **binary flip** (massive discrete output change)
+
+The library automatically **skips** neurons with discrete activations when
+analysing potential targets. This prevents wasted computation and misleading
+predictions. If verbose logging is enabled (`NEAT_AI_DISCOVERY_VERBOSE=1`),
+you'll see messages like:
+
+```
+[NEAT-AI-Discovery][verbose] Skipped 3 focus neurons with discrete activations (STEP/BIPOLAR): [...]
+```
+
+If your creature relies heavily on STEP or BIPOLAR neurons for logical
+operations, discovery may find fewer candidates. Consider using continuous
+approximations (e.g. LOGISTIC with high bias for soft thresholding) if you
+want discovery to suggest improvements for those pathways.
+
 ## Verifying the installation
 
 Use the NEAT-AI helper script after copying the library:
