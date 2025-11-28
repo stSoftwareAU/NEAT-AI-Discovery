@@ -23,19 +23,36 @@ const EPSILON: f32 = 1e-8;
 const WORKGROUP_SIZE: u32 = 256;
 const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 
-/// Check if a target neuron's activation function is discrete/non-differentiable.
-/// For discrete functions like STEP and BIPOLAR, the linear error reduction model
-/// used by discovery completely fails because small input changes either:
-/// 1. Do nothing (if threshold not crossed)
-/// 2. Cause a binary flip (massive discrete change)
+/// Check if a target neuron uses a threshold-based discrete activation function.
+/// STEP and BIPOLAR can benefit from a specialised threshold-crossing analysis model
+/// that counts how many samples would flip to the correct output if we add a new connection.
 ///
-/// The discovery formula `new_error ≈ old_error - weight × activation` assumes
-/// continuous, differentiable behaviour, which doesn't apply to these functions.
-fn is_discrete_activation(squash: &str) -> bool {
+/// - **STEP**: Output = value > 0 ? 1 : 0
+/// - **BIPOLAR**: Output = value > 0 ? 1 : -1
+fn is_threshold_activation(squash: &str) -> bool {
+    matches!(squash.to_uppercase().as_str(), "STEP" | "BIPOLAR")
+}
+
+/// Check if a target neuron's activation function should be skipped entirely.
+/// These functions have complex non-differentiable behaviour where even a
+/// threshold-crossing model won't work well.
+///
+/// ## Skipped activations:
+/// - **IF**: Conditional switch between positive/negative branches (multi-input logic)
+/// - **MAXIMUM**: Selects max of inputs - switching depends on ALL inputs, not just one
+/// - **MINIMUM**: Selects min of inputs - switching depends on ALL inputs, not just one
+/// - **HARD_TANH/CLIPPED**: Has saturation regions, but gradient-based might still help
+/// - **ReLU6**: Has saturation regions at both ends
+fn is_discrete_skip_activation(squash: &str) -> bool {
     matches!(
         squash.to_uppercase().as_str(),
-        "STEP" | "BIPOLAR" | "HARD_TANH" | "BENT_IDENTITY"
+        "IF" | "MAXIMUM" | "MINIMUM" | "HARD_TANH" | "CLIPPED" | "RELU6"
     )
+}
+
+/// Legacy function for backward compatibility - returns true for all discrete activations
+fn is_discrete_activation(squash: &str) -> bool {
+    is_threshold_activation(squash) || is_discrete_skip_activation(squash)
 }
 /// Number of GPU operations to batch together for better utilisation.
 /// Apple Silicon's Unified Memory Architecture (UMA) eliminates CPU-GPU copy overhead,
@@ -1342,6 +1359,88 @@ fn require_unique_focus<'a>(focus_neurons: &'a [String], context: &str) -> Resul
 struct HelpfulSample {
     activation: f32,
     avg_error: f32,
+}
+
+/// Extended sample for threshold-crossing analysis of discrete activations (STEP/BIPOLAR).
+/// Includes the target neuron's pre-activation value to determine threshold crossings.
+#[derive(Clone, Copy)]
+struct DiscreteHelpfulSample {
+    /// Source neuron's activation
+    source_activation: f32,
+    /// Target neuron's input sum before squash function
+    target_value: f32,
+    /// Target neuron's current output after squash (0/1 for STEP, -1/1 for BIPOLAR)
+    target_activation: f32,
+    /// Target neuron's average error
+    avg_error: f32,
+}
+
+/// Type of threshold activation function
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ThresholdType {
+    /// STEP: value > 0 ? 1 : 0
+    Step,
+    /// BIPOLAR: value > 0 ? 1 : -1
+    Bipolar,
+}
+
+impl ThresholdType {
+    fn from_squash(squash: &str) -> Option<Self> {
+        match squash.to_uppercase().as_str() {
+            "STEP" => Some(Self::Step),
+            "BIPOLAR" => Some(Self::Bipolar),
+            _ => None,
+        }
+    }
+
+    /// Calculate the output for a given input value
+    fn apply(&self, value: f32) -> f32 {
+        match self {
+            Self::Step => {
+                if value > 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Self::Bipolar => {
+                if value > 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+        }
+    }
+
+    /// Check if adding a contribution would flip the output
+    fn would_flip(&self, current_value: f32, contribution: f32) -> bool {
+        let current_positive = current_value > 0.0;
+        let new_positive = (current_value + contribution) > 0.0;
+        current_positive != new_positive
+    }
+
+    /// Check if a flip is "helpful" (moves output in direction of error)
+    /// Returns: 1 for helpful flip, -1 for harmful flip, 0 for no flip
+    fn flip_direction(&self, current_value: f32, contribution: f32, error: f32) -> i32 {
+        if !self.would_flip(current_value, contribution) {
+            return 0;
+        }
+
+        let current_output = self.apply(current_value);
+        let new_output = self.apply(current_value + contribution);
+
+        // Error > 0 means output should be higher
+        // Error < 0 means output should be lower
+        let output_increased = new_output > current_output;
+        let should_increase = error > 0.0;
+
+        if output_increased == should_increase {
+            1 // Helpful flip
+        } else {
+            -1 // Harmful flip
+        }
+    }
 }
 
 /// Statistics computed from neuron error and activation samples
@@ -4568,6 +4667,176 @@ fn evaluate_activation_candidate(
     Ok(best_candidate.or(fallback_candidate))
 }
 
+/// Build discrete samples for threshold-crossing analysis.
+/// Combines source neuron activations with target neuron values and errors.
+fn build_discrete_samples(
+    source_records: &[DiscoverRecord],
+    target_records: &[DiscoverRecord],
+) -> Vec<DiscreteHelpfulSample> {
+    // Build a map from obs_index to target record
+    let target_map: HashMap<u32, &DiscoverRecord> = target_records
+        .iter()
+        .filter(|r| !r.errors.is_empty())
+        .map(|r| (r.obs_index, r))
+        .collect();
+
+    let mut samples = Vec::new();
+
+    for source_record in source_records {
+        if !source_record.activation.is_finite() {
+            continue;
+        }
+
+        if let Some(target_record) = target_map.get(&source_record.obs_index) {
+            // Need target's value (pre-activation input sum) for threshold crossing
+            let target_value = match target_record.value {
+                Some(v) if v.is_finite() => v,
+                _ => continue, // Skip if no value available
+            };
+
+            if !target_record.activation.is_finite() {
+                continue;
+            }
+
+            // Compute average error for target
+            let mut error_sum = 0.0;
+            let mut error_count = 0;
+            for &err in &target_record.errors {
+                if err.is_finite() {
+                    error_sum += err;
+                    error_count += 1;
+                }
+            }
+
+            if error_count > 0 {
+                let avg_error = error_sum / error_count as f32;
+                samples.push(DiscreteHelpfulSample {
+                    source_activation: source_record.activation,
+                    target_value,
+                    target_activation: target_record.activation,
+                    avg_error,
+                });
+            }
+        }
+    }
+
+    samples
+}
+
+/// Evaluate a discrete activation candidate using threshold-crossing model.
+/// Instead of predicting continuous error reduction, counts how many samples
+/// would flip to the correct output if we add a new connection.
+///
+/// For STEP/BIPOLAR, the only meaningful improvement is flipping the output:
+/// - If error > 0 (output should be higher), we want to flip 0→1 or -1→1
+/// - If error < 0 (output should be lower), we want to flip 1→0 or 1→-1
+fn evaluate_discrete_candidate(
+    source_uuid: &str,
+    target_uuid: &str,
+    samples: &[DiscreteHelpfulSample],
+    threshold_type: ThresholdType,
+    threshold: f32,
+) -> Option<CandidateNeuronJson> {
+    if samples.len() < MIN_NEURON_SAMPLE_COUNT {
+        return None;
+    }
+
+    let total_count = samples.len() as u32;
+
+    // Weight scales to try - for discrete functions, we need weights that can
+    // actually push the target across the threshold
+    const SCALES: [f32; 8] = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0];
+    const ORIENTATIONS: [f32; 2] = [1.0, -1.0];
+
+    let mut best_candidate: Option<CandidateNeuronJson> = None;
+    let mut best_improvement = threshold;
+
+    // For discrete functions, use IDENTITY squash on the new neuron
+    // This passes the weighted source activation directly
+    let new_neuron_squash = "IDENTITY";
+
+    for &orientation in &ORIENTATIONS {
+        for &scale in &SCALES {
+            let incoming_weight = orientation * scale;
+
+            // For IDENTITY squash, new_neuron_output = incoming_weight * source_activation
+            // Try different outgoing weights
+            for &out_scale in &SCALES {
+                for &out_orientation in &ORIENTATIONS {
+                    let outgoing_weight = out_orientation * out_scale;
+
+                    // Count helpful and harmful flips
+                    let mut helpful_flips = 0i32;
+                    let mut harmful_flips = 0i32;
+                    let mut samples_with_error = 0u32;
+
+                    for sample in samples {
+                        if sample.avg_error.abs() < EPSILON {
+                            continue; // No error, nothing to improve
+                        }
+                        samples_with_error += 1;
+
+                        // New neuron output with IDENTITY: just passes through
+                        let new_neuron_output = incoming_weight * sample.source_activation;
+                        let contribution = outgoing_weight * new_neuron_output;
+
+                        let flip_dir = threshold_type.flip_direction(
+                            sample.target_value,
+                            contribution,
+                            sample.avg_error,
+                        );
+
+                        match flip_dir {
+                            1 => helpful_flips += 1,
+                            -1 => harmful_flips += 1,
+                            _ => {}
+                        }
+                    }
+
+                    if samples_with_error < MIN_NEURON_SAMPLE_COUNT as u32 {
+                        continue;
+                    }
+
+                    // Net improvement: proportion of samples that would be corrected
+                    let net_flips = helpful_flips - harmful_flips;
+                    let improvement = net_flips as f32 / samples_with_error as f32;
+
+                    if improvement > best_improvement && helpful_flips > harmful_flips {
+                        best_improvement = improvement;
+
+                        // Create target neuron stats from samples
+                        let target_stats = {
+                            let helper_samples: Vec<HelpfulSample> = samples
+                                .iter()
+                                .map(|s| HelpfulSample {
+                                    activation: s.target_activation,
+                                    avg_error: s.avg_error,
+                                })
+                                .collect();
+                            NeuronStats::from_samples(&helper_samples).map(|s| s.to_json())
+                        };
+
+                        best_candidate = Some(CandidateNeuronJson {
+                            source_neuron_uuid: source_uuid.to_string(),
+                            target_neuron_uuid: target_uuid.to_string(),
+                            incoming_weight,
+                            outgoing_weight,
+                            squash: new_neuron_squash.to_string(),
+                            bias: 0.0, // IDENTITY doesn't need bias for threshold crossing
+                            expected_improvement_percentage: improvement,
+                            improved_count: helpful_flips as u32,
+                            total_count,
+                            target_neuron_stats: target_stats,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    best_candidate
+}
+
 fn analyze_neurons_with_cache(
     input: &AnalyzeNeuronsInput,
     cache: Arc<RecordCache>,
@@ -4666,16 +4935,22 @@ fn analyze_neurons_with_cache(
 
     // Randomize the focus neuron order so that repeated runs with timeouts will
     // eventually cover all neurons. Convert to owned strings, shuffle, then use.
-    // Also filter out neurons with discrete activation functions (STEP, BIPOLAR, etc.)
-    // because the linear error model used by discovery completely fails for them.
+    //
+    // Filter out neurons that must be completely skipped (IF, MAXIMUM, MINIMUM, etc.)
+    // but allow STEP/BIPOLAR through - they use a specialised threshold-crossing model.
     let mut skipped_discrete: Vec<String> = Vec::new();
+    let mut threshold_targets: Vec<String> = Vec::new();
     let mut focus_order: Vec<String> = unique_focus
         .iter()
         .filter(|uuid| {
             if let Some(squash) = neuron_squash_map.get(**uuid) {
-                if is_discrete_activation(squash) {
+                if is_discrete_skip_activation(squash) {
                     skipped_discrete.push((**uuid).clone());
                     return false;
+                }
+                if is_threshold_activation(squash) {
+                    threshold_targets.push((**uuid).clone());
+                    // Allow through - will use discrete evaluation
                 }
             }
             true
@@ -4683,12 +4958,19 @@ fn analyze_neurons_with_cache(
         .map(|s| (*s).clone())
         .collect();
 
-    // Log skipped discrete neurons for visibility
+    // Log skipped and threshold-crossing neurons for visibility
     if verbose_enabled() && !skipped_discrete.is_empty() {
         eprintln!(
-            "[NEAT-AI-Discovery][verbose] Skipped {} focus neurons with discrete activations (STEP/BIPOLAR): {:?}",
+            "[NEAT-AI-Discovery][verbose] Skipped {} focus neurons with unsupported discrete activations (IF/MAXIMUM/etc): {:?}",
             skipped_discrete.len(),
             skipped_discrete.iter().take(5).collect::<Vec<_>>()
+        );
+    }
+    if verbose_enabled() && !threshold_targets.is_empty() {
+        eprintln!(
+            "[NEAT-AI-Discovery][verbose] Using threshold-crossing model for {} STEP/BIPOLAR neurons: {:?}",
+            threshold_targets.len(),
+            threshold_targets.iter().take(5).collect::<Vec<_>>()
         );
     }
 
@@ -4697,6 +4979,7 @@ fn analyze_neurons_with_cache(
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
     let order_map_arc = Arc::new(order_map);
+    let neuron_squash_map_arc = Arc::new(neuron_squash_map);
 
     // Process each focus neuron in parallel. Deadline checks happen at the start of
     // each focus target so that once analysis for a neuron begins, we prefer to
@@ -4750,6 +5033,11 @@ fn analyze_neurons_with_cache(
                     has_errors
                 );
             }
+
+            // Check if this is a threshold activation (STEP/BIPOLAR) that needs special handling
+            let threshold_type = neuron_squash_map_arc
+                .get(target_uuid)
+                .and_then(|squash| ThresholdType::from_squash(squash));
 
             let target_index = match order_map_arc.get(target_uuid.as_str()) {
                 Some(index) => *index,
@@ -4891,54 +5179,101 @@ fn analyze_neurons_with_cache(
 
             // Phase 4: Process evaluations - GPU work is done here
             // Filter to only sources with samples, then evaluate
-            for result in work_results {
-                // Check deadline before each evaluation batch
-                if deadline_passed(&deadline) {
-                    *analysis_timed_out.lock().expect("Mutex poisoned") = true;
-                    break;
-                }
+            //
+            // For threshold activations (STEP/BIPOLAR), we use a specialised
+            // threshold-crossing model instead of the standard linear error model.
+            if let Some(t_type) = threshold_type {
+                // Threshold activation path - use discrete evaluation
+                for (source, from_records_arc) in &sources_to_process {
+                    // Check deadline
+                    if deadline_passed(&deadline) {
+                        *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+                        break;
+                    }
 
-                if result.samples.is_empty() {
-                    continue;
-                }
+                    let from_records = from_records_arc.as_ref();
+                    let discrete_samples = build_discrete_samples(from_records, target_records);
 
-                let relu_result = evaluate_relu_candidate(
-                    &analyzer,
-                    &result.source_uuid,
-                    target_uuid,
-                    &result.samples,
-                    threshold,
-                )?;
+                    if discrete_samples.len() < MIN_NEURON_SAMPLE_COUNT {
+                        continue;
+                    }
 
-                if let Some(candidate) = relu_result.candidate {
-                    diagnostics
-                        .lock()
-                        .expect("Mutex poisoned: diagnostics")
-                        .mark_candidate_selected(target_uuid);
-                    let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
-                    upsert_candidate(&mut map, candidate);
-                } else if let Some(summary) = relu_result.best_summary.as_ref() {
-                    diagnostics
-                        .lock()
-                        .expect("Mutex poisoned: diagnostics")
-                        .record_rejection(target_uuid, &result.source_uuid, summary, threshold);
-                }
-
-                for spec in ACTIVATION_SPECS.iter() {
-                    if let Some(candidate) = evaluate_activation_candidate(
-                        &analyzer,
-                        &result.source_uuid,
+                    if let Some(candidate) = evaluate_discrete_candidate(
+                        &source.uuid,
                         target_uuid,
-                        &result.samples,
+                        &discrete_samples,
+                        t_type,
                         threshold,
-                        spec,
-                    )? {
+                    ) {
+                        if verbose_enabled() {
+                            eprintln!(
+                                "[NEAT-AI-Discovery][verbose] Threshold-crossing candidate for {} -> {}: {} samples, {:.2}% improvement (flips: {})",
+                                source.uuid,
+                                target_uuid,
+                                discrete_samples.len(),
+                                candidate.expected_improvement_percentage * 100.0,
+                                candidate.improved_count
+                            );
+                        }
                         diagnostics
                             .lock()
                             .expect("Mutex poisoned: diagnostics")
                             .mark_candidate_selected(target_uuid);
                         let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
                         upsert_candidate(&mut map, candidate);
+                    }
+                }
+            } else {
+                // Standard continuous activation path
+                for result in work_results {
+                    // Check deadline before each evaluation batch
+                    if deadline_passed(&deadline) {
+                        *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+                        break;
+                    }
+
+                    if result.samples.is_empty() {
+                        continue;
+                    }
+
+                    let relu_result = evaluate_relu_candidate(
+                        &analyzer,
+                        &result.source_uuid,
+                        target_uuid,
+                        &result.samples,
+                        threshold,
+                    )?;
+
+                    if let Some(candidate) = relu_result.candidate {
+                        diagnostics
+                            .lock()
+                            .expect("Mutex poisoned: diagnostics")
+                            .mark_candidate_selected(target_uuid);
+                        let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
+                        upsert_candidate(&mut map, candidate);
+                    } else if let Some(summary) = relu_result.best_summary.as_ref() {
+                        diagnostics
+                            .lock()
+                            .expect("Mutex poisoned: diagnostics")
+                            .record_rejection(target_uuid, &result.source_uuid, summary, threshold);
+                    }
+
+                    for spec in ACTIVATION_SPECS.iter() {
+                        if let Some(candidate) = evaluate_activation_candidate(
+                            &analyzer,
+                            &result.source_uuid,
+                            target_uuid,
+                            &result.samples,
+                            threshold,
+                            spec,
+                        )? {
+                            diagnostics
+                                .lock()
+                                .expect("Mutex poisoned: diagnostics")
+                                .mark_candidate_selected(target_uuid);
+                            let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
+                            upsert_candidate(&mut map, candidate);
+                        }
                     }
                 }
             }
@@ -7987,17 +8322,37 @@ mod tests_synapses {
     /// at the threshold, making the linear error model used by discovery invalid.
     #[test]
     fn test_is_discrete_activation() {
-        // Discrete activations (should be filtered out from discovery targets)
-        assert!(is_discrete_activation("STEP"), "STEP is discrete");
+        // Fully discrete activations (binary/ternary output)
+        assert!(is_discrete_activation("STEP"), "STEP is discrete (0 or 1)");
         assert!(is_discrete_activation("step"), "case insensitive");
-        assert!(is_discrete_activation("BIPOLAR"), "BIPOLAR is discrete");
         assert!(
-            is_discrete_activation("HARD_TANH"),
-            "HARD_TANH has discrete boundaries"
+            is_discrete_activation("BIPOLAR"),
+            "BIPOLAR is discrete (-1 or 1)"
+        );
+        assert!(is_discrete_activation("IF"), "IF switches between branches");
+
+        // Aggregate activations with non-differentiable switching
+        assert!(
+            is_discrete_activation("MAXIMUM"),
+            "MAXIMUM has non-differentiable switch points"
         );
         assert!(
-            is_discrete_activation("BENT_IDENTITY"),
-            "BENT_IDENTITY has discrete regions"
+            is_discrete_activation("MINIMUM"),
+            "MINIMUM has non-differentiable switch points"
+        );
+
+        // Piecewise with flat/zero-gradient regions
+        assert!(
+            is_discrete_activation("HARD_TANH"),
+            "HARD_TANH has flat regions at -1 and 1"
+        );
+        assert!(
+            is_discrete_activation("CLIPPED"),
+            "CLIPPED is alias for HARD_TANH"
+        );
+        assert!(
+            is_discrete_activation("ReLU6"),
+            "ReLU6 has flat regions at 0 and 6"
         );
 
         // Continuous activations (should NOT be filtered)
@@ -8008,7 +8363,11 @@ mod tests_synapses {
         );
         assert!(
             !is_discrete_activation("ReLU"),
-            "ReLU is continuous (piecewise)"
+            "ReLU is continuous (piecewise linear)"
+        );
+        assert!(
+            !is_discrete_activation("LeakyReLU"),
+            "LeakyReLU is continuous"
         );
         assert!(!is_discrete_activation("ELU"), "ELU is continuous");
         assert!(!is_discrete_activation("SELU"), "SELU is continuous");
@@ -8022,9 +8381,217 @@ mod tests_synapses {
             "Softplus is continuous"
         );
         assert!(
+            !is_discrete_activation("BENT_IDENTITY"),
+            "BENT_IDENTITY is smooth (derivative >= 1)"
+        );
+        assert!(!is_discrete_activation("ArcTan"), "ArcTan is continuous");
+        assert!(!is_discrete_activation("Swish"), "Swish is continuous");
+        assert!(!is_discrete_activation("Mish"), "Mish is continuous");
+        assert!(
             !is_discrete_activation("UNKNOWN"),
             "Unknown defaults to continuous"
         );
+    }
+
+    /// Test is_threshold_activation identifies STEP and BIPOLAR
+    #[test]
+    fn test_is_threshold_activation() {
+        // Threshold activations - can use threshold-crossing model
+        assert!(is_threshold_activation("STEP"), "STEP is threshold");
+        assert!(is_threshold_activation("step"), "case insensitive");
+        assert!(is_threshold_activation("BIPOLAR"), "BIPOLAR is threshold");
+
+        // These are discrete but NOT threshold-based
+        assert!(!is_threshold_activation("IF"), "IF is not threshold-based");
+        assert!(
+            !is_threshold_activation("MAXIMUM"),
+            "MAXIMUM is not threshold-based"
+        );
+        assert!(
+            !is_threshold_activation("MINIMUM"),
+            "MINIMUM is not threshold-based"
+        );
+        assert!(
+            !is_threshold_activation("HARD_TANH"),
+            "HARD_TANH is not threshold-based"
+        );
+
+        // Continuous activations
+        assert!(!is_threshold_activation("TANH"), "TANH is not threshold");
+        assert!(!is_threshold_activation("ReLU"), "ReLU is not threshold");
+    }
+
+    /// Test is_discrete_skip_activation identifies functions to completely skip
+    #[test]
+    fn test_is_discrete_skip_activation() {
+        // Should be skipped - complex aggregate/saturating functions
+        assert!(is_discrete_skip_activation("IF"), "IF should be skipped");
+        assert!(
+            is_discrete_skip_activation("MAXIMUM"),
+            "MAXIMUM should be skipped"
+        );
+        assert!(
+            is_discrete_skip_activation("MINIMUM"),
+            "MINIMUM should be skipped"
+        );
+        assert!(
+            is_discrete_skip_activation("HARD_TANH"),
+            "HARD_TANH should be skipped"
+        );
+        assert!(
+            is_discrete_skip_activation("CLIPPED"),
+            "CLIPPED should be skipped"
+        );
+        assert!(
+            is_discrete_skip_activation("ReLU6"),
+            "ReLU6 should be skipped"
+        );
+
+        // Should NOT be skipped - handled by threshold-crossing model
+        assert!(
+            !is_discrete_skip_activation("STEP"),
+            "STEP uses threshold model"
+        );
+        assert!(
+            !is_discrete_skip_activation("BIPOLAR"),
+            "BIPOLAR uses threshold model"
+        );
+
+        // Continuous activations should not be skipped
+        assert!(!is_discrete_skip_activation("TANH"), "TANH is continuous");
+        assert!(!is_discrete_skip_activation("ReLU"), "ReLU is continuous");
+    }
+
+    /// Test ThresholdType correctly applies threshold functions
+    #[test]
+    fn test_threshold_type_apply() {
+        // STEP: value > 0 ? 1 : 0
+        assert_eq!(ThresholdType::Step.apply(0.5), 1.0);
+        assert_eq!(ThresholdType::Step.apply(0.001), 1.0);
+        assert_eq!(ThresholdType::Step.apply(0.0), 0.0);
+        assert_eq!(ThresholdType::Step.apply(-0.001), 0.0);
+        assert_eq!(ThresholdType::Step.apply(-5.0), 0.0);
+
+        // BIPOLAR: value > 0 ? 1 : -1
+        assert_eq!(ThresholdType::Bipolar.apply(0.5), 1.0);
+        assert_eq!(ThresholdType::Bipolar.apply(0.001), 1.0);
+        assert_eq!(ThresholdType::Bipolar.apply(0.0), -1.0);
+        assert_eq!(ThresholdType::Bipolar.apply(-0.001), -1.0);
+        assert_eq!(ThresholdType::Bipolar.apply(-5.0), -1.0);
+    }
+
+    /// Test ThresholdType correctly detects threshold flips
+    #[test]
+    fn test_threshold_type_would_flip() {
+        // STEP: threshold at 0
+        assert!(
+            ThresholdType::Step.would_flip(-0.5, 1.0),
+            "negative -> positive should flip"
+        );
+        assert!(
+            ThresholdType::Step.would_flip(0.5, -1.0),
+            "positive -> negative should flip"
+        );
+        assert!(
+            !ThresholdType::Step.would_flip(0.5, 0.3),
+            "positive -> more positive shouldn't flip"
+        );
+        assert!(
+            !ThresholdType::Step.would_flip(-0.5, -0.3),
+            "negative -> more negative shouldn't flip"
+        );
+
+        // Edge cases
+        assert!(
+            ThresholdType::Step.would_flip(-0.1, 0.2),
+            "just crosses threshold"
+        );
+        assert!(
+            !ThresholdType::Step.would_flip(-0.1, 0.05),
+            "doesn't quite reach threshold"
+        );
+    }
+
+    /// Test ThresholdType correctly identifies helpful vs harmful flips
+    #[test]
+    fn test_threshold_type_flip_direction() {
+        // STEP: Error > 0 means output should be higher (0 -> 1 is helpful)
+        // Current output is 0 (value < 0), error > 0 (should be 1), flip to 1 is helpful
+        assert_eq!(
+            ThresholdType::Step.flip_direction(-0.5, 1.0, 0.5),
+            1,
+            "flip 0->1 when error>0 is helpful"
+        );
+
+        // Current output is 1 (value > 0), error < 0 (should be 0), flip to 0 is helpful
+        assert_eq!(
+            ThresholdType::Step.flip_direction(0.5, -1.0, -0.5),
+            1,
+            "flip 1->0 when error<0 is helpful"
+        );
+
+        // Current output is 0 (value < 0), error < 0 (should be 0), no flip needed
+        assert_eq!(
+            ThresholdType::Step.flip_direction(-0.5, -0.1, -0.5),
+            0,
+            "no flip when error<0 and output=0"
+        );
+
+        // Current output is 1 (value > 0), error > 0 (should be 1), no flip needed
+        assert_eq!(
+            ThresholdType::Step.flip_direction(0.5, 0.1, 0.5),
+            0,
+            "no flip when error>0 and output=1"
+        );
+
+        // Harmful flip: flip 1->0 when error > 0 (output should stay high)
+        assert_eq!(
+            ThresholdType::Step.flip_direction(0.5, -1.0, 0.5),
+            -1,
+            "flip 1->0 when error>0 is harmful"
+        );
+
+        // Harmful flip: flip 0->1 when error < 0 (output should stay low)
+        assert_eq!(
+            ThresholdType::Step.flip_direction(-0.5, 1.0, -0.5),
+            -1,
+            "flip 0->1 when error<0 is harmful"
+        );
+    }
+
+    /// Test evaluate_discrete_candidate finds candidates for STEP targets
+    #[test]
+    fn test_evaluate_discrete_candidate_step() {
+        // Create samples where source activation correlates with whether the target
+        // is on the "wrong side" of the threshold
+        let mut samples = Vec::new();
+
+        // Case 1: Target is at 0 (value=-0.5) but should be 1 (error=0.5)
+        // Source has high positive activation - adding positive contribution would help
+        for i in 0..20 {
+            samples.push(DiscreteHelpfulSample {
+                source_activation: 0.5 + (i as f32 * 0.01),
+                target_value: -0.3, // Currently outputs 0
+                target_activation: 0.0,
+                avg_error: 0.5, // Should be 1 (positive error)
+            });
+        }
+
+        let candidate = evaluate_discrete_candidate(
+            "input-0",
+            "target-step",
+            &samples,
+            ThresholdType::Step,
+            0.0, // threshold
+        );
+
+        assert!(candidate.is_some(), "Should find a candidate for STEP");
+        let c = candidate.unwrap();
+        assert!(
+            c.expected_improvement_percentage > 0.0,
+            "Should have positive improvement"
+        );
+        assert!(c.improved_count > 0, "Should have some helpful flips");
     }
 
     /// Test get_bias_values returns log-spaced values for efficient search
