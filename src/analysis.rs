@@ -8684,5 +8684,3 @@ mod tests_synapses {
         );
     }
 }
-
-
