@@ -34,20 +34,23 @@ fn is_threshold_activation(squash: &str) -> bool {
 }
 
 /// Check if a target neuron's activation function should be skipped entirely.
-/// These functions have complex non-differentiable behaviour where even a
-/// threshold-crossing model won't work well.
 ///
-/// ## Skipped activations:
-/// - **IF**: Conditional switch between positive/negative branches (multi-input logic)
-/// - **MAXIMUM**: Selects max of inputs - switching depends on ALL inputs, not just one
-/// - **MINIMUM**: Selects min of inputs - switching depends on ALL inputs, not just one
-/// - **HARD_TANH/CLIPPED**: Has saturation regions, but gradient-based might still help
-/// - **ReLU6**: Has saturation regions at both ends
-fn is_discrete_skip_activation(squash: &str) -> bool {
-    matches!(
-        squash.to_uppercase().as_str(),
-        "IF" | "MAXIMUM" | "MINIMUM" | "HARD_TANH" | "CLIPPED" | "RELU6"
-    )
+/// Currently returns false for all activations - we no longer skip any targets.
+/// The linear error model is an approximation for ALL non-linear functions.
+/// For any target neuron, we look at:
+/// - Observed errors on the target
+/// - Observed activations from potential sources
+/// - Correlation between them
+///
+/// This correlation analysis works regardless of how the target computed its
+/// output. The source neurons are black boxes (we use their recorded activations),
+/// and the target's error tells us "should output be higher or lower?".
+///
+/// Even for complex activation functions like IF/MAXIMUM/MINIMUM, finding
+/// sources that correlate with the error can suggest useful connections.
+#[allow(dead_code)]
+fn is_discrete_skip_activation(_squash: &str) -> bool {
+    false // No activations are skipped - correlation analysis works for all
 }
 
 /// Legacy function for backward compatibility - returns true for all discrete activations
@@ -8317,79 +8320,81 @@ mod tests_synapses {
         assert_eq!(step, 0.5);
     }
 
-    /// Test is_discrete_activation correctly identifies discrete activation functions
-    /// Discrete functions like STEP and BIPOLAR have zero gradient everywhere except
-    /// at the threshold, making the linear error model used by discovery invalid.
+    /// Test is_discrete_activation identifies threshold functions (STEP/BIPOLAR).
+    /// These use a specialised threshold-crossing model instead of the linear model.
+    /// All other activations use the standard linear error model - none are skipped.
     #[test]
     fn test_is_discrete_activation() {
-        // Fully discrete activations (binary/ternary output)
-        assert!(is_discrete_activation("STEP"), "STEP is discrete (0 or 1)");
+        // Threshold activations - use threshold-crossing model
+        assert!(is_discrete_activation("STEP"), "STEP uses threshold model");
         assert!(is_discrete_activation("step"), "case insensitive");
         assert!(
             is_discrete_activation("BIPOLAR"),
-            "BIPOLAR is discrete (-1 or 1)"
-        );
-        assert!(is_discrete_activation("IF"), "IF switches between branches");
-
-        // Aggregate activations with non-differentiable switching
-        assert!(
-            is_discrete_activation("MAXIMUM"),
-            "MAXIMUM has non-differentiable switch points"
-        );
-        assert!(
-            is_discrete_activation("MINIMUM"),
-            "MINIMUM has non-differentiable switch points"
+            "BIPOLAR uses threshold model"
         );
 
-        // Piecewise with flat/zero-gradient regions
+        // All other activations use standard linear model (not skipped)
         assert!(
-            is_discrete_activation("HARD_TANH"),
-            "HARD_TANH has flat regions at -1 and 1"
+            !is_discrete_activation("IF"),
+            "IF uses standard model (correlation still works)"
         );
         assert!(
-            is_discrete_activation("CLIPPED"),
-            "CLIPPED is alias for HARD_TANH"
+            !is_discrete_activation("MAXIMUM"),
+            "MAXIMUM uses standard model"
         );
         assert!(
-            is_discrete_activation("ReLU6"),
-            "ReLU6 has flat regions at 0 and 6"
+            !is_discrete_activation("MINIMUM"),
+            "MINIMUM uses standard model"
         );
-
-        // Continuous activations (should NOT be filtered)
-        assert!(!is_discrete_activation("TANH"), "TANH is continuous");
+        assert!(
+            !is_discrete_activation("HARD_TANH"),
+            "HARD_TANH uses standard model"
+        );
+        assert!(
+            !is_discrete_activation("CLIPPED"),
+            "CLIPPED uses standard model"
+        );
+        assert!(
+            !is_discrete_activation("ReLU6"),
+            "ReLU6 uses standard model"
+        );
+        assert!(!is_discrete_activation("TANH"), "TANH uses standard model");
         assert!(
             !is_discrete_activation("LOGISTIC"),
-            "LOGISTIC is continuous"
+            "LOGISTIC uses standard model"
         );
-        assert!(
-            !is_discrete_activation("ReLU"),
-            "ReLU is continuous (piecewise linear)"
-        );
+        assert!(!is_discrete_activation("ReLU"), "ReLU uses standard model");
         assert!(
             !is_discrete_activation("LeakyReLU"),
-            "LeakyReLU is continuous"
+            "LeakyReLU uses standard model"
         );
-        assert!(!is_discrete_activation("ELU"), "ELU is continuous");
-        assert!(!is_discrete_activation("SELU"), "SELU is continuous");
-        assert!(!is_discrete_activation("GELU"), "GELU is continuous");
+        assert!(!is_discrete_activation("ELU"), "ELU uses standard model");
+        assert!(!is_discrete_activation("SELU"), "SELU uses standard model");
+        assert!(!is_discrete_activation("GELU"), "GELU uses standard model");
         assert!(
             !is_discrete_activation("IDENTITY"),
-            "IDENTITY is continuous"
+            "IDENTITY uses standard model"
         );
         assert!(
             !is_discrete_activation("Softplus"),
-            "Softplus is continuous"
+            "Softplus uses standard model"
         );
         assert!(
             !is_discrete_activation("BENT_IDENTITY"),
-            "BENT_IDENTITY is smooth (derivative >= 1)"
+            "BENT_IDENTITY uses standard model"
         );
-        assert!(!is_discrete_activation("ArcTan"), "ArcTan is continuous");
-        assert!(!is_discrete_activation("Swish"), "Swish is continuous");
-        assert!(!is_discrete_activation("Mish"), "Mish is continuous");
+        assert!(
+            !is_discrete_activation("ArcTan"),
+            "ArcTan uses standard model"
+        );
+        assert!(
+            !is_discrete_activation("Swish"),
+            "Swish uses standard model"
+        );
+        assert!(!is_discrete_activation("Mish"), "Mish uses standard model");
         assert!(
             !is_discrete_activation("UNKNOWN"),
-            "Unknown defaults to continuous"
+            "Unknown uses standard model"
         );
     }
 
@@ -8421,45 +8426,36 @@ mod tests_synapses {
         assert!(!is_threshold_activation("ReLU"), "ReLU is not threshold");
     }
 
-    /// Test is_discrete_skip_activation identifies functions to completely skip
+    /// Test is_discrete_skip_activation - no activations are skipped.
+    /// The correlation analysis (source activations vs target errors) works for
+    /// all activation functions. We treat sources as black boxes and use the
+    /// target's error to guide discovery.
     #[test]
     fn test_is_discrete_skip_activation() {
-        // Should be skipped - complex aggregate/saturating functions
-        assert!(is_discrete_skip_activation("IF"), "IF should be skipped");
+        // No activations should be skipped - correlation analysis works for all
         assert!(
-            is_discrete_skip_activation("MAXIMUM"),
-            "MAXIMUM should be skipped"
+            !is_discrete_skip_activation("IF"),
+            "IF not skipped - correlation still works"
         );
         assert!(
-            is_discrete_skip_activation("MINIMUM"),
-            "MINIMUM should be skipped"
+            !is_discrete_skip_activation("MAXIMUM"),
+            "MAXIMUM not skipped - correlation still works"
         );
         assert!(
-            is_discrete_skip_activation("HARD_TANH"),
-            "HARD_TANH should be skipped"
+            !is_discrete_skip_activation("MINIMUM"),
+            "MINIMUM not skipped - correlation still works"
         );
         assert!(
-            is_discrete_skip_activation("CLIPPED"),
-            "CLIPPED should be skipped"
+            !is_discrete_skip_activation("HARD_TANH"),
+            "HARD_TANH not skipped"
         );
-        assert!(
-            is_discrete_skip_activation("ReLU6"),
-            "ReLU6 should be skipped"
-        );
-
-        // Should NOT be skipped - handled by threshold-crossing model
-        assert!(
-            !is_discrete_skip_activation("STEP"),
-            "STEP uses threshold model"
-        );
+        assert!(!is_discrete_skip_activation("STEP"), "STEP not skipped");
         assert!(
             !is_discrete_skip_activation("BIPOLAR"),
-            "BIPOLAR uses threshold model"
+            "BIPOLAR not skipped"
         );
-
-        // Continuous activations should not be skipped
-        assert!(!is_discrete_skip_activation("TANH"), "TANH is continuous");
-        assert!(!is_discrete_skip_activation("ReLU"), "ReLU is continuous");
+        assert!(!is_discrete_skip_activation("TANH"), "TANH not skipped");
+        assert!(!is_discrete_skip_activation("ReLU"), "ReLU not skipped");
     }
 
     /// Test ThresholdType correctly applies threshold functions
@@ -8688,3 +8684,5 @@ mod tests_synapses {
         );
     }
 }
+
+
