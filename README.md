@@ -144,31 +144,29 @@ The threshold-crossing model:
 This allows discovery to find meaningful improvements for STEP/BIPOLAR neurons
 by proposing connections that flip the output to the correct state on more samples.
 
-#### Skipped activations
+#### All other activations
 
-The following activations are **completely skipped** because their behaviour is
-too complex for any analysis model:
+All other activation functions (including IF, MAXIMUM, MINIMUM, HARD_TANH, ReLU6,
+etc.) use the **standard linear error model**. No activations are skipped.
 
-| Activation | Issue |
-|------------|-------|
-| **IF** | Conditional switch between positive/negative branches (multi-input logic) |
-| **MAXIMUM** | Selects max of inputs - switching depends on ALL inputs, not just one |
-| **MINIMUM** | Selects min of inputs - switching depends on ALL inputs, not just one |
-| **HARD_TANH/CLIPPED** | Derivative = 0 in saturation regions (|x| ≥ 1) |
-| **ReLU6** | Derivative = 0 in saturation regions (x ≤ 0 or x ≥ 6) |
+The discovery process treats source neurons as **black boxes** - we don't care
+how they computed their activations, only what the values are. For any target
+neuron, we look at:
+
+1. **Observed errors** on the target (how wrong is the output?)
+2. **Observed activations** from potential source neurons
+3. **Correlation** between them (when source is high, is error positive?)
+
+This correlation analysis works regardless of the target's activation function.
+The linear model is an approximation for ALL non-linear functions - it may be
+more or less accurate depending on the function, but it finds useful patterns.
 
 If verbose logging is enabled (`NEAT_AI_DISCOVERY_VERBOSE=1`), you'll see
 messages like:
 
 ```
 [NEAT-AI-Discovery][verbose] Using threshold-crossing model for 2 STEP/BIPOLAR neurons: [...]
-[NEAT-AI-Discovery][verbose] Skipped 3 focus neurons with unsupported discrete activations (IF/MAXIMUM/etc): [...]
 ```
-
-If your creature relies heavily on the skipped neurons for logical operations,
-discovery may find fewer candidates. Consider using continuous approximations
-(e.g. LOGISTIC with high bias for soft thresholding, or standard ReLU instead
-of ReLU6) if you want discovery to suggest improvements for those pathways.
 
 ## Verifying the installation
 
