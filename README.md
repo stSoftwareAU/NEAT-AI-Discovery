@@ -109,6 +109,67 @@ These steps ensure code quality, proper versioning, and that all tests pass befo
   results for earlier focus neurons, and later targets may be skipped or only
   partially analysed.
 
+### Discrete activation function handling
+
+The standard discovery algorithm uses a **linear error model** to predict improvement:
+
+```
+expected_improvement ≈ (2×w×Σ(error×activation) - w²×Σ(activation²)) / Σ(error²)
+```
+
+This formula assumes the relationship between a neuron's input and error is
+**continuous and differentiable**. For neurons with **discrete or saturating
+activation functions**, this model fails because:
+
+1. Small input changes either do **nothing** (if threshold not crossed)
+2. Or cause a **binary flip** (massive discrete output change)
+3. Or are in a flat/saturated region where the gradient is zero
+
+#### Threshold-crossing model for STEP/BIPOLAR
+
+**STEP** and **BIPOLAR** neurons now use a specialised **threshold-crossing model**
+instead of the standard linear error model:
+
+| Activation | Output | Threshold Model |
+|------------|--------|-----------------|
+| **STEP** | 0 or 1 | Counts samples where adding a connection would flip the output in the helpful direction |
+| **BIPOLAR** | -1 or 1 | Same approach, accounting for the -1/1 output range |
+
+The threshold-crossing model:
+- Examines each sample's target value (pre-activation input sum)
+- Predicts which samples would cross the 0-threshold if we add a new connection
+- Counts "helpful flips" (error-reducing) vs "harmful flips" (error-increasing)
+- Returns candidates where net helpful flips exceed the improvement threshold
+
+This allows discovery to find meaningful improvements for STEP/BIPOLAR neurons
+by proposing connections that flip the output to the correct state on more samples.
+
+#### Skipped activations
+
+The following activations are **completely skipped** because their behaviour is
+too complex for any analysis model:
+
+| Activation | Issue |
+|------------|-------|
+| **IF** | Conditional switch between positive/negative branches (multi-input logic) |
+| **MAXIMUM** | Selects max of inputs - switching depends on ALL inputs, not just one |
+| **MINIMUM** | Selects min of inputs - switching depends on ALL inputs, not just one |
+| **HARD_TANH/CLIPPED** | Derivative = 0 in saturation regions (|x| ≥ 1) |
+| **ReLU6** | Derivative = 0 in saturation regions (x ≤ 0 or x ≥ 6) |
+
+If verbose logging is enabled (`NEAT_AI_DISCOVERY_VERBOSE=1`), you'll see
+messages like:
+
+```
+[NEAT-AI-Discovery][verbose] Using threshold-crossing model for 2 STEP/BIPOLAR neurons: [...]
+[NEAT-AI-Discovery][verbose] Skipped 3 focus neurons with unsupported discrete activations (IF/MAXIMUM/etc): [...]
+```
+
+If your creature relies heavily on the skipped neurons for logical operations,
+discovery may find fewer candidates. Consider using continuous approximations
+(e.g. LOGISTIC with high bias for soft thresholding, or standard ReLU instead
+of ReLU6) if you want discovery to suggest improvements for those pathways.
+
 ## Verifying the installation
 
 Use the NEAT-AI helper script after copying the library:
