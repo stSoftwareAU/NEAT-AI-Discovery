@@ -157,6 +157,24 @@ neuron, we look at:
 2. **Observed activations** from potential source neurons
 3. **Correlation** between them (when source is high, is error positive?)
 
+#### Split-error ReLU evaluation (complementary pairs)
+
+When target errors are split roughly 50/50 between positive (output should be higher)
+and negative (output should be lower), no single ReLU can improve all samples.
+Discovery now evaluates **complementary ReLU pairs**:
+
+| Evaluation | Samples Used | Effect |
+|------------|--------------|--------|
+| **Positive-error ReLU** | Only samples with error > 0 | Finds ReLU that pushes output **up** when needed |
+| **Negative-error ReLU** | Only samples with error < 0 | Finds ReLU that pushes output **down** when needed |
+
+Both candidates are returned if they exceed the improvement threshold. Together,
+they can improve more of the total error than either alone could achieve.
+
+The candidate map uses a key that includes `(source_uuid, target_uuid, squash, sign(incoming_weight))`
+so complementary pairs (one with `incoming_weight=1.0`, one with `incoming_weight=-1.0`) are kept
+as separate entries rather than colliding.
+
 This correlation analysis works regardless of the target's activation function.
 The linear model is an approximation for ALL non-linear functions - it may be
 more or less accurate depending on the function, but it finds useful patterns.

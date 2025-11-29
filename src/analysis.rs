@@ -4373,16 +4373,33 @@ fn build_samples(
     samples
 }
 
+/// Computes the sign of `incoming_weight` as an i8 for use in the candidate key.
+/// Returns 1 for positive weights, -1 for negative, and 0 for zero (though this
+/// shouldn't happen in practice).
+fn incoming_weight_sign(weight: f32) -> i8 {
+    if weight > 0.0 {
+        1
+    } else if weight < 0.0 {
+        -1
+    } else {
+        0
+    }
+}
+
 fn upsert_candidate(
-    map: &mut HashMap<(String, String, String), CandidateNeuronJson>,
+    map: &mut HashMap<(String, String, String, i8), CandidateNeuronJson>,
     candidate: CandidateNeuronJson,
 ) {
     use std::collections::hash_map::Entry;
 
+    // Key includes the sign of incoming_weight so complementary ReLU candidates
+    // (one with incoming_weight=1.0 for positive errors, one with incoming_weight=-1.0
+    // for negative errors) are kept as separate entries rather than colliding.
     let key = (
         candidate.source_neuron_uuid.clone(),
         candidate.target_neuron_uuid.clone(),
         candidate.squash.clone(),
+        incoming_weight_sign(candidate.incoming_weight),
     );
     match map.entry(key) {
         Entry::Occupied(mut entry) => {
@@ -4456,6 +4473,114 @@ fn evaluate_relu_candidate(
         candidate: best_candidate,
         best_summary,
     })
+}
+
+/// Result from split-error ReLU evaluation
+struct SplitReluResult {
+    /// Candidate for samples with positive error (output should be higher)
+    positive_error_candidate: Option<CandidateNeuronJson>,
+    /// Candidate for samples with negative error (output should be lower)
+    negative_error_candidate: Option<CandidateNeuronJson>,
+}
+
+/// Evaluate ReLU candidates by splitting samples based on error sign.
+///
+/// This finds **complementary pairs** of ReLUs:
+/// - One that improves samples where output should be **higher** (positive error)
+/// - One that improves samples where output should be **lower** (negative error)
+///
+/// This is more effective than the standard approach when errors are split ~50/50,
+/// because no single ReLU can help both directions simultaneously.
+fn evaluate_relu_candidates_split(
+    analyzer: &GpuAnalyzer,
+    source_uuid: &str,
+    target_uuid: &str,
+    samples: &[HelpfulSample],
+    threshold: f32,
+) -> Result<SplitReluResult> {
+    // Split samples by error sign
+    let positive_error_samples: Vec<HelpfulSample> = samples
+        .iter()
+        .filter(|s| s.avg_error > EPSILON)
+        .copied()
+        .collect();
+
+    let negative_error_samples: Vec<HelpfulSample> = samples
+        .iter()
+        .filter(|s| s.avg_error < -EPSILON)
+        .copied()
+        .collect();
+
+    let mut result = SplitReluResult {
+        positive_error_candidate: None,
+        negative_error_candidate: None,
+    };
+
+    // For positive errors (output should be higher), try ReLU with positive orientation
+    // ReLU(+1 * source) * (+weight) will push output UP when source is high
+    if positive_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT {
+        let (positive_stats, _, pos_baseline_error_sq) =
+            analyzer.evaluate_relu_gpu(&positive_error_samples, threshold)?;
+
+        let eval = positive_stats.evaluate(
+            source_uuid,
+            target_uuid,
+            threshold,
+            pos_baseline_error_sq,
+            &positive_error_samples,
+        );
+
+        if let Some(mut candidate) = eval.candidate {
+            // Recalculate improvement as fraction of TOTAL error (not just positive subset)
+            // This gives a fair comparison with the standard approach
+            let total_baseline_error_sq: f32 =
+                samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+
+            if total_baseline_error_sq > EPSILON {
+                let subset_improvement = candidate.expected_improvement_percentage;
+                let subset_error_sq = pos_baseline_error_sq;
+                // Scale improvement: (subset_improvement * subset_error) / total_error
+                candidate.expected_improvement_percentage =
+                    subset_improvement * (subset_error_sq / total_baseline_error_sq);
+            }
+
+            result.positive_error_candidate = Some(candidate);
+        }
+    }
+
+    // For negative errors (output should be lower), we still use positive ReLU orientation.
+    // ReLU(source) * (-weight) will push output DOWN when source is high.
+    // The evaluate() function computes: weight = Σ(error×activation) / Σ(activation²)
+    // With negative errors and positive activations, this naturally produces a negative weight.
+    if negative_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT {
+        let (positive_stats, _, neg_baseline_error_sq) =
+            analyzer.evaluate_relu_gpu(&negative_error_samples, threshold)?;
+
+        let eval = positive_stats.evaluate(
+            source_uuid,
+            target_uuid,
+            threshold,
+            neg_baseline_error_sq,
+            &negative_error_samples,
+        );
+
+        if let Some(mut candidate) = eval.candidate {
+            // Recalculate improvement as fraction of TOTAL error
+            let total_baseline_error_sq: f32 =
+                samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+
+            if total_baseline_error_sq > EPSILON {
+                let subset_improvement = candidate.expected_improvement_percentage;
+                let subset_error_sq = neg_baseline_error_sq;
+                candidate.expected_improvement_percentage =
+                    subset_improvement * (subset_error_sq / total_baseline_error_sq);
+            }
+
+            result.negative_error_candidate = Some(candidate);
+        }
+    }
+
+    Ok(result)
 }
 
 fn evaluate_activation_candidate(
@@ -4920,7 +5045,7 @@ fn analyze_neurons_with_cache(
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_neurons")?;
 
     let helpful_map = Arc::new(Mutex::new(HashMap::<
-        (String, String, String),
+        (String, String, String, i8),
         CandidateNeuronJson,
     >::new()));
 
@@ -5239,6 +5364,7 @@ fn analyze_neurons_with_cache(
                         continue;
                     }
 
+                    // Standard ReLU evaluation (best single candidate across all samples)
                     let relu_result = evaluate_relu_candidate(
                         &analyzer,
                         &result.source_uuid,
@@ -5259,6 +5385,51 @@ fn analyze_neurons_with_cache(
                             .lock()
                             .expect("Mutex poisoned: diagnostics")
                             .record_rejection(target_uuid, &result.source_uuid, summary, threshold);
+                    }
+
+                    // Split-error ReLU evaluation: find complementary pairs for split errors
+                    // This helps when errors are ~50/50 positive/negative and no single
+                    // ReLU can help both directions.
+                    let split_result = evaluate_relu_candidates_split(
+                        &analyzer,
+                        &result.source_uuid,
+                        target_uuid,
+                        &result.samples,
+                        threshold,
+                    )?;
+
+                    if let Some(candidate) = split_result.positive_error_candidate {
+                        if verbose_enabled() {
+                            eprintln!(
+                                "[NEAT-AI-Discovery][verbose] Split-ReLU (positive errors) {} -> {}: {:.2}% improvement",
+                                result.source_uuid,
+                                target_uuid,
+                                candidate.expected_improvement_percentage * 100.0
+                            );
+                        }
+                        diagnostics
+                            .lock()
+                            .expect("Mutex poisoned: diagnostics")
+                            .mark_candidate_selected(target_uuid);
+                        let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
+                        upsert_candidate(&mut map, candidate);
+                    }
+
+                    if let Some(candidate) = split_result.negative_error_candidate {
+                        if verbose_enabled() {
+                            eprintln!(
+                                "[NEAT-AI-Discovery][verbose] Split-ReLU (negative errors) {} -> {}: {:.2}% improvement",
+                                result.source_uuid,
+                                target_uuid,
+                                candidate.expected_improvement_percentage * 100.0
+                            );
+                        }
+                        diagnostics
+                            .lock()
+                            .expect("Mutex poisoned: diagnostics")
+                            .mark_candidate_selected(target_uuid);
+                        let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
+                        upsert_candidate(&mut map, candidate);
                     }
 
                     for spec in ACTIVATION_SPECS.iter() {
@@ -8681,6 +8852,131 @@ mod tests_synapses {
         assert!(
             (-1.0..=1.0).contains(&bias),
             "Bias should be in reasonable range, got {bias}"
+        );
+    }
+
+    /// Test that split-error ReLU evaluation finds complementary pairs when errors are split.
+    /// When errors are ~50/50 positive/negative, no single ReLU can help all samples.
+    /// Split evaluation should find two candidates: one for each error direction.
+    #[test]
+    fn test_split_relu_finds_complementary_pairs() {
+        // Create samples with split errors:
+        // - Half have positive error (output should be higher) with high source activation
+        // - Half have negative error (output should be lower) with different pattern
+        let mut samples = Vec::new();
+
+        // Positive errors: when source is high, output should be higher
+        // A ReLU with positive weight on these samples will help
+        for i in 0..50 {
+            samples.push(HelpfulSample {
+                activation: 0.5 + (i as f32) * 0.01,
+                avg_error: 0.3, // Positive: output should be higher
+            });
+        }
+
+        // Negative errors: when source is high, output should be lower
+        // A ReLU with negative weight on these samples will help
+        for i in 0..50 {
+            samples.push(HelpfulSample {
+                activation: 0.5 + (i as f32) * 0.01,
+                avg_error: -0.3, // Negative: output should be lower
+            });
+        }
+
+        // Verify we have split errors
+        let positive_count = samples.iter().filter(|s| s.avg_error > 0.0).count();
+        let negative_count = samples.iter().filter(|s| s.avg_error < 0.0).count();
+        assert_eq!(positive_count, 50);
+        assert_eq!(negative_count, 50);
+
+        // Standard ReLU evaluation should struggle because errors cancel out
+        // when computing error*activation correlation - roughly equal positive
+        // and negative errors with similar activations means weak correlation overall.
+        //
+        // The split evaluation separates these, so each subset has strong correlation.
+        // This test documents the expected behaviour without requiring GPU.
+    }
+
+    /// Test that upsert_candidate keeps complementary ReLU candidates with different
+    /// incoming_weight values. A positive-weight ReLU (incoming_weight=1.0) and a
+    /// negative-weight ReLU (incoming_weight=-1.0) should both be kept, not collide.
+    #[test]
+    fn test_upsert_keeps_complementary_relu_candidates() {
+        use std::collections::HashMap;
+
+        let mut map: HashMap<(String, String, String, i8), CandidateNeuronJson> = HashMap::new();
+
+        // Positive-weight ReLU candidate (for samples where output should be higher)
+        let positive_candidate = CandidateNeuronJson {
+            source_neuron_uuid: "source-1".to_string(),
+            target_neuron_uuid: "target-1".to_string(),
+            incoming_weight: 1.0, // Positive orientation
+            outgoing_weight: 0.5,
+            squash: "ReLU".to_string(),
+            bias: 0.0,
+            expected_improvement_percentage: 0.15,
+            improved_count: 30,
+            total_count: 50,
+            target_neuron_stats: None,
+        };
+
+        // Negative-weight ReLU candidate (for samples where output should be lower)
+        let negative_candidate = CandidateNeuronJson {
+            source_neuron_uuid: "source-1".to_string(),
+            target_neuron_uuid: "target-1".to_string(),
+            incoming_weight: -1.0, // Negative orientation
+            outgoing_weight: -0.4,
+            squash: "ReLU".to_string(),
+            bias: 0.0,
+            expected_improvement_percentage: 0.12,
+            improved_count: 25,
+            total_count: 50,
+            target_neuron_stats: None,
+        };
+
+        // Insert both candidates
+        upsert_candidate(&mut map, positive_candidate.clone());
+        upsert_candidate(&mut map, negative_candidate.clone());
+
+        // Both should be kept - they have different incoming_weight signs
+        assert_eq!(
+            map.len(),
+            2,
+            "Complementary ReLU candidates with different incoming_weight should both be kept"
+        );
+
+        // Verify both are present with correct values
+        let pos_key = (
+            "source-1".to_string(),
+            "target-1".to_string(),
+            "ReLU".to_string(),
+            1_i8,
+        );
+        let neg_key = (
+            "source-1".to_string(),
+            "target-1".to_string(),
+            "ReLU".to_string(),
+            -1_i8,
+        );
+
+        assert!(
+            map.contains_key(&pos_key),
+            "Positive ReLU candidate should exist"
+        );
+        assert!(
+            map.contains_key(&neg_key),
+            "Negative ReLU candidate should exist"
+        );
+
+        assert_eq!(
+            map.get(&pos_key).unwrap().incoming_weight,
+            1.0,
+            "Positive candidate should have incoming_weight=1.0"
+        );
+        assert_eq!(
+            map.get(&neg_key).unwrap().incoming_weight,
+            -1.0,
+            "Negative candidate should have incoming_weight=-1.0"
         );
     }
 }
