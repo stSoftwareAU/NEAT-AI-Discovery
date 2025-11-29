@@ -171,6 +171,10 @@ Discovery now evaluates **complementary ReLU pairs**:
 Both candidates are returned if they exceed the improvement threshold. Together,
 they can improve more of the total error than either alone could achieve.
 
+The candidate map uses a key that includes `(source_uuid, target_uuid, squash, sign(incoming_weight))`
+so complementary pairs (one with `incoming_weight=1.0`, one with `incoming_weight=-1.0`) are kept
+as separate entries rather than colliding.
+
 This correlation analysis works regardless of the target's activation function.
 The linear model is an approximation for ALL non-linear functions - it may be
 more or less accurate depending on the function, but it finds useful patterns.

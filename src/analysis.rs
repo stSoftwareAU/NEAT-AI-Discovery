@@ -4373,16 +4373,33 @@ fn build_samples(
     samples
 }
 
+/// Computes the sign of `incoming_weight` as an i8 for use in the candidate key.
+/// Returns 1 for positive weights, -1 for negative, and 0 for zero (though this
+/// shouldn't happen in practice).
+fn incoming_weight_sign(weight: f32) -> i8 {
+    if weight > 0.0 {
+        1
+    } else if weight < 0.0 {
+        -1
+    } else {
+        0
+    }
+}
+
 fn upsert_candidate(
-    map: &mut HashMap<(String, String, String), CandidateNeuronJson>,
+    map: &mut HashMap<(String, String, String, i8), CandidateNeuronJson>,
     candidate: CandidateNeuronJson,
 ) {
     use std::collections::hash_map::Entry;
 
+    // Key includes the sign of incoming_weight so complementary ReLU candidates
+    // (one with incoming_weight=1.0 for positive errors, one with incoming_weight=-1.0
+    // for negative errors) are kept as separate entries rather than colliding.
     let key = (
         candidate.source_neuron_uuid.clone(),
         candidate.target_neuron_uuid.clone(),
         candidate.squash.clone(),
+        incoming_weight_sign(candidate.incoming_weight),
     );
     match map.entry(key) {
         Entry::Occupied(mut entry) => {
@@ -5028,7 +5045,7 @@ fn analyze_neurons_with_cache(
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_neurons")?;
 
     let helpful_map = Arc::new(Mutex::new(HashMap::<
-        (String, String, String),
+        (String, String, String, i8),
         CandidateNeuronJson,
     >::new()));
 
@@ -8878,5 +8895,88 @@ mod tests_synapses {
         //
         // The split evaluation separates these, so each subset has strong correlation.
         // This test documents the expected behaviour without requiring GPU.
+    }
+
+    /// Test that upsert_candidate keeps complementary ReLU candidates with different
+    /// incoming_weight values. A positive-weight ReLU (incoming_weight=1.0) and a
+    /// negative-weight ReLU (incoming_weight=-1.0) should both be kept, not collide.
+    #[test]
+    fn test_upsert_keeps_complementary_relu_candidates() {
+        use std::collections::HashMap;
+
+        let mut map: HashMap<(String, String, String, i8), CandidateNeuronJson> = HashMap::new();
+
+        // Positive-weight ReLU candidate (for samples where output should be higher)
+        let positive_candidate = CandidateNeuronJson {
+            source_neuron_uuid: "source-1".to_string(),
+            target_neuron_uuid: "target-1".to_string(),
+            incoming_weight: 1.0, // Positive orientation
+            outgoing_weight: 0.5,
+            squash: "ReLU".to_string(),
+            bias: 0.0,
+            expected_improvement_percentage: 0.15,
+            improved_count: 30,
+            total_count: 50,
+            target_neuron_stats: None,
+        };
+
+        // Negative-weight ReLU candidate (for samples where output should be lower)
+        let negative_candidate = CandidateNeuronJson {
+            source_neuron_uuid: "source-1".to_string(),
+            target_neuron_uuid: "target-1".to_string(),
+            incoming_weight: -1.0, // Negative orientation
+            outgoing_weight: -0.4,
+            squash: "ReLU".to_string(),
+            bias: 0.0,
+            expected_improvement_percentage: 0.12,
+            improved_count: 25,
+            total_count: 50,
+            target_neuron_stats: None,
+        };
+
+        // Insert both candidates
+        upsert_candidate(&mut map, positive_candidate.clone());
+        upsert_candidate(&mut map, negative_candidate.clone());
+
+        // Both should be kept - they have different incoming_weight signs
+        assert_eq!(
+            map.len(),
+            2,
+            "Complementary ReLU candidates with different incoming_weight should both be kept"
+        );
+
+        // Verify both are present with correct values
+        let pos_key = (
+            "source-1".to_string(),
+            "target-1".to_string(),
+            "ReLU".to_string(),
+            1_i8,
+        );
+        let neg_key = (
+            "source-1".to_string(),
+            "target-1".to_string(),
+            "ReLU".to_string(),
+            -1_i8,
+        );
+
+        assert!(
+            map.contains_key(&pos_key),
+            "Positive ReLU candidate should exist"
+        );
+        assert!(
+            map.contains_key(&neg_key),
+            "Negative ReLU candidate should exist"
+        );
+
+        assert_eq!(
+            map.get(&pos_key).unwrap().incoming_weight,
+            1.0,
+            "Positive candidate should have incoming_weight=1.0"
+        );
+        assert_eq!(
+            map.get(&neg_key).unwrap().incoming_weight,
+            -1.0,
+            "Negative candidate should have incoming_weight=-1.0"
+        );
     }
 }
