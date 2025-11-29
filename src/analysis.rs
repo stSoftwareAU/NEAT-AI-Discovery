@@ -4373,10 +4373,10 @@ fn build_samples(
     samples
 }
 
-/// Computes the sign of `incoming_weight` as an i8 for use in the candidate key.
+/// Computes the sign of a weight as an i8 for use in the candidate key.
 /// Returns 1 for positive weights, -1 for negative, and 0 for zero (though this
 /// shouldn't happen in practice).
-fn incoming_weight_sign(weight: f32) -> i8 {
+fn weight_sign(weight: f32) -> i8 {
     if weight > 0.0 {
         1
     } else if weight < 0.0 {
@@ -4387,19 +4387,21 @@ fn incoming_weight_sign(weight: f32) -> i8 {
 }
 
 fn upsert_candidate(
-    map: &mut HashMap<(String, String, String, i8), CandidateNeuronJson>,
+    map: &mut HashMap<(String, String, String, i8, i8), CandidateNeuronJson>,
     candidate: CandidateNeuronJson,
 ) {
     use std::collections::hash_map::Entry;
 
-    // Key includes the sign of incoming_weight so complementary ReLU candidates
-    // (one with incoming_weight=1.0 for positive errors, one with incoming_weight=-1.0
-    // for negative errors) are kept as separate entries rather than colliding.
+    // Key includes signs of BOTH incoming_weight AND outgoing_weight so that:
+    // 1. Different ReLU orientations (incoming_weight ±1) are kept separately
+    // 2. Split-error complementary pairs (same incoming_weight, opposite outgoing_weight)
+    //    are also kept separately - one pushes output UP, one pushes DOWN
     let key = (
         candidate.source_neuron_uuid.clone(),
         candidate.target_neuron_uuid.clone(),
         candidate.squash.clone(),
-        incoming_weight_sign(candidate.incoming_weight),
+        weight_sign(candidate.incoming_weight),
+        weight_sign(candidate.outgoing_weight),
     );
     match map.entry(key) {
         Entry::Occupied(mut entry) => {
@@ -5045,7 +5047,7 @@ fn analyze_neurons_with_cache(
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_neurons")?;
 
     let helpful_map = Arc::new(Mutex::new(HashMap::<
-        (String, String, String, i8),
+        (String, String, String, i8, i8),
         CandidateNeuronJson,
     >::new()));
 
@@ -8901,12 +8903,13 @@ mod tests_synapses {
     /// incoming_weight values. A positive-weight ReLU (incoming_weight=1.0) and a
     /// negative-weight ReLU (incoming_weight=-1.0) should both be kept, not collide.
     #[test]
-    fn test_upsert_keeps_complementary_relu_candidates() {
+    fn test_upsert_keeps_complementary_relu_candidates_by_incoming_weight() {
         use std::collections::HashMap;
 
-        let mut map: HashMap<(String, String, String, i8), CandidateNeuronJson> = HashMap::new();
+        let mut map: HashMap<(String, String, String, i8, i8), CandidateNeuronJson> =
+            HashMap::new();
 
-        // Positive-weight ReLU candidate (for samples where output should be higher)
+        // Positive-orientation ReLU candidate
         let positive_candidate = CandidateNeuronJson {
             source_neuron_uuid: "source-1".to_string(),
             target_neuron_uuid: "target-1".to_string(),
@@ -8920,12 +8923,12 @@ mod tests_synapses {
             target_neuron_stats: None,
         };
 
-        // Negative-weight ReLU candidate (for samples where output should be lower)
+        // Negative-orientation ReLU candidate
         let negative_candidate = CandidateNeuronJson {
             source_neuron_uuid: "source-1".to_string(),
             target_neuron_uuid: "target-1".to_string(),
             incoming_weight: -1.0, // Negative orientation
-            outgoing_weight: -0.4,
+            outgoing_weight: 0.4,  // Same outgoing sign
             squash: "ReLU".to_string(),
             bias: 0.0,
             expected_improvement_percentage: 0.12,
@@ -8942,7 +8945,7 @@ mod tests_synapses {
         assert_eq!(
             map.len(),
             2,
-            "Complementary ReLU candidates with different incoming_weight should both be kept"
+            "Candidates with different incoming_weight should both be kept"
         );
 
         // Verify both are present with correct values
@@ -8950,33 +8953,113 @@ mod tests_synapses {
             "source-1".to_string(),
             "target-1".to_string(),
             "ReLU".to_string(),
-            1_i8,
+            1_i8, // incoming sign
+            1_i8, // outgoing sign
         );
         let neg_key = (
             "source-1".to_string(),
             "target-1".to_string(),
             "ReLU".to_string(),
-            -1_i8,
+            -1_i8, // incoming sign
+            1_i8,  // outgoing sign
         );
 
         assert!(
             map.contains_key(&pos_key),
-            "Positive ReLU candidate should exist"
+            "Positive-orientation candidate should exist"
         );
         assert!(
             map.contains_key(&neg_key),
-            "Negative ReLU candidate should exist"
+            "Negative-orientation candidate should exist"
+        );
+    }
+
+    /// Test that upsert_candidate keeps split-error complementary pairs with same
+    /// incoming_weight but different outgoing_weight signs. This is the key case for
+    /// split-error ReLU evaluation where errors are ~50/50 positive/negative.
+    #[test]
+    fn test_upsert_keeps_split_error_complementary_pairs() {
+        use std::collections::HashMap;
+
+        let mut map: HashMap<(String, String, String, i8, i8), CandidateNeuronJson> =
+            HashMap::new();
+
+        // Candidate for positive errors: same source/target, positive outgoing_weight
+        // This pushes output UP when source is high
+        let positive_error_candidate = CandidateNeuronJson {
+            source_neuron_uuid: "source-1".to_string(),
+            target_neuron_uuid: "target-1".to_string(),
+            incoming_weight: 1.0, // Same orientation
+            outgoing_weight: 0.5, // POSITIVE: pushes output UP
+            squash: "ReLU".to_string(),
+            bias: 0.0,
+            expected_improvement_percentage: 0.10,
+            improved_count: 25,
+            total_count: 50,
+            target_neuron_stats: None,
+        };
+
+        // Candidate for negative errors: same source/target, negative outgoing_weight
+        // This pushes output DOWN when source is high
+        let negative_error_candidate = CandidateNeuronJson {
+            source_neuron_uuid: "source-1".to_string(),
+            target_neuron_uuid: "target-1".to_string(),
+            incoming_weight: 1.0,  // Same orientation
+            outgoing_weight: -0.4, // NEGATIVE: pushes output DOWN
+            squash: "ReLU".to_string(),
+            bias: 0.0,
+            expected_improvement_percentage: 0.08,
+            improved_count: 20,
+            total_count: 50,
+            target_neuron_stats: None,
+        };
+
+        // Insert both candidates
+        upsert_candidate(&mut map, positive_error_candidate.clone());
+        upsert_candidate(&mut map, negative_error_candidate.clone());
+
+        // Both should be kept - they have different outgoing_weight signs
+        // This is the key fix for split-error ReLU evaluation
+        assert_eq!(
+            map.len(),
+            2,
+            "Split-error complementary pairs with different outgoing_weight signs should both be kept"
+        );
+
+        // Verify both are present
+        let pos_out_key = (
+            "source-1".to_string(),
+            "target-1".to_string(),
+            "ReLU".to_string(),
+            1_i8, // incoming sign (both same)
+            1_i8, // outgoing sign: positive
+        );
+        let neg_out_key = (
+            "source-1".to_string(),
+            "target-1".to_string(),
+            "ReLU".to_string(),
+            1_i8,  // incoming sign (both same)
+            -1_i8, // outgoing sign: negative
+        );
+
+        assert!(
+            map.contains_key(&pos_out_key),
+            "Positive-outgoing candidate (pushes UP) should exist"
+        );
+        assert!(
+            map.contains_key(&neg_out_key),
+            "Negative-outgoing candidate (pushes DOWN) should exist"
         );
 
         assert_eq!(
-            map.get(&pos_key).unwrap().incoming_weight,
-            1.0,
-            "Positive candidate should have incoming_weight=1.0"
+            map.get(&pos_out_key).unwrap().outgoing_weight,
+            0.5,
+            "Positive-outgoing candidate should have outgoing_weight=0.5"
         );
         assert_eq!(
-            map.get(&neg_key).unwrap().incoming_weight,
-            -1.0,
-            "Negative candidate should have incoming_weight=-1.0"
+            map.get(&neg_out_key).unwrap().outgoing_weight,
+            -0.4,
+            "Negative-outgoing candidate should have outgoing_weight=-0.4"
         );
     }
 }
