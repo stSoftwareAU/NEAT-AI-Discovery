@@ -4531,14 +4531,15 @@ fn evaluate_relu_candidates_split(
         }
     }
 
-    // For negative errors (output should be lower), try ReLU with negative orientation
-    // ReLU(-1 * source) * (+weight) = 0 when source > 0, so we need different approach:
-    // ReLU(+1 * source) * (-weight) will push output DOWN when source is high
+    // For negative errors (output should be lower), we still use positive ReLU orientation.
+    // ReLU(source) * (-weight) will push output DOWN when source is high.
+    // The evaluate() function computes: weight = Σ(error×activation) / Σ(activation²)
+    // With negative errors and positive activations, this naturally produces a negative weight.
     if negative_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT {
-        let (_, negative_stats, neg_baseline_error_sq) =
+        let (positive_stats, _, neg_baseline_error_sq) =
             analyzer.evaluate_relu_gpu(&negative_error_samples, threshold)?;
 
-        let eval = negative_stats.evaluate(
+        let eval = positive_stats.evaluate(
             source_uuid,
             target_uuid,
             threshold,
