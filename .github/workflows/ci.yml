@@ -266,44 +266,44 @@ jobs:
           fi
         fi
 
-  build:
-    name: Build Release
-    runs-on: ubuntu-latest
-    needs: [version-increment, auto-format, quality]
+  # build:
+  #   name: Build Release
+  #   runs-on: ubuntu-latest
+  #   needs: [version-increment, auto-format, quality]
     
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.head_ref }}
-        fetch-depth: 0
-        token: ${{ secrets.GITHUB_TOKEN }}
+  #   steps:
+  #   - name: Checkout code
+  #     uses: actions/checkout@v4
+  #     with:
+  #       ref: ${{ github.head_ref }}
+  #       fetch-depth: 0
+  #       token: ${{ secrets.GITHUB_TOKEN }}
         
-    - name: Pull latest changes
-      run: git pull origin ${{ github.head_ref }}
+  #   - name: Pull latest changes
+  #     run: git pull origin ${{ github.head_ref }}
       
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+  #   - name: Install Rust toolchain
+  #     uses: dtolnay/rust-toolchain@stable
         
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+  #   - name: Cache dependencies
+  #     uses: actions/cache@v4
+  #     with:
+  #       path: |
+  #         ~/.cargo/registry
+  #         ~/.cargo/git
+  #         target
+  #       key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+  #       restore-keys: |
+  #         ${{ runner.os }}-cargo-
           
-    - name: Build release library
-      run: cargo build --release --lib
+    # - name: Build release library
+    #   run: cargo build --release --lib
       
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: neat-ai-discovery-release
-        path: target/release/libneat_ai_discovery.*
+    # - name: Upload build artifacts
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: neat-ai-discovery-release
+    #     path: target/release/libneat_ai_discovery.*
 
   auto-format:
     name: Auto-format Code
