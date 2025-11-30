@@ -1358,10 +1358,24 @@ fn require_unique_focus<'a>(focus_neurons: &'a [String], context: &str) -> Resul
     Ok(unique_focus)
 }
 
-#[derive(Clone, Copy)]
+/// Sample data for evaluating potential synapses/neurons.
+///
+/// For accurate HARD_TANH modelling, we need the target's pre-activation value
+/// to properly simulate clamping behaviour. When `target_value` is `Some`, we can
+/// compute the actual effect of adding a contribution rather than using the linear
+/// approximation.
+#[derive(Clone, Copy, Default)]
 struct HelpfulSample {
+    /// Source neuron's activation (what we're considering adding a connection FROM)
     activation: f32,
+    /// Target neuron's average error (expected - actual output)
     avg_error: f32,
+    /// Target neuron's pre-activation value (input sum before squash function).
+    /// Used for accurate HARD_TANH/clamping calculations. None for GPU-matched samples.
+    target_value: Option<f32>,
+    /// Target neuron's post-activation output (after squash function).
+    /// Used with avg_error to compute expected: expected = target_activation + avg_error
+    target_activation: Option<f32>,
 }
 
 /// Extended sample for threshold-crossing analysis of discrete activations (STEP/BIPOLAR).
@@ -1485,6 +1499,8 @@ impl NeuronStats {
                 samples.push(HelpfulSample {
                     activation: record.activation,
                     avg_error,
+                    target_value: record.value,
+                    target_activation: Some(record.activation),
                 });
             }
         }
@@ -4278,12 +4294,16 @@ impl GpuAnalyzer {
         let gpu_samples: &[GpuHelpfulSample] = bytemuck::cast_slice(&data);
 
         // Retain only finite samples; GPU matching emits NaN for invalid rows
+        // NOTE: GPU samples don't include target_value/target_activation yet.
+        // For HARD_TANH support, we'll need to update the GPU shader to return this data.
         let mut samples = Vec::new();
         for gpu_sample in gpu_samples {
             if gpu_sample.activation.is_finite() && gpu_sample.avg_error.is_finite() {
                 samples.push(HelpfulSample {
                     activation: gpu_sample.activation,
                     avg_error: gpu_sample.avg_error,
+                    target_value: None,
+                    target_activation: None,
                 });
             }
         }
@@ -4327,6 +4347,13 @@ fn build_ordered_neurons(creature: &crate::CreatureJson) -> Vec<OrderedNeuron> {
     ordered
 }
 
+/// Target data for a single observation (used for matching with source records)
+struct TargetData {
+    avg_error: f32,
+    value: Option<f32>,
+    activation: f32,
+}
+
 fn build_samples(
     target_records: &[DiscoverRecord],
     from_records: &[DiscoverRecord],
@@ -4335,9 +4362,10 @@ fn build_samples(
         return Vec::new();
     }
 
-    let mut error_map: HashMap<u32, f32> = HashMap::with_capacity(target_records.len());
+    // Build map from obs_index to target data (error, value, activation)
+    let mut target_map: HashMap<u32, TargetData> = HashMap::with_capacity(target_records.len());
     for record in target_records {
-        if record.errors.is_empty() {
+        if record.errors.is_empty() || !record.activation.is_finite() {
             continue;
         }
         let mut sum = 0.0;
@@ -4351,20 +4379,29 @@ fn build_samples(
         if count == 0 {
             continue;
         }
-        error_map.insert(record.obs_index, sum / count as f32);
+        target_map.insert(
+            record.obs_index,
+            TargetData {
+                avg_error: sum / count as f32,
+                value: record.value,
+                activation: record.activation,
+            },
+        );
     }
 
-    if error_map.is_empty() {
+    if target_map.is_empty() {
         return Vec::new();
     }
 
     let mut samples = Vec::new();
     for record in from_records {
-        if let Some(avg_error) = error_map.get(&record.obs_index) {
-            if record.activation.is_finite() && avg_error.is_finite() {
+        if let Some(target) = target_map.get(&record.obs_index) {
+            if record.activation.is_finite() && target.avg_error.is_finite() {
                 samples.push(HelpfulSample {
                     activation: record.activation,
-                    avg_error: *avg_error,
+                    avg_error: target.avg_error,
+                    target_value: target.value,
+                    target_activation: Some(target.activation),
                 });
             }
         }
@@ -4493,12 +4530,108 @@ struct SplitReluResult {
 ///
 /// This is more effective than the standard approach when errors are split ~50/50,
 /// because no single ReLU can help both directions simultaneously.
+/// Compute the net improvement when applying a ReLU candidate to ALL samples.
+/// Returns the fractional reduction in total squared error.
+///
+/// For each sample: new_error = error - outgoing_weight × ReLU(incoming_weight × activation)
+/// Net improvement = (baseline_sq - new_error_sq) / baseline_sq
+/// Apply HARD_TANH activation function (clamp to [-1, 1])
+#[inline]
+fn hard_tanh(x: f32) -> f32 {
+    x.clamp(-1.0, 1.0)
+}
+
+/// Compute the net improvement when applying a ReLU candidate to ALL samples.
+///
+/// When `target_squash` is Some("HARD_TANH") and samples have target_value data,
+/// we compute the actual output after clamping rather than using linear approximation.
+/// This correctly handles saturation effects where the linear model would be wrong.
+fn compute_net_improvement_with_squash(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    total_baseline_error_sq: f32,
+    target_squash: Option<&str>,
+) -> f32 {
+    if total_baseline_error_sq <= EPSILON {
+        return 0.0;
+    }
+
+    // Check if we can use HARD_TANH model (need target_value for all samples)
+    let use_hard_tanh = target_squash == Some("HARD_TANH")
+        && samples
+            .iter()
+            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
+
+    let mut new_error_sq_sum = 0.0;
+
+    for sample in samples {
+        // ReLU activation: max(0, incoming_weight × source_activation)
+        let pre_activation = incoming_weight * sample.activation;
+        let relu_output = pre_activation.max(0.0);
+        let contribution = outgoing_weight * relu_output;
+
+        let new_error = if use_hard_tanh {
+            // HARD_TANH model: compute actual output after clamping
+            // new_input = old_input + contribution
+            // new_output = hard_tanh(new_input)
+            // expected = target_activation + error
+            // new_error = expected - new_output
+            let target_value = sample.target_value.unwrap();
+            let target_activation = sample.target_activation.unwrap();
+            let expected = target_activation + sample.avg_error;
+            let new_input = target_value + contribution;
+            let new_output = hard_tanh(new_input);
+            expected - new_output
+        } else {
+            // Linear model: new_error = old_error - contribution
+            sample.avg_error - contribution
+        };
+
+        new_error_sq_sum += new_error * new_error;
+    }
+
+    // Net improvement = (baseline - new) / baseline
+    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
+
+    if improvement.is_finite() {
+        improvement
+    } else {
+        0.0
+    }
+}
+
+/// Count how many samples are improved vs total when applying a ReLU candidate.
+fn count_improved_samples(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+) -> (u32, u32) {
+    let mut improved_count = 0u32;
+    let total_count = samples.len() as u32;
+
+    for sample in samples {
+        let pre_activation = incoming_weight * sample.activation;
+        let relu_output = pre_activation.max(0.0);
+        let contribution = outgoing_weight * relu_output;
+        let new_error = sample.avg_error - contribution;
+
+        // Sample is improved if |new_error| < |old_error|
+        if new_error.abs() + EPSILON < sample.avg_error.abs() {
+            improved_count += 1;
+        }
+    }
+
+    (improved_count, total_count)
+}
+
 fn evaluate_relu_candidates_split(
     analyzer: &GpuAnalyzer,
     source_uuid: &str,
     target_uuid: &str,
     samples: &[HelpfulSample],
     threshold: f32,
+    target_squash: Option<&str>,
 ) -> Result<SplitReluResult> {
     // Split samples by error sign
     let positive_error_samples: Vec<HelpfulSample> = samples
@@ -4518,8 +4651,15 @@ fn evaluate_relu_candidates_split(
         negative_error_candidate: None,
     };
 
-    // For positive errors (output should be higher), try ReLU with positive orientation
-    // ReLU(+1 * source) * (+weight) will push output UP when source is high
+    // Compute total baseline error across ALL samples (for net improvement calculation)
+    let total_baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+
+    if total_baseline_error_sq <= EPSILON {
+        return Ok(result);
+    }
+
+    // For positive errors (output should be higher), compute optimal weight from subset
+    // then evaluate the NET effect across ALL samples
     if positive_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT {
         let (positive_stats, _, pos_baseline_error_sq) =
             analyzer.evaluate_relu_gpu(&positive_error_samples, threshold)?;
@@ -4533,27 +4673,38 @@ fn evaluate_relu_candidates_split(
         );
 
         if let Some(mut candidate) = eval.candidate {
-            // Recalculate improvement as fraction of TOTAL error (not just positive subset)
-            // This gives a fair comparison with the standard approach
-            let total_baseline_error_sq: f32 =
-                samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+            // CRITICAL FIX: Compute net improvement across ALL samples, not just the subset.
+            // The weight computed from positive-error samples will also affect negative-error
+            // samples. We must account for both help AND harm.
+            //
+            // For HARD_TANH targets, use the clamping model for accurate predictions.
+            let net_improvement = compute_net_improvement_with_squash(
+                samples,
+                candidate.incoming_weight,
+                candidate.outgoing_weight,
+                total_baseline_error_sq,
+                target_squash,
+            );
 
-            if total_baseline_error_sq > EPSILON {
-                let subset_improvement = candidate.expected_improvement_percentage;
-                let subset_error_sq = pos_baseline_error_sq;
-                // Scale improvement: (subset_improvement * subset_error) / total_error
-                candidate.expected_improvement_percentage =
-                    subset_improvement * (subset_error_sq / total_baseline_error_sq);
+            // Update counts to reflect ALL samples
+            let (improved, total) = count_improved_samples(
+                samples,
+                candidate.incoming_weight,
+                candidate.outgoing_weight,
+            );
+            candidate.improved_count = improved;
+            candidate.total_count = total;
+
+            // Only keep if net improvement is positive and above threshold
+            if net_improvement > threshold {
+                candidate.expected_improvement_percentage = net_improvement;
+                result.positive_error_candidate = Some(candidate);
             }
-
-            result.positive_error_candidate = Some(candidate);
         }
     }
 
-    // For negative errors (output should be lower), we still use positive ReLU orientation.
-    // ReLU(source) * (-weight) will push output DOWN when source is high.
-    // The evaluate() function computes: weight = Σ(error×activation) / Σ(activation²)
-    // With negative errors and positive activations, this naturally produces a negative weight.
+    // For negative errors (output should be lower), compute optimal weight from subset
+    // then evaluate the NET effect across ALL samples
     if negative_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT {
         let (positive_stats, _, neg_baseline_error_sq) =
             analyzer.evaluate_relu_gpu(&negative_error_samples, threshold)?;
@@ -4567,18 +4718,30 @@ fn evaluate_relu_candidates_split(
         );
 
         if let Some(mut candidate) = eval.candidate {
-            // Recalculate improvement as fraction of TOTAL error
-            let total_baseline_error_sq: f32 =
-                samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+            // CRITICAL FIX: Compute net improvement across ALL samples
+            // For HARD_TANH targets, use the clamping model for accurate predictions.
+            let net_improvement = compute_net_improvement_with_squash(
+                samples,
+                candidate.incoming_weight,
+                candidate.outgoing_weight,
+                total_baseline_error_sq,
+                target_squash,
+            );
 
-            if total_baseline_error_sq > EPSILON {
-                let subset_improvement = candidate.expected_improvement_percentage;
-                let subset_error_sq = neg_baseline_error_sq;
-                candidate.expected_improvement_percentage =
-                    subset_improvement * (subset_error_sq / total_baseline_error_sq);
+            // Update counts to reflect ALL samples
+            let (improved, total) = count_improved_samples(
+                samples,
+                candidate.incoming_weight,
+                candidate.outgoing_weight,
+            );
+            candidate.improved_count = improved;
+            candidate.total_count = total;
+
+            // Only keep if net improvement is positive and above threshold
+            if net_improvement > threshold {
+                candidate.expected_improvement_percentage = net_improvement;
+                result.negative_error_candidate = Some(candidate);
             }
-
-            result.negative_error_candidate = Some(candidate);
         }
     }
 
@@ -4941,6 +5104,8 @@ fn evaluate_discrete_candidate(
                                 .map(|s| HelpfulSample {
                                     activation: s.target_activation,
                                     avg_error: s.avg_error,
+                                    target_value: Some(s.target_value),
+                                    target_activation: Some(s.target_activation),
                                 })
                                 .collect();
                             NeuronStats::from_samples(&helper_samples).map(|s| s.to_json())
@@ -5392,12 +5557,16 @@ fn analyze_neurons_with_cache(
                     // Split-error ReLU evaluation: find complementary pairs for split errors
                     // This helps when errors are ~50/50 positive/negative and no single
                     // ReLU can help both directions.
+                    //
+                    // Pass target_squash for accurate HARD_TANH modelling.
+                    let target_squash = neuron_squash_map_arc.get(target_uuid).map(|s| s.as_str());
                     let split_result = evaluate_relu_candidates_split(
                         &analyzer,
                         &result.source_uuid,
                         target_uuid,
                         &result.samples,
                         threshold,
+                        target_squash,
                     )?;
 
                     if let Some(candidate) = split_result.positive_error_candidate {
@@ -6729,6 +6898,8 @@ mod tests_synapses {
             original_samples.push(HelpfulSample {
                 activation: 1.0,
                 avg_error: 0.05,
+                target_value: None,
+                target_activation: None,
             });
         }
         let evaluation = stats.evaluate("source", "target", 2.0, 1.0, &original_samples);
@@ -6755,12 +6926,16 @@ mod tests_synapses {
             samples.push(HelpfulSample {
                 activation: 1.0,
                 avg_error: -1.0,
+                target_value: None,
+                target_activation: None,
             });
         }
         for _ in 0..MIN_NEURON_SAMPLE_COUNT {
             samples.push(HelpfulSample {
                 activation: -1.0,
                 avg_error: 1.0,
+                target_value: None,
+                target_activation: None,
             });
         }
 
@@ -7892,42 +8067,62 @@ mod tests_synapses {
             HelpfulSample {
                 activation: 0.5,
                 avg_error: 0.2,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.3,
                 avg_error: -0.15,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.8,
                 avg_error: 0.25,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.6,
                 avg_error: -0.1,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.4,
                 avg_error: 0.18,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.2,
                 avg_error: -0.08,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.7,
                 avg_error: 0.22,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.5,
                 avg_error: -0.12,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.6,
                 avg_error: 0.19,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.4,
                 avg_error: -0.09,
+                target_value: None,
+                target_activation: None,
             },
         ];
 
@@ -7947,42 +8142,62 @@ mod tests_synapses {
             HelpfulSample {
                 activation: 0.5,
                 avg_error: 0.2,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.3,
                 avg_error: -0.15,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.8,
                 avg_error: 0.25,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.6,
                 avg_error: -0.1,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.4,
                 avg_error: 0.18,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.2,
                 avg_error: -0.08,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.7,
                 avg_error: 0.22,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.5,
                 avg_error: -0.12,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.6,
                 avg_error: 0.19,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.4,
                 avg_error: -0.09,
+                target_value: None,
+                target_activation: None,
             },
         ];
 
@@ -8001,42 +8216,62 @@ mod tests_synapses {
             HelpfulSample {
                 activation: 0.5,
                 avg_error: 0.2,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.3,
                 avg_error: -0.15,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.8,
                 avg_error: 0.25,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.6,
                 avg_error: -0.1,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.4,
                 avg_error: 0.18,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.2,
                 avg_error: -0.08,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.7,
                 avg_error: 0.22,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.5,
                 avg_error: -0.12,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.6,
                 avg_error: 0.19,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.4,
                 avg_error: -0.09,
+                target_value: None,
+                target_activation: None,
             },
         ];
 
@@ -8346,42 +8581,62 @@ mod tests_synapses {
             HelpfulSample {
                 activation: 0.5,
                 avg_error: 0.2,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.3,
                 avg_error: -0.15,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.8,
                 avg_error: 0.25,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.6,
                 avg_error: -0.1,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.4,
                 avg_error: 0.18,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.2,
                 avg_error: -0.08,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.7,
                 avg_error: 0.22,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.5,
                 avg_error: -0.12,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.6,
                 avg_error: 0.19,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.4,
                 avg_error: -0.09,
+                target_value: None,
+                target_activation: None,
             },
         ];
 
@@ -8430,22 +8685,32 @@ mod tests_synapses {
             HelpfulSample {
                 activation: 0.5,
                 avg_error: 0.2,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.3,
                 avg_error: -0.15,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.8,
                 avg_error: 0.25,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.6,
                 avg_error: -0.1,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.4,
                 avg_error: 0.18,
+                target_value: None,
+                target_activation: None,
             },
         ];
 
@@ -8805,42 +9070,62 @@ mod tests_synapses {
             HelpfulSample {
                 activation: 0.5,
                 avg_error: 0.2,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: f32::NAN,
                 avg_error: -0.15,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.8,
                 avg_error: f32::INFINITY,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.6,
                 avg_error: -0.1,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.4,
                 avg_error: 0.18,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.2,
                 avg_error: -0.08,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.7,
                 avg_error: 0.22,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.5,
                 avg_error: -0.12,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: 0.6,
                 avg_error: 0.19,
+                target_value: None,
+                target_activation: None,
             },
             HelpfulSample {
                 activation: -0.4,
                 avg_error: -0.09,
+                target_value: None,
+                target_activation: None,
             },
         ];
 
@@ -8873,6 +9158,8 @@ mod tests_synapses {
             samples.push(HelpfulSample {
                 activation: 0.5 + (i as f32) * 0.01,
                 avg_error: 0.3, // Positive: output should be higher
+                target_value: None,
+                target_activation: None,
             });
         }
 
@@ -8882,6 +9169,8 @@ mod tests_synapses {
             samples.push(HelpfulSample {
                 activation: 0.5 + (i as f32) * 0.01,
                 avg_error: -0.3, // Negative: output should be lower
+                target_value: None,
+                target_activation: None,
             });
         }
 
@@ -9060,6 +9349,475 @@ mod tests_synapses {
             map.get(&neg_out_key).unwrap().outgoing_weight,
             -0.4,
             "Negative-outgoing candidate should have outgoing_weight=-0.4"
+        );
+    }
+
+    // ============================================================================
+    // TDD TESTS: Validate ReLU improvement calculations
+    // ============================================================================
+
+    /// TDD Test: Verify that predicted improvement matches actual for split errors.
+    /// This tests the core maths of compute_net_improvement_across_all_samples.
+    #[test]
+    fn test_predicted_improvement_matches_actual_for_split_relu() {
+        // Scenario: 50% positive errors, 50% negative errors
+        // Source always positive (0.5), so ReLU always fires
+        //
+        // Positive errors: error = +0.2 (want output higher)
+        // Negative errors: error = -0.2 (want output lower)
+        //
+        // If we compute optimal weight from positive subset: w = Σ(error×act)/Σ(act²)
+        // For positive subset: w = (0.2×0.5 + 0.2×0.5) / (0.5² + 0.5²) = 0.2/0.5 = 0.4
+        //
+        // Now apply w=0.4 to ALL samples:
+        // - Positive samples: new_error = 0.2 - 0.4×0.5 = 0.0 (perfect!)
+        // - Negative samples: new_error = -0.2 - 0.4×0.5 = -0.4 (much worse!)
+        //
+        // Net improvement should be NEGATIVE (overall harm)
+
+        let samples = vec![
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: 0.2,
+                target_value: None,
+                target_activation: None,
+            },
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: 0.2,
+                target_value: None,
+                target_activation: None,
+            },
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: -0.2,
+                target_value: None,
+                target_activation: None,
+            },
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: -0.2,
+                target_value: None,
+                target_activation: None,
+            },
+        ];
+
+        // Optimal weight computed from positive samples
+        let outgoing_weight: f32 = 0.4;
+        let incoming_weight: f32 = 1.0;
+
+        let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
+
+        // Use the function under test (linear model)
+        let predicted_improvement = compute_net_improvement_with_squash(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            baseline_error_sq,
+            None,
+        );
+
+        // Manually compute actual improvement
+        let mut new_error_sq = 0.0f32;
+        for sample in &samples {
+            let relu_out = (incoming_weight * sample.activation).max(0.0);
+            let new_err = sample.avg_error - outgoing_weight * relu_out;
+            new_error_sq += new_err.powi(2);
+        }
+        let actual_improvement = (baseline_error_sq - new_error_sq) / baseline_error_sq;
+
+        eprintln!("Baseline error²: {baseline_error_sq:.4}");
+        eprintln!(
+            "Outgoing weight: {outgoing_weight:.4}, Predicted: {:.4}%, Actual: {:.4}%",
+            predicted_improvement * 100.0,
+            actual_improvement * 100.0
+        );
+
+        assert!(
+            (predicted_improvement - actual_improvement).abs() < 0.0001,
+            "Predicted {predicted_improvement:.4} must match actual {actual_improvement:.4}",
+        );
+
+        // With split errors, the net improvement should be NEGATIVE
+        assert!(
+            predicted_improvement < 0.0,
+            "With split errors and uniform source, net improvement should be negative, got {:.4}%",
+            predicted_improvement * 100.0
+        );
+    }
+
+    /// TDD Test: When errors are aligned, linear model should be accurate.
+    #[test]
+    fn test_linear_model_accurate_when_errors_aligned() {
+        // All positive errors, source always positive
+        // This is the ideal case for ReLU - linear model should work perfectly
+        let samples = vec![
+            HelpfulSample {
+                activation: 1.0,
+                avg_error: 0.5,
+                target_value: None,
+                target_activation: None,
+            },
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: 0.25,
+                target_value: None,
+                target_activation: None,
+            },
+            HelpfulSample {
+                activation: 0.8,
+                avg_error: 0.4,
+                target_value: None,
+                target_activation: None,
+            },
+        ];
+
+        // Compute optimal weight: w = Σ(error×activation) / Σ(activation²)
+        let error_act_sum: f32 = samples.iter().map(|s| s.avg_error * s.activation).sum();
+        let act_sq_sum: f32 = samples.iter().map(|s| s.activation.powi(2)).sum();
+        let outgoing_weight = error_act_sum / act_sq_sum;
+        let incoming_weight = 1.0f32;
+
+        let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
+
+        let predicted_improvement = compute_net_improvement_with_squash(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            baseline_error_sq,
+            None, // Linear model
+        );
+
+        // Manually compute
+        let mut new_error_sq = 0.0f32;
+        for sample in &samples {
+            let relu_out = (incoming_weight * sample.activation).max(0.0);
+            let new_err = sample.avg_error - outgoing_weight * relu_out;
+            new_error_sq += new_err.powi(2);
+        }
+        let actual_improvement = (baseline_error_sq - new_error_sq) / baseline_error_sq;
+
+        eprintln!(
+            "Aligned errors: weight={outgoing_weight:.4}, predicted={:.4}%, actual={:.4}%",
+            predicted_improvement * 100.0,
+            actual_improvement * 100.0
+        );
+
+        assert!(
+            (predicted_improvement - actual_improvement).abs() < 0.0001,
+            "Predicted {predicted_improvement:.4} must match actual {actual_improvement:.4}",
+        );
+
+        assert!(
+            actual_improvement > 0.1,
+            "With aligned errors, should see significant improvement, got {:.4}%",
+            actual_improvement * 100.0
+        );
+    }
+
+    // ============================================================================
+    // TDD TESTS: HARD_TANH saturation behaviour
+    // ============================================================================
+
+    /// Extended sample for HARD_TANH testing - includes target neuron's pre-activation value
+    struct HardTanhSample {
+        source_activation: f32,
+        target_value: f32,      // Pre-activation input sum
+        target_activation: f32, // Post-activation output (clamped to [-1, 1])
+        target_error: f32,      // expected - actual
+    }
+
+    /// Apply HARD_TANH activation function
+    fn hard_tanh(x: f32) -> f32 {
+        x.clamp(-1.0, 1.0)
+    }
+
+    /// TEST: Demonstrates that linear model is WRONG for HARD_TANH targets near saturation.
+    /// The linear model predicts disaster (-125%) but HARD_TANH actually gives perfect result!
+    #[test]
+    fn test_hard_tanh_linear_model_is_wrong_near_saturation() {
+        // Scenario: Target neuron with HARD_TANH activation is near saturation
+        // - target_value = 0.9 (input sum before clamping)
+        // - target_activation = 0.9 (output after HARD_TANH, not saturated yet)
+        // - expected output = 1.0
+        // - error = 1.0 - 0.9 = 0.1 (positive: output should be higher)
+        //
+        // Source neuron fires with activation 0.5
+        // If we add a ReLU with outgoing_weight = 0.5:
+        // - contribution = 0.5 * relu(0.5) = 0.5 * 0.5 = 0.25
+        //
+        // LINEAR MODEL predicts:
+        // - new_error = 0.1 - 0.25 = -0.15 (overshot)
+        // - old_error² = 0.01, new_error² = 0.0225
+        // - improvement = (0.01 - 0.0225) / 0.01 = -125% (WORSE!)
+        //
+        // ACTUAL HARD_TANH behaviour:
+        // - new_input = 0.9 + 0.25 = 1.15
+        // - new_output = clamp(1.15, -1, 1) = 1.0 (saturated!)
+        // - new_error = 1.0 - 1.0 = 0.0 (PERFECT!)
+        // - old_error² = 0.01, new_error² = 0.0
+        // - improvement = (0.01 - 0.0) / 0.01 = +100% (MUCH BETTER!)
+
+        let samples = vec![HardTanhSample {
+            source_activation: 0.5,
+            target_value: 0.9,      // Near saturation
+            target_activation: 0.9, // hard_tanh(0.9) = 0.9
+            target_error: 0.1,      // expected (1.0) - actual (0.9)
+        }];
+
+        let incoming_weight = 1.0;
+        let outgoing_weight = 0.5;
+
+        // Compute baseline error
+        let baseline_error_sq: f32 = samples.iter().map(|s| s.target_error.powi(2)).sum();
+
+        // LINEAR MODEL prediction (current behaviour)
+        let mut linear_new_error_sq = 0.0f32;
+        for sample in &samples {
+            let relu_output = (incoming_weight * sample.source_activation).max(0.0);
+            let contribution = outgoing_weight * relu_output;
+            let linear_new_error = sample.target_error - contribution;
+            linear_new_error_sq += linear_new_error.powi(2);
+        }
+        let linear_improvement = (baseline_error_sq - linear_new_error_sq) / baseline_error_sq;
+
+        // ACTUAL HARD_TANH behaviour
+        let mut hard_tanh_new_error_sq = 0.0f32;
+        for sample in &samples {
+            let relu_output = (incoming_weight * sample.source_activation).max(0.0);
+            let contribution = outgoing_weight * relu_output;
+            let new_input = sample.target_value + contribution;
+            let new_output = hard_tanh(new_input);
+            let expected = sample.target_activation + sample.target_error;
+            let new_error = expected - new_output;
+            hard_tanh_new_error_sq += new_error.powi(2);
+        }
+        let hard_tanh_improvement =
+            (baseline_error_sq - hard_tanh_new_error_sq) / baseline_error_sq;
+
+        eprintln!("Baseline error²: {baseline_error_sq:.4}");
+        eprintln!(
+            "Linear model: new_error²={linear_new_error_sq:.4}, improvement={:.1}%",
+            linear_improvement * 100.0
+        );
+        eprintln!(
+            "HARD_TANH actual: new_error²={hard_tanh_new_error_sq:.4}, improvement={:.1}%",
+            hard_tanh_improvement * 100.0
+        );
+
+        // The linear model predicts NEGATIVE improvement (making things worse)
+        assert!(
+            linear_improvement < 0.0,
+            "Linear model should predict negative improvement near saturation, got {:.1}%",
+            linear_improvement * 100.0
+        );
+
+        // But the actual HARD_TANH behaviour shows PERFECT improvement!
+        assert!(
+            hard_tanh_improvement > 0.99,
+            "HARD_TANH should show ~100% improvement (error goes to 0), got {:.1}%",
+            hard_tanh_improvement * 100.0
+        );
+
+        // The difference is massive - linear model is completely wrong!
+        let difference = (hard_tanh_improvement - linear_improvement).abs();
+        assert!(
+            difference > 1.0,
+            "Difference between models should be >100%, got {:.1}%",
+            difference * 100.0
+        );
+    }
+
+    /// TEST: Linear model predicts improvement but HARD_TANH shows NO improvement (already saturated)
+    #[test]
+    fn test_hard_tanh_linear_model_wrong_when_already_saturated() {
+        // Scenario: Target is ALREADY saturated at 1.0
+        // - target_value = 1.5 (input already beyond saturation)
+        // - target_activation = 1.0 (clamped output)
+        // - expected output = 0.8
+        // - error = 0.8 - 1.0 = -0.2 (negative: output should be LOWER)
+        //
+        // Source fires with activation 0.5, ReLU with outgoing_weight = -0.3
+        // Contribution = -0.3 * 0.5 = -0.15 (pushing output DOWN, seems good!)
+        //
+        // LINEAR MODEL predicts:
+        // - new_error = -0.2 - (-0.15) = -0.05 (improved!)
+        // - old_error² = 0.04, new_error² = 0.0025
+        // - improvement = (0.04 - 0.0025) / 0.04 = 93.75% (great!)
+        //
+        // ACTUAL HARD_TANH behaviour:
+        // - new_input = 1.5 + (-0.15) = 1.35 (still beyond saturation!)
+        // - new_output = clamp(1.35) = 1.0 (unchanged!)
+        // - new_error = 0.8 - 1.0 = -0.2 (NO CHANGE!)
+        // - improvement = 0%
+
+        let samples = vec![HardTanhSample {
+            source_activation: 0.5,
+            target_value: 1.5,      // Already beyond saturation
+            target_activation: 1.0, // Clamped at max
+            target_error: -0.2,     // expected (0.8) - actual (1.0)
+        }];
+
+        let incoming_weight = 1.0;
+        let outgoing_weight = -0.3; // Trying to push output down
+
+        let baseline_error_sq: f32 = samples.iter().map(|s| s.target_error.powi(2)).sum();
+
+        // LINEAR MODEL
+        let mut linear_new_error_sq = 0.0f32;
+        for sample in &samples {
+            let relu_output = (incoming_weight * sample.source_activation).max(0.0);
+            let contribution = outgoing_weight * relu_output;
+            let linear_new_error = sample.target_error - contribution;
+            linear_new_error_sq += linear_new_error.powi(2);
+        }
+        let linear_improvement = (baseline_error_sq - linear_new_error_sq) / baseline_error_sq;
+
+        // ACTUAL HARD_TANH
+        let mut hard_tanh_new_error_sq = 0.0f32;
+        for sample in &samples {
+            let relu_output = (incoming_weight * sample.source_activation).max(0.0);
+            let contribution = outgoing_weight * relu_output;
+            let new_input = sample.target_value + contribution;
+            let new_output = hard_tanh(new_input);
+            let expected = sample.target_activation + sample.target_error;
+            let new_error = expected - new_output;
+            hard_tanh_new_error_sq += new_error.powi(2);
+        }
+        let hard_tanh_improvement =
+            (baseline_error_sq - hard_tanh_new_error_sq) / baseline_error_sq;
+
+        eprintln!("Baseline error²: {baseline_error_sq:.4}");
+        eprintln!(
+            "Linear model predicts: {:.1}% improvement",
+            linear_improvement * 100.0
+        );
+        eprintln!(
+            "HARD_TANH actual: {:.1}% improvement",
+            hard_tanh_improvement * 100.0
+        );
+
+        // Linear model predicts big improvement
+        assert!(
+            linear_improvement > 0.9,
+            "Linear model should predict ~93% improvement, got {:.1}%",
+            linear_improvement * 100.0
+        );
+
+        // But HARD_TANH shows NO improvement (still saturated)
+        assert!(
+            hard_tanh_improvement.abs() < 0.01,
+            "HARD_TANH should show ~0% improvement (still saturated), got {:.1}%",
+            hard_tanh_improvement * 100.0
+        );
+    }
+
+    /// Test that compute_net_improvement_with_squash uses HARD_TANH model when specified.
+    /// This verifies the actual function we use in production.
+    #[test]
+    fn test_compute_net_improvement_uses_hard_tanh_model() {
+        // Create samples WITH target data (target_value and target_activation)
+        // so that the HARD_TANH model can be used
+        let samples = vec![HelpfulSample {
+            activation: 0.5,
+            avg_error: 0.1,          // expected 1.0, actual 0.9
+            target_value: Some(0.9), // Near saturation
+            target_activation: Some(0.9),
+        }];
+
+        let incoming_weight = 1.0;
+        let outgoing_weight = 0.5; // contribution = 0.5 * 0.5 = 0.25
+
+        let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
+
+        // Test with LINEAR model (no squash specified)
+        let linear_improvement = compute_net_improvement_with_squash(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            baseline_error_sq,
+            None,
+        );
+
+        // Test with HARD_TANH model
+        let hard_tanh_improvement = compute_net_improvement_with_squash(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            baseline_error_sq,
+            Some("HARD_TANH"),
+        );
+
+        eprintln!(
+            "compute_net_improvement_with_squash(None): {:.1}%",
+            linear_improvement * 100.0
+        );
+        eprintln!(
+            "compute_net_improvement_with_squash(HARD_TANH): {:.1}%",
+            hard_tanh_improvement * 100.0
+        );
+
+        // LINEAR model should predict NEGATIVE improvement (overshoot to -0.15 error)
+        // new_error = 0.1 - 0.25 = -0.15, new_error² = 0.0225
+        // baseline = 0.01, so improvement = (0.01 - 0.0225) / 0.01 = -125%
+        assert!(
+            linear_improvement < 0.0,
+            "Linear model should predict negative improvement, got {:.1}%",
+            linear_improvement * 100.0
+        );
+
+        // HARD_TANH model should predict PERFECT improvement (saturate at 1.0)
+        // new_input = 0.9 + 0.25 = 1.15, new_output = clamp(1.15) = 1.0
+        // expected = 0.9 + 0.1 = 1.0, new_error = 0.0
+        // improvement = (0.01 - 0.0) / 0.01 = 100%
+        assert!(
+            hard_tanh_improvement > 0.99,
+            "HARD_TANH should show ~100% improvement, got {:.1}%",
+            hard_tanh_improvement * 100.0
+        );
+
+        // The difference between models should be massive
+        let difference = (hard_tanh_improvement - linear_improvement).abs();
+        assert!(
+            difference > 1.0,
+            "Difference between models should be >100%, got {:.1}%",
+            difference * 100.0
+        );
+    }
+
+    /// Test that HARD_TANH model falls back to linear when target data is missing.
+    #[test]
+    fn test_compute_net_improvement_falls_back_to_linear_without_target_data() {
+        // Create samples WITHOUT target data (None values)
+        let samples = vec![HelpfulSample {
+            activation: 0.5,
+            avg_error: 0.1,
+            target_value: None,      // No target data
+            target_activation: None, // No target data
+        }];
+
+        let incoming_weight = 1.0;
+        let outgoing_weight = 0.5;
+        let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
+
+        // Even with HARD_TANH specified, should fall back to linear model
+        let improvement = compute_net_improvement_with_squash(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            baseline_error_sq,
+            Some("HARD_TANH"),
+        );
+
+        // Should match the linear model result (-125%)
+        // new_error = 0.1 - 0.25 = -0.15, new_error² = 0.0225
+        // improvement = (0.01 - 0.0225) / 0.01 = -125%
+        let expected_linear = -1.25;
+        assert!(
+            (improvement - expected_linear).abs() < 0.01,
+            "Should fall back to linear model without target data, got {:.1}% (expected {:.1}%)",
+            improvement * 100.0,
+            expected_linear * 100.0
         );
     }
 }
