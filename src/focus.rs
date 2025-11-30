@@ -281,30 +281,23 @@ pub fn rank_focus_neurons(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    // Identify removal candidates: neurons with HIGH error but VERY LOW impact.
-    // These neurons are far from outputs and contribute almost nothing - they should
-    // be removed rather than focused on for improvement.
+    // Identify removal candidates: neurons with impact below the costOfGrowth threshold.
     //
-    // Criteria:
-    // - Impact below threshold (effectively disconnected from outputs)
-    // - Error above average (consuming compute but not contributing)
-    const REMOVAL_IMPACT_THRESHOLD: f32 = 0.01; // Less than 1% contribution to outputs
-    let avg_error = if neurons.is_empty() {
-        0.0
-    } else {
-        neurons.iter().map(|n| n.total_error).sum::<f32>() / neurons.len() as f32
-    };
+    // Simple logic: if a neuron's impact < costOfGrowth, removing it will improve the
+    // creature's score because the complexity reduction benefit outweighs any contribution
+    // the neuron makes to the output. Such neurons are essentially "free" to remove.
+    const COST_OF_GROWTH: f32 = 1e-7;
 
     let removal_candidates: Vec<RemovalCandidate> = neurons
         .iter()
-        .filter(|n| n.impact < REMOVAL_IMPACT_THRESHOLD && n.total_error > avg_error)
+        .filter(|n| n.impact < COST_OF_GROWTH)
         .map(|n| RemovalCandidate {
             neuron_uuid: n.neuron_uuid.clone(),
             total_error: n.total_error,
             impact: n.impact,
             reason: format!(
-                "High error ({:.4}) but very low impact ({:.6}) - far from outputs",
-                n.total_error, n.impact
+                "Impact ({:.2e}) below costOfGrowth ({:.0e}) - removal improves score",
+                n.impact, COST_OF_GROWTH
             ),
         })
         .collect();
@@ -618,9 +611,10 @@ mod tests {
     }
 
     #[test]
-    fn test_high_error_low_impact_neurons_are_removal_candidates() {
-        // Scenario: A neuron with very high error but zero impact (disconnected from outputs)
-        // should be flagged as a removal candidate - it's consuming compute but not contributing.
+    fn test_disconnected_neurons_are_removal_candidates() {
+        // Scenario: A neuron disconnected from outputs (zero impact) should be flagged
+        // as a removal candidate because impact < costOfGrowth means removing it
+        // improves the creature's score.
         let creature = create_creature(
             vec![
                 ("input-0", "input"),
@@ -639,24 +633,17 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let file_path = temp_file.path().to_str().unwrap();
 
-        // Note: errors are capped at max_output_error, so output needs high error
-        // to allow orphan's high error to not be capped below average.
-        // With output at 10.0, cap is 10.0
-        // Orphan at 10.0 (capped at 10.0), connected at 1.0, output at 10.0
-        // Average = (10 + 1 + 10) / 3 = 7.0
-        // Orphan (10.0 > 7.0) with zero impact -> removal candidate
+        // Error level doesn't matter for removal - only impact < costOfGrowth
         let records = create_records(vec![
-            ("orphan", 100.0), // Very high error (capped to 10.0), zero impact -> removal candidate
-            ("connected", 1.0), // Low error, high impact
-            ("output-0", 10.0), // High error, 100% impact (sets the cap)
+            ("orphan", 0.5),    // Any error, zero impact -> removal candidate
+            ("connected", 1.0), // High impact
+            ("output-0", 1.0),  // Output neuron
         ]);
         write_records_to_parquet(file_path, &records).unwrap();
 
         let result = rank_focus_neurons(file_path, &creature, None).unwrap();
 
-        // Orphan should be a removal candidate:
-        // - Impact ~0 (below 0.01 threshold)
-        // - Error 10.0 (above average of ~7.0)
+        // Orphan should be a removal candidate because impact (0) < costOfGrowth (1e-7)
         assert!(
             !result.removal_candidates.is_empty(),
             "Should have at least one removal candidate. Neurons: {:?}",
@@ -678,19 +665,14 @@ mod tests {
 
         let orphan = orphan_removal.unwrap();
         assert!(
-            orphan.impact < 0.01,
-            "Orphan should have very low impact, got {}",
+            orphan.impact < 1e-7,
+            "Orphan should have impact below costOfGrowth (1e-7), got {}",
             orphan.impact
         );
-        // Error is capped at max_output_error (10.0), and should be above average (~7.0)
+        // Verify the reason explains the removal
         assert!(
-            orphan.total_error >= 7.0,
-            "Orphan should have high error (above average), got {}",
-            orphan.total_error
-        );
-        assert!(
-            orphan.reason.contains("low impact"),
-            "Reason should mention low impact: {}",
+            orphan.reason.contains("costOfGrowth") || orphan.reason.contains("removal"),
+            "Reason should explain why removal improves score: {}",
             orphan.reason
         );
     }
@@ -736,18 +718,73 @@ mod tests {
     }
 
     #[test]
-    fn test_low_error_low_impact_neurons_are_not_removal_candidates() {
-        // Scenario: Neurons with low impact but ALSO low error should NOT be
-        // removal candidates - they're not causing problems.
+    fn test_low_error_moderate_impact_neurons_are_not_removal_candidates() {
+        // Scenario: Neurons with moderate impact (above negligible threshold) and low error
+        // should NOT be removal candidates - they may be doing useful work.
         let creature = create_creature(
             vec![
                 ("input-0", "input"),
-                ("orphan", "hidden"), // No path to output - zero impact
+                ("low-impact", "hidden"), // Weak connection to output but above negligible
                 ("connected", "hidden"),
                 ("output-0", "output"),
             ],
             vec![
-                ("input-0", "orphan", 1.0),
+                ("input-0", "low-impact", 1.0),
+                ("input-0", "connected", 1.0),
+                ("low-impact", "output-0", 0.05), // 5% contribution - above negligible
+                ("connected", "output-0", 0.95),  // 95% contribution
+            ],
+        );
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        // low-impact has LOW error (below average) and moderate impact (5%)
+        let records = create_records(vec![
+            ("low-impact", 0.1), // Low error, ~5% impact -> NOT a removal candidate
+            ("connected", 10.0), // High error, high impact
+            ("output-0", 5.0),   // Moderate error, 100% impact
+        ]);
+        write_records_to_parquet(file_path, &records).unwrap();
+
+        let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+        // low-impact should NOT be a removal candidate: it has low error and
+        // moderate impact (above the negligible threshold)
+        let low_impact_removal = result
+            .removal_candidates
+            .iter()
+            .find(|c| c.neuron_uuid == "low-impact");
+        assert!(
+            low_impact_removal.is_none(),
+            "Low-impact neuron with moderate impact (>1e-7) should NOT be a removal candidate when error is below average"
+        );
+    }
+
+    #[test]
+    fn test_negligible_impact_neurons_are_removal_candidates_regardless_of_error() {
+        // Scenario: A neuron with NEGLIGIBLE impact (below costOfGrowth threshold of 1e-7)
+        // should be a removal candidate REGARDLESS of error level. Such neurons contribute
+        // essentially nothing to the output and are just consuming compute.
+        //
+        // This test replicates the "crippled-removal" scenario where a neuron with near-zero
+        // weights (1e-12) was added but not detected as a removal candidate because its
+        // error was below average.
+        let creature = create_creature(
+            vec![
+                ("input-0", "input"),
+                ("input-1", "input"),
+                ("negligible", "hidden"), // Near-zero weights -> negligible impact
+                ("connected", "hidden"),
+                ("output-0", "output"),
+            ],
+            vec![
+                // Negligible neuron has tiny incoming weights
+                ("input-0", "negligible", 1e-12),
+                ("input-1", "negligible", -1e-12),
+                // And a tiny outgoing weight
+                ("negligible", "connected", 1e-12),
+                // Connected neuron has normal weights
                 ("input-0", "connected", 1.0),
                 ("connected", "output-0", 1.0),
             ],
@@ -756,24 +793,53 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let file_path = temp_file.path().to_str().unwrap();
 
-        // Orphan has LOW error (below average), so even with zero impact, not a removal candidate
+        // Negligible neuron has LOW error (below average) because it doesn't
+        // contribute enough to create errors. This is the scenario that was
+        // slipping through detection.
         let records = create_records(vec![
-            ("orphan", 0.1),     // Low error, zero impact -> NOT a removal candidate
-            ("connected", 10.0), // High error, high impact
-            ("output-0", 5.0),   // Moderate error, 100% impact
+            ("negligible", 0.01), // Low error, negligible impact -> SHOULD be removal candidate
+            ("connected", 1.0),   // Normal error, high impact
+            ("output-0", 0.5),    // Normal error, 100% impact
         ]);
         write_records_to_parquet(file_path, &records).unwrap();
 
         let result = rank_focus_neurons(file_path, &creature, None).unwrap();
 
-        // Orphan should NOT be a removal candidate because error is below average
-        let orphan_removal = result
+        // Verify the negligible neuron has essentially zero impact
+        let negligible_neuron = result
+            .neurons
+            .iter()
+            .find(|n| n.neuron_uuid == "negligible")
+            .expect("negligible neuron should be in results");
+        assert!(
+            negligible_neuron.impact < 1e-7,
+            "Negligible neuron should have impact < 1e-7 (costOfGrowth), got {}",
+            negligible_neuron.impact
+        );
+
+        // Negligible neuron SHOULD be a removal candidate regardless of error level
+        // because its impact is below the costOfGrowth threshold (1e-7)
+        let negligible_removal = result
             .removal_candidates
             .iter()
-            .find(|c| c.neuron_uuid == "orphan");
+            .find(|c| c.neuron_uuid == "negligible");
         assert!(
-            orphan_removal.is_none(),
-            "Orphan should NOT be a removal candidate when error is below average"
+            negligible_removal.is_some(),
+            "Neuron with negligible impact (<1e-7) should be a removal candidate regardless of error. \
+             Neurons: {:?}",
+            result
+                .neurons
+                .iter()
+                .map(|n| (&n.neuron_uuid, n.total_error, n.impact))
+                .collect::<Vec<_>>()
+        );
+
+        // Verify the reason explains why removal improves score
+        let candidate = negligible_removal.unwrap();
+        assert!(
+            candidate.reason.contains("costOfGrowth") || candidate.reason.contains("removal"),
+            "Reason should explain why removal improves score: {}",
+            candidate.reason
         );
     }
 
