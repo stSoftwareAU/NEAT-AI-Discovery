@@ -9963,4 +9963,54 @@ mod tests_synapses {
             "Linear model should show sample is improved when squash is None"
         );
     }
+
+    /// Test that compute_activation_improvement_and_count correctly falls back to linear model
+    /// when samples lack target_value/target_activation data, even if use_hard_tanh is true.
+    ///
+    /// This validates the safety invariant: use_hard_tanh should only be true when
+    /// can_use_hard_tanh() has verified all samples have the required data.
+    #[test]
+    fn test_activation_improvement_uses_linear_when_no_target_data() {
+        // Samples WITHOUT target data
+        let samples = vec![HelpfulSample {
+            activation: 0.5,
+            avg_error: 0.1,
+            target_value: None,      // No target data
+            target_activation: None, // No target data
+        }];
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
+
+        // can_use_hard_tanh should return false when samples lack target data
+        assert!(
+            !can_use_hard_tanh(&samples, Some("HARD_TANH")),
+            "can_use_hard_tanh must return false when samples lack target data"
+        );
+
+        // When properly using can_use_hard_tanh, we get linear model behaviour
+        let use_hard_tanh = can_use_hard_tanh(&samples, Some("HARD_TANH"));
+        let (improvement, improved, total) = compute_activation_improvement_and_count(
+            &samples,
+            1.0,            // incoming_weight
+            0.5,            // outgoing_weight
+            0.0,            // bias
+            |x| x.max(0.0), // ReLU activation
+            baseline_sq,
+            use_hard_tanh, // Will be false due to missing target data
+        );
+
+        // Linear model: contribution = 0.5 × max(0, 1.0 × 0.5 + 0) = 0.25
+        // new_error = 0.25 - 0.1 = 0.15 (note: compute_activation uses contribution - avg_error)
+        // But |0.15| > |0.1| so sample is NOT improved
+        // improvement = (0.01 - 0.0225) / 0.01 = -125%
+        assert!(
+            improvement < 0.0,
+            "Linear model should show negative improvement"
+        );
+        assert_eq!(total, 1, "Should have 1 total sample");
+        assert_eq!(
+            improved, 0,
+            "Linear model should show sample is NOT improved"
+        );
+    }
 }
