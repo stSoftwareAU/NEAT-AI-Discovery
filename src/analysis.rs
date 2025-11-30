@@ -5337,36 +5337,23 @@ fn analyze_neurons_with_cache(
     // Randomize the focus neuron order so that repeated runs with timeouts will
     // eventually cover all neurons. Convert to owned strings, shuffle, then use.
     //
-    // Filter out neurons that must be completely skipped (IF, MAXIMUM, MINIMUM, etc.)
-    // but allow STEP/BIPOLAR through - they use a specialised threshold-crossing model.
-    let mut skipped_discrete: Vec<String> = Vec::new();
+    // All neurons are processed - no activation functions are skipped. STEP/BIPOLAR
+    // neurons use a specialised threshold-crossing model; all others use the standard
+    // linear error model (which is an approximation but still finds useful patterns).
     let mut threshold_targets: Vec<String> = Vec::new();
     let mut focus_order: Vec<String> = unique_focus
         .iter()
-        .filter(|uuid| {
-            if let Some(squash) = neuron_squash_map.get(**uuid) {
+        .map(|uuid| {
+            if let Some(squash) = neuron_squash_map.get(*uuid) {
                 if is_threshold_activation(squash) {
-                    skipped_discrete.push((**uuid).clone());
-                    return false;
-                }
-                if is_threshold_activation(squash) {
-                    threshold_targets.push((**uuid).clone());
-                    // Allow through - will use discrete evaluation
+                    threshold_targets.push((*uuid).clone());
                 }
             }
-            true
+            (*uuid).clone()
         })
-        .map(|s| (*s).clone())
         .collect();
 
-    // Log skipped and threshold-crossing neurons for visibility
-    if verbose_enabled() && !skipped_discrete.is_empty() {
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Skipped {} focus neurons with unsupported discrete activations (IF/MAXIMUM/etc): {:?}",
-            skipped_discrete.len(),
-            skipped_discrete.iter().take(5).collect::<Vec<_>>()
-        );
-    }
+    // Log threshold-crossing neurons for visibility
     if verbose_enabled() && !threshold_targets.is_empty() {
         eprintln!(
             "[NEAT-AI-Discovery][verbose] Using threshold-crossing model for {} STEP/BIPOLAR neurons: {:?}",
