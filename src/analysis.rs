@@ -4917,7 +4917,8 @@ fn evaluate_activation_candidate(
             }
 
             // For HARD_TANH targets, search for best outgoing_weight since linear optimal may be wrong
-            let use_hard_tanh = target_squash == Some("HARD_TANH");
+            // Must verify samples have target_value/target_activation data before using unsafe unwrap
+            let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
             let (
                 outgoing_weight,
                 optimal_bias,
