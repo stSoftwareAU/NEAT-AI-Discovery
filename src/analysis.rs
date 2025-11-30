@@ -1909,6 +1909,7 @@ impl ReluStats {
 
         // Calculate optimal bias for ReLU neuron
         // TODO: Pass GpuAnalyzer reference for GPU-accelerated bias search
+        // Note: target_squash is not available in this context, using None
         let optimal_bias = calculate_optimal_bias(
             original_samples,
             incoming_weight,
@@ -1916,6 +1917,7 @@ impl ReluStats {
             |x| x.max(0.0), // ReLU activation function
             "ReLU",
             None, // GPU-accelerated bias search
+            None, // target_squash not available in this context
         );
 
         let target_stats = NeuronStats::from_samples(original_samples).map(|s| s.to_json());
@@ -2321,6 +2323,7 @@ fn calculate_optimal_bias(
     activation_fn: fn(f32) -> f32,
     squash: &str,
     analyzer: Option<&GpuAnalyzer>,
+    target_squash: Option<&str>,
 ) -> f32 {
     if samples.is_empty() {
         return 0.0;
@@ -2364,6 +2367,12 @@ fn calculate_optimal_bias(
     let mut best_bias = 0.0;
     let mut best_error_reduction = f32::NEG_INFINITY;
 
+    // Check if we can use HARD_TANH model (need target_value for all samples)
+    let use_hard_tanh = target_squash == Some("HARD_TANH")
+        && samples
+            .iter()
+            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
+
     // Search over log-spaced bias values
     for &bias in &bias_values {
         // Calculate error with this bias
@@ -2385,7 +2394,18 @@ fn calculate_optimal_bias(
 
             // Calculate new error at target neuron
             let correction = outgoing_weight * new_neuron_activation;
-            let new_error = sample.avg_error - correction;
+            let new_error = if use_hard_tanh {
+                // HARD_TANH model: account for target neuron's clamping
+                let target_value = sample.target_value.unwrap();
+                let target_activation = sample.target_activation.unwrap();
+                let expected = target_activation + sample.avg_error;
+                let new_input = target_value + correction;
+                let new_output = hard_tanh(new_input);
+                expected - new_output
+            } else {
+                // Linear model
+                sample.avg_error - correction
+            };
 
             if new_error.is_finite() {
                 total_new_error_sq += new_error * new_error;
@@ -4501,6 +4521,8 @@ fn evaluate_relu_candidate(
         }
 
         if let Some(mut candidate) = eval.candidate {
+            let original_improvement = candidate.expected_improvement_percentage;
+
             // For HARD_TANH targets, recompute improvement using saturation-aware model
             // The GPU evaluation uses linear model which can be very inaccurate near saturation
             let net_improvement = compute_net_improvement_with_squash(
@@ -4518,6 +4540,34 @@ fn evaluate_relu_candidate(
                 candidate.outgoing_weight,
                 target_squash,
             );
+
+            // DEBUG: Log ReLU candidate evaluation details
+            // TODO: Remove this before raising PR
+            if verbose_enabled() && target_uuid == "output-0" {
+                eprintln!(
+                    "[NEAT-AI-Discovery][DEBUG-RELU] {} -> {} (target_squash={:?}): GPU linear={:.4}%, recalc={:.4}%, improved={}/{}, inW={:.3}, outW={:.3}, baseline_err_sq={:.6}",
+                    source_uuid,
+                    target_uuid,
+                    target_squash,
+                    original_improvement * 100.0,
+                    net_improvement * 100.0,
+                    improved,
+                    total,
+                    candidate.incoming_weight,
+                    candidate.outgoing_weight,
+                    total_baseline_error_sq
+                );
+                // Log sample details for first 3 samples
+                for (i, sample) in samples.iter().take(3).enumerate() {
+                    let relu_out = (candidate.incoming_weight * sample.activation).max(0.0);
+                    let contribution = candidate.outgoing_weight * relu_out;
+                    eprintln!(
+                        "[NEAT-AI-Discovery][DEBUG-RELU]   sample[{}]: activation={:.4}, error={:.4}, relu_out={:.4}, contrib={:.4}, target_value={:?}, target_activation={:?}",
+                        i, sample.activation, sample.avg_error, relu_out, contribution, sample.target_value, sample.target_activation
+                    );
+                }
+            }
+
             candidate.improved_count = improved;
             candidate.total_count = total;
             candidate.expected_improvement_percentage = net_improvement;
@@ -4651,6 +4701,113 @@ fn count_improved_samples(
             expected - new_output
         } else {
             // Linear model: new_error = old_error - contribution
+            sample.avg_error - contribution
+        };
+
+        // Sample is improved if |new_error| < |old_error|
+        if new_error.abs() + EPSILON < sample.avg_error.abs() {
+            improved_count += 1;
+        }
+    }
+
+    (improved_count, total_count)
+}
+
+/// Compute net improvement for activation candidates with HARD_TANH-aware calculation.
+///
+/// For HARD_TANH targets, uses saturation-aware model that accounts for clamping.
+/// The contribution goes through the specified activation function, then adds
+/// to the target neuron's pre-activation value.
+fn compute_activation_net_improvement_with_squash(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    bias: f32,
+    activation_fn: fn(f32) -> f32,
+    total_baseline_error_sq: f32,
+    target_squash: Option<&str>,
+) -> f32 {
+    if total_baseline_error_sq <= EPSILON {
+        return 0.0;
+    }
+
+    // Check if we can use HARD_TANH model (need target_value for all samples)
+    let use_hard_tanh = target_squash == Some("HARD_TANH")
+        && samples
+            .iter()
+            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
+
+    let mut new_error_sq_sum = 0.0;
+
+    for sample in samples {
+        // Apply new neuron's activation: activation_fn(incoming_weight × source_activation + bias)
+        let pre_activation = incoming_weight * sample.activation + bias;
+        let neuron_output = activation_fn(pre_activation);
+        let contribution = outgoing_weight * neuron_output;
+
+        let new_error = if use_hard_tanh {
+            // HARD_TANH model: compute actual output after clamping
+            // new_input = old_input + contribution
+            // new_output = hard_tanh(new_input)
+            // expected = target_activation + error
+            // new_error = expected - new_output
+            let target_value = sample.target_value.unwrap();
+            let target_activation = sample.target_activation.unwrap();
+            let expected = target_activation + sample.avg_error;
+            let new_input = target_value + contribution;
+            let new_output = hard_tanh(new_input);
+            expected - new_output
+        } else {
+            // Linear model: new_error = old_error - contribution
+            sample.avg_error - contribution
+        };
+
+        if new_error.is_finite() {
+            new_error_sq_sum += new_error * new_error;
+        }
+    }
+
+    // Net improvement = (baseline - new) / baseline
+    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
+
+    if improvement.is_finite() {
+        improvement
+    } else {
+        0.0
+    }
+}
+
+/// Count improved samples for activation candidates with HARD_TANH-aware calculation.
+fn count_activation_improved_samples(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    bias: f32,
+    activation_fn: fn(f32) -> f32,
+    target_squash: Option<&str>,
+) -> (u32, u32) {
+    let mut improved_count = 0u32;
+    let total_count = samples.len() as u32;
+
+    // Check if we can use HARD_TANH model (need target_value for all samples)
+    let use_hard_tanh = target_squash == Some("HARD_TANH")
+        && samples
+            .iter()
+            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
+
+    for sample in samples {
+        let pre_activation = incoming_weight * sample.activation + bias;
+        let neuron_output = activation_fn(pre_activation);
+        let contribution = outgoing_weight * neuron_output;
+
+        let new_error = if use_hard_tanh {
+            let target_value = sample.target_value.unwrap();
+            let target_activation = sample.target_activation.unwrap();
+            let expected = target_activation + sample.avg_error;
+            let new_input = target_value + contribution;
+            let new_output = hard_tanh(new_input);
+            expected - new_output
+        } else {
             sample.avg_error - contribution
         };
 
@@ -4805,6 +4962,7 @@ fn evaluate_activation_candidate(
     samples: &[HelpfulSample],
     threshold: f32,
     spec: &ActivationCandidateSpec,
+    target_squash: Option<&str>,
 ) -> Result<Option<CandidateNeuronJson>> {
     if samples.len() < MIN_NEURON_SAMPLE_COUNT {
         return Ok(None);
@@ -4893,26 +5051,10 @@ fn evaluate_activation_candidate(
                 continue;
             }
 
-            let mut outgoing_weight = sum_error_activation / (sum_activation_sq + EPSILON);
-            if !outgoing_weight.is_finite() || outgoing_weight.abs() <= EPSILON {
+            // Calculate linear optimal weight as starting point
+            let linear_optimal_weight = sum_error_activation / (sum_activation_sq + EPSILON);
+            if !linear_optimal_weight.is_finite() || linear_optimal_weight.abs() <= EPSILON {
                 continue;
-            }
-            outgoing_weight = outgoing_weight.clamp(-10.0, 10.0);
-
-            // Always calculate improved_count after weight validation to ensure it uses
-            // the same validated and clamped weight that will be used in the final candidate.
-            // This must be done after validation because the GPU may have calculated it
-            // with a different weight (before validation checks).
-            let mut final_improved_count = 0u32;
-            for sample in samples {
-                let pre_activation = incoming_weight * sample.activation;
-                let output = (spec.activation)(pre_activation);
-                if output.is_finite() {
-                    let new_error = sample.avg_error - outgoing_weight * output;
-                    if new_error.abs() + EPSILON < sample.avg_error.abs() {
-                        final_improved_count += 1;
-                    }
-                }
             }
 
             let total_count = samples.len() as u32;
@@ -4920,36 +5062,134 @@ fn evaluate_activation_candidate(
                 continue;
             }
 
-            // Calculate improvement based on magnitude (reduction in squared error)
-            // improvement = baseline_sq - new_sq
-            // = 2*w*sum(ea) - w^2*sum(aa)
-            let improvement_magnitude = 2.0 * outgoing_weight * sum_error_activation
-                - outgoing_weight * outgoing_weight * sum_activation_sq;
+            // For HARD_TANH targets, search for best outgoing_weight since linear optimal may be wrong
+            // The linear model doesn't account for clamping, so we try multiple weights
+            let (
+                outgoing_weight,
+                optimal_bias,
+                expected_improvement_percentage,
+                final_improved_count,
+            ) = if target_squash == Some("HARD_TANH") {
+                // Weight candidates: linear optimal and scaled versions
+                let weight_candidates: [f32; 9] = [
+                    linear_optimal_weight * 0.1,
+                    linear_optimal_weight * 0.25,
+                    linear_optimal_weight * 0.5,
+                    linear_optimal_weight * 0.75,
+                    linear_optimal_weight,
+                    linear_optimal_weight * 1.5,
+                    linear_optimal_weight * 2.0,
+                    -linear_optimal_weight * 0.5, // Try opposite direction
+                    -linear_optimal_weight,       // Try opposite direction
+                ];
 
-            let expected_improvement_percentage = if baseline_sq > EPSILON {
-                let result = improvement_magnitude / baseline_sq;
-                if result.is_finite() {
-                    result
-                } else {
-                    0.0
+                let mut best_weight = linear_optimal_weight.clamp(-10.0, 10.0);
+                let mut best_bias = 0.0f32;
+                let mut best_improvement = f32::NEG_INFINITY;
+                let mut best_improved_count = 0u32;
+
+                for &weight in &weight_candidates {
+                    let clamped_weight = weight.clamp(-10.0, 10.0);
+                    if clamped_weight.abs() <= EPSILON {
+                        continue;
+                    }
+
+                    // Find optimal bias for this weight
+                    let bias = calculate_optimal_bias(
+                        samples,
+                        incoming_weight,
+                        clamped_weight,
+                        spec.activation,
+                        spec.name,
+                        None,
+                        target_squash,
+                    );
+
+                    // Calculate improvement with this weight and bias
+                    let improvement = compute_activation_net_improvement_with_squash(
+                        samples,
+                        incoming_weight,
+                        clamped_weight,
+                        bias,
+                        spec.activation,
+                        baseline_sq,
+                        target_squash,
+                    );
+
+                    if improvement > best_improvement {
+                        best_improvement = improvement;
+                        best_weight = clamped_weight;
+                        best_bias = bias;
+                        let (improved, _) = count_activation_improved_samples(
+                            samples,
+                            incoming_weight,
+                            clamped_weight,
+                            bias,
+                            spec.activation,
+                            target_squash,
+                        );
+                        best_improved_count = improved;
+                    }
                 }
+
+                (
+                    best_weight,
+                    best_bias,
+                    best_improvement,
+                    best_improved_count,
+                )
             } else {
-                0.0
-            };
+                // For non-HARD_TANH, use linear optimal weight
+                let outgoing_weight = linear_optimal_weight.clamp(-10.0, 10.0);
 
-            if expected_improvement_percentage > fallback_score {
-                fallback_score = expected_improvement_percentage;
-
-                // Calculate optimal bias for fallback candidate
-                // TODO: Pass GpuAnalyzer reference for GPU-accelerated bias search
                 let optimal_bias = calculate_optimal_bias(
                     samples,
                     incoming_weight,
                     outgoing_weight,
                     spec.activation,
                     spec.name,
-                    None, // GPU-accelerated bias search
+                    None,
+                    target_squash,
                 );
+
+                // Calculate improved_count and improvement with bias
+                let mut improved_count = 0u32;
+                let mut total_new_error_sq = 0.0;
+                for sample in samples {
+                    let pre_activation = incoming_weight * sample.activation + optimal_bias;
+                    let output = (spec.activation)(pre_activation);
+                    if output.is_finite() {
+                        let new_error = sample.avg_error - outgoing_weight * output;
+                        if new_error.is_finite() {
+                            total_new_error_sq += new_error * new_error;
+                        }
+                        if new_error.abs() + EPSILON < sample.avg_error.abs() {
+                            improved_count += 1;
+                        }
+                    }
+                }
+
+                let improvement = if baseline_sq > EPSILON {
+                    let result = (baseline_sq - total_new_error_sq) / baseline_sq;
+                    if result.is_finite() {
+                        result
+                    } else {
+                        0.0
+                    }
+                } else {
+                    0.0
+                };
+
+                (outgoing_weight, optimal_bias, improvement, improved_count)
+            };
+
+            // Skip invalid weights
+            if outgoing_weight.abs() <= EPSILON {
+                continue;
+            }
+
+            if expected_improvement_percentage > fallback_score {
+                fallback_score = expected_improvement_percentage;
 
                 let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
                 fallback_candidate = Some(CandidateNeuronJson {
@@ -4977,17 +5217,6 @@ fn evaluate_activation_candidate(
             // Current iteration passed threshold - create best_candidate with current iteration's values
             if expected_improvement_percentage > best_score {
                 best_score = expected_improvement_percentage;
-
-                // Calculate optimal bias for best candidate
-                // TODO: Pass GpuAnalyzer reference for GPU-accelerated bias search
-                let optimal_bias = calculate_optimal_bias(
-                    samples,
-                    incoming_weight,
-                    outgoing_weight,
-                    spec.activation,
-                    spec.name,
-                    None, // GPU-accelerated bias search
-                );
 
                 let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
                 // Use current iteration's values, not fallback candidate's values
@@ -5321,6 +5550,19 @@ fn analyze_neurons_with_cache(
 
     let mut rng = thread_rng();
     focus_order.shuffle(&mut rng);
+
+    // DEBUG: Temporarily filter to only output-0 to debug HARD_TANH predictions
+    // TODO: Remove this before raising PR
+    let focus_order: Vec<String> = focus_order
+        .into_iter()
+        .filter(|uuid| uuid == "output-0")
+        .collect();
+    if verbose_enabled() {
+        eprintln!(
+            "[NEAT-AI-Discovery][DEBUG] Filtered to output-0 only. Focus targets: {focus_order:?}"
+        );
+    }
+
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
     let order_map_arc = Arc::new(order_map);
@@ -5570,6 +5812,21 @@ fn analyze_neurons_with_cache(
                 }
             } else {
                 // Standard continuous activation path
+                // DEBUG: Log target squash for debugging
+                // TODO: Remove this before raising PR
+                let target_squash_debug = neuron_squash_map_arc.get(target_uuid).cloned();
+                if verbose_enabled() {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][DEBUG] Target {} has squash: {:?}",
+                        target_uuid,
+                        target_squash_debug
+                    );
+                }
+
+                // DEBUG: Counter for saturation logging
+                // TODO: Remove this before raising PR
+                let mut spec_count = 0usize;
+
                 for result in work_results {
                     // Check deadline before each evaluation batch
                     if deadline_passed(&deadline) {
@@ -5655,6 +5912,27 @@ fn analyze_neurons_with_cache(
                         upsert_candidate(&mut map, candidate);
                     }
 
+                    // DEBUG: Log sample saturation before activation candidates
+                    // TODO: Remove this before raising PR
+                    if verbose_enabled() && target_uuid == "output-0" && spec_count == 0 {
+                        spec_count += 1;
+                        let saturated_count = result.samples.iter().filter(|s| {
+                            s.target_value.map(|v| v <= -1.0 || v >= 1.0).unwrap_or(false)
+                        }).count();
+                        let total = result.samples.len();
+                        eprintln!(
+                            "[NEAT-AI-Discovery][DEBUG-SATURATION] {} -> {}: {}/{} samples saturated (target_squash={:?})",
+                            result.source_uuid, target_uuid, saturated_count, total, target_squash
+                        );
+                        // Show first 3 samples
+                        for (i, s) in result.samples.iter().take(3).enumerate() {
+                            eprintln!(
+                                "[NEAT-AI-Discovery][DEBUG-SATURATION]   sample[{}]: activation={:.4}, error={:.4}, target_value={:?}, target_activation={:?}",
+                                i, s.activation, s.avg_error, s.target_value, s.target_activation
+                            );
+                        }
+                    }
+
                     for spec in ACTIVATION_SPECS.iter() {
                         if let Some(candidate) = evaluate_activation_candidate(
                             &analyzer,
@@ -5663,7 +5941,24 @@ fn analyze_neurons_with_cache(
                             &result.samples,
                             threshold,
                             spec,
+                            target_squash,
                         )? {
+                            // DEBUG: Log activation candidate details
+                            // TODO: Remove this before raising PR
+                            if verbose_enabled() && target_uuid == "output-0" {
+                                eprintln!(
+                                    "[NEAT-AI-Discovery][DEBUG-ACTIVATION] {} -> {} ({}): {:.4}% improvement, improved={}/{}, inW={:.3}, outW={:.3}, bias={:.3}",
+                                    result.source_uuid,
+                                    target_uuid,
+                                    candidate.squash,
+                                    candidate.expected_improvement_percentage * 100.0,
+                                    candidate.improved_count,
+                                    candidate.total_count,
+                                    candidate.incoming_weight,
+                                    candidate.outgoing_weight,
+                                    candidate.bias
+                                );
+                            }
                             diagnostics
                                 .lock()
                                 .expect("Mutex poisoned: diagnostics")
@@ -5697,6 +5992,30 @@ fn analyze_neurons_with_cache(
             .partial_cmp(&a.expected_improvement_percentage)
             .unwrap_or(Ordering::Equal)
     });
+
+    // DEBUG: Log candidates before truncation
+    // TODO: Remove this before raising PR
+    if verbose_enabled() {
+        eprintln!(
+            "[NEAT-AI-Discovery][DEBUG] Returning {} neuron candidates (before truncation):",
+            helpful_results.len()
+        );
+        for (i, c) in helpful_results.iter().take(10).enumerate() {
+            eprintln!(
+                "[NEAT-AI-Discovery][DEBUG]   [{}] {} -> {} ({}): {:.4}% improvement, improved={}/{}, inW={:.3}, outW={:.3}, bias={:.3}",
+                i,
+                c.source_neuron_uuid,
+                c.target_neuron_uuid,
+                c.squash,
+                c.expected_improvement_percentage * 100.0,
+                c.improved_count,
+                c.total_count,
+                c.incoming_weight,
+                c.outgoing_weight,
+                c.bias
+            );
+        }
+    }
 
     if let Some(limit) = input.max_candidates {
         helpful_results.truncate(limit);
@@ -8178,7 +8497,7 @@ mod tests_synapses {
             },
         ];
 
-        let bias = calculate_optimal_bias(&samples, 1.0, -0.5, tanh_activation, "TANH", None);
+        let bias = calculate_optimal_bias(&samples, 1.0, -0.5, tanh_activation, "TANH", None, None);
 
         // Bias should be in expanded TANH range
         assert!(
@@ -8254,7 +8573,7 @@ mod tests_synapses {
         ];
 
         let relu_fn = |x: f32| x.max(0.0);
-        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, relu_fn, "ReLU", None);
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, relu_fn, "ReLU", None, None);
 
         // ReLU can now use negative bias for threshold shifting (expanded range)
         assert!(bias >= -1.0, "Bias for ReLU should be >= -1.0, got {bias}");
@@ -8347,6 +8666,7 @@ mod tests_synapses {
             outgoing,
             inverse_activation,
             "INVERSE",
+            None,
             None,
         );
 
@@ -8710,7 +9030,7 @@ mod tests_synapses {
         ];
 
         for (name, activation_fn, min_expected, max_expected) in test_cases {
-            let bias = calculate_optimal_bias(&samples, 1.0, 1.0, activation_fn, name, None);
+            let bias = calculate_optimal_bias(&samples, 1.0, 1.0, activation_fn, name, None, None);
             assert!(
                 bias >= min_expected && bias <= max_expected,
                 "Bias for {name} should be in range [{min_expected}, {max_expected}], got {bias}"
@@ -8723,7 +9043,7 @@ mod tests_synapses {
     fn test_bias_calculation_empty_samples() {
         let samples: Vec<HelpfulSample> = vec![];
 
-        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None);
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None, None);
 
         // Should return 0.0 for empty samples
         assert_eq!(bias, 0.0, "Empty samples should return bias of 0.0");
@@ -8766,7 +9086,7 @@ mod tests_synapses {
             },
         ];
 
-        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None);
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None, None);
 
         // Should still return a valid bias in range (though may be 0.0 if no bias tested has sufficient samples)
         assert!(
@@ -9181,7 +9501,7 @@ mod tests_synapses {
             },
         ];
 
-        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None);
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None, None);
 
         // Should handle non-finite values gracefully and return a finite bias
         assert!(
