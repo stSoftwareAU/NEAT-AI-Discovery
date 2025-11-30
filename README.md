@@ -144,10 +144,33 @@ The threshold-crossing model:
 This allows discovery to find meaningful improvements for STEP/BIPOLAR neurons
 by proposing connections that flip the output to the correct state on more samples.
 
+#### HARD_TANH saturation-aware model
+
+For **HARD_TANH** target neurons, the library uses a **saturation-aware model**
+instead of the linear approximation. This is critical for accurate predictions
+because HARD_TANH clamps outputs to [-1, 1]:
+
+| Scenario | Linear Model | HARD_TANH Model | Difference |
+|----------|--------------|-----------------|------------|
+| **Near saturation** (value=0.9, error=0.1) | **-125%** (overshoots!) | **+100%** (saturates at 1.0) | 225% |
+| **Already saturated** (value=1.5, error=-0.2) | **+94%** (thinks it helps) | **0%** (still saturated) | 94% |
+
+The saturation-aware model:
+- Uses the target neuron's pre-activation value (input sum before clamping)
+- Computes `new_output = clamp(value + contribution, -1, 1)`
+- Calculates error reduction against the actual clamped output
+
+This ensures predictions match actual results when the candidate is applied,
+which is essential for production systems where HARD_TANH is commonly used.
+
+**Note:** The saturation-aware model requires target_value data (pre-activation
+input sum) to be recorded during discovery. When this data is unavailable, the
+library falls back to the linear model.
+
 #### All other activations
 
-All other activation functions (including IF, MAXIMUM, MINIMUM, HARD_TANH, ReLU6,
-etc.) use the **standard linear error model**. No activations are skipped.
+All other activation functions (including IF, MAXIMUM, MINIMUM, ReLU6, etc.)
+use the **standard linear error model**. No activations are skipped.
 
 The discovery process treats source neurons as **black boxes** - we don't care
 how they computed their activations, only what the values are. For any target
@@ -161,15 +184,26 @@ neuron, we look at:
 
 When target errors are split roughly 50/50 between positive (output should be higher)
 and negative (output should be lower), no single ReLU can improve all samples.
-Discovery now evaluates **complementary ReLU pairs**:
+Discovery evaluates **complementary ReLU pairs**:
 
-| Evaluation | Samples Used | Effect |
-|------------|--------------|--------|
-| **Positive-error ReLU** | Only samples with error > 0 | Finds ReLU that pushes output **up** when needed |
-| **Negative-error ReLU** | Only samples with error < 0 | Finds ReLU that pushes output **down** when needed |
+| Evaluation | Weight Computed From | Net Improvement Computed From |
+|------------|---------------------|------------------------------|
+| **Positive-error ReLU** | Samples with error > 0 | **ALL samples** |
+| **Negative-error ReLU** | Samples with error < 0 | **ALL samples** |
 
-Both candidates are returned if they exceed the improvement threshold. Together,
-they can improve more of the total error than either alone could achieve.
+**CRITICAL**: The optimal weight is computed from the target subset (to find the right
+direction), but the **net improvement is computed across ALL samples**. This is essential
+because a ReLU that helps positive-error samples may harm negative-error samples:
+
+- When source neurons fire on both positive and negative error samples, adding a ReLU
+  will push the output in one direction for ALL samples
+- The improvement on the target subset may be cancelled (or exceeded) by harm to the
+  other subset
+- The true expected improvement is `(baseline_sq - new_error_sq) / baseline_sq` computed
+  over the entire dataset
+
+Candidates are only returned if the **net improvement across ALL samples** exceeds the
+threshold. This ensures predictions match actual results when the candidate is applied.
 
 The candidate map uses a key that includes:
 `(source_uuid, target_uuid, squash, sign(incoming_weight), sign(outgoing_weight))`
