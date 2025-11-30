@@ -29,33 +29,9 @@ const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 ///
 /// - **STEP**: Output = value > 0 ? 1 : 0
 /// - **BIPOLAR**: Output = value > 0 ? 1 : -1
+#[inline]
 fn is_threshold_activation(squash: &str) -> bool {
     matches!(squash.to_uppercase().as_str(), "STEP" | "BIPOLAR")
-}
-
-/// Check if a target neuron's activation function should be skipped entirely.
-///
-/// Currently returns false for all activations - we no longer skip any targets.
-/// The linear error model is an approximation for ALL non-linear functions.
-/// For any target neuron, we look at:
-/// - Observed errors on the target
-/// - Observed activations from potential sources
-/// - Correlation between them
-///
-/// This correlation analysis works regardless of how the target computed its
-/// output. The source neurons are black boxes (we use their recorded activations),
-/// and the target's error tells us "should output be higher or lower?".
-///
-/// Even for complex activation functions like IF/MAXIMUM/MINIMUM, finding
-/// sources that correlate with the error can suggest useful connections.
-#[allow(dead_code)]
-fn is_discrete_skip_activation(_squash: &str) -> bool {
-    false // No activations are skipped - correlation analysis works for all
-}
-
-/// Legacy function for backward compatibility - returns true for all discrete activations
-fn is_discrete_activation(squash: &str) -> bool {
-    is_threshold_activation(squash) || is_discrete_skip_activation(squash)
 }
 /// Number of GPU operations to batch together for better utilisation.
 /// Apple Silicon's Unified Memory Architecture (UMA) eliminates CPU-GPU copy overhead,
@@ -4519,30 +4495,21 @@ fn evaluate_relu_candidate(
         }
 
         if let Some(mut candidate) = eval.candidate {
-            // For HARD_TANH targets, recompute improvement using saturation-aware model
-            // The GPU evaluation uses linear model which can be very inaccurate near saturation
-            let net_improvement = compute_net_improvement_with_squash(
+            // For HARD_TANH targets, recompute using saturation-aware model (single pass)
+            let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
+            let (net_improvement, improved, total) = compute_relu_improvement_and_count(
                 samples,
                 candidate.incoming_weight,
                 candidate.outgoing_weight,
                 total_baseline_error_sq,
-                target_squash,
-            );
-
-            // Update counts to reflect HARD_TANH model if applicable
-            let (improved, total) = count_improved_samples(
-                samples,
-                candidate.incoming_weight,
-                candidate.outgoing_weight,
-                target_squash,
+                use_hard_tanh,
             );
 
             candidate.improved_count = improved;
             candidate.total_count = total;
             candidate.expected_improvement_percentage = net_improvement;
 
-            // Only consider if still above threshold after HARD_TANH recalculation
-            // Use strict > for consistency with evaluate_relu_candidates_split and ReluStats::evaluate
+            // Only consider if still above threshold after recalculation
             if net_improvement > threshold
                 && (best_candidate.is_none() || net_improvement > best_candidate_score)
             {
@@ -4567,16 +4534,132 @@ struct SplitReluResult {
 }
 
 /// Apply HARD_TANH activation function (clamp to [-1, 1])
-#[inline]
+#[inline(always)]
 fn hard_tanh(x: f32) -> f32 {
     x.clamp(-1.0, 1.0)
 }
 
-/// Compute the net improvement when applying a ReLU candidate to ALL samples.
+/// Check if samples support HARD_TANH model (all have target data).
+/// Caches the result to avoid repeated iteration.
+#[inline]
+fn can_use_hard_tanh(samples: &[HelpfulSample], target_squash: Option<&str>) -> bool {
+    target_squash == Some("HARD_TANH")
+        && samples
+            .iter()
+            .all(|s| s.target_value.is_some() && s.target_activation.is_some())
+}
+
+/// Combined computation of improvement and count for ReLU candidates.
+/// Single pass over samples for better cache efficiency.
 ///
-/// When `target_squash` is Some("HARD_TANH") and samples have target_value data,
-/// we compute the actual output after clamping rather than using linear approximation.
-/// This correctly handles saturation effects where the linear model would be wrong.
+/// Returns (improvement_percentage, improved_count, total_count)
+fn compute_relu_improvement_and_count(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    total_baseline_error_sq: f32,
+    use_hard_tanh: bool,
+) -> (f32, u32, u32) {
+    if total_baseline_error_sq <= EPSILON || samples.is_empty() {
+        return (0.0, 0, samples.len() as u32);
+    }
+
+    let mut new_error_sq_sum = 0.0f32;
+    let mut improved_count = 0u32;
+    let total_count = samples.len() as u32;
+
+    for sample in samples {
+        let pre_activation = incoming_weight * sample.activation;
+        let relu_output = pre_activation.max(0.0);
+        let contribution = outgoing_weight * relu_output;
+
+        let new_error = if use_hard_tanh {
+            // Safety: use_hard_tanh is only true when all samples have target data
+            let target_value = unsafe { sample.target_value.unwrap_unchecked() };
+            let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
+            let expected = target_activation + sample.avg_error;
+            let new_input = target_value + contribution;
+            hard_tanh(new_input) - expected
+        } else {
+            contribution - sample.avg_error
+        };
+
+        new_error_sq_sum += new_error * new_error;
+
+        // Sample is improved if |new_error| < |old_error|
+        if new_error.abs() + EPSILON < sample.avg_error.abs() {
+            improved_count += 1;
+        }
+    }
+
+    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
+    let improvement = if improvement.is_finite() {
+        improvement
+    } else {
+        0.0
+    };
+
+    (improvement, improved_count, total_count)
+}
+
+/// Combined computation of improvement and count for activation candidates.
+/// Single pass over samples for better cache efficiency.
+///
+/// Returns (improvement_percentage, improved_count, total_count)
+fn compute_activation_improvement_and_count(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    bias: f32,
+    activation_fn: fn(f32) -> f32,
+    total_baseline_error_sq: f32,
+    use_hard_tanh: bool,
+) -> (f32, u32, u32) {
+    if total_baseline_error_sq <= EPSILON || samples.is_empty() {
+        return (0.0, 0, samples.len() as u32);
+    }
+
+    let mut new_error_sq_sum = 0.0f32;
+    let mut improved_count = 0u32;
+    let total_count = samples.len() as u32;
+
+    for sample in samples {
+        let pre_activation = incoming_weight * sample.activation + bias;
+        let neuron_output = activation_fn(pre_activation);
+        let contribution = outgoing_weight * neuron_output;
+
+        let new_error = if use_hard_tanh {
+            // Safety: use_hard_tanh is only true when all samples have target data
+            let target_value = unsafe { sample.target_value.unwrap_unchecked() };
+            let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
+            let expected = target_activation + sample.avg_error;
+            let new_input = target_value + contribution;
+            hard_tanh(new_input) - expected
+        } else {
+            contribution - sample.avg_error
+        };
+
+        if new_error.is_finite() {
+            new_error_sq_sum += new_error * new_error;
+        }
+
+        if new_error.abs() + EPSILON < sample.avg_error.abs() {
+            improved_count += 1;
+        }
+    }
+
+    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
+    let improvement = if improvement.is_finite() {
+        improvement
+    } else {
+        0.0
+    };
+
+    (improvement, improved_count, total_count)
+}
+
+/// Wrapper for tests - computes improvement only.
+#[cfg(test)]
 fn compute_net_improvement_with_squash(
     samples: &[HelpfulSample],
     incoming_weight: f32,
@@ -4584,209 +4667,35 @@ fn compute_net_improvement_with_squash(
     total_baseline_error_sq: f32,
     target_squash: Option<&str>,
 ) -> f32 {
-    if total_baseline_error_sq <= EPSILON {
-        return 0.0;
-    }
-
-    // Check if we can use HARD_TANH model (need target_value for all samples)
-    let use_hard_tanh = target_squash == Some("HARD_TANH")
-        && samples
-            .iter()
-            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
-
-    let mut new_error_sq_sum = 0.0;
-
-    for sample in samples {
-        // ReLU activation: max(0, incoming_weight × source_activation)
-        let pre_activation = incoming_weight * sample.activation;
-        let relu_output = pre_activation.max(0.0);
-        let contribution = outgoing_weight * relu_output;
-
-        let new_error = if use_hard_tanh {
-            // HARD_TANH model: compute actual output after clamping
-            // new_input = old_input + contribution
-            // new_output = hard_tanh(new_input)
-            // expected = target_activation + error
-            // new_error = expected - new_output
-            let target_value = sample.target_value.unwrap();
-            let target_activation = sample.target_activation.unwrap();
-            let expected = target_activation + sample.avg_error;
-            let new_input = target_value + contribution;
-            let new_output = hard_tanh(new_input);
-            expected - new_output
-        } else {
-            // Linear model: new_error = old_error - contribution
-            sample.avg_error - contribution
-        };
-
-        new_error_sq_sum += new_error * new_error;
-    }
-
-    // Net improvement = (baseline - new) / baseline
-    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
-
-    if improvement.is_finite() {
-        improvement
-    } else {
-        0.0
-    }
+    let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
+    let (improvement, _, _) = compute_relu_improvement_and_count(
+        samples,
+        incoming_weight,
+        outgoing_weight,
+        total_baseline_error_sq,
+        use_hard_tanh,
+    );
+    improvement
 }
 
-/// Count how many samples are improved vs total when applying a ReLU candidate.
-///
-/// For HARD_TANH targets with available target data, uses the saturation-aware model
-/// to ensure counts are consistent with `compute_net_improvement_with_squash`.
+/// Wrapper for tests - counts improved samples only.
+#[cfg(test)]
 fn count_improved_samples(
     samples: &[HelpfulSample],
     incoming_weight: f32,
     outgoing_weight: f32,
     target_squash: Option<&str>,
 ) -> (u32, u32) {
-    let mut improved_count = 0u32;
-    let total_count = samples.len() as u32;
-
-    // Check if we can use HARD_TANH model (need target_value for all samples)
-    let use_hard_tanh = target_squash == Some("HARD_TANH")
-        && samples
-            .iter()
-            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
-
-    for sample in samples {
-        let pre_activation = incoming_weight * sample.activation;
-        let relu_output = pre_activation.max(0.0);
-        let contribution = outgoing_weight * relu_output;
-
-        let new_error = if use_hard_tanh {
-            // HARD_TANH model: compute actual output after clamping
-            // new_input = old_input + contribution
-            // new_output = hard_tanh(new_input)
-            // expected = target_activation + error
-            // new_error = expected - new_output
-            let target_value = sample.target_value.unwrap();
-            let target_activation = sample.target_activation.unwrap();
-            let expected = target_activation + sample.avg_error;
-            let new_input = target_value + contribution;
-            let new_output = hard_tanh(new_input);
-            expected - new_output
-        } else {
-            // Linear model: new_error = old_error - contribution
-            sample.avg_error - contribution
-        };
-
-        // Sample is improved if |new_error| < |old_error|
-        if new_error.abs() + EPSILON < sample.avg_error.abs() {
-            improved_count += 1;
-        }
-    }
-
-    (improved_count, total_count)
-}
-
-/// Compute net improvement for activation candidates with HARD_TANH-aware calculation.
-///
-/// For HARD_TANH targets, uses saturation-aware model that accounts for clamping.
-/// The contribution goes through the specified activation function, then adds
-/// to the target neuron's pre-activation value.
-fn compute_activation_net_improvement_with_squash(
-    samples: &[HelpfulSample],
-    incoming_weight: f32,
-    outgoing_weight: f32,
-    bias: f32,
-    activation_fn: fn(f32) -> f32,
-    total_baseline_error_sq: f32,
-    target_squash: Option<&str>,
-) -> f32 {
-    if total_baseline_error_sq <= EPSILON {
-        return 0.0;
-    }
-
-    // Check if we can use HARD_TANH model (need target_value for all samples)
-    let use_hard_tanh = target_squash == Some("HARD_TANH")
-        && samples
-            .iter()
-            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
-
-    let mut new_error_sq_sum = 0.0;
-
-    for sample in samples {
-        // Apply new neuron's activation: activation_fn(incoming_weight × source_activation + bias)
-        let pre_activation = incoming_weight * sample.activation + bias;
-        let neuron_output = activation_fn(pre_activation);
-        let contribution = outgoing_weight * neuron_output;
-
-        let new_error = if use_hard_tanh {
-            // HARD_TANH model: compute actual output after clamping
-            // new_input = old_input + contribution
-            // new_output = hard_tanh(new_input)
-            // expected = target_activation + error
-            // new_error = expected - new_output
-            let target_value = sample.target_value.unwrap();
-            let target_activation = sample.target_activation.unwrap();
-            let expected = target_activation + sample.avg_error;
-            let new_input = target_value + contribution;
-            let new_output = hard_tanh(new_input);
-            expected - new_output
-        } else {
-            // Linear model: new_error = old_error - contribution
-            sample.avg_error - contribution
-        };
-
-        if new_error.is_finite() {
-            new_error_sq_sum += new_error * new_error;
-        }
-    }
-
-    // Net improvement = (baseline - new) / baseline
-    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
-
-    if improvement.is_finite() {
-        improvement
-    } else {
-        0.0
-    }
-}
-
-/// Count improved samples for activation candidates with HARD_TANH-aware calculation.
-fn count_activation_improved_samples(
-    samples: &[HelpfulSample],
-    incoming_weight: f32,
-    outgoing_weight: f32,
-    bias: f32,
-    activation_fn: fn(f32) -> f32,
-    target_squash: Option<&str>,
-) -> (u32, u32) {
-    let mut improved_count = 0u32;
-    let total_count = samples.len() as u32;
-
-    // Check if we can use HARD_TANH model (need target_value for all samples)
-    let use_hard_tanh = target_squash == Some("HARD_TANH")
-        && samples
-            .iter()
-            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
-
-    for sample in samples {
-        let pre_activation = incoming_weight * sample.activation + bias;
-        let neuron_output = activation_fn(pre_activation);
-        let contribution = outgoing_weight * neuron_output;
-
-        let new_error = if use_hard_tanh {
-            let target_value = sample.target_value.unwrap();
-            let target_activation = sample.target_activation.unwrap();
-            let expected = target_activation + sample.avg_error;
-            let new_input = target_value + contribution;
-            let new_output = hard_tanh(new_input);
-            expected - new_output
-        } else {
-            sample.avg_error - contribution
-        };
-
-        // Sample is improved if |new_error| < |old_error|
-        if new_error.abs() + EPSILON < sample.avg_error.abs() {
-            improved_count += 1;
-        }
-    }
-
-    (improved_count, total_count)
+    let total_baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+    let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
+    let (_, improved, total) = compute_relu_improvement_and_count(
+        samples,
+        incoming_weight,
+        outgoing_weight,
+        total_baseline_error_sq,
+        use_hard_tanh,
+    );
+    (improved, total)
 }
 
 /// Evaluate ReLU candidates by splitting samples based on error sign.
@@ -4845,31 +4754,18 @@ fn evaluate_relu_candidates_split(
         );
 
         if let Some(mut candidate) = eval.candidate {
-            // CRITICAL FIX: Compute net improvement across ALL samples, not just the subset.
-            // The weight computed from positive-error samples will also affect negative-error
-            // samples. We must account for both help AND harm.
-            //
-            // For HARD_TANH targets, use the clamping model for accurate predictions.
-            let net_improvement = compute_net_improvement_with_squash(
+            // Compute net improvement across ALL samples (single pass)
+            let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
+            let (net_improvement, improved, total) = compute_relu_improvement_and_count(
                 samples,
                 candidate.incoming_weight,
                 candidate.outgoing_weight,
                 total_baseline_error_sq,
-                target_squash,
-            );
-
-            // Update counts to reflect ALL samples
-            // Use target_squash for consistent HARD_TANH handling
-            let (improved, total) = count_improved_samples(
-                samples,
-                candidate.incoming_weight,
-                candidate.outgoing_weight,
-                target_squash,
+                use_hard_tanh,
             );
             candidate.improved_count = improved;
             candidate.total_count = total;
 
-            // Only keep if net improvement is positive and above threshold
             if net_improvement > threshold {
                 candidate.expected_improvement_percentage = net_improvement;
                 result.positive_error_candidate = Some(candidate);
@@ -4877,8 +4773,7 @@ fn evaluate_relu_candidates_split(
         }
     }
 
-    // For negative errors (output should be lower), compute optimal weight from subset
-    // then evaluate the NET effect across ALL samples
+    // For negative errors (output should be lower)
     if negative_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT {
         let (positive_stats, _, neg_baseline_error_sq) =
             analyzer.evaluate_relu_gpu(&negative_error_samples, threshold)?;
@@ -4892,28 +4787,18 @@ fn evaluate_relu_candidates_split(
         );
 
         if let Some(mut candidate) = eval.candidate {
-            // CRITICAL FIX: Compute net improvement across ALL samples
-            // For HARD_TANH targets, use the clamping model for accurate predictions.
-            let net_improvement = compute_net_improvement_with_squash(
+            // Compute net improvement across ALL samples (single pass)
+            let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
+            let (net_improvement, improved, total) = compute_relu_improvement_and_count(
                 samples,
                 candidate.incoming_weight,
                 candidate.outgoing_weight,
                 total_baseline_error_sq,
-                target_squash,
-            );
-
-            // Update counts to reflect ALL samples
-            // Use target_squash for consistent HARD_TANH handling
-            let (improved, total) = count_improved_samples(
-                samples,
-                candidate.incoming_weight,
-                candidate.outgoing_weight,
-                target_squash,
+                use_hard_tanh,
             );
             candidate.improved_count = improved;
             candidate.total_count = total;
 
-            // Only keep if net improvement is positive and above threshold
             if net_improvement > threshold {
                 candidate.expected_improvement_percentage = net_improvement;
                 result.negative_error_candidate = Some(candidate);
@@ -5032,13 +4917,13 @@ fn evaluate_activation_candidate(
             }
 
             // For HARD_TANH targets, search for best outgoing_weight since linear optimal may be wrong
-            // The linear model doesn't account for clamping, so we try multiple weights
+            let use_hard_tanh = target_squash == Some("HARD_TANH");
             let (
                 outgoing_weight,
                 optimal_bias,
                 expected_improvement_percentage,
                 final_improved_count,
-            ) = if target_squash == Some("HARD_TANH") {
+            ) = if use_hard_tanh {
                 // Weight candidates: linear optimal and scaled versions
                 let weight_candidates: [f32; 9] = [
                     linear_optimal_weight * 0.1,
@@ -5048,8 +4933,8 @@ fn evaluate_activation_candidate(
                     linear_optimal_weight,
                     linear_optimal_weight * 1.5,
                     linear_optimal_weight * 2.0,
-                    -linear_optimal_weight * 0.5, // Try opposite direction
-                    -linear_optimal_weight,       // Try opposite direction
+                    -linear_optimal_weight * 0.5,
+                    -linear_optimal_weight,
                 ];
 
                 let mut best_weight = linear_optimal_weight.clamp(-10.0, 10.0);
@@ -5063,7 +4948,6 @@ fn evaluate_activation_candidate(
                         continue;
                     }
 
-                    // Find optimal bias for this weight
                     let bias = calculate_optimal_bias(
                         samples,
                         incoming_weight,
@@ -5074,29 +4958,21 @@ fn evaluate_activation_candidate(
                         target_squash,
                     );
 
-                    // Calculate improvement with this weight and bias
-                    let improvement = compute_activation_net_improvement_with_squash(
+                    // Single pass for improvement and count
+                    let (improvement, improved, _) = compute_activation_improvement_and_count(
                         samples,
                         incoming_weight,
                         clamped_weight,
                         bias,
                         spec.activation,
                         baseline_sq,
-                        target_squash,
+                        true, // use_hard_tanh
                     );
 
                     if improvement > best_improvement {
                         best_improvement = improvement;
                         best_weight = clamped_weight;
                         best_bias = bias;
-                        let (improved, _) = count_activation_improved_samples(
-                            samples,
-                            incoming_weight,
-                            clamped_weight,
-                            bias,
-                            spec.activation,
-                            target_squash,
-                        );
                         best_improved_count = improved;
                     }
                 }
@@ -5108,7 +4984,7 @@ fn evaluate_activation_candidate(
                     best_improved_count,
                 )
             } else {
-                // For non-HARD_TANH, use linear optimal weight
+                // For non-HARD_TANH, use linear optimal weight with single pass
                 let outgoing_weight = linear_optimal_weight.clamp(-10.0, 10.0);
 
                 let optimal_bias = calculate_optimal_bias(
@@ -5121,33 +4997,15 @@ fn evaluate_activation_candidate(
                     target_squash,
                 );
 
-                // Calculate improved_count and improvement with bias
-                let mut improved_count = 0u32;
-                let mut total_new_error_sq = 0.0;
-                for sample in samples {
-                    let pre_activation = incoming_weight * sample.activation + optimal_bias;
-                    let output = (spec.activation)(pre_activation);
-                    if output.is_finite() {
-                        let new_error = sample.avg_error - outgoing_weight * output;
-                        if new_error.is_finite() {
-                            total_new_error_sq += new_error * new_error;
-                        }
-                        if new_error.abs() + EPSILON < sample.avg_error.abs() {
-                            improved_count += 1;
-                        }
-                    }
-                }
-
-                let improvement = if baseline_sq > EPSILON {
-                    let result = (baseline_sq - total_new_error_sq) / baseline_sq;
-                    if result.is_finite() {
-                        result
-                    } else {
-                        0.0
-                    }
-                } else {
-                    0.0
-                };
+                let (improvement, improved_count, _) = compute_activation_improvement_and_count(
+                    samples,
+                    incoming_weight,
+                    outgoing_weight,
+                    optimal_bias,
+                    spec.activation,
+                    baseline_sq,
+                    false, // use_hard_tanh
+                );
 
                 (outgoing_weight, optimal_bias, improvement, improved_count)
             };
@@ -5487,7 +5345,7 @@ fn analyze_neurons_with_cache(
         .iter()
         .filter(|uuid| {
             if let Some(squash) = neuron_squash_map.get(**uuid) {
-                if is_discrete_skip_activation(squash) {
+                if is_threshold_activation(squash) {
                     skipped_discrete.push((**uuid).clone());
                     return false;
                 }
@@ -6093,7 +5951,7 @@ fn analyze_synapses_with_cache(
         .iter()
         .filter(|uuid| {
             if let Some(squash) = neuron_squash_map.get(**uuid) {
-                if is_discrete_activation(squash) {
+                if is_threshold_activation(squash) {
                     skipped_discrete.push((**uuid).clone());
                     return false;
                 }
@@ -9011,142 +8869,82 @@ mod tests_synapses {
         assert_eq!(step, 0.5);
     }
 
-    /// Test is_discrete_activation identifies threshold functions (STEP/BIPOLAR).
+    /// Test is_threshold_activation identifies threshold functions (STEP/BIPOLAR).
     /// These use a specialised threshold-crossing model instead of the linear model.
     /// All other activations use the standard linear error model - none are skipped.
     #[test]
-    fn test_is_discrete_activation() {
+    fn test_is_threshold_activation() {
         // Threshold activations - use threshold-crossing model
-        assert!(is_discrete_activation("STEP"), "STEP uses threshold model");
-        assert!(is_discrete_activation("step"), "case insensitive");
+        assert!(is_threshold_activation("STEP"), "STEP uses threshold model");
+        assert!(is_threshold_activation("step"), "case insensitive");
         assert!(
-            is_discrete_activation("BIPOLAR"),
+            is_threshold_activation("BIPOLAR"),
             "BIPOLAR uses threshold model"
         );
 
         // All other activations use standard linear model (not skipped)
         assert!(
-            !is_discrete_activation("IF"),
+            !is_threshold_activation("IF"),
             "IF uses standard model (correlation still works)"
         );
         assert!(
-            !is_discrete_activation("MAXIMUM"),
+            !is_threshold_activation("MAXIMUM"),
             "MAXIMUM uses standard model"
         );
         assert!(
-            !is_discrete_activation("MINIMUM"),
+            !is_threshold_activation("MINIMUM"),
             "MINIMUM uses standard model"
         );
         assert!(
-            !is_discrete_activation("HARD_TANH"),
+            !is_threshold_activation("HARD_TANH"),
             "HARD_TANH uses standard model"
         );
         assert!(
-            !is_discrete_activation("CLIPPED"),
+            !is_threshold_activation("CLIPPED"),
             "CLIPPED uses standard model"
         );
         assert!(
-            !is_discrete_activation("ReLU6"),
+            !is_threshold_activation("ReLU6"),
             "ReLU6 uses standard model"
         );
-        assert!(!is_discrete_activation("TANH"), "TANH uses standard model");
+        assert!(!is_threshold_activation("TANH"), "TANH uses standard model");
         assert!(
-            !is_discrete_activation("LOGISTIC"),
+            !is_threshold_activation("LOGISTIC"),
             "LOGISTIC uses standard model"
         );
-        assert!(!is_discrete_activation("ReLU"), "ReLU uses standard model");
+        assert!(!is_threshold_activation("ReLU"), "ReLU uses standard model");
         assert!(
-            !is_discrete_activation("LeakyReLU"),
+            !is_threshold_activation("LeakyReLU"),
             "LeakyReLU uses standard model"
         );
-        assert!(!is_discrete_activation("ELU"), "ELU uses standard model");
-        assert!(!is_discrete_activation("SELU"), "SELU uses standard model");
-        assert!(!is_discrete_activation("GELU"), "GELU uses standard model");
+        assert!(!is_threshold_activation("ELU"), "ELU uses standard model");
+        assert!(!is_threshold_activation("SELU"), "SELU uses standard model");
+        assert!(!is_threshold_activation("GELU"), "GELU uses standard model");
         assert!(
-            !is_discrete_activation("IDENTITY"),
+            !is_threshold_activation("IDENTITY"),
             "IDENTITY uses standard model"
         );
         assert!(
-            !is_discrete_activation("Softplus"),
+            !is_threshold_activation("Softplus"),
             "Softplus uses standard model"
         );
         assert!(
-            !is_discrete_activation("BENT_IDENTITY"),
+            !is_threshold_activation("BENT_IDENTITY"),
             "BENT_IDENTITY uses standard model"
         );
         assert!(
-            !is_discrete_activation("ArcTan"),
+            !is_threshold_activation("ArcTan"),
             "ArcTan uses standard model"
         );
         assert!(
-            !is_discrete_activation("Swish"),
+            !is_threshold_activation("Swish"),
             "Swish uses standard model"
         );
-        assert!(!is_discrete_activation("Mish"), "Mish uses standard model");
+        assert!(!is_threshold_activation("Mish"), "Mish uses standard model");
         assert!(
-            !is_discrete_activation("UNKNOWN"),
+            !is_threshold_activation("UNKNOWN"),
             "Unknown uses standard model"
         );
-    }
-
-    /// Test is_threshold_activation identifies STEP and BIPOLAR
-    #[test]
-    fn test_is_threshold_activation() {
-        // Threshold activations - can use threshold-crossing model
-        assert!(is_threshold_activation("STEP"), "STEP is threshold");
-        assert!(is_threshold_activation("step"), "case insensitive");
-        assert!(is_threshold_activation("BIPOLAR"), "BIPOLAR is threshold");
-
-        // These are discrete but NOT threshold-based
-        assert!(!is_threshold_activation("IF"), "IF is not threshold-based");
-        assert!(
-            !is_threshold_activation("MAXIMUM"),
-            "MAXIMUM is not threshold-based"
-        );
-        assert!(
-            !is_threshold_activation("MINIMUM"),
-            "MINIMUM is not threshold-based"
-        );
-        assert!(
-            !is_threshold_activation("HARD_TANH"),
-            "HARD_TANH is not threshold-based"
-        );
-
-        // Continuous activations
-        assert!(!is_threshold_activation("TANH"), "TANH is not threshold");
-        assert!(!is_threshold_activation("ReLU"), "ReLU is not threshold");
-    }
-
-    /// Test is_discrete_skip_activation - no activations are skipped.
-    /// The correlation analysis (source activations vs target errors) works for
-    /// all activation functions. We treat sources as black boxes and use the
-    /// target's error to guide discovery.
-    #[test]
-    fn test_is_discrete_skip_activation() {
-        // No activations should be skipped - correlation analysis works for all
-        assert!(
-            !is_discrete_skip_activation("IF"),
-            "IF not skipped - correlation still works"
-        );
-        assert!(
-            !is_discrete_skip_activation("MAXIMUM"),
-            "MAXIMUM not skipped - correlation still works"
-        );
-        assert!(
-            !is_discrete_skip_activation("MINIMUM"),
-            "MINIMUM not skipped - correlation still works"
-        );
-        assert!(
-            !is_discrete_skip_activation("HARD_TANH"),
-            "HARD_TANH not skipped"
-        );
-        assert!(!is_discrete_skip_activation("STEP"), "STEP not skipped");
-        assert!(
-            !is_discrete_skip_activation("BIPOLAR"),
-            "BIPOLAR not skipped"
-        );
-        assert!(!is_discrete_skip_activation("TANH"), "TANH not skipped");
-        assert!(!is_discrete_skip_activation("ReLU"), "ReLU not skipped");
     }
 
     /// Test ThresholdType correctly applies threshold functions
