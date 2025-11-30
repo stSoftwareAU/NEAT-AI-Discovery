@@ -194,9 +194,7 @@ mod deadline_override {
 }
 
 fn verbose_enabled() -> bool {
-    // TODO: Remove this temporary default-on after debugging the "no eligible sources" issue
-    // Original: std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok()
-    true
+    std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok()
 }
 
 /// Suppress Mesa/libEGL debug warnings on Linux.
@@ -4521,8 +4519,6 @@ fn evaluate_relu_candidate(
         }
 
         if let Some(mut candidate) = eval.candidate {
-            let original_improvement = candidate.expected_improvement_percentage;
-
             // For HARD_TANH targets, recompute improvement using saturation-aware model
             // The GPU evaluation uses linear model which can be very inaccurate near saturation
             let net_improvement = compute_net_improvement_with_squash(
@@ -4540,33 +4536,6 @@ fn evaluate_relu_candidate(
                 candidate.outgoing_weight,
                 target_squash,
             );
-
-            // DEBUG: Log ReLU candidate evaluation details
-            // TODO: Remove this before raising PR
-            if verbose_enabled() && target_uuid == "output-0" {
-                eprintln!(
-                    "[NEAT-AI-Discovery][DEBUG-RELU] {} -> {} (target_squash={:?}): GPU linear={:.4}%, recalc={:.4}%, improved={}/{}, inW={:.3}, outW={:.3}, baseline_err_sq={:.6}",
-                    source_uuid,
-                    target_uuid,
-                    target_squash,
-                    original_improvement * 100.0,
-                    net_improvement * 100.0,
-                    improved,
-                    total,
-                    candidate.incoming_weight,
-                    candidate.outgoing_weight,
-                    total_baseline_error_sq
-                );
-                // Log sample details for first 3 samples
-                for (i, sample) in samples.iter().take(3).enumerate() {
-                    let relu_out = (candidate.incoming_weight * sample.activation).max(0.0);
-                    let contribution = candidate.outgoing_weight * relu_out;
-                    eprintln!(
-                        "[NEAT-AI-Discovery][DEBUG-RELU]   sample[{}]: activation={:.4}, error={:.4}, relu_out={:.4}, contrib={:.4}, target_value={:?}, target_activation={:?}",
-                        i, sample.activation, sample.avg_error, relu_out, contribution, sample.target_value, sample.target_activation
-                    );
-                }
-            }
 
             candidate.improved_count = improved;
             candidate.total_count = total;
@@ -5551,18 +5520,6 @@ fn analyze_neurons_with_cache(
     let mut rng = thread_rng();
     focus_order.shuffle(&mut rng);
 
-    // DEBUG: Temporarily filter to only output-0 to debug HARD_TANH predictions
-    // TODO: Remove this before raising PR
-    let focus_order: Vec<String> = focus_order
-        .into_iter()
-        .filter(|uuid| uuid == "output-0")
-        .collect();
-    if verbose_enabled() {
-        eprintln!(
-            "[NEAT-AI-Discovery][DEBUG] Filtered to output-0 only. Focus targets: {focus_order:?}"
-        );
-    }
-
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
     let order_map_arc = Arc::new(order_map);
@@ -5812,21 +5769,6 @@ fn analyze_neurons_with_cache(
                 }
             } else {
                 // Standard continuous activation path
-                // DEBUG: Log target squash for debugging
-                // TODO: Remove this before raising PR
-                let target_squash_debug = neuron_squash_map_arc.get(target_uuid).cloned();
-                if verbose_enabled() {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][DEBUG] Target {} has squash: {:?}",
-                        target_uuid,
-                        target_squash_debug
-                    );
-                }
-
-                // DEBUG: Counter for saturation logging
-                // TODO: Remove this before raising PR
-                let mut spec_count = 0usize;
-
                 for result in work_results {
                     // Check deadline before each evaluation batch
                     if deadline_passed(&deadline) {
@@ -5912,27 +5854,6 @@ fn analyze_neurons_with_cache(
                         upsert_candidate(&mut map, candidate);
                     }
 
-                    // DEBUG: Log sample saturation before activation candidates
-                    // TODO: Remove this before raising PR
-                    if verbose_enabled() && target_uuid == "output-0" && spec_count == 0 {
-                        spec_count += 1;
-                        let saturated_count = result.samples.iter().filter(|s| {
-                            s.target_value.map(|v| v <= -1.0 || v >= 1.0).unwrap_or(false)
-                        }).count();
-                        let total = result.samples.len();
-                        eprintln!(
-                            "[NEAT-AI-Discovery][DEBUG-SATURATION] {} -> {}: {}/{} samples saturated (target_squash={:?})",
-                            result.source_uuid, target_uuid, saturated_count, total, target_squash
-                        );
-                        // Show first 3 samples
-                        for (i, s) in result.samples.iter().take(3).enumerate() {
-                            eprintln!(
-                                "[NEAT-AI-Discovery][DEBUG-SATURATION]   sample[{}]: activation={:.4}, error={:.4}, target_value={:?}, target_activation={:?}",
-                                i, s.activation, s.avg_error, s.target_value, s.target_activation
-                            );
-                        }
-                    }
-
                     for spec in ACTIVATION_SPECS.iter() {
                         if let Some(candidate) = evaluate_activation_candidate(
                             &analyzer,
@@ -5943,22 +5864,6 @@ fn analyze_neurons_with_cache(
                             spec,
                             target_squash,
                         )? {
-                            // DEBUG: Log activation candidate details
-                            // TODO: Remove this before raising PR
-                            if verbose_enabled() && target_uuid == "output-0" {
-                                eprintln!(
-                                    "[NEAT-AI-Discovery][DEBUG-ACTIVATION] {} -> {} ({}): {:.4}% improvement, improved={}/{}, inW={:.3}, outW={:.3}, bias={:.3}",
-                                    result.source_uuid,
-                                    target_uuid,
-                                    candidate.squash,
-                                    candidate.expected_improvement_percentage * 100.0,
-                                    candidate.improved_count,
-                                    candidate.total_count,
-                                    candidate.incoming_weight,
-                                    candidate.outgoing_weight,
-                                    candidate.bias
-                                );
-                            }
                             diagnostics
                                 .lock()
                                 .expect("Mutex poisoned: diagnostics")
@@ -5992,30 +5897,6 @@ fn analyze_neurons_with_cache(
             .partial_cmp(&a.expected_improvement_percentage)
             .unwrap_or(Ordering::Equal)
     });
-
-    // DEBUG: Log candidates before truncation
-    // TODO: Remove this before raising PR
-    if verbose_enabled() {
-        eprintln!(
-            "[NEAT-AI-Discovery][DEBUG] Returning {} neuron candidates (before truncation):",
-            helpful_results.len()
-        );
-        for (i, c) in helpful_results.iter().take(10).enumerate() {
-            eprintln!(
-                "[NEAT-AI-Discovery][DEBUG]   [{}] {} -> {} ({}): {:.4}% improvement, improved={}/{}, inW={:.3}, outW={:.3}, bias={:.3}",
-                i,
-                c.source_neuron_uuid,
-                c.target_neuron_uuid,
-                c.squash,
-                c.expected_improvement_percentage * 100.0,
-                c.improved_count,
-                c.total_count,
-                c.incoming_weight,
-                c.outgoing_weight,
-                c.bias
-            );
-        }
-    }
 
     if let Some(limit) = input.max_candidates {
         helpful_results.truncate(limit);
