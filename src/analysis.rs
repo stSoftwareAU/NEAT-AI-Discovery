@@ -4460,6 +4460,7 @@ fn evaluate_relu_candidate(
     target_uuid: &str,
     samples: &[HelpfulSample],
     threshold: f32,
+    target_squash: Option<&str>,
 ) -> Result<ReluEvaluationResult> {
     if samples.is_empty() {
         return Ok(ReluEvaluationResult {
@@ -4468,7 +4469,7 @@ fn evaluate_relu_candidate(
         });
     }
 
-    // Use GPU-accelerated ReLU evaluation
+    // Use GPU-accelerated ReLU evaluation (uses linear model)
     let (positive_stats, negative_stats, total_baseline_error_sq) =
         analyzer.evaluate_relu_gpu(samples, threshold)?;
 
@@ -4499,10 +4500,33 @@ fn evaluate_relu_candidate(
             best_summary = Some(eval.summary.clone());
         }
 
-        if let Some(candidate) = eval.candidate {
-            if best_candidate.is_none() || eval.summary.expected_improvement > best_candidate_score
+        if let Some(mut candidate) = eval.candidate {
+            // For HARD_TANH targets, recompute improvement using saturation-aware model
+            // The GPU evaluation uses linear model which can be very inaccurate near saturation
+            let net_improvement = compute_net_improvement_with_squash(
+                samples,
+                candidate.incoming_weight,
+                candidate.outgoing_weight,
+                total_baseline_error_sq,
+                target_squash,
+            );
+
+            // Update counts to reflect HARD_TANH model if applicable
+            let (improved, total) = count_improved_samples(
+                samples,
+                candidate.incoming_weight,
+                candidate.outgoing_weight,
+                target_squash,
+            );
+            candidate.improved_count = improved;
+            candidate.total_count = total;
+            candidate.expected_improvement_percentage = net_improvement;
+
+            // Only consider if still above threshold after HARD_TANH recalculation
+            if net_improvement >= threshold
+                && (best_candidate.is_none() || net_improvement > best_candidate_score)
             {
-                best_candidate_score = eval.summary.expected_improvement;
+                best_candidate_score = net_improvement;
                 best_candidate = Some(candidate);
             }
         }
@@ -4522,19 +4546,6 @@ struct SplitReluResult {
     negative_error_candidate: Option<CandidateNeuronJson>,
 }
 
-/// Evaluate ReLU candidates by splitting samples based on error sign.
-///
-/// This finds **complementary pairs** of ReLUs:
-/// - One that improves samples where output should be **higher** (positive error)
-/// - One that improves samples where output should be **lower** (negative error)
-///
-/// This is more effective than the standard approach when errors are split ~50/50,
-/// because no single ReLU can help both directions simultaneously.
-/// Compute the net improvement when applying a ReLU candidate to ALL samples.
-/// Returns the fractional reduction in total squared error.
-///
-/// For each sample: new_error = error - outgoing_weight × ReLU(incoming_weight × activation)
-/// Net improvement = (baseline_sq - new_error_sq) / baseline_sq
 /// Apply HARD_TANH activation function (clamp to [-1, 1])
 #[inline]
 fn hard_tanh(x: f32) -> f32 {
@@ -4602,19 +4613,45 @@ fn compute_net_improvement_with_squash(
 }
 
 /// Count how many samples are improved vs total when applying a ReLU candidate.
+///
+/// For HARD_TANH targets with available target data, uses the saturation-aware model
+/// to ensure counts are consistent with `compute_net_improvement_with_squash`.
 fn count_improved_samples(
     samples: &[HelpfulSample],
     incoming_weight: f32,
     outgoing_weight: f32,
+    target_squash: Option<&str>,
 ) -> (u32, u32) {
     let mut improved_count = 0u32;
     let total_count = samples.len() as u32;
+
+    // Check if we can use HARD_TANH model (need target_value for all samples)
+    let use_hard_tanh = target_squash == Some("HARD_TANH")
+        && samples
+            .iter()
+            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
 
     for sample in samples {
         let pre_activation = incoming_weight * sample.activation;
         let relu_output = pre_activation.max(0.0);
         let contribution = outgoing_weight * relu_output;
-        let new_error = sample.avg_error - contribution;
+
+        let new_error = if use_hard_tanh {
+            // HARD_TANH model: compute actual output after clamping
+            // new_input = old_input + contribution
+            // new_output = hard_tanh(new_input)
+            // expected = target_activation + error
+            // new_error = expected - new_output
+            let target_value = sample.target_value.unwrap();
+            let target_activation = sample.target_activation.unwrap();
+            let expected = target_activation + sample.avg_error;
+            let new_input = target_value + contribution;
+            let new_output = hard_tanh(new_input);
+            expected - new_output
+        } else {
+            // Linear model: new_error = old_error - contribution
+            sample.avg_error - contribution
+        };
 
         // Sample is improved if |new_error| < |old_error|
         if new_error.abs() + EPSILON < sample.avg_error.abs() {
@@ -4625,6 +4662,14 @@ fn count_improved_samples(
     (improved_count, total_count)
 }
 
+/// Evaluate ReLU candidates by splitting samples based on error sign.
+///
+/// This finds **complementary pairs** of ReLUs:
+/// - One that improves samples where output should be **higher** (positive error)
+/// - One that improves samples where output should be **lower** (negative error)
+///
+/// This is more effective than the standard approach when errors are split ~50/50,
+/// because no single ReLU can help both directions simultaneously.
 fn evaluate_relu_candidates_split(
     analyzer: &GpuAnalyzer,
     source_uuid: &str,
@@ -4687,10 +4732,12 @@ fn evaluate_relu_candidates_split(
             );
 
             // Update counts to reflect ALL samples
+            // Use target_squash for consistent HARD_TANH handling
             let (improved, total) = count_improved_samples(
                 samples,
                 candidate.incoming_weight,
                 candidate.outgoing_weight,
+                target_squash,
             );
             candidate.improved_count = improved;
             candidate.total_count = total;
@@ -4729,10 +4776,12 @@ fn evaluate_relu_candidates_split(
             );
 
             // Update counts to reflect ALL samples
+            // Use target_squash for consistent HARD_TANH handling
             let (improved, total) = count_improved_samples(
                 samples,
                 candidate.incoming_weight,
                 candidate.outgoing_weight,
+                target_squash,
             );
             candidate.improved_count = improved;
             candidate.total_count = total;
@@ -5531,13 +5580,18 @@ fn analyze_neurons_with_cache(
                         continue;
                     }
 
+                    // Get target_squash for accurate HARD_TANH modelling in both evaluations
+                    let target_squash = neuron_squash_map_arc.get(target_uuid).map(|s| s.as_str());
+
                     // Standard ReLU evaluation (best single candidate across all samples)
+                    // Passes target_squash for accurate HARD_TANH saturation-aware modelling
                     let relu_result = evaluate_relu_candidate(
                         &analyzer,
                         &result.source_uuid,
                         target_uuid,
                         &result.samples,
                         threshold,
+                        target_squash,
                     )?;
 
                     if let Some(candidate) = relu_result.candidate {
@@ -5557,9 +5611,6 @@ fn analyze_neurons_with_cache(
                     // Split-error ReLU evaluation: find complementary pairs for split errors
                     // This helps when errors are ~50/50 positive/negative and no single
                     // ReLU can help both directions.
-                    //
-                    // Pass target_squash for accurate HARD_TANH modelling.
-                    let target_squash = neuron_squash_map_arc.get(target_uuid).map(|s| s.as_str());
                     let split_result = evaluate_relu_candidates_split(
                         &analyzer,
                         &result.source_uuid,
@@ -6939,7 +6990,7 @@ mod tests_synapses {
             });
         }
 
-        let result = evaluate_relu_candidate(&analyzer, "input-0", "output-0", &samples, 0.0)
+        let result = evaluate_relu_candidate(&analyzer, "input-0", "output-0", &samples, 0.0, None)
             .expect("ReLU evaluation should succeed with balanced samples");
 
         let summary = result
@@ -9818,6 +9869,110 @@ mod tests_synapses {
             "Should fall back to linear model without target data, got {:.1}% (expected {:.1}%)",
             improvement * 100.0,
             expected_linear * 100.0
+        );
+    }
+
+    /// TEST: count_improved_samples must use HARD_TANH model for accurate sample counts.
+    ///
+    /// This test demonstrates the bug where count_improved_samples always uses the linear
+    /// model, causing inaccurate counts for HARD_TANH targets. For a sample near saturation,
+    /// the linear model predicts the error gets worse (overshoot), but the HARD_TANH model
+    /// correctly shows the sample is improved (saturates at the limit).
+    #[test]
+    fn test_count_improved_samples_uses_hard_tanh_model() {
+        // Scenario: Target neuron with HARD_TANH activation is near saturation
+        // - target_value = 0.9 (input sum before clamping)
+        // - target_activation = 0.9 (output after HARD_TANH, not saturated yet)
+        // - expected output = 1.0 (what we want)
+        // - avg_error = 0.1 (expected - actual = 1.0 - 0.9 = 0.1)
+        //
+        // When we add a connection with contribution = 0.25:
+        // - LINEAR model: new_error = 0.1 - 0.25 = -0.15, |new_error| > |old_error|, NOT improved
+        // - HARD_TANH model: new_input = 0.9 + 0.25 = 1.15, new_output = clamp(1.15) = 1.0
+        //                    new_error = 1.0 - 1.0 = 0.0, |new_error| < |old_error|, IMPROVED!
+        let samples = vec![HelpfulSample {
+            activation: 0.5,              // Source neuron's activation
+            avg_error: 0.1,               // Target wants to go up by 0.1
+            target_value: Some(0.9),      // Pre-activation input sum
+            target_activation: Some(0.9), // Post-activation output (not yet saturated)
+        }];
+
+        let incoming_weight = 1.0;
+        let outgoing_weight = 0.5; // contribution = 0.5 × max(0, 1.0 × 0.5) = 0.25
+
+        // With HARD_TANH model, this sample SHOULD be counted as improved
+        let (improved_count, total_count) = count_improved_samples(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            Some("HARD_TANH"),
+        );
+
+        assert_eq!(total_count, 1, "Should have 1 total sample");
+        assert_eq!(
+            improved_count, 1,
+            "HARD_TANH model should show sample is improved (saturates at 1.0), got {improved_count} improved",
+        );
+    }
+
+    /// TEST: count_improved_samples falls back to linear model when target data is missing.
+    #[test]
+    fn test_count_improved_samples_falls_back_to_linear_without_target_data() {
+        // Sample WITHOUT target data - should use linear model
+        let samples = vec![HelpfulSample {
+            activation: 0.5,
+            avg_error: 0.1,
+            target_value: None,      // No target data
+            target_activation: None, // No target data
+        }];
+
+        let incoming_weight = 1.0;
+        let outgoing_weight = 0.5; // contribution = 0.25
+                                   // Linear model: new_error = 0.1 - 0.25 = -0.15, |new_error| > |old_error|, NOT improved
+
+        let (improved_count, _) = count_improved_samples(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            Some("HARD_TANH"), // Even with HARD_TANH, should fall back to linear
+        );
+
+        assert_eq!(
+            improved_count, 0,
+            "Without target data, should fall back to linear model (sample not improved)"
+        );
+    }
+
+    /// TEST: count_improved_samples uses linear model for non-HARD_TANH activations.
+    #[test]
+    fn test_count_improved_samples_uses_linear_for_other_activations() {
+        let samples = vec![HelpfulSample {
+            activation: 0.5,
+            avg_error: 0.3,
+            target_value: Some(0.5),
+            target_activation: Some(0.5),
+        }];
+
+        let incoming_weight = 1.0;
+        let outgoing_weight = 0.5; // contribution = 0.25
+                                   // Linear: new_error = 0.3 - 0.25 = 0.05, |new_error| < |old_error| = 0.3, IMPROVED
+
+        // With TANH (not HARD_TANH), should use linear model
+        let (improved_count, _) =
+            count_improved_samples(&samples, incoming_weight, outgoing_weight, Some("TANH"));
+
+        assert_eq!(
+            improved_count, 1,
+            "Linear model should show sample is improved for TANH"
+        );
+
+        // With None squash, should also use linear model
+        let (improved_count_none, _) =
+            count_improved_samples(&samples, incoming_weight, outgoing_weight, None);
+
+        assert_eq!(
+            improved_count_none, 1,
+            "Linear model should show sample is improved when squash is None"
         );
     }
 }
