@@ -5064,111 +5064,124 @@ fn evaluate_activation_candidate(
 
             // For HARD_TANH targets, search for best outgoing_weight since linear optimal may be wrong
             // The linear model doesn't account for clamping, so we try multiple weights
-            let (outgoing_weight, optimal_bias, expected_improvement_percentage, final_improved_count) =
-                if target_squash == Some("HARD_TANH") {
-                    // Weight candidates: linear optimal and scaled versions
-                    let weight_candidates: [f32; 9] = [
-                        linear_optimal_weight * 0.1,
-                        linear_optimal_weight * 0.25,
-                        linear_optimal_weight * 0.5,
-                        linear_optimal_weight * 0.75,
-                        linear_optimal_weight,
-                        linear_optimal_weight * 1.5,
-                        linear_optimal_weight * 2.0,
-                        -linear_optimal_weight * 0.5, // Try opposite direction
-                        -linear_optimal_weight,       // Try opposite direction
-                    ];
+            let (
+                outgoing_weight,
+                optimal_bias,
+                expected_improvement_percentage,
+                final_improved_count,
+            ) = if target_squash == Some("HARD_TANH") {
+                // Weight candidates: linear optimal and scaled versions
+                let weight_candidates: [f32; 9] = [
+                    linear_optimal_weight * 0.1,
+                    linear_optimal_weight * 0.25,
+                    linear_optimal_weight * 0.5,
+                    linear_optimal_weight * 0.75,
+                    linear_optimal_weight,
+                    linear_optimal_weight * 1.5,
+                    linear_optimal_weight * 2.0,
+                    -linear_optimal_weight * 0.5, // Try opposite direction
+                    -linear_optimal_weight,       // Try opposite direction
+                ];
 
-                    let mut best_weight = linear_optimal_weight.clamp(-10.0, 10.0);
-                    let mut best_bias = 0.0f32;
-                    let mut best_improvement = f32::NEG_INFINITY;
-                    let mut best_improved_count = 0u32;
+                let mut best_weight = linear_optimal_weight.clamp(-10.0, 10.0);
+                let mut best_bias = 0.0f32;
+                let mut best_improvement = f32::NEG_INFINITY;
+                let mut best_improved_count = 0u32;
 
-                    for &weight in &weight_candidates {
-                        let clamped_weight = weight.clamp(-10.0, 10.0);
-                        if clamped_weight.abs() <= EPSILON {
-                            continue;
-                        }
-
-                        // Find optimal bias for this weight
-                        let bias = calculate_optimal_bias(
-                            samples,
-                            incoming_weight,
-                            clamped_weight,
-                            spec.activation,
-                            spec.name,
-                            None,
-                            target_squash,
-                        );
-
-                        // Calculate improvement with this weight and bias
-                        let improvement = compute_activation_net_improvement_with_squash(
-                            samples,
-                            incoming_weight,
-                            clamped_weight,
-                            bias,
-                            spec.activation,
-                            baseline_sq,
-                            target_squash,
-                        );
-
-                        if improvement > best_improvement {
-                            best_improvement = improvement;
-                            best_weight = clamped_weight;
-                            best_bias = bias;
-                            let (improved, _) = count_activation_improved_samples(
-                                samples,
-                                incoming_weight,
-                                clamped_weight,
-                                bias,
-                                spec.activation,
-                                target_squash,
-                            );
-                            best_improved_count = improved;
-                        }
+                for &weight in &weight_candidates {
+                    let clamped_weight = weight.clamp(-10.0, 10.0);
+                    if clamped_weight.abs() <= EPSILON {
+                        continue;
                     }
 
-                    (best_weight, best_bias, best_improvement, best_improved_count)
-                } else {
-                    // For non-HARD_TANH, use linear optimal weight
-                    let outgoing_weight = linear_optimal_weight.clamp(-10.0, 10.0);
-
-                    let optimal_bias = calculate_optimal_bias(
+                    // Find optimal bias for this weight
+                    let bias = calculate_optimal_bias(
                         samples,
                         incoming_weight,
-                        outgoing_weight,
+                        clamped_weight,
                         spec.activation,
                         spec.name,
                         None,
                         target_squash,
                     );
 
-                    // Calculate improved_count and improvement with bias
-                    let mut improved_count = 0u32;
-                    let mut total_new_error_sq = 0.0;
-                    for sample in samples {
-                        let pre_activation = incoming_weight * sample.activation + optimal_bias;
-                        let output = (spec.activation)(pre_activation);
-                        if output.is_finite() {
-                            let new_error = sample.avg_error - outgoing_weight * output;
-                            if new_error.is_finite() {
-                                total_new_error_sq += new_error * new_error;
-                            }
-                            if new_error.abs() + EPSILON < sample.avg_error.abs() {
-                                improved_count += 1;
-                            }
+                    // Calculate improvement with this weight and bias
+                    let improvement = compute_activation_net_improvement_with_squash(
+                        samples,
+                        incoming_weight,
+                        clamped_weight,
+                        bias,
+                        spec.activation,
+                        baseline_sq,
+                        target_squash,
+                    );
+
+                    if improvement > best_improvement {
+                        best_improvement = improvement;
+                        best_weight = clamped_weight;
+                        best_bias = bias;
+                        let (improved, _) = count_activation_improved_samples(
+                            samples,
+                            incoming_weight,
+                            clamped_weight,
+                            bias,
+                            spec.activation,
+                            target_squash,
+                        );
+                        best_improved_count = improved;
+                    }
+                }
+
+                (
+                    best_weight,
+                    best_bias,
+                    best_improvement,
+                    best_improved_count,
+                )
+            } else {
+                // For non-HARD_TANH, use linear optimal weight
+                let outgoing_weight = linear_optimal_weight.clamp(-10.0, 10.0);
+
+                let optimal_bias = calculate_optimal_bias(
+                    samples,
+                    incoming_weight,
+                    outgoing_weight,
+                    spec.activation,
+                    spec.name,
+                    None,
+                    target_squash,
+                );
+
+                // Calculate improved_count and improvement with bias
+                let mut improved_count = 0u32;
+                let mut total_new_error_sq = 0.0;
+                for sample in samples {
+                    let pre_activation = incoming_weight * sample.activation + optimal_bias;
+                    let output = (spec.activation)(pre_activation);
+                    if output.is_finite() {
+                        let new_error = sample.avg_error - outgoing_weight * output;
+                        if new_error.is_finite() {
+                            total_new_error_sq += new_error * new_error;
+                        }
+                        if new_error.abs() + EPSILON < sample.avg_error.abs() {
+                            improved_count += 1;
                         }
                     }
+                }
 
-                    let improvement = if baseline_sq > EPSILON {
-                        let result = (baseline_sq - total_new_error_sq) / baseline_sq;
-                        if result.is_finite() { result } else { 0.0 }
+                let improvement = if baseline_sq > EPSILON {
+                    let result = (baseline_sq - total_new_error_sq) / baseline_sq;
+                    if result.is_finite() {
+                        result
                     } else {
                         0.0
-                    };
-
-                    (outgoing_weight, optimal_bias, improvement, improved_count)
+                    }
+                } else {
+                    0.0
                 };
+
+                (outgoing_weight, optimal_bias, improvement, improved_count)
+            };
 
             // Skip invalid weights
             if outgoing_weight.abs() <= EPSILON {
