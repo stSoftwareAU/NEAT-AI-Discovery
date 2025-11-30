@@ -4523,7 +4523,8 @@ fn evaluate_relu_candidate(
             candidate.expected_improvement_percentage = net_improvement;
 
             // Only consider if still above threshold after HARD_TANH recalculation
-            if net_improvement >= threshold
+            // Use strict > for consistency with evaluate_relu_candidates_split and ReluStats::evaluate
+            if net_improvement > threshold
                 && (best_candidate.is_none() || net_improvement > best_candidate_score)
             {
                 best_candidate_score = net_improvement;
