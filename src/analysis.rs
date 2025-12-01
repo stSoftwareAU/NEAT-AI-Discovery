@@ -847,25 +847,13 @@ impl TargetDiagnostics {
     }
 }
 
-#[derive(Clone, Copy)]
-enum NeuronRejectionReason {
-    NoSamples,
-    NotEnoughActivations,
-    WeightDegenerate,
-    BelowThreshold,
-}
-
+/// Detail about why a source was rejected (currently only used for NoSamples).
 #[derive(Clone)]
 struct NeuronRejectionDetail {
     source_uuid: String,
     orientation: Option<&'static str>,
-    reason: NeuronRejectionReason,
     sample_count: usize,
-    improved_count: u32,
-    worsened_count: u32,
     expected_improvement: f32,
-    threshold: f32,
-    outgoing_weight: Option<f32>,
 }
 
 impl NeuronRejectionDetail {
@@ -976,40 +964,8 @@ impl NeuronDiagnostics {
             entry.update_best(NeuronRejectionDetail {
                 source_uuid: source_uuid.to_string(),
                 orientation: None,
-                reason: NeuronRejectionReason::NoSamples,
                 sample_count: 0,
-                improved_count: 0,
-                worsened_count: 0,
                 expected_improvement: f32::NEG_INFINITY,
-                threshold: 0.0,
-                outgoing_weight: None,
-            });
-        }
-    }
-
-    fn record_rejection(
-        &mut self,
-        target_uuid: &str,
-        source_uuid: &str,
-        summary: &ReluOrientationSummary,
-        threshold: f32,
-    ) {
-        let reason = match summary.failure {
-            Some(ReluFailure::NotEnoughSamples) => NeuronRejectionReason::NotEnoughActivations,
-            Some(ReluFailure::WeightInvalid) => NeuronRejectionReason::WeightDegenerate,
-            Some(ReluFailure::BelowThreshold) | None => NeuronRejectionReason::BelowThreshold,
-        };
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
-            entry.update_best(NeuronRejectionDetail {
-                source_uuid: source_uuid.to_string(),
-                orientation: Some(summary.orientation_name()),
-                reason,
-                sample_count: summary.sample_count,
-                improved_count: summary.improved_count,
-                worsened_count: summary.worsened_count,
-                expected_improvement: summary.expected_improvement,
-                threshold,
-                outgoing_weight: summary.outgoing_weight,
             });
         }
     }
@@ -1080,61 +1036,11 @@ impl NeuronDiagnostics {
                 }
             };
 
-            let orientation = best.orientation.unwrap_or("unknown");
-            match best.reason {
-                NeuronRejectionReason::NoSamples => {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} skipped candidate from {} because no overlapping samples were found.",
-                        entry.target_uuid, best.source_uuid
-                    );
-                }
-                NeuronRejectionReason::NotEnoughActivations => {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} saw fewer than {} aligned samples for {} ({}) so the ReLU neuron could not be evaluated.",
-                        entry.target_uuid,
-                        MIN_NEURON_SAMPLE_COUNT,
-                        best.source_uuid,
-                        orientation
-                    );
-                }
-                NeuronRejectionReason::WeightDegenerate => {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} computed a degenerate weight for {} ({}) so the candidate was discarded (samples {}).",
-                        entry.target_uuid,
-                        best.source_uuid,
-                        orientation,
-                        best.sample_count
-                    );
-                }
-                NeuronRejectionReason::BelowThreshold => {
-                    if let Some(weight) = best.outgoing_weight {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Target {} best ReLU candidate from {} ({}) improved {:.4} but stayed below threshold {:.4} (samples {}, improved {}, worsened {}, weight {:.4}).",
-                            entry.target_uuid,
-                            best.source_uuid,
-                            orientation,
-                            best.expected_improvement,
-                            best.threshold,
-                            best.sample_count,
-                            best.improved_count,
-                            best.worsened_count,
-                            weight
-                        );
-                    } else {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Target {} best ReLU candidate from {} ({}) improved {:.4} but stayed below threshold {:.4} (samples {}, improved {}, worsened {}).",
-                            entry.target_uuid,
-                            best.source_uuid,
-                            orientation,
-                            best.expected_improvement,
-                            best.threshold,
-                            best.sample_count,
-                            best.improved_count,
-                            best.worsened_count
-                        );
-                    }
-                }
-            }
+            // Currently only NoSamples is used
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Target {} skipped candidate from {} because no overlapping samples were found.",
+                entry.target_uuid, best.source_uuid
+            );
         }
     }
 
@@ -1176,18 +1082,8 @@ impl NeuronDiagnostics {
                 }
 
                 if let Some(best) = &entry.best_rejection {
-                    let reason = match best.reason {
-                        NeuronRejectionReason::NoSamples => NeuronNoCandidateReason::NoSamples,
-                        NeuronRejectionReason::NotEnoughActivations => {
-                            NeuronNoCandidateReason::NotEnoughActivations
-                        }
-                        NeuronRejectionReason::WeightDegenerate => {
-                            NeuronNoCandidateReason::WeightDegenerate
-                        }
-                        NeuronRejectionReason::BelowThreshold => {
-                            NeuronNoCandidateReason::BelowThreshold
-                        }
-                    };
+                    // Currently only NoSamples is ever set as rejection reason
+                    let reason = NeuronNoCandidateReason::NoSamples;
                     return NeuronNoCandidateSummary {
                         target_uuid: entry.target_uuid.clone(),
                         reason,
@@ -1198,11 +1094,11 @@ impl NeuronDiagnostics {
                             source_uuid: Some(best.source_uuid.clone()),
                             orientation: best.orientation.map(|name| name.to_string()),
                             sample_count: Some(best.sample_count),
-                            improved_count: Some(best.improved_count),
-                            worsened_count: Some(best.worsened_count),
+                            improved_count: None,
+                            worsened_count: None,
                             expected_improvement: Some(best.expected_improvement),
-                            threshold: Some(best.threshold),
-                            outgoing_weight: best.outgoing_weight,
+                            threshold: None,
+                            outgoing_weight: None,
                         }),
                     };
                 }
@@ -1797,14 +1693,7 @@ impl ReluStats {
         }
     }
 
-    /// Add a sample to the stats - used only in tests
-    #[cfg(test)]
-    fn push(&mut self, relu_activation: f32, error: f32) {
-        self.samples.push((relu_activation, error));
-        self.activation_sq_sum += relu_activation * relu_activation;
-        self.error_activation_sum += relu_activation * error;
-    }
-
+    /// Evaluate this orientation and return a candidate if it passes the threshold.
     fn evaluate(
         &self,
         source_uuid: &str,
@@ -1812,37 +1701,25 @@ impl ReluStats {
         threshold: f32,
         total_baseline_error_sq: f32,
         original_samples: &[HelpfulSample],
-    ) -> ReluOrientationEvaluation {
+    ) -> Option<CandidateNeuronJson> {
         let sample_count = self.samples.len();
         if sample_count < MIN_NEURON_SAMPLE_COUNT || self.activation_sq_sum <= EPSILON {
-            return ReluOrientationEvaluation {
-                summary: ReluOrientationSummary::insufficient(self.orientation, sample_count),
-                candidate: None,
-            };
+            return None;
         }
 
         let mut outgoing_weight = self.error_activation_sum / (self.activation_sq_sum + EPSILON);
         if !outgoing_weight.is_finite() || outgoing_weight.abs() <= EPSILON {
-            return ReluOrientationEvaluation {
-                summary: ReluOrientationSummary::degenerate(self.orientation, sample_count),
-                candidate: None,
-            };
+            return None;
         }
         outgoing_weight = outgoing_weight.clamp(-10.0, 10.0);
 
         let mut improved_count = 0u32;
-        let mut worsened_count = 0u32;
         for (relu_activation, error) in &self.samples {
             let new_error = error - outgoing_weight * relu_activation;
             if new_error.abs() + EPSILON < error.abs() {
                 improved_count += 1;
-            } else if new_error.abs() > error.abs() + EPSILON {
-                worsened_count += 1;
             }
         }
-
-        let total_count = self.samples.len() as u32;
-        debug_assert!(total_count > 0);
 
         // Calculate improvement based on magnitude (reduction in squared error)
         // improvement = baseline_sq - new_sq
@@ -1850,7 +1727,7 @@ impl ReluStats {
         let improvement_magnitude = 2.0 * outgoing_weight * self.error_activation_sum
             - outgoing_weight * outgoing_weight * self.activation_sq_sum;
 
-        // Normalize by total baseline error of ALL samples (not just active ones)
+        // Normalise by total baseline error of ALL samples (not just active ones)
         let expected_improvement = if total_baseline_error_sq > EPSILON {
             let result = improvement_magnitude / total_baseline_error_sq;
             if result.is_finite() {
@@ -1863,17 +1740,7 @@ impl ReluStats {
         };
 
         if expected_improvement <= threshold {
-            return ReluOrientationEvaluation {
-                summary: ReluOrientationSummary::below_threshold(
-                    self.orientation,
-                    sample_count,
-                    improved_count,
-                    worsened_count,
-                    expected_improvement,
-                    outgoing_weight,
-                ),
-                candidate: None,
-            };
+            return None;
         }
 
         let incoming_weight = match self.orientation {
@@ -1882,8 +1749,6 @@ impl ReluStats {
         };
 
         // Calculate optimal bias for ReLU neuron
-        // TODO: Pass GpuAnalyzer reference for GPU-accelerated bias search
-        // Note: target_squash is not available in this context, using None
         let optimal_bias = calculate_optimal_bias(
             original_samples,
             incoming_weight,
@@ -1895,129 +1760,21 @@ impl ReluStats {
         );
 
         let target_stats = NeuronStats::from_samples(original_samples).map(|s| s.to_json());
+        let total_count = self.samples.len() as u32;
 
-        ReluOrientationEvaluation {
-            summary: ReluOrientationSummary::successful(
-                self.orientation,
-                sample_count,
-                improved_count,
-                worsened_count,
-                expected_improvement,
-                outgoing_weight,
-            ),
-            candidate: Some(CandidateNeuronJson {
-                source_neuron_uuid: source_uuid.to_string(),
-                target_neuron_uuid: target_uuid.to_string(),
-                incoming_weight,
-                outgoing_weight,
-                squash: "ReLU".to_string(),
-                bias: optimal_bias,
-                expected_improvement_percentage: expected_improvement,
-                improved_count,
-                total_count,
-                target_neuron_stats: target_stats,
-            }),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum ReluFailure {
-    NotEnoughSamples,
-    WeightInvalid,
-    BelowThreshold,
-}
-
-#[derive(Clone)]
-struct ReluOrientationSummary {
-    orientation: ReluOrientation,
-    sample_count: usize,
-    improved_count: u32,
-    worsened_count: u32,
-    expected_improvement: f32,
-    outgoing_weight: Option<f32>,
-    failure: Option<ReluFailure>,
-}
-
-impl ReluOrientationSummary {
-    fn insufficient(orientation: ReluOrientation, sample_count: usize) -> Self {
-        Self {
-            orientation,
-            sample_count,
-            improved_count: 0,
-            worsened_count: 0,
-            expected_improvement: f32::NEG_INFINITY,
-            outgoing_weight: None,
-            failure: Some(ReluFailure::NotEnoughSamples),
-        }
-    }
-
-    fn degenerate(orientation: ReluOrientation, sample_count: usize) -> Self {
-        Self {
-            orientation,
-            sample_count,
-            improved_count: 0,
-            worsened_count: 0,
-            expected_improvement: f32::NEG_INFINITY,
-            outgoing_weight: None,
-            failure: Some(ReluFailure::WeightInvalid),
-        }
-    }
-
-    fn below_threshold(
-        orientation: ReluOrientation,
-        sample_count: usize,
-        improved_count: u32,
-        worsened_count: u32,
-        expected_improvement: f32,
-        outgoing_weight: f32,
-    ) -> Self {
-        Self {
-            orientation,
-            sample_count,
+        Some(CandidateNeuronJson {
+            source_neuron_uuid: source_uuid.to_string(),
+            target_neuron_uuid: target_uuid.to_string(),
+            incoming_weight,
+            outgoing_weight,
+            squash: "ReLU".to_string(),
+            bias: optimal_bias,
+            expected_improvement_percentage: expected_improvement,
             improved_count,
-            worsened_count,
-            expected_improvement,
-            outgoing_weight: Some(outgoing_weight),
-            failure: Some(ReluFailure::BelowThreshold),
-        }
+            total_count,
+            target_neuron_stats: target_stats,
+        })
     }
-
-    fn successful(
-        orientation: ReluOrientation,
-        sample_count: usize,
-        improved_count: u32,
-        worsened_count: u32,
-        expected_improvement: f32,
-        outgoing_weight: f32,
-    ) -> Self {
-        Self {
-            orientation,
-            sample_count,
-            improved_count,
-            worsened_count,
-            expected_improvement,
-            outgoing_weight: Some(outgoing_weight),
-            failure: None,
-        }
-    }
-
-    fn orientation_name(&self) -> &'static str {
-        match self.orientation {
-            ReluOrientation::Positive => "positive",
-            ReluOrientation::Negative => "negative",
-        }
-    }
-}
-
-struct ReluOrientationEvaluation {
-    summary: ReluOrientationSummary,
-    candidate: Option<CandidateNeuronJson>,
-}
-
-struct ReluEvaluationResult {
-    candidate: Option<CandidateNeuronJson>,
-    best_summary: Option<ReluOrientationSummary>,
 }
 
 struct ActivationCandidateSpec {
@@ -4448,84 +4205,7 @@ fn upsert_candidate(
     }
 }
 
-fn evaluate_relu_candidate(
-    analyzer: &GpuAnalyzer,
-    source_uuid: &str,
-    target_uuid: &str,
-    samples: &[HelpfulSample],
-    threshold: f32,
-    target_squash: Option<&str>,
-) -> Result<ReluEvaluationResult> {
-    if samples.is_empty() {
-        return Ok(ReluEvaluationResult {
-            candidate: None,
-            best_summary: None,
-        });
-    }
-
-    // Use GPU-accelerated ReLU evaluation (uses linear model)
-    let (positive_stats, negative_stats, total_baseline_error_sq) =
-        analyzer.evaluate_relu_gpu(samples, threshold)?;
-
-    let positive_eval = positive_stats.evaluate(
-        source_uuid,
-        target_uuid,
-        threshold,
-        total_baseline_error_sq,
-        samples,
-    );
-    let negative_eval = negative_stats.evaluate(
-        source_uuid,
-        target_uuid,
-        threshold,
-        total_baseline_error_sq,
-        samples,
-    );
-    let evaluations = [positive_eval, negative_eval];
-
-    let mut best_candidate: Option<CandidateNeuronJson> = None;
-    let mut best_candidate_score = f32::NEG_INFINITY;
-    let mut best_summary: Option<ReluOrientationSummary> = None;
-    let mut best_summary_score = f32::NEG_INFINITY;
-
-    for eval in evaluations.into_iter() {
-        if best_summary.is_none() || eval.summary.expected_improvement > best_summary_score {
-            best_summary_score = eval.summary.expected_improvement;
-            best_summary = Some(eval.summary.clone());
-        }
-
-        if let Some(mut candidate) = eval.candidate {
-            // For HARD_TANH targets, recompute using saturation-aware model (single pass)
-            let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
-            let (net_improvement, improved, total) = compute_relu_improvement_and_count(
-                samples,
-                candidate.incoming_weight,
-                candidate.outgoing_weight,
-                total_baseline_error_sq,
-                use_hard_tanh,
-            );
-
-            candidate.improved_count = improved;
-            candidate.total_count = total;
-            candidate.expected_improvement_percentage = net_improvement;
-
-            // Only consider if still above threshold after recalculation
-            if net_improvement > threshold
-                && (best_candidate.is_none() || net_improvement > best_candidate_score)
-            {
-                best_candidate_score = net_improvement;
-                best_candidate = Some(candidate);
-            }
-        }
-    }
-
-    Ok(ReluEvaluationResult {
-        candidate: best_candidate,
-        best_summary,
-    })
-}
-
-/// Result from split-error ReLU evaluation
+/// Result from ReLU evaluation (split by target error sign)
 struct SplitReluResult {
     /// Candidate for samples with positive error (output should be higher)
     positive_error_candidate: Option<CandidateNeuronJson>,
@@ -4698,14 +4378,21 @@ fn count_improved_samples(
     (improved, total)
 }
 
-/// Evaluate ReLU candidates by splitting samples based on error sign.
+/// Evaluate ReLU candidates by splitting samples based on TARGET neuron's error sign.
 ///
-/// This finds **complementary pairs** of ReLUs:
-/// - One that improves samples where output should be **higher** (positive error)
-/// - One that improves samples where output should be **lower** (negative error)
+/// This is the PRIMARY approach for ReLU evaluation. It finds candidates for both directions:
+/// - **Positive-error samples** (output should be HIGHER): compute weight that pushes UP
+/// - **Negative-error samples** (output should be LOWER): compute weight that pushes DOWN
 ///
-/// This is more effective than the standard approach when errors are split ~50/50,
-/// because no single ReLU can help both directions simultaneously.
+/// For each direction:
+/// 1. Compute optimal weight from the error subset
+/// 2. Evaluate NET improvement across ALL samples
+/// 3. Return candidate if it passes threshold
+///
+/// This is the correct approach for directional activations like ReLU because:
+/// - ReLU can only push output in ONE direction (based on outgoing weight sign)
+/// - Averaging over all samples cancels out when errors are split ~50/50
+/// - We evaluate source activations as-is (we don't care how they were calculated)
 fn evaluate_relu_candidates_split(
     analyzer: &GpuAnalyzer,
     source_uuid: &str,
@@ -4745,15 +4432,13 @@ fn evaluate_relu_candidates_split(
         let (positive_stats, _, pos_baseline_error_sq) =
             analyzer.evaluate_relu_gpu(&positive_error_samples, threshold)?;
 
-        let eval = positive_stats.evaluate(
+        if let Some(mut candidate) = positive_stats.evaluate(
             source_uuid,
             target_uuid,
             threshold,
             pos_baseline_error_sq,
             &positive_error_samples,
-        );
-
-        if let Some(mut candidate) = eval.candidate {
+        ) {
             // Compute net improvement across ALL samples (single pass)
             let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
             let (net_improvement, improved, total) = compute_relu_improvement_and_count(
@@ -4778,15 +4463,13 @@ fn evaluate_relu_candidates_split(
         let (positive_stats, _, neg_baseline_error_sq) =
             analyzer.evaluate_relu_gpu(&negative_error_samples, threshold)?;
 
-        let eval = positive_stats.evaluate(
+        if let Some(mut candidate) = positive_stats.evaluate(
             source_uuid,
             target_uuid,
             threshold,
             neg_baseline_error_sq,
             &negative_error_samples,
-        );
-
-        if let Some(mut candidate) = eval.candidate {
+        ) {
             // Compute net improvement across ALL samples (single pass)
             let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
             let (net_improvement, improved, total) = compute_relu_improvement_and_count(
@@ -5626,37 +5309,22 @@ fn analyze_neurons_with_cache(
                         continue;
                     }
 
-                    // Get target_squash for accurate HARD_TANH modelling in both evaluations
+                    // Get target_squash for accurate HARD_TANH modelling
                     let target_squash = neuron_squash_map_arc.get(target_uuid).map(|s| s.as_str());
 
-                    // Standard ReLU evaluation (best single candidate across all samples)
-                    // Passes target_squash for accurate HARD_TANH saturation-aware modelling
-                    let relu_result = evaluate_relu_candidate(
-                        &analyzer,
-                        &result.source_uuid,
-                        target_uuid,
-                        &result.samples,
-                        threshold,
-                        target_squash,
-                    )?;
-
-                    if let Some(candidate) = relu_result.candidate {
-                        diagnostics
-                            .lock()
-                            .expect("Mutex poisoned: diagnostics")
-                            .mark_candidate_selected(target_uuid);
-                        let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
-                        upsert_candidate(&mut map, candidate);
-                    } else if let Some(summary) = relu_result.best_summary.as_ref() {
-                        diagnostics
-                            .lock()
-                            .expect("Mutex poisoned: diagnostics")
-                            .record_rejection(target_uuid, &result.source_uuid, summary, threshold);
-                    }
-
-                    // Split-error ReLU evaluation: find complementary pairs for split errors
-                    // This helps when errors are ~50/50 positive/negative and no single
-                    // ReLU can help both directions.
+                    // ReLU evaluation: split by TARGET neuron's error sign.
+                    //
+                    // ReLU can only push output in ONE direction (based on outgoing weight sign),
+                    // so we evaluate two candidates separately:
+                    // - Positive-error ReLU: optimised for samples where output should be HIGHER
+                    // - Negative-error ReLU: optimised for samples where output should be LOWER
+                    //
+                    // Each candidate's weight is computed from its error subset, then NET
+                    // improvement is calculated across ALL samples. This is the correct
+                    // approach for directional activation functions like ReLU.
+                    //
+                    // NOTE: We don't use "averaging over all samples" because when errors are
+                    // split ~50/50, the average cancels out and no candidate is found.
                     let split_result = evaluate_relu_candidates_split(
                         &analyzer,
                         &result.source_uuid,
@@ -5669,7 +5337,7 @@ fn analyze_neurons_with_cache(
                     if let Some(candidate) = split_result.positive_error_candidate {
                         if verbose_enabled() {
                             eprintln!(
-                                "[NEAT-AI-Discovery][verbose] Split-ReLU (positive errors) {} -> {}: {:.2}% improvement",
+                                "[NEAT-AI-Discovery][verbose] ReLU (push UP) {} -> {}: {:.2}% improvement",
                                 result.source_uuid,
                                 target_uuid,
                                 candidate.expected_improvement_percentage * 100.0
@@ -5686,7 +5354,7 @@ fn analyze_neurons_with_cache(
                     if let Some(candidate) = split_result.negative_error_candidate {
                         if verbose_enabled() {
                             eprintln!(
-                                "[NEAT-AI-Discovery][verbose] Split-ReLU (negative errors) {} -> {}: {:.2}% improvement",
+                                "[NEAT-AI-Discovery][verbose] ReLU (push DOWN) {} -> {}: {:.2}% improvement",
                                 result.source_uuid,
                                 target_uuid,
                                 candidate.expected_improvement_percentage * 100.0
@@ -6988,106 +6656,61 @@ mod tests_synapses {
     }
 
     #[test]
-    fn relu_evaluation_identifies_below_threshold_reason() {
-        let mut stats = ReluStats::new(ReluOrientation::Positive);
-        let mut original_samples = Vec::new();
-        for _ in 0..(MIN_NEURON_SAMPLE_COUNT + 2) {
-            stats.push(1.0, 0.05);
-            original_samples.push(HelpfulSample {
-                activation: 1.0,
-                avg_error: 0.05,
-                target_value: None,
-                target_activation: None,
-            });
-        }
-        let evaluation = stats.evaluate("source", "target", 2.0, 1.0, &original_samples);
-        assert!(
-            evaluation.candidate.is_none(),
-            "Expected candidate to fall below the threshold"
-        );
-        assert!(
-            matches!(
-                evaluation.summary.failure,
-                Some(ReluFailure::BelowThreshold)
-            ),
-            "Summary should record the below-threshold failure"
-        );
-    }
-
-    #[test]
-    fn relu_evaluation_keeps_summary_and_candidate_in_sync_on_ties() {
+    fn relu_split_evaluation_finds_candidates_when_activation_correlates_with_error() {
+        // Test that split-by-error ReLU evaluation finds candidates when source activation
+        // correlates with target error direction.
+        //
+        // Key insight: A ReLU can only help if its activation correlates with the errors
+        // it's trying to fix. If activation is the same for all samples, the ReLU's
+        // contribution will cancel out across balanced errors.
+        //
+        // This test creates samples where:
+        // - Source fires (activation > 0) when target error is positive (output should go UP)
+        // - Source doesn't fire (activation <= 0) when target error is negative
+        //
+        // This is the realistic scenario where adding a ReLU neuron can help.
         skip_if_no_gpu!();
         let analyzer = GpuAnalyzer::new().expect("GPU analysis should be available");
 
         let mut samples = Vec::new();
+        // Samples where source fires AND output should go UP (positive error)
         for _ in 0..MIN_NEURON_SAMPLE_COUNT {
             samples.push(HelpfulSample {
-                activation: 1.0,
-                avg_error: -1.0,
+                activation: 1.0, // Source fires
+                avg_error: 0.5,  // Output should be HIGHER
                 target_value: None,
                 target_activation: None,
             });
         }
+        // Samples where source doesn't fire AND output should go DOWN (negative error)
         for _ in 0..MIN_NEURON_SAMPLE_COUNT {
             samples.push(HelpfulSample {
-                activation: -1.0,
-                avg_error: 1.0,
+                activation: -0.5, // Source doesn't fire (ReLU will output 0)
+                avg_error: -0.5,  // Output should be LOWER
                 target_value: None,
                 target_activation: None,
             });
         }
 
-        let result = evaluate_relu_candidate(&analyzer, "input-0", "output-0", &samples, 0.0, None)
-            .expect("ReLU evaluation should succeed with balanced samples");
+        let result =
+            evaluate_relu_candidates_split(&analyzer, "input-0", "output-0", &samples, 0.0, None)
+                .expect("ReLU split evaluation should succeed");
 
-        let summary = result
-            .best_summary
-            .expect("Expected a summary for the best orientation");
-        let candidate = result
-            .candidate
-            .expect("Expected a candidate neuron for tied orientations");
-
-        let summary_orientation = summary.orientation_name();
-        let candidate_orientation = if candidate.incoming_weight > 0.0 {
-            "positive"
-        } else {
-            "negative"
-        };
-
-        assert_eq!(
-            summary_orientation, candidate_orientation,
-            "Summary orientation should match the selected candidate orientation when scores tie",
-        );
-    }
-
-    #[test]
-    fn neuron_diagnostics_records_relu_rejection() {
-        let mut diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
-        let summary = ReluOrientationSummary::below_threshold(
-            ReluOrientation::Positive,
-            MIN_NEURON_SAMPLE_COUNT,
-            12,
-            4,
-            0.05,
-            0.25,
-        );
-        diagnostics.record_rejection("output-0", "hidden-1", &summary, 0.1);
-        let entry = diagnostics
-            .entry_for("output-0")
-            .expect("diagnostics entry should exist");
-        let detail = entry
-            .best_rejection
-            .as_ref()
-            .expect("best rejection should be recorded");
+        // With correlation between activation and error, we should find a positive-error candidate
+        // The ReLU fires when we need output to go UP, and doesn't fire when we need it DOWN.
         assert!(
-            matches!(detail.reason, NeuronRejectionReason::BelowThreshold),
-            "Expected below-threshold reason"
+            result.positive_error_candidate.is_some(),
+            "Should find positive-error ReLU candidate when activation correlates with error direction"
         );
-        assert_eq!(
-            detail.orientation,
-            Some("positive"),
-            "Orientation should be preserved"
-        );
+
+        // Verify the candidate pushes in the correct direction
+        if let Some(pos_candidate) = &result.positive_error_candidate {
+            assert!(
+                pos_candidate.outgoing_weight > 0.0,
+                "Positive-error candidate should have positive outgoing weight (pushes UP). Got: {}",
+                pos_candidate.outgoing_weight
+            );
+        }
     }
 
     #[test]
