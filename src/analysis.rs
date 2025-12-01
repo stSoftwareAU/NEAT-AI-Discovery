@@ -4426,67 +4426,87 @@ fn evaluate_relu_candidates_split(
         return Ok(result);
     }
 
+    let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
+
     // For positive errors (output should be higher), compute optimal weight from subset
-    // then evaluate the NET effect across ALL samples
+    // then evaluate the NET effect across ALL samples.
+    // We evaluate BOTH ReLU orientations (positive and negative incoming weight) and pick best.
     if positive_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT {
-        let (positive_stats, _, pos_baseline_error_sq) =
+        let (positive_stats, negative_stats, pos_baseline_error_sq) =
             analyzer.evaluate_relu_gpu(&positive_error_samples, threshold)?;
 
-        if let Some(mut candidate) = positive_stats.evaluate(
-            source_uuid,
-            target_uuid,
-            threshold,
-            pos_baseline_error_sq,
-            &positive_error_samples,
-        ) {
-            // Compute net improvement across ALL samples (single pass)
-            let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
-            let (net_improvement, improved, total) = compute_relu_improvement_and_count(
-                samples,
-                candidate.incoming_weight,
-                candidate.outgoing_weight,
-                total_baseline_error_sq,
-                use_hard_tanh,
-            );
-            candidate.improved_count = improved;
-            candidate.total_count = total;
+        // Try both orientations and pick the best
+        let orientations = [positive_stats, negative_stats];
+        let mut best_candidate: Option<CandidateNeuronJson> = None;
+        let mut best_improvement = threshold;
 
-            if net_improvement > threshold {
-                candidate.expected_improvement_percentage = net_improvement;
-                result.positive_error_candidate = Some(candidate);
+        for stats in orientations {
+            if let Some(mut candidate) = stats.evaluate(
+                source_uuid,
+                target_uuid,
+                threshold,
+                pos_baseline_error_sq,
+                &positive_error_samples,
+            ) {
+                // Compute net improvement across ALL samples (single pass)
+                let (net_improvement, improved, total) = compute_relu_improvement_and_count(
+                    samples,
+                    candidate.incoming_weight,
+                    candidate.outgoing_weight,
+                    total_baseline_error_sq,
+                    use_hard_tanh,
+                );
+                candidate.improved_count = improved;
+                candidate.total_count = total;
+
+                if net_improvement > best_improvement {
+                    candidate.expected_improvement_percentage = net_improvement;
+                    best_improvement = net_improvement;
+                    best_candidate = Some(candidate);
+                }
             }
         }
+        result.positive_error_candidate = best_candidate;
     }
 
-    // For negative errors (output should be lower)
+    // For negative errors (output should be lower).
+    // We evaluate BOTH ReLU orientations (positive and negative incoming weight) and pick best.
     if negative_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT {
-        let (positive_stats, _, neg_baseline_error_sq) =
+        let (positive_stats, negative_stats, neg_baseline_error_sq) =
             analyzer.evaluate_relu_gpu(&negative_error_samples, threshold)?;
 
-        if let Some(mut candidate) = positive_stats.evaluate(
-            source_uuid,
-            target_uuid,
-            threshold,
-            neg_baseline_error_sq,
-            &negative_error_samples,
-        ) {
-            // Compute net improvement across ALL samples (single pass)
-            let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
-            let (net_improvement, improved, total) = compute_relu_improvement_and_count(
-                samples,
-                candidate.incoming_weight,
-                candidate.outgoing_weight,
-                total_baseline_error_sq,
-                use_hard_tanh,
-            );
-            candidate.improved_count = improved;
-            candidate.total_count = total;
+        // Try both orientations and pick the best
+        let orientations = [positive_stats, negative_stats];
+        let mut best_candidate: Option<CandidateNeuronJson> = None;
+        let mut best_improvement = threshold;
 
-            if net_improvement > threshold {
-                candidate.expected_improvement_percentage = net_improvement;
-                result.negative_error_candidate = Some(candidate);
+        for stats in orientations {
+            if let Some(mut candidate) = stats.evaluate(
+                source_uuid,
+                target_uuid,
+                threshold,
+                neg_baseline_error_sq,
+                &negative_error_samples,
+            ) {
+                // Compute net improvement across ALL samples (single pass)
+                let (net_improvement, improved, total) = compute_relu_improvement_and_count(
+                    samples,
+                    candidate.incoming_weight,
+                    candidate.outgoing_weight,
+                    total_baseline_error_sq,
+                    use_hard_tanh,
+                );
+                candidate.improved_count = improved;
+                candidate.total_count = total;
+
+                if net_improvement > best_improvement {
+                    candidate.expected_improvement_percentage = net_improvement;
+                    best_improvement = net_improvement;
+                    best_candidate = Some(candidate);
+                }
             }
         }
+        result.negative_error_candidate = best_candidate;
     }
 
     Ok(result)
@@ -6708,6 +6728,67 @@ mod tests_synapses {
             assert!(
                 pos_candidate.outgoing_weight > 0.0,
                 "Positive-error candidate should have positive outgoing weight (pushes UP). Got: {}",
+                pos_candidate.outgoing_weight
+            );
+        }
+    }
+
+    #[test]
+    fn relu_split_evaluation_finds_negative_orientation_candidates() {
+        // Test that we can find ReLU candidates with incoming_weight = -1.0 (negative orientation).
+        //
+        // This is critical: when source neurons have predominantly NEGATIVE activations
+        // that correlate with errors, we need a ReLU with incoming_weight = -1.0 to flip
+        // the sign before the ReLU activation.
+        //
+        // Bug regression test: Previously, evaluate_relu_candidates_split discarded
+        // negative_stats entirely, meaning these candidates could never be found.
+        skip_if_no_gpu!();
+        let analyzer = GpuAnalyzer::new().expect("GPU analysis should be available");
+
+        let mut samples = Vec::new();
+        // Samples where source has NEGATIVE activation AND output should go UP (positive error)
+        // A ReLU with incoming_weight = -1.0 will flip -1.0 to +1.0, then ReLU outputs 1.0
+        for _ in 0..MIN_NEURON_SAMPLE_COUNT {
+            samples.push(HelpfulSample {
+                activation: -1.0, // NEGATIVE activation
+                avg_error: 0.5,   // Output should be HIGHER
+                target_value: None,
+                target_activation: None,
+            });
+        }
+        // Samples where source has POSITIVE activation AND output should go DOWN (negative error)
+        // A ReLU with incoming_weight = -1.0 will flip +0.5 to -0.5, then ReLU outputs 0
+        for _ in 0..MIN_NEURON_SAMPLE_COUNT {
+            samples.push(HelpfulSample {
+                activation: 0.5, // POSITIVE activation (will be flipped to negative, ReLU = 0)
+                avg_error: -0.5, // Output should be LOWER
+                target_value: None,
+                target_activation: None,
+            });
+        }
+
+        let result =
+            evaluate_relu_candidates_split(&analyzer, "input-0", "output-0", &samples, 0.0, None)
+                .expect("ReLU split evaluation should succeed");
+
+        // With negative activations correlating with positive errors, we should find a candidate
+        // that uses the NEGATIVE orientation (incoming_weight = -1.0)
+        assert!(
+            result.positive_error_candidate.is_some(),
+            "Should find ReLU candidate even when source has negative activations (requires negative orientation)"
+        );
+
+        // Verify the candidate uses negative incoming weight (the critical fix!)
+        if let Some(pos_candidate) = &result.positive_error_candidate {
+            assert!(
+                pos_candidate.incoming_weight < 0.0,
+                "Candidate should have NEGATIVE incoming weight to flip negative activations. Got: {}",
+                pos_candidate.incoming_weight
+            );
+            assert!(
+                pos_candidate.outgoing_weight > 0.0,
+                "Candidate should have positive outgoing weight (pushes UP). Got: {}",
                 pos_candidate.outgoing_weight
             );
         }
