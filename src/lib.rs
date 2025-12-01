@@ -267,18 +267,30 @@ pub struct RankFocusNeuronsInput {
 pub struct RankedNeuronJson {
     pub neuron_uuid: String,
     pub total_error: f32,
+    /// Structural impact based on weight paths to output
     pub impact: f32,
+    /// Mean absolute activation value from recorded samples
+    pub mean_activation: f32,
+    /// Activation-weighted impact = structural_impact × mean_activation
+    /// This reflects the actual contribution the neuron makes during inference
+    pub activation_weighted_impact: f32,
 }
 
-/// A neuron with high error but very low impact - candidate for removal.
-/// These neurons consume compute but contribute almost nothing to outputs.
+/// A neuron with activation-weighted impact below costOfGrowth threshold - candidate for removal.
+/// Removing such neurons improves score because complexity reduction outweighs contribution.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemovalCandidateJson {
     pub neuron_uuid: String,
     pub total_error: f32,
+    /// Structural impact based on weight paths to output
     pub impact: f32,
-    /// High error neurons far from outputs are wasteful
+    /// Mean absolute activation value from recorded samples
+    pub mean_activation: f32,
+    /// Activation-weighted impact = structural_impact × mean_activation
+    /// This reflects the actual contribution the neuron makes during inference
+    pub activation_weighted_impact: f32,
+    /// Explains why removal improves score
     pub reason: String,
 }
 
@@ -725,6 +737,8 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                     neuron_uuid: neuron.neuron_uuid,
                     total_error: neuron.total_error,
                     impact: neuron.impact,
+                    mean_activation: neuron.mean_activation,
+                    activation_weighted_impact: neuron.activation_weighted_impact,
                 })
                 .collect();
             let removal_candidates: Vec<RemovalCandidateJson> = stats
@@ -734,6 +748,8 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                     neuron_uuid: c.neuron_uuid,
                     total_error: c.total_error,
                     impact: c.impact,
+                    mean_activation: c.mean_activation,
+                    activation_weighted_impact: c.activation_weighted_impact,
                     reason: c.reason,
                 })
                 .collect();

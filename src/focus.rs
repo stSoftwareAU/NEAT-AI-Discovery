@@ -10,23 +10,35 @@ use std::time::Instant;
 pub struct RankedNeuron {
     pub neuron_uuid: String,
     pub total_error: f32,
+    /// Structural impact based on weight paths to output
     pub impact: f32,
+    /// Mean absolute activation value from recorded samples
+    pub mean_activation: f32,
+    /// Activation-weighted impact = structural_impact × mean_activation
+    /// This reflects the actual contribution the neuron makes during inference
+    pub activation_weighted_impact: f32,
 }
 
-/// A neuron with high error but very low impact - candidate for removal.
-/// These neurons consume compute but contribute almost nothing to outputs.
+/// A neuron with activation-weighted impact below costOfGrowth threshold - candidate for removal.
+/// Removing such neurons improves score because complexity reduction outweighs contribution.
 #[derive(Debug)]
 pub struct RemovalCandidate {
     pub neuron_uuid: String,
     pub total_error: f32,
+    /// Structural impact based on weight paths to output
     pub impact: f32,
+    /// Mean absolute activation value from recorded samples
+    pub mean_activation: f32,
+    /// Activation-weighted impact = structural_impact × mean_activation
+    /// This reflects the actual contribution the neuron makes during inference
+    pub activation_weighted_impact: f32,
     pub reason: String,
 }
 
 #[derive(Debug)]
 pub struct RankFocusStats {
     pub neurons: Vec<RankedNeuron>,
-    /// Neurons with high error but very low impact - candidates for removal
+    /// Neurons with impact below costOfGrowth - candidates for removal
     pub removal_candidates: Vec<RemovalCandidate>,
     pub max_output_error: f32,
     pub processed_neurons: usize,
@@ -56,6 +68,30 @@ fn average_absolute_error_from_records(records: &[DiscoverRecord]) -> f32 {
                 sum += err.abs();
                 count += 1;
             }
+        }
+    }
+
+    if count == 0 {
+        0.0
+    } else {
+        sum / count as f32
+    }
+}
+
+/// Compute mean absolute activation from discovery records.
+/// This captures the actual magnitude of signals flowing through a neuron.
+fn mean_absolute_activation_from_records(records: &[DiscoverRecord]) -> f32 {
+    if records.is_empty() {
+        return 0.0;
+    }
+
+    let mut sum = 0.0f32;
+    let mut count: u32 = 0;
+
+    for record in records {
+        if record.activation.is_finite() {
+            sum += record.activation.abs();
+            count += 1;
         }
     }
 
@@ -251,7 +287,17 @@ pub fn rank_focus_neurons(
                 .get(&neuron.uuid)
                 .expect("Selectable neuron should have records (already verified above)");
             let avg_error = average_absolute_error_from_records(records);
-            let impact = *impact_map.get(&neuron.uuid).unwrap_or(&0.0);
+            let structural_impact = *impact_map.get(&neuron.uuid).unwrap_or(&0.0);
+            let mean_activation = mean_absolute_activation_from_records(records);
+
+            // Activation-weighted impact reflects the ACTUAL contribution during inference.
+            // A neuron with tiny structural impact but massive activations still contributes
+            // significantly: actual_contribution ≈ weight × activation
+            //
+            // Only neurons with BOTH low structural impact AND low activation should be
+            // removal candidates. If either is high, the neuron is contributing.
+            let activation_weighted_impact = structural_impact * mean_activation;
+
             let total_error = if max_output_error > 0.0 {
                 avg_error.min(max_output_error)
             } else {
@@ -260,7 +306,9 @@ pub fn rank_focus_neurons(
             RankedNeuron {
                 neuron_uuid: neuron.uuid.clone(),
                 total_error,
-                impact,
+                impact: structural_impact,
+                mean_activation,
+                activation_weighted_impact,
             }
         })
         .collect::<Vec<_>>();
@@ -281,26 +329,37 @@ pub fn rank_focus_neurons(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    // Identify removal candidates: neurons with impact below the costOfGrowth threshold.
+    // Identify removal candidates: neurons with ACTIVATION-WEIGHTED impact below costOfGrowth.
     //
-    // Simple logic: if a neuron's impact < costOfGrowth, removing it will improve the
-    // creature's score because the complexity reduction benefit outweighs any contribution
-    // the neuron makes to the output. Such neurons are essentially "free" to remove.
+    // Key insight: structural impact alone is misleading. A neuron with tiny weights but
+    // massive activations still contributes significantly: actual ≈ weight × activation.
+    //
+    // We use activation_weighted_impact = structural_impact × mean_activation
+    // Only neurons with activation_weighted_impact < costOfGrowth are safe to remove.
     const COST_OF_GROWTH: f32 = 1e-7;
 
-    let removal_candidates: Vec<RemovalCandidate> = neurons
+    let mut removal_candidates: Vec<RemovalCandidate> = neurons
         .iter()
-        .filter(|n| n.impact < COST_OF_GROWTH)
+        .filter(|n| n.activation_weighted_impact < COST_OF_GROWTH)
         .map(|n| RemovalCandidate {
             neuron_uuid: n.neuron_uuid.clone(),
             total_error: n.total_error,
             impact: n.impact,
+            mean_activation: n.mean_activation,
+            activation_weighted_impact: n.activation_weighted_impact,
             reason: format!(
-                "Impact ({:.2e}) below costOfGrowth ({:.0e}) - removal improves score",
-                n.impact, COST_OF_GROWTH
+                "Activation-weighted impact ({:.2e}) below costOfGrowth ({:.0e}) - removal improves score",
+                n.activation_weighted_impact, COST_OF_GROWTH
             ),
         })
         .collect();
+
+    // Sort by activation_weighted_impact ascending (lowest = safest to remove)
+    removal_candidates.sort_by(|a, b| {
+        a.activation_weighted_impact
+            .partial_cmp(&b.activation_weighted_impact)
+            .unwrap_or(Ordering::Equal)
+    });
 
     if let Some(limit) = max_results {
         if neurons.len() > limit {
@@ -363,6 +422,22 @@ mod tests {
                 vec![
                     DiscoverRecord::new(0, uuid.to_string(), Some(0.5), 0.5, vec![error]),
                     DiscoverRecord::new(1, uuid.to_string(), Some(0.5), 0.5, vec![error]),
+                ]
+            })
+            .collect()
+    }
+
+    /// Helper to create parquet records for neurons with specified errors AND activations.
+    /// This is essential for testing activation-weighted impact.
+    fn create_records_with_activation(
+        neuron_data: Vec<(&str, f32, f32)>, // (uuid, error, activation)
+    ) -> Vec<DiscoverRecord> {
+        neuron_data
+            .into_iter()
+            .flat_map(|(uuid, error, activation)| {
+                vec![
+                    DiscoverRecord::new(0, uuid.to_string(), Some(0.5), activation, vec![error]),
+                    DiscoverRecord::new(1, uuid.to_string(), Some(0.5), activation, vec![error]),
                 ]
             })
             .collect()
@@ -841,6 +916,165 @@ mod tests {
             "Reason should explain why removal improves score: {}",
             candidate.reason
         );
+    }
+
+    #[test]
+    fn test_activation_weighted_impact_prevents_false_removal_candidates() {
+        // Scenario: A neuron with low STRUCTURAL impact but HIGH activation should NOT be
+        // a removal candidate because actual_contribution ≈ weight × activation.
+        //
+        // This test prevents regression on the bug where neurons with tiny weights but
+        // massive activations were incorrectly flagged for removal.
+        //
+        // Network: input-0 -> high-activation (tiny weight 1e-9) -> output-0
+        //
+        // high-activation has:
+        // - Structural impact: 1e-9 (below costOfGrowth 1e-7)
+        // - Mean activation: 1e6 (very high!)
+        // - Activation-weighted impact: 1e-9 × 1e6 = 1e-3 (ABOVE costOfGrowth)
+        //
+        // So it should NOT be a removal candidate.
+        let creature = create_creature(
+            vec![
+                ("input-0", "input"),
+                ("high-activation", "hidden"),
+                ("low-activation", "hidden"),
+                ("output-0", "output"),
+            ],
+            vec![
+                ("input-0", "high-activation", 1.0),
+                ("input-0", "low-activation", 1.0),
+                // Both have tiny structural paths to output
+                ("high-activation", "output-0", 1e-9),
+                ("low-activation", "output-0", 1e-9),
+            ],
+        );
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        // high-activation: tiny structural impact BUT massive activation → NOT removal candidate
+        // low-activation: tiny structural impact AND tiny activation → IS removal candidate
+        let records = create_records_with_activation(vec![
+            ("high-activation", 0.1, 1e6), // High activation → not safe to remove
+            ("low-activation", 0.1, 1e-9), // Low activation → safe to remove
+            ("output-0", 0.5, 0.5),
+        ]);
+        write_records_to_parquet(file_path, &records).unwrap();
+
+        let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+        // Verify high-activation neuron has high activation-weighted impact
+        let high_act = result
+            .neurons
+            .iter()
+            .find(|n| n.neuron_uuid == "high-activation")
+            .expect("high-activation should be in results");
+        assert!(
+            high_act.mean_activation > 1e5,
+            "high-activation should have high mean_activation, got {}",
+            high_act.mean_activation
+        );
+        assert!(
+            high_act.activation_weighted_impact > 1e-7,
+            "high-activation should have activation_weighted_impact > costOfGrowth, got {}",
+            high_act.activation_weighted_impact
+        );
+
+        // high-activation should NOT be a removal candidate (activation-weighted impact too high)
+        let high_act_removal = result
+            .removal_candidates
+            .iter()
+            .find(|c| c.neuron_uuid == "high-activation");
+        assert!(
+            high_act_removal.is_none(),
+            "high-activation should NOT be a removal candidate because activation-weighted impact ({}) > costOfGrowth",
+            high_act.activation_weighted_impact
+        );
+
+        // Verify low-activation neuron has low activation-weighted impact
+        let low_act = result
+            .neurons
+            .iter()
+            .find(|n| n.neuron_uuid == "low-activation")
+            .expect("low-activation should be in results");
+        assert!(
+            low_act.mean_activation < 1e-7,
+            "low-activation should have low mean_activation, got {}",
+            low_act.mean_activation
+        );
+        assert!(
+            low_act.activation_weighted_impact < 1e-7,
+            "low-activation should have activation_weighted_impact < costOfGrowth, got {}",
+            low_act.activation_weighted_impact
+        );
+
+        // low-activation SHOULD be a removal candidate
+        let low_act_removal = result
+            .removal_candidates
+            .iter()
+            .find(|c| c.neuron_uuid == "low-activation");
+        assert!(
+            low_act_removal.is_some(),
+            "low-activation SHOULD be a removal candidate because activation-weighted impact ({}) < costOfGrowth. \
+             Removal candidates: {:?}",
+            low_act.activation_weighted_impact,
+            result.removal_candidates.iter().map(|c| &c.neuron_uuid).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_removal_candidates_sorted_by_activation_weighted_impact() {
+        // Verify that removal candidates are sorted by activation-weighted impact (ascending)
+        // so the safest candidates (lowest impact) come first.
+        let creature = create_creature(
+            vec![
+                ("input-0", "input"),
+                ("medium-impact", "hidden"),
+                ("low-impact", "hidden"),
+                ("lowest-impact", "hidden"),
+                ("output-0", "output"),
+            ],
+            vec![
+                ("input-0", "medium-impact", 1.0),
+                ("input-0", "low-impact", 1.0),
+                ("input-0", "lowest-impact", 1.0),
+                // All disconnected from output → zero structural impact
+            ],
+        );
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        // Different activation levels → different activation-weighted impacts
+        let records = create_records_with_activation(vec![
+            ("medium-impact", 0.1, 1e-4),  // activation-weighted: 0 × 1e-4 = 0
+            ("low-impact", 0.1, 1e-6),     // activation-weighted: 0 × 1e-6 = 0
+            ("lowest-impact", 0.1, 1e-10), // activation-weighted: 0 × 1e-10 = 0
+            ("output-0", 0.5, 0.5),
+        ]);
+        write_records_to_parquet(file_path, &records).unwrap();
+
+        let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+        // All three should be removal candidates (disconnected from output)
+        assert!(
+            result.removal_candidates.len() >= 3,
+            "Should have at least 3 removal candidates, got {}",
+            result.removal_candidates.len()
+        );
+
+        // Verify sorted order (ascending by activation_weighted_impact)
+        for i in 1..result.removal_candidates.len() {
+            assert!(
+                result.removal_candidates[i - 1].activation_weighted_impact
+                    <= result.removal_candidates[i].activation_weighted_impact,
+                "Removal candidates should be sorted by activation_weighted_impact (ascending). \
+                 Got {:?} before {:?}",
+                result.removal_candidates[i - 1].activation_weighted_impact,
+                result.removal_candidates[i].activation_weighted_impact
+            );
+        }
     }
 
     #[test]
