@@ -4191,15 +4191,49 @@ fn upsert_candidate(
         weight_sign(candidate.incoming_weight),
         weight_sign(candidate.outgoing_weight),
     );
+
+    // DEBUG: Log ReLU candidate insertions
+    if verbose_enabled() && candidate.squash == "ReLU" {
+        eprintln!(
+            "[NEAT-AI-Discovery][DEBUG] upsert_candidate ReLU: {} -> {} improvement={:.2}% key=({}, {}, {}, {}, {})",
+            candidate.source_neuron_uuid,
+            candidate.target_neuron_uuid,
+            candidate.expected_improvement_percentage * 100.0,
+            &candidate.source_neuron_uuid[..8.min(candidate.source_neuron_uuid.len())],
+            &candidate.target_neuron_uuid[..8.min(candidate.target_neuron_uuid.len())],
+            candidate.squash,
+            weight_sign(candidate.incoming_weight),
+            weight_sign(candidate.outgoing_weight),
+        );
+    }
+
     match map.entry(key) {
         Entry::Occupied(mut entry) => {
-            if candidate.expected_improvement_percentage
-                > entry.get().expected_improvement_percentage
+            let existing = entry.get();
+            if candidate.expected_improvement_percentage > existing.expected_improvement_percentage
             {
+                if verbose_enabled() && candidate.squash == "ReLU" {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][DEBUG] ReLU replacing existing {} ({:.2}% -> {:.2}%)",
+                        existing.squash,
+                        existing.expected_improvement_percentage * 100.0,
+                        candidate.expected_improvement_percentage * 100.0,
+                    );
+                }
                 entry.insert(candidate);
+            } else if verbose_enabled() && candidate.squash == "ReLU" {
+                eprintln!(
+                    "[NEAT-AI-Discovery][DEBUG] ReLU NOT replacing {} (existing {:.2}% >= new {:.2}%)",
+                    existing.squash,
+                    existing.expected_improvement_percentage * 100.0,
+                    candidate.expected_improvement_percentage * 100.0,
+                );
             }
         }
         Entry::Vacant(entry) => {
+            if verbose_enabled() && candidate.squash == "ReLU" {
+                eprintln!("[NEAT-AI-Discovery][DEBUG] ReLU inserted as NEW entry",);
+            }
             entry.insert(candidate);
         }
     }
@@ -4219,9 +4253,64 @@ fn hard_tanh(x: f32) -> f32 {
     x.clamp(-1.0, 1.0)
 }
 
-/// Check if samples support HARD_TANH model (all have target data).
-/// Caches the result to avoid repeated iteration.
+/// ReLU activation for target simulation
+#[inline(always)]
+fn relu(x: f32) -> f32 {
+    x.max(0.0)
+}
+
+/// LeakyReLU activation for target simulation
+#[inline(always)]
+fn leaky_relu(x: f32) -> f32 {
+    if x > 0.0 {
+        x
+    } else {
+        0.01 * x
+    }
+}
+
+/// Get the activation function for a given squash name.
+/// Returns None for activations that are approximately linear and don't need simulation.
 #[inline]
+fn get_target_activation_fn(squash: &str) -> Option<fn(f32) -> f32> {
+    match squash {
+        "HARD_TANH" => Some(hard_tanh),
+        "ReLU" => Some(relu),
+        "LeakyReLU" => Some(leaky_relu),
+        "TANH" => Some(|x: f32| x.tanh()),
+        "LOGISTIC" => Some(logistic_activation),
+        "BIPOLAR" => Some(bipolar_activation),
+        "CLIPPED" => Some(clipped_activation),
+        // IDENTITY, INVERSE, etc. are linear - no simulation needed
+        _ => None,
+    }
+}
+
+/// Check if samples support target activation simulation (all have target data).
+/// Returns the activation function to use, or None if linear approximation should be used.
+#[inline]
+fn get_target_simulation_fn(
+    samples: &[HelpfulSample],
+    target_squash: Option<&str>,
+) -> Option<fn(f32) -> f32> {
+    let squash = target_squash?;
+    let activation_fn = get_target_activation_fn(squash)?;
+
+    // Verify all samples have the required target data
+    if samples
+        .iter()
+        .all(|s| s.target_value.is_some() && s.target_activation.is_some())
+    {
+        Some(activation_fn)
+    } else {
+        None
+    }
+}
+
+/// Legacy function for backwards compatibility - returns true only for HARD_TANH
+/// Deprecated: Use get_target_simulation_fn instead for more accurate simulation
+#[inline]
+#[cfg(test)] // Only used in tests now
 fn can_use_hard_tanh(samples: &[HelpfulSample], target_squash: Option<&str>) -> bool {
     target_squash == Some("HARD_TANH")
         && samples
@@ -4232,13 +4321,16 @@ fn can_use_hard_tanh(samples: &[HelpfulSample], target_squash: Option<&str>) -> 
 /// Combined computation of improvement and count for ReLU candidates.
 /// Single pass over samples for better cache efficiency.
 ///
+/// When `target_activation_fn` is Some, simulates the target neuron's actual activation
+/// function for more accurate improvement estimates. Otherwise falls back to linear approximation.
+///
 /// Returns (improvement_percentage, improved_count, total_count)
 fn compute_relu_improvement_and_count(
     samples: &[HelpfulSample],
     incoming_weight: f32,
     outgoing_weight: f32,
     total_baseline_error_sq: f32,
-    use_hard_tanh: bool,
+    target_activation_fn: Option<fn(f32) -> f32>,
 ) -> (f32, u32, u32) {
     if total_baseline_error_sq <= EPSILON || samples.is_empty() {
         return (0.0, 0, samples.len() as u32);
@@ -4253,14 +4345,16 @@ fn compute_relu_improvement_and_count(
         let relu_output = pre_activation.max(0.0);
         let contribution = outgoing_weight * relu_output;
 
-        let new_error = if use_hard_tanh {
-            // Safety: use_hard_tanh is only true when all samples have target data
+        let new_error = if let Some(target_fn) = target_activation_fn {
+            // Simulate the target neuron's actual activation function
+            // Safety: target_activation_fn is only Some when all samples have target data
             let target_value = unsafe { sample.target_value.unwrap_unchecked() };
             let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
             let expected = target_activation + sample.avg_error;
             let new_input = target_value + contribution;
-            hard_tanh(new_input) - expected
+            target_fn(new_input) - expected
         } else {
+            // Linear approximation - assumes contribution directly reduces error
             contribution - sample.avg_error
         };
 
@@ -4285,6 +4379,9 @@ fn compute_relu_improvement_and_count(
 /// Combined computation of improvement and count for activation candidates.
 /// Single pass over samples for better cache efficiency.
 ///
+/// When `target_activation_fn` is Some, simulates the target neuron's actual activation
+/// function for more accurate improvement estimates. Otherwise falls back to linear approximation.
+///
 /// Returns (improvement_percentage, improved_count, total_count)
 fn compute_activation_improvement_and_count(
     samples: &[HelpfulSample],
@@ -4293,7 +4390,7 @@ fn compute_activation_improvement_and_count(
     bias: f32,
     activation_fn: fn(f32) -> f32,
     total_baseline_error_sq: f32,
-    use_hard_tanh: bool,
+    target_activation_fn: Option<fn(f32) -> f32>,
 ) -> (f32, u32, u32) {
     if total_baseline_error_sq <= EPSILON || samples.is_empty() {
         return (0.0, 0, samples.len() as u32);
@@ -4308,14 +4405,16 @@ fn compute_activation_improvement_and_count(
         let neuron_output = activation_fn(pre_activation);
         let contribution = outgoing_weight * neuron_output;
 
-        let new_error = if use_hard_tanh {
-            // Safety: use_hard_tanh is only true when all samples have target data
+        let new_error = if let Some(target_fn) = target_activation_fn {
+            // Simulate the target neuron's actual activation function
+            // Safety: target_activation_fn is only Some when all samples have target data
             let target_value = unsafe { sample.target_value.unwrap_unchecked() };
             let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
             let expected = target_activation + sample.avg_error;
             let new_input = target_value + contribution;
-            hard_tanh(new_input) - expected
+            target_fn(new_input) - expected
         } else {
+            // Linear approximation - assumes contribution directly reduces error
             contribution - sample.avg_error
         };
 
@@ -4347,13 +4446,13 @@ fn compute_net_improvement_with_squash(
     total_baseline_error_sq: f32,
     target_squash: Option<&str>,
 ) -> f32 {
-    let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
+    let target_activation_fn = get_target_simulation_fn(samples, target_squash);
     let (improvement, _, _) = compute_relu_improvement_and_count(
         samples,
         incoming_weight,
         outgoing_weight,
         total_baseline_error_sq,
-        use_hard_tanh,
+        target_activation_fn,
     );
     improvement
 }
@@ -4367,13 +4466,13 @@ fn count_improved_samples(
     target_squash: Option<&str>,
 ) -> (u32, u32) {
     let total_baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
-    let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
+    let target_activation_fn = get_target_simulation_fn(samples, target_squash);
     let (_, improved, total) = compute_relu_improvement_and_count(
         samples,
         incoming_weight,
         outgoing_weight,
         total_baseline_error_sq,
-        use_hard_tanh,
+        target_activation_fn,
     );
     (improved, total)
 }
@@ -4426,7 +4525,8 @@ fn evaluate_relu_candidates_split(
         return Ok(result);
     }
 
-    let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
+    // Get target activation function for accurate simulation (ReLU, HARD_TANH, etc.)
+    let target_activation_fn = get_target_simulation_fn(samples, target_squash);
 
     // For positive errors (output should be higher), compute optimal weight from subset
     // then evaluate the NET effect across ALL samples.
@@ -4454,7 +4554,7 @@ fn evaluate_relu_candidates_split(
                     candidate.incoming_weight,
                     candidate.outgoing_weight,
                     total_baseline_error_sq,
-                    use_hard_tanh,
+                    target_activation_fn,
                 );
                 candidate.improved_count = improved;
                 candidate.total_count = total;
@@ -4494,7 +4594,7 @@ fn evaluate_relu_candidates_split(
                     candidate.incoming_weight,
                     candidate.outgoing_weight,
                     total_baseline_error_sq,
-                    use_hard_tanh,
+                    target_activation_fn,
                 );
                 candidate.improved_count = improved;
                 candidate.total_count = total;
@@ -4619,15 +4719,16 @@ fn evaluate_activation_candidate(
                 continue;
             }
 
-            // For HARD_TANH targets, search for best outgoing_weight since linear optimal may be wrong
-            // Must verify samples have target_value/target_activation data before using unsafe unwrap
-            let use_hard_tanh = can_use_hard_tanh(samples, target_squash);
+            // For non-linear targets (HARD_TANH, ReLU, etc.), search for best outgoing_weight
+            // since linear optimal may be wrong due to activation saturation/clipping.
+            // Must verify samples have target_value/target_activation data before simulation.
+            let target_activation_fn = get_target_simulation_fn(samples, target_squash);
             let (
                 outgoing_weight,
                 optimal_bias,
                 expected_improvement_percentage,
                 final_improved_count,
-            ) = if use_hard_tanh {
+            ) = if target_activation_fn.is_some() {
                 // Weight candidates: linear optimal and scaled versions
                 let weight_candidates: [f32; 9] = [
                     linear_optimal_weight * 0.1,
@@ -4662,7 +4763,7 @@ fn evaluate_activation_candidate(
                         target_squash,
                     );
 
-                    // Single pass for improvement and count
+                    // Single pass for improvement and count with target simulation
                     let (improvement, improved, _) = compute_activation_improvement_and_count(
                         samples,
                         incoming_weight,
@@ -4670,7 +4771,7 @@ fn evaluate_activation_candidate(
                         bias,
                         spec.activation,
                         baseline_sq,
-                        true, // use_hard_tanh
+                        target_activation_fn,
                     );
 
                     if improvement > best_improvement {
@@ -4688,7 +4789,7 @@ fn evaluate_activation_candidate(
                     best_improved_count,
                 )
             } else {
-                // For non-HARD_TANH, use linear optimal weight with single pass
+                // For linear targets or when target data unavailable, use linear optimal weight
                 let outgoing_weight = linear_optimal_weight.clamp(-10.0, 10.0);
 
                 let optimal_bias = calculate_optimal_bias(
@@ -4708,7 +4809,7 @@ fn evaluate_activation_candidate(
                     optimal_bias,
                     spec.activation,
                     baseline_sq,
-                    false, // use_hard_tanh
+                    None, // Linear approximation
                 );
 
                 (outgoing_weight, optimal_bias, improvement, improved_count)
@@ -5425,6 +5526,32 @@ fn analyze_neurons_with_cache(
         eprintln!("[NEAT-AI-Discovery][verbose] analyse_neurons reached analysis deadline; returning partial results.");
     }
 
+    // DEBUG: Log contents of helpful_map before conversion
+    if verbose_enabled() {
+        let relu_count = helpful_map.values().filter(|c| c.squash == "ReLU").count();
+        let total_count = helpful_map.len();
+        eprintln!(
+            "[NEAT-AI-Discovery][DEBUG] helpful_map contains {total_count} total candidates, {relu_count} are ReLU"
+        );
+        // Log top 5 by improvement (including squash type)
+        let mut sorted_preview: Vec<_> = helpful_map.values().collect();
+        sorted_preview.sort_by(|a, b| {
+            b.expected_improvement_percentage
+                .partial_cmp(&a.expected_improvement_percentage)
+                .unwrap_or(Ordering::Equal)
+        });
+        for (i, c) in sorted_preview.iter().take(10).enumerate() {
+            eprintln!(
+                "[NEAT-AI-Discovery][DEBUG] Top {} in map: {} {} -> {} improvement={:.2}%",
+                i + 1,
+                c.squash,
+                &c.source_neuron_uuid[..12.min(c.source_neuron_uuid.len())],
+                &c.target_neuron_uuid[..12.min(c.target_neuron_uuid.len())],
+                c.expected_improvement_percentage * 100.0
+            );
+        }
+    }
+
     let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
     helpful_results.sort_by(|a, b| {
         b.expected_improvement_percentage
@@ -5432,8 +5559,46 @@ fn analyze_neurons_with_cache(
             .unwrap_or(Ordering::Equal)
     });
 
+    // DEBUG: Log after sorting
+    if verbose_enabled() && !helpful_results.is_empty() {
+        eprintln!(
+            "[NEAT-AI-Discovery][DEBUG] After sorting, top candidate: {} {} -> {} improvement={:.2}%",
+            helpful_results[0].squash,
+            &helpful_results[0].source_neuron_uuid[..12.min(helpful_results[0].source_neuron_uuid.len())],
+            &helpful_results[0].target_neuron_uuid[..12.min(helpful_results[0].target_neuron_uuid.len())],
+            helpful_results[0].expected_improvement_percentage * 100.0
+        );
+    }
+
     if let Some(limit) = input.max_candidates {
         helpful_results.truncate(limit);
+    }
+
+    // DEBUG: Log final count after truncation
+    if verbose_enabled() {
+        let relu_count = helpful_results
+            .iter()
+            .filter(|c| c.squash == "ReLU")
+            .count();
+        eprintln!(
+            "[NEAT-AI-Discovery][DEBUG] Returning {} candidates, {} are ReLU",
+            helpful_results.len(),
+            relu_count
+        );
+        // Log ALL returned candidates
+        for (i, c) in helpful_results.iter().enumerate() {
+            eprintln!(
+                "[NEAT-AI-Discovery][DEBUG] RETURNED[{}]: {} {} -> {} improvement={:.4}% bias={:.4} inW={:.4} outW={:.4}",
+                i,
+                c.squash,
+                &c.source_neuron_uuid,
+                &c.target_neuron_uuid[..20.min(c.target_neuron_uuid.len())],
+                c.expected_improvement_percentage * 100.0,
+                c.bias,
+                c.incoming_weight,
+                c.outgoing_weight,
+            );
+        }
     }
 
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
@@ -9691,8 +9856,14 @@ mod tests_synapses {
             "can_use_hard_tanh must return false when samples lack target data"
         );
 
-        // When properly using can_use_hard_tanh, we get linear model behaviour
-        let use_hard_tanh = can_use_hard_tanh(&samples, Some("HARD_TANH"));
+        // get_target_simulation_fn should also return None when samples lack target data
+        assert!(
+            get_target_simulation_fn(&samples, Some("HARD_TANH")).is_none(),
+            "get_target_simulation_fn must return None when samples lack target data"
+        );
+
+        // When properly using get_target_simulation_fn, we get linear model behaviour
+        let target_activation_fn = get_target_simulation_fn(&samples, Some("HARD_TANH"));
         let (improvement, improved, total) = compute_activation_improvement_and_count(
             &samples,
             1.0,            // incoming_weight
@@ -9700,7 +9871,7 @@ mod tests_synapses {
             0.0,            // bias
             |x| x.max(0.0), // ReLU activation
             baseline_sq,
-            use_hard_tanh, // Will be false due to missing target data
+            target_activation_fn, // Will be None due to missing target data
         );
 
         // Linear model: contribution = 0.5 × max(0, 1.0 × 0.5 + 0) = 0.25
