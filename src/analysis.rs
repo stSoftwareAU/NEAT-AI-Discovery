@@ -4457,6 +4457,109 @@ fn compute_net_improvement_with_squash(
     improvement
 }
 
+/// Compute synapse improvement accounting for target neuron's activation function.
+///
+/// For direct synapse connections (source → target), the contribution is `weight × source_activation`.
+/// This function simulates the target's activation function to predict accurate improvement,
+/// avoiding overprediction near saturation for HARD_TANH, TANH, LOGISTIC, etc.
+///
+/// Returns improvement_percentage only. Used in tests; production uses compute_synapse_improvement_and_count.
+#[cfg(test)]
+fn compute_synapse_improvement_with_target_squash(
+    samples: &[HelpfulSample],
+    weight: f32,
+    total_baseline_error_sq: f32,
+    target_squash: Option<&str>,
+) -> f32 {
+    if total_baseline_error_sq <= EPSILON || samples.is_empty() {
+        return 0.0;
+    }
+
+    // Check if we can use saturation-aware model
+    let target_activation_fn = get_target_simulation_fn(samples, target_squash);
+
+    let mut new_error_sq_sum = 0.0f32;
+
+    for sample in samples {
+        // Direct synapse contribution: weight × source_activation
+        let contribution = weight * sample.activation;
+
+        let new_error = if let Some(target_fn) = target_activation_fn {
+            // Saturation-aware model: apply target's activation function
+            // Safety: target_activation_fn is only Some when all samples have target data
+            let target_value = unsafe { sample.target_value.unwrap_unchecked() };
+            let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
+            let expected = target_activation + sample.avg_error;
+            let new_input = target_value + contribution;
+            target_fn(new_input) - expected
+        } else {
+            // Linear approximation - assumes contribution directly reduces error
+            sample.avg_error - contribution
+        };
+
+        if new_error.is_finite() {
+            new_error_sq_sum += new_error * new_error;
+        }
+    }
+
+    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
+    if improvement.is_finite() {
+        improvement
+    } else {
+        0.0
+    }
+}
+
+/// Compute both improvement and improved count for synapse candidates.
+/// Used when we need to count how many samples actually improved.
+fn compute_synapse_improvement_and_count(
+    samples: &[HelpfulSample],
+    weight: f32,
+    total_baseline_error_sq: f32,
+    target_squash: Option<&str>,
+) -> (f32, u32, u32) {
+    if total_baseline_error_sq <= EPSILON || samples.is_empty() {
+        return (0.0, 0, samples.len() as u32);
+    }
+
+    let target_activation_fn = get_target_simulation_fn(samples, target_squash);
+
+    let mut new_error_sq_sum = 0.0f32;
+    let mut improved_count = 0u32;
+    let total_count = samples.len() as u32;
+
+    for sample in samples {
+        let contribution = weight * sample.activation;
+
+        let new_error = if let Some(target_fn) = target_activation_fn {
+            let target_value = unsafe { sample.target_value.unwrap_unchecked() };
+            let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
+            let expected = target_activation + sample.avg_error;
+            let new_input = target_value + contribution;
+            target_fn(new_input) - expected
+        } else {
+            sample.avg_error - contribution
+        };
+
+        if new_error.is_finite() {
+            new_error_sq_sum += new_error * new_error;
+        }
+
+        if new_error.abs() + EPSILON < sample.avg_error.abs() {
+            improved_count += 1;
+        }
+    }
+
+    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
+    let improvement = if improvement.is_finite() {
+        improvement
+    } else {
+        0.0
+    };
+
+    (improvement, improved_count, total_count)
+}
+
 /// Wrapper for tests - counts improved samples only.
 #[cfg(test)]
 fn count_improved_samples(
@@ -5841,6 +5944,7 @@ fn analyze_synapses_with_cache(
     let existing_synapses_arc = Arc::new(existing_synapses);
     let synapses_by_target_arc = Arc::new(synapses_by_target);
     let order_map_arc = Arc::new(order_map);
+    let neuron_squash_map_arc = Arc::new(neuron_squash_map);
 
     // Build a comprehensive map of ALL neuron UUIDs to their types
     // This includes: input neurons, and all neurons from creature.neurons (hidden, output, constant)
@@ -6174,12 +6278,12 @@ fn analyze_synapses_with_cache(
 
                 for (work, stats) in helpful_work_batch.iter().zip(helpful_stats_batch.iter()) {
                     let positive_is_better = stats.positive_count >= stats.negative_count;
-                    let improved_count = if positive_is_better {
+                    let gpu_improved_count = if positive_is_better {
                         stats.positive_count
                     } else {
                         stats.negative_count
                     };
-                    if improved_count == 0 {
+                    if gpu_improved_count == 0 {
                         diagnostics_zero_improvements.push((
                             work.target_uuid.clone(),
                             work.source_uuid.clone(),
@@ -6209,18 +6313,25 @@ fn analyze_synapses_with_cache(
                         weight = weight.clamp(-10.0, 10.0);
                     }
 
-                    let improvement_magnitude = 2.0 * weight * stats.error_activation_sum
-                        - weight * weight * stats.activation_sq_sum;
+                    // Get target's squash function for saturation-aware improvement calculation.
+                    // For saturating activations (HARD_TANH, TANH, LOGISTIC, etc.), the linear model
+                    // overpredicts improvement near saturation. Using the actual activation function
+                    // gives accurate predictions that match real-world results.
+                    let target_squash = neuron_squash_map_arc
+                        .get(&work.target_uuid)
+                        .map(|s| s.as_str());
 
-                    let expected_improvement_percentage = if stats.error_sq_sum > EPSILON {
-                        let result = improvement_magnitude / stats.error_sq_sum;
-                        if result.is_finite() {
-                            result
-                        } else {
-                            0.0
-                        }
-                    } else {
-                        0.0
+                    // Compute expected improvement using saturation-aware model when target data is available.
+                    // Falls back to linear model when target_value/target_activation are not recorded.
+                    let (expected_improvement_percentage, improved_count) = {
+                        let baseline_error_sq = stats.error_sq_sum;
+                        let (improvement, improved, _) = compute_synapse_improvement_and_count(
+                            &work.samples,
+                            weight,
+                            baseline_error_sq,
+                            target_squash,
+                        );
+                        (improvement, improved)
                     };
 
                     // Accept all positive improvements as candidates (not just those above threshold)
@@ -9965,6 +10076,106 @@ mod tests_synapses {
         assert!(
             weight2 > 1.0,
             "Weight {weight2} should exceed 1.0, proving it's not using the buggy clamped formula"
+        );
+    }
+
+    /// Test that synapse improvement calculation uses saturation-aware model for HARD_TANH targets.
+    ///
+    /// The linear model overpredicts improvement when target is near saturation because it
+    /// assumes the contribution is applied directly to error, not clamped by the activation.
+    ///
+    /// Example: HARD_TANH target with pre-activation value = 0.9, error = 0.15 (wants output 1.05)
+    /// Linear model: Adding contribution of 0.2 reduces error by 0.2 (100%+ improvement!)
+    /// Reality: HARD_TANH(0.9 + 0.2) = HARD_TANH(1.1) = 1.0, so error becomes 1.0 - 1.05 = -0.05
+    /// Actual improvement: |0.15|² - |0.05|² = 0.0225 - 0.0025 = 0.02 (only ~89% reduction)
+    ///
+    /// Without saturation-aware model, synapse candidates may promise more than they deliver.
+    #[test]
+    fn synapse_improvement_uses_saturation_aware_model_for_hard_tanh() {
+        // Create samples where HARD_TANH is near saturation
+        // target_value (pre-activation) = 0.9, so close to +1 saturation
+        // target_activation = HARD_TANH(0.9) = 0.9
+        // avg_error = 0.15 (output should be 0.9 + 0.15 = 1.05, but HARD_TANH caps at 1.0)
+        let samples = vec![
+            HelpfulSample {
+                activation: 0.5,              // source neuron activation
+                avg_error: 0.15,              // target error (positive = output should be higher)
+                target_value: Some(0.9),      // pre-activation sum
+                target_activation: Some(0.9), // current output
+            },
+            HelpfulSample {
+                activation: 0.4,
+                avg_error: 0.12,
+                target_value: Some(0.85),
+                target_activation: Some(0.85),
+            },
+        ];
+
+        // Compute optimal weight using linear model
+        let mut error_activation_sum = 0.0f32;
+        let mut activation_sq_sum = 0.0f32;
+        let mut baseline_error_sq = 0.0f32;
+
+        for sample in &samples {
+            error_activation_sum += sample.avg_error * sample.activation;
+            activation_sq_sum += sample.activation * sample.activation;
+            baseline_error_sq += sample.avg_error * sample.avg_error;
+        }
+
+        let weight = error_activation_sum / (activation_sq_sum + EPSILON);
+
+        // LINEAR MODEL PREDICTION (what old code does):
+        // improvement = (2*w*E[a*e] - w²*E[a²]) / E[e²]
+        let linear_improvement = (2.0 * weight * error_activation_sum
+            - weight * weight * activation_sq_sum)
+            / baseline_error_sq;
+
+        // SATURATION-AWARE MODEL (what should happen):
+        // For each sample, compute actual new error after applying synapse through HARD_TANH
+        let mut actual_new_error_sq = 0.0f32;
+        for sample in &samples {
+            let target_value = sample.target_value.unwrap();
+            let target_activation = sample.target_activation.unwrap();
+            let expected_output = target_activation + sample.avg_error;
+
+            // New pre-activation = old pre-activation + weight * source_activation
+            let new_pre_activation = target_value + weight * sample.activation;
+            // New output = HARD_TANH(new_pre_activation)
+            let new_output = new_pre_activation.clamp(-1.0, 1.0);
+            // New error = new_output - expected_output
+            let new_error = new_output - expected_output;
+
+            actual_new_error_sq += new_error * new_error;
+        }
+
+        let actual_improvement = (baseline_error_sq - actual_new_error_sq) / baseline_error_sq;
+
+        // Linear model should predict MORE improvement than reality (overpredicts)
+        assert!(
+            linear_improvement > actual_improvement,
+            "Linear model ({linear_improvement:.4}) should overpredict vs actual ({actual_improvement:.4}) for HARD_TANH near saturation"
+        );
+
+        // The difference should be meaningful (not just floating-point noise)
+        let prediction_error = (linear_improvement - actual_improvement).abs();
+        assert!(
+            prediction_error > 0.01,
+            "Prediction error ({prediction_error:.4}) should be > 1% for HARD_TANH near saturation"
+        );
+
+        // Now test that compute_synapse_improvement_with_target_squash gives accurate prediction
+        let saturation_aware_improvement = compute_synapse_improvement_with_target_squash(
+            &samples,
+            weight,
+            baseline_error_sq,
+            Some("HARD_TANH"),
+        );
+
+        // Saturation-aware model should be close to actual improvement
+        let saturation_error = (saturation_aware_improvement - actual_improvement).abs();
+        assert!(
+            saturation_error < 0.01,
+            "Saturation-aware model ({saturation_aware_improvement:.4}) should match actual ({actual_improvement:.4}), error was {saturation_error:.4}"
         );
     }
 }
