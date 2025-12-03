@@ -4510,22 +4510,25 @@ fn compute_synapse_improvement_with_target_squash(
     }
 }
 
-/// Compute both improvement and improved count for synapse candidates.
-/// Used when we need to count how many samples actually improved.
+/// Compute improvement, improved count, and worsened count for synapse candidates.
+/// All counts use the same saturation-aware methodology for consistency.
+///
+/// Returns (improvement_percentage, improved_count, worsened_count, total_count)
 fn compute_synapse_improvement_and_count(
     samples: &[HelpfulSample],
     weight: f32,
     total_baseline_error_sq: f32,
     target_squash: Option<&str>,
-) -> (f32, u32, u32) {
+) -> (f32, u32, u32, u32) {
     if total_baseline_error_sq <= EPSILON || samples.is_empty() {
-        return (0.0, 0, samples.len() as u32);
+        return (0.0, 0, 0, samples.len() as u32);
     }
 
     let target_activation_fn = get_target_simulation_fn(samples, target_squash);
 
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
+    let mut worsened_count = 0u32;
     let total_count = samples.len() as u32;
 
     for sample in samples {
@@ -4545,9 +4548,15 @@ fn compute_synapse_improvement_and_count(
             new_error_sq_sum += new_error * new_error;
         }
 
+        // Count improved samples: new error is smaller than old error
         if new_error.abs() + EPSILON < sample.avg_error.abs() {
             improved_count += 1;
         }
+        // Count worsened samples: new error is larger than old error
+        else if new_error.abs() > sample.avg_error.abs() + EPSILON {
+            worsened_count += 1;
+        }
+        // Note: samples where |new_error| ≈ |old_error| are neither improved nor worsened
     }
 
     let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
@@ -4557,7 +4566,7 @@ fn compute_synapse_improvement_and_count(
         0.0
     };
 
-    (improvement, improved_count, total_count)
+    (improvement, improved_count, worsened_count, total_count)
 }
 
 /// Wrapper for tests - counts improved samples only.
@@ -6294,11 +6303,6 @@ fn analyze_synapses_with_cache(
                         continue;
                     }
 
-                    let worsen_count = if positive_is_better {
-                        stats.negative_count
-                    } else {
-                        stats.positive_count
-                    };
                     let total_count = work.samples.len() as u32;
                     if total_count == 0 {
                         continue;
@@ -6323,15 +6327,18 @@ fn analyze_synapses_with_cache(
 
                     // Compute expected improvement using saturation-aware model when target data is available.
                     // Falls back to linear model when target_value/target_activation are not recorded.
-                    let (expected_improvement_percentage, improved_count) = {
+                    // Both improved_count and worsened_count now use the same CPU-based saturation-aware
+                    // methodology for consistency (previously worsened_count came from GPU linear model).
+                    let (expected_improvement_percentage, improved_count, worsened_count) = {
                         let baseline_error_sq = stats.error_sq_sum;
-                        let (improvement, improved, _) = compute_synapse_improvement_and_count(
-                            &work.samples,
-                            weight,
-                            baseline_error_sq,
-                            target_squash,
-                        );
-                        (improvement, improved)
+                        let (improvement, improved, worsened, _) =
+                            compute_synapse_improvement_and_count(
+                                &work.samples,
+                                weight,
+                                baseline_error_sq,
+                                target_squash,
+                            );
+                        (improvement, improved, worsened)
                     };
 
                     // Accept all positive improvements as candidates (not just those above threshold)
@@ -6351,7 +6358,7 @@ fn analyze_synapses_with_cache(
                                 expected_improvement: expected_improvement_percentage,
                                 threshold,
                                 improved_count,
-                                worsened_count: worsen_count,
+                                worsened_count,
                                 weight,
                             },
                         ));
