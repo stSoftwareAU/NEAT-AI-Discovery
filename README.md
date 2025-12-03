@@ -216,6 +216,25 @@ This correlation analysis works regardless of the target's activation function.
 The linear model is an approximation for ALL non-linear functions - it may be
 more or less accurate depending on the function, but it finds useful patterns.
 
+#### Bias-aware neuron improvement calculation
+
+When evaluating neuron candidates (add-neurons), the **bias parameter** is critical
+for accurate improvement predictions. The bias shifts the activation threshold:
+
+| Bias | Effect | Samples Affected |
+|------|--------|-----------------|
+| bias > 0 | Shifts threshold left | More samples activate the neuron |
+| bias = 0 | Default threshold | Only positive pre-activation values activate |
+| bias < 0 | Shifts threshold right | Fewer samples activate the neuron |
+
+For example, with a ReLU neuron:
+- Without bias: `ReLU(1.0 × activation)` only fires when activation > 0
+- With bias=0.5: `ReLU(1.0 × activation + 0.5)` fires when activation > -0.5
+
+The improvement calculation now includes the proposed bias when evaluating neuron
+candidates. This ensures the predicted improvement matches the actual improvement
+when the neuron is applied with its computed bias value.
+
 If verbose logging is enabled (`NEAT_AI_DISCOVERY_VERBOSE=1`), you'll see
 messages like:
 

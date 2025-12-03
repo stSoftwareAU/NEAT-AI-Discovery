@@ -4324,11 +4324,17 @@ fn can_use_hard_tanh(samples: &[HelpfulSample], target_squash: Option<&str>) -> 
 /// When `target_activation_fn` is Some, simulates the target neuron's actual activation
 /// function for more accurate improvement estimates. Otherwise falls back to linear approximation.
 ///
+/// IMPORTANT: The `bias` parameter is critical for accurate predictions. It shifts the ReLU
+/// activation threshold, affecting which samples produce non-zero output. When bias > 0,
+/// more samples activate; when bias < 0, fewer samples activate. Excluding bias causes
+/// significant prediction errors.
+///
 /// Returns (improvement_percentage, improved_count, total_count)
 fn compute_relu_improvement_and_count(
     samples: &[HelpfulSample],
     incoming_weight: f32,
     outgoing_weight: f32,
+    bias: f32,
     total_baseline_error_sq: f32,
     target_activation_fn: Option<fn(f32) -> f32>,
 ) -> (f32, u32, u32) {
@@ -4341,7 +4347,7 @@ fn compute_relu_improvement_and_count(
     let total_count = samples.len() as u32;
 
     for sample in samples {
-        let pre_activation = incoming_weight * sample.activation;
+        let pre_activation = incoming_weight * sample.activation + bias;
         let relu_output = pre_activation.max(0.0);
         let contribution = outgoing_weight * relu_output;
 
@@ -4354,8 +4360,9 @@ fn compute_relu_improvement_and_count(
             let new_input = target_value + contribution;
             target_fn(new_input) - expected
         } else {
-            // Linear approximation - assumes contribution directly reduces error
-            contribution - sample.avg_error
+            // Linear approximation - consistent with synapse model: new_error = old_error - correction
+            // avg_error is (expected - actual), contribution adds to output, so reduces error
+            sample.avg_error - contribution
         };
 
         new_error_sq_sum += new_error * new_error;
@@ -4414,8 +4421,9 @@ fn compute_activation_improvement_and_count(
             let new_input = target_value + contribution;
             target_fn(new_input) - expected
         } else {
-            // Linear approximation - assumes contribution directly reduces error
-            contribution - sample.avg_error
+            // Linear approximation - consistent with synapse model: new_error = old_error - correction
+            // avg_error is (expected - actual), contribution adds to output, so reduces error
+            sample.avg_error - contribution
         };
 
         if new_error.is_finite() {
@@ -4438,11 +4446,14 @@ fn compute_activation_improvement_and_count(
 }
 
 /// Wrapper for tests - computes improvement only.
+/// NOTE: For ReLU candidates, bias affects which samples activate. Pass the actual bias
+/// that will be used with the new neuron for accurate predictions.
 #[cfg(test)]
 fn compute_net_improvement_with_squash(
     samples: &[HelpfulSample],
     incoming_weight: f32,
     outgoing_weight: f32,
+    bias: f32,
     total_baseline_error_sq: f32,
     target_squash: Option<&str>,
 ) -> f32 {
@@ -4451,6 +4462,7 @@ fn compute_net_improvement_with_squash(
         samples,
         incoming_weight,
         outgoing_weight,
+        bias,
         total_baseline_error_sq,
         target_activation_fn,
     );
@@ -4575,6 +4587,7 @@ fn count_improved_samples(
     samples: &[HelpfulSample],
     incoming_weight: f32,
     outgoing_weight: f32,
+    bias: f32,
     target_squash: Option<&str>,
 ) -> (u32, u32) {
     let total_baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
@@ -4583,6 +4596,7 @@ fn count_improved_samples(
         samples,
         incoming_weight,
         outgoing_weight,
+        bias,
         total_baseline_error_sq,
         target_activation_fn,
     );
@@ -4661,10 +4675,12 @@ fn evaluate_relu_candidates_split(
                 &positive_error_samples,
             ) {
                 // Compute net improvement across ALL samples (single pass)
+                // CRITICAL: Include candidate.bias for accurate prediction
                 let (net_improvement, improved, total) = compute_relu_improvement_and_count(
                     samples,
                     candidate.incoming_weight,
                     candidate.outgoing_weight,
+                    candidate.bias,
                     total_baseline_error_sq,
                     target_activation_fn,
                 );
@@ -4701,10 +4717,12 @@ fn evaluate_relu_candidates_split(
                 &negative_error_samples,
             ) {
                 // Compute net improvement across ALL samples (single pass)
+                // CRITICAL: Include candidate.bias for accurate prediction
                 let (net_improvement, improved, total) = compute_relu_improvement_and_count(
                     samples,
                     candidate.incoming_weight,
                     candidate.outgoing_weight,
+                    candidate.bias,
                     total_baseline_error_sq,
                     target_activation_fn,
                 );
@@ -9420,11 +9438,12 @@ mod tests_synapses {
 
         let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
 
-        // Use the function under test (linear model)
+        // Use the function under test (linear model, bias=0)
         let predicted_improvement = compute_net_improvement_with_squash(
             &samples,
             incoming_weight,
             outgoing_weight,
+            0.0, // bias=0 for this test (ReLU threshold at 0)
             baseline_error_sq,
             None,
         );
@@ -9496,11 +9515,12 @@ mod tests_synapses {
             &samples,
             incoming_weight,
             outgoing_weight,
+            0.0, // bias=0 for this test
             baseline_error_sq,
             None, // Linear model
         );
 
-        // Manually compute
+        // Manually compute (bias=0)
         let mut new_error_sq = 0.0f32;
         for sample in &samples {
             let relu_out = (incoming_weight * sample.activation).max(0.0);
@@ -9742,20 +9762,22 @@ mod tests_synapses {
 
         let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
 
-        // Test with LINEAR model (no squash specified)
+        // Test with LINEAR model (no squash specified, bias=0)
         let linear_improvement = compute_net_improvement_with_squash(
             &samples,
             incoming_weight,
             outgoing_weight,
+            0.0, // bias=0
             baseline_error_sq,
             None,
         );
 
-        // Test with HARD_TANH model
+        // Test with HARD_TANH model (bias=0)
         let hard_tanh_improvement = compute_net_improvement_with_squash(
             &samples,
             incoming_weight,
             outgoing_weight,
+            0.0, // bias=0
             baseline_error_sq,
             Some("HARD_TANH"),
         );
@@ -9812,11 +9834,12 @@ mod tests_synapses {
         let outgoing_weight = 0.5;
         let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
 
-        // Even with HARD_TANH specified, should fall back to linear model
+        // Even with HARD_TANH specified, should fall back to linear model (bias=0)
         let improvement = compute_net_improvement_with_squash(
             &samples,
             incoming_weight,
             outgoing_weight,
+            0.0, // bias=0
             baseline_error_sq,
             Some("HARD_TANH"),
         );
@@ -9861,11 +9884,12 @@ mod tests_synapses {
         let incoming_weight = 1.0;
         let outgoing_weight = 0.5; // contribution = 0.5 × max(0, 1.0 × 0.5) = 0.25
 
-        // With HARD_TANH model, this sample SHOULD be counted as improved
+        // With HARD_TANH model, this sample SHOULD be counted as improved (bias=0)
         let (improved_count, total_count) = count_improved_samples(
             &samples,
             incoming_weight,
             outgoing_weight,
+            0.0, // bias=0
             Some("HARD_TANH"),
         );
 
@@ -9895,6 +9919,7 @@ mod tests_synapses {
             &samples,
             incoming_weight,
             outgoing_weight,
+            0.0,               // bias=0
             Some("HARD_TANH"), // Even with HARD_TANH, should fall back to linear
         );
 
@@ -9918,18 +9943,23 @@ mod tests_synapses {
         let outgoing_weight = 0.5; // contribution = 0.25
                                    // Linear: new_error = 0.3 - 0.25 = 0.05, |new_error| < |old_error| = 0.3, IMPROVED
 
-        // With TANH (not HARD_TANH), should use linear model
-        let (improved_count, _) =
-            count_improved_samples(&samples, incoming_weight, outgoing_weight, Some("TANH"));
+        // With TANH (not HARD_TANH), should use linear model (bias=0)
+        let (improved_count, _) = count_improved_samples(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            0.0,
+            Some("TANH"),
+        );
 
         assert_eq!(
             improved_count, 1,
             "Linear model should show sample is improved for TANH"
         );
 
-        // With None squash, should also use linear model
+        // With None squash, should also use linear model (bias=0)
         let (improved_count_none, _) =
-            count_improved_samples(&samples, incoming_weight, outgoing_weight, None);
+            count_improved_samples(&samples, incoming_weight, outgoing_weight, 0.0, None);
 
         assert_eq!(
             improved_count_none, 1,
@@ -10183,6 +10213,141 @@ mod tests_synapses {
         assert!(
             saturation_error < 0.01,
             "Saturation-aware model ({saturation_aware_improvement:.4}) should match actual ({actual_improvement:.4}), error was {saturation_error:.4}"
+        );
+    }
+
+    /// TDD Test: ReLU improvement calculation MUST include bias for accurate predictions.
+    ///
+    /// When bias > 0, the ReLU threshold shifts left, causing more samples to activate.
+    /// When bias < 0, the ReLU threshold shifts right, causing fewer samples to activate.
+    ///
+    /// If bias is NOT included in the improvement calculation, the prediction will be
+    /// inaccurate when a non-zero bias is proposed for the new neuron.
+    ///
+    /// This test demonstrates the bug: compute_relu_improvement_and_count ignores bias,
+    /// leading to overestimation when the actual neuron would use a different activation
+    /// pattern due to the bias.
+    #[test]
+    fn test_relu_improvement_must_include_bias() {
+        // Scenario: Source activations that are NEGATIVE (would be zeroed by ReLU without bias).
+        // With a positive bias, the ReLU would fire on these samples.
+        //
+        // Sample 1: activation = -0.3, error = 0.5 (want output higher)
+        // Sample 2: activation = -0.2, error = 0.4 (want output higher)
+        // Sample 3: activation = 0.1, error = 0.3 (want output higher)
+        //
+        // Without bias (bias=0):
+        //   ReLU(1.0 × -0.3 + 0) = 0  → contribution = 0
+        //   ReLU(1.0 × -0.2 + 0) = 0  → contribution = 0
+        //   ReLU(1.0 × 0.1 + 0) = 0.1 → contribution = outgoing_weight × 0.1
+        //
+        // With bias=0.5:
+        //   ReLU(1.0 × -0.3 + 0.5) = 0.2 → contribution = outgoing_weight × 0.2
+        //   ReLU(1.0 × -0.2 + 0.5) = 0.3 → contribution = outgoing_weight × 0.3
+        //   ReLU(1.0 × 0.1 + 0.5) = 0.6 → contribution = outgoing_weight × 0.6
+        //
+        // The bias dramatically changes which samples are affected and by how much!
+
+        let samples = vec![
+            HelpfulSample {
+                activation: -0.3,
+                avg_error: 0.5,
+                target_value: None,
+                target_activation: None,
+            },
+            HelpfulSample {
+                activation: -0.2,
+                avg_error: 0.4,
+                target_value: None,
+                target_activation: None,
+            },
+            HelpfulSample {
+                activation: 0.1,
+                avg_error: 0.3,
+                target_value: None,
+                target_activation: None,
+            },
+        ];
+
+        let incoming_weight = 1.0f32;
+        let outgoing_weight = 0.8f32; // Positive weight to reduce positive errors
+        let bias = 0.5f32; // Significant positive bias
+
+        let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
+        // 0.5² + 0.4² + 0.3² = 0.25 + 0.16 + 0.09 = 0.5
+
+        // Predicted improvement using the function WITH bias parameter
+        let predicted_with_bias = compute_net_improvement_with_squash(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            baseline_error_sq,
+            None,
+        );
+
+        // Also compute without bias (bias=0) to show the difference
+        let predicted_without_bias = compute_net_improvement_with_squash(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            0.0, // No bias
+            baseline_error_sq,
+            None,
+        );
+
+        // Manually compute ACTUAL improvement WITH bias
+        let mut new_error_sq_with_bias = 0.0f32;
+        for sample in &samples {
+            let pre_activation = incoming_weight * sample.activation + bias;
+            let relu_out = pre_activation.max(0.0);
+            let contribution = outgoing_weight * relu_out;
+            let new_err = sample.avg_error - contribution;
+            new_error_sq_with_bias += new_err.powi(2);
+        }
+        let actual_improvement_with_bias =
+            (baseline_error_sq - new_error_sq_with_bias) / baseline_error_sq;
+
+        // Manually compute improvement WITHOUT bias (what current code predicts)
+        let mut new_error_sq_without_bias = 0.0f32;
+        for sample in &samples {
+            let pre_activation = incoming_weight * sample.activation; // No bias!
+            let relu_out = pre_activation.max(0.0);
+            let contribution = outgoing_weight * relu_out;
+            let new_err = sample.avg_error - contribution;
+            new_error_sq_without_bias += new_err.powi(2);
+        }
+        let manual_improvement_without_bias =
+            (baseline_error_sq - new_error_sq_without_bias) / baseline_error_sq;
+
+        eprintln!(
+            "Baseline error²: {baseline_error_sq:.4}, With bias: new_error²={new_error_sq_with_bias:.4}, Without bias: new_error²={new_error_sq_without_bias:.4}"
+        );
+        let predicted_with_bias_pct = predicted_with_bias * 100.0;
+        let predicted_without_bias_pct = predicted_without_bias * 100.0;
+        let actual_with_bias_pct = actual_improvement_with_bias * 100.0;
+        eprintln!(
+            "Predicted (with bias): {predicted_with_bias_pct:.2}%, Predicted (no bias): {predicted_without_bias_pct:.2}%, Actual (with bias): {actual_with_bias_pct:.2}%"
+        );
+
+        // The predicted improvement WITH bias should match the actual improvement WITH bias.
+        // This verifies that the bias parameter is correctly included in the calculation.
+        assert!(
+            (predicted_with_bias - actual_improvement_with_bias).abs() < 0.01,
+            "Predicted improvement WITH bias ({predicted_with_bias:.4}) must match actual improvement WITH bias ({actual_improvement_with_bias:.4})."
+        );
+
+        // Verify that WITHOUT bias prediction matches manual calculation (both bias=0)
+        assert!(
+            (predicted_without_bias - manual_improvement_without_bias).abs() < 0.01,
+            "Predicted (no bias) ({predicted_without_bias:.4}) must match manual (no bias) ({manual_improvement_without_bias:.4})."
+        );
+
+        // The key insight: with bias=0.5, improvement should be much higher than with bias=0
+        // because more samples activate the ReLU
+        assert!(
+            actual_improvement_with_bias > predicted_without_bias + 0.1,
+            "Improvement with bias ({actual_improvement_with_bias:.4}) should be significantly higher than without ({predicted_without_bias:.4})"
         );
     }
 }
