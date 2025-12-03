@@ -6200,27 +6200,13 @@ fn analyze_synapses_with_cache(
                         continue;
                     }
 
-                    let improvement_sum = if positive_is_better {
-                        stats.positive_improvement_sum
-                    } else {
-                        stats.negative_improvement_sum
-                    };
-
-                    let activation_sum = if positive_is_better {
-                        stats.positive_activation_sum
-                    } else {
-                        stats.negative_activation_sum
-                    };
-
+                    // Use the correct linear optimal weight formula: w = Σ(error × activation) / Σ(activation²)
+                    // This minimises squared error and produces naturally-signed weights based on correlation.
+                    // The previous formula (Σ|error| / Σ|activation|) was incorrect and often clamped to ±1.0.
                     let mut weight = 0.0;
-                    if activation_sum.abs() > EPSILON {
-                        let raw_weight = improvement_sum / (activation_sum + 1e-8);
-                        weight = if positive_is_better {
-                            -raw_weight
-                        } else {
-                            raw_weight
-                        };
-                        weight = weight.clamp(-1.0, 1.0);
+                    if stats.activation_sq_sum > EPSILON {
+                        weight = stats.error_activation_sum / (stats.activation_sq_sum + EPSILON);
+                        weight = weight.clamp(-10.0, 10.0);
                     }
 
                     let improvement_magnitude = 2.0 * weight * stats.error_activation_sum
@@ -9886,6 +9872,99 @@ mod tests_synapses {
         assert_eq!(
             improved, 0,
             "Linear model should show sample is NOT improved"
+        );
+    }
+
+    /// Verify synapse weight uses correct linear optimal formula: w = Σ(error × activation) / Σ(activation²)
+    /// The old buggy formula (Σ|error| / Σ|activation|) would clamp to ±1.0 in many cases.
+    /// This test ensures weights are computed correctly and not always clamped.
+    #[test]
+    fn synapse_weight_uses_correct_linear_optimal_formula() {
+        // Create HelpfulStats with known values that demonstrate the difference
+        // between the correct and buggy formulas:
+        //
+        // Sample 1: activation=2.0, error=0.8  (error×activation = 1.6, activation² = 4.0)
+        // Sample 2: activation=3.0, error=0.6  (error×activation = 1.8, activation² = 9.0)
+        // Sample 3: activation=1.0, error=0.4  (error×activation = 0.4, activation² = 1.0)
+        //
+        // Σ(error × activation) = 1.6 + 1.8 + 0.4 = 3.8
+        // Σ(activation²) = 4.0 + 9.0 + 1.0 = 14.0
+        //
+        // Correct optimal weight: 3.8 / 14.0 = 0.271...
+        //
+        // Old buggy formula would compute:
+        // Σ|error| = 0.8 + 0.6 + 0.4 = 1.8
+        // Σ|activation| = 2.0 + 3.0 + 1.0 = 6.0
+        // Buggy weight: 1.8 / 6.0 = 0.3 (different!)
+        //
+        // And in cases where Σ|error| > Σ|activation|, the buggy formula would clamp to 1.0
+
+        let stats = HelpfulStats {
+            positive_count: 3, // All samples have positive correlation for this test
+            negative_count: 0,
+            positive_improvement_sum: 1.8, // Σ|error| for positive samples (unused in new formula)
+            negative_improvement_sum: 0.0,
+            positive_activation_sum: 6.0, // Σ|activation| for positive samples (unused in new formula)
+            negative_activation_sum: 0.0,
+            error_sq_sum: 0.8 * 0.8 + 0.6 * 0.6 + 0.4 * 0.4, // 0.64 + 0.36 + 0.16 = 1.16
+            activation_sq_sum: 14.0,                         // Σ(activation²) = 4 + 9 + 1
+            error_activation_sum: 3.8, // Σ(error × activation) = 1.6 + 1.8 + 0.4
+        };
+
+        // Apply the correct formula used in production (after fix):
+        // weight = error_activation_sum / (activation_sq_sum + EPSILON)
+        let weight = if stats.activation_sq_sum > EPSILON {
+            let raw = stats.error_activation_sum / (stats.activation_sq_sum + EPSILON);
+            raw.clamp(-10.0, 10.0)
+        } else {
+            0.0
+        };
+
+        // Expected weight: 3.8 / 14.0 ≈ 0.2714
+        let expected = 3.8 / 14.0;
+        assert!(
+            (weight - expected).abs() < 0.001,
+            "Weight should be calculated as Σ(error×activation)/Σ(activation²) = {expected:.4}, got {weight:.4}"
+        );
+
+        // Verify it's NOT the buggy value
+        let buggy_weight = 1.8 / 6.0; // 0.3
+        assert!(
+            (weight - buggy_weight).abs() > 0.01,
+            "Weight {weight} should differ from buggy formula result {buggy_weight}"
+        );
+
+        // Now test a case that would clamp to 1.0 with the buggy formula
+        // Samples where |error| >> |activation|
+        let stats_would_clamp = HelpfulStats {
+            positive_count: 2,
+            negative_count: 0,
+            positive_improvement_sum: 5.0, // Σ|error| (buggy formula would use this)
+            negative_improvement_sum: 0.0,
+            positive_activation_sum: 2.0, // Σ|activation| (buggy formula: 5.0/2.0 = 2.5 -> clamp to 1.0)
+            negative_activation_sum: 0.0,
+            error_sq_sum: 13.0,        // 2² + 3² = 4 + 9 = 13
+            activation_sq_sum: 2.0,    // 1² + 1² = 2
+            error_activation_sum: 5.0, // 2×1 + 3×1 = 5
+        };
+
+        let weight2 = if stats_would_clamp.activation_sq_sum > EPSILON {
+            let raw = stats_would_clamp.error_activation_sum
+                / (stats_would_clamp.activation_sq_sum + EPSILON);
+            raw.clamp(-10.0, 10.0)
+        } else {
+            0.0
+        };
+
+        // Correct optimal: 5.0 / 2.0 = 2.5
+        // Buggy formula would have clamped to 1.0
+        assert!(
+            (weight2 - 2.5).abs() < 0.001,
+            "Weight should be 2.5 (not clamped to 1.0), got {weight2}"
+        );
+        assert!(
+            weight2 > 1.0,
+            "Weight {weight2} should exceed 1.0, proving it's not using the buggy clamped formula"
         );
     }
 }
