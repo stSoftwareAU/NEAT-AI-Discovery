@@ -1002,6 +1002,19 @@ impl NeuronDiagnostics {
                 continue;
             }
 
+            // Check hidden_filtered FIRST - this takes precedence over all other reasons.
+            // Hidden neurons are filtered out before analysis even begins, so they won't
+            // have any other diagnostic data (eligible sources, samples, etc.).
+            if entry.hidden_filtered {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} was filtered out (hidden neuron). \
+                    Add-neuron analysis only targets output neurons because hidden neuron error \
+                    reduction doesn't reliably translate to creature score improvement.",
+                    entry.target_uuid
+                );
+                continue;
+            }
+
             // Check for record loading failures (this indicates a bug or data issue)
             if entry.record_load_failures > 0 {
                 eprintln!(
