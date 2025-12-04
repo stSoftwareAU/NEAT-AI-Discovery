@@ -395,6 +395,10 @@ pub enum NeuronNoCandidateReason {
     /// Hidden neurons are filtered out from add-neuron analysis because their
     /// backpropagated errors don't reliably translate to output error reduction.
     HiddenNeuronFiltered,
+    /// Input neurons are filtered out from add-neuron analysis because they're
+    /// observation sources, not computation nodes - they have no activation function
+    /// or error to reduce.
+    InputNeuronFiltered,
 }
 
 #[derive(Debug, Clone)]
@@ -877,6 +881,9 @@ struct NeuronDiagnosticEntry {
     /// Set to true when this neuron was filtered out because it's a hidden neuron
     /// (only output neurons are valid targets for add-neuron analysis).
     hidden_filtered: bool,
+    /// Set to true when this neuron was filtered out because it's an input neuron
+    /// (input neurons are observation sources, not computation nodes).
+    input_filtered: bool,
 }
 
 impl NeuronDiagnosticEntry {
@@ -891,6 +898,7 @@ impl NeuronDiagnosticEntry {
             had_candidate: false,
             best_rejection: None,
             hidden_filtered: false,
+            input_filtered: false,
         }
     }
 
@@ -992,6 +1000,15 @@ impl NeuronDiagnostics {
         }
     }
 
+    /// Mark a neuron as filtered out because it's an input neuron.
+    /// Input neurons are observation sources, not computation nodes - they have
+    /// no activation function or error to reduce.
+    fn mark_input_filtered(&mut self, target_uuid: &str) {
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.input_filtered = true;
+        }
+    }
+
     fn emit_logs(&self) {
         if !self.log_enabled {
             return;
@@ -1002,9 +1019,22 @@ impl NeuronDiagnostics {
                 continue;
             }
 
-            // Check hidden_filtered FIRST - this takes precedence over all other reasons.
-            // Hidden neurons are filtered out before analysis even begins, so they won't
+            // Check pre-analysis filters FIRST - these take precedence over all other reasons.
+            // These neurons are filtered out before analysis even begins, so they won't
             // have any other diagnostic data (eligible sources, samples, etc.).
+
+            // Input neurons are observation sources, not computation nodes
+            if entry.input_filtered {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} was filtered out (input neuron). \
+                    Input neurons are observation sources, not computation nodes - they have no \
+                    activation function or error to reduce.",
+                    entry.target_uuid
+                );
+                continue;
+            }
+
+            // Hidden neurons have backpropagated errors that don't reliably predict output error
             if entry.hidden_filtered {
                 eprintln!(
                     "[NEAT-AI-Discovery][verbose] Target {} was filtered out (hidden neuron). \
@@ -1083,9 +1113,23 @@ impl NeuronDiagnostics {
             .values()
             .filter(|entry| !entry.had_candidate)
             .map(|entry| {
-                // Check hidden_filtered FIRST - this takes precedence over all other reasons.
-                // Hidden neurons are filtered out before analysis even begins, so they won't
+                // Check pre-analysis filters FIRST - these take precedence over all other reasons.
+                // These neurons are filtered out before analysis even begins, so they won't
                 // have any other diagnostic data (eligible sources, samples, etc.).
+
+                // Input neurons are observation sources, not computation nodes
+                if entry.input_filtered {
+                    return NeuronNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: NeuronNoCandidateReason::InputNeuronFiltered,
+                        evaluated_sources: 0,
+                        sources_with_samples: 0,
+                        target_record_count: 0,
+                        detail: None,
+                    };
+                }
+
+                // Hidden neurons have backpropagated errors that don't reliably predict output error
                 if entry.hidden_filtered {
                     return NeuronNoCandidateSummary {
                         target_uuid: entry.target_uuid.clone(),
@@ -5264,17 +5308,27 @@ fn analyze_neurons_with_cache(
         .map(|n| (n.uuid.clone(), n.squash.clone()))
         .collect();
 
-    // Build a lookup map for neuron types to filter focus neurons
+    // Build a comprehensive lookup map for ALL neuron UUIDs to their types.
+    // This includes: input neurons (from creature.input count) and all neurons from
+    // creature.neurons (hidden, output, constant). If a UUID is not in this map,
+    // it's an invalid UUID (bug in the caller).
+    //
     // Only output neurons should be targets for add-neuron candidates because:
     // - Output neuron errors directly affect creature score
     // - Hidden neuron errors are backpropagated approximations that don't correlate
     //   reliably with actual output error reduction
-    let neuron_type_map: HashMap<String, String> = input
-        .creature
-        .neurons
-        .iter()
-        .map(|n| (n.uuid.clone(), n.neuron_type.clone()))
-        .collect();
+    // - Input neurons are observation sources, not computation nodes
+    let mut neuron_type_map: HashMap<String, String> = HashMap::new();
+
+    // Add input neurons (they're not in creature.neurons, only represented by creature.input count)
+    for input_index in 0..input.creature.input {
+        neuron_type_map.insert(format!("input-{input_index}"), "input".to_string());
+    }
+
+    // Add all neurons from creature.neurons (hidden, output, constant)
+    for neuron in &input.creature.neurons {
+        neuron_type_map.insert(neuron.uuid.clone(), neuron.neuron_type.clone());
+    }
 
     // Log creature configuration for debugging data issues
     if verbose_enabled() {
@@ -5364,11 +5418,14 @@ fn analyze_neurons_with_cache(
     // For HIDDEN neurons, the backpropagated error is an approximation that doesn't
     // reliably translate to actual output error reduction - we've observed 100%
     // failure rates when targeting hidden neurons.
+    // For INPUT neurons, they are observation sources, not computation nodes - they
+    // have no activation function or error to reduce.
     //
-    // Hidden neurons are skipped here but still tracked in diagnostics so the caller
-    // knows they were received but filtered out.
+    // Non-output neurons are skipped here but still tracked in diagnostics so the
+    // caller knows they were received but filtered out (with the correct reason).
     let original_focus_count = unique_focus.len();
     let mut skipped_hidden: Vec<String> = Vec::new();
+    let mut skipped_input: Vec<String> = Vec::new();
 
     // Randomize the focus neuron order so that repeated runs with timeouts will
     // eventually cover all neurons. Convert to owned strings, shuffle, then use.
@@ -5382,49 +5439,102 @@ fn analyze_neurons_with_cache(
         .filter_map(|uuid| {
             // Check neuron type - only allow output neurons for add-neuron analysis
             let neuron_type = neuron_type_map.get(*uuid).map(|s| s.as_str());
-            if neuron_type != Some("output") {
-                skipped_hidden.push((*uuid).clone());
-                return None;
-            }
-
-            if let Some(squash) = neuron_squash_map.get(*uuid) {
-                if is_threshold_activation(squash) {
-                    threshold_targets.push((*uuid).clone());
+            match neuron_type {
+                Some("output") => {
+                    // Output neurons are valid targets - continue processing
+                    if let Some(squash) = neuron_squash_map.get(*uuid) {
+                        if is_threshold_activation(squash) {
+                            threshold_targets.push((*uuid).clone());
+                        }
+                    }
+                    Some((*uuid).clone())
+                }
+                Some("input") => {
+                    // Input neurons are observation sources, not computation nodes
+                    skipped_input.push((*uuid).clone());
+                    None
+                }
+                Some(_) => {
+                    // Hidden/constant neurons have backpropagated errors that don't
+                    // reliably translate to output error reduction
+                    skipped_hidden.push((*uuid).clone());
+                    None
+                }
+                None => {
+                    // Unknown UUID - this is likely a bug, but treat as hidden for now
+                    // (this shouldn't happen with proper creature data)
+                    eprintln!(
+                        "[NEAT-AI-Discovery] Warning: Unknown neuron UUID '{uuid}' in focus list \
+                        (not found in creature). Treating as hidden neuron."
+                    );
+                    skipped_hidden.push((*uuid).clone());
+                    None
                 }
             }
-            Some((*uuid).clone())
         })
         .collect();
 
-    // Log when hidden neurons are filtered out
-    if !skipped_hidden.is_empty() {
-        eprintln!(
-            "[NEAT-AI-Discovery] Filtered {} hidden neuron(s) from add-neuron analysis (only output neurons are valid targets). \
-            Hidden neurons skipped: {:?}. Remaining output neurons: {}",
-            skipped_hidden.len(),
-            skipped_hidden.iter().take(5).collect::<Vec<_>>(),
-            focus_order.len()
-        );
+    // Log when non-output neurons are filtered out
+    let total_skipped = skipped_hidden.len() + skipped_input.len();
+    if total_skipped > 0 {
+        if !skipped_input.is_empty() && !skipped_hidden.is_empty() {
+            eprintln!(
+                "[NEAT-AI-Discovery] Filtered {} neuron(s) from add-neuron analysis (only output neurons are valid targets). \
+                Input neurons skipped: {:?}. Hidden neurons skipped: {:?}. Remaining output neurons: {}",
+                total_skipped,
+                skipped_input.iter().take(5).collect::<Vec<_>>(),
+                skipped_hidden.iter().take(5).collect::<Vec<_>>(),
+                focus_order.len()
+            );
+        } else if !skipped_input.is_empty() {
+            eprintln!(
+                "[NEAT-AI-Discovery] Filtered {} input neuron(s) from add-neuron analysis \
+                (input neurons are observation sources, not computation nodes). \
+                Input neurons skipped: {:?}. Remaining output neurons: {}",
+                skipped_input.len(),
+                skipped_input.iter().take(5).collect::<Vec<_>>(),
+                focus_order.len()
+            );
+        } else {
+            eprintln!(
+                "[NEAT-AI-Discovery] Filtered {} hidden neuron(s) from add-neuron analysis \
+                (only output neurons are valid targets). \
+                Hidden neurons skipped: {:?}. Remaining output neurons: {}",
+                skipped_hidden.len(),
+                skipped_hidden.iter().take(5).collect::<Vec<_>>(),
+                focus_order.len()
+            );
+        }
     }
 
     // If no output neurons remain after filtering, return early with empty results
     if focus_order.is_empty() {
         eprintln!(
-            "[NEAT-AI-Discovery] No output neurons in focus list ({original_focus_count} hidden neurons filtered out). \
-            Add-neuron candidates can only target output neurons because hidden neuron error reduction \
-            doesn't reliably translate to creature score improvement."
+            "[NEAT-AI-Discovery] No output neurons in focus list ({original_focus_count} non-output neurons filtered out). \
+            Add-neuron candidates can only target output neurons."
         );
-        let no_candidate_reasons: Vec<NeuronNoCandidateSummary> = skipped_hidden
-            .iter()
-            .map(|uuid| NeuronNoCandidateSummary {
+        // Build no_candidate_reasons with correct reason for each neuron type
+        let mut no_candidate_reasons: Vec<NeuronNoCandidateSummary> = Vec::new();
+        for uuid in &skipped_input {
+            no_candidate_reasons.push(NeuronNoCandidateSummary {
+                target_uuid: uuid.clone(),
+                reason: NeuronNoCandidateReason::InputNeuronFiltered,
+                evaluated_sources: 0,
+                sources_with_samples: 0,
+                target_record_count: 0,
+                detail: None,
+            });
+        }
+        for uuid in &skipped_hidden {
+            no_candidate_reasons.push(NeuronNoCandidateSummary {
                 target_uuid: uuid.clone(),
                 reason: NeuronNoCandidateReason::HiddenNeuronFiltered,
                 evaluated_sources: 0,
                 sources_with_samples: 0,
                 target_record_count: 0,
                 detail: None,
-            })
-            .collect();
+            });
+        }
         return Ok(AnalyzeNeuronsResult {
             helpful_neurons: Vec::new(),
             gpu_used: true,
@@ -5432,9 +5542,15 @@ fn analyze_neurons_with_cache(
         });
     }
 
-    // Mark skipped hidden neurons in diagnostics so they appear with the correct reason
-    // (HiddenNeuronFiltered) instead of misleading reasons like NoEligibleSources.
+    // Mark skipped neurons in diagnostics so they appear with the correct reason
+    // instead of misleading reasons like NoEligibleSources.
     // This is the normal flow case where some output neurons exist.
+    for input_uuid in &skipped_input {
+        diagnostics
+            .lock()
+            .expect("Mutex poisoned: diagnostics")
+            .mark_input_filtered(input_uuid);
+    }
     for hidden_uuid in &skipped_hidden {
         diagnostics
             .lock()
@@ -10539,6 +10655,69 @@ mod tests_synapses {
             .expect("Should have summary for hidden-1");
 
         // The hidden neuron should have HiddenNeuronFiltered reason
+        assert!(
+            matches!(
+                hidden_summary.reason,
+                NeuronNoCandidateReason::HiddenNeuronFiltered
+            ),
+            "Hidden neuron should report HiddenNeuronFiltered, not {:?}",
+            hidden_summary.reason
+        );
+    }
+
+    #[test]
+    fn neuron_diagnostics_reports_input_neuron_filtered_not_hidden() {
+        // Test that when an input neuron is in the focus list, it gets
+        // InputNeuronFiltered reason (not HiddenNeuronFiltered).
+        //
+        // Bug scenario: The neuron_type_map was only built from creature.neurons
+        // and didn't include input neurons. When an input neuron (e.g. "input-0")
+        // was in the focus list, neuron_type_map.get() returned None, and
+        // `neuron_type != Some("output")` evaluated to true. The input neuron
+        // was incorrectly added to skipped_hidden and reported with
+        // HiddenNeuronFiltered reason.
+        let mut diagnostics =
+            NeuronDiagnostics::new_for_tests(&["output-0", "input-1", "hidden-2"]);
+
+        // Mark input-1 as filtered because it's an input neuron
+        diagnostics.mark_input_filtered("input-1");
+
+        // Mark hidden-2 as filtered because it's a hidden neuron
+        diagnostics.mark_hidden_filtered("hidden-2");
+
+        // Simulate output-0 being processed normally but finding no candidate
+        diagnostics.set_target_record_count("output-0", 100);
+        diagnostics.set_total_eligible_sources("output-0", 5);
+        diagnostics.record_candidate_attempt("output-0", false);
+
+        let summaries = diagnostics.no_candidate_summaries();
+
+        // All three should have summaries
+        assert_eq!(
+            summaries.len(),
+            3,
+            "Expected 3 summaries (one for output, one for input, one for hidden)"
+        );
+
+        // Find the input neuron summary - should have InputNeuronFiltered reason
+        let input_summary = summaries
+            .iter()
+            .find(|s| s.target_uuid == "input-1")
+            .expect("Should have summary for input-1");
+        assert!(
+            matches!(
+                input_summary.reason,
+                NeuronNoCandidateReason::InputNeuronFiltered
+            ),
+            "Input neuron should report InputNeuronFiltered, not {:?}",
+            input_summary.reason
+        );
+
+        // Find the hidden neuron summary - should still have HiddenNeuronFiltered reason
+        let hidden_summary = summaries
+            .iter()
+            .find(|s| s.target_uuid == "hidden-2")
+            .expect("Should have summary for hidden-2");
         assert!(
             matches!(
                 hidden_summary.reason,

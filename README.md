@@ -251,6 +251,22 @@ now filters out these candidates:
 2. **Bias filtering**: IDENTITY candidates with `|bias| < 0.01` are rejected
 3. **Use synapse analysis**: Direct connections should use `add-synapses`, not `add-neurons`
 
+#### Add-neuron target neuron filtering
+
+**Only output neurons are valid targets** for add-neuron analysis. Input and
+hidden neurons are filtered out from the focus list:
+
+| Neuron Type | Filtered? | Reason | Diagnostic Code |
+|-------------|-----------|--------|-----------------|
+| **output** | No | Direct impact on creature score | (not filtered) |
+| **hidden** | Yes | Backpropagated errors don't reliably predict output error | `hidden_neuron_filtered` |
+| **input** | Yes | Observation sources, not computation nodes | `input_neuron_filtered` |
+| **constant** | Yes | No activation function or error | `hidden_neuron_filtered` |
+
+This filtering occurs before analysis begins. The diagnostics response includes
+the appropriate reason code for each filtered neuron, so callers know why a
+focus neuron received no candidates.
+
 If verbose logging is enabled (`NEAT_AI_DISCOVERY_VERBOSE=1`), you'll see
 messages like:
 

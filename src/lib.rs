@@ -381,6 +381,10 @@ pub enum NeuronDiagnosticReasonJson {
     /// Hidden neurons are filtered out from add-neuron analysis because their
     /// backpropagated errors don't reliably translate to output error reduction.
     HiddenNeuronFiltered,
+    /// Input neurons are filtered out from add-neuron analysis because they're
+    /// observation sources, not computation nodes - they have no activation function
+    /// or error to reduce.
+    InputNeuronFiltered,
 }
 
 #[derive(Debug, Serialize)]
@@ -485,6 +489,9 @@ fn neuron_diagnostics_json(
                     }
                     analysis::NeuronNoCandidateReason::HiddenNeuronFiltered => {
                         NeuronDiagnosticReasonJson::HiddenNeuronFiltered
+                    }
+                    analysis::NeuronNoCandidateReason::InputNeuronFiltered => {
+                        NeuronDiagnosticReasonJson::InputNeuronFiltered
                     }
                 },
                 evaluated_sources: summary.evaluated_sources,
