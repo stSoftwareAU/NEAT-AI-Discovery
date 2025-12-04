@@ -874,6 +874,9 @@ struct NeuronDiagnosticEntry {
     sources_with_samples: u32,
     had_candidate: bool,
     best_rejection: Option<NeuronRejectionDetail>,
+    /// Set to true when this neuron was filtered out because it's a hidden neuron
+    /// (only output neurons are valid targets for add-neuron analysis).
+    hidden_filtered: bool,
 }
 
 impl NeuronDiagnosticEntry {
@@ -887,6 +890,7 @@ impl NeuronDiagnosticEntry {
             sources_with_samples: 0,
             had_candidate: false,
             best_rejection: None,
+            hidden_filtered: false,
         }
     }
 
@@ -979,6 +983,15 @@ impl NeuronDiagnostics {
         }
     }
 
+    /// Mark a neuron as filtered out because it's a hidden neuron.
+    /// Hidden neurons are not valid targets for add-neuron analysis because their
+    /// backpropagated errors don't reliably translate to output error reduction.
+    fn mark_hidden_filtered(&mut self, target_uuid: &str) {
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.hidden_filtered = true;
+        }
+    }
+
     fn emit_logs(&self) {
         if !self.log_enabled {
             return;
@@ -1057,6 +1070,20 @@ impl NeuronDiagnostics {
             .values()
             .filter(|entry| !entry.had_candidate)
             .map(|entry| {
+                // Check hidden_filtered FIRST - this takes precedence over all other reasons.
+                // Hidden neurons are filtered out before analysis even begins, so they won't
+                // have any other diagnostic data (eligible sources, samples, etc.).
+                if entry.hidden_filtered {
+                    return NeuronNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: NeuronNoCandidateReason::HiddenNeuronFiltered,
+                        evaluated_sources: 0,
+                        sources_with_samples: 0,
+                        target_record_count: 0,
+                        detail: None,
+                    };
+                }
+
                 // Only report "no eligible sources" if there were genuinely no eligible sources
                 // AND no evaluated candidates. If there were eligible sources but they all failed
                 // to load or had empty records, report that as NoSamples with context.
@@ -4955,6 +4982,31 @@ fn evaluate_activation_candidate(
                 continue;
             }
 
+            // =================================================================
+            // FUNDAMENTAL VALIDITY FILTERS
+            // These filters apply to ALL candidates (both fallback and best).
+            // They must be checked BEFORE setting fallback_candidate to prevent
+            // invalid candidates from being returned through the fallback path.
+            // =================================================================
+
+            // Require minimum ABSOLUTE error reduction, not just percentage.
+            // A 1% improvement on baseline_sq=0.0001 is only 0.000001 absolute reduction,
+            // which won't meaningfully affect the creature's total error.
+            // Minimum absolute improvement = 0.001 (0.1% of typical baseline ~1.0)
+            let absolute_improvement = expected_improvement_percentage * baseline_sq;
+            if absolute_improvement < 0.001 {
+                continue;
+            }
+
+            // IDENTITY with bias ≈ 0 is equivalent to a direct synapse (source × incoming × outgoing)
+            // Filter out these redundant candidates - use synapse analysis for direct connections
+            if spec.name == "IDENTITY" && optimal_bias.abs() < 0.01 {
+                continue;
+            }
+
+            // =================================================================
+            // FALLBACK CANDIDATE (best seen so far, regardless of threshold)
+            // =================================================================
             if expected_improvement_percentage > fallback_score {
                 fallback_score = expected_improvement_percentage;
 
@@ -4973,6 +5025,9 @@ fn evaluate_activation_candidate(
                 });
             }
 
+            // =================================================================
+            // THRESHOLD CHECK (only for best_candidate, not fallback)
+            // =================================================================
             // Use the STRICTER threshold (max) to ensure meaningful improvements
             // If spec requires 5% and caller passes 1%, we require 5%
             // If spec requires 0% and caller passes 1%, we require 1%
@@ -4981,21 +5036,6 @@ fn evaluate_activation_candidate(
             if expected_improvement_percentage <= improvement_cutoff
                 || final_improved_count < MIN_NEURON_SAMPLE_COUNT as u32
             {
-                continue;
-            }
-
-            // Require minimum ABSOLUTE error reduction, not just percentage.
-            // A 1% improvement on baseline_sq=0.0001 is only 0.000001 absolute reduction,
-            // which won't meaningfully affect the creature's total error.
-            // Minimum absolute improvement = 0.001 (0.1% of typical baseline ~1.0)
-            let absolute_improvement = expected_improvement_percentage * baseline_sq;
-            if absolute_improvement < 0.001 {
-                continue;
-            }
-
-            // IDENTITY with bias ≈ 0 is equivalent to a direct synapse (source × incoming × outgoing)
-            // Filter out these redundant candidates - use synapse analysis for direct connections
-            if spec.name == "IDENTITY" && optimal_bias.abs() < 0.01 {
                 continue;
             }
 
@@ -5377,6 +5417,16 @@ fn analyze_neurons_with_cache(
             gpu_used: true,
             no_candidate_reasons,
         });
+    }
+
+    // Mark skipped hidden neurons in diagnostics so they appear with the correct reason
+    // (HiddenNeuronFiltered) instead of misleading reasons like NoEligibleSources.
+    // This is the normal flow case where some output neurons exist.
+    for hidden_uuid in &skipped_hidden {
+        diagnostics
+            .lock()
+            .expect("Mutex poisoned: diagnostics")
+            .mark_hidden_filtered(hidden_uuid);
     }
 
     // Log threshold-crossing neurons for visibility
@@ -10439,6 +10489,50 @@ mod tests_synapses {
         assert!(
             actual_improvement_with_bias > predicted_without_bias + 0.1,
             "Improvement with bias ({actual_improvement_with_bias:.4}) should be significantly higher than without ({predicted_without_bias:.4})"
+        );
+    }
+
+    #[test]
+    fn neuron_diagnostics_reports_hidden_neuron_filtered_in_mixed_focus_list() {
+        // Test that when a focus list contains BOTH output AND hidden neurons,
+        // the hidden neurons get HiddenNeuronFiltered reason (not NoEligibleSources).
+        //
+        // Bug scenario: When focus_order is NOT empty (some output neurons exist),
+        // the skipped_hidden neurons were never merged into diagnostics, so they
+        // appeared with misleading reasons like NoEligibleSources.
+        let mut diagnostics = NeuronDiagnostics::new_for_tests(&["output-0", "hidden-1"]);
+
+        // Mark hidden-1 as filtered (this is what should happen in normal flow)
+        diagnostics.mark_hidden_filtered("hidden-1");
+
+        // Simulate output-0 being processed normally but finding no candidate
+        diagnostics.set_target_record_count("output-0", 100);
+        diagnostics.set_total_eligible_sources("output-0", 5);
+        diagnostics.record_candidate_attempt("output-0", false);
+
+        let summaries = diagnostics.no_candidate_summaries();
+
+        // Both should have summaries
+        assert_eq!(
+            summaries.len(),
+            2,
+            "Expected 2 summaries (one for output, one for hidden)"
+        );
+
+        // Find the hidden neuron summary
+        let hidden_summary = summaries
+            .iter()
+            .find(|s| s.target_uuid == "hidden-1")
+            .expect("Should have summary for hidden-1");
+
+        // The hidden neuron should have HiddenNeuronFiltered reason
+        assert!(
+            matches!(
+                hidden_summary.reason,
+                NeuronNoCandidateReason::HiddenNeuronFiltered
+            ),
+            "Hidden neuron should report HiddenNeuronFiltered, not {:?}",
+            hidden_summary.reason
         );
     }
 }
