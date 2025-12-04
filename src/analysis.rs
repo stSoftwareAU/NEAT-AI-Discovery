@@ -392,6 +392,9 @@ pub enum NeuronNoCandidateReason {
     NotEnoughActivations,
     WeightDegenerate,
     BelowThreshold,
+    /// Hidden neurons are filtered out from add-neuron analysis because their
+    /// backpropagated errors don't reliably translate to output error reduction.
+    HiddenNeuronFiltered,
 }
 
 #[derive(Debug, Clone)]
@@ -1932,7 +1935,9 @@ const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_WIDE,
         activation: identity_activation,
-        min_improvement: 0.0,
+        // IDENTITY is just a pass-through - require meaningful improvement to justify
+        // adding a neuron instead of adjusting existing synapse weights
+        min_improvement: 0.05,
     },
     ActivationCandidateSpec {
         name: "BIPOLAR",
@@ -4968,11 +4973,29 @@ fn evaluate_activation_candidate(
                 });
             }
 
-            let improvement_cutoff = threshold.min(spec.min_improvement);
+            // Use the STRICTER threshold (max) to ensure meaningful improvements
+            // If spec requires 5% and caller passes 1%, we require 5%
+            // If spec requires 0% and caller passes 1%, we require 1%
+            let improvement_cutoff = threshold.max(spec.min_improvement);
 
             if expected_improvement_percentage <= improvement_cutoff
                 || final_improved_count < MIN_NEURON_SAMPLE_COUNT as u32
             {
+                continue;
+            }
+
+            // Require minimum ABSOLUTE error reduction, not just percentage.
+            // A 1% improvement on baseline_sq=0.0001 is only 0.000001 absolute reduction,
+            // which won't meaningfully affect the creature's total error.
+            // Minimum absolute improvement = 0.001 (0.1% of typical baseline ~1.0)
+            let absolute_improvement = expected_improvement_percentage * baseline_sq;
+            if absolute_improvement < 0.001 {
+                continue;
+            }
+
+            // IDENTITY with bias ≈ 0 is equivalent to a direct synapse (source × incoming × outgoing)
+            // Filter out these redundant candidates - use synapse analysis for direct connections
+            if spec.name == "IDENTITY" && optimal_bias.abs() < 0.01 {
                 continue;
             }
 
@@ -5188,6 +5211,18 @@ fn analyze_neurons_with_cache(
         .map(|n| (n.uuid.clone(), n.squash.clone()))
         .collect();
 
+    // Build a lookup map for neuron types to filter focus neurons
+    // Only output neurons should be targets for add-neuron candidates because:
+    // - Output neuron errors directly affect creature score
+    // - Hidden neuron errors are backpropagated approximations that don't correlate
+    //   reliably with actual output error reduction
+    let neuron_type_map: HashMap<String, String> = input
+        .creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.clone(), n.neuron_type.clone()))
+        .collect();
+
     // Log creature configuration for debugging data issues
     if verbose_enabled() {
         let non_input_count = input.creature.neurons.len();
@@ -5269,6 +5304,19 @@ fn analyze_neurons_with_cache(
     let gpu_used = true;
     let analysis_timed_out = Arc::new(Mutex::new(false));
 
+    // Filter focus neurons to ONLY output neurons for add-neuron analysis.
+    //
+    // Rationale: Add-neuron candidates predict error reduction at the target neuron.
+    // For OUTPUT neurons, this directly corresponds to creature score improvement.
+    // For HIDDEN neurons, the backpropagated error is an approximation that doesn't
+    // reliably translate to actual output error reduction - we've observed 100%
+    // failure rates when targeting hidden neurons.
+    //
+    // Hidden neurons are skipped here but still tracked in diagnostics so the caller
+    // knows they were received but filtered out.
+    let original_focus_count = unique_focus.len();
+    let mut skipped_hidden: Vec<String> = Vec::new();
+
     // Randomize the focus neuron order so that repeated runs with timeouts will
     // eventually cover all neurons. Convert to owned strings, shuffle, then use.
     //
@@ -5278,15 +5326,58 @@ fn analyze_neurons_with_cache(
     let mut threshold_targets: Vec<String> = Vec::new();
     let mut focus_order: Vec<String> = unique_focus
         .iter()
-        .map(|uuid| {
+        .filter_map(|uuid| {
+            // Check neuron type - only allow output neurons for add-neuron analysis
+            let neuron_type = neuron_type_map.get(*uuid).map(|s| s.as_str());
+            if neuron_type != Some("output") {
+                skipped_hidden.push((*uuid).clone());
+                return None;
+            }
+
             if let Some(squash) = neuron_squash_map.get(*uuid) {
                 if is_threshold_activation(squash) {
                     threshold_targets.push((*uuid).clone());
                 }
             }
-            (*uuid).clone()
+            Some((*uuid).clone())
         })
         .collect();
+
+    // Log when hidden neurons are filtered out
+    if !skipped_hidden.is_empty() {
+        eprintln!(
+            "[NEAT-AI-Discovery] Filtered {} hidden neuron(s) from add-neuron analysis (only output neurons are valid targets). \
+            Hidden neurons skipped: {:?}. Remaining output neurons: {}",
+            skipped_hidden.len(),
+            skipped_hidden.iter().take(5).collect::<Vec<_>>(),
+            focus_order.len()
+        );
+    }
+
+    // If no output neurons remain after filtering, return early with empty results
+    if focus_order.is_empty() {
+        eprintln!(
+            "[NEAT-AI-Discovery] No output neurons in focus list ({original_focus_count} hidden neurons filtered out). \
+            Add-neuron candidates can only target output neurons because hidden neuron error reduction \
+            doesn't reliably translate to creature score improvement."
+        );
+        let no_candidate_reasons: Vec<NeuronNoCandidateSummary> = skipped_hidden
+            .iter()
+            .map(|uuid| NeuronNoCandidateSummary {
+                target_uuid: uuid.clone(),
+                reason: NeuronNoCandidateReason::HiddenNeuronFiltered,
+                evaluated_sources: 0,
+                sources_with_samples: 0,
+                target_record_count: 0,
+                detail: None,
+            })
+            .collect();
+        return Ok(AnalyzeNeuronsResult {
+            helpful_neurons: Vec::new(),
+            gpu_used: true,
+            no_candidate_reasons,
+        });
+    }
 
     // Log threshold-crossing neurons for visibility
     if verbose_enabled() && !threshold_targets.is_empty() {

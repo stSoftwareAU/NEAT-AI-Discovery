@@ -369,7 +369,7 @@ pub struct NeuronDiagnosticJson {
     pub detail: Option<NeuronDiagnosticDetailJson>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NeuronDiagnosticReasonJson {
     NoEligibleSources,
@@ -378,6 +378,9 @@ pub enum NeuronDiagnosticReasonJson {
     NotEnoughActivations,
     WeightDegenerate,
     BelowThreshold,
+    /// Hidden neurons are filtered out from add-neuron analysis because their
+    /// backpropagated errors don't reliably translate to output error reduction.
+    HiddenNeuronFiltered,
 }
 
 #[derive(Debug, Serialize)]
@@ -479,6 +482,9 @@ fn neuron_diagnostics_json(
                     }
                     analysis::NeuronNoCandidateReason::BelowThreshold => {
                         NeuronDiagnosticReasonJson::BelowThreshold
+                    }
+                    analysis::NeuronNoCandidateReason::HiddenNeuronFiltered => {
+                        NeuronDiagnosticReasonJson::HiddenNeuronFiltered
                     }
                 },
                 evaluated_sources: summary.evaluated_sources,
