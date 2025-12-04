@@ -235,6 +235,38 @@ The improvement calculation now includes the proposed bias when evaluating neuro
 candidates. This ensures the predicted improvement matches the actual improvement
 when the neuron is applied with its computed bias value.
 
+#### IDENTITY neuron filtering
+
+**IDENTITY neurons with bias ≈ 0 are redundant** because they're mathematically
+equivalent to a direct synapse:
+
+```
+IDENTITY(input × incoming_weight + 0) × outgoing_weight = input × incoming × outgoing
+```
+
+This is just a synapse with `weight = incoming_weight × outgoing_weight`. Discovery
+now filters out these candidates:
+
+1. **Minimum improvement threshold**: IDENTITY requires at least 5% improvement
+2. **Bias filtering**: IDENTITY candidates with `|bias| < 0.01` are rejected
+3. **Use synapse analysis**: Direct connections should use `add-synapses`, not `add-neurons`
+
+#### Add-neuron target neuron filtering
+
+**Only output neurons are valid targets** for add-neuron analysis. Input and
+hidden neurons are filtered out from the focus list:
+
+| Neuron Type | Filtered? | Reason | Diagnostic Code |
+|-------------|-----------|--------|-----------------|
+| **output** | No | Direct impact on creature score | (not filtered) |
+| **hidden** | Yes | Backpropagated errors don't reliably predict output error | `hidden_neuron_filtered` |
+| **input** | Yes | Observation sources, not computation nodes | `input_neuron_filtered` |
+| **constant** | Yes | No activation function or error | `hidden_neuron_filtered` |
+
+This filtering occurs before analysis begins. The diagnostics response includes
+the appropriate reason code for each filtered neuron, so callers know why a
+focus neuron received no candidates.
+
 If verbose logging is enabled (`NEAT_AI_DISCOVERY_VERBOSE=1`), you'll see
 messages like:
 
@@ -360,11 +392,34 @@ whether discovery should be enabled:
   If the warnings appear but discovery still proceeds successfully (you see
   "Training ... with N binary file" after the warnings), wgpu has found an
   alternative GPU backend and the warnings can be safely ignored.
-- **Out of memory errors**: If the Deno process is killed due to memory
-  exhaustion, increase the `--max-old-space-size` flag. For example:
-  `--v8-flags=--max-old-space-size=16384` for 16GB. The Rust library itself is
-  memory-efficient and streams data from Parquet files, but the TypeScript
-  controller may need more memory for large datasets.
+- **Out of memory errors (exit code 137)**: Exit code 137 indicates the process
+  was killed by the Linux OOM (Out of Memory) killer (128 + SIGKILL). This
+  commonly occurs when `--max-old-space-size` exceeds available system RAM.
+  
+  **For heterogeneous environments** (old Linux servers to new Mac M4 Pro):
+  
+  ```bash
+  # Detect available memory and set V8 heap appropriately
+  # Linux: use 50-75% of available RAM
+  AVAILABLE_MB=$(free -m | awk '/^Mem:/{print int($7 * 0.6)}')
+  # macOS: use 50-75% of available RAM  
+  AVAILABLE_MB=$(vm_stat | awk '/Pages free/{free=$3} /Pages inactive/{inactive=$3} END{print int((free+inactive)*4096/1024/1024*0.6)}')
+  
+  # Set a sensible default if detection fails (2GB works on most machines)
+  HEAP_SIZE=${AVAILABLE_MB:-2048}
+  
+  deno run --v8-flags=--max-old-space-size=${HEAP_SIZE} ...
+  ```
+  
+  **Common scenarios:**
+  - **Large machines** (32GB+ RAM): Use `--max-old-space-size=8192` or higher
+  - **Medium machines** (8-16GB RAM): Use `--max-old-space-size=4096`
+  - **Small/old machines** (4GB or less): Use `--max-old-space-size=2048`
+  
+  **Note:** The Rust library itself is memory-efficient and streams data from
+  Parquet files. The TypeScript/Deno controller typically consumes more memory.
+  Setting `--max-old-space-size` too high on memory-constrained machines causes
+  V8 to allocate beyond available RAM, triggering the OOM killer.
 - **Analysis timeout**: The analysis phase has a default 10-minute timeout when
   `analysis_deadline_ms` is not provided. If a timeout is explicitly provided
   but is less than 3 seconds or greater than 1 hour, it will be clamped to the
