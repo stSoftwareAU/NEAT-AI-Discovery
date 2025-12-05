@@ -20,14 +20,27 @@ error. Controllers call into the library via Deno FFI to power
 
 1. Install prerequisites (`rustup`, `cargo`, build tools, and `jq`). The
    `scripts/runlib.sh` helper will guide you if anything is missing.
-2. Build the library:
+2. Build and install the library using `runlib.sh`:
+
    ```bash
-   cargo build --release --lib
-   # or use the helper that also installs into ~/.cargo/lib
    ./scripts/runlib.sh
    ```
-3. Confirm the artefact exists (`target/release/libneat_ai_discovery.*`).
+
+   This script:
+   - Installs Rust and Cargo if missing (no sudo required)
+   - Builds the library in release mode
+   - Installs it to `~/.cargo/lib/` with version tracking
+   - Signs it on macOS for FFI compatibility
+
+   **From NEAT-AI directory**, you can call this script directly:
+
+   ```bash
+   ../NEAT-AI-Discovery/scripts/runlib.sh
+   ```
+
+3. Confirm the artefact exists at `~/.cargo/lib/libneat_ai_discovery.*`.
 4. Run the quality gate before committing:
+
    ```bash
    ./quality.sh
    ```
@@ -163,14 +176,45 @@ The saturation-aware model:
 This ensures predictions match actual results when the candidate is applied,
 which is essential for production systems where HARD_TANH is commonly used.
 
-**Note:** The saturation-aware model requires target_value data (pre-activation
-input sum) to be recorded during discovery. When this data is unavailable, the
-library falls back to the linear model.
+#### GPU-accelerated target activation simulation
+
+The library performs GPU-accelerated sample matching to build candidate evaluation
+datasets. As of v0.1.114, the GPU matching shader passes through **both**
+`target_value` (pre-activation input sum) and `target_activation` (post-squash
+output) for each matched sample. This enables accurate activation function
+simulation for the following target neuron types:
+
+| Activation | Simulation | Why It Matters |
+|------------|------------|----------------|
+| **HARD_TANH** | Saturation-aware | Avoids overprediction near ±1 clamp boundaries |
+| **TANH** | Saturation-aware | Gradual saturation at extremes |
+| **LOGISTIC** | Saturation-aware | Asymptotic bounds at 0 and 1 |
+| **ReLU** | Threshold-aware | Zero output for negative inputs |
+| **LeakyReLU** | Threshold-aware | Different slopes for positive/negative |
+| **BIPOLAR** | Discrete | Binary -1/+1 output |
+| **CLIPPED** | Saturation-aware | Hard clamp at ±1 |
+
+For these activations, the library computes the actual new error after applying
+the candidate contribution through the target's activation function, rather than
+using the linear approximation. This is verified by unit tests:
+`gpu_matching_preserves_target_value_and_activation` and
+`gpu_matching_enables_target_activation_simulation`.
+
+**Linear fallback**: If `target_value` or `target_activation` data is missing
+(e.g., when using CPU-only matching or older Parquet files), the library falls
+back to the linear model. The linear model works reasonably well when errors are
+small relative to the activation function's linear region.
 
 #### All other activations
 
-All other activation functions (including IF, MAXIMUM, MINIMUM, ReLU6, etc.)
-use the **standard linear error model**. No activations are skipped.
+All other activation functions (including IDENTITY, INVERSE, IF, MAXIMUM,
+MINIMUM, ReLU6, Softplus, GELU, SELU, ELU, etc.) use the **standard linear
+error model**. No activations are skipped.
+
+Some of these (IDENTITY, INVERSE) are mathematically linear, so the linear model
+is exact. For others (Softplus, GELU, SELU, ELU), the linear model is a
+reasonable approximation when the target neuron isn't near saturation. The model
+may over- or under-predict improvement, but typically finds useful candidates.
 
 The discovery process treats source neurons as **black boxes** - we don't care
 how they computed their activations, only what the values are. For any target
