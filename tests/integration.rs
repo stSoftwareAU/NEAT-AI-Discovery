@@ -629,6 +629,250 @@ fn test_bias_values_are_activation_specific() {
     }
 }
 
+/// Test that impact is cumulative when a neuron connects to MULTIPLE outputs.
+/// This is a regression test for the bug where impact used MAX instead of SUM
+/// for multiple outgoing synapses, causing neurons connected to multiple outputs
+/// to be incorrectly flagged as "low-impact" removal candidates.
+#[test]
+fn test_cumulative_impact_with_multiple_output_connections() {
+    // Create a creature where a hidden neuron connects to TWO outputs
+    // The impact should be the SUM of contributions to both outputs
+    let creature = CreatureJson {
+        neurons: vec![
+            NeuronJson {
+                uuid: "input-0".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "hub".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "output-1".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: vec![
+            SynapseJson {
+                from_uuid: "input-0".to_string(),
+                to_uuid: "hub".to_string(),
+                weight: 1.0,
+            },
+            // Hub connects to BOTH outputs - removing it affects BOTH
+            SynapseJson {
+                from_uuid: "hub".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 0.5, // 100% of output-0's inbound
+            },
+            SynapseJson {
+                from_uuid: "hub".to_string(),
+                to_uuid: "output-1".to_string(),
+                weight: 0.5, // 100% of output-1's inbound
+            },
+        ],
+        input: 1,
+        output: 2,
+    };
+
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    // Write discovery data
+    let input_json = serde_json::json!({
+        "creature": creature.clone(),
+        "training_data": [{
+            "input": [0.5],
+            "output": [0.25, 0.25],
+            "neuron_data": [
+                {"neuron_uuid": "hub", "activation": 0.5, "value": 0.5, "errors": [0.1, 0.1]},
+                {"neuron_uuid": "output-0", "activation": 0.25, "value": 0.25, "errors": [0.1]},
+                {"neuron_uuid": "output-1", "activation": 0.25, "value": 0.25, "errors": [0.1]}
+            ]
+        }],
+        "temp_dir": temp_path.to_str().unwrap()
+    });
+
+    let record_input = serde_json::to_string(&input_json).unwrap();
+    let record_output_json = record_discovery_internal(&record_input).unwrap();
+    let record_output: serde_json::Value = serde_json::from_str(&record_output_json).unwrap();
+    assert_eq!(
+        record_output["success"], true,
+        "Failed to record discovery data"
+    );
+
+    let parquet_file = temp_path.join(record_output["file"].as_str().unwrap());
+
+    use neat_ai_discovery::rank_focus_neurons_internal;
+    let rank_input = serde_json::json!({
+        "parquetFile": parquet_file.to_str().unwrap(),
+        "creature": creature,
+        "maxResults": 10
+    })
+    .to_string();
+
+    let result_json = rank_focus_neurons_internal(&rank_input).unwrap();
+    let result: serde_json::Value = serde_json::from_str(&result_json).unwrap();
+
+    if result["success"] != true {
+        panic!(
+            "Rank focus neurons failed: {}",
+            result["error"].as_str().unwrap_or("unknown error")
+        );
+    }
+
+    let neurons = result["neurons"]
+        .as_array()
+        .expect("neurons should be an array");
+
+    let hub = neurons
+        .iter()
+        .find(|n| n["neuronUuid"] == "hub")
+        .expect("hub should be in results");
+
+    let impact = hub["impact"].as_f64().expect("impact should be a number") as f32;
+
+    // Hub connects to both outputs at 100% each.
+    // With cumulative (sum) impact: 1.0 + 1.0 = 2.0
+    // With the old bug (max): would only be 1.0
+    //
+    // This is critical: a neuron affecting 2 outputs should NOT be flagged as low-impact!
+    assert!(
+        impact > 1.5,
+        "Hub neuron connecting to 2 outputs should have cumulative impact > 1.5, got {impact}. \
+         This indicates the impact calculation is using MAX instead of SUM for multiple outgoing synapses. \
+         Bug: This neuron could be incorrectly flagged as a removal candidate!"
+    );
+
+    // Verify hub is NOT in removal candidates (it should have high impact)
+    // Note: removalCandidates may be null/None if there are no removal candidates
+    let hub_in_removal = result
+        .get("removalCandidates")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().any(|c| c["neuronUuid"] == "hub"))
+        .unwrap_or(false);
+
+    assert!(
+        !hub_in_removal,
+        "Hub neuron with high cumulative impact should NOT be a removal candidate"
+    );
+}
+
+/// Test that add-neuron analysis can find successful candidates when conditions are right.
+/// This is a regression test to verify add-neuron discovery is working correctly.
+#[test]
+fn test_add_neuron_finds_candidates_with_correlated_errors() {
+    skip_without_gpu!();
+    use neat_ai_discovery::AnalyzeNeuronsInput;
+
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    // Create a simple creature with just an output neuron and multiple inputs
+    let creature = CreatureJson {
+        neurons: vec![NeuronJson {
+            uuid: "output-0".to_string(),
+            neuron_type: "output".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }],
+        synapses: vec![], // No existing synapses - add-neuron should find candidates
+        input: 2,
+        output: 1,
+    };
+
+    // Generate training data where input-0 activation CORRELATES with output error
+    // This is the ideal scenario for add-neuron to find a candidate:
+    // - When input-0 is high, error is positive (output should be higher)
+    // - When input-0 is low, error is negative (output should be lower)
+    let mut training_data = Vec::new();
+    for i in 0..50 {
+        let input_0_val = (i as f32 - 25.0) / 25.0; // Range: -1.0 to 1.0
+        let input_1_val = 0.5; // Constant (no correlation)
+
+        // Create correlated error: when input-0 is positive, error is positive
+        // This means a new neuron from input-0 could help reduce error
+        let error = input_0_val * 0.5; // Positive correlation
+
+        training_data.push(serde_json::json!({
+            "input": [input_0_val, input_1_val],
+            "output": [0.0],
+            "neuron_data": [{
+                "neuron_uuid": "output-0",
+                "activation": 0.0,
+                "value": 0.0,
+                "errors": [error]
+            }]
+        }));
+    }
+
+    // Record discovery data
+    let input_json = serde_json::json!({
+        "creature": creature.clone(),
+        "training_data": training_data,
+        "temp_dir": temp_path.to_str().unwrap()
+    });
+
+    let record_input = serde_json::to_string(&input_json).unwrap();
+    let record_output_json = record_discovery_internal(&record_input).unwrap();
+    let record_output: serde_json::Value = serde_json::from_str(&record_output_json).unwrap();
+    assert_eq!(
+        record_output["success"], true,
+        "Failed to record discovery data: {:?}",
+        record_output["error"]
+    );
+
+    let parquet_file = temp_path.join(record_output["file"].as_str().unwrap());
+
+    // Analyse neurons with a lower threshold to increase chances of success
+    let analyze_input = AnalyzeNeuronsInput {
+        parquet_file: parquet_file.to_str().unwrap().to_string(),
+        creature,
+        focus_neurons: vec!["output-0".to_string()],
+        improvement_threshold: Some(0.01), // 1% threshold - low to ensure candidates are found
+        max_candidates: Some(10),
+        analysis_deadline_ms: None,
+    };
+
+    let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
+        .expect("Neuron analysis should succeed");
+
+    // With correlated errors and no existing connections, we should find candidates
+    // The input-0 -> ReLU -> output-0 path should show improvement
+    assert!(
+        !result.helpful_neurons.is_empty(),
+        "Add-neuron should find at least one candidate when input activation correlates with output error. \
+         Diagnostics: {:?}",
+        result.no_candidate_reasons
+    );
+
+    // Verify the candidate makes sense
+    let best = &result.helpful_neurons[0];
+    assert!(
+        best.expected_improvement_percentage > 0.0,
+        "Best candidate should show positive improvement, got {}",
+        best.expected_improvement_percentage
+    );
+
+    // The source should be input-0 (the correlated input)
+    assert!(
+        best.source_neuron_uuid == "input-0",
+        "Best candidate should use the correlated source (input-0), got {}",
+        best.source_neuron_uuid
+    );
+}
+
 /// Test that neurons with calculated bias improve error more than bias=0
 #[test]
 fn test_bias_improves_neuron_performance() {

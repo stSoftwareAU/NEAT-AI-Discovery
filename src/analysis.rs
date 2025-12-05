@@ -5255,7 +5255,17 @@ fn evaluate_discrete_candidate(
                     let net_flips = helpful_flips - harmful_flips;
                     let improvement = net_flips as f32 / samples_with_error as f32;
 
-                    if improvement > best_improvement && helpful_flips > harmful_flips {
+                    // IMPORTANT: Require meaningful improvement (at least 1%) for IDENTITY neurons.
+                    // IDENTITY with bias=0 is mathematically equivalent to a direct synapse:
+                    //   IDENTITY(source × incoming_weight + 0) × outgoing_weight = source × incoming × outgoing
+                    // These candidates should use add-synapse, not add-neuron.
+                    // Additionally, very low flip rates (< 1%) indicate the contribution isn't
+                    // reliably pushing the target across the threshold.
+                    const MIN_DISCRETE_IMPROVEMENT: f32 = 0.01; // 1% minimum
+
+                    if improvement > best_improvement.max(MIN_DISCRETE_IMPROVEMENT)
+                        && helpful_flips > harmful_flips
+                    {
                         best_improvement = improvement;
 
                         // Create target neuron stats from samples
@@ -9326,6 +9336,48 @@ mod tests_synapses {
             "Should have positive improvement"
         );
         assert!(c.improved_count > 0, "Should have some helpful flips");
+    }
+
+    /// Test that discrete evaluation filters out low-improvement IDENTITY candidates.
+    /// IDENTITY neurons with bias=0 are mathematically equivalent to synapses,
+    /// and candidates with very low flip rates (<1%) don't reliably improve the model.
+    #[test]
+    fn test_discrete_evaluation_filters_low_improvement_identity() {
+        // Create a large sample set where only a tiny fraction would flip.
+        // This simulates the production scenario where 0.01% improvement candidates
+        // are being returned but don't actually help.
+        let mut samples = Vec::new();
+
+        // 1000 samples where most DON'T benefit from the new neuron
+        for i in 0..1000 {
+            // Only ~5 samples (0.5%) have error on the "wrong side" that could flip
+            let should_flip = i < 5;
+            samples.push(DiscreteHelpfulSample {
+                source_activation: if should_flip { 1.0 } else { 0.1 },
+                // Most samples are already on the correct side of threshold
+                target_value: if should_flip { -0.1 } else { 0.5 },
+                target_activation: if should_flip { 0.0 } else { 1.0 },
+                // Error indicates we want to flip the few wrong samples
+                avg_error: if should_flip { 0.5 } else { 0.0 },
+            });
+        }
+
+        let candidate = evaluate_discrete_candidate(
+            "input-0",
+            "target-step",
+            &samples,
+            ThresholdType::Step,
+            0.0, // Even with zero threshold, low flip rate should be filtered
+        );
+
+        // Should NOT return a candidate because improvement would be <1%
+        // (only 5 flips out of 1000 samples = 0.5% improvement)
+        assert!(
+            candidate.is_none(),
+            "Should NOT return IDENTITY candidate with <1% improvement. \
+             These are equivalent to direct synapses and don't reliably help. \
+             Got candidate: {candidate:?}"
+        );
     }
 
     /// Test get_bias_values returns log-spaced values for efficient search

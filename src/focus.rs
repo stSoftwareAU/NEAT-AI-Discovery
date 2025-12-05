@@ -174,7 +174,13 @@ fn compute_impact_recursive(
     let impact = if outputs.contains(uuid) {
         1.0
     } else if let Some(edges) = adjacency.get(uuid) {
-        let mut max_value = 0.0;
+        // IMPORTANT: Use SUM (not max) to accumulate impact across all outgoing edges.
+        // A neuron connecting to multiple outputs affects ALL of them, so removing it
+        // has a cumulative effect. Using max previously underestimated impact for neurons
+        // with multiple outgoing synapses - e.g. a neuron connecting to 2 outputs directly
+        // would show impact=1.0 (max) instead of impact=2.0 (sum), causing incorrect
+        // "low-impact" classification and failed removal predictions.
+        let mut total_impact = 0.0;
         for (to_uuid, weight) in edges {
             let child_impact = compute_impact_recursive(
                 to_uuid,
@@ -202,11 +208,9 @@ fn compute_impact_recursive(
             };
 
             let contribution = normalized_weight * child_impact;
-            if contribution > max_value {
-                max_value = contribution;
-            }
+            total_impact += contribution;
         }
-        max_value
+        total_impact
     } else {
         0.0
     };
@@ -1164,5 +1168,117 @@ mod tests {
                 // This is the preferred behavior to maintain data integrity
             }
         }
+    }
+
+    #[test]
+    fn test_cumulative_impact_for_multiple_outgoing_synapses() {
+        // Scenario: A hidden neuron connects to MULTIPLE outputs.
+        // The impact should be the SUM of contributions to all outputs, not the MAX.
+        //
+        // Bug discovered: A neuron with 3 outgoing synapses to 2 outputs + 1 hidden
+        // was flagged as "low-impact" (1.07e-13) but removing it caused a score
+        // delta of 6.3e-5 - much higher than predicted.
+        //
+        // Network:
+        //   input-0 -> hub -> output-0 (weight 0.5, normalised contribution = 50%)
+        //            -> hub -> output-1 (weight 0.5, normalised contribution = 50%)
+        //
+        // Expected cumulative impact: 0.5 + 0.5 = 1.0 (affects both outputs equally)
+        // Bug behaviour (max): 0.5 (only considers one output)
+        let creature = create_creature(
+            vec![
+                ("input-0", "input"),
+                ("hub", "hidden"), // Connects to both outputs
+                ("output-0", "output"),
+                ("output-1", "output"),
+            ],
+            vec![
+                ("input-0", "hub", 1.0),
+                // Hub connects to BOTH outputs with equal weight
+                ("hub", "output-0", 0.5), // 100% of output-0's inbound (only connection)
+                ("hub", "output-1", 0.5), // 100% of output-1's inbound (only connection)
+            ],
+        );
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        let records = create_records(vec![("hub", 0.5), ("output-0", 0.5), ("output-1", 0.5)]);
+        write_records_to_parquet(file_path, &records).unwrap();
+
+        let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+        // Find the hub neuron's impact
+        let hub = result
+            .neurons
+            .iter()
+            .find(|n| n.neuron_uuid == "hub")
+            .expect("Hub neuron should be in results");
+
+        // Hub connects to both outputs at 100% of each output's inbound weight.
+        // Cumulative impact should be: 1.0 + 1.0 = 2.0 (but we cap at sensible values)
+        // At minimum, impact should be > 1.0 because it affects TWO outputs.
+        //
+        // With the bug (using max), impact would be 1.0 (only counting one output).
+        // With the fix (using sum), impact should be 2.0.
+        assert!(
+            hub.impact > 1.0,
+            "Hub neuron connecting to 2 outputs should have cumulative impact > 1.0, got {}. \
+             This indicates the impact calculation is using MAX instead of SUM for multiple outgoing synapses.",
+            hub.impact
+        );
+    }
+
+    #[test]
+    fn test_cumulative_impact_mixed_direct_and_indirect_paths() {
+        // Scenario: A neuron has multiple paths to outputs:
+        // - Direct connection to output-0
+        // - Indirect connection through hidden-2 to output-1
+        //
+        // Both paths should contribute to the cumulative impact.
+        let creature = create_creature(
+            vec![
+                ("input-0", "input"),
+                ("hub", "hidden"),
+                ("hidden-2", "hidden"),
+                ("output-0", "output"),
+                ("output-1", "output"),
+            ],
+            vec![
+                ("input-0", "hub", 1.0),
+                ("hub", "output-0", 1.0),      // Direct to output-0 (100%)
+                ("hub", "hidden-2", 1.0),      // To hidden-2
+                ("hidden-2", "output-1", 1.0), // hidden-2 to output-1 (100%)
+            ],
+        );
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        let records = create_records(vec![
+            ("hub", 0.5),
+            ("hidden-2", 0.5),
+            ("output-0", 0.5),
+            ("output-1", 0.5),
+        ]);
+        write_records_to_parquet(file_path, &records).unwrap();
+
+        let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+        let hub = result
+            .neurons
+            .iter()
+            .find(|n| n.neuron_uuid == "hub")
+            .expect("Hub neuron should be in results");
+
+        // Hub has:
+        // - Direct path to output-0: impact = 1.0
+        // - Indirect path via hidden-2 to output-1: impact = 1.0 * 1.0 = 1.0
+        // Cumulative impact should be: 1.0 + 1.0 = 2.0
+        assert!(
+            hub.impact > 1.5,
+            "Hub with direct and indirect paths to 2 outputs should have impact > 1.5, got {}",
+            hub.impact
+        );
     }
 }
