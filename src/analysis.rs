@@ -1584,47 +1584,6 @@ struct GpuHelpfulSample {
 }
 
 /// Extended sample struct for GPU matching output, includes target neuron data.
-/// Used only by the matching shader; other shaders use the simpler GpuHelpfulSample.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct GpuMatchingSample {
-    activation: f32,
-    avg_error: f32,
-    /// Target neuron's pre-activation value (input sum before squash function)
-    target_value: f32,
-    /// Target neuron's post-activation output (after squash function)
-    target_activation: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct GpuTargetRecord {
-    obs_index: u32,
-    error_start_index: u32,
-    error_count: u32,
-    /// Target neuron's pre-activation value (input sum before squash function)
-    value: f32,
-    /// Target neuron's post-activation output (after squash function)
-    activation: f32,
-    pad0: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct GpuFromRecord {
-    obs_index: u32,
-    activation: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct MatchingUniforms {
-    target_count: u32,
-    from_count: u32,
-    total_errors: u32,
-    pad0: u32,
-}
-
 impl From<HelpfulSample> for GpuHelpfulSample {
     fn from(value: HelpfulSample) -> Self {
         Self {
@@ -2283,8 +2242,6 @@ pub struct GpuAnalyzer {
     helpful_pipeline: Option<wgpu::ComputePipeline>,
     harmful_layout: Option<wgpu::BindGroupLayout>,
     harmful_pipeline: Option<wgpu::ComputePipeline>,
-    matching_layout: Option<wgpu::BindGroupLayout>,
-    matching_pipeline: Option<wgpu::ComputePipeline>,
     relu_layout: Option<wgpu::BindGroupLayout>,
     relu_pipeline: Option<wgpu::ComputePipeline>,
     #[allow(dead_code)] // Framework for future GPU activation evaluation
@@ -2468,8 +2425,6 @@ impl GpuAnalyzer {
             Self::build_helpful_pipeline(&device, "helpful-synapse-pipeline");
         let (harmful_layout, harmful_pipeline) =
             Self::build_harmful_pipeline(&device, "harmful-synapse-pipeline");
-        let (matching_layout, matching_pipeline) =
-            Self::build_matching_pipeline(&device, "matching-pipeline");
         let (relu_layout, relu_pipeline) = Self::build_relu_pipeline(&device, "relu-pipeline");
         let (activation_layout, activation_pipeline) =
             Self::build_activation_pipeline(&device, "activation-pipeline");
@@ -2482,8 +2437,6 @@ impl GpuAnalyzer {
             helpful_pipeline: Some(helpful_pipeline),
             harmful_layout: Some(harmful_layout),
             harmful_pipeline: Some(harmful_pipeline),
-            matching_layout: Some(matching_layout),
-            matching_pipeline: Some(matching_pipeline),
             relu_layout: Some(relu_layout),
             relu_pipeline: Some(relu_pipeline),
             activation_layout: Some(activation_layout),
@@ -2588,87 +2541,6 @@ impl GpuAnalyzer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(label),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(label),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: "main",
-        });
-
-        (layout, pipeline)
-    }
-
-    fn build_matching_pipeline(
-        device: &wgpu::Device,
-        label: &str,
-    ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("matching-shader"),
-            source: wgpu::ShaderSource::Wgsl(MATCHING_SHADER.into()),
-        });
-
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("matching-bind-group"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -3044,9 +2916,17 @@ impl GpuAnalyzer {
         Ok(stats)
     }
 
-    fn evaluate_harmful(&self, samples: &[HelpfulSample], weight: f32) -> Result<HarmfulStats> {
-        if samples.is_empty() {
-            return Ok(HarmfulStats::default());
+    /// Batch evaluate multiple harmful synapse operations to improve GPU utilisation.
+    /// Each entry is (samples, weight) pair. Returns stats in the same order as input.
+    ///
+    /// This reduces CPU-GPU round trips by submitting multiple GPU dispatches in a single
+    /// command buffer, significantly improving throughput for harmful synapse analysis.
+    fn evaluate_harmful_batch(
+        &self,
+        samples_batch: &[(&[HelpfulSample], f32)],
+    ) -> Result<Vec<HarmfulStats>> {
+        if samples_batch.is_empty() {
+            return Ok(Vec::new());
         }
 
         // GPU is always required - discovery should be disabled without GPU
@@ -3057,134 +2937,191 @@ impl GpuAnalyzer {
         let queue = self
             .queue
             .as_ref()
-            .context("GPU queue not initialised for harmful analysis")?;
+            .context("GPU queue not initialised for batched harmful analysis")?;
         let harmful_layout = self
             .harmful_layout
             .as_ref()
-            .context("GPU layout not initialised for harmful analysis")?;
+            .context("GPU layout not initialised for batched harmful analysis")?;
         let harmful_pipeline = self
             .harmful_pipeline
             .as_ref()
-            .context("GPU pipeline not initialised for harmful analysis")?;
+            .context("GPU pipeline not initialised for batched harmful analysis")?;
 
-        let gpu_samples: Vec<GpuHelpfulSample> = samples
-            .iter()
-            .copied()
-            .map(GpuHelpfulSample::from)
-            .collect();
-        let contributions_zeroed = vec![HarmfulContribution::zeroed(); samples.len()];
+        // Process in batches to avoid excessive memory usage
+        // Apple Silicon optimisation: Use single encoder per batch to reduce Metal driver overhead
+        let mut all_results = Vec::with_capacity(samples_batch.len());
 
-        let sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("harmful-samples-buffer"),
-            contents: bytemuck::cast_slice(&gpu_samples),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        for batch_chunk in samples_batch.chunks(GPU_BATCH_SIZE) {
+            let mut empty_flags = Vec::with_capacity(batch_chunk.len());
+            let mut batch_staging_buffers = Vec::new();
+            let mut batch_contribution_sizes = Vec::new();
+            let mut batch_contributions_buffers = Vec::new();
 
-        let contributions_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("harmful-contributions-buffer"),
-            contents: bytemuck::cast_slice(&contributions_zeroed),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let uniforms = HarmfulUniforms {
-            length: samples.len() as u32,
-            pad0: 0,
-            epsilon: EPSILON,
-            weight,
-        };
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("harmful-uniform-buffer"),
-            contents: bytemuck::bytes_of(&uniforms),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: harmful_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: sample_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: contributions_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("harmful-bind-group"),
-        });
-
-        let contribution_size = (std::mem::size_of::<HarmfulContribution>() * samples.len()) as u64;
-        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("harmful-staging-buffer"),
-            size: contribution_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("harmful-command-encoder"),
-        });
-
-        {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("harmful-compute-pass"),
-                timestamp_writes: None,
+            // Single encoder for entire batch - reduces Metal driver overhead on Apple Silicon
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("harmful-command-encoder-batch"),
             });
-            compute_pass.set_pipeline(harmful_pipeline);
-            compute_pass.set_bind_group(0, &bind_group, &[]);
-            let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
-            compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
-        }
 
-        encoder.copy_buffer_to_buffer(
-            &contributions_buffer,
-            0,
-            &staging_buffer,
-            0,
-            contribution_size,
-        );
+            // Prepare all operations in this batch
+            for (samples, weight) in batch_chunk {
+                if samples.is_empty() {
+                    empty_flags.push(true);
+                    continue;
+                }
+                empty_flags.push(false);
 
-        queue.submit(Some(encoder.finish()));
+                let gpu_samples: Vec<GpuHelpfulSample> = samples
+                    .iter()
+                    .copied()
+                    .map(GpuHelpfulSample::from)
+                    .collect();
+                let contributions_zeroed = vec![HarmfulContribution::zeroed(); samples.len()];
 
-        let buffer_slice = staging_buffer.slice(..);
-        let (sender, receiver) = mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender
-                .send(result)
-                .expect("Failed to send map_async result");
-        });
-        device.poll(wgpu::Maintain::Wait);
+                let sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("harmful-samples-buffer-batch"),
+                    contents: bytemuck::cast_slice(&gpu_samples),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
 
-        match receiver.recv() {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                return Err(anyhow!("Failed to map harmful contributions buffer: {err}"));
+                let contributions_buffer =
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("harmful-contributions-buffer-batch"),
+                        contents: bytemuck::cast_slice(&contributions_zeroed),
+                        usage: wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::COPY_SRC
+                            | wgpu::BufferUsages::COPY_DST,
+                    });
+
+                let uniforms = HarmfulUniforms {
+                    length: samples.len() as u32,
+                    pad0: 0,
+                    epsilon: EPSILON,
+                    weight: *weight,
+                };
+                let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("harmful-uniform-buffer-batch"),
+                    contents: bytemuck::bytes_of(&uniforms),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: harmful_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: sample_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: contributions_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: uniform_buffer.as_entire_binding(),
+                        },
+                    ],
+                    label: Some("harmful-bind-group-batch"),
+                });
+
+                let contribution_size =
+                    (std::mem::size_of::<HarmfulContribution>() * samples.len()) as u64;
+                let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("harmful-staging-buffer-batch"),
+                    size: contribution_size,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+
+                // Add compute pass to shared encoder (reduces command buffer overhead)
+                {
+                    let mut compute_pass =
+                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("harmful-compute-pass-batch"),
+                            timestamp_writes: None,
+                        });
+                    compute_pass.set_pipeline(harmful_pipeline);
+                    compute_pass.set_bind_group(0, &bind_group, &[]);
+                    let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
+                    compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+                }
+
+                batch_contributions_buffers.push(contributions_buffer);
+                batch_staging_buffers.push(staging_buffer);
+                batch_contribution_sizes.push(contribution_size);
             }
-            Err(_) => {
-                return Err(anyhow!("Failed to receive harmful map_async completion"));
+
+            // Add all buffer copies after compute passes (better GPU scheduling)
+            for (i, staging_buffer) in batch_staging_buffers.iter().enumerate() {
+                let contribution_size = batch_contribution_sizes[i];
+                encoder.copy_buffer_to_buffer(
+                    &batch_contributions_buffers[i],
+                    0,
+                    staging_buffer,
+                    0,
+                    contribution_size,
+                );
+            }
+
+            // Submit single command buffer for entire batch - reduces Metal driver overhead
+            if !batch_staging_buffers.is_empty() {
+                queue.submit(Some(encoder.finish()));
+            }
+
+            // Process results - maintain order with empty flags
+            let mut staging_iter = batch_staging_buffers.into_iter();
+            for is_empty in empty_flags {
+                if is_empty {
+                    all_results.push(HarmfulStats::default());
+                } else {
+                    let staging_buffer = staging_iter.next().expect("Staging buffer mismatch");
+                    let buffer_slice = staging_buffer.slice(..);
+                    let (sender, receiver) = mpsc::channel();
+                    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                        sender
+                            .send(result)
+                            .expect("Failed to send map_async result");
+                    });
+
+                    // Poll until this buffer is ready
+                    loop {
+                        device.poll(wgpu::Maintain::Poll);
+                        match receiver.try_recv() {
+                            Ok(Ok(())) => break,
+                            Ok(Err(err)) => {
+                                return Err(anyhow!(
+                                    "Failed to map harmful contributions buffer: {err}"
+                                ));
+                            }
+                            Err(mpsc::TryRecvError::Empty) => {
+                                std::thread::yield_now();
+                            }
+                            Err(mpsc::TryRecvError::Disconnected) => {
+                                return Err(anyhow!(
+                                    "Channel disconnected waiting for harmful buffer map"
+                                ));
+                            }
+                        }
+                    }
+
+                    let data = buffer_slice.get_mapped_range();
+                    let contributions: &[HarmfulContribution] = bytemuck::cast_slice(&data);
+
+                    let mut stats = HarmfulStats::default();
+                    for contribution in contributions {
+                        stats.harmful_count += contribution.harmful_flag;
+                        stats.helpful_count += contribution.helpful_flag;
+                        stats.harmful_error_sum += contribution.error_magnitude;
+                    }
+
+                    drop(data);
+                    staging_buffer.unmap();
+
+                    all_results.push(stats);
+                }
             }
         }
 
-        let data = buffer_slice.get_mapped_range();
-        let contributions: &[HarmfulContribution] = bytemuck::cast_slice(&data);
-
-        let mut stats = HarmfulStats::default();
-        for contribution in contributions {
-            stats.harmful_count += contribution.harmful_flag;
-            stats.helpful_count += contribution.helpful_flag;
-            stats.harmful_error_sum += contribution.error_magnitude;
-        }
-
-        drop(data);
-        staging_buffer.unmap();
-
-        Ok(stats)
+        Ok(all_results)
     }
 
     fn evaluate_relu_gpu(
@@ -3960,239 +3897,11 @@ impl GpuAnalyzer {
 
         results
     }
-
-    /// GPU-accelerated matching of activations to errors by obs_index
-    /// This replaces the CPU-based build_samples function for better GPU utilization
-    fn build_samples_gpu(
-        &self,
-        target_records: &[DiscoverRecord],
-        from_records: &[DiscoverRecord],
-    ) -> Result<Vec<HelpfulSample>> {
-        if target_records.is_empty() || from_records.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // GPU is always required - discovery should be disabled without GPU
-        let device = self
-            .device
-            .as_ref()
-            .expect("GPU device must be available - discovery should be disabled without GPU");
-        let queue = self
-            .queue
-            .as_ref()
-            .context("GPU queue not initialised for sample matching")?;
-        let matching_layout = self
-            .matching_layout
-            .as_ref()
-            .context("GPU matching layout not initialised")?;
-        let matching_pipeline = self
-            .matching_pipeline
-            .as_ref()
-            .context("GPU matching pipeline not initialised")?;
-
-        // Prepare target records: flatten error arrays and create GPU structures
-        let mut gpu_targets: Vec<GpuTargetRecord> = Vec::new();
-        let mut all_errors: Vec<f32> = Vec::new();
-        let mut error_start_index = 0u32;
-
-        for record in target_records {
-            if record.errors.is_empty() {
-                continue;
-            }
-
-            // Count finite errors and add them to the flattened array
-            let mut finite_error_count = 0u32;
-            for error in &record.errors {
-                if error.is_finite() {
-                    all_errors.push(*error);
-                    finite_error_count += 1;
-                }
-            }
-
-            if finite_error_count > 0 {
-                gpu_targets.push(GpuTargetRecord {
-                    obs_index: record.obs_index,
-                    error_start_index,
-                    error_count: finite_error_count,
-                    // Include target neuron's value and activation for accurate simulation
-                    value: record.value.unwrap_or(f32::NAN),
-                    activation: record.activation,
-                    pad0: 0,
-                });
-                error_start_index += finite_error_count;
-            }
-        }
-
-        if gpu_targets.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Sort by obs_index for binary search (should already be sorted, but ensure it)
-        gpu_targets.sort_by_key(|r| r.obs_index);
-
-        // Prepare from records
-        let gpu_froms: Vec<GpuFromRecord> = from_records
-            .iter()
-            .map(|r| GpuFromRecord {
-                obs_index: r.obs_index,
-                activation: r.activation,
-            })
-            .collect();
-
-        // Create GPU buffers
-        let target_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("matching-target-buffer"),
-            contents: bytemuck::cast_slice(&gpu_targets),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        let errors_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("matching-errors-buffer"),
-            contents: bytemuck::cast_slice(&all_errors),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        let from_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("matching-from-buffer"),
-            contents: bytemuck::cast_slice(&gpu_froms),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        let samples_zeroed = vec![GpuMatchingSample::zeroed(); from_records.len()];
-        let samples_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("matching-samples-buffer"),
-            contents: bytemuck::cast_slice(&samples_zeroed),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let uniforms = MatchingUniforms {
-            target_count: gpu_targets.len() as u32,
-            from_count: from_records.len() as u32,
-            total_errors: all_errors.len() as u32,
-            pad0: 0,
-        };
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("matching-uniform-buffer"),
-            contents: bytemuck::bytes_of(&uniforms),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: matching_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: target_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: errors_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: from_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: samples_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("matching-bind-group"),
-        });
-
-        let sample_size = (std::mem::size_of::<GpuMatchingSample>() * from_records.len()) as u64;
-        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("matching-staging-buffer"),
-            size: sample_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("matching-command-encoder"),
-        });
-
-        {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("matching-compute-pass"),
-                timestamp_writes: None,
-            });
-            compute_pass.set_pipeline(matching_pipeline);
-            compute_pass.set_bind_group(0, &bind_group, &[]);
-            let workgroups = (from_records.len() as u32).div_ceil(WORKGROUP_SIZE);
-            compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
-        }
-
-        encoder.copy_buffer_to_buffer(&samples_buffer, 0, &staging_buffer, 0, sample_size);
-
-        queue.submit(Some(encoder.finish()));
-
-        let buffer_slice = staging_buffer.slice(..);
-        let (sender, receiver) = mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender
-                .send(result)
-                .expect("Failed to send map_async result");
-        });
-        device.poll(wgpu::Maintain::Wait);
-
-        match receiver.recv() {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                return Err(anyhow!("Failed to map matching samples buffer: {err}"));
-            }
-            Err(_) => {
-                return Err(anyhow!("Failed to receive matching map_async completion"));
-            }
-        }
-
-        let data = buffer_slice.get_mapped_range();
-        let gpu_samples: &[GpuMatchingSample] = bytemuck::cast_slice(&data);
-
-        // Retain only finite samples; GPU matching emits NaN for invalid rows.
-        // Now includes target_value and target_activation for accurate activation
-        // function simulation (HARD_TANH, TANH, LOGISTIC, etc.).
-        let mut samples = Vec::new();
-        for gpu_sample in gpu_samples {
-            if gpu_sample.activation.is_finite() && gpu_sample.avg_error.is_finite() {
-                // Convert NaN values to None for target data
-                let target_value = if gpu_sample.target_value.is_finite() {
-                    Some(gpu_sample.target_value)
-                } else {
-                    None
-                };
-                let target_activation = if gpu_sample.target_activation.is_finite() {
-                    Some(gpu_sample.target_activation)
-                } else {
-                    None
-                };
-                samples.push(HelpfulSample {
-                    activation: gpu_sample.activation,
-                    avg_error: gpu_sample.avg_error,
-                    target_value,
-                    target_activation,
-                });
-            }
-        }
-
-        drop(data);
-        staging_buffer.unmap();
-
-        Ok(samples)
-    }
 }
 
 const HELPFUL_SHADER: &str = include_str!("shaders/helpful.wgsl");
 
 const HARMFUL_SHADER: &str = include_str!("shaders/harmful.wgsl");
-
-const MATCHING_SHADER: &str = include_str!("shaders/matching.wgsl");
 
 const RELU_SHADER: &str = include_str!("shaders/relu.wgsl");
 
@@ -6788,14 +6497,18 @@ fn analyze_synapses_with_cache(
                 }
             }
 
-            // Process harmful synapses for this target - batch results to reduce mutex contention
+            // Process harmful synapses for this target - BATCHED GPU evaluation for better utilisation
             // Vertical timeout: Complete all harmful synapse processing for the current focus neuron
             if !*analysis_timed_out.lock().expect("Mutex poisoned") {
                 if let Some(existing) = synapses_by_target_arc.get(target_uuid.as_str()) {
-                    let mut harmful_candidates = Vec::new();
+                    // Phase 1: Build all samples on CPU (fast, parallel-friendly)
+                    struct HarmfulWork {
+                        synapse: SynapseJson,
+                        samples: Vec<HelpfulSample>,
+                    }
+                    let mut harmful_work: Vec<HarmfulWork> = Vec::with_capacity(existing.len());
 
                     for synapse in existing {
-
                         let from_records_arc = match cache.get(&synapse.from_uuid) {
                             Ok(records) => records,
                             Err(_) => continue,
@@ -6804,43 +6517,63 @@ fn analyze_synapses_with_cache(
                             continue;
                         }
                         let from_records = from_records_arc.as_ref();
-                        let samples = analyzer.build_samples_gpu(target_records, from_records)?;
+                        // Use CPU sample building to avoid GPU sync overhead per synapse
+                        let samples = build_samples(target_records, from_records);
                         if samples.is_empty() {
                             continue;
                         }
 
-                        let stats = analyzer.evaluate_harmful(&samples, synapse.weight)?;
-                        let total_count = samples.len() as u32;
-                        if total_count == 0 {
-                            continue;
-                        }
+                        harmful_work.push(HarmfulWork {
+                            synapse: synapse.clone(),
+                            samples,
+                        });
+                    }
 
-                        let expected_improvement_percentage = (stats.harmful_count as f32
-                            - stats.helpful_count as f32)
-                            / total_count as f32;
+                    // Phase 2: Batch GPU evaluation (single submission for all synapses)
+                    if !harmful_work.is_empty() {
+                        let batch_input: Vec<(&[HelpfulSample], f32)> = harmful_work
+                            .iter()
+                            .map(|w| (w.samples.as_slice(), w.synapse.weight))
+                            .collect();
 
+                        let batch_stats = analyzer.evaluate_harmful_batch(&batch_input)?;
+
+                        // Phase 3: Process results
+                        let mut harmful_candidates = Vec::with_capacity(batch_stats.len());
                         let target_stats = cache
                             .get(target_uuid.as_str())
                             .ok()
                             .and_then(|records| NeuronStats::from_records(records.as_ref()))
                             .map(|s| s.to_json());
-                        harmful_candidates.push(CandidateSynapseJson {
-                            from_neuron_uuid: synapse.from_uuid.clone(),
-                            to_neuron_uuid: synapse.to_uuid.clone(),
-                            weight: synapse.weight,
-                            expected_improvement_percentage,
-                            improved_count: stats.harmful_count,
-                            total_count,
-                            target_neuron_stats: target_stats,
-                        });
-                    }
 
-                    // Batch push all harmful candidates (single lock)
-                    if !harmful_candidates.is_empty() {
-                        let mut results = harmful_results
-                            .lock()
-                            .expect("Mutex poisoned: harmful_results");
-                        results.extend(harmful_candidates);
+                        for (work, stats) in harmful_work.iter().zip(batch_stats.iter()) {
+                            let total_count = work.samples.len() as u32;
+                            if total_count == 0 {
+                                continue;
+                            }
+
+                            let expected_improvement_percentage = (stats.harmful_count as f32
+                                - stats.helpful_count as f32)
+                                / total_count as f32;
+
+                            harmful_candidates.push(CandidateSynapseJson {
+                                from_neuron_uuid: work.synapse.from_uuid.clone(),
+                                to_neuron_uuid: work.synapse.to_uuid.clone(),
+                                weight: work.synapse.weight,
+                                expected_improvement_percentage,
+                                improved_count: stats.harmful_count,
+                                total_count,
+                                target_neuron_stats: target_stats.clone(),
+                            });
+                        }
+
+                        // Batch push all harmful candidates (single lock)
+                        if !harmful_candidates.is_empty() {
+                            let mut results = harmful_results
+                                .lock()
+                                .expect("Mutex poisoned: harmful_results");
+                            results.extend(harmful_candidates);
+                        }
                     }
                 }
             }
@@ -7160,11 +6893,62 @@ mod tests_synapses {
         );
     }
 
+    /// TDD Test: evaluate_harmful_batch should handle empty batch gracefully.
     #[test]
-    fn gpu_matching_filters_non_finite_values() {
+    fn evaluate_harmful_batch_handles_empty_batch() {
         skip_if_no_gpu!();
         let analyzer = GpuAnalyzer::new().expect("GPU analyser creation should succeed in tests");
 
+        let empty_batch: Vec<(&[HelpfulSample], f32)> = vec![];
+        let result = analyzer
+            .evaluate_harmful_batch(&empty_batch)
+            .expect("Empty batch should succeed");
+
+        assert!(result.is_empty(), "Empty batch should return empty results");
+    }
+
+    /// TDD Test: evaluate_harmful_batch should handle batch with empty sample sets.
+    #[test]
+    fn evaluate_harmful_batch_handles_empty_sample_sets() {
+        skip_if_no_gpu!();
+        let analyzer = GpuAnalyzer::new().expect("GPU analyser creation should succeed in tests");
+
+        let samples: Vec<HelpfulSample> = (0..20)
+            .map(|i| HelpfulSample {
+                activation: (i as f32) / 20.0,
+                avg_error: 0.1,
+                target_value: None,
+                target_activation: None,
+            })
+            .collect();
+        let empty_samples: Vec<HelpfulSample> = vec![];
+
+        let batch_input = vec![
+            (&samples[..], 0.5),
+            (&empty_samples[..], 0.3), // Empty set in the middle
+            (&samples[..], -0.2),
+        ];
+
+        let batched = analyzer
+            .evaluate_harmful_batch(&batch_input)
+            .expect("Batch with empty set should succeed");
+
+        assert_eq!(batched.len(), 3, "Should return 3 results");
+
+        // Middle result should be default (all zeros)
+        assert_eq!(
+            batched[1].harmful_count, 0,
+            "Empty sample set should have 0 harmful_count"
+        );
+        assert_eq!(
+            batched[1].helpful_count, 0,
+            "Empty sample set should have 0 helpful_count"
+        );
+    }
+
+    #[test]
+    fn sample_matching_filters_non_finite_values() {
+        // No GPU needed - tests the CPU build_samples function used in production
         let huge = f32::MAX;
         let target_records = vec![
             DiscoverRecord::new(0, "target".to_string(), None, 0.0, vec![0.5, -0.25]),
@@ -7175,27 +6959,16 @@ mod tests_synapses {
             DiscoverRecord::new(1, "from".to_string(), None, 1.0, Vec::new()),
         ];
 
-        let cpu_samples = build_samples(&target_records, &from_records);
+        let samples = build_samples(&target_records, &from_records);
         assert!(
-            cpu_samples.is_empty(),
-            "CPU matching should exclude non-finite samples"
-        );
-
-        let gpu_samples = analyzer
-            .build_samples_gpu(&target_records, &from_records)
-            .expect("GPU matching should succeed");
-
-        assert!(
-            gpu_samples.is_empty(),
-            "GPU matching should exclude non-finite samples"
+            samples.is_empty(),
+            "Sample matching should exclude non-finite samples"
         );
     }
 
     #[test]
-    fn gpu_matching_retains_legitimate_zero_samples() {
-        skip_if_no_gpu!();
-        let analyzer = GpuAnalyzer::new().expect("GPU analyser creation should succeed in tests");
-
+    fn sample_matching_retains_legitimate_zero_samples() {
+        // No GPU needed - tests the CPU build_samples function used in production
         let target_records = vec![DiscoverRecord::new(
             42,
             "target".to_string(),
@@ -7211,49 +6984,30 @@ mod tests_synapses {
             Vec::new(),
         )];
 
-        let cpu_samples = build_samples(&target_records, &from_records);
+        let samples = build_samples(&target_records, &from_records);
         assert_eq!(
-            cpu_samples.len(),
+            samples.len(),
             1,
-            "CPU matching should include legitimate zero-valued samples"
+            "Sample matching should include legitimate zero-valued samples"
         );
 
-        let gpu_samples = analyzer
-            .build_samples_gpu(&target_records, &from_records)
-            .expect("GPU matching should succeed");
-
+        let sample = samples[0];
         assert_eq!(
-            gpu_samples.len(),
-            cpu_samples.len(),
-            "GPU matching should retain legitimate zero-valued samples"
-        );
-
-        let cpu_sample = cpu_samples[0];
-        let gpu_sample = gpu_samples[0];
-        assert_eq!(
-            cpu_sample.activation, gpu_sample.activation,
-            "Zero activation should be preserved by GPU matching"
+            sample.activation, 0.0,
+            "Zero activation should be preserved"
         );
         assert_eq!(
-            cpu_sample.avg_error, gpu_sample.avg_error,
-            "Zero average error should be preserved by GPU matching"
+            sample.avg_error, 0.0,
+            "Zero average error should be preserved"
         );
     }
 
-    /// Test that GPU matching preserves target_value and target_activation.
+    /// Test that sample matching preserves target_value and target_activation.
     /// This is critical for accurate improvement predictions with non-linear
     /// activation functions (TANH, LOGISTIC, HARD_TANH, etc.).
-    ///
-    /// Bug regression test: Previously, GPU matching always returned
-    /// target_value=None and target_activation=None, causing the improvement
-    /// calculation to fall back to an inaccurate linear model that consistently
-    /// overpredicted improvements for add-neuron candidates.
     #[test]
-    fn gpu_matching_preserves_target_value_and_activation() {
-        skip_if_no_gpu!();
-        let analyzer = GpuAnalyzer::new().expect("GPU analyser creation should succeed in tests");
-
-        // Create target records with explicit value (pre-activation) and activation (post-activation)
+    fn sample_matching_preserves_target_value_and_activation() {
+        // No GPU needed - tests the production build_samples function
         let target_value = 0.8; // Pre-activation input sum
         let target_activation = 0.6; // Post-activation output (e.g., after TANH)
         let target_records = vec![DiscoverRecord::new(
@@ -7271,45 +7025,21 @@ mod tests_synapses {
             Vec::new(),
         )];
 
-        // CPU matching should preserve target data
-        let cpu_samples = build_samples(&target_records, &from_records);
-        assert_eq!(cpu_samples.len(), 1, "CPU should find one matching sample");
+        let samples = build_samples(&target_records, &from_records);
+        assert_eq!(samples.len(), 1, "Should find one matching sample");
         assert_eq!(
-            cpu_samples[0].target_value,
+            samples[0].target_value,
             Some(target_value),
-            "CPU matching should preserve target_value"
+            "Sample matching must preserve target_value for activation function simulation"
         );
         assert_eq!(
-            cpu_samples[0].target_activation,
+            samples[0].target_activation,
             Some(target_activation),
-            "CPU matching should preserve target_activation"
-        );
-
-        // GPU matching should also preserve target data (this was the bug)
-        let gpu_samples = analyzer
-            .build_samples_gpu(&target_records, &from_records)
-            .expect("GPU matching should succeed");
-
-        assert_eq!(gpu_samples.len(), 1, "GPU should find one matching sample");
-        assert_eq!(
-            gpu_samples[0].target_value,
-            Some(target_value),
-            "GPU matching should preserve target_value (required for activation function simulation)"
+            "Sample matching must preserve target_activation for error calculation"
         );
         assert_eq!(
-            gpu_samples[0].target_activation,
-            Some(target_activation),
-            "GPU matching should preserve target_activation (required for error calculation)"
-        );
-
-        // Verify values match between CPU and GPU
-        assert_eq!(
-            cpu_samples[0].activation, gpu_samples[0].activation,
-            "Source activation should match between CPU and GPU"
-        );
-        assert!(
-            (cpu_samples[0].avg_error - gpu_samples[0].avg_error).abs() < 1e-6,
-            "Average error should match between CPU and GPU"
+            samples[0].activation, 0.5,
+            "Source activation should be preserved"
         );
     }
 
@@ -7317,10 +7047,8 @@ mod tests_synapses {
     /// When target_value is available, get_target_simulation_fn should return
     /// the activation function, enabling saturation-aware improvement predictions.
     #[test]
-    fn gpu_matching_enables_target_activation_simulation() {
-        skip_if_no_gpu!();
-        let analyzer = GpuAnalyzer::new().expect("GPU analyser creation should succeed in tests");
-
+    fn sample_matching_enables_target_activation_simulation() {
+        // No GPU needed - tests the production build_samples function
         // Create samples near HARD_TANH saturation to test simulation accuracy
         let target_records = vec![
             DiscoverRecord::new(
@@ -7343,36 +7071,34 @@ mod tests_synapses {
             DiscoverRecord::new(1, "from".to_string(), None, -0.3, Vec::new()),
         ];
 
-        let gpu_samples = analyzer
-            .build_samples_gpu(&target_records, &from_records)
-            .expect("GPU matching should succeed");
+        let samples = build_samples(&target_records, &from_records);
 
-        assert_eq!(gpu_samples.len(), 2, "Should match both records");
+        assert_eq!(samples.len(), 2, "Should match both records");
 
         // Verify all samples have target data (required for simulation)
-        for (i, sample) in gpu_samples.iter().enumerate() {
+        for (i, sample) in samples.iter().enumerate() {
             assert!(
                 sample.target_value.is_some(),
-                "Sample {i} should have target_value for activation simulation"
+                "Sample {i} must have target_value for activation simulation"
             );
             assert!(
                 sample.target_activation.is_some(),
-                "Sample {i} should have target_activation for error calculation"
+                "Sample {i} must have target_activation for error calculation"
             );
         }
 
         // With target data available, get_target_simulation_fn should return Some
         // for activations that need simulation (HARD_TANH, TANH, ReLU, etc.)
-        let simulation_fn = get_target_simulation_fn(&gpu_samples, Some("HARD_TANH"));
+        let simulation_fn = get_target_simulation_fn(&samples, Some("HARD_TANH"));
         assert!(
             simulation_fn.is_some(),
-            "Should enable HARD_TANH simulation when GPU samples have target data"
+            "Should enable HARD_TANH simulation when samples have target data"
         );
 
-        let simulation_fn = get_target_simulation_fn(&gpu_samples, Some("TANH"));
+        let simulation_fn = get_target_simulation_fn(&samples, Some("TANH"));
         assert!(
             simulation_fn.is_some(),
-            "Should enable TANH simulation when GPU samples have target data"
+            "Should enable TANH simulation when samples have target data"
         );
     }
 

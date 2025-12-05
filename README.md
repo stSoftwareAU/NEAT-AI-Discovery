@@ -16,6 +16,19 @@ error. Controllers call into the library via Deno FFI to power
 - **Drop-in for NEAT-AI** – Exposes the `libneat_ai_discovery` symbol set expected
   by the TypeScript bindings in `NEAT-AI`.
 
+## GPU Requirement
+
+**This library requires a GPU.** There is no CPU fallback. If no compatible GPU is
+available, discovery is simply skipped – NEAT-AI continues training without the
+discovery phase. This is by design:
+
+- **Simplicity**: One code path means fewer bugs. No subtle differences between
+  CPU and GPU implementations.
+- **Performance**: GPU-accelerated analysis is the whole point. A CPU fallback
+  would be too slow to be useful.
+- **Optional feature**: Discovery is an optimisation, not a requirement. NEAT-AI
+  works fine without it.
+
 ## Quick start
 
 1. Install prerequisites (`rustup`, `cargo`, build tools, and `jq`). The
@@ -97,13 +110,15 @@ These steps ensure code quality, proper versioning, and that all tests pass befo
   target) that do **not** already have a synapse. This quickly grows into
   thousands of potential new synapses for realistic creatures (e.g. 1,486
   observations × 450+ hidden neurons).
-- Each source/target pair becomes its own GPU job. We batch the jobs in chunks
-  (default 32) so the GPU can chew through aligned samples in parallel while the
-  CPU streams discovery records from Parquet.
-- The GPU kernels (matching + helpful/harmful statistics) produce sufficient
-  aggregates to derive the suggested weight and the expected error reduction.
-  Results are sorted by expected improvement before being returned, so callers
-  can simply read the first entry or pass `max_candidates=1` to receive the best.
+- **GPU batching for improved utilisation (v0.1.118)**: Both helpful and harmful
+  synapse analysis now batch multiple GPU operations into single command buffer
+  submissions (batch size 512). This reduces CPU-GPU round trips and keeps the
+  GPU busy with larger workloads. Sample building is done on CPU in parallel to
+  avoid GPU sync overhead per source.
+- The GPU kernels (helpful/harmful statistics) produce sufficient aggregates to
+  derive the suggested weight and the expected error reduction. Results are sorted
+  by expected improvement before being returned, so callers can simply read the
+  first entry or pass `max_candidates=1` to receive the best.
 - When no candidate “makes the grade” (e.g. there were no overlapping samples,
   the GPU observed zero consistent improvements, or every candidate fell under
   the requested threshold) set `NEAT_AI_DISCOVERY_VERBOSE=1` before launching
@@ -197,13 +212,13 @@ simulation for the following target neuron types:
 For these activations, the library computes the actual new error after applying
 the candidate contribution through the target's activation function, rather than
 using the linear approximation. This is verified by unit tests:
-`gpu_matching_preserves_target_value_and_activation` and
-`gpu_matching_enables_target_activation_simulation`.
+`sample_matching_preserves_target_value_and_activation` and
+`sample_matching_enables_target_activation_simulation`.
 
 **Linear fallback**: If `target_value` or `target_activation` data is missing
-(e.g., when using CPU-only matching or older Parquet files), the library falls
-back to the linear model. The linear model works reasonably well when errors are
-small relative to the activation function's linear region.
+(e.g., older Parquet files from before this feature), the library falls back to
+the linear model. The linear model works reasonably well when errors are small
+relative to the activation function's linear region.
 
 #### Bias-aware weight calculation (v0.1.115)
 
@@ -398,9 +413,9 @@ If the script reports that discovery is enabled, you are ready to schedule
 
 ### Checking for a usable GPU from NEAT-AI
 
-Discovery analysis is designed as a GPU-accelerated extension. On machines
-without a suitable GPU, controllers should disable discovery rather than
-falling back to a separate CPU-only implementation.
+Discovery **requires a GPU** – there is no CPU fallback. On machines without a
+suitable GPU, controllers must disable discovery entirely. This is intentional:
+the library has one code path (GPU) to avoid bugs from divergent implementations.
 
 The library exposes a lightweight FFI entry point to allow NEAT-AI to decide
 whether discovery should be enabled:
