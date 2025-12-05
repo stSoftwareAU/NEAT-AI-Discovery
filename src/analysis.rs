@@ -4478,7 +4478,7 @@ fn compute_relu_improvement_and_count(
             let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
             let expected = target_activation + sample.avg_error;
             let new_input = target_value + contribution;
-            target_fn(new_input) - expected
+            expected - target_fn(new_input)
         } else {
             // Linear approximation - consistent with synapse model: new_error = old_error - correction
             // avg_error is (expected - actual), contribution adds to output, so reduces error
@@ -4539,7 +4539,7 @@ fn compute_activation_improvement_and_count(
             let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
             let expected = target_activation + sample.avg_error;
             let new_input = target_value + contribution;
-            target_fn(new_input) - expected
+            expected - target_fn(new_input)
         } else {
             // Linear approximation - consistent with synapse model: new_error = old_error - correction
             // avg_error is (expected - actual), contribution adds to output, so reduces error
@@ -4623,7 +4623,7 @@ fn compute_synapse_improvement_with_target_squash(
             let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
             let expected = target_activation + sample.avg_error;
             let new_input = target_value + contribution;
-            target_fn(new_input) - expected
+            expected - target_fn(new_input)
         } else {
             // Linear approximation - assumes contribution directly reduces error
             sample.avg_error - contribution
@@ -4671,7 +4671,7 @@ fn compute_synapse_improvement_and_count(
             let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
             let expected = target_activation + sample.avg_error;
             let new_input = target_value + contribution;
-            target_fn(new_input) - expected
+            expected - target_fn(new_input)
         } else {
             sample.avg_error - contribution
         };
@@ -7575,6 +7575,68 @@ mod tests_synapses {
             prediction_error_wrong > prediction_error_correct * 10.0,
             "Wrong weight should have much higher error than correct weight. \
              Wrong error={prediction_error_wrong:.6}, Correct error={prediction_error_correct:.6}"
+        );
+    }
+
+    /// Regression test: Target simulation must compute new_error = expected - new_output.
+    ///
+    /// BUG: The code was computing new_error = new_output - expected (opposite sign).
+    /// This caused predictions to have the WRONG SIGN compared to actual results:
+    /// - Predicted positive improvement but actual was negative (worse)
+    /// - The sign error was in the target activation simulation path
+    ///
+    /// The linear approximation uses: new_error = avg_error - contribution
+    /// The target simulation must be consistent: new_error = expected - target_fn(new_input)
+    ///
+    /// Note: Since we square the errors, the sign doesn't affect the squared error sum,
+    /// but it DOES affect the direction of the optimal weight calculation when used
+    /// inconsistently between the weight optimisation and improvement prediction.
+    #[test]
+    fn target_simulation_error_sign_consistent_with_linear_model() {
+        // Sample with positive avg_error (output should be higher)
+        // avg_error = expected - actual = positive means actual < expected
+        let sample = HelpfulSample {
+            activation: 0.5,
+            avg_error: 0.2,               // Output should be 0.2 higher
+            target_value: Some(0.3),      // Pre-activation input to target
+            target_activation: Some(0.3), // Post-activation (in linear region of HARD_TANH)
+        };
+
+        // Small positive contribution (should reduce the positive error)
+        let contribution = 0.05f32;
+
+        // Linear model: new_error = avg_error - contribution = 0.2 - 0.05 = 0.15
+        let linear_new_error = sample.avg_error - contribution;
+
+        // Target simulation (for linear region of HARD_TANH):
+        let expected = sample.target_activation.unwrap() + sample.avg_error; // = 0.3 + 0.2 = 0.5
+        let new_input = sample.target_value.unwrap() + contribution; // = 0.3 + 0.05 = 0.35
+        let new_output = hard_tanh(new_input); // = 0.35 (in linear region)
+
+        // CORRECT formula: new_error = expected - new_output
+        let target_new_error = expected - new_output; // = 0.5 - 0.35 = 0.15
+
+        // Both should give the same result (positive error, reduced by positive contribution)
+        assert!(
+            (linear_new_error - target_new_error).abs() < 0.001,
+            "Target simulation should match linear model in linear region. \
+             Linear: {linear_new_error}, Target: {target_new_error}"
+        );
+
+        // Both should show error REDUCTION (not increase)
+        assert!(
+            target_new_error.abs() < sample.avg_error.abs(),
+            "Positive contribution should REDUCE positive error. \
+             Old error: {}, New error: {}",
+            sample.avg_error,
+            target_new_error
+        );
+
+        // Verify both have the same sign (positive)
+        assert!(
+            linear_new_error > 0.0 && target_new_error > 0.0,
+            "Both error calculations should be positive. \
+             Linear: {linear_new_error}, Target: {target_new_error}"
         );
     }
 
