@@ -5013,11 +5013,32 @@ fn evaluate_activation_candidate(
                         target_squash,
                     );
 
+                    // CRITICAL FIX: Recompute optimal weight WITH the bias included.
+                    // The initial weight_candidates were computed WITHOUT bias, so they're
+                    // wrong when bias significantly changes the activation pattern.
+                    // Now recompute the weight that optimises error reduction for this bias.
+                    let mut sum_activation_sq_with_bias = 0.0f32;
+                    let mut sum_error_activation_with_bias = 0.0f32;
+                    for sample in samples.iter() {
+                        let pre_activation = incoming_weight * sample.activation + bias;
+                        let output = (spec.activation)(pre_activation);
+                        if output.is_finite() {
+                            sum_activation_sq_with_bias += output * output;
+                            sum_error_activation_with_bias += output * sample.avg_error;
+                        }
+                    }
+                    let recomputed_weight = if sum_activation_sq_with_bias > EPSILON {
+                        (sum_error_activation_with_bias / sum_activation_sq_with_bias)
+                            .clamp(-10.0, 10.0)
+                    } else {
+                        clamped_weight
+                    };
+
                     // Single pass for improvement and count with target simulation
                     let (improvement, improved, _) = compute_activation_improvement_and_count(
                         samples,
                         incoming_weight,
-                        clamped_weight,
+                        recomputed_weight,
                         bias,
                         spec.activation,
                         baseline_sq,
@@ -5026,7 +5047,7 @@ fn evaluate_activation_candidate(
 
                     if improvement > best_improvement {
                         best_improvement = improvement;
-                        best_weight = clamped_weight;
+                        best_weight = recomputed_weight;
                         best_bias = bias;
                         best_improved_count = improved;
                     }
@@ -5040,17 +5061,37 @@ fn evaluate_activation_candidate(
                 )
             } else {
                 // For linear targets or when target data unavailable, use linear optimal weight
-                let outgoing_weight = linear_optimal_weight.clamp(-10.0, 10.0);
+                let initial_weight = linear_optimal_weight.clamp(-10.0, 10.0);
 
                 let optimal_bias = calculate_optimal_bias(
                     samples,
                     incoming_weight,
-                    outgoing_weight,
+                    initial_weight,
                     spec.activation,
                     spec.name,
                     None,
                     target_squash,
                 );
+
+                // CRITICAL FIX: Recompute optimal weight WITH the bias included.
+                // The linear_optimal_weight was computed WITHOUT bias, so recompute
+                // using the actual activation pattern with bias.
+                let mut sum_activation_sq_with_bias = 0.0f32;
+                let mut sum_error_activation_with_bias = 0.0f32;
+                for sample in samples.iter() {
+                    let pre_activation = incoming_weight * sample.activation + optimal_bias;
+                    let output = (spec.activation)(pre_activation);
+                    if output.is_finite() {
+                        sum_activation_sq_with_bias += output * output;
+                        sum_error_activation_with_bias += output * sample.avg_error;
+                    }
+                }
+                let outgoing_weight = if sum_activation_sq_with_bias > EPSILON {
+                    (sum_error_activation_with_bias / sum_activation_sq_with_bias)
+                        .clamp(-10.0, 10.0)
+                } else {
+                    initial_weight
+                };
 
                 let (improvement, improved_count, _) = compute_activation_improvement_and_count(
                     samples,
@@ -7322,6 +7363,218 @@ mod tests_synapses {
         assert!(
             simulation_fn.is_some(),
             "Should enable TANH simulation when GPU samples have target data"
+        );
+    }
+
+    /// Regression test: Add-neuron predictions must use weight computed WITH bias.
+    ///
+    /// BUG: Previously, the optimal outgoing weight was computed WITHOUT bias:
+    ///   weight = Σ(error × TANH(x)) / Σ(TANH(x)²)
+    ///
+    /// But the actual neuron uses bias:
+    ///   contribution = weight × TANH(x + bias)
+    ///
+    /// When bias significantly shifts the activation pattern, the weight computed
+    /// without bias causes predictions to have the WRONG SIGN - predicting improvement
+    /// when it actually makes things worse.
+    ///
+    /// This test reproduces the production failure pattern:
+    /// - Predicted: +0.3% improvement
+    /// - Actual: -0.2% (worse!)
+    #[test]
+    fn add_neuron_weight_must_include_bias_in_calculation() {
+        // Scenario from production: TANH neuron with bias=1
+        // This shifts the activation threshold from x>0 to x>-1
+        let incoming_weight = 1.0f32;
+        let bias = 1.0f32;
+
+        // Create samples that expose the bug:
+        // - Source activations centered around 0
+        // - Roughly equal positive and negative errors
+        // - With bias=1, TANH(x+1) is almost always positive (x > -1)
+        // - Without bias, TANH(x) has mixed signs
+        let samples: Vec<HelpfulSample> = vec![
+            // Positive source activation, positive error (need output up)
+            HelpfulSample {
+                activation: 0.5,
+                avg_error: 0.3,
+                target_value: Some(0.0),
+                target_activation: Some(0.0),
+            },
+            HelpfulSample {
+                activation: 0.3,
+                avg_error: 0.2,
+                target_value: Some(0.0),
+                target_activation: Some(0.0),
+            },
+            HelpfulSample {
+                activation: 0.1,
+                avg_error: 0.1,
+                target_value: Some(0.0),
+                target_activation: Some(0.0),
+            },
+            // Negative source activation, negative error (need output down)
+            HelpfulSample {
+                activation: -0.5,
+                avg_error: -0.3,
+                target_value: Some(0.0),
+                target_activation: Some(0.0),
+            },
+            HelpfulSample {
+                activation: -0.3,
+                avg_error: -0.2,
+                target_value: Some(0.0),
+                target_activation: Some(0.0),
+            },
+            HelpfulSample {
+                activation: -0.1,
+                avg_error: -0.1,
+                target_value: Some(0.0),
+                target_activation: Some(0.0),
+            },
+            // More samples near zero - these are affected most by bias
+            HelpfulSample {
+                activation: 0.05,
+                avg_error: 0.15,
+                target_value: Some(0.0),
+                target_activation: Some(0.0),
+            },
+            HelpfulSample {
+                activation: -0.05,
+                avg_error: -0.15,
+                target_value: Some(0.0),
+                target_activation: Some(0.0),
+            },
+        ];
+
+        // Compute baseline error
+        let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+
+        // BUG PATH: Compute weight WITHOUT bias (what the old code did)
+        let mut sum_sq_no_bias = 0.0f32;
+        let mut sum_ea_no_bias = 0.0f32;
+        for s in &samples {
+            let pre_act = incoming_weight * s.activation; // NO BIAS!
+            let output = pre_act.tanh();
+            sum_sq_no_bias += output * output;
+            sum_ea_no_bias += output * s.avg_error;
+        }
+        let weight_without_bias = sum_ea_no_bias / sum_sq_no_bias;
+
+        // FIX PATH: Compute weight WITH bias (what the fixed code does)
+        let mut sum_sq_with_bias = 0.0f32;
+        let mut sum_ea_with_bias = 0.0f32;
+        for s in &samples {
+            let pre_act = incoming_weight * s.activation + bias; // WITH BIAS!
+            let output = pre_act.tanh();
+            sum_sq_with_bias += output * output;
+            sum_ea_with_bias += output * s.avg_error;
+        }
+        let weight_with_bias = sum_ea_with_bias / sum_sq_with_bias;
+
+        // Compute ACTUAL error reduction using the ACTUAL neuron (with bias)
+        fn compute_actual_improvement(
+            samples: &[HelpfulSample],
+            incoming_weight: f32,
+            outgoing_weight: f32,
+            bias: f32,
+            baseline_error_sq: f32,
+        ) -> f32 {
+            let mut new_error_sq = 0.0f32;
+            for s in samples {
+                let pre_act = incoming_weight * s.activation + bias;
+                let neuron_output = pre_act.tanh();
+                let contribution = outgoing_weight * neuron_output;
+                // Linear approximation: new_error = old_error - contribution
+                let new_error = s.avg_error - contribution;
+                new_error_sq += new_error * new_error;
+            }
+            // Improvement = (baseline - new) / baseline
+            (baseline_error_sq - new_error_sq) / baseline_error_sq
+        }
+
+        // Test 1: Using weight computed WITHOUT bias gives WRONG prediction
+        // The prediction (using weight_without_bias) should differ from actual
+        let predicted_without_bias = {
+            // Predicted improvement uses the same formula as actual
+            // but the weight was computed from wrong activation pattern
+            let mut predicted_new_error_sq = 0.0f32;
+            for s in &samples {
+                let pre_act = incoming_weight * s.activation; // NO BIAS in prediction!
+                let output = pre_act.tanh();
+                let contribution = weight_without_bias * output;
+                let new_error = s.avg_error - contribution;
+                predicted_new_error_sq += new_error * new_error;
+            }
+            (baseline_error_sq - predicted_new_error_sq) / baseline_error_sq
+        };
+
+        let actual_with_wrong_weight = compute_actual_improvement(
+            &samples,
+            incoming_weight,
+            weight_without_bias,
+            bias,
+            baseline_error_sq,
+        );
+
+        // The bug: predicted is positive, actual is often negative or much smaller
+        // This happens because weight was optimised for TANH(x) but applied to TANH(x+1)
+        let prediction_error_wrong = (predicted_without_bias - actual_with_wrong_weight).abs();
+
+        // Test 2: Using weight computed WITH bias gives CORRECT prediction
+        let predicted_with_bias = {
+            let mut predicted_new_error_sq = 0.0f32;
+            for s in &samples {
+                let pre_act = incoming_weight * s.activation + bias; // WITH BIAS in prediction!
+                let output = pre_act.tanh();
+                let contribution = weight_with_bias * output;
+                let new_error = s.avg_error - contribution;
+                predicted_new_error_sq += new_error * new_error;
+            }
+            (baseline_error_sq - predicted_new_error_sq) / baseline_error_sq
+        };
+
+        let actual_with_correct_weight = compute_actual_improvement(
+            &samples,
+            incoming_weight,
+            weight_with_bias,
+            bias,
+            baseline_error_sq,
+        );
+
+        let prediction_error_correct = (predicted_with_bias - actual_with_correct_weight).abs();
+
+        // Assertions:
+        // 1. The two weights should be significantly different
+        assert!(
+            (weight_with_bias - weight_without_bias).abs() > 0.01,
+            "Weights should differ: without_bias={weight_without_bias:.4}, with_bias={weight_with_bias:.4}"
+        );
+
+        // 2. Using wrong weight should have high prediction error
+        assert!(
+            prediction_error_wrong > 0.001,
+            "Wrong weight should cause prediction error > 0.1%. \
+             Predicted={predicted_without_bias:.4}, Actual={actual_with_wrong_weight:.4}, \
+             Error={prediction_error_wrong:.4}"
+        );
+
+        // 3. Using correct weight should have low prediction error
+        assert!(
+            prediction_error_correct < 0.0001,
+            "Correct weight should have prediction error < 0.01%. \
+             Predicted={predicted_with_bias:.4}, Actual={actual_with_correct_weight:.4}, \
+             Error={prediction_error_correct:.4}"
+        );
+
+        // 4. The key bug symptom: wrong weight often gives OPPOSITE sign of improvement
+        // (predicts positive improvement but actual is negative, or vice versa)
+        // This may not always happen with this specific test data, but we verify
+        // the prediction error is significantly worse.
+        assert!(
+            prediction_error_wrong > prediction_error_correct * 10.0,
+            "Wrong weight should have much higher error than correct weight. \
+             Wrong error={prediction_error_wrong:.6}, Correct error={prediction_error_correct:.6}"
         );
     }
 

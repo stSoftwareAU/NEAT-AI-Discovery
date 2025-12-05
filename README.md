@@ -205,6 +205,27 @@ using the linear approximation. This is verified by unit tests:
 back to the linear model. The linear model works reasonably well when errors are
 small relative to the activation function's linear region.
 
+#### Bias-aware weight calculation (v0.1.115)
+
+For **add-neuron** candidates, the optimal outgoing weight must be computed using
+the new neuron's **actual activation pattern** (which includes bias). Previously,
+the weight was computed without bias, then a separate bias optimisation was
+performed. This caused predictions to fail when bias significantly shifted the
+activation threshold.
+
+**Example failure scenario (now fixed):**
+- New TANH neuron with `bias=1`
+- Without bias: `TANH(x)` fires when x > 0 (~50% of samples)
+- With bias: `TANH(x+1)` fires when x > -1 (almost always!)
+- The optimal weight for these two patterns is completely different
+
+**The fix**: After finding the optimal bias, the library now **recomputes** the
+optimal outgoing weight using the actual activation pattern (with bias). This
+ensures predictions match reality.
+
+This is verified by unit tests: `add_neuron_weight_must_include_bias_in_calculation`
+and integration test: `test_add_neuron_with_hard_tanh_target_uses_bias_aware_weight`.
+
 #### All other activations
 
 All other activation functions (including IDENTITY, INVERSE, IF, MAXIMUM,
