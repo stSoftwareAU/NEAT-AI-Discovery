@@ -873,6 +873,119 @@ fn test_add_neuron_finds_candidates_with_correlated_errors() {
     );
 }
 
+/// Regression test: Add-neuron with HARD_TANH target must use bias-aware weight calculation.
+///
+/// Production uses HARD_TANH for output neurons. The optimal outgoing weight depends on
+/// the new neuron's bias - computing weight without bias gives wrong predictions.
+///
+/// This test verifies that predictions for non-linear target neurons are accurate.
+#[test]
+fn test_add_neuron_with_hard_tanh_target_uses_bias_aware_weight() {
+    skip_without_gpu!();
+    use neat_ai_discovery::AnalyzeNeuronsInput;
+
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    // Create creature with HARD_TANH output (matches production)
+    let creature = CreatureJson {
+        neurons: vec![NeuronJson {
+            uuid: "output-0".to_string(),
+            neuron_type: "output".to_string(),
+            squash: "HARD_TANH".to_string(), // Non-linear - requires bias-aware weight
+            bias: 0.0,
+        }],
+        synapses: vec![],
+        input: 2,
+        output: 1,
+    };
+
+    // Generate training data with correlated errors
+    // Key: the new neuron will have bias, changing its activation pattern
+    let mut training_data = Vec::new();
+    for i in 0..100 {
+        let input_0_val = (i as f32 - 50.0) / 50.0; // Range: -1.0 to 1.0
+        let input_1_val = 0.3;
+
+        // Correlated error - when input-0 is positive, output should be higher
+        let error = input_0_val * 0.4;
+        // HARD_TANH output value in linear region
+        let output_value = 0.1 + input_0_val * 0.1;
+        let output_activation = output_value.clamp(-1.0, 1.0);
+
+        training_data.push(serde_json::json!({
+            "input": [input_0_val, input_1_val],
+            "output": [0.0],
+            "neuron_data": [{
+                "neuron_uuid": "output-0",
+                "activation": output_activation,
+                "value": output_value,  // Required for saturation-aware prediction
+                "errors": [error]
+            }]
+        }));
+    }
+
+    // Record discovery data
+    let input_json = serde_json::json!({
+        "creature": creature.clone(),
+        "training_data": training_data,
+        "temp_dir": temp_path.to_str().unwrap()
+    });
+
+    let record_input = serde_json::to_string(&input_json).unwrap();
+    let record_output_json = record_discovery_internal(&record_input).unwrap();
+    let record_output: serde_json::Value = serde_json::from_str(&record_output_json).unwrap();
+    assert_eq!(
+        record_output["success"], true,
+        "Failed to record discovery data: {:?}",
+        record_output["error"]
+    );
+
+    let parquet_file = temp_path.join(record_output["file"].as_str().unwrap());
+
+    // Analyse neurons
+    let analyze_input = AnalyzeNeuronsInput {
+        parquet_file: parquet_file.to_str().unwrap().to_string(),
+        creature,
+        focus_neurons: vec!["output-0".to_string()],
+        improvement_threshold: Some(0.01),
+        max_candidates: Some(10),
+        analysis_deadline_ms: None,
+    };
+
+    let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
+        .expect("Neuron analysis should succeed");
+
+    // Should find candidates with HARD_TANH target
+    assert!(
+        !result.helpful_neurons.is_empty(),
+        "Add-neuron should find candidates for HARD_TANH target. Diagnostics: {:?}",
+        result.no_candidate_reasons
+    );
+
+    // Verify the candidate has reasonable expected improvement
+    let best = &result.helpful_neurons[0];
+    assert!(
+        best.expected_improvement_percentage > 0.0,
+        "Expected improvement should be positive, got {}",
+        best.expected_improvement_percentage
+    );
+
+    // Key assertion: the improvement prediction should be realistic (not inflated)
+    // With the bug, predictions were often 10x higher than reality
+    // After the fix, predictions should be < 50% (a reasonable upper bound)
+    assert!(
+        best.expected_improvement_percentage < 50.0,
+        "Expected improvement should be realistic (< 50%), got {}%. \
+         This may indicate the bias-aware weight calculation is not working.",
+        best.expected_improvement_percentage
+    );
+
+    // Note: bias=0 is a valid value (the optimal bias search includes 0.0)
+    // The key fix is that the outgoing weight is recomputed AFTER finding the bias,
+    // so even with bias=0, the weight calculation is now correct.
+}
+
 /// Test that neurons with calculated bias improve error more than bias=0
 #[test]
 fn test_bias_improves_neuron_performance() {
