@@ -2,6 +2,10 @@ struct TargetRecord {
     obs_index: u32,
     error_start_index: u32,
     error_count: u32,
+    // Target neuron's pre-activation value (input sum before squash function)
+    value: f32,
+    // Target neuron's post-activation output (after squash function)
+    activation: f32,
     pad0: u32,
 };
 
@@ -10,9 +14,13 @@ struct FromRecord {
     activation: f32,
 };
 
-struct HelpfulSample {
+struct MatchingSample {
     activation: f32,
     avg_error: f32,
+    // Target neuron's pre-activation value (for activation function simulation)
+    target_value: f32,
+    // Target neuron's post-activation output (for accurate error calculation)
+    target_activation: f32,
 };
 
 struct MatchingUniforms {
@@ -29,7 +37,7 @@ var<storage, read> errors: array<f32>;
 @group(0) @binding(2)
 var<storage, read> from_records: array<FromRecord>;
 @group(0) @binding(3)
-var<storage, read_write> samples: array<HelpfulSample>;
+var<storage, read_write> samples: array<MatchingSample>;
 @group(0) @binding(4)
 var<uniform> uniforms: MatchingUniforms;
 
@@ -79,7 +87,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Skip if activation is not finite
     if (!is_finite_value(from_rec.activation)) {
-        samples[idx] = HelpfulSample(0.0, quiet_nan());
+        samples[idx] = MatchingSample(0.0, quiet_nan(), quiet_nan(), quiet_nan());
         return;
     }
 
@@ -114,13 +122,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         // Skip if the averaged error is not finite
         if (is_finite_value(avg_error)) {
-            samples[idx] = HelpfulSample(from_rec.activation, avg_error);
+            // Include target neuron's value and activation for accurate improvement simulation
+            samples[idx] = MatchingSample(from_rec.activation, avg_error, target_rec.value, target_rec.activation);
         } else {
-            samples[idx] = HelpfulSample(0.0, quiet_nan());
+            samples[idx] = MatchingSample(0.0, quiet_nan(), quiet_nan(), quiet_nan());
         }
     } else {
         // No match found
-        samples[idx] = HelpfulSample(0.0, quiet_nan());
+        samples[idx] = MatchingSample(0.0, quiet_nan(), quiet_nan(), quiet_nan());
     }
 }
 

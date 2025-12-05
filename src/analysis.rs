@@ -1583,12 +1583,29 @@ struct GpuHelpfulSample {
     avg_error: f32,
 }
 
+/// Extended sample struct for GPU matching output, includes target neuron data.
+/// Used only by the matching shader; other shaders use the simpler GpuHelpfulSample.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuMatchingSample {
+    activation: f32,
+    avg_error: f32,
+    /// Target neuron's pre-activation value (input sum before squash function)
+    target_value: f32,
+    /// Target neuron's post-activation output (after squash function)
+    target_activation: f32,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GpuTargetRecord {
     obs_index: u32,
     error_start_index: u32,
     error_count: u32,
+    /// Target neuron's pre-activation value (input sum before squash function)
+    value: f32,
+    /// Target neuron's post-activation output (after squash function)
+    activation: f32,
     pad0: u32,
 }
 
@@ -3995,6 +4012,9 @@ impl GpuAnalyzer {
                     obs_index: record.obs_index,
                     error_start_index,
                     error_count: finite_error_count,
+                    // Include target neuron's value and activation for accurate simulation
+                    value: record.value.unwrap_or(f32::NAN),
+                    activation: record.activation,
                     pad0: 0,
                 });
                 error_start_index += finite_error_count;
@@ -4036,7 +4056,7 @@ impl GpuAnalyzer {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        let samples_zeroed = vec![GpuHelpfulSample::zeroed(); from_records.len()];
+        let samples_zeroed = vec![GpuMatchingSample::zeroed(); from_records.len()];
         let samples_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("matching-samples-buffer"),
             contents: bytemuck::cast_slice(&samples_zeroed),
@@ -4084,7 +4104,7 @@ impl GpuAnalyzer {
             label: Some("matching-bind-group"),
         });
 
-        let sample_size = (std::mem::size_of::<GpuHelpfulSample>() * from_records.len()) as u64;
+        let sample_size = (std::mem::size_of::<GpuMatchingSample>() * from_records.len()) as u64;
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("matching-staging-buffer"),
             size: sample_size,
@@ -4131,19 +4151,30 @@ impl GpuAnalyzer {
         }
 
         let data = buffer_slice.get_mapped_range();
-        let gpu_samples: &[GpuHelpfulSample] = bytemuck::cast_slice(&data);
+        let gpu_samples: &[GpuMatchingSample] = bytemuck::cast_slice(&data);
 
-        // Retain only finite samples; GPU matching emits NaN for invalid rows
-        // NOTE: GPU samples don't include target_value/target_activation yet.
-        // For HARD_TANH support, we'll need to update the GPU shader to return this data.
+        // Retain only finite samples; GPU matching emits NaN for invalid rows.
+        // Now includes target_value and target_activation for accurate activation
+        // function simulation (HARD_TANH, TANH, LOGISTIC, etc.).
         let mut samples = Vec::new();
         for gpu_sample in gpu_samples {
             if gpu_sample.activation.is_finite() && gpu_sample.avg_error.is_finite() {
+                // Convert NaN values to None for target data
+                let target_value = if gpu_sample.target_value.is_finite() {
+                    Some(gpu_sample.target_value)
+                } else {
+                    None
+                };
+                let target_activation = if gpu_sample.target_activation.is_finite() {
+                    Some(gpu_sample.target_activation)
+                } else {
+                    None
+                };
                 samples.push(HelpfulSample {
                     activation: gpu_sample.activation,
                     avg_error: gpu_sample.avg_error,
-                    target_value: None,
-                    target_activation: None,
+                    target_value,
+                    target_activation,
                 });
             }
         }
@@ -7155,6 +7186,142 @@ mod tests_synapses {
         assert_eq!(
             cpu_sample.avg_error, gpu_sample.avg_error,
             "Zero average error should be preserved by GPU matching"
+        );
+    }
+
+    /// Test that GPU matching preserves target_value and target_activation.
+    /// This is critical for accurate improvement predictions with non-linear
+    /// activation functions (TANH, LOGISTIC, HARD_TANH, etc.).
+    ///
+    /// Bug regression test: Previously, GPU matching always returned
+    /// target_value=None and target_activation=None, causing the improvement
+    /// calculation to fall back to an inaccurate linear model that consistently
+    /// overpredicted improvements for add-neuron candidates.
+    #[test]
+    fn gpu_matching_preserves_target_value_and_activation() {
+        skip_if_no_gpu!();
+        let analyzer = GpuAnalyzer::new().expect("GPU analyser creation should succeed in tests");
+
+        // Create target records with explicit value (pre-activation) and activation (post-activation)
+        let target_value = 0.8; // Pre-activation input sum
+        let target_activation = 0.6; // Post-activation output (e.g., after TANH)
+        let target_records = vec![DiscoverRecord::new(
+            0,
+            "target".to_string(),
+            Some(target_value),
+            target_activation,
+            vec![0.1, -0.2],
+        )];
+        let from_records = vec![DiscoverRecord::new(
+            0,
+            "from".to_string(),
+            None, // Source value not used
+            0.5,  // Source activation
+            Vec::new(),
+        )];
+
+        // CPU matching should preserve target data
+        let cpu_samples = build_samples(&target_records, &from_records);
+        assert_eq!(cpu_samples.len(), 1, "CPU should find one matching sample");
+        assert_eq!(
+            cpu_samples[0].target_value,
+            Some(target_value),
+            "CPU matching should preserve target_value"
+        );
+        assert_eq!(
+            cpu_samples[0].target_activation,
+            Some(target_activation),
+            "CPU matching should preserve target_activation"
+        );
+
+        // GPU matching should also preserve target data (this was the bug)
+        let gpu_samples = analyzer
+            .build_samples_gpu(&target_records, &from_records)
+            .expect("GPU matching should succeed");
+
+        assert_eq!(gpu_samples.len(), 1, "GPU should find one matching sample");
+        assert_eq!(
+            gpu_samples[0].target_value,
+            Some(target_value),
+            "GPU matching should preserve target_value (required for activation function simulation)"
+        );
+        assert_eq!(
+            gpu_samples[0].target_activation,
+            Some(target_activation),
+            "GPU matching should preserve target_activation (required for error calculation)"
+        );
+
+        // Verify values match between CPU and GPU
+        assert_eq!(
+            cpu_samples[0].activation, gpu_samples[0].activation,
+            "Source activation should match between CPU and GPU"
+        );
+        assert!(
+            (cpu_samples[0].avg_error - gpu_samples[0].avg_error).abs() < 1e-6,
+            "Average error should match between CPU and GPU"
+        );
+    }
+
+    /// Test that target_value enables proper activation function simulation.
+    /// When target_value is available, get_target_simulation_fn should return
+    /// the activation function, enabling saturation-aware improvement predictions.
+    #[test]
+    fn gpu_matching_enables_target_activation_simulation() {
+        skip_if_no_gpu!();
+        let analyzer = GpuAnalyzer::new().expect("GPU analyser creation should succeed in tests");
+
+        // Create samples near HARD_TANH saturation to test simulation accuracy
+        let target_records = vec![
+            DiscoverRecord::new(
+                0,
+                "target".to_string(),
+                Some(0.95), // Near saturation
+                0.95,       // HARD_TANH clips to 1.0 when input >= 1.0
+                vec![0.1],  // Small positive error (output should be higher)
+            ),
+            DiscoverRecord::new(
+                1,
+                "target".to_string(),
+                Some(-0.8),
+                -0.8,
+                vec![-0.15], // Small negative error (output should be lower)
+            ),
+        ];
+        let from_records = vec![
+            DiscoverRecord::new(0, "from".to_string(), None, 0.5, Vec::new()),
+            DiscoverRecord::new(1, "from".to_string(), None, -0.3, Vec::new()),
+        ];
+
+        let gpu_samples = analyzer
+            .build_samples_gpu(&target_records, &from_records)
+            .expect("GPU matching should succeed");
+
+        assert_eq!(gpu_samples.len(), 2, "Should match both records");
+
+        // Verify all samples have target data (required for simulation)
+        for (i, sample) in gpu_samples.iter().enumerate() {
+            assert!(
+                sample.target_value.is_some(),
+                "Sample {i} should have target_value for activation simulation"
+            );
+            assert!(
+                sample.target_activation.is_some(),
+                "Sample {i} should have target_activation for error calculation"
+            );
+        }
+
+        // With target data available, get_target_simulation_fn should return Some
+        // for activations that need simulation (HARD_TANH, TANH, ReLU, etc.)
+        let simulation_fn = get_target_simulation_fn(&gpu_samples, Some("HARD_TANH"));
+        assert!(
+            simulation_fn.is_some(),
+            "Should enable HARD_TANH simulation when GPU samples have target data"
+        );
+
+        let simulation_fn = get_target_simulation_fn(&gpu_samples, Some("TANH"));
+        assert!(
+            simulation_fn.is_some(),
+            "Should enable TANH simulation when GPU samples have target data"
         );
     }
 
