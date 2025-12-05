@@ -5255,7 +5255,17 @@ fn evaluate_discrete_candidate(
                     let net_flips = helpful_flips - harmful_flips;
                     let improvement = net_flips as f32 / samples_with_error as f32;
 
-                    if improvement > best_improvement && helpful_flips > harmful_flips {
+                    // IMPORTANT: Require meaningful improvement (at least 1%) for IDENTITY neurons.
+                    // IDENTITY with bias=0 is mathematically equivalent to a direct synapse:
+                    //   IDENTITY(source × incoming_weight + 0) × outgoing_weight = source × incoming × outgoing
+                    // These candidates should use add-synapse, not add-neuron.
+                    // Additionally, very low flip rates (< 1%) indicate the contribution isn't
+                    // reliably pushing the target across the threshold.
+                    const MIN_DISCRETE_IMPROVEMENT: f32 = 0.01; // 1% minimum
+
+                    if improvement > best_improvement.max(MIN_DISCRETE_IMPROVEMENT)
+                        && helpful_flips > harmful_flips
+                    {
                         best_improvement = improvement;
 
                         // Create target neuron stats from samples
@@ -9326,6 +9336,131 @@ mod tests_synapses {
             "Should have positive improvement"
         );
         assert!(c.improved_count > 0, "Should have some helpful flips");
+    }
+
+    /// Test that discrete evaluation filters out low-improvement IDENTITY candidates.
+    /// IDENTITY neurons with bias=0 are mathematically equivalent to synapses,
+    /// and candidates with very low flip rates (<1%) don't reliably improve the model.
+    ///
+    /// The MIN_DISCRETE_IMPROVEMENT threshold (1%) is the key filter being tested here.
+    /// The test creates samples where ALL have error (to pass MIN_NEURON_SAMPLE_COUNT check)
+    /// but only a tiny fraction would actually flip in the helpful direction.
+    #[test]
+    fn test_discrete_evaluation_filters_low_improvement_identity() {
+        // Create a sample set where ALL samples have error (passing the sample count check)
+        // but only a tiny fraction (< 1%) would flip helpfully.
+        //
+        // IMPORTANT: Previously this test was broken - it only gave 5 samples non-zero error,
+        // so samples_with_error=5 was less than MIN_NEURON_SAMPLE_COUNT=10, causing all weight
+        // combinations to be skipped. The test passed for the wrong reason.
+        //
+        // Key insight: To make samples truly un-flippable, source_activation must be ZERO.
+        // Any non-zero source activation with any of the tested weight scales (0.1 to 50.0)
+        // could potentially flip the target. With source_activation=0, contribution=0
+        // regardless of weights, so those samples cannot be affected.
+        let mut samples = Vec::new();
+
+        // 1000 samples - ALL have error to pass samples_with_error check
+        for i in 0..1000 {
+            // Only ~5 samples (0.5%) can flip helpfully:
+            // These have non-zero source activation
+            let can_flip_to_help = i < 5;
+
+            if can_flip_to_help {
+                // Sample that CAN flip to help:
+                // - source_activation = 1.0 (non-zero, can contribute)
+                // - target_value just below threshold (0)
+                // - error positive (wants output to increase from 0 to 1)
+                samples.push(DiscreteHelpfulSample {
+                    source_activation: 1.0,
+                    target_value: -0.05,    // Just below threshold
+                    target_activation: 0.0, // Currently outputs 0 (STEP)
+                    avg_error: 0.5,         // Wants to output 1, has error
+                });
+            } else {
+                // Sample that CANNOT flip:
+                // - source_activation = 0 (CRITICAL: contribution is always 0)
+                // - Has error but cannot be helped since contribution = weight * 0 = 0
+                samples.push(DiscreteHelpfulSample {
+                    source_activation: 0.0, // Zero! contribution = weight * 0 = 0
+                    target_value: -0.5,     // Below threshold (outputs 0)
+                    target_activation: 0.0, // Currently outputs 0
+                    avg_error: 0.3,         // Has error but source can't help
+                });
+            }
+        }
+
+        let candidate = evaluate_discrete_candidate(
+            "input-0",
+            "target-step",
+            &samples,
+            ThresholdType::Step,
+            0.0, // Zero threshold - MIN_DISCRETE_IMPROVEMENT (1%) should filter
+        );
+
+        // Should NOT return a candidate because improvement would be <1%
+        // samples_with_error = 1000 (all have error)
+        // helpful_flips = 5 (only samples with non-zero source activation)
+        // harmful_flips = 0 (zero-activation samples can't flip either way)
+        // improvement = 5 / 1000 = 0.5% < MIN_DISCRETE_IMPROVEMENT (1%)
+        assert!(
+            candidate.is_none(),
+            "Should NOT return IDENTITY candidate with <1% improvement (0.5% in this test). \
+             These are equivalent to direct synapses and don't reliably help. \
+             Got candidate: {candidate:?}"
+        );
+    }
+
+    /// Complementary test: verify that improvement ABOVE 1% DOES return a candidate.
+    /// This ensures the MIN_DISCRETE_IMPROVEMENT threshold is the actual filter,
+    /// not some other logic (like MIN_NEURON_SAMPLE_COUNT).
+    #[test]
+    fn test_discrete_evaluation_accepts_above_threshold_improvement() {
+        // Same structure as the filter test, but with 2% flippable samples (> 1% threshold)
+        let mut samples = Vec::new();
+
+        for i in 0..1000 {
+            // 20 samples (2%) can flip helpfully - above the 1% threshold
+            let can_flip_to_help = i < 20;
+
+            if can_flip_to_help {
+                samples.push(DiscreteHelpfulSample {
+                    source_activation: 1.0,
+                    target_value: -0.05,
+                    target_activation: 0.0,
+                    avg_error: 0.5,
+                });
+            } else {
+                samples.push(DiscreteHelpfulSample {
+                    source_activation: 0.0, // Cannot contribute
+                    target_value: -0.5,
+                    target_activation: 0.0,
+                    avg_error: 0.3,
+                });
+            }
+        }
+
+        let candidate = evaluate_discrete_candidate(
+            "input-0",
+            "target-step",
+            &samples,
+            ThresholdType::Step,
+            0.0,
+        );
+
+        // SHOULD return a candidate because improvement = 20/1000 = 2% > 1% threshold
+        assert!(
+            candidate.is_some(),
+            "Should return candidate when improvement (2%) exceeds MIN_DISCRETE_IMPROVEMENT (1%)"
+        );
+
+        let c = candidate.unwrap();
+        // Verify the improvement is roughly what we expect (2%)
+        assert!(
+            c.expected_improvement_percentage > 0.015 && c.expected_improvement_percentage < 0.025,
+            "Expected ~2% improvement, got {}%",
+            c.expected_improvement_percentage * 100.0
+        );
     }
 
     /// Test get_bias_values returns log-spaced values for efficient search
