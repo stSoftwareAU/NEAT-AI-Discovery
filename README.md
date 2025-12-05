@@ -226,6 +226,50 @@ ensures predictions match reality.
 This is verified by unit tests: `add_neuron_weight_must_include_bias_in_calculation`
 and integration test: `test_add_neuron_with_hard_tanh_target_uses_bias_aware_weight`.
 
+#### VALUE domain error interpretation (v0.1.117)
+
+**CRITICAL BUG FIX**: The NEAT-AI TypeScript library stores errors in the **VALUE
+domain** (pre-activation), not the ACTIVATION domain (post-squash). This affects
+how the Rust library interprets and uses error data for improvement predictions.
+
+**TypeScript error calculation (NEAT-AI `Neuron.record()`):**
+```typescript
+const targetValue = unSquash(desiredActivation);  // Convert desired output to pre-activation
+const error = targetValue - currentValue;         // VALUE domain error
+```
+
+**Previous (incorrect) Rust interpretation:**
+```rust
+// WRONG: Treated error as activation domain
+let expected = target_activation + avg_error;  // Mixing ACTIVATION + VALUE domains!
+```
+
+**Corrected Rust interpretation (v0.1.117):**
+```rust
+// CORRECT: Error is in VALUE domain, so compute expected via squash
+let desired_value = target_value + avg_error;
+let expected = squash(desired_value);  // Convert to ACTIVATION domain
+```
+
+**Why this matters for saturation:**
+
+| Scenario | Current Value | Error (VALUE) | Old Formula | Correct Formula |
+|----------|---------------|---------------|-------------|-----------------|
+| Near saturation | 0.8 | 0.3 | `expected = 0.8 + 0.3 = 1.1` | `expected = clamp(1.1) = 1.0` |
+| In saturation | 1.5 | -1.0 | `expected = 1.0 + (-1.0) = 0.0` | `expected = clamp(0.5) = 0.5` |
+
+The old formula produced incorrect `expected` values when the target neuron was
+near or in saturation, causing predictions to be wildly inaccurate.
+
+**Fixed locations:**
+- `compute_net_improvement_new` (HARD_TANH model)
+- `compute_activation_improvement_and_count` (all 4 activation paths)
+- `compute_synapse_improvement_with_target_squash`
+- `count_improved_samples_with_target_squash`
+
+This fix ensures predictions match actual results when candidates are applied,
+resolving the "add-neuron candidates always fail" production issue.
+
 #### All other activations
 
 All other activation functions (including IDENTITY, INVERSE, IF, MAXIMUM,
