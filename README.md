@@ -330,6 +330,34 @@ when simulating, VALUE for linear approximation). This is verified by
 - `compute_relu_improvement_and_count`
 - `compute_activation_improvement_and_count`
 
+#### Fallback candidate minimum threshold (v0.1.123)
+
+**BUG FIX**: Add-neuron candidates with very low predicted improvements (e.g., 0.16%)
+were being returned as "fallback candidates" when no candidate passed the standard
+threshold (typically 10%). At such low predicted improvements, the model's error
+margin becomes significant relative to the prediction itself, causing actual results
+to often be **negative** (worse than baseline).
+
+**Example of the issue:**
+- Predicted improvement: +0.16%
+- Model error margin: ±0.5%
+- Possible actual result: -0.34% (making things worse)
+
+**The fix**: Fallback candidates now require a minimum 2% predicted improvement
+(`MIN_FALLBACK_IMPROVEMENT = 0.02`). This filters out unreliable low-confidence
+predictions while still returning useful candidates that don't quite meet the
+standard threshold.
+
+| Candidate Type | Threshold | Purpose |
+|----------------|-----------|---------|
+| **Best candidate** | 10% (configurable) | High-confidence improvements |
+| **Fallback candidate** | 2% (fixed minimum) | Reasonable-confidence when no best found |
+| **Rejected** | < 2% | Too low to be reliable |
+
+This resolves the production issue where discovery returned many add-neuron
+candidates showing small positive expected improvements, but all resulted in
+actual error increases when applied.
+
 #### All other activations
 
 All other activation functions (including IDENTITY, INVERSE, IF, MAXIMUM,
