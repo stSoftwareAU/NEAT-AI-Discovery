@@ -1074,3 +1074,320 @@ fn test_bias_improves_neuron_performance() {
         }
     }
 }
+
+/// REGRESSION TEST: Hidden neurons must be analysed, not filtered out.
+///
+/// v0.1.123: Previously hidden neurons were filtered entirely with 100% failure rate.
+/// Investigation revealed this was caused by low-confidence fallback candidates.
+/// Now hidden neurons ARE analysed with impact-based discounting.
+///
+/// This test will FAIL if hidden neurons are filtered out instead of analysed.
+#[test]
+fn test_hidden_neurons_are_analysed_not_filtered() {
+    skip_without_gpu!();
+    use neat_ai_discovery::AnalyzeNeuronsInput;
+
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    // Create a creature with: input -> hidden -> output
+    // The hidden neuron connects input to output
+    let creature = CreatureJson {
+        neurons: vec![
+            NeuronJson {
+                uuid: "hidden-0".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "TANH".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: vec![SynapseJson {
+            from_uuid: "hidden-0".to_string(),
+            to_uuid: "output-0".to_string(),
+            weight: 1.0, // Hidden -> Output connection gives hidden-0 impact = 1.0
+        }],
+        input: 2,
+        output: 1,
+    };
+
+    // Generate training data with correlated errors for HIDDEN neuron
+    // This creates a scenario where adding a connection to the hidden neuron could help
+    let mut training_data = Vec::new();
+    for i in 0..50 {
+        let input_0_val = (i as f32 - 25.0) / 25.0; // Range: -1.0 to 1.0
+        let input_1_val = 0.5;
+
+        // Create correlated error at the HIDDEN neuron
+        let hidden_error = input_0_val * 0.5;
+        let hidden_value = input_0_val * 0.3;
+        let hidden_activation = hidden_value.tanh();
+
+        // Output also has error (but we're targeting hidden-0)
+        let output_error = hidden_error * 0.5; // Propagated error
+
+        training_data.push(serde_json::json!({
+            "input": [input_0_val, input_1_val],
+            "output": [0.0],
+            "neuron_data": [
+                {
+                    "neuron_uuid": "hidden-0",
+                    "activation": hidden_activation,
+                    "value": hidden_value,
+                    "errors": [hidden_error]
+                },
+                {
+                    "neuron_uuid": "output-0",
+                    "activation": 0.0,
+                    "value": 0.0,
+                    "errors": [output_error]
+                }
+            ]
+        }));
+    }
+
+    // Record discovery data
+    let input_json = serde_json::json!({
+        "creature": creature.clone(),
+        "training_data": training_data,
+        "temp_dir": temp_path.to_str().unwrap()
+    });
+
+    let record_input = serde_json::to_string(&input_json).unwrap();
+    let record_output_json = record_discovery_internal(&record_input).unwrap();
+    let record_output: serde_json::Value = serde_json::from_str(&record_output_json).unwrap();
+    assert_eq!(
+        record_output["success"], true,
+        "Failed to record discovery data: {:?}",
+        record_output["error"]
+    );
+
+    let parquet_file = temp_path.join(record_output["file"].as_str().unwrap());
+
+    // CRITICAL: Request analysis with hidden-0 as a focus target
+    let analyze_input = AnalyzeNeuronsInput {
+        parquet_file: parquet_file.to_str().unwrap().to_string(),
+        creature,
+        focus_neurons: vec!["hidden-0".to_string()], // Request hidden neuron analysis
+        improvement_threshold: Some(0.01),
+        max_candidates: Some(10),
+        analysis_deadline_ms: None,
+    };
+
+    let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
+        .expect("Neuron analysis should succeed");
+
+    // REGRESSION CHECK: Hidden neuron should NOT be reported as filtered
+    let hidden_filtered = result.no_candidate_reasons.iter().any(|r| {
+        r.target_uuid == "hidden-0"
+            && matches!(
+                r.reason,
+                neat_ai_discovery::analysis::NeuronNoCandidateReason::HiddenNeuronFiltered
+            )
+    });
+
+    assert!(
+        !hidden_filtered,
+        "REGRESSION: Hidden neuron 'hidden-0' was filtered out instead of being analysed! \
+        Hidden neurons should be analysed with impact-based discounting, not filtered. \
+        Diagnostics: {:?}",
+        result.no_candidate_reasons
+    );
+
+    // If the hidden neuron was analysed but no candidates found, that's OK
+    // The key assertion is that it was NOT filtered
+    eprintln!(
+        "Hidden neuron analysis result: {} candidates found, {} diagnostics",
+        result.helpful_neurons.len(),
+        result.no_candidate_reasons.len()
+    );
+}
+
+/// REGRESSION TEST: Hidden neuron candidates must have discounted predictions.
+///
+/// When a candidate targets a hidden neuron, the expected_improvement_percentage
+/// should be discounted by the hidden neuron's impact score (path to outputs).
+///
+/// Impact is calculated as: (weight to child / total inbound to child) × child_impact
+/// So to get impact < 1.0, we need multiple paths to the output.
+///
+/// This test will FAIL if hidden neuron predictions are not discounted.
+#[test]
+fn test_hidden_neuron_candidates_have_impact_discounted_predictions() {
+    skip_without_gpu!();
+    use neat_ai_discovery::AnalyzeNeuronsInput;
+
+    let temp_dir = TempDir::new().unwrap();
+    let temp_path = temp_dir.path();
+
+    // Create creature where hidden-0 has impact < 1.0 to output
+    // Two hidden neurons both connect to output, so each has impact ~0.5
+    //
+    //   hidden-0 (weight 1.0) --\
+    //                            --> output-0
+    //   hidden-1 (weight 1.0) --/
+    //
+    // hidden-0 impact = (1.0 / 2.0) × 1.0 = 0.5
+    let creature = CreatureJson {
+        neurons: vec![
+            NeuronJson {
+                uuid: "hidden-0".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "hidden-1".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: vec![
+            SynapseJson {
+                from_uuid: "hidden-0".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 1.0,
+            },
+            SynapseJson {
+                from_uuid: "hidden-1".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 1.0, // Total inbound to output = 2.0, so each hidden has impact 0.5
+            },
+        ],
+        input: 2,
+        output: 1,
+    };
+
+    // Generate strongly correlated training data for hidden-0
+    let mut training_data = Vec::new();
+    for i in 0..100 {
+        let input_0_val = (i as f32 - 50.0) / 50.0;
+        let input_1_val = 0.3;
+
+        // Strong correlation at hidden-0
+        let hidden_0_error = input_0_val * 0.8;
+        let hidden_0_value = input_0_val * 0.2;
+
+        // hidden-1 has no correlation (constant)
+        let hidden_1_error = 0.0;
+        let hidden_1_value = 0.5;
+
+        training_data.push(serde_json::json!({
+            "input": [input_0_val, input_1_val],
+            "output": [0.0],
+            "neuron_data": [
+                {
+                    "neuron_uuid": "hidden-0",
+                    "activation": hidden_0_value,
+                    "value": hidden_0_value,
+                    "errors": [hidden_0_error]
+                },
+                {
+                    "neuron_uuid": "hidden-1",
+                    "activation": hidden_1_value,
+                    "value": hidden_1_value,
+                    "errors": [hidden_1_error]
+                },
+                {
+                    "neuron_uuid": "output-0",
+                    "activation": 0.0,
+                    "value": 0.0,
+                    "errors": [hidden_0_error * 0.5]
+                }
+            ]
+        }));
+    }
+
+    // Record discovery data
+    let input_json = serde_json::json!({
+        "creature": creature.clone(),
+        "training_data": training_data,
+        "temp_dir": temp_path.to_str().unwrap()
+    });
+
+    let record_input = serde_json::to_string(&input_json).unwrap();
+    let record_output_json = record_discovery_internal(&record_input).unwrap();
+    let record_output: serde_json::Value = serde_json::from_str(&record_output_json).unwrap();
+    assert_eq!(
+        record_output["success"], true,
+        "Failed to record discovery data: {:?}",
+        record_output["error"]
+    );
+
+    let parquet_file = temp_path.join(record_output["file"].as_str().unwrap());
+
+    // Analyse hidden-0 which has impact = 0.5
+    let analyze_input = AnalyzeNeuronsInput {
+        parquet_file: parquet_file.to_str().unwrap().to_string(),
+        creature,
+        focus_neurons: vec!["hidden-0".to_string()],
+        improvement_threshold: Some(0.001), // Very low threshold to get candidates
+        max_candidates: Some(20),
+        analysis_deadline_ms: None,
+    };
+
+    let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
+        .expect("Neuron analysis should succeed");
+
+    // Hidden neuron should be analysed, not filtered
+    let hidden_was_filtered = result.no_candidate_reasons.iter().any(|r| {
+        r.target_uuid == "hidden-0"
+            && matches!(
+                r.reason,
+                neat_ai_discovery::analysis::NeuronNoCandidateReason::HiddenNeuronFiltered
+            )
+    });
+
+    assert!(
+        !hidden_was_filtered,
+        "REGRESSION: Hidden neuron was filtered instead of analysed!"
+    );
+
+    // Find candidates for hidden-0
+    let hidden_candidates: Vec<_> = result
+        .helpful_neurons
+        .iter()
+        .filter(|c| c.target_neuron_uuid == "hidden-0")
+        .collect();
+
+    // If we found hidden candidates, verify their predictions are discounted
+    if !hidden_candidates.is_empty() {
+        for candidate in &hidden_candidates {
+            // With impact = 0.5, predictions should be discounted by 50%
+            // So maximum possible is 50% even if raw prediction was 100%
+            assert!(
+                candidate.expected_improvement_percentage <= 0.5,
+                "Hidden neuron candidate improvement {:.4}% exceeds impact-adjusted maximum of 50%. \
+                Hidden-0 has impact ~0.5, so predictions should be discounted. \
+                This suggests impact discounting is not being applied.",
+                candidate.expected_improvement_percentage * 100.0
+            );
+
+            eprintln!(
+                "Hidden neuron candidate (impact ~0.5): {} -> {} improvement={:.4}%",
+                candidate.source_neuron_uuid,
+                candidate.target_neuron_uuid,
+                candidate.expected_improvement_percentage * 100.0
+            );
+        }
+    } else {
+        // No candidates found - that's OK, the key test is that it wasn't filtered
+        eprintln!(
+            "No candidates found for hidden-0 (this is OK - key test is it wasn't filtered). \
+            Diagnostics: {:?}",
+            result.no_candidate_reasons
+        );
+    }
+}

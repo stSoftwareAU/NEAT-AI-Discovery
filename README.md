@@ -358,6 +358,51 @@ This resolves the production issue where discovery returned many add-neuron
 candidates showing small positive expected improvements, but all resulted in
 actual error increases when applied.
 
+#### Hidden neuron add-neuron analysis (v0.1.123, v0.1.124)
+
+**FEATURE**: Hidden neurons are now valid targets for add-neuron analysis.
+Previously, hidden neurons were filtered out entirely with a 100% failure rate.
+Investigation revealed this was caused by the same low-confidence fallback
+candidates issue (fixed above).
+
+**How it works**:
+- **Output neurons**: Impact = 1.0 (direct contribution to score). No discount applied.
+- **Hidden neurons**: Impact = path weight product to outputs. Predictions are
+  discounted by impact factor.
+
+For a hidden neuron with impact 0.5:
+- Raw predicted improvement: 10%
+- Discounted improvement: 10% × 0.5 = 5%
+
+This discounting ensures hidden neuron predictions are appropriately penalised
+based on their distance from outputs in the network topology. Hidden neurons
+close to outputs (high impact) have more reliable predictions than those far
+from outputs (low impact).
+
+The impact score is computed using the existing `compute_impacts()` function
+from the focus module, which calculates normalised path weights through the
+network to all outputs.
+
+**v0.1.124 FIX**: After applying impact discounting, candidates are now
+re-filtered against `MIN_FALLBACK_IMPROVEMENT` (2%). Previously, a hidden neuron
+with 3% raw improvement and 0.3 impact would be discounted to 0.9% but still
+returned. This contradicts the low-confidence fallback fix - if 2% is the
+minimum for reliable predictions, discounted predictions below 2% are equally
+unreliable.
+
+**v0.1.125 FIX**: Focus neurons that have all candidates filtered by impact
+discounting now appear in `no_candidate_reasons` with `ImpactDiscountedBelowThreshold`.
+Previously, these neurons would silently disappear from the response:
+- Candidates were found → `had_candidate = true`
+- Impact discounting reduced improvement below 2%
+- Re-filtering removed all candidates
+- `no_candidate_summaries()` excluded the entry (because `had_candidate == true`)
+- Result: neuron appeared in neither `helpful_neurons` nor `no_candidate_reasons`
+
+Now, after re-filtering, any focus neuron that lost ALL its candidates is marked
+with `impact_discounted_below_threshold = true`, ensuring it appears in the
+diagnostics with an appropriate reason code.
+
 #### All other activations
 
 All other activation functions (including IDENTITY, INVERSE, IF, MAXIMUM,
@@ -450,19 +495,24 @@ now filters out these candidates:
 
 #### Add-neuron target neuron filtering
 
-**Only output neurons are valid targets** for add-neuron analysis. Input and
-hidden neurons are filtered out from the focus list:
+**Output and hidden neurons are valid targets** for add-neuron analysis. Input
+and constant neurons are filtered out from the focus list:
 
 | Neuron Type | Filtered? | Reason | Diagnostic Code |
 |-------------|-----------|--------|-----------------|
 | **output** | No | Direct impact on creature score | (not filtered) |
-| **hidden** | Yes | Backpropagated errors don't reliably predict output error | `hidden_neuron_filtered` |
+| **hidden** | No | Analysed with impact-based discounting (v0.1.123) | (not filtered) |
 | **input** | Yes | Observation sources, not computation nodes | `input_neuron_filtered` |
-| **constant** | Yes | No activation function or error | `hidden_neuron_filtered` |
+| **constant** | Yes | Don't receive inputs - always output fixed value | `constant_neuron_filtered` |
 
 This filtering occurs before analysis begins. The diagnostics response includes
 the appropriate reason code for each filtered neuron, so callers know why a
 focus neuron received no candidates.
+
+**Post-analysis filtering** (v0.1.125): Hidden neurons that have candidates
+found but ALL candidates are filtered by impact discounting (below 2% after
+discount) receive the diagnostic code `impact_discounted_below_threshold`. This
+ensures focus neurons never silently disappear from the response.
 
 If verbose logging is enabled (`NEAT_AI_DISCOVERY_VERBOSE=1`), you'll see
 messages like:
@@ -694,6 +744,7 @@ the same functional behavior.
    - Refactor if needed while keeping tests green
    - All new tests should pass after implementation
    - **Always read this README before making any changes**
+   - See [Testing Philosophy](#testing-philosophy) below for test organisation guidelines
 
 2. **Code Quality Enforcement**: **MUST run quality checks after EVERY code change**
    - **CRITICAL**: Execute `./quality.sh` after making ANY code modifications
@@ -746,14 +797,138 @@ This will build the library and install it to `~/.cargo/lib/` with version track
 ### Testing
 
 ```bash
-# Run all tests
+# Run all tests (unit + integration)
 cargo test
 
-# Run unit tests only
+# Run unit tests only (in src/)
 cargo test --lib
 
-# Run integration tests only
+# Run integration tests only (in tests/)
 cargo test --test '*'
+
+# Run specific test file
+cargo test --test integration
+cargo test --test regression_v0_1_123
+cargo test --test weights  # All weight-related tests
+
+# Run tests matching a pattern
+cargo test test_hidden_neuron
+```
+
+**Note**: GPU-dependent tests include `skip_without_gpu!()` and will be skipped
+automatically on machines without a GPU. Run `./quality.sh` locally with a GPU
+for full test coverage.
+
+### Testing Philosophy
+
+**The quality of tests is what makes a good system.** This project follows these
+testing principles:
+
+#### 1. Test OUTCOMES, not implementation
+
+Tests should verify **what** the system does, not **how** it does it. The same
+test should pass regardless of whether we use GPU, CPU, or TPU internally.
+
+```rust
+// GOOD: Tests the outcome
+#[test]
+fn test_low_impact_neurons_are_detected() {
+    let creature = create_test_creature();
+    let impacts = compute_impacts(&creature);
+    
+    // Verify we detected the expected low-impact neurons
+    assert!(impacts["far-from-output"] < 0.1);
+    assert!(impacts["close-to-output"] > 0.9);
+}
+
+// BAD: Tests implementation details
+#[test]
+fn test_gpu_kernel_computes_impacts() {
+    // Don't test HOW we compute, test WHAT we compute
+}
+```
+
+#### 2. Separate test files organised by feature
+
+Small, focused test files make it **obvious when tests change**:
+- Adding a new test file = good (new coverage)
+- Modifying existing tests = raises questions (why?)
+- Removing tests = requires justification
+
+| Directory | Purpose | Example |
+|-----------|---------|---------|
+| `tests/` | Integration tests for public API | `tests/integration.rs` |
+| `tests/regression_*.rs` | Prevent re-introducing fixed bugs | `tests/regression_v0_1_123.rs` |
+| `tests/<feature>.rs` | Tests grouped by feature/concern | `tests/weights.rs`, `tests/impacts.rs` |
+| `src/*.rs` (`#[cfg(test)]`) | Unit tests for private functions | Only when necessary |
+
+**Prefer separate test files** in `tests/` over inline unit tests:
+- Easier to see what changed in code review
+- Clear separation of concerns
+- Don't need to make APIs public just for testing
+
+#### 3. Don't make APIs public just for testing
+
+If a function is internal, keep it internal. Use integration tests to verify
+behaviour through the public API. Only use inline unit tests (`#[cfg(test)]`
+in `src/`) when you genuinely need to test private implementation details.
+
+#### 4. Group related tests by concern
+
+When investigating an issue (e.g., "something's wrong with weight calculations"),
+you should be able to find all relevant tests in one place:
+
+```
+tests/
+├── common/mod.rs           # Shared test utilities
+├── integration.rs          # General integration tests
+├── regression_v0_1_123.rs  # Regression tests for v0.1.123 fixes
+├── weights.rs              # All weight calculation tests (future)
+├── impacts.rs              # All impact score tests (future)
+└── activations.rs          # All activation function tests (future)
+```
+
+#### 5. Test changes are significant
+
+In code review:
+- **New test file**: Generally good - more coverage
+- **Modified test**: Why? Did requirements change? Was it wrong?
+- **Removed/skipped test**: Red flag - must be justified
+
+Tests are the specification. Changing them changes what the system promises to do.
+
+### Continuous Integration
+
+GitHub Actions runs quality checks on every pull request to `Develop`:
+
+```yaml
+# .github/workflows/ci.yml jobs:
+- auto-format          # Applies rustfmt and commits fixes
+- version-increment    # Auto-bumps patch version when src/ changes  
+- quality              # fmt check, clippy, cargo check, tests, build
+- shell-checks         # Validates bash script syntax
+- spell-check          # Runs codespell on codebase
+- validation           # Checks required files and Cargo.toml
+- security             # Runs security audit workflow
+```
+
+**Test coverage**: The quality job runs `cargo test --all-targets --all-features`
+which includes:
+- Unit tests in `src/` (lib target)
+- Integration tests in `tests/` directory
+- All feature-gated tests
+
+**GPU tests are skipped in CI** (no GPU available). The CI ensures:
+- Code compiles and passes linting
+- Non-GPU unit tests pass
+- Public API contract is maintained (integration tests)
+
+For full GPU test coverage, run `./quality.sh` locally before pushing.
+
+**⚠️ CRITICAL: Do NOT modify `.github/workflows/ci.yml` without explicit approval.**
+This workflow is essential for PR checks. If accidentally modified, restore from Develop:
+```bash
+git checkout Develop -- .github/workflows/ci.yml
 ```
 
 ## File Format

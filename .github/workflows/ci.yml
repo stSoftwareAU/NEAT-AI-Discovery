@@ -1,3 +1,9 @@
+# ==============================================================================
+# CRITICAL: Do NOT modify this workflow without explicit approval.
+# This file is essential for PR checks and should match the Develop branch.
+# Restoring from Develop: git checkout Develop -- .github/workflows/ci.yml
+# ==============================================================================
+
 name: CI/CD Pipeline
 
 on:

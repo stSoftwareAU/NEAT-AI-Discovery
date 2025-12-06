@@ -126,6 +126,18 @@ fn build_inbound_weights(creature: &CreatureJson) -> HashMap<String, f32> {
 }
 
 fn compute_impacts(creature: &CreatureJson) -> HashMap<String, f32> {
+    compute_impacts_internal(creature)
+}
+
+/// Public version of compute_impacts for use in add-neuron analysis.
+/// Computes the structural impact of each neuron on outputs (path weight products).
+/// Output neurons have impact = 1.0, hidden neurons have impact in [0, 1] based on
+/// their weighted paths to outputs.
+pub fn compute_impacts_public(creature: &CreatureJson) -> HashMap<String, f32> {
+    compute_impacts_internal(creature)
+}
+
+fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
     let adjacency = build_adjacency(creature);
     let inbound_weights = build_inbound_weights(creature);
     let output_neurons: HashSet<String> = creature
