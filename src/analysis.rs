@@ -4160,6 +4160,9 @@ fn can_use_hard_tanh(samples: &[HelpfulSample], target_squash: Option<&str>) -> 
 /// more samples activate; when bias < 0, fewer samples activate. Excluding bias causes
 /// significant prediction errors.
 ///
+/// CRITICAL DOMAIN FIX (v0.1.120): When using target_activation_fn simulation,
+/// both baseline and new error must be computed in ACTIVATION domain.
+///
 /// Returns (improvement_percentage, improved_count, total_count)
 fn compute_relu_improvement_and_count(
     samples: &[HelpfulSample],
@@ -4173,6 +4176,7 @@ fn compute_relu_improvement_and_count(
         return (0.0, 0, samples.len() as u32);
     }
 
+    let mut baseline_error_sq_sum = 0.0f32; // ACTIVATION domain when simulating
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
     let total_count = samples.len() as u32;
@@ -4182,31 +4186,51 @@ fn compute_relu_improvement_and_count(
         let relu_output = pre_activation.max(0.0);
         let contribution = outgoing_weight * relu_output;
 
-        let new_error = if let Some(target_fn) = target_activation_fn {
-            // Simulate the target neuron's actual activation function
-            // CRITICAL: avg_error is in VALUE domain (targetValue - currentValue from TypeScript)
-            // So we compute desired_value = target_value + avg_error, then squash to get expected activation
-            // Safety: target_activation_fn is only Some when all samples have target data
+        let (baseline_error, new_error) = if let Some(target_fn) = target_activation_fn {
+            // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
             let target_value = unsafe { sample.target_value.unwrap_unchecked() };
+            let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
             let desired_value = target_value + sample.avg_error;
             let expected = target_fn(desired_value);
+
+            // Baseline error in ACTIVATION domain
+            let baseline_err = expected - target_activation;
+
+            // New error in ACTIVATION domain
             let new_input = target_value + contribution;
-            expected - target_fn(new_input)
+            let new_err = expected - target_fn(new_input);
+
+            (baseline_err, new_err)
         } else {
-            // Linear approximation - consistent with synapse model: new_error = old_error - correction
-            // avg_error is (expected - actual), contribution adds to output, so reduces error
-            sample.avg_error - contribution
+            // Linear approximation: both errors in VALUE domain
+            (sample.avg_error, sample.avg_error - contribution)
         };
 
-        new_error_sq_sum += new_error * new_error;
+        if baseline_error.is_finite() {
+            baseline_error_sq_sum += baseline_error * baseline_error;
+        }
+        if new_error.is_finite() {
+            new_error_sq_sum += new_error * new_error;
+        }
 
-        // Sample is improved if |new_error| < |old_error|
-        if new_error.abs() + EPSILON < sample.avg_error.abs() {
+        // Sample is improved if |new_error| < |baseline_error| (consistent domain)
+        if new_error.abs() + EPSILON < baseline_error.abs() {
             improved_count += 1;
         }
     }
 
-    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
+    // Use computed ACTIVATION domain baseline when simulating, else use passed VALUE domain
+    let effective_baseline = if target_activation_fn.is_some() {
+        baseline_error_sq_sum
+    } else {
+        total_baseline_error_sq
+    };
+
+    let improvement = if effective_baseline > EPSILON {
+        (effective_baseline - new_error_sq_sum) / effective_baseline
+    } else {
+        0.0
+    };
     let improvement = if improvement.is_finite() {
         improvement
     } else {
@@ -4222,6 +4246,9 @@ fn compute_relu_improvement_and_count(
 /// When `target_activation_fn` is Some, simulates the target neuron's actual activation
 /// function for more accurate improvement estimates. Otherwise falls back to linear approximation.
 ///
+/// CRITICAL DOMAIN FIX (v0.1.120): When using target_activation_fn simulation,
+/// both baseline and new error must be computed in ACTIVATION domain.
+///
 /// Returns (improvement_percentage, improved_count, total_count)
 fn compute_activation_improvement_and_count(
     samples: &[HelpfulSample],
@@ -4236,6 +4263,7 @@ fn compute_activation_improvement_and_count(
         return (0.0, 0, samples.len() as u32);
     }
 
+    let mut baseline_error_sq_sum = 0.0f32; // ACTIVATION domain when simulating
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
     let total_count = samples.len() as u32;
@@ -4245,32 +4273,51 @@ fn compute_activation_improvement_and_count(
         let neuron_output = activation_fn(pre_activation);
         let contribution = outgoing_weight * neuron_output;
 
-        let new_error = if let Some(target_fn) = target_activation_fn {
-            // Simulate the target neuron's actual activation function
-            // CRITICAL: avg_error is in VALUE domain (targetValue - currentValue from TypeScript)
-            // So we compute desired_value = target_value + avg_error, then squash to get expected activation
-            // Safety: target_activation_fn is only Some when all samples have target data
+        let (baseline_error, new_error) = if let Some(target_fn) = target_activation_fn {
+            // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
             let target_value = unsafe { sample.target_value.unwrap_unchecked() };
+            let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
             let desired_value = target_value + sample.avg_error;
             let expected = target_fn(desired_value);
+
+            // Baseline error in ACTIVATION domain
+            let baseline_err = expected - target_activation;
+
+            // New error in ACTIVATION domain
             let new_input = target_value + contribution;
-            expected - target_fn(new_input)
+            let new_err = expected - target_fn(new_input);
+
+            (baseline_err, new_err)
         } else {
-            // Linear approximation - consistent with synapse model: new_error = old_error - correction
-            // avg_error is (expected - actual), contribution adds to output, so reduces error
-            sample.avg_error - contribution
+            // Linear approximation: both errors in VALUE domain
+            (sample.avg_error, sample.avg_error - contribution)
         };
 
+        if baseline_error.is_finite() {
+            baseline_error_sq_sum += baseline_error * baseline_error;
+        }
         if new_error.is_finite() {
             new_error_sq_sum += new_error * new_error;
         }
 
-        if new_error.abs() + EPSILON < sample.avg_error.abs() {
+        // Sample is improved if |new_error| < |baseline_error| (consistent domain)
+        if new_error.abs() + EPSILON < baseline_error.abs() {
             improved_count += 1;
         }
     }
 
-    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
+    // Use computed ACTIVATION domain baseline when simulating, else use passed VALUE domain
+    let effective_baseline = if target_activation_fn.is_some() {
+        baseline_error_sq_sum
+    } else {
+        total_baseline_error_sq
+    };
+
+    let improvement = if effective_baseline > EPSILON {
+        (effective_baseline - new_error_sq_sum) / effective_baseline
+    } else {
+        0.0
+    };
     let improvement = if improvement.is_finite() {
         improvement
     } else {
@@ -4362,6 +4409,11 @@ fn compute_synapse_improvement_with_target_squash(
 /// Compute improvement, improved count, and worsened count for synapse candidates.
 /// All counts use the same saturation-aware methodology for consistency.
 ///
+/// CRITICAL DOMAIN FIX (v0.1.120): When using target_activation_fn simulation,
+/// both baseline and new error must be computed in ACTIVATION domain. The passed-in
+/// total_baseline_error_sq is in VALUE domain, so we compute our own ACTIVATION
+/// domain baseline when simulating.
+///
 /// Returns (improvement_percentage, improved_count, worsened_count, total_count)
 fn compute_synapse_improvement_and_count(
     samples: &[HelpfulSample],
@@ -4375,6 +4427,7 @@ fn compute_synapse_improvement_and_count(
 
     let target_activation_fn = get_target_simulation_fn(samples, target_squash);
 
+    let mut baseline_error_sq_sum = 0.0f32; // ACTIVATION domain when simulating
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
     let mut worsened_count = 0u32;
@@ -4383,34 +4436,54 @@ fn compute_synapse_improvement_and_count(
     for sample in samples {
         let contribution = weight * sample.activation;
 
-        let new_error = if let Some(target_fn) = target_activation_fn {
-            // CRITICAL: avg_error is in VALUE domain (targetValue - currentValue from TypeScript)
-            // So we compute desired_value = target_value + avg_error, then squash to get expected activation
+        let (baseline_error, new_error) = if let Some(target_fn) = target_activation_fn {
+            // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
+            // avg_error is in VALUE domain, but MSE is measured in ACTIVATION domain.
             let target_value = unsafe { sample.target_value.unwrap_unchecked() };
+            let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
             let desired_value = target_value + sample.avg_error;
             let expected = target_fn(desired_value);
+
+            // Baseline error in ACTIVATION domain: expected output - current output
+            let baseline_err = expected - target_activation;
+
+            // New error in ACTIVATION domain: expected output - new output
             let new_input = target_value + contribution;
-            expected - target_fn(new_input)
+            let new_err = expected - target_fn(new_input);
+
+            (baseline_err, new_err)
         } else {
-            sample.avg_error - contribution
+            // Linear approximation: both errors in VALUE domain
+            (sample.avg_error, sample.avg_error - contribution)
         };
 
+        if baseline_error.is_finite() {
+            baseline_error_sq_sum += baseline_error * baseline_error;
+        }
         if new_error.is_finite() {
             new_error_sq_sum += new_error * new_error;
         }
 
-        // Count improved samples: new error is smaller than old error
-        if new_error.abs() + EPSILON < sample.avg_error.abs() {
+        // Count improved/worsened samples using consistent domain comparison
+        if new_error.abs() + EPSILON < baseline_error.abs() {
             improved_count += 1;
-        }
-        // Count worsened samples: new error is larger than old error
-        else if new_error.abs() > sample.avg_error.abs() + EPSILON {
+        } else if new_error.abs() > baseline_error.abs() + EPSILON {
             worsened_count += 1;
         }
-        // Note: samples where |new_error| ≈ |old_error| are neither improved nor worsened
     }
 
-    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
+    // Use computed ACTIVATION domain baseline when simulating, else use passed VALUE domain
+    let effective_baseline = if target_activation_fn.is_some() {
+        baseline_error_sq_sum
+    } else {
+        total_baseline_error_sq
+    };
+
+    let improvement = if effective_baseline > EPSILON {
+        (effective_baseline - new_error_sq_sum) / effective_baseline
+    } else {
+        0.0
+    };
     let improvement = if improvement.is_finite() {
         improvement
     } else {
@@ -10977,6 +11050,122 @@ mod tests_synapses {
         assert!(
             saturation_aware_improvement.is_finite(),
             "Saturation-aware model should give finite improvement"
+        );
+    }
+
+    /// TDD Test: Domain consistency in improvement calculation.
+    ///
+    /// BUG: When using target_activation_fn simulation, the code was computing:
+    /// - baseline_error in VALUE domain (sample.avg_error²)
+    /// - new_error in ACTIVATION domain (expected - target_fn(new_input))²
+    ///
+    /// This is WRONG because VALUE and ACTIVATION domains have different scales
+    /// near saturation. The actual MSE (measured by Deno) is in ACTIVATION domain,
+    /// so both baseline and new must use ACTIVATION domain for accurate predictions.
+    ///
+    /// This test verifies that the improvement calculation uses consistent domains.
+    #[test]
+    fn improvement_calculation_uses_consistent_domains() {
+        // Near saturation scenario where domain mismatch is most visible
+        let samples = vec![HelpfulSample {
+            activation: 0.5,              // source activation
+            avg_error: 0.3,               // VALUE domain: want +0.3 to pre-activation
+            target_value: Some(0.9),      // near upper saturation
+            target_activation: Some(0.9), // HARD_TANH(0.9) = 0.9
+        }];
+
+        // With this sample:
+        // - desired_value = 0.9 + 0.3 = 1.2
+        // - expected = HARD_TANH(1.2) = 1.0 (saturated)
+        // - target_activation = 0.9
+        //
+        // ACTIVATION domain baseline error = 1.0 - 0.9 = 0.1
+        // VALUE domain baseline error = 0.3 (sample.avg_error)
+        //
+        // If we apply a contribution of 0.15:
+        // - new_input = 0.9 + 0.15 = 1.05
+        // - new_output = HARD_TANH(1.05) = 1.0 (saturated)
+        // - ACTIVATION domain new error = 1.0 - 1.0 = 0.0 (perfect!)
+        //
+        // CORRECT improvement (ACTIVATION domain):
+        // = (0.1² - 0.0²) / 0.1² = 100%
+        //
+        // BUGGY improvement (VALUE baseline, ACTIVATION new):
+        // = (0.3² - 0.0²) / 0.3² = 100% (coincidentally same in this case)
+
+        // Now test with partial contribution
+        let contribution = 0.05;
+        // new_input = 0.9 + 0.05 = 0.95
+        // new_output = HARD_TANH(0.95) = 0.95
+        // ACTIVATION domain new error = 1.0 - 0.95 = 0.05
+        //
+        // CORRECT improvement (ACTIVATION domain):
+        // = (0.1² - 0.05²) / 0.1² = (0.01 - 0.0025) / 0.01 = 75%
+        //
+        // BUGGY improvement (VALUE baseline, ACTIVATION new):
+        // = (0.3² - 0.05²) / 0.3² = (0.09 - 0.0025) / 0.09 = 97% (WRONG!)
+
+        let desired_value: f32 = 0.9 + 0.3; // = 1.2
+        let expected = desired_value.clamp(-1.0, 1.0); // = 1.0
+        let target_activation: f32 = 0.9;
+
+        // Correct ACTIVATION domain baseline
+        let baseline_act_error = expected - target_activation; // = 0.1
+        let baseline_act_sq = baseline_act_error * baseline_act_error; // = 0.01
+
+        // New error in ACTIVATION domain
+        let new_input: f32 = 0.9 + contribution; // = 0.95
+        let new_output = new_input.clamp(-1.0, 1.0); // = 0.95
+        let new_act_error = expected - new_output; // = 0.05
+        let new_act_sq = new_act_error * new_act_error; // = 0.0025
+
+        // Correct improvement
+        let correct_improvement = (baseline_act_sq - new_act_sq) / baseline_act_sq;
+        assert!(
+            (correct_improvement - 0.75).abs() < 0.01,
+            "Correct ACTIVATION domain improvement should be ~75%, got {:.2}%",
+            correct_improvement * 100.0
+        );
+
+        // Buggy calculation (VALUE baseline, ACTIVATION new)
+        let value_baseline_sq: f32 = 0.3 * 0.3; // = 0.09
+        let buggy_improvement = (value_baseline_sq - new_act_sq) / value_baseline_sq;
+        assert!(
+            (buggy_improvement - 0.97_f32).abs() < 0.01,
+            "Buggy mixed-domain improvement should be ~97%, got {:.2}%",
+            buggy_improvement * 100.0
+        );
+
+        // The bug causes MASSIVE overprediction: 97% predicted vs 75% actual
+        assert!(
+            buggy_improvement > correct_improvement + 0.1,
+            "Buggy calculation should significantly overpredict improvement"
+        );
+
+        // Now verify the actual function uses consistent domains
+        // Use the optimal weight that would produce contribution=0.05 with activation=0.5
+        let weight = contribution / 0.5; // = 0.1
+
+        // CRITICAL: Production passes VALUE domain baseline (this is what stats.error_sq_sum is)
+        // The function should INTERNALLY compute ACTIVATION domain baseline when simulating target
+        let production_baseline = value_baseline_sq; // VALUE domain as passed in production
+
+        let (improvement, _, _, _) = compute_synapse_improvement_and_count(
+            &samples,
+            weight,
+            production_baseline,
+            Some("HARD_TANH"),
+        );
+
+        // The function should give the CORRECT result (75%) not the buggy result (97%)
+        // because it should internally use ACTIVATION domain for both baseline and new error
+        assert!(
+            (improvement - correct_improvement).abs() < 0.1,
+            "Function should internally use consistent ACTIVATION domain. \
+             Expected ~{:.1}%, got {:.1}% (buggy would be ~{:.1}%)",
+            correct_improvement * 100.0,
+            improvement * 100.0,
+            buggy_improvement * 100.0
         );
     }
 
