@@ -899,16 +899,24 @@ Tests are the specification. Changing them changes what the system promises to d
 
 ### Continuous Integration
 
-GitHub Actions runs quality checks on every push and pull request:
+GitHub Actions runs quality checks on every pull request to `Develop`:
 
 ```yaml
-# .github/workflows/ci.yml
-- cargo fmt --check      # Formatting
-- cargo clippy           # Linting  
-- cargo check            # Type checking
-- cargo test             # Unit + integration tests
-- cargo build --release  # Release build
+# .github/workflows/ci.yml jobs:
+- auto-format          # Applies rustfmt and commits fixes
+- version-increment    # Auto-bumps patch version when src/ changes  
+- quality              # fmt check, clippy, cargo check, tests, build
+- shell-checks         # Validates bash script syntax
+- spell-check          # Runs codespell on codebase
+- validation           # Checks required files and Cargo.toml
+- security             # Runs security audit workflow
 ```
+
+**Test coverage**: The quality job runs `cargo test --all-targets --all-features`
+which includes:
+- Unit tests in `src/` (lib target)
+- Integration tests in `tests/` directory
+- All feature-gated tests
 
 **GPU tests are skipped in CI** (no GPU available). The CI ensures:
 - Code compiles and passes linting
@@ -916,6 +924,12 @@ GitHub Actions runs quality checks on every push and pull request:
 - Public API contract is maintained (integration tests)
 
 For full GPU test coverage, run `./quality.sh` locally before pushing.
+
+**⚠️ CRITICAL: Do NOT modify `.github/workflows/ci.yml` without explicit approval.**
+This workflow is essential for PR checks. If accidentally modified, restore from Develop:
+```bash
+git checkout Develop -- .github/workflows/ci.yml
+```
 
 ## File Format
 
