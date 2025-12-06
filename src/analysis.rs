@@ -4924,9 +4924,21 @@ fn evaluate_activation_candidate(
             }
 
             // =================================================================
-            // FALLBACK CANDIDATE (best seen so far, regardless of threshold)
+            // FALLBACK CANDIDATE (best seen so far, but requires minimum improvement)
             // =================================================================
-            if expected_improvement_percentage > fallback_score {
+            // CRITICAL: Fallback candidates must meet a MINIMUM improvement threshold.
+            // At very low predicted improvements (e.g., 0.16%), the prediction model's
+            // error margin becomes significant. A model error of ±0.5% can turn a
+            // +0.16% prediction into an actual -0.34% result (making things worse).
+            //
+            // We require at least 2% predicted improvement for fallback candidates to
+            // ensure reasonable prediction reliability. This is lower than the typical
+            // 10% threshold for best_candidate, but high enough to filter out noise.
+            const MIN_FALLBACK_IMPROVEMENT: f32 = 0.02; // 2% minimum for fallback
+
+            if expected_improvement_percentage > fallback_score
+                && expected_improvement_percentage >= MIN_FALLBACK_IMPROVEMENT
+            {
                 fallback_score = expected_improvement_percentage;
 
                 let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
