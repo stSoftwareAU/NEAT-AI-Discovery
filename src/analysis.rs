@@ -1,3 +1,4 @@
+use crate::focus::compute_impacts_public;
 use crate::types::DiscoverRecord;
 use crate::{
     AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson,
@@ -5321,11 +5322,13 @@ fn analyze_neurons_with_cache(
     let mut focus_order: Vec<String> = unique_focus
         .iter()
         .filter_map(|uuid| {
-            // Check neuron type - only allow output neurons for add-neuron analysis
+            // Check neuron type - allow output and hidden neurons for add-neuron analysis
+            // Hidden neurons are analysed with impact-based discounting (v0.1.123)
             let neuron_type = neuron_type_map.get(*uuid).map(|s| s.as_str());
             match neuron_type {
-                Some("output") => {
-                    // Output neurons are valid targets - continue processing
+                Some("output") | Some("hidden") => {
+                    // Output and hidden neurons are valid targets
+                    // Hidden neuron predictions will be discounted by impact later
                     if let Some(squash) = neuron_squash_map.get(*uuid) {
                         if is_threshold_activation(squash) {
                             threshold_targets.push((*uuid).clone());
@@ -5338,20 +5341,25 @@ fn analyze_neurons_with_cache(
                     skipped_input.push((*uuid).clone());
                     None
                 }
-                Some(_) => {
-                    // Hidden/constant neurons have backpropagated errors that don't
-                    // reliably translate to output error reduction
+                Some("constant") => {
+                    // Constant neurons don't receive inputs - filtering them out
                     skipped_hidden.push((*uuid).clone());
                     None
                 }
+                Some(unknown_type) => {
+                    // Unknown type - treat as hidden (analysable with discount)
+                    eprintln!(
+                        "[NEAT-AI-Discovery] Warning: Unknown neuron type '{unknown_type}' for UUID '{uuid}'. \
+                        Treating as hidden neuron (will apply impact discount)."
+                    );
+                    Some((*uuid).clone())
+                }
                 None => {
-                    // Unknown UUID - this is likely a bug, but treat as hidden for now
-                    // (this shouldn't happen with proper creature data)
+                    // Unknown UUID - this is likely a bug, skip it
                     eprintln!(
                         "[NEAT-AI-Discovery] Warning: Unknown neuron UUID '{uuid}' in focus list \
-                        (not found in creature). Treating as hidden neuron."
+                        (not found in creature). Skipping."
                     );
-                    skipped_hidden.push((*uuid).clone());
                     None
                 }
             }
@@ -5837,6 +5845,50 @@ fn analyze_neurons_with_cache(
     }
 
     let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
+
+    // Apply impact-based discounting for hidden neurons (v0.1.123)
+    // Hidden neuron errors are backpropagated approximations, so their predictions
+    // are less reliable than output neurons. We discount by their impact score
+    // (path weight product to outputs).
+    let impact_scores = compute_impacts_public(&input.creature);
+    for candidate in &mut helpful_results {
+        let is_hidden = neuron_type_map
+            .get(&candidate.target_neuron_uuid)
+            .map(|t| t != "output")
+            .unwrap_or(true); // Default to true if type unknown (treat as hidden)
+
+        if is_hidden {
+            if let Some(&impact) = impact_scores.get(&candidate.target_neuron_uuid) {
+                let discount = impact.clamp(0.0, 1.0);
+                let original = candidate.expected_improvement_percentage;
+                candidate.expected_improvement_percentage *= discount;
+                if verbose_enabled() {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Hidden neuron {} prediction discounted by impact {:.3}: \
+                        {:.4}% -> {:.4}%",
+                        &candidate.target_neuron_uuid[..12.min(candidate.target_neuron_uuid.len())],
+                        discount,
+                        original * 100.0,
+                        candidate.expected_improvement_percentage * 100.0
+                    );
+                }
+            } else {
+                // No impact score means disconnected from outputs - heavy discount
+                let original = candidate.expected_improvement_percentage;
+                candidate.expected_improvement_percentage *= 0.1;
+                if verbose_enabled() {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Hidden neuron {} has no impact score (disconnected?). \
+                        Applying 90% discount: {:.4}% -> {:.4}%",
+                        &candidate.target_neuron_uuid[..12.min(candidate.target_neuron_uuid.len())],
+                        original * 100.0,
+                        candidate.expected_improvement_percentage * 100.0
+                    );
+                }
+            }
+        }
+    }
+
     helpful_results.sort_by(|a, b| {
         b.expected_improvement_percentage
             .partial_cmp(&a.expected_improvement_percentage)
