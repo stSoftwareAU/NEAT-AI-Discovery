@@ -257,11 +257,15 @@ fn test_impact_with_very_small_incoming_weight_is_not_zeroed() {
         .as_f64()
         .expect("impact should be a number") as f32;
 
-    // With a single non-zero connection to an output, impact should be close to 1.0,
-    // not forced to zero just because the weight is very small.
+    // With absolute weights (v0.1.126+), impact = weight × downstream_impact.
+    // For weight 1e-12 to output (impact=1.0): impact = 1e-12 × 1.0 = 1e-12
+    //
+    // The key test is that the impact is NOT zero - very small weights should
+    // produce very small (but proportional) impact, not be zeroed out.
     assert!(
-        impact > 0.5,
-        "hidden-1 impact should be significant for the only path to an output, got {impact}",
+        impact > 0.0 && impact < 1e-10,
+        "hidden-1 impact should be proportional to weight (1e-12), got {impact}. \
+         Impact should be tiny but non-zero.",
     );
 }
 
@@ -401,18 +405,22 @@ fn test_impact_calculation_with_multiple_incoming_connections() {
         .as_f64()
         .expect("impact should be a number") as f32;
 
-    // hidden-a has weight 10.0 to output-0, total incoming is 15.0, so impact should be 10.0/15.0 = 0.6667
-    // hidden-b has weight 5.0 to output-0, total incoming is 15.0, so impact should be 5.0/15.0 = 0.3333
+    // With absolute weights (v0.1.126+), impact = weight × downstream_impact (output = 1.0):
+    // - hidden-a: 10.0 × 1.0 = 10.0
+    // - hidden-b: 5.0 × 1.0 = 5.0
+    //
+    // (Previously normalised: 10/15 = 0.667 and 5/15 = 0.333 - this was WRONG)
     assert!(
-        (impact_a - 0.6667).abs() < 0.01,
-        "hidden-a impact should be ~0.667, got {impact_a}",
+        (impact_a - 10.0).abs() < 0.1,
+        "hidden-a impact should be ~10.0 (absolute weight), got {impact_a}",
     );
     assert!(
-        (impact_b - 0.3333).abs() < 0.01,
-        "hidden-b impact should be ~0.333, got {impact_b}",
+        (impact_b - 5.0).abs() < 0.1,
+        "hidden-b impact should be ~5.0 (absolute weight), got {impact_b}",
     );
 
     // Also verify that hidden-a has about 2x the impact of hidden-b (since it has 2x the weight)
+    // This ratio should be the same regardless of normalisation
     assert!(
         (impact_a / impact_b - 2.0).abs() < 0.1,
         "hidden-a should have ~2x impact of hidden-b, got ratio {}",
@@ -743,14 +751,18 @@ fn test_cumulative_impact_with_multiple_output_connections() {
 
     let impact = hub["impact"].as_f64().expect("impact should be a number") as f32;
 
-    // Hub connects to both outputs at 100% each.
-    // With cumulative (sum) impact: 1.0 + 1.0 = 2.0
-    // With the old bug (max): would only be 1.0
+    // With absolute weights (v0.1.126+):
+    // hub → output-0 (weight 0.5): 0.5 × 1.0 = 0.5
+    // hub → output-1 (weight 0.5): 0.5 × 1.0 = 0.5
+    // Cumulative impact: 0.5 + 0.5 = 1.0
+    //
+    // The key test is that we SUM across multiple outputs, not take MAX.
+    // With the old bug (max): would only be 0.5
     //
     // This is critical: a neuron affecting 2 outputs should NOT be flagged as low-impact!
     assert!(
-        impact > 1.5,
-        "Hub neuron connecting to 2 outputs should have cumulative impact > 1.5, got {impact}. \
+        impact > 0.9,
+        "Hub neuron connecting to 2 outputs should have cumulative impact > 0.9 (sum of paths), got {impact}. \
          This indicates the impact calculation is using MAX instead of SUM for multiple outgoing synapses. \
          Bug: This neuron could be incorrectly flagged as a removal candidate!"
     );
@@ -1226,13 +1238,14 @@ fn test_hidden_neuron_candidates_have_impact_discounted_predictions() {
     let temp_path = temp_dir.path();
 
     // Create creature where hidden-0 has impact < 1.0 to output
-    // Two hidden neurons both connect to output, so each has impact ~0.5
+    // With absolute weights (v0.1.126+), impact = weight × downstream_impact.
     //
-    //   hidden-0 (weight 1.0) --\
+    //   hidden-0 (weight 0.5) --\
     //                            --> output-0
-    //   hidden-1 (weight 1.0) --/
+    //   hidden-1 (weight 0.5) --/
     //
-    // hidden-0 impact = (1.0 / 2.0) × 1.0 = 0.5
+    // hidden-0 impact = 0.5 × 1.0 = 0.5
+    // (Previously normalised: 0.5 / 1.0 = 0.5, same value but different formula)
     let creature = CreatureJson {
         neurons: vec![
             NeuronJson {
@@ -1258,12 +1271,12 @@ fn test_hidden_neuron_candidates_have_impact_discounted_predictions() {
             SynapseJson {
                 from_uuid: "hidden-0".to_string(),
                 to_uuid: "output-0".to_string(),
-                weight: 1.0,
+                weight: 0.5, // Absolute impact = 0.5 × 1.0 = 0.5
             },
             SynapseJson {
                 from_uuid: "hidden-1".to_string(),
                 to_uuid: "output-0".to_string(),
-                weight: 1.0, // Total inbound to output = 2.0, so each hidden has impact 0.5
+                weight: 0.5, // Absolute impact = 0.5 × 1.0 = 0.5
             },
         ],
         input: 2,

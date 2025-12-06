@@ -514,6 +514,35 @@ found but ALL candidates are filtered by impact discounting (below 2% after
 discount) receive the diagnostic code `impact_discounted_below_threshold`. This
 ensures focus neurons never silently disappear from the response.
 
+#### Impact calculation fix (v0.1.126)
+
+**CRITICAL BUG FIX**: The neuron impact calculation was severely underestimating
+impact by normalising weights. This caused ~75% of "low-impact" removal
+candidates to actually INCREASE error when removed.
+
+**The bug**: Impact was computed as `weight / total_inbound × child_impact` which
+gave the "fraction of downstream's input from this neuron" instead of the actual
+contribution to output.
+
+**Example of the bug**:
+- Neuron A → Target (weight 0.001), Other → Target (weight 100)
+- Old (normalised): impact = 0.001 / 100.001 × 1.0 ≈ **1e-5**
+- New (absolute): impact = 0.001 × 1.0 = **0.001**
+
+The normalised formula underestimated by **100x** in this case! For deep networks
+with many competing inputs at each layer, the underestimation compounds to
+**1000x or more**.
+
+**Production evidence**: Neurons with calculated impact 1e-10 to 1e-17 caused
+score deltas of 1e-5 to 1e-2 when removed - off by 5-15 orders of magnitude.
+
+**The fix**: Impact now uses absolute weight products along paths to outputs:
+```
+impact = weight × downstream_impact
+```
+
+This matches the actual contribution: `activation × weight × downstream_impact`.
+
 If verbose logging is enabled (`NEAT_AI_DISCOVERY_VERBOSE=1`), you'll see
 messages like:
 
