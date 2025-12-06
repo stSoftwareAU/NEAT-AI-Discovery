@@ -390,6 +390,19 @@ returned. This contradicts the low-confidence fallback fix - if 2% is the
 minimum for reliable predictions, discounted predictions below 2% are equally
 unreliable.
 
+**v0.1.125 FIX**: Focus neurons that have all candidates filtered by impact
+discounting now appear in `no_candidate_reasons` with `ImpactDiscountedBelowThreshold`.
+Previously, these neurons would silently disappear from the response:
+- Candidates were found → `had_candidate = true`
+- Impact discounting reduced improvement below 2%
+- Re-filtering removed all candidates
+- `no_candidate_summaries()` excluded the entry (because `had_candidate == true`)
+- Result: neuron appeared in neither `helpful_neurons` nor `no_candidate_reasons`
+
+Now, after re-filtering, any focus neuron that lost ALL its candidates is marked
+with `impact_discounted_below_threshold = true`, ensuring it appears in the
+diagnostics with an appropriate reason code.
+
 #### All other activations
 
 All other activation functions (including IDENTITY, INVERSE, IF, MAXIMUM,
@@ -482,19 +495,24 @@ now filters out these candidates:
 
 #### Add-neuron target neuron filtering
 
-**Only output neurons are valid targets** for add-neuron analysis. Input and
-hidden neurons are filtered out from the focus list:
+**Output and hidden neurons are valid targets** for add-neuron analysis. Input
+and constant neurons are filtered out from the focus list:
 
 | Neuron Type | Filtered? | Reason | Diagnostic Code |
 |-------------|-----------|--------|-----------------|
 | **output** | No | Direct impact on creature score | (not filtered) |
-| **hidden** | Yes | Backpropagated errors don't reliably predict output error | `hidden_neuron_filtered` |
+| **hidden** | No | Analysed with impact-based discounting (v0.1.123) | (not filtered) |
 | **input** | Yes | Observation sources, not computation nodes | `input_neuron_filtered` |
-| **constant** | Yes | No activation function or error | `hidden_neuron_filtered` |
+| **constant** | Yes | Don't receive inputs - always output fixed value | `constant_neuron_filtered` |
 
 This filtering occurs before analysis begins. The diagnostics response includes
 the appropriate reason code for each filtered neuron, so callers know why a
 focus neuron received no candidates.
+
+**Post-analysis filtering** (v0.1.125): Hidden neurons that have candidates
+found but ALL candidates are filtered by impact discounting (below 2% after
+discount) receive the diagnostic code `impact_discounted_below_threshold`. This
+ensures focus neurons never silently disappear from the response.
 
 If verbose logging is enabled (`NEAT_AI_DISCOVERY_VERBOSE=1`), you'll see
 messages like:

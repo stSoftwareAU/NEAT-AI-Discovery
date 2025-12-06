@@ -385,6 +385,15 @@ pub enum NeuronDiagnosticReasonJson {
     /// observation sources, not computation nodes - they have no activation function
     /// or error to reduce.
     InputNeuronFiltered,
+    /// Constant neurons are filtered out from add-neuron analysis because they
+    /// don't receive inputs - they always output a fixed value regardless of
+    /// network state, so adding a connection to them has no effect.
+    ConstantNeuronFiltered,
+    /// Candidates were found but all fell below MIN_FALLBACK_IMPROVEMENT (2%) after
+    /// impact-based discounting for hidden neurons. The raw predictions passed the
+    /// threshold, but after discounting by the neuron's impact score (distance from
+    /// outputs), the discounted predictions were too low to be reliable.
+    ImpactDiscountedBelowThreshold,
 }
 
 #[derive(Debug, Serialize)]
@@ -492,6 +501,12 @@ fn neuron_diagnostics_json(
                     }
                     analysis::NeuronNoCandidateReason::InputNeuronFiltered => {
                         NeuronDiagnosticReasonJson::InputNeuronFiltered
+                    }
+                    analysis::NeuronNoCandidateReason::ConstantNeuronFiltered => {
+                        NeuronDiagnosticReasonJson::ConstantNeuronFiltered
+                    }
+                    analysis::NeuronNoCandidateReason::ImpactDiscountedBelowThreshold => {
+                        NeuronDiagnosticReasonJson::ImpactDiscountedBelowThreshold
                     }
                 },
                 evaluated_sources: summary.evaluated_sources,

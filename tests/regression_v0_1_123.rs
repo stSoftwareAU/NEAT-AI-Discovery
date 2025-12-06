@@ -574,3 +574,226 @@ fn regression_discounted_hidden_neurons_must_meet_minimum_threshold() {
         result.helpful_neurons.len()
     );
 }
+
+/// REGRESSION TEST: Impact-discounted neurons must appear in EITHER helpful_neurons OR no_candidate_reasons.
+///
+/// BUG (to be fixed in v0.1.125): When a hidden neuron candidate is found but then filtered out
+/// by impact discounting (falls below 2% after discount), the neuron disappears from BOTH:
+/// - `helpful_neurons` (candidate was removed by re-filtering)
+/// - `no_candidate_reasons` (had_candidate was set to true before filtering)
+///
+/// This causes focus neurons to silently disappear from the response, leaving callers
+/// with no information about neurons they explicitly requested analysis for.
+///
+/// A focus neuron must ALWAYS appear in exactly one of:
+/// 1. `helpful_neurons` (has candidates)
+/// 2. `no_candidate_reasons` (was analysed but has no viable candidates)
+#[test]
+fn regression_impact_discounted_neurons_must_appear_in_response() {
+    skip_without_gpu!();
+
+    let temp_dir = TempDir::new().expect("Failed to create temporary directory");
+    let parquet_path = temp_dir.path().join("records.parquet");
+    let parquet_file = parquet_path
+        .to_str()
+        .expect("Temporary path should be valid UTF-8")
+        .to_string();
+
+    // Create a creature where hidden-will-be-discounted has VERY LOW impact (0.05).
+    // We'll engineer the data so raw improvement is ~5-15%, but after 0.05 discount
+    // it becomes 0.25-0.75% which falls below MIN_FALLBACK_IMPROVEMENT (2%).
+    //
+    // hidden-will-be-discounted (weight 0.05) --\
+    //                                            --> output-0
+    // hidden-high-impact (weight 0.95) ---------/
+    //
+    // Impact for hidden-will-be-discounted = 0.05 / (0.05 + 0.95) = 0.05
+    let creature = CreatureJson {
+        input: 2,
+        output: 1,
+        neurons: vec![
+            NeuronJson {
+                uuid: "hidden-will-be-discounted".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "hidden-high-impact".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: vec![
+            SynapseJson {
+                from_uuid: "hidden-will-be-discounted".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 0.05, // Very low weight = very low impact (0.05)
+            },
+            SynapseJson {
+                from_uuid: "hidden-high-impact".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 0.95, // High weight = high impact (0.95)
+            },
+        ],
+    };
+
+    // Verify impact scores
+    let impacts = neat_ai_discovery::focus::compute_impacts_public(&creature);
+    let discounted_impact = impacts
+        .get("hidden-will-be-discounted")
+        .copied()
+        .unwrap_or(0.0);
+    eprintln!("hidden-will-be-discounted has impact score: {discounted_impact:.3}");
+    assert!(
+        discounted_impact < 0.1,
+        "Test setup error: hidden-will-be-discounted should have impact < 0.1, got {discounted_impact:.3}"
+    );
+
+    // Create discovery records with VERY WEAK correlation for hidden-will-be-discounted.
+    // We want raw improvement to be ~5-30% so that after 0.05 impact discount
+    // it falls to 0.25-1.5% (below MIN_FALLBACK_IMPROVEMENT of 2%).
+    //
+    // The key is: raw improvement >= 2% (passes initial filter) but
+    // discounted improvement < 2% (gets filtered by re-filtering).
+    //
+    // We use mostly noise with tiny signal to break the correlation.
+    let mut records = Vec::new();
+    for obs_index in 0..100u32 {
+        let input_val = (obs_index as f32 - 50.0) / 50.0; // -1.0 to 1.0
+
+        // Heavy noise, tiny signal - produces ~5-30% raw improvement
+        // which becomes 0.25-1.5% after 0.05 impact discount
+        let noise1 = ((obs_index * 17) % 11) as f32 / 5.5 - 1.0; // Pseudo-random -1 to 1
+        let noise2 = ((obs_index * 23) % 7) as f32 / 3.5 - 1.0; // Different noise
+        let hidden_error = input_val * 0.02 + noise1 * 0.3 + noise2 * 0.2;
+
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "input-0".to_string(),
+            Some(input_val),
+            input_val,
+            vec![],
+        ));
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "input-1".to_string(),
+            Some(0.3),
+            0.3,
+            vec![],
+        ));
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "hidden-will-be-discounted".to_string(),
+            Some(input_val * 0.2),
+            input_val * 0.2,
+            vec![hidden_error],
+        ));
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "hidden-high-impact".to_string(),
+            Some(0.5),
+            0.5,
+            vec![0.0], // No error - not our focus
+        ));
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "output-0".to_string(),
+            Some(input_val * 0.1),
+            input_val * 0.1,
+            vec![hidden_error * 0.1],
+        ));
+    }
+
+    write_records_to_parquet(&parquet_file, &records).expect("Failed to write records");
+
+    let input = AnalyzeNeuronsInput {
+        parquet_file,
+        creature,
+        focus_neurons: vec!["hidden-will-be-discounted".to_string()],
+        improvement_threshold: Some(0.01), // Low threshold so raw candidate is found
+        max_candidates: Some(50),
+        analysis_deadline_ms: None,
+    };
+
+    let result = analyze_neurons(&input).expect("Neuron analysis should succeed");
+
+    // KEY ASSERTION: The focus neuron must appear in EITHER helpful_neurons OR no_candidate_reasons.
+    // It must NOT silently disappear from the response.
+    let in_helpful = result
+        .helpful_neurons
+        .iter()
+        .any(|c| c.target_neuron_uuid == "hidden-will-be-discounted");
+
+    let in_no_candidate = result
+        .no_candidate_reasons
+        .iter()
+        .any(|r| r.target_uuid == "hidden-will-be-discounted");
+
+    assert!(
+        in_helpful || in_no_candidate,
+        "\n\n\
+        ╔══════════════════════════════════════════════════════════════════════════════╗\n\
+        ║  REGRESSION DETECTED: Focus neuron silently disappeared from response!        ║\n\
+        ╠══════════════════════════════════════════════════════════════════════════════╣\n\
+        ║  'hidden-will-be-discounted' was requested in focus_neurons but appears       ║\n\
+        ║  in NEITHER helpful_neurons NOR no_candidate_reasons.                         ║\n\
+        ║                                                                              ║\n\
+        ║  This happens when:                                                          ║\n\
+        ║  1. A candidate is found → had_candidate = true                              ║\n\
+        ║  2. Impact discounting reduces improvement below 2%                           ║\n\
+        ║  3. Re-filtering removes the candidate                                        ║\n\
+        ║  4. no_candidate_summaries() skips entry (had_candidate == true)              ║\n\
+        ║                                                                              ║\n\
+        ║  Result: Neuron disappears from both lists!                                   ║\n\
+        ║                                                                              ║\n\
+        ║  FIX: After re-filtering, update diagnostics for neurons that lost all        ║\n\
+        ║  candidates to mark them as ImpactDiscountedBelowThreshold.                   ║\n\
+        ║                                                                              ║\n\
+        ║  helpful_neurons: {:?}                                                        \n\
+        ║  no_candidate_reasons: {:?}                                                   \n\
+        ╚══════════════════════════════════════════════════════════════════════════════╝\n\n",
+        result
+            .helpful_neurons
+            .iter()
+            .map(|c| &c.target_neuron_uuid)
+            .collect::<Vec<_>>(),
+        result
+            .no_candidate_reasons
+            .iter()
+            .map(|r| &r.target_uuid)
+            .collect::<Vec<_>>()
+    );
+
+    // If it's in no_candidate_reasons, verify the reason is appropriate
+    if in_no_candidate {
+        let reason = result
+            .no_candidate_reasons
+            .iter()
+            .find(|r| r.target_uuid == "hidden-will-be-discounted")
+            .unwrap();
+
+        // It should NOT be HiddenNeuronFiltered (that's a pre-analysis filter)
+        assert!(
+            !matches!(reason.reason, NeuronNoCandidateReason::HiddenNeuronFiltered),
+            "Hidden neuron should have been analysed, not filtered. Got: {:?}",
+            reason.reason
+        );
+
+        eprintln!(
+            "Test passed: hidden-will-be-discounted appears in no_candidate_reasons with reason: {:?}",
+            reason.reason
+        );
+    } else {
+        eprintln!(
+            "Test note: hidden-will-be-discounted appears in helpful_neurons (candidate survived discounting)"
+        );
+    }
+}

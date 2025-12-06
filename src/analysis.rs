@@ -400,6 +400,15 @@ pub enum NeuronNoCandidateReason {
     /// observation sources, not computation nodes - they have no activation function
     /// or error to reduce.
     InputNeuronFiltered,
+    /// Constant neurons are filtered out from add-neuron analysis because they
+    /// don't receive inputs - they always output a fixed value regardless of
+    /// network state, so adding a connection to them has no effect.
+    ConstantNeuronFiltered,
+    /// Candidates were found but all fell below MIN_FALLBACK_IMPROVEMENT (2%) after
+    /// impact-based discounting for hidden neurons. The raw predictions passed the
+    /// threshold, but after discounting by the neuron's impact score (distance from
+    /// outputs), the discounted predictions were too low to be reliable.
+    ImpactDiscountedBelowThreshold,
 }
 
 #[derive(Debug, Clone)]
@@ -885,6 +894,12 @@ struct NeuronDiagnosticEntry {
     /// Set to true when this neuron was filtered out because it's an input neuron
     /// (input neurons are observation sources, not computation nodes).
     input_filtered: bool,
+    /// Set to true when this neuron was filtered out because it's a constant neuron
+    /// (constant neurons don't receive inputs - they always output a fixed value).
+    constant_filtered: bool,
+    /// Set to true when candidates were found but all fell below MIN_FALLBACK_IMPROVEMENT
+    /// after impact-based discounting. This overrides `had_candidate` for reporting purposes.
+    impact_discounted_below_threshold: bool,
 }
 
 impl NeuronDiagnosticEntry {
@@ -900,6 +915,8 @@ impl NeuronDiagnosticEntry {
             best_rejection: None,
             hidden_filtered: false,
             input_filtered: false,
+            constant_filtered: false,
+            impact_discounted_below_threshold: false,
         }
     }
 
@@ -1010,6 +1027,24 @@ impl NeuronDiagnostics {
         }
     }
 
+    /// Mark a neuron as filtered out because it's a constant neuron.
+    /// Constant neurons don't receive inputs - they always output a fixed value
+    /// regardless of network state, so adding a connection to them has no effect.
+    fn mark_constant_filtered(&mut self, target_uuid: &str) {
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.constant_filtered = true;
+        }
+    }
+
+    /// Mark a neuron as having candidates that were all filtered out by impact discounting.
+    /// This is called when a hidden neuron had candidates found, but all fell below
+    /// MIN_FALLBACK_IMPROVEMENT (2%) after applying impact-based discounting.
+    fn mark_impact_discounted_below_threshold(&mut self, target_uuid: &str) {
+        if let Some(entry) = self.entries.get_mut(target_uuid) {
+            entry.impact_discounted_below_threshold = true;
+        }
+    }
+
     fn emit_logs(&self) {
         if !self.log_enabled {
             return;
@@ -1041,6 +1076,17 @@ impl NeuronDiagnostics {
                     "[NEAT-AI-Discovery][verbose] Target {} was filtered out (hidden neuron). \
                     Add-neuron analysis only targets output neurons because hidden neuron error \
                     reduction doesn't reliably translate to creature score improvement.",
+                    entry.target_uuid
+                );
+                continue;
+            }
+
+            // Constant neurons don't receive inputs - they always output a fixed value
+            if entry.constant_filtered {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} was filtered out (constant neuron). \
+                    Constant neurons don't receive inputs - they always output a fixed value \
+                    regardless of network state, so adding a connection to them has no effect.",
                     entry.target_uuid
                 );
                 continue;
@@ -1112,9 +1158,38 @@ impl NeuronDiagnostics {
     fn no_candidate_summaries(&self) -> Vec<NeuronNoCandidateSummary> {
         self.entries
             .values()
-            .filter(|entry| !entry.had_candidate)
+            // Include entries that either:
+            // 1. Never had a candidate (!had_candidate), OR
+            // 2. Had candidates but all were filtered by impact discounting
+            .filter(|entry| !entry.had_candidate || entry.impact_discounted_below_threshold)
             .map(|entry| {
-                // Check pre-analysis filters FIRST - these take precedence over all other reasons.
+                // Check post-analysis filter FIRST - impact discounting takes precedence
+                // because it indicates candidates WERE found but then filtered out.
+                // This ensures neurons don't silently disappear from the response.
+                if entry.impact_discounted_below_threshold {
+                    return NeuronNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: NeuronNoCandidateReason::ImpactDiscountedBelowThreshold,
+                        evaluated_sources: entry.evaluated_sources,
+                        sources_with_samples: entry.sources_with_samples,
+                        target_record_count: entry.target_record_count,
+                        detail: entry
+                            .best_rejection
+                            .as_ref()
+                            .map(|best| NeuronNoCandidateDetail {
+                                source_uuid: Some(best.source_uuid.clone()),
+                                orientation: best.orientation.map(|name| name.to_string()),
+                                sample_count: Some(best.sample_count),
+                                improved_count: None,
+                                worsened_count: None,
+                                expected_improvement: Some(best.expected_improvement),
+                                threshold: None,
+                                outgoing_weight: None,
+                            }),
+                    };
+                }
+
+                // Check pre-analysis filters NEXT - these take precedence over other reasons.
                 // These neurons are filtered out before analysis even begins, so they won't
                 // have any other diagnostic data (eligible sources, samples, etc.).
 
@@ -1135,6 +1210,18 @@ impl NeuronDiagnostics {
                     return NeuronNoCandidateSummary {
                         target_uuid: entry.target_uuid.clone(),
                         reason: NeuronNoCandidateReason::HiddenNeuronFiltered,
+                        evaluated_sources: 0,
+                        sources_with_samples: 0,
+                        target_record_count: 0,
+                        detail: None,
+                    };
+                }
+
+                // Constant neurons don't receive inputs - they always output a fixed value
+                if entry.constant_filtered {
+                    return NeuronNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: NeuronNoCandidateReason::ConstantNeuronFiltered,
                         evaluated_sources: 0,
                         sources_with_samples: 0,
                         target_record_count: 0,
@@ -5309,8 +5396,9 @@ fn analyze_neurons_with_cache(
     // Non-output neurons are skipped here but still tracked in diagnostics so the
     // caller knows they were received but filtered out (with the correct reason).
     let original_focus_count = unique_focus.len();
-    let mut skipped_hidden: Vec<String> = Vec::new();
+    let skipped_hidden: Vec<String> = Vec::new();
     let mut skipped_input: Vec<String> = Vec::new();
+    let mut skipped_constant: Vec<String> = Vec::new();
 
     // Randomize the focus neuron order so that repeated runs with timeouts will
     // eventually cover all neurons. Convert to owned strings, shuffle, then use.
@@ -5343,7 +5431,7 @@ fn analyze_neurons_with_cache(
                 }
                 Some("constant") => {
                     // Constant neurons don't receive inputs - filtering them out
-                    skipped_hidden.push((*uuid).clone());
+                    skipped_constant.push((*uuid).clone());
                     None
                 }
                 Some(unknown_type) => {
@@ -5367,36 +5455,34 @@ fn analyze_neurons_with_cache(
         .collect();
 
     // Log when non-output neurons are filtered out
-    let total_skipped = skipped_hidden.len() + skipped_input.len();
+    let total_skipped = skipped_hidden.len() + skipped_input.len() + skipped_constant.len();
     if total_skipped > 0 {
-        if !skipped_input.is_empty() && !skipped_hidden.is_empty() {
-            eprintln!(
-                "[NEAT-AI-Discovery] Filtered {} neuron(s) from add-neuron analysis (only output neurons are valid targets). \
-                Input neurons skipped: {:?}. Hidden neurons skipped: {:?}. Remaining output neurons: {}",
-                total_skipped,
-                skipped_input.iter().take(5).collect::<Vec<_>>(),
-                skipped_hidden.iter().take(5).collect::<Vec<_>>(),
-                focus_order.len()
-            );
-        } else if !skipped_input.is_empty() {
-            eprintln!(
-                "[NEAT-AI-Discovery] Filtered {} input neuron(s) from add-neuron analysis \
-                (input neurons are observation sources, not computation nodes). \
-                Input neurons skipped: {:?}. Remaining output neurons: {}",
-                skipped_input.len(),
-                skipped_input.iter().take(5).collect::<Vec<_>>(),
-                focus_order.len()
-            );
-        } else {
-            eprintln!(
-                "[NEAT-AI-Discovery] Filtered {} hidden neuron(s) from add-neuron analysis \
-                (only output neurons are valid targets). \
-                Hidden neurons skipped: {:?}. Remaining output neurons: {}",
-                skipped_hidden.len(),
-                skipped_hidden.iter().take(5).collect::<Vec<_>>(),
-                focus_order.len()
-            );
+        // Build a summary of skipped neuron types
+        let mut skipped_parts: Vec<String> = Vec::new();
+        if !skipped_input.is_empty() {
+            skipped_parts.push(format!(
+                "Input: {:?}",
+                skipped_input.iter().take(5).collect::<Vec<_>>()
+            ));
         }
+        if !skipped_hidden.is_empty() {
+            skipped_parts.push(format!(
+                "Hidden: {:?}",
+                skipped_hidden.iter().take(5).collect::<Vec<_>>()
+            ));
+        }
+        if !skipped_constant.is_empty() {
+            skipped_parts.push(format!(
+                "Constant: {:?}",
+                skipped_constant.iter().take(5).collect::<Vec<_>>()
+            ));
+        }
+        eprintln!(
+            "[NEAT-AI-Discovery] Filtered {} neuron(s) from add-neuron analysis. {}. Remaining valid targets: {}",
+            total_skipped,
+            skipped_parts.join(". "),
+            focus_order.len()
+        );
     }
 
     // If no output neurons remain after filtering, return early with empty results
@@ -5427,6 +5513,16 @@ fn analyze_neurons_with_cache(
                 detail: None,
             });
         }
+        for uuid in &skipped_constant {
+            no_candidate_reasons.push(NeuronNoCandidateSummary {
+                target_uuid: uuid.clone(),
+                reason: NeuronNoCandidateReason::ConstantNeuronFiltered,
+                evaluated_sources: 0,
+                sources_with_samples: 0,
+                target_record_count: 0,
+                detail: None,
+            });
+        }
         return Ok(AnalyzeNeuronsResult {
             helpful_neurons: Vec::new(),
             gpu_used: true,
@@ -5448,6 +5544,12 @@ fn analyze_neurons_with_cache(
             .lock()
             .expect("Mutex poisoned: diagnostics")
             .mark_hidden_filtered(hidden_uuid);
+    }
+    for constant_uuid in &skipped_constant {
+        diagnostics
+            .lock()
+            .expect("Mutex poisoned: diagnostics")
+            .mark_constant_filtered(constant_uuid);
     }
 
     // Log threshold-crossing neurons for visibility
@@ -5812,7 +5914,7 @@ fn analyze_neurons_with_cache(
         .lock()
         .expect("Mutex poisoned: helpful_map")
         .clone();
-    let diagnostics = diagnostics.lock().expect("Mutex poisoned: diagnostics");
+    let mut diagnostics = diagnostics.lock().expect("Mutex poisoned: diagnostics");
 
     if analysis_timed_out && verbose_enabled() {
         eprintln!("[NEAT-AI-Discovery][verbose] analyse_neurons reached analysis deadline; returning partial results.");
@@ -5894,6 +5996,14 @@ fn analyze_neurons_with_cache(
     // These low predictions are unreliable for the same reason as original fallbacks:
     // the model's error margin (~±0.5%) exceeds the prediction itself.
     const MIN_FALLBACK_IMPROVEMENT: f32 = 0.02; // 2% minimum - same as evaluate_activation_candidate
+
+    // Track which target neurons have candidates BEFORE filtering (v0.1.125 fix)
+    // This allows us to report when neurons lose ALL candidates due to impact discounting.
+    let targets_with_candidates_before: HashSet<String> = helpful_results
+        .iter()
+        .map(|c| c.target_neuron_uuid.clone())
+        .collect();
+
     let pre_filter_count = helpful_results.len();
     helpful_results.retain(|c| c.expected_improvement_percentage >= MIN_FALLBACK_IMPROVEMENT);
     let filtered_count = pre_filter_count - helpful_results.len();
@@ -5903,6 +6013,27 @@ fn analyze_neurons_with_cache(
             {:.0}% MIN_FALLBACK_IMPROVEMENT after impact discounting",
             MIN_FALLBACK_IMPROVEMENT * 100.0
         );
+    }
+
+    // Find target neurons that had candidates but now have NONE after filtering (v0.1.125 fix)
+    // These neurons must appear in no_candidate_reasons, not silently disappear.
+    let targets_with_candidates_after: HashSet<String> = helpful_results
+        .iter()
+        .map(|c| c.target_neuron_uuid.clone())
+        .collect();
+
+    for target_uuid in &targets_with_candidates_before {
+        if !targets_with_candidates_after.contains(target_uuid) {
+            // This target had candidates but all were filtered out by impact discounting
+            diagnostics.mark_impact_discounted_below_threshold(target_uuid);
+            if verbose_enabled() {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} lost ALL candidates after impact \
+                    discounting - will report ImpactDiscountedBelowThreshold",
+                    &target_uuid[..20.min(target_uuid.len())]
+                );
+            }
+        }
     }
 
     helpful_results.sort_by(|a, b| {
@@ -11472,6 +11603,68 @@ mod tests_synapses {
             ),
             "Input neuron should report InputNeuronFiltered, not {:?}",
             input_summary.reason
+        );
+
+        // Find the hidden neuron summary - should still have HiddenNeuronFiltered reason
+        let hidden_summary = summaries
+            .iter()
+            .find(|s| s.target_uuid == "hidden-2")
+            .expect("Should have summary for hidden-2");
+        assert!(
+            matches!(
+                hidden_summary.reason,
+                NeuronNoCandidateReason::HiddenNeuronFiltered
+            ),
+            "Hidden neuron should report HiddenNeuronFiltered, not {:?}",
+            hidden_summary.reason
+        );
+    }
+
+    #[test]
+    fn neuron_diagnostics_reports_constant_neuron_filtered_not_hidden() {
+        // Test that when a constant neuron is in the focus list, it gets
+        // ConstantNeuronFiltered reason (not HiddenNeuronFiltered).
+        //
+        // Bug scenario (v0.1.124): Constant neurons were pushed to skipped_hidden
+        // but reported with HiddenNeuronFiltered reason. This is semantically
+        // incorrect - constant neurons don't receive inputs because they always
+        // output a fixed value, which is different from hidden neurons whose
+        // backpropagated errors don't reliably predict output error.
+        let mut diagnostics =
+            NeuronDiagnostics::new_for_tests(&["output-0", "constant-1", "hidden-2"]);
+
+        // Mark constant-1 as filtered because it's a constant neuron
+        diagnostics.mark_constant_filtered("constant-1");
+
+        // Mark hidden-2 as filtered because it's a hidden neuron
+        diagnostics.mark_hidden_filtered("hidden-2");
+
+        // Simulate output-0 being processed normally but finding no candidate
+        diagnostics.set_target_record_count("output-0", 100);
+        diagnostics.set_total_eligible_sources("output-0", 5);
+        diagnostics.record_candidate_attempt("output-0", false);
+
+        let summaries = diagnostics.no_candidate_summaries();
+
+        // All three should have summaries
+        assert_eq!(
+            summaries.len(),
+            3,
+            "Expected 3 summaries (one for output, one for constant, one for hidden)"
+        );
+
+        // Find the constant neuron summary - should have ConstantNeuronFiltered reason
+        let constant_summary = summaries
+            .iter()
+            .find(|s| s.target_uuid == "constant-1")
+            .expect("Should have summary for constant-1");
+        assert!(
+            matches!(
+                constant_summary.reason,
+                NeuronNoCandidateReason::ConstantNeuronFiltered
+            ),
+            "Constant neuron should report ConstantNeuronFiltered, not {:?}",
+            constant_summary.reason
         );
 
         // Find the hidden neuron summary - should still have HiddenNeuronFiltered reason
