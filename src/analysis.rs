@@ -4102,17 +4102,27 @@ fn leaky_relu(x: f32) -> f32 {
 
 /// Get the activation function for a given squash name.
 /// Returns None for activations that are approximately linear and don't need simulation.
+///
+/// v0.1.121: Added ELU, SELU, GELU, Softplus to improve prediction accuracy
+/// for these commonly-used non-linear activations.
 #[inline]
 fn get_target_activation_fn(squash: &str) -> Option<fn(f32) -> f32> {
     match squash {
+        // Saturating activations - simulation critical near boundaries
         "HARD_TANH" => Some(hard_tanh),
-        "ReLU" => Some(relu),
-        "LeakyReLU" => Some(leaky_relu),
         "TANH" => Some(|x: f32| x.tanh()),
         "LOGISTIC" => Some(logistic_activation),
-        "BIPOLAR" => Some(bipolar_activation),
         "CLIPPED" => Some(clipped_activation),
-        // IDENTITY, INVERSE, etc. are linear - no simulation needed
+        "BIPOLAR" => Some(bipolar_activation),
+        // ReLU family - simulation important for threshold behaviour
+        "ReLU" => Some(relu),
+        "LeakyReLU" => Some(leaky_relu),
+        // Smooth non-linear activations - simulation improves accuracy (v0.1.121)
+        "ELU" => Some(elu_activation),
+        "SELU" => Some(selu_activation),
+        "GELU" => Some(gelu_activation),
+        "Softplus" => Some(softplus_activation),
+        // IDENTITY, INVERSE are linear - no simulation needed
         _ => None,
     }
 }
@@ -4805,32 +4815,20 @@ fn evaluate_activation_candidate(
                         target_squash,
                     );
 
-                    // CRITICAL FIX: Recompute optimal weight WITH the bias included.
-                    // The initial weight_candidates were computed WITHOUT bias, so they're
-                    // wrong when bias significantly changes the activation pattern.
-                    // Now recompute the weight that optimises error reduction for this bias.
-                    let mut sum_activation_sq_with_bias = 0.0f32;
-                    let mut sum_error_activation_with_bias = 0.0f32;
-                    for sample in samples.iter() {
-                        let pre_activation = incoming_weight * sample.activation + bias;
-                        let output = (spec.activation)(pre_activation);
-                        if output.is_finite() {
-                            sum_activation_sq_with_bias += output * output;
-                            sum_error_activation_with_bias += output * sample.avg_error;
-                        }
-                    }
-                    let recomputed_weight = if sum_activation_sq_with_bias > EPSILON {
-                        (sum_error_activation_with_bias / sum_activation_sq_with_bias)
-                            .clamp(-10.0, 10.0)
-                    } else {
-                        clamped_weight
-                    };
+                    // v0.1.122: When target simulation is available, DON'T recompute weight
+                    // using VALUE domain optimization. The candidate weights are already
+                    // scaled versions of linear optimal. Recomputing in VALUE domain can
+                    // overshoot near saturation, leading to worse ACTIVATION domain results.
+                    // Instead, let the ACTIVATION domain evaluation pick the best candidate.
+                    //
+                    // We DO recompute to account for bias changing the activation pattern,
+                    // but only when we don't have target simulation (linear approximation).
 
                     // Single pass for improvement and count with target simulation
                     let (improvement, improved, _) = compute_activation_improvement_and_count(
                         samples,
                         incoming_weight,
-                        recomputed_weight,
+                        clamped_weight, // Use candidate weight directly, not recomputed
                         bias,
                         spec.activation,
                         baseline_sq,
@@ -4839,7 +4837,7 @@ fn evaluate_activation_candidate(
 
                     if improvement > best_improvement {
                         best_improvement = improvement;
-                        best_weight = recomputed_weight;
+                        best_weight = clamped_weight; // Use candidate weight directly
                         best_bias = bias;
                         best_improved_count = improved;
                     }
