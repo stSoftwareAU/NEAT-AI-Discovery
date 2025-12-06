@@ -285,6 +285,51 @@ near or in saturation, causing predictions to be wildly inaccurate.
 This fix ensures predictions match actual results when candidates are applied,
 resolving the "add-neuron candidates always fail" production issue.
 
+#### ACTIVATION domain consistency (v0.1.120)
+
+**CRITICAL BUG FIX**: When using target activation function simulation (to handle
+saturation in HARD_TANH, TANH, etc.), the improvement calculation was comparing
+errors from **different domains**:
+
+- **Baseline error**: VALUE domain (`avg_error²`)
+- **New error**: ACTIVATION domain (`(expected - new_output)²`)
+
+Near saturation, VALUE domain errors are much larger than ACTIVATION domain errors
+(because the activation function compresses them). This caused **massive
+overprediction** of improvements.
+
+**Example of the bug:**
+
+| Value | Computation | Result |
+|-------|-------------|--------|
+| target_value | Pre-activation input | 0.9 |
+| avg_error | VALUE domain error | 0.3 |
+| desired_value | target_value + avg_error | 1.2 |
+| expected | HARD_TANH(1.2) | 1.0 (saturated) |
+| target_activation | Current output | 0.9 |
+| contribution | Weight × new_neuron_output | 0.05 |
+| new_input | target_value + contribution | 0.95 |
+| new_output | HARD_TANH(0.95) | 0.95 |
+
+**Buggy calculation (mixed domains):**
+- Baseline error² = 0.3² = 0.09 (VALUE domain)
+- New error² = (1.0 - 0.95)² = 0.0025 (ACTIVATION domain)
+- Improvement = (0.09 - 0.0025) / 0.09 = **97%** ❌
+
+**Correct calculation (consistent ACTIVATION domain):**
+- Baseline error² = (1.0 - 0.9)² = 0.01 (ACTIVATION domain)
+- New error² = (1.0 - 0.95)² = 0.0025 (ACTIVATION domain)
+- Improvement = (0.01 - 0.0025) / 0.01 = **75%** ✓
+
+The fix computes **both baseline and new error** in the same domain (ACTIVATION
+when simulating, VALUE for linear approximation). This is verified by
+`improvement_calculation_uses_consistent_domains`.
+
+**Fixed functions:**
+- `compute_synapse_improvement_and_count`
+- `compute_relu_improvement_and_count`
+- `compute_activation_improvement_and_count`
+
 #### All other activations
 
 All other activation functions (including IDENTITY, INVERSE, IF, MAXIMUM,
