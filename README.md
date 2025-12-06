@@ -358,7 +358,7 @@ This resolves the production issue where discovery returned many add-neuron
 candidates showing small positive expected improvements, but all resulted in
 actual error increases when applied.
 
-#### Hidden neuron add-neuron analysis (v0.1.123)
+#### Hidden neuron add-neuron analysis (v0.1.123, v0.1.124)
 
 **FEATURE**: Hidden neurons are now valid targets for add-neuron analysis.
 Previously, hidden neurons were filtered out entirely with a 100% failure rate.
@@ -382,6 +382,13 @@ from outputs (low impact).
 The impact score is computed using the existing `compute_impacts()` function
 from the focus module, which calculates normalised path weights through the
 network to all outputs.
+
+**v0.1.124 FIX**: After applying impact discounting, candidates are now
+re-filtered against `MIN_FALLBACK_IMPROVEMENT` (2%). Previously, a hidden neuron
+with 3% raw improvement and 0.3 impact would be discounted to 0.9% but still
+returned. This contradicts the low-confidence fallback fix - if 2% is the
+minimum for reliable predictions, discounted predictions below 2% are equally
+unreliable.
 
 #### All other activations
 

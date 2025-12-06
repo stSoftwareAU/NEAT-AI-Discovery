@@ -5889,6 +5889,22 @@ fn analyze_neurons_with_cache(
         }
     }
 
+    // Re-filter discounted candidates against MIN_FALLBACK_IMPROVEMENT (v0.1.124)
+    // After impact discounting, hidden neuron candidates may fall below 2%.
+    // These low predictions are unreliable for the same reason as original fallbacks:
+    // the model's error margin (~±0.5%) exceeds the prediction itself.
+    const MIN_FALLBACK_IMPROVEMENT: f32 = 0.02; // 2% minimum - same as evaluate_activation_candidate
+    let pre_filter_count = helpful_results.len();
+    helpful_results.retain(|c| c.expected_improvement_percentage >= MIN_FALLBACK_IMPROVEMENT);
+    let filtered_count = pre_filter_count - helpful_results.len();
+    if filtered_count > 0 && verbose_enabled() {
+        eprintln!(
+            "[NEAT-AI-Discovery][verbose] Filtered {filtered_count} candidate(s) that fell below \
+            {:.0}% MIN_FALLBACK_IMPROVEMENT after impact discounting",
+            MIN_FALLBACK_IMPROVEMENT * 100.0
+        );
+    }
+
     helpful_results.sort_by(|a, b| {
         b.expected_improvement_percentage
             .partial_cmp(&a.expected_improvement_percentage)

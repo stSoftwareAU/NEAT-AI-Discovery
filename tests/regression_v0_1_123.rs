@@ -398,3 +398,179 @@ fn regression_hidden_neuron_predictions_must_be_impact_discounted() {
         ╚══════════════════════════════════════════════════════════════════════════════╝\n\n"
     );
 }
+
+/// REGRESSION TEST: Discounted hidden neuron candidates must still meet 2% threshold.
+///
+/// BUG (fixed in v0.1.124): After applying impact-based discounting for hidden neurons,
+/// candidates were not re-filtered against MIN_FALLBACK_IMPROVEMENT (2%). A hidden
+/// neuron with 3% raw improvement and 0.3 impact would be discounted to 0.9%, falling
+/// below the minimum threshold but still returned.
+///
+/// This contradicts the fix for low-confidence fallback candidates - if 2% is the
+/// minimum for reliable predictions, then discounted predictions below 2% are equally
+/// unreliable.
+///
+/// This test creates a hidden neuron with LOW impact that would cause discounting
+/// below 2%, and verifies such candidates are NOT returned.
+#[test]
+fn regression_discounted_hidden_neurons_must_meet_minimum_threshold() {
+    skip_without_gpu!();
+
+    let temp_dir = TempDir::new().expect("Failed to create temporary directory");
+    let parquet_path = temp_dir.path().join("records.parquet");
+    let parquet_file = parquet_path
+        .to_str()
+        .expect("Temporary path should be valid UTF-8")
+        .to_string();
+
+    // Create a creature where hidden-low-impact has LOW impact to output.
+    // Structure: hidden-low-impact (weight 0.1) and hidden-high-impact (weight 0.9) both -> output
+    // hidden-low-impact impact = 0.1 / (0.1 + 0.9) × 1.0 = 0.1
+    //
+    // If analysis produces ~3% raw improvement for hidden-low-impact:
+    // - Raw improvement: 3%
+    // - After 0.1 discount: 0.3%
+    // - This should be filtered (< 2%)
+    let creature = CreatureJson {
+        input: 2,
+        output: 1,
+        neurons: vec![
+            NeuronJson {
+                uuid: "hidden-low-impact".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "hidden-high-impact".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: vec![
+            SynapseJson {
+                from_uuid: "hidden-low-impact".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 0.1, // Low weight = low impact
+            },
+            SynapseJson {
+                from_uuid: "hidden-high-impact".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 0.9, // High weight = high impact
+            },
+        ],
+    };
+
+    // Verify the impact scores first
+    let impacts = neat_ai_discovery::focus::compute_impacts_public(&creature);
+    let low_impact = impacts.get("hidden-low-impact").copied().unwrap_or(0.0);
+    eprintln!("hidden-low-impact has impact score: {low_impact:.3}");
+    assert!(
+        low_impact < 0.2,
+        "Test setup error: hidden-low-impact should have impact < 0.2, got {low_impact:.3}"
+    );
+
+    // Create discovery records with STRONG correlation for hidden-low-impact
+    // This should produce ~3-5% raw improvement prediction (before discount)
+    let mut records = Vec::new();
+    for obs_index in 0..100u32 {
+        let input_val = (obs_index as f32 - 50.0) / 50.0; // -1.0 to 1.0
+
+        // Strong linear correlation between input and error at hidden-low-impact
+        let hidden_low_error = input_val * 0.5;
+        let hidden_high_error = 0.0; // No correlation at high-impact hidden
+
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "input-0".to_string(),
+            Some(input_val),
+            input_val,
+            vec![],
+        ));
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "input-1".to_string(),
+            Some(0.3),
+            0.3,
+            vec![],
+        ));
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "hidden-low-impact".to_string(),
+            Some(input_val * 0.2),
+            input_val * 0.2,
+            vec![hidden_low_error],
+        ));
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "hidden-high-impact".to_string(),
+            Some(0.5),
+            0.5,
+            vec![hidden_high_error],
+        ));
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "output-0".to_string(),
+            Some(input_val * 0.1),
+            input_val * 0.1,
+            vec![hidden_low_error * 0.1], // Small propagated error
+        ));
+    }
+
+    write_records_to_parquet(&parquet_file, &records).expect("Failed to write records");
+
+    let input = AnalyzeNeuronsInput {
+        parquet_file,
+        creature,
+        focus_neurons: vec!["hidden-low-impact".to_string()],
+        improvement_threshold: Some(0.01), // 1% threshold (below MIN_FALLBACK_IMPROVEMENT)
+        max_candidates: Some(50),
+        analysis_deadline_ms: None,
+    };
+
+    let result = analyze_neurons(&input).expect("Neuron analysis should succeed");
+
+    // KEY ASSERTION: ALL returned candidates must have >= 2% improvement
+    // Even after impact discounting
+    for candidate in &result.helpful_neurons {
+        assert!(
+            candidate.expected_improvement_percentage >= 0.02,
+            "\n\n\
+            ╔══════════════════════════════════════════════════════════════════════════════╗\n\
+            ║  REGRESSION DETECTED: Discounted hidden neuron below MIN_FALLBACK!           ║\n\
+            ╠══════════════════════════════════════════════════════════════════════════════╣\n\
+            ║  Candidate returned with {:.2}% expected improvement (after discount).       \n\
+            ║                                                                              ║\n\
+            ║  This hidden neuron candidate was discounted by impact but NOT re-filtered   ║\n\
+            ║  against MIN_FALLBACK_IMPROVEMENT (2%).                                      ║\n\
+            ║                                                                              ║\n\
+            ║  If 2% is the minimum for reliable predictions, then discounted predictions  ║\n\
+            ║  below 2% are equally unreliable.                                            ║\n\
+            ║                                                                              ║\n\
+            ║  This was fixed in v0.1.124.                                                 ║\n\
+            ║                                                                              ║\n\
+            ║  CHECK: After impact discounting, re-filter against MIN_FALLBACK_IMPROVEMENT ║\n\
+            ║                                                                              ║\n\
+            ║  Candidate: {} -> {} ({})                                                    \n\
+            ║  Target neuron type: hidden (impact: {:.3})                                  \n\
+            ╚══════════════════════════════════════════════════════════════════════════════╝\n\n",
+            candidate.expected_improvement_percentage * 100.0,
+            candidate.source_neuron_uuid,
+            candidate.target_neuron_uuid,
+            candidate.squash,
+            low_impact
+        );
+    }
+
+    eprintln!(
+        "Test passed: {} candidates returned, all >= 2% after discounting",
+        result.helpful_neurons.len()
+    );
+}
