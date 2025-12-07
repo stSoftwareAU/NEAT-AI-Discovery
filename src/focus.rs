@@ -404,22 +404,23 @@ pub fn rank_focus_neurons(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    // Identify removal candidates: ALL neurons sorted by activation_weighted_impact.
+    // Identify removal candidates: neurons with activation_weighted_impact < costOfGrowth.
     //
     // activation_weighted_impact = structural_impact × mean_activation
-    // where structural_impact = product of |weights| on path(s) to output(s)
+    // where structural_impact = NORMALISED impact through the network
     //
-    // The lowest impact neurons are the best candidates for removal.
-    // NO THRESHOLD FILTERING - let NEAT-AI decide based on cost/benefit analysis.
+    // Neurons with impact below costOfGrowth are net negative - removing them
+    // reduces complexity more than it affects error.
     //
     // We provide complexity savings info for each neuron based on NEAT-AI's formula:
     //   savings = growthCost × (1 + (N + M) / 10)
     // where N = incoming synapses, M = outgoing synapses
     const COST_OF_GROWTH: f32 = 1e-7;
 
-    // Return ALL neurons as potential removal candidates, sorted by impact
+    // Return ALL neurons with impact below costOfGrowth as removal candidates
     let mut removal_candidates: Vec<RemovalCandidate> = neurons
         .iter()
+        .filter(|n| n.activation_weighted_impact < COST_OF_GROWTH)
         .map(|n| {
             let (incoming, outgoing) = count_synapses_for_neuron(&n.neuron_uuid, creature);
             let savings = calculate_removal_savings(incoming, outgoing, COST_OF_GROWTH);
@@ -434,9 +435,11 @@ pub fn rank_focus_neurons(
                 outgoing_synapses: outgoing,
                 removal_savings: savings,
                 reason: format!(
-                    "Impact {:.2e} (structural {:.2e} × activation {:.2e}), {} synapses, saves {:.2e}",
-                    n.activation_weighted_impact, n.impact, n.mean_activation,
-                    incoming + outgoing, savings
+                    "Impact {:.2e} < costOfGrowth ({:.0e}), {} synapses, saves {:.2e}",
+                    n.activation_weighted_impact,
+                    COST_OF_GROWTH,
+                    incoming + outgoing,
+                    savings
                 ),
             }
         })
@@ -448,9 +451,6 @@ pub fn rank_focus_neurons(
             .partial_cmp(&b.activation_weighted_impact)
             .unwrap_or(Ordering::Equal)
     });
-
-    // Return only top 10 candidates (lowest impact = highest chance of success)
-    removal_candidates.truncate(10);
 
     if let Some(limit) = max_results {
         if neurons.len() > limit {
