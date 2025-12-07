@@ -235,22 +235,117 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
         many.activation_weighted_impact
     );
 
-    // Check that removal candidates are found with the dynamic threshold
-    println!(
-        "few-synapses: impact={:.2e}, activation_weighted={:.2e}",
-        few.impact, few.activation_weighted_impact
-    );
-    println!(
-        "many-synapses: impact={:.2e}, activation_weighted={:.2e}",
-        many.impact, many.activation_weighted_impact
-    );
-    println!(
-        "Removal candidates: {:?}",
+    // CRITICAL: Both neurons must be found as removal candidates.
+    // This is the actual regression check - if zero candidates are found, the feature is broken.
+    let few_candidate = result
+        .removal_candidates
+        .iter()
+        .find(|c| c.neuron_uuid == "few-synapses");
+    let many_candidate = result
+        .removal_candidates
+        .iter()
+        .find(|c| c.neuron_uuid == "many-synapses");
+
+    assert!(
+        few_candidate.is_some(),
+        "\n\n\
+        ╔══════════════════════════════════════════════════════════════════════════════════╗\n\
+        ║  REGRESSION: 'few-synapses' not found as removal candidate!                       ║\n\
+        ╠══════════════════════════════════════════════════════════════════════════════════╣\n\
+        ║  Neuron has:                                                                      ║\n\
+        ║    - impact = {:.2e}                                                              \n\
+        ║    - activation_weighted_impact = {:.2e}                                          \n\
+        ║                                                                                   ║\n\
+        ║  Dynamic threshold (1 in + 1 out = 2 synapses):                                   ║\n\
+        ║    savings = 1e-7 × 1.2 = 1.2e-7                                                  ║\n\
+        ║    threshold = savings × 100 = 1.2e-5                                             ║\n\
+        ║                                                                                   ║\n\
+        ║  Found {} candidates: {:?}                                                        \n\
+        ╚══════════════════════════════════════════════════════════════════════════════════╝\n\n",
+        few.impact,
+        few.activation_weighted_impact,
+        result.removal_candidates.len(),
         result
             .removal_candidates
             .iter()
-            .map(|c| (&c.neuron_uuid, c.incoming_synapses, c.outgoing_synapses))
+            .map(|c| &c.neuron_uuid)
             .collect::<Vec<_>>()
+    );
+
+    assert!(
+        many_candidate.is_some(),
+        "\n\n\
+        ╔══════════════════════════════════════════════════════════════════════════════════╗\n\
+        ║  REGRESSION: 'many-synapses' not found as removal candidate!                      ║\n\
+        ╠══════════════════════════════════════════════════════════════════════════════════╣\n\
+        ║  Neuron has:                                                                      ║\n\
+        ║    - impact = {:.2e}                                                              \n\
+        ║    - activation_weighted_impact = {:.2e}                                          \n\
+        ║                                                                                   ║\n\
+        ║  Dynamic threshold (3 in + 2 out = 5 synapses):                                   ║\n\
+        ║    savings = 1e-7 × 1.5 = 1.5e-7                                                  ║\n\
+        ║    threshold = savings × 100 = 1.5e-5                                             ║\n\
+        ║                                                                                   ║\n\
+        ║  Found {} candidates: {:?}                                                        \n\
+        ╚══════════════════════════════════════════════════════════════════════════════════╝\n\n",
+        many.impact,
+        many.activation_weighted_impact,
+        result.removal_candidates.len(),
+        result
+            .removal_candidates
+            .iter()
+            .map(|c| &c.neuron_uuid)
+            .collect::<Vec<_>>()
+    );
+
+    // Verify the synapse counts are correct
+    let few_candidate = few_candidate.unwrap();
+    let many_candidate = many_candidate.unwrap();
+
+    assert_eq!(
+        few_candidate.incoming_synapses, 1,
+        "few-synapses should have 1 incoming synapse"
+    );
+    assert_eq!(
+        few_candidate.outgoing_synapses, 1,
+        "few-synapses should have 1 outgoing synapse"
+    );
+    assert_eq!(
+        many_candidate.incoming_synapses, 3,
+        "many-synapses should have 3 incoming synapses"
+    );
+    assert_eq!(
+        many_candidate.outgoing_synapses, 2,
+        "many-synapses should have 2 outgoing synapses"
+    );
+
+    // Verify the neuron with more synapses has higher removal savings
+    // (this is the core of the dynamic threshold feature)
+    assert!(
+        many_candidate.removal_savings > few_candidate.removal_savings,
+        "many-synapses ({} synapses, savings={:.2e}) should have higher removal_savings than \
+         few-synapses ({} synapses, savings={:.2e})",
+        many_candidate.incoming_synapses + many_candidate.outgoing_synapses,
+        many_candidate.removal_savings,
+        few_candidate.incoming_synapses + few_candidate.outgoing_synapses,
+        few_candidate.removal_savings
+    );
+
+    // Verify the savings match the NEAT-AI formula: growthCost × (1 + totalSynapses/10)
+    let expected_few_savings = COST_OF_GROWTH * (1.0 + 2.0 / 10.0); // 1.2e-7
+    let expected_many_savings = COST_OF_GROWTH * (1.0 + 5.0 / 10.0); // 1.5e-7
+
+    assert!(
+        (few_candidate.removal_savings - expected_few_savings).abs() < 1e-15,
+        "few-synapses savings should be {:.2e}, got {:.2e}",
+        expected_few_savings,
+        few_candidate.removal_savings
+    );
+    assert!(
+        (many_candidate.removal_savings - expected_many_savings).abs() < 1e-15,
+        "many-synapses savings should be {:.2e}, got {:.2e}",
+        expected_many_savings,
+        many_candidate.removal_savings
     );
 }
 
