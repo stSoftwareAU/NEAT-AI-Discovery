@@ -265,11 +265,7 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
         few.impact,
         few.activation_weighted_impact,
         result.removal_candidates.len(),
-        result
-            .removal_candidates
-            .iter()
-            .map(|c| &c.neuron_uuid)
-            .collect::<Vec<_>>()
+        result.removal_candidates.iter().map(|c| &c.neuron_uuid).collect::<Vec<_>>()
     );
 
     assert!(
@@ -291,11 +287,7 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
         many.impact,
         many.activation_weighted_impact,
         result.removal_candidates.len(),
-        result
-            .removal_candidates
-            .iter()
-            .map(|c| &c.neuron_uuid)
-            .collect::<Vec<_>>()
+        result.removal_candidates.iter().map(|c| &c.neuron_uuid).collect::<Vec<_>>()
     );
 
     // Verify the synapse counts are correct
