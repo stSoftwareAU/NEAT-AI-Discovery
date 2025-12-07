@@ -587,6 +587,29 @@ A's contribution to B = |w| / total_inbound_to_B × B's_impact
 
 This is **recursive** - if B has 100 inputs, A only contributes 1/100th of B's signal.
 
+#### Squash-aware impact calculation (v0.1.132)
+
+**ENHANCEMENT**: The impact calculation is now **squash-aware**. Different squash
+functions use different impact formulas to avoid underestimating impact.
+
+| Squash Category | Functions | Impact Formula | Rationale |
+|-----------------|-----------|----------------|-----------|
+| **Linear** | IDENTITY, TANH, LOGISTIC, etc. | `\|w\| / total_inbound × child` | Sum of weighted inputs |
+| **Threshold** | STEP, BIPOLAR | `child_impact` (full, not normalised) | Any synapse can flip output |
+| **Selection** | MINIMUM, MAXIMUM, IF | `child_impact / N` (equal probability) | Only one synapse "wins" |
+
+**Why this matters**:
+
+- **STEP/BIPOLAR**: A tiny weight (1e-8) feeding into a STEP neuron could flip the
+  output from 0→1 if the neuron is near its threshold. The old sum-based formula
+  would calculate impact ≈ 0, but the actual effect could be 1.0!
+
+- **MINIMUM/MAXIMUM**: The old formula gave large weights high impact in MINIMUM
+  (~90%), but small weights are actually more likely to win! The new formula gives
+  each synapse equal probability (1/N).
+
+For detailed explanation with diagrams, see [Impact Calculation](docs/IMPACT_CALCULATION.md).
+
 **Example**: Output has 107 incoming synapses with total |weight| = 343.
 A neuron with weight 3.0 to output contributes: `3.0 / 343 ≈ 0.9%` of output.
 
@@ -758,6 +781,12 @@ whether discovery should be enabled:
   `analysis_deadline_ms` is not provided. If a timeout is explicitly provided
   but is less than 3 seconds or greater than 1 hour, it will be clamped to the
   10-minute default with a warning message.
+
+## Additional documentation
+
+- [Impact Calculation](docs/IMPACT_CALCULATION.md) - Detailed explanation of how
+  neuron impact is calculated, including special handling for threshold (STEP/BIPOLAR)
+  and selection (MINIMUM/MAXIMUM) squash functions.
 
 ## Existing reference material
 
