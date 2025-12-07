@@ -106,23 +106,22 @@ fn test_more_synapses_means_higher_threshold() {
     );
 }
 
-/// REGRESSION TEST: Removal candidates must use dynamic threshold based on synapse count.
+/// REGRESSION TEST: Removal candidates must use dynamic savings based on synapse count.
 ///
-/// A neuron with many synapses saves more complexity when removed, so it can have
-/// higher activation_weighted_impact and still be a valid removal candidate.
+/// A neuron with many synapses saves more complexity when removed.
+/// The criterion is: activation_weighted_impact < savings (no scale factor).
 #[test]
 fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
     // Network with two neurons having different synapse counts:
     //
-    // few-synapses: 1 incoming, 1 outgoing
-    //   input-0 -> few-synapses -> output-0
+    // few-synapses: 1 incoming, 1 outgoing (2 total)
     //   savings = growthCost × (1 + 2/10) = 1.2e-7
-    //   threshold = 1.2e-7 × 100 = 1.2e-5
     //
-    // many-synapses: 3 incoming, 2 outgoing
-    //   input-0, input-1, input-2 -> many-synapses -> output-0, output-1
+    // many-synapses: 3 incoming, 2 outgoing (5 total)
     //   savings = growthCost × (1 + 5/10) = 1.5e-7
-    //   threshold = 1.5e-7 × 100 = 1.5e-5
+    //
+    // To be a removal candidate: activation_weighted_impact < savings
+    // Using tiny weights (1e-8) so both neurons qualify as candidates.
     let creature = CreatureJson {
         input: 3,
         output: 2,
@@ -157,38 +156,38 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
             SynapseJson {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "few-synapses".to_string(),
-                weight: 1e-6, // Very small weight
+                weight: 1e-8, // Tiny weight so contribution < savings
             },
             SynapseJson {
                 from_uuid: "few-synapses".to_string(),
                 to_uuid: "output-0".to_string(),
-                weight: 1e-6, // Very small weight
+                weight: 1e-8,
             },
             // many-synapses: 3 in, 2 out
             SynapseJson {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "many-synapses".to_string(),
-                weight: 1e-6,
+                weight: 1e-8,
             },
             SynapseJson {
                 from_uuid: "input-1".to_string(),
                 to_uuid: "many-synapses".to_string(),
-                weight: 1e-6,
+                weight: 1e-8,
             },
             SynapseJson {
                 from_uuid: "input-2".to_string(),
                 to_uuid: "many-synapses".to_string(),
-                weight: 1e-6,
+                weight: 1e-8,
             },
             SynapseJson {
                 from_uuid: "many-synapses".to_string(),
                 to_uuid: "output-0".to_string(),
-                weight: 1e-6,
+                weight: 1e-8,
             },
             SynapseJson {
                 from_uuid: "many-synapses".to_string(),
                 to_uuid: "output-1".to_string(),
-                weight: 1e-6,
+                weight: 1e-8,
             },
         ],
     };
@@ -256,9 +255,9 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
         ║    - impact = {:.2e}                                                              \n\
         ║    - activation_weighted_impact = {:.2e}                                          \n\
         ║                                                                                   ║\n\
-        ║  Dynamic threshold (1 in + 1 out = 2 synapses):                                   ║\n\
+        ║  Criterion (1 in + 1 out = 2 synapses):                                           ║\n\
         ║    savings = 1e-7 × 1.2 = 1.2e-7                                                  ║\n\
-        ║    threshold = savings × 100 = 1.2e-5                                             ║\n\
+        ║    activation_weighted_impact < savings should pass                               ║\n\
         ║                                                                                   ║\n\
         ║  Found {} candidates: {:?}                                                        \n\
         ╚══════════════════════════════════════════════════════════════════════════════════╝\n\n",
@@ -282,9 +281,9 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
         ║    - impact = {:.2e}                                                              \n\
         ║    - activation_weighted_impact = {:.2e}                                          \n\
         ║                                                                                   ║\n\
-        ║  Dynamic threshold (3 in + 2 out = 5 synapses):                                   ║\n\
+        ║  Criterion (3 in + 2 out = 5 synapses):                                           ║\n\
         ║    savings = 1e-7 × 1.5 = 1.5e-7                                                  ║\n\
-        ║    threshold = savings × 100 = 1.5e-5                                             ║\n\
+        ║    activation_weighted_impact < savings should pass                               ║\n\
         ║                                                                                   ║\n\
         ║  Found {} candidates: {:?}                                                        \n\
         ╚══════════════════════════════════════════════════════════════════════════════════╝\n\n",
