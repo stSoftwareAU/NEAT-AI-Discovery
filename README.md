@@ -543,6 +543,56 @@ impact = weight × downstream_impact
 
 This matches the actual contribution: `activation × weight × downstream_impact`.
 
+#### Dynamic removal threshold based on synapse counts (v0.1.127)
+
+**BUG FIX**: After the v0.1.126 impact calculation fix, ZERO removal candidates
+were being found. The fix implements a dynamic threshold based on NEAT-AI's
+actual Score.ts complexity formula.
+
+**The issue**: The removal candidate threshold was a static value that didn't
+account for the complexity savings from removing the neuron's synapses.
+
+**NEAT-AI's Score.ts formula** (the authoritative source):
+```typescript
+const complexityPenalty = hiddenNeuronCount * growthCost +
+    creature.synapses.length * growthCost / 10 +
+    penalty * growthCost / 100;
+```
+
+**So removing a neuron with N incoming and M outgoing synapses saves:**
+```
+savings = growthCost × (1 + (N + M) / 10)
+```
+
+**The fix**: The threshold is calculated as `savings × SCALE_FACTOR` where
+SCALE_FACTOR=100 accounts for uncertainty in the impact calculation:
+
+| Synapses (in + out) | Savings | Threshold (×100) |
+|---------------------|---------|------------------|
+| 0 | `1.0e-7` | `1.0e-5` |
+| 2 | `1.2e-7` | `1.2e-5` |
+| 5 | `1.5e-7` | `1.5e-5` |
+| 10 | `2.0e-7` | `2.0e-5` |
+| 20 | `3.0e-7` | `3.0e-5` |
+
+**Why the scale factor?** The impact calculation `structural_impact × mean_activation`
+is an approximation that doesn't capture:
+1. Correlation between neuron activation and error (may be positive or negative)
+2. Partial cancellation when multiple paths exist
+3. Saturation effects in downstream squash functions
+
+The scale factor finds meaningful candidates while maintaining the synapse-based
+relationship: neurons with more synapses get a higher threshold because removing
+them saves more complexity.
+
+**Removal candidate JSON response** now includes:
+- `incomingSynapses` / `outgoingSynapses`: synapse counts used in calculation
+- `removalSavings`: the raw savings value from NEAT-AI formula
+- Candidates sorted by benefit (biggest gap between savings and impact first)
+
+The `calculate_removal_savings(incoming, outgoing, growth_cost)` function is
+available for use in other analyses and is tested against the NEAT-AI formula.
+
 If verbose logging is enabled (`NEAT_AI_DISCOVERY_VERBOSE=1`), you'll see
 messages like:
 

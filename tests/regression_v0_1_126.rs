@@ -238,6 +238,152 @@ fn regression_many_competing_inputs_must_not_suppress_impact() {
     );
 }
 
+/// REGRESSION TEST: Removal candidates must be found for neurons with low contribution.
+///
+/// The dynamic threshold is based on NEAT-AI's Score.ts formula with a scale factor:
+///   savings = growthCost × (1 + (incoming + outgoing) / 10)
+///   threshold = savings × SCALE_FACTOR (currently 100)
+///
+/// For a neuron with 1 outgoing synapse:
+///   savings = 1e-7 × (1 + 1/10) = 1.1e-7
+///   threshold = 1.1e-7 × 100 = 1.1e-5
+///
+/// Removal candidate when: activation_weighted_impact < threshold
+#[test]
+fn regression_removal_candidates_found_for_negligible_neurons() {
+    use neat_ai_discovery::focus::rank_focus_neurons;
+    use neat_ai_discovery::parquet_format::write_records_to_parquet;
+    use neat_ai_discovery::types::DiscoverRecord;
+    use tempfile::NamedTempFile;
+
+    // Network with a neuron that has small weights:
+    //   low-impact → output-0 (weight 1e-5)
+    //
+    // Structural impact = 1e-5 × 1.0 = 1e-5
+    // With mean_activation = 0.5:
+    //   activation_weighted_impact = 1e-5 × 0.5 = 5e-6
+    //
+    // Synapse count: 0 incoming, 1 outgoing
+    // Removal savings = 1e-7 × (1 + 1/10) = 1.1e-7
+    // Threshold = 1.1e-7 × 100 = 1.1e-5
+    //
+    // 5e-6 < 1.1e-5 ✓ (should be a removal candidate)
+    let creature = CreatureJson {
+        input: 1,
+        output: 1,
+        neurons: vec![
+            NeuronJson {
+                uuid: "low-impact".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: vec![SynapseJson {
+            from_uuid: "low-impact".to_string(),
+            to_uuid: "output-0".to_string(),
+            weight: 1e-5, // Small weight - 0.001% contribution
+        }],
+    };
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    // Create records with typical activation (0.5)
+    let records = vec![
+        DiscoverRecord::new(0, "low-impact".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(1, "low-impact".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(0, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(1, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+    ];
+    write_records_to_parquet(file_path, &records).unwrap();
+
+    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+    // Verify the impact calculation is correct (absolute weights)
+    let low_impact_neuron = result
+        .neurons
+        .iter()
+        .find(|n| n.neuron_uuid == "low-impact")
+        .expect("low-impact neuron should be in results");
+
+    assert!(
+        (low_impact_neuron.impact - 1e-5).abs() < 1e-6,
+        "Impact should be ~1e-5 (absolute weight), got {}",
+        low_impact_neuron.impact
+    );
+
+    // Verify activation_weighted_impact = impact × activation = 1e-5 × 0.5 = 5e-6
+    assert!(
+        (low_impact_neuron.activation_weighted_impact - 5e-6).abs() < 1e-6,
+        "activation_weighted_impact should be ~5e-6, got {}",
+        low_impact_neuron.activation_weighted_impact
+    );
+
+    // CRITICAL: This neuron should be a removal candidate.
+    //
+    // Dynamic threshold (v0.1.127):
+    //   - 0 incoming synapses, 1 outgoing synapse
+    //   - savings = 1e-7 × (1 + 1/10) = 1.1e-7
+    //   - threshold = 1.1e-7 × 100 = 1.1e-5
+    //   - activation_weighted_impact = 5e-6 < 1.1e-5 ✓
+    let removal = result
+        .removal_candidates
+        .iter()
+        .find(|c| c.neuron_uuid == "low-impact");
+
+    assert!(
+        removal.is_some(),
+        "\n\n\
+        ╔══════════════════════════════════════════════════════════════════════════════════╗\n\
+        ║  REGRESSION: No removal candidates found for neuron with low contribution!        ║\n\
+        ╠══════════════════════════════════════════════════════════════════════════════════╣\n\
+        ║  Neuron 'low-impact' has:                                                         \n\
+        ║    - structural_impact = {:.2e}                                                   \n\
+        ║    - mean_activation = {:.2}                                                      \n\
+        ║    - activation_weighted_impact = {:.2e}                                          \n\
+        ║                                                                                   ║\n\
+        ║  Dynamic threshold (0 in + 1 out synapse):                                        ║\n\
+        ║    savings = 1e-7 × 1.1 = 1.1e-7                                                  ║\n\
+        ║    threshold = savings × 100 = 1.1e-5                                             ║\n\
+        ║    activation_weighted_impact (5e-6) < threshold (1.1e-5) should pass             ║\n\
+        ║                                                                                   ║\n\
+        ║  Found {} removal candidates: {:?}                                                \n\
+        ╚══════════════════════════════════════════════════════════════════════════════════╝\n\n",
+        low_impact_neuron.impact,
+        low_impact_neuron.mean_activation,
+        low_impact_neuron.activation_weighted_impact,
+        result.removal_candidates.len(),
+        result
+            .removal_candidates
+            .iter()
+            .map(|c| &c.neuron_uuid)
+            .collect::<Vec<_>>()
+    );
+
+    // Verify the removal candidate has correct synapse counts
+    let candidate = removal.unwrap();
+    assert_eq!(
+        candidate.incoming_synapses, 0,
+        "Should have 0 incoming synapses"
+    );
+    assert_eq!(
+        candidate.outgoing_synapses, 1,
+        "Should have 1 outgoing synapse"
+    );
+    assert!(
+        (candidate.removal_savings - 1.1e-7).abs() < 1e-9,
+        "Removal savings should be ~1.1e-7, got {}",
+        candidate.removal_savings
+    );
+}
+
 /// REGRESSION TEST: Deep networks must accumulate impact correctly.
 ///
 /// For a chain: A → B → C → output

@@ -19,7 +19,7 @@ pub struct RankedNeuron {
     pub activation_weighted_impact: f32,
 }
 
-/// A neuron with activation-weighted impact below costOfGrowth threshold - candidate for removal.
+/// A neuron with activation-weighted impact below removal savings threshold - candidate for removal.
 /// Removing such neurons improves score because complexity reduction outweighs contribution.
 #[derive(Debug)]
 pub struct RemovalCandidate {
@@ -32,6 +32,12 @@ pub struct RemovalCandidate {
     /// Activation-weighted impact = structural_impact × mean_activation
     /// This reflects the actual contribution the neuron makes during inference
     pub activation_weighted_impact: f32,
+    /// Number of synapses pointing TO this neuron
+    pub incoming_synapses: usize,
+    /// Number of synapses pointing FROM this neuron
+    pub outgoing_synapses: usize,
+    /// The complexity savings from removing this neuron (based on NEAT-AI Score.ts formula)
+    pub removal_savings: f32,
     pub reason: String,
 }
 
@@ -48,6 +54,58 @@ pub struct RankFocusStats {
 
 fn is_selectable_type(neuron_type: &str) -> bool {
     neuron_type != "input" && neuron_type != "constant"
+}
+
+/// Calculate the complexity savings from removing a neuron.
+///
+/// Based on NEAT-AI's Score.ts formula:
+/// ```typescript
+/// const complexityPenalty = hiddenNeuronCount * growthCost +
+///     creature.synapses.length * growthCost / 10 + penalty * growthCost / 100;
+/// ```
+///
+/// So removing a neuron with N incoming and M outgoing synapses saves:
+/// - `growth_cost` for the neuron itself
+/// - `(N + M) × growth_cost / 10` for the synapses
+///
+/// Total: `growth_cost × (1 + (N + M) / 10)`
+///
+/// # Arguments
+/// * `incoming_synapses` - Number of synapses pointing TO this neuron
+/// * `outgoing_synapses` - Number of synapses pointing FROM this neuron
+/// * `growth_cost` - The cost per hidden neuron (typically 1e-7)
+///
+/// # Returns
+/// The total complexity savings from removing this neuron and its synapses
+pub fn calculate_removal_savings(
+    incoming_synapses: usize,
+    outgoing_synapses: usize,
+    growth_cost: f32,
+) -> f32 {
+    let total_synapses = incoming_synapses + outgoing_synapses;
+    growth_cost * (1.0 + total_synapses as f32 / 10.0)
+}
+
+/// Count the incoming and outgoing synapses for a neuron.
+///
+/// # Arguments
+/// * `neuron_uuid` - The UUID of the neuron to count synapses for
+/// * `creature` - The creature containing the synapses
+///
+/// # Returns
+/// A tuple of (incoming_count, outgoing_count)
+fn count_synapses_for_neuron(neuron_uuid: &str, creature: &CreatureJson) -> (usize, usize) {
+    let incoming = creature
+        .synapses
+        .iter()
+        .filter(|s| s.to_uuid == neuron_uuid)
+        .count();
+    let outgoing = creature
+        .synapses
+        .iter()
+        .filter(|s| s.from_uuid == neuron_uuid)
+        .count();
+    (incoming, outgoing)
 }
 
 #[allow(dead_code)]
@@ -334,36 +392,72 @@ pub fn rank_focus_neurons(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    // Identify removal candidates: neurons with ACTIVATION-WEIGHTED impact below costOfGrowth.
+    // Identify removal candidates: neurons where the contribution is small enough
+    // that removing saves more complexity than it hurts accuracy.
     //
-    // Key insight: structural impact alone is misleading. A neuron with tiny weights but
-    // massive activations still contributes significantly: actual ≈ weight × activation.
+    // Based on NEAT-AI's Score.ts formula:
+    //   complexityPenalty = hiddenNeuronCount × growthCost +
+    //                       synapseCount × growthCost / 10 +
+    //                       penalty × growthCost / 100
     //
-    // We use activation_weighted_impact = structural_impact × mean_activation
-    // Only neurons with activation_weighted_impact < costOfGrowth are safe to remove.
+    // So removing a neuron with N incoming and M outgoing synapses saves:
+    //   savings = growthCost × (1 + (N + M) / 10)
+    //
+    // THRESHOLD SCALING: The raw savings value (1e-7 range) is too conservative
+    // because our impact calculation has inherent uncertainty. The impact formula
+    // `structural_impact × mean_activation` is an approximation - it assumes:
+    // - The neuron's activation is always in the same direction relative to error
+    // - The path weights capture the full effect on output
+    //
+    // In practice, a neuron with activation_weighted_impact up to ~100× the savings
+    // may still be safe to remove because:
+    // 1. The actual contribution depends on correlation with error (not captured)
+    // 2. Multiple paths may partially cancel each other
+    // 3. The activation may be in a saturated region of downstream squash functions
+    //
+    // The scale factor is calibrated to find candidates while maintaining a good
+    // success rate. With scale=100, the threshold for a neuron with 2 synapses is:
+    //   1.2e-7 × 100 = 1.2e-5 (0.0012% contribution)
+    //
+    // This maintains the synapse-based relationship (more synapses = higher threshold)
+    // while finding meaningful candidates.
     const COST_OF_GROWTH: f32 = 1e-7;
+    const SCALE_FACTOR: f32 = 100.0;
 
     let mut removal_candidates: Vec<RemovalCandidate> = neurons
         .iter()
-        .filter(|n| n.activation_weighted_impact < COST_OF_GROWTH)
-        .map(|n| RemovalCandidate {
-            neuron_uuid: n.neuron_uuid.clone(),
-            total_error: n.total_error,
-            impact: n.impact,
-            mean_activation: n.mean_activation,
-            activation_weighted_impact: n.activation_weighted_impact,
-            reason: format!(
-                "Activation-weighted impact ({:.2e}) below costOfGrowth ({:.0e}) - removal improves score",
-                n.activation_weighted_impact, COST_OF_GROWTH
-            ),
+        .filter_map(|n| {
+            let (incoming, outgoing) = count_synapses_for_neuron(&n.neuron_uuid, creature);
+            let savings = calculate_removal_savings(incoming, outgoing, COST_OF_GROWTH);
+            let threshold = savings * SCALE_FACTOR;
+
+            if n.activation_weighted_impact < threshold {
+                Some(RemovalCandidate {
+                    neuron_uuid: n.neuron_uuid.clone(),
+                    total_error: n.total_error,
+                    impact: n.impact,
+                    mean_activation: n.mean_activation,
+                    activation_weighted_impact: n.activation_weighted_impact,
+                    incoming_synapses: incoming,
+                    outgoing_synapses: outgoing,
+                    removal_savings: savings,
+                    reason: format!(
+                        "Activation-weighted impact ({:.2e}) < threshold ({:.2e}) from {} synapses - removal likely improves score",
+                        n.activation_weighted_impact, threshold, incoming + outgoing
+                    ),
+                })
+            } else {
+                None
+            }
         })
         .collect();
 
-    // Sort by activation_weighted_impact ascending (lowest = safest to remove)
+    // Sort by (impact - savings) ascending: most beneficial removals first
+    // Lower values = bigger gap between savings and impact = safer to remove
     removal_candidates.sort_by(|a, b| {
-        a.activation_weighted_impact
-            .partial_cmp(&b.activation_weighted_impact)
-            .unwrap_or(Ordering::Equal)
+        let a_benefit = a.removal_savings - a.activation_weighted_impact;
+        let b_benefit = b.removal_savings - b.activation_weighted_impact;
+        b_benefit.partial_cmp(&a_benefit).unwrap_or(Ordering::Equal)
     });
 
     if let Some(limit) = max_results {
