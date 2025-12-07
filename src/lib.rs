@@ -290,6 +290,12 @@ pub struct RemovalCandidateJson {
     /// Activation-weighted impact = structural_impact × mean_activation
     /// This reflects the actual contribution the neuron makes during inference
     pub activation_weighted_impact: f32,
+    /// Number of synapses pointing TO this neuron
+    pub incoming_synapses: usize,
+    /// Number of synapses pointing FROM this neuron
+    pub outgoing_synapses: usize,
+    /// The complexity savings from removing this neuron (based on NEAT-AI Score.ts formula)
+    pub removal_savings: f32,
     /// Explains why removal improves score
     pub reason: String,
 }
@@ -778,6 +784,9 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                     impact: c.impact,
                     mean_activation: c.mean_activation,
                     activation_weighted_impact: c.activation_weighted_impact,
+                    incoming_synapses: c.incoming_synapses,
+                    outgoing_synapses: c.outgoing_synapses,
+                    removal_savings: c.removal_savings,
                     reason: c.reason,
                 })
                 .collect();
