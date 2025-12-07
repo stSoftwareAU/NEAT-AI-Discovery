@@ -392,8 +392,7 @@ pub fn rank_focus_neurons(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    // Identify removal candidates: neurons where the contribution to output is less
-    // than the complexity savings from removing them.
+    // Identify removal candidates: neurons where removing them likely improves score.
     //
     // Based on NEAT-AI's Score.ts formula:
     //   score = error + complexityPenalty
@@ -404,14 +403,17 @@ pub fn rank_focus_neurons(
     // Removing a neuron with N incoming and M outgoing synapses saves:
     //   savings = growthCost × (1 + (N + M) / 10)
     //
+    // UNIT CONVERSION: activation_weighted_impact is in OUTPUT units (contribution to
+    // output), while savings is in SCORE units (error + complexity). For MSE error,
+    // a contribution `c` to output can increase error by at most `c²`. So:
+    //
+    //   c² < savings  →  c < sqrt(savings)
+    //
     // A neuron is a removal candidate when:
-    //   activation_weighted_impact < savings
+    //   activation_weighted_impact < sqrt(savings)
     //
-    // Where activation_weighted_impact = structural_impact × mean_activation
-    // represents the neuron's contribution to output (diluted by distance from output).
-    //
-    // This is the mathematically correct criterion: if the neuron's effect on output
-    // is smaller than the complexity cost of keeping it, removing improves score.
+    // For savings ≈ 1.5e-7 (typical), threshold = sqrt(1.5e-7) ≈ 4e-4 (0.04%)
+    // This catches neurons contributing less than 0.04% to output.
     const COST_OF_GROWTH: f32 = 1e-7;
 
     // Track statistics for verbose logging
@@ -434,7 +436,10 @@ pub fn rank_focus_neurons(
                 max_impact = n.activation_weighted_impact;
             }
 
-            if n.activation_weighted_impact < savings {
+            // Use sqrt(savings) as threshold to account for MSE error relationship
+            let threshold = savings.sqrt();
+
+            if n.activation_weighted_impact < threshold {
                 Some(RemovalCandidate {
                     neuron_uuid: n.neuron_uuid.clone(),
                     total_error: n.total_error,
@@ -445,8 +450,8 @@ pub fn rank_focus_neurons(
                     outgoing_synapses: outgoing,
                     removal_savings: savings,
                     reason: format!(
-                        "Activation-weighted impact ({:.2e}) < removal savings ({:.2e}) for {} synapses - removal improves score",
-                        n.activation_weighted_impact, savings, incoming + outgoing
+                        "Activation-weighted impact ({:.2e}) < threshold ({:.2e}) for {} synapses - removal likely improves score",
+                        n.activation_weighted_impact, threshold, incoming + outgoing
                     ),
                 })
             } else {
@@ -458,13 +463,15 @@ pub fn rank_focus_neurons(
     // Verbose logging to help debug removal candidate detection
     if std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok() && !neurons.is_empty() {
         let typical_savings = COST_OF_GROWTH * 1.5; // ~15 synapses
+        let typical_threshold = typical_savings.sqrt();
         eprintln!(
             "[NEAT-AI-Discovery][verbose] Removal candidate check: {} neurons, impact range [{:.2e}, {:.2e}], \
-             typical savings threshold {:.2e}, found {} candidates. Lowest impact: {} ({:.2e})",
+             threshold sqrt({:.2e})={:.2e}, found {} candidates. Lowest impact: {} ({:.2e})",
             neurons.len(),
             min_impact,
             max_impact,
             typical_savings,
+            typical_threshold,
             removal_candidates.len(),
             min_impact_uuid,
             min_impact
