@@ -564,39 +564,31 @@ const complexityPenalty = hiddenNeuronCount * growthCost +
 savings = growthCost × (1 + (N + M) / 10)
 ```
 
-**The fix**: A neuron is a removal candidate when its contribution to output
-is small enough that removing it likely improves score.
-
-**Unit conversion**: `activation_weighted_impact` is in OUTPUT units (contribution
-to output), while `savings` is in SCORE units (error + complexity). For MSE error,
-a contribution `c` to output can increase error by at most `c²`. So:
+**The fix**: Top 10 neurons with lowest impact are returned as removal candidates,
+sorted by `activation_weighted_impact` ascending.
 
 ```
-c² < savings  →  c < sqrt(savings)
-```
-
-A neuron is a removal candidate when:
-```
-activation_weighted_impact < sqrt(savings)
+activation_weighted_impact = structural_impact × mean_absolute_activation
 ```
 
 Where:
-- `activation_weighted_impact = structural_impact × mean_activation`
-  (the neuron's contribution to output, diluted by distance from output)
-- `savings = growthCost × (1 + (N + M) / 10)`
-  (from NEAT-AI's Score.ts complexity formula)
+- `structural_impact` = NORMALISED impact through the network
+- `mean_absolute_activation` = sum(|activation|) / record_count
 
-| Synapses (in + out) | Savings | Threshold (sqrt) |
-|---------------------|---------|------------------|
-| 0 | `1.0e-7` | `3.2e-4` (0.03%) |
-| 2 | `1.2e-7` | `3.5e-4` (0.035%) |
-| 5 | `1.5e-7` | `3.9e-4` (0.039%) |
-| 10 | `2.0e-7` | `4.5e-4` (0.045%) |
-| 20 | `3.0e-7` | `5.5e-4` (0.055%) |
+**Normalised impact calculation**:
 
-This catches neurons contributing less than ~0.04% to output, which with MSE error
-would contribute less than `(0.0004)² ≈ 1.6e-7` to error - comparable to the
-complexity savings from removal.
+For each synapse from neuron A to target B with weight w:
+```
+A's contribution to B = |w| / total_inbound_to_B × B's_impact
+```
+
+This is **recursive** - if B has 100 inputs, A only contributes 1/100th of B's signal.
+
+**Example**: Output has 107 incoming synapses with total |weight| = 343.
+A neuron with weight 3.0 to output contributes: `3.0 / 343 ≈ 0.9%` of output.
+
+This correctly captures that removing a neuron with many competing inputs
+has a small effect on the downstream signal.
 
 **Removal candidate JSON response** now includes:
 - `incomingSynapses` / `outgoingSynapses`: synapse counts used in calculation
