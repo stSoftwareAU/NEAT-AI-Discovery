@@ -896,6 +896,178 @@ fn test_cumulative_impact_for_multiple_outgoing_synapses() {
 }
 
 #[test]
+fn test_non_finite_activations_handled_gracefully() {
+    // REGRESSION TEST: The refactored mean_absolute_activation_from_records function
+    // must handle NaN and Infinity activations without corrupting the ranking.
+    //
+    // If any record has activation = NaN or Infinity, the sum() would return NaN,
+    // which propagates through activation_weighted_impact and corrupts sorting.
+    //
+    // The old implementation properly filtered out non-finite values using is_finite().
+    let creature = create_creature(
+        vec![
+            ("input-0", "input"),
+            ("nan-activation", "hidden"),
+            ("inf-activation", "hidden"),
+            ("normal", "hidden"),
+            ("output-0", "output"),
+        ],
+        vec![
+            ("input-0", "nan-activation", 1.0),
+            ("input-0", "inf-activation", 1.0),
+            ("input-0", "normal", 1.0),
+            ("nan-activation", "output-0", 0.1),
+            ("inf-activation", "output-0", 0.1),
+            ("normal", "output-0", 0.8),
+        ],
+    );
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    // Create records with non-finite activations
+    let records = vec![
+        // NaN activation record
+        DiscoverRecord::new(
+            0,
+            "nan-activation".to_string(),
+            Some(0.5),
+            f32::NAN,
+            vec![0.1],
+        ),
+        DiscoverRecord::new(1, "nan-activation".to_string(), Some(0.5), 0.5, vec![0.1]),
+        // Infinity activation record
+        DiscoverRecord::new(
+            0,
+            "inf-activation".to_string(),
+            Some(0.5),
+            f32::INFINITY,
+            vec![0.1],
+        ),
+        DiscoverRecord::new(1, "inf-activation".to_string(), Some(0.5), 0.5, vec![0.1]),
+        // Normal activation records
+        DiscoverRecord::new(0, "normal".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(1, "normal".to_string(), Some(0.5), 0.5, vec![0.1]),
+        // Output records
+        DiscoverRecord::new(0, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(1, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+    ];
+    write_records_to_parquet(file_path, &records).unwrap();
+
+    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+    // Verify the ranking is not corrupted by NaN
+    assert!(
+        !result.neurons.is_empty(),
+        "Should have neurons in results despite non-finite activations"
+    );
+
+    // Verify no NaN values in activation_weighted_impact
+    for neuron in &result.neurons {
+        assert!(
+            neuron.activation_weighted_impact.is_finite(),
+            "activation_weighted_impact for {} should be finite, got {}",
+            neuron.neuron_uuid,
+            neuron.activation_weighted_impact
+        );
+        assert!(
+            neuron.mean_activation.is_finite(),
+            "mean_activation for {} should be finite, got {}",
+            neuron.neuron_uuid,
+            neuron.mean_activation
+        );
+    }
+
+    // Verify removal candidates are sorted correctly (not corrupted by NaN)
+    for i in 1..result.removal_candidates.len() {
+        let prev = result.removal_candidates[i - 1].activation_weighted_impact;
+        let curr = result.removal_candidates[i].activation_weighted_impact;
+        assert!(
+            prev <= curr,
+            "Removal candidates should be sorted ascending by impact. \
+             Position {}: {} vs position {}: {}",
+            i - 1,
+            prev,
+            i,
+            curr
+        );
+    }
+
+    // Verify the normal neuron has expected values
+    let normal = result
+        .neurons
+        .iter()
+        .find(|n| n.neuron_uuid == "normal")
+        .expect("normal neuron should be in results");
+    assert!(
+        (normal.mean_activation - 0.5).abs() < 0.001,
+        "normal neuron should have mean_activation = 0.5, got {}",
+        normal.mean_activation
+    );
+}
+
+#[test]
+fn test_all_non_finite_activations_returns_zero_mean() {
+    // Edge case: ALL activation values are non-finite.
+    // The function should return 0.0 (same as empty records).
+    let creature = create_creature(
+        vec![
+            ("input-0", "input"),
+            ("all-nan", "hidden"),
+            ("output-0", "output"),
+        ],
+        vec![("input-0", "all-nan", 1.0), ("all-nan", "output-0", 1.0)],
+    );
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    // All records for all-nan neuron have non-finite activations
+    let records = vec![
+        DiscoverRecord::new(0, "all-nan".to_string(), Some(0.5), f32::NAN, vec![0.1]),
+        DiscoverRecord::new(
+            1,
+            "all-nan".to_string(),
+            Some(0.5),
+            f32::INFINITY,
+            vec![0.1],
+        ),
+        DiscoverRecord::new(
+            2,
+            "all-nan".to_string(),
+            Some(0.5),
+            f32::NEG_INFINITY,
+            vec![0.1],
+        ),
+        DiscoverRecord::new(0, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(1, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(2, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+    ];
+    write_records_to_parquet(file_path, &records).unwrap();
+
+    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+    // Find the all-nan neuron
+    let all_nan = result
+        .neurons
+        .iter()
+        .find(|n| n.neuron_uuid == "all-nan")
+        .expect("all-nan neuron should be in results");
+
+    // When all activations are non-finite, mean_activation should be 0.0
+    assert!(
+        all_nan.mean_activation.is_finite(),
+        "mean_activation should be finite even when all inputs are NaN/Inf, got {}",
+        all_nan.mean_activation
+    );
+    assert_eq!(
+        all_nan.mean_activation, 0.0,
+        "mean_activation should be 0.0 when all inputs are NaN/Inf, got {}",
+        all_nan.mean_activation
+    );
+}
+
+#[test]
 fn test_cumulative_impact_mixed_direct_and_indirect_paths() {
     // Scenario: A neuron has multiple paths to outputs:
     // - Direct connection to output-0

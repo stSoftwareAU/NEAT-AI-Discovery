@@ -137,14 +137,30 @@ fn average_absolute_error_from_records(records: &[DiscoverRecord]) -> f32 {
 }
 
 /// Compute mean absolute activation from discovery records.
-/// Sum of |activation| divided by number of records.
+/// Sum of |activation| divided by number of finite records.
+///
+/// Non-finite values (NaN, Infinity) are filtered out to prevent
+/// corruption of activation_weighted_impact calculations and sorting.
 fn mean_absolute_activation_from_records(records: &[DiscoverRecord]) -> f32 {
     if records.is_empty() {
         return 0.0;
     }
 
-    let sum: f32 = records.iter().map(|r| r.activation.abs()).sum();
-    sum / records.len() as f32
+    let mut sum = 0.0f32;
+    let mut count: u32 = 0;
+
+    for record in records {
+        if record.activation.is_finite() {
+            sum += record.activation.abs();
+            count += 1;
+        }
+    }
+
+    if count == 0 {
+        0.0
+    } else {
+        sum / count as f32
+    }
 }
 
 fn build_adjacency(creature: &CreatureJson) -> HashMap<String, Vec<(String, f32)>> {
