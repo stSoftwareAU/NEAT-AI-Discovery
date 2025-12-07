@@ -137,7 +137,10 @@ fn average_absolute_error_from_records(records: &[DiscoverRecord]) -> f32 {
 }
 
 /// Compute mean absolute activation from discovery records.
-/// This captures the actual magnitude of signals flowing through a neuron.
+/// Sum of |activation| divided by number of finite records.
+///
+/// Non-finite values (NaN, Infinity) are filtered out to prevent
+/// corruption of activation_weighted_impact calculations and sorting.
 fn mean_absolute_activation_from_records(records: &[DiscoverRecord]) -> f32 {
     if records.is_empty() {
         return 0.0;
@@ -189,6 +192,16 @@ pub fn compute_impacts_public(creature: &CreatureJson) -> HashMap<String, f32> {
 
 fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
     let adjacency = build_adjacency(creature);
+
+    // Build total inbound |weight| for each neuron (for normalisation)
+    let total_inbound: HashMap<String, f32> = {
+        let mut map: HashMap<String, f32> = HashMap::new();
+        for synapse in &creature.synapses {
+            *map.entry(synapse.to_uuid.clone()).or_insert(0.0) += synapse.weight.abs();
+        }
+        map
+    };
+
     let output_neurons: HashSet<String> = creature
         .neurons
         .iter()
@@ -205,6 +218,7 @@ fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
         compute_impact_recursive(
             &neuron.uuid,
             &adjacency,
+            &total_inbound,
             &output_neurons,
             &mut cache,
             &mut visiting,
@@ -217,6 +231,7 @@ fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
 fn compute_impact_recursive(
     uuid: &str,
     adjacency: &HashMap<String, Vec<(String, f32)>>,
+    total_inbound: &HashMap<String, f32>,
     outputs: &HashSet<String>,
     cache: &mut HashMap<String, f32>,
     visiting: &mut HashSet<String>,
@@ -233,40 +248,37 @@ fn compute_impact_recursive(
     let impact = if outputs.contains(uuid) {
         1.0
     } else if let Some(edges) = adjacency.get(uuid) {
-        // IMPORTANT: Use SUM (not max) to accumulate impact across all outgoing edges.
-        // A neuron connecting to multiple outputs affects ALL of them, so removing it
-        // has a cumulative effect. Using max previously underestimated impact for neurons
-        // with multiple outgoing synapses - e.g. a neuron connecting to 2 outputs directly
-        // would show impact=1.0 (max) instead of impact=2.0 (sum), causing incorrect
-        // "low-impact" classification and failed removal predictions.
+        // Sum across all outgoing edges (neuron may connect to multiple targets)
         let mut total_impact = 0.0;
         for (to_uuid, weight) in edges {
-            let child_impact =
-                compute_impact_recursive(to_uuid, adjacency, outputs, cache, visiting);
+            let child_impact = compute_impact_recursive(
+                to_uuid,
+                adjacency,
+                total_inbound,
+                outputs,
+                cache,
+                visiting,
+            );
             if child_impact <= 0.0 {
                 continue;
             }
 
-            // Use ABSOLUTE weight for contribution calculation.
+            // NORMALISED impact: what fraction of the target's input does this neuron provide?
             //
-            // BUG FIX (v0.1.126): Previously normalised by total_inbound, which computed
-            // "fraction of downstream's input from this neuron" rather than "absolute
-            // contribution to output". This caused massive underestimation:
+            // If target has 100 incoming synapses with total |weight| = 343,
+            // and this synapse has |weight| = 3, then this neuron contributes:
+            //   3 / 343 ≈ 0.9% of the target's input
             //
-            // Example: neuron → target (weight 0.001), other → target (weight 100)
-            // - Old (normalised): 0.001 / 100.001 × 1.0 ≈ 1e-5
-            // - New (absolute): 0.001 × 1.0 = 0.001
-            //
-            // The normalised formula was 100x too pessimistic, leading to neurons being
-            // incorrectly flagged as "low-impact" when they actually contributed
-            // measurably to error. Production data showed ~75% of "low-impact" removals
-            // actually increased error.
-            //
-            // The correct formula for contribution to output is:
-            //   contribution = activation × weight × downstream_impact
-            // NOT:
-            //   contribution = activation × (weight / total_inbound) × downstream_impact
-            let contribution = weight.abs() * child_impact;
+            // This is recursive - the fraction propagates through the network.
+            // A neuron 2 hops from output, going through a target with 100 inputs,
+            // has its impact diluted by that factor.
+            let target_total = total_inbound
+                .get(to_uuid)
+                .copied()
+                .unwrap_or(1.0)
+                .max(1e-10);
+            let fraction = weight.abs() / target_total;
+            let contribution = fraction * child_impact;
             total_impact += contribution;
         }
         total_impact
@@ -392,99 +404,53 @@ pub fn rank_focus_neurons(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    // Identify removal candidates: neurons where removing them likely improves score.
+    // Identify removal candidates: ALL neurons sorted by activation_weighted_impact.
     //
-    // Based on NEAT-AI's Score.ts formula:
-    //   score = error + complexityPenalty
-    //   complexityPenalty = hiddenNeuronCount × growthCost +
-    //                       synapseCount × growthCost / 10 +
-    //                       penalty × growthCost / 100
+    // activation_weighted_impact = structural_impact × mean_activation
+    // where structural_impact = product of |weights| on path(s) to output(s)
     //
-    // Removing a neuron with N incoming and M outgoing synapses saves:
+    // The lowest impact neurons are the best candidates for removal.
+    // NO THRESHOLD FILTERING - let NEAT-AI decide based on cost/benefit analysis.
+    //
+    // We provide complexity savings info for each neuron based on NEAT-AI's formula:
     //   savings = growthCost × (1 + (N + M) / 10)
-    //
-    // UNIT CONVERSION: activation_weighted_impact is in OUTPUT units (contribution to
-    // output), while savings is in SCORE units (error + complexity). For MSE error,
-    // a contribution `c` to output can increase error by at most `c²`. So:
-    //
-    //   c² < savings  →  c < sqrt(savings)
-    //
-    // A neuron is a removal candidate when:
-    //   activation_weighted_impact < sqrt(savings)
-    //
-    // For savings ≈ 1.5e-7 (typical), threshold = sqrt(1.5e-7) ≈ 4e-4 (0.04%)
-    // This catches neurons contributing less than 0.04% to output.
+    // where N = incoming synapses, M = outgoing synapses
     const COST_OF_GROWTH: f32 = 1e-7;
 
-    // Track statistics for verbose logging
-    let mut min_impact: f32 = f32::MAX;
-    let mut max_impact: f32 = f32::MIN;
-    let mut min_impact_uuid = String::new();
-
+    // Return ALL neurons as potential removal candidates, sorted by impact
     let mut removal_candidates: Vec<RemovalCandidate> = neurons
         .iter()
-        .filter_map(|n| {
+        .map(|n| {
             let (incoming, outgoing) = count_synapses_for_neuron(&n.neuron_uuid, creature);
             let savings = calculate_removal_savings(incoming, outgoing, COST_OF_GROWTH);
 
-            // Track min/max for verbose logging
-            if n.activation_weighted_impact < min_impact {
-                min_impact = n.activation_weighted_impact;
-                min_impact_uuid = n.neuron_uuid.clone();
-            }
-            if n.activation_weighted_impact > max_impact {
-                max_impact = n.activation_weighted_impact;
-            }
-
-            // Use sqrt(savings) as threshold to account for MSE error relationship
-            let threshold = savings.sqrt();
-
-            if n.activation_weighted_impact < threshold {
-                Some(RemovalCandidate {
-                    neuron_uuid: n.neuron_uuid.clone(),
-                    total_error: n.total_error,
-                    impact: n.impact,
-                    mean_activation: n.mean_activation,
-                    activation_weighted_impact: n.activation_weighted_impact,
-                    incoming_synapses: incoming,
-                    outgoing_synapses: outgoing,
-                    removal_savings: savings,
-                    reason: format!(
-                        "Activation-weighted impact ({:.2e}) < threshold ({:.2e}) for {} synapses - removal likely improves score",
-                        n.activation_weighted_impact, threshold, incoming + outgoing
-                    ),
-                })
-            } else {
-                None
+            RemovalCandidate {
+                neuron_uuid: n.neuron_uuid.clone(),
+                total_error: n.total_error,
+                impact: n.impact,
+                mean_activation: n.mean_activation,
+                activation_weighted_impact: n.activation_weighted_impact,
+                incoming_synapses: incoming,
+                outgoing_synapses: outgoing,
+                removal_savings: savings,
+                reason: format!(
+                    "Impact {:.2e} (structural {:.2e} × activation {:.2e}), {} synapses, saves {:.2e}",
+                    n.activation_weighted_impact, n.impact, n.mean_activation,
+                    incoming + outgoing, savings
+                ),
             }
         })
         .collect();
 
-    // Verbose logging to help debug removal candidate detection
-    if std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok() && !neurons.is_empty() {
-        let typical_savings = COST_OF_GROWTH * 1.5; // ~15 synapses
-        let typical_threshold = typical_savings.sqrt();
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Removal candidate check: {} neurons, impact range [{:.2e}, {:.2e}], \
-             threshold sqrt({:.2e})={:.2e}, found {} candidates. Lowest impact: {} ({:.2e})",
-            neurons.len(),
-            min_impact,
-            max_impact,
-            typical_savings,
-            typical_threshold,
-            removal_candidates.len(),
-            min_impact_uuid,
-            min_impact
-        );
-    }
-
-    // Sort by (impact - savings) ascending: most beneficial removals first
-    // Lower values = bigger gap between savings and impact = safer to remove
+    // Sort by activation_weighted_impact ascending (lowest impact = best candidates)
     removal_candidates.sort_by(|a, b| {
-        let a_benefit = a.removal_savings - a.activation_weighted_impact;
-        let b_benefit = b.removal_savings - b.activation_weighted_impact;
-        b_benefit.partial_cmp(&a_benefit).unwrap_or(Ordering::Equal)
+        a.activation_weighted_impact
+            .partial_cmp(&b.activation_weighted_impact)
+            .unwrap_or(Ordering::Equal)
     });
+
+    // Return only top 10 candidates (lowest impact = highest chance of success)
+    removal_candidates.truncate(10);
 
     if let Some(limit) = max_results {
         if neurons.len() > limit {

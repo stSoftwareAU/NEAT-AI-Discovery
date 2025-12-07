@@ -377,18 +377,18 @@ fn test_disconnected_neurons_are_removal_candidates() {
         "Orphan should have impact below costOfGrowth (1e-7), got {}",
         orphan.impact
     );
-    // Verify the reason explains the removal
+    // Verify the reason contains impact info
     assert!(
-        orphan.reason.contains("costOfGrowth") || orphan.reason.contains("removal"),
-        "Reason should explain why removal improves score: {}",
+        orphan.reason.contains("Impact") || orphan.reason.contains("saves"),
+        "Reason should contain impact info: {}",
         orphan.reason
     );
 }
 
 #[test]
-fn test_high_impact_neurons_are_not_removal_candidates() {
-    // Scenario: Even neurons with high error should NOT be removal candidates
-    // if they have high impact (close to outputs).
+fn test_high_impact_neurons_sorted_last_in_removal_candidates() {
+    // Scenario: All neurons are returned as removal candidates, but high-impact
+    // neurons should be sorted LAST (lowest impact first).
     let creature = create_creature(
         vec![
             ("input-0", "input"),
@@ -406,40 +406,45 @@ fn test_high_impact_neurons_are_not_removal_candidates() {
 
     // Both have high error, but both have high impact
     let records = create_records(vec![
-        ("hidden-1", 100.0), // Very high error, but ~100% impact
+        ("hidden-1", 100.0), // Very high error, ~100% impact
         ("output-0", 100.0), // Very high error, 100% impact
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
     let result = rank_focus_neurons(file_path, &creature, None).unwrap();
 
-    // Neither should be a removal candidate because both have high impact
+    // All neurons returned as candidates, but they have high impact so would be
+    // poor choices for removal. The sorting puts lowest impact first.
     assert!(
-        result.removal_candidates.is_empty(),
-        "No removal candidates expected when all neurons have high impact, got: {:?}",
-        result
-            .removal_candidates
-            .iter()
-            .map(|c| &c.neuron_uuid)
-            .collect::<Vec<_>>()
+        !result.removal_candidates.is_empty(),
+        "All neurons should be returned as removal candidates"
     );
+
+    // First candidate should have lowest impact
+    let first = &result.removal_candidates[0];
+    for candidate in &result.removal_candidates {
+        assert!(
+            first.activation_weighted_impact <= candidate.activation_weighted_impact,
+            "Candidates should be sorted by impact ascending"
+        );
+    }
 }
 
 #[test]
-fn test_low_error_moderate_impact_neurons_are_not_removal_candidates() {
-    // Scenario: Neurons with moderate impact (above negligible threshold) and low error
-    // should NOT be removal candidates - they may be doing useful work.
+fn test_lower_impact_neurons_sorted_before_higher_impact() {
+    // Scenario: All neurons returned as removal candidates, sorted by impact.
+    // Lower impact neurons should appear first (better removal candidates).
     let creature = create_creature(
         vec![
             ("input-0", "input"),
-            ("low-impact", "hidden"), // Weak connection to output but above negligible
+            ("low-impact", "hidden"), // Weak connection to output
             ("connected", "hidden"),
             ("output-0", "output"),
         ],
         vec![
             ("input-0", "low-impact", 1.0),
             ("input-0", "connected", 1.0),
-            ("low-impact", "output-0", 0.05), // 5% contribution - above negligible
+            ("low-impact", "output-0", 0.05), // 5% contribution
             ("connected", "output-0", 0.95),  // 95% contribution
         ],
     );
@@ -447,9 +452,8 @@ fn test_low_error_moderate_impact_neurons_are_not_removal_candidates() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    // low-impact has LOW error (below average) and moderate impact (5%)
     let records = create_records(vec![
-        ("low-impact", 0.1), // Low error, ~5% impact -> NOT a removal candidate
+        ("low-impact", 0.1), // Low error, ~5% impact
         ("connected", 10.0), // High error, high impact
         ("output-0", 5.0),   // Moderate error, 100% impact
     ]);
@@ -457,27 +461,37 @@ fn test_low_error_moderate_impact_neurons_are_not_removal_candidates() {
 
     let result = rank_focus_neurons(file_path, &creature, None).unwrap();
 
-    // low-impact should NOT be a removal candidate: it has low error and
-    // moderate impact (above the negligible threshold)
-    let low_impact_removal = result
+    // All neurons returned as candidates
+    assert!(
+        !result.removal_candidates.is_empty(),
+        "All neurons should be returned as removal candidates"
+    );
+
+    // low-impact neuron should be sorted before connected neuron (lower impact first)
+    let low_impact_pos = result
         .removal_candidates
         .iter()
-        .find(|c| c.neuron_uuid == "low-impact");
-    assert!(
-        low_impact_removal.is_none(),
-        "Low-impact neuron with moderate impact (>1e-7) should NOT be a removal candidate when error is below average"
-    );
+        .position(|c| c.neuron_uuid == "low-impact");
+    let connected_pos = result
+        .removal_candidates
+        .iter()
+        .position(|c| c.neuron_uuid == "connected");
+
+    if let (Some(low_pos), Some(conn_pos)) = (low_impact_pos, connected_pos) {
+        assert!(
+            low_pos < conn_pos,
+            "low-impact neuron (5%) should be sorted before connected neuron (95%)"
+        );
+    }
 }
 
 #[test]
-fn test_negligible_impact_neurons_are_removal_candidates_regardless_of_error() {
-    // Scenario: A neuron with NEGLIGIBLE impact (below costOfGrowth threshold of 1e-7)
-    // should be a removal candidate REGARDLESS of error level. Such neurons contribute
-    // essentially nothing to the output and are just consuming compute.
+fn test_negligible_impact_neurons_sorted_first_as_best_removal_candidates() {
+    // Scenario: A neuron with NEGLIGIBLE impact should be sorted FIRST in the
+    // removal candidates list (lowest impact = best candidate for removal).
     //
     // This test replicates the "crippled-removal" scenario where a neuron with near-zero
-    // weights (1e-12) was added but not detected as a removal candidate because its
-    // error was below average.
+    // weights (1e-12) should be the top removal candidate.
     let creature = create_creature(
         vec![
             ("input-0", "input"),
@@ -502,10 +516,9 @@ fn test_negligible_impact_neurons_are_removal_candidates_regardless_of_error() {
     let file_path = temp_file.path().to_str().unwrap();
 
     // Negligible neuron has LOW error (below average) because it doesn't
-    // contribute enough to create errors. This is the scenario that was
-    // slipping through detection.
+    // contribute enough to create errors.
     let records = create_records(vec![
-        ("negligible", 0.01), // Low error, negligible impact -> SHOULD be removal candidate
+        ("negligible", 0.01), // Low error, negligible impact
         ("connected", 1.0),   // Normal error, high impact
         ("output-0", 0.5),    // Normal error, 100% impact
     ]);
@@ -521,31 +534,30 @@ fn test_negligible_impact_neurons_are_removal_candidates_regardless_of_error() {
         .expect("negligible neuron should be in results");
     assert!(
         negligible_neuron.impact < 1e-7,
-        "Negligible neuron should have impact < 1e-7 (costOfGrowth), got {}",
+        "Negligible neuron should have impact < 1e-7, got {}",
         negligible_neuron.impact
     );
 
-    // Negligible neuron SHOULD be a removal candidate regardless of error level
-    // because its impact is below the costOfGrowth threshold (1e-7)
+    // Negligible neuron should be in removal candidates
     let negligible_removal = result
         .removal_candidates
         .iter()
         .find(|c| c.neuron_uuid == "negligible");
     assert!(
         negligible_removal.is_some(),
-        "Neuron with negligible impact (<1e-7) should be a removal candidate regardless of error. \
-         Neurons: {:?}",
-        result
-            .neurons
-            .iter()
-            .map(|n| (&n.neuron_uuid, n.total_error, n.impact))
-            .collect::<Vec<_>>()
+        "Neuron with negligible impact should be in removal candidates"
     );
 
-    // Verify the reason explains why removal improves score
+    // Negligible neuron should be sorted FIRST (lowest impact)
+    assert_eq!(
+        result.removal_candidates[0].neuron_uuid, "negligible",
+        "Negligible neuron should be first removal candidate (lowest impact)"
+    );
+
+    // Verify the reason contains impact info
     let candidate = negligible_removal.unwrap();
     assert!(
-        candidate.reason.contains("costOfGrowth") || candidate.reason.contains("removal"),
+        candidate.reason.contains("Impact") || candidate.reason.contains("saves"),
         "Reason should explain why removal improves score: {}",
         candidate.reason
     );
@@ -620,15 +632,15 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         high_act.activation_weighted_impact
     );
 
-    // high-activation should NOT be a removal candidate (activation-weighted impact too high)
+    // Both neurons are returned as removal candidates, but high-activation should be
+    // sorted AFTER low-activation because it has higher impact
     let high_act_removal = result
         .removal_candidates
         .iter()
         .find(|c| c.neuron_uuid == "high-activation");
     assert!(
-        high_act_removal.is_none(),
-        "high-activation should NOT be a removal candidate because activation-weighted impact ({:.4}) > threshold (~1%)",
-        high_act.activation_weighted_impact
+        high_act_removal.is_some(),
+        "high-activation should be in removal candidates (all neurons returned)"
     );
 
     // Verify low-activation neuron has low activation-weighted impact
@@ -643,8 +655,8 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         low_act.mean_activation
     );
     assert!(
-        low_act.activation_weighted_impact < 1e-10,
-        "low-activation should have activation_weighted_impact << threshold, got {}",
+        low_act.activation_weighted_impact < 1e-8,
+        "low-activation should have very small activation_weighted_impact, got {}",
         low_act.activation_weighted_impact
     );
 
@@ -655,11 +667,26 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         .find(|c| c.neuron_uuid == "low-activation");
     assert!(
         low_act_removal.is_some(),
-        "low-activation SHOULD be a removal candidate because activation-weighted impact ({:.2e}) << threshold. \
-         Removal candidates: {:?}",
-        low_act.activation_weighted_impact,
-        result.removal_candidates.iter().map(|c| &c.neuron_uuid).collect::<Vec<_>>()
+        "low-activation SHOULD be a removal candidate"
     );
+
+    // low-activation should be sorted BEFORE high-activation (lower impact first)
+    let low_pos = result
+        .removal_candidates
+        .iter()
+        .position(|c| c.neuron_uuid == "low-activation");
+    let high_pos = result
+        .removal_candidates
+        .iter()
+        .position(|c| c.neuron_uuid == "high-activation");
+    if let (Some(lp), Some(hp)) = (low_pos, high_pos) {
+        assert!(
+            lp < hp,
+            "low-activation (impact {:.2e}) should be sorted before high-activation (impact {:.2e})",
+            low_act.activation_weighted_impact,
+            high_act.activation_weighted_impact
+        );
+    }
 }
 
 #[test]
@@ -865,6 +892,178 @@ fn test_cumulative_impact_for_multiple_outgoing_synapses() {
         "Hub neuron connecting to 2 outputs should have cumulative impact > 1.0, got {}. \
          This indicates the impact calculation is using MAX instead of SUM for multiple outgoing synapses.",
         hub.impact
+    );
+}
+
+#[test]
+fn test_non_finite_activations_handled_gracefully() {
+    // REGRESSION TEST: The refactored mean_absolute_activation_from_records function
+    // must handle NaN and Infinity activations without corrupting the ranking.
+    //
+    // If any record has activation = NaN or Infinity, the sum() would return NaN,
+    // which propagates through activation_weighted_impact and corrupts sorting.
+    //
+    // The old implementation properly filtered out non-finite values using is_finite().
+    let creature = create_creature(
+        vec![
+            ("input-0", "input"),
+            ("nan-activation", "hidden"),
+            ("inf-activation", "hidden"),
+            ("normal", "hidden"),
+            ("output-0", "output"),
+        ],
+        vec![
+            ("input-0", "nan-activation", 1.0),
+            ("input-0", "inf-activation", 1.0),
+            ("input-0", "normal", 1.0),
+            ("nan-activation", "output-0", 0.1),
+            ("inf-activation", "output-0", 0.1),
+            ("normal", "output-0", 0.8),
+        ],
+    );
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    // Create records with non-finite activations
+    let records = vec![
+        // NaN activation record
+        DiscoverRecord::new(
+            0,
+            "nan-activation".to_string(),
+            Some(0.5),
+            f32::NAN,
+            vec![0.1],
+        ),
+        DiscoverRecord::new(1, "nan-activation".to_string(), Some(0.5), 0.5, vec![0.1]),
+        // Infinity activation record
+        DiscoverRecord::new(
+            0,
+            "inf-activation".to_string(),
+            Some(0.5),
+            f32::INFINITY,
+            vec![0.1],
+        ),
+        DiscoverRecord::new(1, "inf-activation".to_string(), Some(0.5), 0.5, vec![0.1]),
+        // Normal activation records
+        DiscoverRecord::new(0, "normal".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(1, "normal".to_string(), Some(0.5), 0.5, vec![0.1]),
+        // Output records
+        DiscoverRecord::new(0, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(1, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+    ];
+    write_records_to_parquet(file_path, &records).unwrap();
+
+    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+    // Verify the ranking is not corrupted by NaN
+    assert!(
+        !result.neurons.is_empty(),
+        "Should have neurons in results despite non-finite activations"
+    );
+
+    // Verify no NaN values in activation_weighted_impact
+    for neuron in &result.neurons {
+        assert!(
+            neuron.activation_weighted_impact.is_finite(),
+            "activation_weighted_impact for {} should be finite, got {}",
+            neuron.neuron_uuid,
+            neuron.activation_weighted_impact
+        );
+        assert!(
+            neuron.mean_activation.is_finite(),
+            "mean_activation for {} should be finite, got {}",
+            neuron.neuron_uuid,
+            neuron.mean_activation
+        );
+    }
+
+    // Verify removal candidates are sorted correctly (not corrupted by NaN)
+    for i in 1..result.removal_candidates.len() {
+        let prev = result.removal_candidates[i - 1].activation_weighted_impact;
+        let curr = result.removal_candidates[i].activation_weighted_impact;
+        assert!(
+            prev <= curr,
+            "Removal candidates should be sorted ascending by impact. \
+             Position {}: {} vs position {}: {}",
+            i - 1,
+            prev,
+            i,
+            curr
+        );
+    }
+
+    // Verify the normal neuron has expected values
+    let normal = result
+        .neurons
+        .iter()
+        .find(|n| n.neuron_uuid == "normal")
+        .expect("normal neuron should be in results");
+    assert!(
+        (normal.mean_activation - 0.5).abs() < 0.001,
+        "normal neuron should have mean_activation = 0.5, got {}",
+        normal.mean_activation
+    );
+}
+
+#[test]
+fn test_all_non_finite_activations_returns_zero_mean() {
+    // Edge case: ALL activation values are non-finite.
+    // The function should return 0.0 (same as empty records).
+    let creature = create_creature(
+        vec![
+            ("input-0", "input"),
+            ("all-nan", "hidden"),
+            ("output-0", "output"),
+        ],
+        vec![("input-0", "all-nan", 1.0), ("all-nan", "output-0", 1.0)],
+    );
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    // All records for all-nan neuron have non-finite activations
+    let records = vec![
+        DiscoverRecord::new(0, "all-nan".to_string(), Some(0.5), f32::NAN, vec![0.1]),
+        DiscoverRecord::new(
+            1,
+            "all-nan".to_string(),
+            Some(0.5),
+            f32::INFINITY,
+            vec![0.1],
+        ),
+        DiscoverRecord::new(
+            2,
+            "all-nan".to_string(),
+            Some(0.5),
+            f32::NEG_INFINITY,
+            vec![0.1],
+        ),
+        DiscoverRecord::new(0, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(1, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(2, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+    ];
+    write_records_to_parquet(file_path, &records).unwrap();
+
+    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+    // Find the all-nan neuron
+    let all_nan = result
+        .neurons
+        .iter()
+        .find(|n| n.neuron_uuid == "all-nan")
+        .expect("all-nan neuron should be in results");
+
+    // When all activations are non-finite, mean_activation should be 0.0
+    assert!(
+        all_nan.mean_activation.is_finite(),
+        "mean_activation should be finite even when all inputs are NaN/Inf, got {}",
+        all_nan.mean_activation
+    );
+    assert_eq!(
+        all_nan.mean_activation, 0.0,
+        "mean_activation should be 0.0 when all inputs are NaN/Inf, got {}",
+        all_nan.mean_activation
     );
 }
 

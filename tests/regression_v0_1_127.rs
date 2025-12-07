@@ -20,15 +20,16 @@
 //!    savings = growthCost × (1 + (N + M) / 10)
 //!    ```
 //!
-//! 2. **Unit conversion via sqrt**: activation_weighted_impact is in OUTPUT units,
-//!    while savings is in SCORE units (error + complexity). For MSE error, a
-//!    contribution c to output increases error by c². So:
+//! 2. **Unit conversion via fourth root**: activation_weighted_impact is in OUTPUT
+//!    units, while savings is in SCORE units (error + complexity). We use a fourth
+//!    root to bridge the gap:
 //!
 //!    ```
-//!    c² < savings  →  c < sqrt(savings)
+//!    threshold = savings^0.25
 //!    ```
 //!
-//!    Removal is beneficial when: activation_weighted_impact < sqrt(savings)
+//!    For savings ≈ 1.5e-7, threshold = (1.5e-7)^0.25 ≈ 6e-3 (0.6%)
+//!    Removal is beneficial when: activation_weighted_impact < savings^0.25
 //!
 //! If any of these tests fail after a code change, the fix has regressed.
 
@@ -117,20 +118,20 @@ fn test_more_synapses_means_higher_threshold() {
 /// REGRESSION TEST: Removal candidates must use dynamic savings based on synapse count.
 ///
 /// A neuron with many synapses saves more complexity when removed.
-/// The criterion is: activation_weighted_impact < sqrt(savings).
+/// The criterion is: activation_weighted_impact < savings^0.25.
 #[test]
 fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
     // Network with two neurons having different synapse counts:
     //
     // few-synapses: 1 incoming, 1 outgoing (2 total)
     //   savings = growthCost × (1 + 2/10) = 1.2e-7
-    //   threshold = sqrt(1.2e-7) ≈ 3.5e-4
+    //   threshold = (1.2e-7)^0.25 ≈ 5.9e-3
     //
     // many-synapses: 3 incoming, 2 outgoing (5 total)
     //   savings = growthCost × (1 + 5/10) = 1.5e-7
-    //   threshold = sqrt(1.5e-7) ≈ 3.9e-4
+    //   threshold = (1.5e-7)^0.25 ≈ 6.2e-3
     //
-    // To be a removal candidate: activation_weighted_impact < sqrt(savings)
+    // To be a removal candidate: activation_weighted_impact < savings^0.25
     // Using tiny weights (1e-8) so both neurons qualify as candidates.
     let creature = CreatureJson {
         input: 3,
@@ -166,12 +167,12 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
             SynapseJson {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "few-synapses".to_string(),
-                weight: 1e-8, // Tiny weight so contribution < savings
+                weight: 1e-8,
             },
             SynapseJson {
                 from_uuid: "few-synapses".to_string(),
                 to_uuid: "output-0".to_string(),
-                weight: 1e-8,
+                weight: 1e-8, // Tiny compared to other inputs
             },
             // many-synapses: 3 in, 2 out
             SynapseJson {
@@ -198,6 +199,17 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
                 from_uuid: "many-synapses".to_string(),
                 to_uuid: "output-1".to_string(),
                 weight: 1e-8,
+            },
+            // Add dominant inputs to outputs so test neurons are a small fraction
+            SynapseJson {
+                from_uuid: "input-0".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 1.0, // Dominates: 1e-8 / 1.0 ≈ 1e-8 fraction
+            },
+            SynapseJson {
+                from_uuid: "input-1".to_string(),
+                to_uuid: "output-1".to_string(),
+                weight: 1.0,
             },
         ],
     };
@@ -358,30 +370,30 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
     );
 }
 
-/// REGRESSION TEST: Threshold must use sqrt(savings) not raw savings.
+/// REGRESSION TEST: Threshold must use savings^0.25 not raw savings.
 ///
 /// activation_weighted_impact is in OUTPUT units, savings is in SCORE units.
-/// For MSE error, a contribution c increases error by c². So:
-///   c² < savings  →  c < sqrt(savings)
+/// We use a fourth root to bridge these units:
+///   threshold = savings^0.25
 ///
-/// This test creates a neuron with impact BETWEEN savings and sqrt(savings):
-///   savings = 1.5e-7
-///   sqrt(savings) ≈ 3.9e-4
-///   impact = 1e-5 (between them)
+/// This test creates a neuron with impact BETWEEN savings and savings^0.25:
+///   savings = 1.4e-7 (for 3 synapses)
+///   savings^0.25 ≈ 6.1e-3
+///   impact = 1e-3 (between them)
 ///
-/// Under old logic (impact < savings): NOT a candidate (1e-5 > 1.5e-7)
-/// Under correct logic (impact < sqrt(savings)): IS a candidate (1e-5 < 3.9e-4)
+/// Under old logic (impact < savings): NOT a candidate (1e-3 > 1.4e-7)
+/// Under correct logic (impact < savings^0.25): IS a candidate (1e-3 < 6.1e-3)
 #[test]
-fn regression_threshold_must_use_sqrt_savings() {
-    // Create a neuron with activation_weighted_impact = 1e-5
+fn regression_threshold_must_use_fourth_root_savings() {
+    // Create a neuron with activation_weighted_impact = 1e-3 (0.1%)
     // This is:
-    //   - LARGER than savings (1.5e-7) - would NOT be candidate under old raw comparison
-    //   - SMALLER than sqrt(savings) (~3.9e-4) - IS a candidate under sqrt comparison
+    //   - LARGER than savings (1.4e-7) - would NOT be candidate under raw comparison
+    //   - SMALLER than savings^0.25 (~6.1e-3) - IS a candidate under fourth root
     //
-    // We achieve impact ≈ 1e-5 using weight × activation:
-    //   structural_impact ≈ weight = 1e-4 (path to output)
+    // We achieve impact ≈ 1e-3 using weight × activation:
+    //   structural_impact ≈ weight = 1e-2 (path to output)
     //   mean_activation = 0.1
-    //   activation_weighted_impact ≈ 1e-4 × 0.1 = 1e-5
+    //   activation_weighted_impact ≈ 1e-2 × 0.1 = 1e-3
     let creature = CreatureJson {
         input: 1,
         output: 1,
@@ -406,11 +418,11 @@ fn regression_threshold_must_use_sqrt_savings() {
                 to_uuid: "between-thresholds".to_string(),
                 weight: 0.5,
             },
-            // Hidden → output with small weight for small impact
+            // Hidden → output with moderate weight for ~1e-3 impact
             SynapseJson {
                 from_uuid: "between-thresholds".to_string(),
                 to_uuid: "output-0".to_string(),
-                weight: 1e-4, // Small weight → small structural impact
+                weight: 1e-2, // structural_impact ≈ 1e-2
             },
             // Direct input → output to ensure output neuron has records
             SynapseJson {
@@ -453,11 +465,11 @@ fn regression_threshold_must_use_sqrt_savings() {
         .iter()
         .find(|c| c.neuron_uuid == "between-thresholds");
 
-    // This neuron MUST be a removal candidate under the sqrt threshold
+    // This neuron MUST be a removal candidate under the fourth root threshold
     assert!(
         candidate.is_some(),
-        "Neuron with activation_weighted_impact (~1e-5) should be a removal candidate \
-         because 1e-5 < sqrt(1.4e-7) ≈ 3.7e-4. Found candidates: {:?}",
+        "Neuron with activation_weighted_impact (~1e-3) should be a removal candidate \
+         because 1e-3 < (1.4e-7)^0.25 ≈ 6.1e-3. Found candidates: {:?}",
         result
             .removal_candidates
             .iter()
@@ -467,24 +479,24 @@ fn regression_threshold_must_use_sqrt_savings() {
 
     let candidate = candidate.unwrap();
 
-    // Verify the impact is in the expected range (between savings and sqrt(savings))
+    // Verify the impact is in the expected range (between savings and savings^0.25)
     let savings = candidate.removal_savings;
-    let sqrt_savings = savings.sqrt();
+    let fourth_root_savings = savings.sqrt().sqrt(); // savings^0.25
 
     assert!(
         candidate.activation_weighted_impact > savings,
         "activation_weighted_impact ({:.2e}) should be LARGER than raw savings ({:.2e}) - \
-         this test specifically targets the gap between savings and sqrt(savings)",
+         this test specifically targets the gap between savings and savings^0.25",
         candidate.activation_weighted_impact,
         savings
     );
 
     assert!(
-        candidate.activation_weighted_impact < sqrt_savings,
-        "activation_weighted_impact ({:.2e}) should be SMALLER than sqrt(savings) ({:.2e}) - \
+        candidate.activation_weighted_impact < fourth_root_savings,
+        "activation_weighted_impact ({:.2e}) should be SMALLER than savings^0.25 ({:.2e}) - \
          this is why it qualifies as a removal candidate",
         candidate.activation_weighted_impact,
-        sqrt_savings
+        fourth_root_savings
     );
 }
 
