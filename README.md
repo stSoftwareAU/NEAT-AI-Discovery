@@ -565,10 +565,19 @@ savings = growthCost × (1 + (N + M) / 10)
 ```
 
 **The fix**: A neuron is a removal candidate when its contribution to output
-is less than the complexity savings from removing it:
+is small enough that removing it likely improves score.
+
+**Unit conversion**: `activation_weighted_impact` is in OUTPUT units (contribution
+to output), while `savings` is in SCORE units (error + complexity). For MSE error,
+a contribution `c` to output can increase error by at most `c²`. So:
 
 ```
-activation_weighted_impact < savings
+c² < savings  →  c < sqrt(savings)
+```
+
+A neuron is a removal candidate when:
+```
+activation_weighted_impact < sqrt(savings)
 ```
 
 Where:
@@ -577,16 +586,17 @@ Where:
 - `savings = growthCost × (1 + (N + M) / 10)`
   (from NEAT-AI's Score.ts complexity formula)
 
-| Synapses (in + out) | Savings |
-|---------------------|---------|
-| 0 | `1.0e-7` |
-| 2 | `1.2e-7` |
-| 5 | `1.5e-7` |
-| 10 | `2.0e-7` |
-| 20 | `3.0e-7` |
+| Synapses (in + out) | Savings | Threshold (sqrt) |
+|---------------------|---------|------------------|
+| 0 | `1.0e-7` | `3.2e-4` (0.03%) |
+| 2 | `1.2e-7` | `3.5e-4` (0.035%) |
+| 5 | `1.5e-7` | `3.9e-4` (0.039%) |
+| 10 | `2.0e-7` | `4.5e-4` (0.045%) |
+| 20 | `3.0e-7` | `5.5e-4` (0.055%) |
 
-This is the mathematically correct criterion: if a neuron's effect on output is
-smaller than the complexity cost of keeping it, removing improves the score.
+This catches neurons contributing less than ~0.04% to output, which with MSE error
+would contribute less than `(0.0004)² ≈ 1.6e-7` to error - comparable to the
+complexity savings from removal.
 
 **Removal candidate JSON response** now includes:
 - `incomingSynapses` / `outgoingSynapses`: synapse counts used in calculation

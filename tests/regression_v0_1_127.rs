@@ -1,6 +1,6 @@
-//! REGRESSION TESTS for v0.1.127 fixes
+//! REGRESSION TESTS for v0.1.127+ fixes
 //!
-//! These tests catch regressions if the v0.1.127 fixes are accidentally reverted.
+//! These tests catch regressions if the v0.1.127+ fixes are accidentally reverted.
 //! DO NOT DELETE OR COMMENT OUT THESE TESTS - they protect against known bugs.
 //!
 //! ## Fixes covered:
@@ -20,7 +20,15 @@
 //!    savings = growthCost × (1 + (N + M) / 10)
 //!    ```
 //!
-//!    Removal is beneficial when: activation_weighted_impact < savings × SCALE_FACTOR
+//! 2. **Unit conversion via sqrt**: activation_weighted_impact is in OUTPUT units,
+//!    while savings is in SCORE units (error + complexity). For MSE error, a
+//!    contribution c to output increases error by c². So:
+//!
+//!    ```
+//!    c² < savings  →  c < sqrt(savings)
+//!    ```
+//!
+//!    Removal is beneficial when: activation_weighted_impact < sqrt(savings)
 //!
 //! If any of these tests fail after a code change, the fix has regressed.
 
@@ -109,18 +117,20 @@ fn test_more_synapses_means_higher_threshold() {
 /// REGRESSION TEST: Removal candidates must use dynamic savings based on synapse count.
 ///
 /// A neuron with many synapses saves more complexity when removed.
-/// The criterion is: activation_weighted_impact < savings (no scale factor).
+/// The criterion is: activation_weighted_impact < sqrt(savings).
 #[test]
 fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
     // Network with two neurons having different synapse counts:
     //
     // few-synapses: 1 incoming, 1 outgoing (2 total)
     //   savings = growthCost × (1 + 2/10) = 1.2e-7
+    //   threshold = sqrt(1.2e-7) ≈ 3.5e-4
     //
     // many-synapses: 3 incoming, 2 outgoing (5 total)
     //   savings = growthCost × (1 + 5/10) = 1.5e-7
+    //   threshold = sqrt(1.5e-7) ≈ 3.9e-4
     //
-    // To be a removal candidate: activation_weighted_impact < savings
+    // To be a removal candidate: activation_weighted_impact < sqrt(savings)
     // Using tiny weights (1e-8) so both neurons qualify as candidates.
     let creature = CreatureJson {
         input: 3,
@@ -345,6 +355,136 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
         "many-synapses savings should be {:.2e}, got {:.2e}",
         expected_many_savings,
         many_candidate.removal_savings
+    );
+}
+
+/// REGRESSION TEST: Threshold must use sqrt(savings) not raw savings.
+///
+/// activation_weighted_impact is in OUTPUT units, savings is in SCORE units.
+/// For MSE error, a contribution c increases error by c². So:
+///   c² < savings  →  c < sqrt(savings)
+///
+/// This test creates a neuron with impact BETWEEN savings and sqrt(savings):
+///   savings = 1.5e-7
+///   sqrt(savings) ≈ 3.9e-4
+///   impact = 1e-5 (between them)
+///
+/// Under old logic (impact < savings): NOT a candidate (1e-5 > 1.5e-7)
+/// Under correct logic (impact < sqrt(savings)): IS a candidate (1e-5 < 3.9e-4)
+#[test]
+fn regression_threshold_must_use_sqrt_savings() {
+    // Create a neuron with activation_weighted_impact = 1e-5
+    // This is:
+    //   - LARGER than savings (1.5e-7) - would NOT be candidate under old raw comparison
+    //   - SMALLER than sqrt(savings) (~3.9e-4) - IS a candidate under sqrt comparison
+    //
+    // We achieve impact ≈ 1e-5 using weight × activation:
+    //   structural_impact ≈ weight = 1e-4 (path to output)
+    //   mean_activation = 0.1
+    //   activation_weighted_impact ≈ 1e-4 × 0.1 = 1e-5
+    let creature = CreatureJson {
+        input: 1,
+        output: 1,
+        neurons: vec![
+            NeuronJson {
+                uuid: "between-thresholds".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: vec![
+            // Input → hidden (3 synapses for savings = 1.4e-7)
+            SynapseJson {
+                from_uuid: "input-0".to_string(),
+                to_uuid: "between-thresholds".to_string(),
+                weight: 0.5,
+            },
+            // Hidden → output with small weight for small impact
+            SynapseJson {
+                from_uuid: "between-thresholds".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 1e-4, // Small weight → small structural impact
+            },
+            // Direct input → output to ensure output neuron has records
+            SynapseJson {
+                from_uuid: "input-0".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 1.0,
+            },
+        ],
+    };
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    // Records with mean_activation = 0.1 for our target neuron
+    let records = vec![
+        DiscoverRecord::new(
+            0,
+            "between-thresholds".to_string(),
+            Some(0.1), // activation
+            0.1,       // state
+            vec![0.1],
+        ),
+        DiscoverRecord::new(
+            1,
+            "between-thresholds".to_string(),
+            Some(0.1),
+            0.1,
+            vec![0.1],
+        ),
+        DiscoverRecord::new(0, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(1, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+    ];
+    write_records_to_parquet(file_path, &records).unwrap();
+
+    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+    // Find the neuron in removal candidates
+    let candidate = result
+        .removal_candidates
+        .iter()
+        .find(|c| c.neuron_uuid == "between-thresholds");
+
+    // This neuron MUST be a removal candidate under the sqrt threshold
+    assert!(
+        candidate.is_some(),
+        "Neuron with activation_weighted_impact (~1e-5) should be a removal candidate \
+         because 1e-5 < sqrt(1.4e-7) ≈ 3.7e-4. Found candidates: {:?}",
+        result
+            .removal_candidates
+            .iter()
+            .map(|c| format!("{}: {:.2e}", c.neuron_uuid, c.activation_weighted_impact))
+            .collect::<Vec<_>>()
+    );
+
+    let candidate = candidate.unwrap();
+
+    // Verify the impact is in the expected range (between savings and sqrt(savings))
+    let savings = candidate.removal_savings;
+    let sqrt_savings = savings.sqrt();
+
+    assert!(
+        candidate.activation_weighted_impact > savings,
+        "activation_weighted_impact ({:.2e}) should be LARGER than raw savings ({:.2e}) - \
+         this test specifically targets the gap between savings and sqrt(savings)",
+        candidate.activation_weighted_impact,
+        savings
+    );
+
+    assert!(
+        candidate.activation_weighted_impact < sqrt_savings,
+        "activation_weighted_impact ({:.2e}) should be SMALLER than sqrt(savings) ({:.2e}) - \
+         this is why it qualifies as a removal candidate",
+        candidate.activation_weighted_impact,
+        sqrt_savings
     );
 }
 
