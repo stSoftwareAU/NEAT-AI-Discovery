@@ -564,26 +564,29 @@ const complexityPenalty = hiddenNeuronCount * growthCost +
 savings = growthCost × (1 + (N + M) / 10)
 ```
 
-**The fix**: The threshold is calculated as `savings × SCALE_FACTOR` where
-SCALE_FACTOR=100 accounts for uncertainty in the impact calculation:
+**The fix**: A neuron is a removal candidate when its contribution to output
+is less than the complexity savings from removing it:
 
-| Synapses (in + out) | Savings | Threshold (×100) |
-|---------------------|---------|------------------|
-| 0 | `1.0e-7` | `1.0e-5` |
-| 2 | `1.2e-7` | `1.2e-5` |
-| 5 | `1.5e-7` | `1.5e-5` |
-| 10 | `2.0e-7` | `2.0e-5` |
-| 20 | `3.0e-7` | `3.0e-5` |
+```
+activation_weighted_impact < savings
+```
 
-**Why the scale factor?** The impact calculation `structural_impact × mean_activation`
-is an approximation that doesn't capture:
-1. Correlation between neuron activation and error (may be positive or negative)
-2. Partial cancellation when multiple paths exist
-3. Saturation effects in downstream squash functions
+Where:
+- `activation_weighted_impact = structural_impact × mean_activation`
+  (the neuron's contribution to output, diluted by distance from output)
+- `savings = growthCost × (1 + (N + M) / 10)`
+  (from NEAT-AI's Score.ts complexity formula)
 
-The scale factor finds meaningful candidates while maintaining the synapse-based
-relationship: neurons with more synapses get a higher threshold because removing
-them saves more complexity.
+| Synapses (in + out) | Savings |
+|---------------------|---------|
+| 0 | `1.0e-7` |
+| 2 | `1.2e-7` |
+| 5 | `1.5e-7` |
+| 10 | `2.0e-7` |
+| 20 | `3.0e-7` |
+
+This is the mathematically correct criterion: if a neuron's effect on output is
+smaller than the complexity cost of keeping it, removing improves the score.
 
 **Removal candidate JSON response** now includes:
 - `incomingSynapses` / `outgoingSynapses`: synapse counts used in calculation

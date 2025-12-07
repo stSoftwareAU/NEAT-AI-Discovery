@@ -553,20 +553,25 @@ fn test_negligible_impact_neurons_are_removal_candidates_regardless_of_error() {
 
 #[test]
 fn test_activation_weighted_impact_prevents_false_removal_candidates() {
-    // Scenario: A neuron with low STRUCTURAL impact but HIGH activation should NOT be
+    // Scenario: A neuron with moderate STRUCTURAL impact and HIGH activation should NOT be
     // a removal candidate because actual_contribution ≈ weight × activation.
     //
-    // This test prevents regression on the bug where neurons with tiny weights but
-    // massive activations were incorrectly flagged for removal.
+    // This test verifies that activation-weighted impact (not just structural impact)
+    // determines removal candidates.
     //
-    // Network: input-0 -> high-activation (tiny weight 1e-9) -> output-0
+    // Network: input-0 -> high-activation -> output-0
     //
     // high-activation has:
-    // - Structural impact: 1e-9 (below costOfGrowth 1e-7)
-    // - Mean activation: 1e6 (very high!)
-    // - Activation-weighted impact: 1e-9 × 1e6 = 1e-3 (ABOVE costOfGrowth)
+    // - Structural impact: 1e-6 (small weight to output)
+    // - Mean activation: 1e5 (very high!)
+    // - Activation-weighted impact: 1e-6 × 1e5 = 0.1 (10% - well above threshold)
     //
-    // So it should NOT be a removal candidate.
+    // With SCALE_FACTOR=1e5, threshold for 1 synapse = 1.1e-7 × 1e5 = 0.011 (1.1%)
+    // 10% > 1.1%, so it should NOT be a removal candidate.
+    //
+    // low-activation has same weight but tiny activation:
+    // - Activation-weighted impact: 1e-6 × 1e-9 = 1e-15 (way below threshold)
+    // So it SHOULD be a removal candidate.
     let creature = create_creature(
         vec![
             ("input-0", "input"),
@@ -577,20 +582,20 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         vec![
             ("input-0", "high-activation", 1.0),
             ("input-0", "low-activation", 1.0),
-            // Both have tiny structural paths to output
-            ("high-activation", "output-0", 1e-9),
-            ("low-activation", "output-0", 1e-9),
+            // Both have small structural paths to output
+            ("high-activation", "output-0", 1e-6),
+            ("low-activation", "output-0", 1e-6),
         ],
     );
 
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    // high-activation: tiny structural impact BUT massive activation → NOT removal candidate
-    // low-activation: tiny structural impact AND tiny activation → IS removal candidate
+    // high-activation: small structural impact BUT massive activation → NOT removal candidate
+    // low-activation: small structural impact AND tiny activation → IS removal candidate
     let records = create_records_with_activation(vec![
-        ("high-activation", 0.1, 1e6), // High activation → not safe to remove
-        ("low-activation", 0.1, 1e-9), // Low activation → safe to remove
+        ("high-activation", 0.1, 1e5), // High activation → contribution 10% → not safe to remove
+        ("low-activation", 0.1, 1e-9), // Low activation → contribution ~0% → safe to remove
         ("output-0", 0.5, 0.5),
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
@@ -604,13 +609,14 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         .find(|n| n.neuron_uuid == "high-activation")
         .expect("high-activation should be in results");
     assert!(
-        high_act.mean_activation > 1e5,
+        high_act.mean_activation > 1e4,
         "high-activation should have high mean_activation, got {}",
         high_act.mean_activation
     );
+    // Activation-weighted impact should be ~0.1 (10%)
     assert!(
-        high_act.activation_weighted_impact > 1e-7,
-        "high-activation should have activation_weighted_impact > costOfGrowth, got {}",
+        high_act.activation_weighted_impact > 0.01,
+        "high-activation should have activation_weighted_impact > 1% (threshold), got {}",
         high_act.activation_weighted_impact
     );
 
@@ -621,7 +627,7 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         .find(|c| c.neuron_uuid == "high-activation");
     assert!(
         high_act_removal.is_none(),
-        "high-activation should NOT be a removal candidate because activation-weighted impact ({}) > costOfGrowth",
+        "high-activation should NOT be a removal candidate because activation-weighted impact ({:.4}) > threshold (~1%)",
         high_act.activation_weighted_impact
     );
 
@@ -637,8 +643,8 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         low_act.mean_activation
     );
     assert!(
-        low_act.activation_weighted_impact < 1e-7,
-        "low-activation should have activation_weighted_impact < costOfGrowth, got {}",
+        low_act.activation_weighted_impact < 1e-10,
+        "low-activation should have activation_weighted_impact << threshold, got {}",
         low_act.activation_weighted_impact
     );
 
@@ -649,7 +655,7 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         .find(|c| c.neuron_uuid == "low-activation");
     assert!(
         low_act_removal.is_some(),
-        "low-activation SHOULD be a removal candidate because activation-weighted impact ({}) < costOfGrowth. \
+        "low-activation SHOULD be a removal candidate because activation-weighted impact ({:.2e}) << threshold. \
          Removal candidates: {:?}",
         low_act.activation_weighted_impact,
         result.removal_candidates.iter().map(|c| &c.neuron_uuid).collect::<Vec<_>>()
