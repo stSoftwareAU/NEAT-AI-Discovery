@@ -174,6 +174,40 @@ fn build_adjacency(creature: &CreatureJson) -> HashMap<String, Vec<(String, f32)
     adjacency
 }
 
+/// Build a map from neuron UUID to squash function name.
+fn build_squash_map(creature: &CreatureJson) -> HashMap<String, String> {
+    creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.clone(), n.squash.to_uppercase()))
+        .collect()
+}
+
+/// Categorise squash functions for impact calculation.
+/// See docs/IMPACT_CALCULATION.md for detailed explanation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SquashCategory {
+    /// Linear or approximately linear (IDENTITY, TANH, etc.)
+    /// Impact = normalised weight fraction
+    Linear,
+    /// Threshold functions (STEP, BIPOLAR)
+    /// Any input could flip the output - don't normalise
+    Threshold,
+    /// Selection functions (MINIMUM, MAXIMUM)
+    /// Only one synapse "wins" - conservative: don't normalise
+    Selection,
+}
+
+impl SquashCategory {
+    fn from_squash(squash: &str) -> Self {
+        match squash.to_uppercase().as_str() {
+            "STEP" | "BIPOLAR" => Self::Threshold,
+            "MINIMUM" | "MAXIMUM" | "IF" => Self::Selection,
+            _ => Self::Linear,
+        }
+    }
+}
+
 // NOTE: build_inbound_weights was removed in v0.1.126 as part of the impact
 // calculation fix. The normalisation it supported was causing massive
 // underestimation of neuron impact (see regression_v0_1_126.rs tests).
@@ -186,12 +220,27 @@ fn compute_impacts(creature: &CreatureJson) -> HashMap<String, f32> {
 /// Computes the structural impact of each neuron on outputs (path weight products).
 /// Output neurons have impact = 1.0, hidden neurons have impact in [0, 1] based on
 /// their weighted paths to outputs.
+///
+/// NOTE: This function is squash-aware. For neurons feeding into STEP/BIPOLAR/MINIMUM/MAXIMUM
+/// targets, the impact calculation uses special handling to avoid underestimation.
+/// See docs/IMPACT_CALCULATION.md for detailed explanation.
 pub fn compute_impacts_public(creature: &CreatureJson) -> HashMap<String, f32> {
     compute_impacts_internal(creature)
 }
 
+/// Context for impact calculation, containing pre-computed lookup tables.
+/// This struct groups related parameters to avoid clippy::too_many_arguments.
+struct ImpactContext {
+    adjacency: HashMap<String, Vec<(String, f32)>>,
+    total_inbound: HashMap<String, f32>,
+    inbound_count: HashMap<String, usize>,
+    squash_map: HashMap<String, String>,
+    outputs: HashSet<String>,
+}
+
 fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
     let adjacency = build_adjacency(creature);
+    let squash_map = build_squash_map(creature);
 
     // Build total inbound |weight| for each neuron (for normalisation)
     let total_inbound: HashMap<String, f32> = {
@@ -202,12 +251,30 @@ fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
         map
     };
 
-    let output_neurons: HashSet<String> = creature
+    // Build inbound synapse count for selection squashes
+    let inbound_count: HashMap<String, usize> = {
+        let mut map: HashMap<String, usize> = HashMap::new();
+        for synapse in &creature.synapses {
+            *map.entry(synapse.to_uuid.clone()).or_insert(0) += 1;
+        }
+        map
+    };
+
+    let outputs: HashSet<String> = creature
         .neurons
         .iter()
         .filter(|n| n.neuron_type == "output")
         .map(|n| n.uuid.clone())
         .collect();
+
+    let ctx = ImpactContext {
+        adjacency,
+        total_inbound,
+        inbound_count,
+        squash_map,
+        outputs,
+    };
+
     let mut cache: HashMap<String, f32> = HashMap::new();
 
     for neuron in &creature.neurons {
@@ -215,14 +282,7 @@ fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
             continue;
         }
         let mut visiting = HashSet::new();
-        compute_impact_recursive(
-            &neuron.uuid,
-            &adjacency,
-            &total_inbound,
-            &output_neurons,
-            &mut cache,
-            &mut visiting,
-        );
+        compute_impact_recursive(&neuron.uuid, &ctx, &mut cache, &mut visiting);
     }
 
     cache
@@ -230,9 +290,7 @@ fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
 
 fn compute_impact_recursive(
     uuid: &str,
-    adjacency: &HashMap<String, Vec<(String, f32)>>,
-    total_inbound: &HashMap<String, f32>,
-    outputs: &HashSet<String>,
+    ctx: &ImpactContext,
     cache: &mut HashMap<String, f32>,
     visiting: &mut HashSet<String>,
 ) -> f32 {
@@ -245,40 +303,79 @@ fn compute_impact_recursive(
         return 0.0;
     }
 
-    let impact = if outputs.contains(uuid) {
+    let impact = if ctx.outputs.contains(uuid) {
         1.0
-    } else if let Some(edges) = adjacency.get(uuid) {
+    } else if let Some(edges) = ctx.adjacency.get(uuid) {
         // Sum across all outgoing edges (neuron may connect to multiple targets)
         let mut total_impact = 0.0;
         for (to_uuid, weight) in edges {
-            let child_impact = compute_impact_recursive(
-                to_uuid,
-                adjacency,
-                total_inbound,
-                outputs,
-                cache,
-                visiting,
-            );
+            let child_impact = compute_impact_recursive(to_uuid, ctx, cache, visiting);
             if child_impact <= 0.0 {
                 continue;
             }
 
-            // NORMALISED impact: what fraction of the target's input does this neuron provide?
-            //
-            // If target has 100 incoming synapses with total |weight| = 343,
-            // and this synapse has |weight| = 3, then this neuron contributes:
-            //   3 / 343 ≈ 0.9% of the target's input
-            //
-            // This is recursive - the fraction propagates through the network.
-            // A neuron 2 hops from output, going through a target with 100 inputs,
-            // has its impact diluted by that factor.
-            let target_total = total_inbound
+            // Get the target neuron's squash category
+            let squash = ctx
+                .squash_map
                 .get(to_uuid)
-                .copied()
-                .unwrap_or(1.0)
-                .max(1e-10);
-            let fraction = weight.abs() / target_total;
-            let contribution = fraction * child_impact;
+                .map(|s| s.as_str())
+                .unwrap_or("IDENTITY");
+            let category = SquashCategory::from_squash(squash);
+
+            let contribution = match category {
+                SquashCategory::Linear => {
+                    // NORMALISED impact: what fraction of the target's input does this neuron provide?
+                    //
+                    // If target has 100 incoming synapses with total |weight| = 343,
+                    // and this synapse has |weight| = 3, then this neuron contributes:
+                    //   3 / 343 ≈ 0.9% of the target's input
+                    //
+                    // This is recursive - the fraction propagates through the network.
+                    // A neuron 2 hops from output, going through a target with 100 inputs,
+                    // has its impact diluted by that factor.
+                    let target_total = ctx
+                        .total_inbound
+                        .get(to_uuid)
+                        .copied()
+                        .unwrap_or(1.0)
+                        .max(1e-10);
+                    let fraction = weight.abs() / target_total;
+                    fraction * child_impact
+                }
+                SquashCategory::Threshold => {
+                    // THRESHOLD impact (STEP/BIPOLAR): Any synapse could flip the output!
+                    //
+                    // For STEP/BIPOLAR neurons, even tiny weights can cause the full output
+                    // swing if they push the neuron across the threshold (0).
+                    //
+                    // Conservative approach: Don't normalise by total_inbound. Instead,
+                    // use the full child_impact as if this synapse alone determines output.
+                    //
+                    // This may overestimate impact, but it's better than underestimating
+                    // (which causes incorrect removal candidates).
+                    //
+                    // See docs/IMPACT_CALCULATION.md for detailed explanation.
+                    child_impact
+                }
+                SquashCategory::Selection => {
+                    // SELECTION impact (MINIMUM/MAXIMUM/IF): Only one synapse "wins"!
+                    //
+                    // For MINIMUM/MAXIMUM neurons, only the min/max synapse contributes to
+                    // the output. The others have zero contribution at any given time.
+                    //
+                    // Without activation data, we can't know which synapse wins. Conservative
+                    // approach: assume each synapse has 1/N probability of winning (where N
+                    // is the number of incoming synapses), giving impact = child_impact / N.
+                    //
+                    // This is better than the sum-based approach which is completely wrong
+                    // (gives high impact to large weights in MINIMUM when they're least
+                    // likely to win).
+                    //
+                    // See docs/IMPACT_CALCULATION.md for detailed explanation.
+                    let count = ctx.inbound_count.get(to_uuid).copied().unwrap_or(1).max(1);
+                    child_impact / count as f32
+                }
+            };
             total_impact += contribution;
         }
         total_impact
