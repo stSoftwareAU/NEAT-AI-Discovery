@@ -564,8 +564,8 @@ const complexityPenalty = hiddenNeuronCount * growthCost +
 savings = growthCost × (1 + (N + M) / 10)
 ```
 
-**The fix**: Top 10 neurons with lowest impact are returned as removal candidates,
-sorted by `activation_weighted_impact` ascending.
+**The fix**: ALL neurons with `activation_weighted_impact < costOfGrowth` (1e-7) are
+returned as removal candidates, sorted by impact ascending.
 
 ```
 activation_weighted_impact = structural_impact × mean_absolute_activation
@@ -573,7 +573,10 @@ activation_weighted_impact = structural_impact × mean_absolute_activation
 
 Where:
 - `structural_impact` = NORMALISED impact through the network
-- `mean_absolute_activation` = sum(|activation|) / record_count
+- `mean_absolute_activation` = sum(|finite activation|) / finite_record_count
+
+**Note**: Non-finite activation values (NaN, Infinity) are filtered out when computing
+`mean_absolute_activation` to prevent corruption of the removal candidate ranking.
 
 **Normalised impact calculation**:
 
@@ -593,7 +596,7 @@ has a small effect on the downstream signal.
 **Removal candidate JSON response** now includes:
 - `incomingSynapses` / `outgoingSynapses`: synapse counts used in calculation
 - `removalSavings`: the raw savings value from NEAT-AI formula
-- Candidates sorted by benefit (biggest gap between savings and impact first)
+- Candidates sorted by activation_weighted_impact ascending (lowest first = safest to remove)
 
 The `calculate_removal_savings(incoming, outgoing, growth_cost)` function is
 available for use in other analyses and is tested against the NEAT-AI formula.

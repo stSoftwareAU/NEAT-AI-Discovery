@@ -370,36 +370,30 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
     );
 }
 
-/// REGRESSION TEST: Threshold must use savings^0.25 not raw savings.
+/// REGRESSION TEST: Threshold must use costOfGrowth (1e-7).
 ///
-/// activation_weighted_impact is in OUTPUT units, savings is in SCORE units.
-/// We use a fourth root to bridge these units:
-///   threshold = savings^0.25
+/// Neurons are removal candidates when:
+///   activation_weighted_impact < costOfGrowth (1e-7)
 ///
-/// This test creates a neuron with impact BETWEEN savings and savings^0.25:
-///   savings = 1.4e-7 (for 3 synapses)
-///   savings^0.25 ≈ 6.1e-3
-///   impact = 1e-3 (between them)
-///
-/// Under old logic (impact < savings): NOT a candidate (1e-3 > 1.4e-7)
-/// Under correct logic (impact < savings^0.25): IS a candidate (1e-3 < 6.1e-3)
+/// This test creates a neuron with impact ABOVE costOfGrowth that should NOT
+/// be a removal candidate.
 #[test]
-fn regression_threshold_must_use_fourth_root_savings() {
+fn regression_threshold_uses_cost_of_growth() {
     // Create a neuron with activation_weighted_impact = 1e-3 (0.1%)
     // This is:
-    //   - LARGER than savings (1.4e-7) - would NOT be candidate under raw comparison
-    //   - SMALLER than savings^0.25 (~6.1e-3) - IS a candidate under fourth root
+    //   - LARGER than costOfGrowth (1e-7) - should NOT be a candidate
     //
-    // We achieve impact ≈ 1e-3 using weight × activation:
-    //   structural_impact ≈ weight = 1e-2 (path to output)
+    // With normalised impact:
+    //   total_inbound to output = 1e-2 + 1.0 = 1.02
+    //   structural_impact = 1e-2 / 1.02 × 1.0 ≈ 0.0098 (0.98%)
     //   mean_activation = 0.1
-    //   activation_weighted_impact ≈ 1e-2 × 0.1 = 1e-3
+    //   activation_weighted_impact ≈ 0.0098 × 0.1 = 9.8e-4 >> 1e-7
     let creature = CreatureJson {
         input: 1,
         output: 1,
         neurons: vec![
             NeuronJson {
-                uuid: "between-thresholds".to_string(),
+                uuid: "moderate-impact".to_string(),
                 neuron_type: "hidden".to_string(),
                 squash: "IDENTITY".to_string(),
                 bias: 0.0,
@@ -412,19 +406,18 @@ fn regression_threshold_must_use_fourth_root_savings() {
             },
         ],
         synapses: vec![
-            // Input → hidden (3 synapses for savings = 1.4e-7)
             SynapseJson {
                 from_uuid: "input-0".to_string(),
-                to_uuid: "between-thresholds".to_string(),
+                to_uuid: "moderate-impact".to_string(),
                 weight: 0.5,
             },
-            // Hidden → output with moderate weight for ~1e-3 impact
+            // Hidden → output with small weight
             SynapseJson {
-                from_uuid: "between-thresholds".to_string(),
+                from_uuid: "moderate-impact".to_string(),
                 to_uuid: "output-0".to_string(),
-                weight: 1e-2, // structural_impact ≈ 1e-2
+                weight: 1e-2,
             },
-            // Direct input → output to ensure output neuron has records
+            // Direct input → output (dominates inbound)
             SynapseJson {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "output-0".to_string(),
@@ -436,22 +429,10 @@ fn regression_threshold_must_use_fourth_root_savings() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    // Records with mean_activation = 0.1 for our target neuron
+    // Records with mean_activation = 0.1
     let records = vec![
-        DiscoverRecord::new(
-            0,
-            "between-thresholds".to_string(),
-            Some(0.1), // activation
-            0.1,       // state
-            vec![0.1],
-        ),
-        DiscoverRecord::new(
-            1,
-            "between-thresholds".to_string(),
-            Some(0.1),
-            0.1,
-            vec![0.1],
-        ),
+        DiscoverRecord::new(0, "moderate-impact".to_string(), Some(0.1), 0.1, vec![0.1]),
+        DiscoverRecord::new(1, "moderate-impact".to_string(), Some(0.1), 0.1, vec![0.1]),
         DiscoverRecord::new(0, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
         DiscoverRecord::new(1, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
     ];
@@ -459,53 +440,57 @@ fn regression_threshold_must_use_fourth_root_savings() {
 
     let result = rank_focus_neurons(file_path, &creature, None).unwrap();
 
-    // Find the neuron in removal candidates
+    // Find the neuron in ranked neurons
+    let neuron = result
+        .neurons
+        .iter()
+        .find(|n| n.neuron_uuid == "moderate-impact")
+        .expect("moderate-impact should be in ranked neurons");
+
+    // Verify impact is above costOfGrowth
+    let cost_of_growth: f32 = 1e-7;
+    assert!(
+        neuron.activation_weighted_impact > cost_of_growth,
+        "activation_weighted_impact ({:.2e}) should be LARGER than costOfGrowth ({:.0e})",
+        neuron.activation_weighted_impact,
+        cost_of_growth
+    );
+
+    // Should NOT be a removal candidate (impact > costOfGrowth)
     let candidate = result
         .removal_candidates
         .iter()
-        .find(|c| c.neuron_uuid == "between-thresholds");
+        .find(|c| c.neuron_uuid == "moderate-impact");
 
-    // This neuron MUST be a removal candidate under the fourth root threshold
     assert!(
-        candidate.is_some(),
-        "Neuron with activation_weighted_impact (~1e-3) should be a removal candidate \
-         because 1e-3 < (1.4e-7)^0.25 ≈ 6.1e-3. Found candidates: {:?}",
+        candidate.is_none(),
+        "Neuron with activation_weighted_impact ({:.2e}) > costOfGrowth ({:.0e}) should NOT \
+         be a removal candidate. Found candidates: {:?}",
+        neuron.activation_weighted_impact,
+        cost_of_growth,
         result
             .removal_candidates
             .iter()
             .map(|c| format!("{}: {:.2e}", c.neuron_uuid, c.activation_weighted_impact))
             .collect::<Vec<_>>()
     );
-
-    let candidate = candidate.unwrap();
-
-    // Verify the impact is in the expected range (between savings and savings^0.25)
-    let savings = candidate.removal_savings;
-    let fourth_root_savings = savings.sqrt().sqrt(); // savings^0.25
-
-    assert!(
-        candidate.activation_weighted_impact > savings,
-        "activation_weighted_impact ({:.2e}) should be LARGER than raw savings ({:.2e}) - \
-         this test specifically targets the gap between savings and savings^0.25",
-        candidate.activation_weighted_impact,
-        savings
-    );
-
-    assert!(
-        candidate.activation_weighted_impact < fourth_root_savings,
-        "activation_weighted_impact ({:.2e}) should be SMALLER than savings^0.25 ({:.2e}) - \
-         this is why it qualifies as a removal candidate",
-        candidate.activation_weighted_impact,
-        fourth_root_savings
-    );
 }
 
 /// Test that the removal reason includes synapse count information.
 #[test]
 fn test_removal_reason_includes_synapse_savings() {
-    // Network with a neuron that should be a removal candidate
+    // Network with a neuron that should be a removal candidate.
+    // To achieve truly negligible impact, we need:
+    //   - Small weight relative to other inputs to output
+    //   - Low activation
+    //
+    // With normalised impact:
+    //   structural_impact = |weight| / total_inbound × downstream_impact
+    //   total_inbound to output = 1e-10 + 10.0 ≈ 10.0
+    //   structural_impact ≈ 1e-10 / 10.0 × 1.0 = 1e-11
+    //   activation_weighted_impact = 1e-11 × 1e-5 = 1e-16 << 1e-7 ✓
     let creature = CreatureJson {
-        input: 1,
+        input: 2,
         output: 1,
         neurons: vec![
             NeuronJson {
@@ -525,12 +510,19 @@ fn test_removal_reason_includes_synapse_savings() {
             SynapseJson {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "negligible".to_string(),
-                weight: 1e-10, // Extremely small
+                weight: 1e-10,
             },
+            // Negligible's synapse to output has tiny weight
             SynapseJson {
                 from_uuid: "negligible".to_string(),
                 to_uuid: "output-0".to_string(),
-                weight: 1e-10, // Extremely small
+                weight: 1e-10,
+            },
+            // Dominant synapse to output (makes negligible's fraction tiny)
+            SynapseJson {
+                from_uuid: "input-1".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 10.0,
             },
         ],
     };
@@ -538,9 +530,10 @@ fn test_removal_reason_includes_synapse_savings() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
+    // Tiny activation ensures activation_weighted_impact << costOfGrowth
     let records = vec![
-        DiscoverRecord::new(0, "negligible".to_string(), Some(0.5), 0.5, vec![0.1]),
-        DiscoverRecord::new(1, "negligible".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(0, "negligible".to_string(), Some(1e-5), 1e-5, vec![0.1]),
+        DiscoverRecord::new(1, "negligible".to_string(), Some(1e-5), 1e-5, vec![0.1]),
         DiscoverRecord::new(0, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
         DiscoverRecord::new(1, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
     ];
@@ -561,7 +554,7 @@ fn test_removal_reason_includes_synapse_savings() {
         result
             .removal_candidates
             .iter()
-            .map(|c| &c.neuron_uuid)
+            .map(|c| format!("{}: {:.2e}", c.neuron_uuid, c.activation_weighted_impact))
             .collect::<Vec<_>>()
     );
 

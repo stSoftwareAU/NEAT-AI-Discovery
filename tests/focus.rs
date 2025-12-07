@@ -386,9 +386,9 @@ fn test_disconnected_neurons_are_removal_candidates() {
 }
 
 #[test]
-fn test_high_impact_neurons_sorted_last_in_removal_candidates() {
-    // Scenario: All neurons are returned as removal candidates, but high-impact
-    // neurons should be sorted LAST (lowest impact first).
+fn test_high_impact_neurons_not_returned_as_removal_candidates() {
+    // Scenario: High impact neurons (impact >= costOfGrowth) should NOT be
+    // returned as removal candidates - only neurons below threshold qualify.
     let creature = create_creature(
         vec![
             ("input-0", "input"),
@@ -404,7 +404,7 @@ fn test_high_impact_neurons_sorted_last_in_removal_candidates() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    // Both have high error, but both have high impact
+    // Both have high error, but both have high impact (well above costOfGrowth 1e-7)
     let records = create_records(vec![
         ("hidden-1", 100.0), // Very high error, ~100% impact
         ("output-0", 100.0), // Very high error, 100% impact
@@ -413,27 +413,23 @@ fn test_high_impact_neurons_sorted_last_in_removal_candidates() {
 
     let result = rank_focus_neurons(file_path, &creature, None).unwrap();
 
-    // All neurons returned as candidates, but they have high impact so would be
-    // poor choices for removal. The sorting puts lowest impact first.
+    // High impact neurons should NOT be removal candidates
+    // Both hidden-1 and output-0 have activation_weighted_impact >> 1e-7
     assert!(
-        !result.removal_candidates.is_empty(),
-        "All neurons should be returned as removal candidates"
+        result.removal_candidates.is_empty(),
+        "High impact neurons should NOT be removal candidates. Found: {:?}",
+        result
+            .removal_candidates
+            .iter()
+            .map(|c| (&c.neuron_uuid, c.activation_weighted_impact))
+            .collect::<Vec<_>>()
     );
-
-    // First candidate should have lowest impact
-    let first = &result.removal_candidates[0];
-    for candidate in &result.removal_candidates {
-        assert!(
-            first.activation_weighted_impact <= candidate.activation_weighted_impact,
-            "Candidates should be sorted by impact ascending"
-        );
-    }
 }
 
 #[test]
-fn test_lower_impact_neurons_sorted_before_higher_impact() {
-    // Scenario: All neurons returned as removal candidates, sorted by impact.
-    // Lower impact neurons should appear first (better removal candidates).
+fn test_only_low_impact_neurons_returned_as_removal_candidates() {
+    // Scenario: Only neurons with activation_weighted_impact < costOfGrowth (1e-7)
+    // are returned as removal candidates. High impact neurons are filtered out.
     let creature = create_creature(
         vec![
             ("input-0", "input"),
@@ -452,37 +448,29 @@ fn test_lower_impact_neurons_sorted_before_higher_impact() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
+    // Both neurons have normal activations (0.5), so their activation_weighted_impact
+    // will be structural_impact × 0.5:
+    // - low-impact: 0.05 × 0.5 = 0.025 (>> 1e-7, NOT a candidate)
+    // - connected: 0.95 × 0.5 = 0.475 (>> 1e-7, NOT a candidate)
     let records = create_records(vec![
-        ("low-impact", 0.1), // Low error, ~5% impact
-        ("connected", 10.0), // High error, high impact
-        ("output-0", 5.0),   // Moderate error, 100% impact
+        ("low-impact", 0.1), // Low error, ~5% impact × 0.5 activation = 0.025
+        ("connected", 10.0), // High error, 95% impact × 0.5 activation = 0.475
+        ("output-0", 5.0),   // 100% impact × 0.5 activation = 0.5
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
     let result = rank_focus_neurons(file_path, &creature, None).unwrap();
 
-    // All neurons returned as candidates
+    // All neurons have impact >> costOfGrowth, so none should be removal candidates
     assert!(
-        !result.removal_candidates.is_empty(),
-        "All neurons should be returned as removal candidates"
+        result.removal_candidates.is_empty(),
+        "Neurons with activation_weighted_impact >> costOfGrowth should NOT be removal candidates. Found: {:?}",
+        result
+            .removal_candidates
+            .iter()
+            .map(|c| (&c.neuron_uuid, c.activation_weighted_impact))
+            .collect::<Vec<_>>()
     );
-
-    // low-impact neuron should be sorted before connected neuron (lower impact first)
-    let low_impact_pos = result
-        .removal_candidates
-        .iter()
-        .position(|c| c.neuron_uuid == "low-impact");
-    let connected_pos = result
-        .removal_candidates
-        .iter()
-        .position(|c| c.neuron_uuid == "connected");
-
-    if let (Some(low_pos), Some(conn_pos)) = (low_impact_pos, connected_pos) {
-        assert!(
-            low_pos < conn_pos,
-            "low-impact neuron (5%) should be sorted before connected neuron (95%)"
-        );
-    }
 }
 
 #[test]
@@ -632,15 +620,15 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         high_act.activation_weighted_impact
     );
 
-    // Both neurons are returned as removal candidates, but high-activation should be
-    // sorted AFTER low-activation because it has higher impact
+    // high-activation should NOT be a removal candidate (impact 0.1 >> 1e-7)
     let high_act_removal = result
         .removal_candidates
         .iter()
         .find(|c| c.neuron_uuid == "high-activation");
     assert!(
-        high_act_removal.is_some(),
-        "high-activation should be in removal candidates (all neurons returned)"
+        high_act_removal.is_none(),
+        "high-activation should NOT be a removal candidate (impact {:.2e} >> costOfGrowth 1e-7)",
+        high_act.activation_weighted_impact
     );
 
     // Verify low-activation neuron has low activation-weighted impact
@@ -660,33 +648,23 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         low_act.activation_weighted_impact
     );
 
-    // low-activation SHOULD be a removal candidate
+    // low-activation SHOULD be a removal candidate (impact 1e-15 << 1e-7)
     let low_act_removal = result
         .removal_candidates
         .iter()
         .find(|c| c.neuron_uuid == "low-activation");
     assert!(
         low_act_removal.is_some(),
-        "low-activation SHOULD be a removal candidate"
+        "low-activation SHOULD be a removal candidate (impact {:.2e} < costOfGrowth 1e-7)",
+        low_act.activation_weighted_impact
     );
 
-    // low-activation should be sorted BEFORE high-activation (lower impact first)
-    let low_pos = result
-        .removal_candidates
-        .iter()
-        .position(|c| c.neuron_uuid == "low-activation");
-    let high_pos = result
-        .removal_candidates
-        .iter()
-        .position(|c| c.neuron_uuid == "high-activation");
-    if let (Some(lp), Some(hp)) = (low_pos, high_pos) {
-        assert!(
-            lp < hp,
-            "low-activation (impact {:.2e}) should be sorted before high-activation (impact {:.2e})",
-            low_act.activation_weighted_impact,
-            high_act.activation_weighted_impact
-        );
-    }
+    // Only low-activation should be in removal candidates
+    assert_eq!(
+        result.removal_candidates.len(),
+        1,
+        "Only low-activation should be a removal candidate"
+    );
 }
 
 #[test]
