@@ -393,6 +393,27 @@ than they help the other are filtered out automatically.
 
 **Test added**: `tests/split_error_all_activations.rs` verifies the fix.
 
+#### Split-error fallback candidate fix (v0.1.136)
+
+**BUG FIX**: The split-error evaluation introduced in v0.1.135 had a threshold bug that
+broke the fallback mechanism. Candidates with small positive improvements (below threshold)
+were silently dropped instead of being returned as fallbacks.
+
+**Root cause**: `evaluate_activation_for_subset` initialised `best_net_improvement` to
+`threshold`, meaning candidates with `0 < improvement <= threshold` failed the comparison
+check and were never returned. The calling code expected to receive sub-threshold candidates
+for fallback tracking.
+
+**Impact**: For split-error cases (50/50 positive/negative errors), valid candidates with
+small improvements were dropped, causing the code to fall through to all-samples evaluation
+which may fail entirely for the cases split-error was designed to handle.
+
+**Fix**: Changed `best_net_improvement` initialisation from `threshold` to `0.0`. Any
+candidate with positive improvement is now returned. The calling code handles threshold
+vs fallback logic.
+
+**Test added**: `tests/split_error_fallback_candidates.rs` verifies the fix.
+
 #### Simplified candidate filtering (v0.1.134)
 
 **SIMPLIFICATION**: Removed all arbitrary percentage thresholds. The creature's score

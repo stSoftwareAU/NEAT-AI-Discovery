@@ -4686,12 +4686,10 @@ fn evaluate_activation_for_subset(
     target_uuid: &str,
     subset_samples: &[HelpfulSample], // Used to compute optimal weight
     all_samples: &[HelpfulSample],    // Used to compute net improvement
-    threshold: f32,
     spec: &ActivationCandidateSpec,
     target_squash: Option<&str>,
     total_baseline_error_sq: f32,
     target_activation_fn: Option<fn(f32) -> f32>,
-    _error_label: &str, // For debugging
 ) -> Result<Option<CandidateNeuronJson>> {
     if subset_samples.len() < MIN_NEURON_SAMPLE_COUNT {
         return Ok(None);
@@ -4701,7 +4699,11 @@ fn evaluate_activation_for_subset(
     let use_gpu = analyzer.device.is_some();
 
     let mut best_candidate: Option<CandidateNeuronJson> = None;
-    let mut best_net_improvement = threshold;
+    // v0.1.136: Fixed threshold bug - use 0.0 instead of threshold.
+    // The calling code in evaluate_activation_candidate handles threshold vs fallback
+    // logic. If we initialise to threshold here, candidates with 0 < improvement <= threshold
+    // are silently dropped, breaking the fallback mechanism for split-error evaluation.
+    let mut best_net_improvement = 0.0;
 
     for &orientation in spec.orientations {
         for &scale in spec.scales {
@@ -4870,10 +4872,7 @@ fn evaluate_activation_candidate(
 
     // Evaluate candidates from BOTH error subsets
     // This ensures we find the best direction even with split errors
-    for (error_samples, error_label) in [
-        (&positive_error_samples, "positive"),
-        (&negative_error_samples, "negative"),
-    ] {
+    for error_samples in [&positive_error_samples, &negative_error_samples] {
         if error_samples.len() < MIN_NEURON_SAMPLE_COUNT {
             continue;
         }
@@ -4894,12 +4893,10 @@ fn evaluate_activation_candidate(
             target_uuid,
             error_samples, // Compute weight from subset
             samples,       // Evaluate improvement on ALL samples
-            threshold,
             spec,
             target_squash,
             total_baseline_error_sq,
             target_activation_fn,
-            error_label,
         )? {
             // Track best and fallback candidates from split evaluation
             if candidate.expected_improvement_percentage > best_score {
