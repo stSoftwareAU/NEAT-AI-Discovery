@@ -15,6 +15,10 @@ use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use tempfile::NamedTempFile;
 
 /// Helper to create a creature with specified neurons (including squash) and synapses
+///
+/// Note: Input neurons in the `neurons` parameter are used only to count `input`.
+/// They are NOT included in `creature.neurons` as per the NEAT-AI data model -
+/// input neurons are represented only by the `creature.input` count.
 fn create_creature_with_squash(
     neurons: Vec<(&str, &str, &str)>, // (uuid, type, squash)
     synapses: Vec<(&str, &str, f32)>, // (from, to, weight)
@@ -22,8 +26,10 @@ fn create_creature_with_squash(
     let input_count = neurons.iter().filter(|(_, t, _)| *t == "input").count();
     let output_count = neurons.iter().filter(|(_, t, _)| *t == "output").count();
     CreatureJson {
+        // Filter out input neurons - they are only represented by creature.input count
         neurons: neurons
             .into_iter()
+            .filter(|(_, neuron_type, _)| *neuron_type != "input")
             .map(|(uuid, neuron_type, squash)| NeuronJson {
                 uuid: uuid.to_string(),
                 neuron_type: neuron_type.to_string(),

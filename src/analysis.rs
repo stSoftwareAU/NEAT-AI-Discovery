@@ -6950,21 +6950,10 @@ fn analyze_synapses_with_cache(
         }
     }
 
-    // Also discount the fallback candidate if it exists and targets a hidden neuron
-    if let Some(ref mut fallback) = helpful_fallback {
-        let is_hidden = neuron_type_map
-            .get(&fallback.to_neuron_uuid)
-            .map(|t| t != "output")
-            .unwrap_or(true);
-
-        if is_hidden {
-            if let Some(&impact) = impact_scores.get(&fallback.to_neuron_uuid) {
-                fallback.expected_improvement_percentage *= impact.clamp(0.0, 1.0);
-            } else {
-                fallback.expected_improvement_percentage *= 0.1;
-            }
-        }
-    }
+    // Note: helpful_fallback does NOT need separate discounting here.
+    // If helpful_results was empty, the fallback was already moved into it via .take()
+    // at line ~6877 and gets discounted in the loop above. If helpful_results was NOT
+    // empty, the fallback is intentionally not returned (we have better candidates).
 
     helpful_results.sort_by(|a, b| {
         b.expected_improvement_percentage

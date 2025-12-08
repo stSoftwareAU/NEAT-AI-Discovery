@@ -275,20 +275,10 @@ fn test_impact_calculation_with_multiple_incoming_connections() {
     // Test that impact is properly normalized when a neuron has multiple incoming connections
     // This tests the fix for the bug where impact was using absolute weights instead of normalized shares
 
+    // Note: Input neurons are NOT included in creature.neurons as per the NEAT-AI data model.
+    // They are represented only by the creature.input count.
     let creature = CreatureJson {
         neurons: vec![
-            NeuronJson {
-                uuid: "input-0".to_string(),
-                neuron_type: "input".to_string(),
-                squash: "IDENTITY".to_string(),
-                bias: 0.0,
-            },
-            NeuronJson {
-                uuid: "input-1".to_string(),
-                neuron_type: "input".to_string(),
-                squash: "IDENTITY".to_string(),
-                bias: 0.0,
-            },
             NeuronJson {
                 uuid: "hidden-a".to_string(),
                 neuron_type: "hidden".to_string(),
@@ -646,14 +636,9 @@ fn test_bias_values_are_activation_specific() {
 fn test_cumulative_impact_with_multiple_output_connections() {
     // Create a creature where a hidden neuron connects to TWO outputs
     // The impact should be the SUM of contributions to both outputs
+    // Note: Input neurons are NOT included in creature.neurons as per the NEAT-AI data model.
     let creature = CreatureJson {
         neurons: vec![
-            NeuronJson {
-                uuid: "input-0".to_string(),
-                neuron_type: "input".to_string(),
-                squash: "IDENTITY".to_string(),
-                bias: 0.0,
-            },
             NeuronJson {
                 uuid: "hub".to_string(),
                 neuron_type: "hidden".to_string(),
