@@ -371,6 +371,28 @@ when simulating, VALUE for linear approximation). This is verified by
 - `compute_relu_improvement_and_count`
 - `compute_activation_improvement_and_count`
 
+#### Split-error evaluation for all activations (v0.1.135)
+
+**BUG FIX**: When target neuron errors are split ~50/50 between positive and negative,
+the standard linear model would predict small positive improvements that were actually
+negative in practice. This caused systematic prediction failures for add-neuron candidates.
+
+**Root cause**: Computing optimal weight from ALL samples averages out when errors
+are balanced. The model predicts +0.08% but actual result is -0.08% because helping
+one group hurts the other equally.
+
+**Fix**: Extended ReLU's split-error handling to ALL activations:
+1. Split samples by error sign (positive vs negative)
+2. For EACH subset, compute optimal weight from that subset
+3. Evaluate NET improvement across ALL samples
+4. Only return candidates where net improvement > 0
+
+**Result**: `expected_improvement_percentage` is now the TRUE net improvement across
+all samples, not just a subset prediction. Candidates that would hurt one group more
+than they help the other are filtered out automatically.
+
+**Test added**: `tests/split_error_all_activations.rs` verifies the fix.
+
 #### Simplified candidate filtering (v0.1.134)
 
 **SIMPLIFICATION**: Removed all arbitrary percentage thresholds. The creature's score
