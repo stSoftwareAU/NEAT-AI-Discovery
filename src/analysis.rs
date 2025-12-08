@@ -4064,48 +4064,15 @@ fn upsert_candidate(
         weight_sign(candidate.outgoing_weight),
     );
 
-    // DEBUG: Log ReLU candidate insertions
-    if verbose_enabled() && candidate.squash == "ReLU" {
-        eprintln!(
-            "[NEAT-AI-Discovery][DEBUG] upsert_candidate ReLU: {} -> {} improvement={:.2}% key=({}, {}, {}, {}, {})",
-            candidate.source_neuron_uuid,
-            candidate.target_neuron_uuid,
-            candidate.expected_improvement_percentage * 100.0,
-            &candidate.source_neuron_uuid[..8.min(candidate.source_neuron_uuid.len())],
-            &candidate.target_neuron_uuid[..8.min(candidate.target_neuron_uuid.len())],
-            candidate.squash,
-            weight_sign(candidate.incoming_weight),
-            weight_sign(candidate.outgoing_weight),
-        );
-    }
-
     match map.entry(key) {
         Entry::Occupied(mut entry) => {
-            let existing = entry.get();
-            if candidate.expected_improvement_percentage > existing.expected_improvement_percentage
+            if candidate.expected_improvement_percentage
+                > entry.get().expected_improvement_percentage
             {
-                if verbose_enabled() && candidate.squash == "ReLU" {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][DEBUG] ReLU replacing existing {} ({:.2}% -> {:.2}%)",
-                        existing.squash,
-                        existing.expected_improvement_percentage * 100.0,
-                        candidate.expected_improvement_percentage * 100.0,
-                    );
-                }
                 entry.insert(candidate);
-            } else if verbose_enabled() && candidate.squash == "ReLU" {
-                eprintln!(
-                    "[NEAT-AI-Discovery][DEBUG] ReLU NOT replacing {} (existing {:.2}% >= new {:.2}%)",
-                    existing.squash,
-                    existing.expected_improvement_percentage * 100.0,
-                    candidate.expected_improvement_percentage * 100.0,
-                );
             }
         }
         Entry::Vacant(entry) => {
-            if verbose_enabled() && candidate.squash == "ReLU" {
-                eprintln!("[NEAT-AI-Discovery][DEBUG] ReLU inserted as NEW entry",);
-            }
             entry.insert(candidate);
         }
     }
@@ -5869,32 +5836,6 @@ fn analyze_neurons_with_cache(
         eprintln!("[NEAT-AI-Discovery][verbose] analyse_neurons reached analysis deadline; returning partial results.");
     }
 
-    // DEBUG: Log contents of helpful_map before conversion
-    if verbose_enabled() {
-        let relu_count = helpful_map.values().filter(|c| c.squash == "ReLU").count();
-        let total_count = helpful_map.len();
-        eprintln!(
-            "[NEAT-AI-Discovery][DEBUG] helpful_map contains {total_count} total candidates, {relu_count} are ReLU"
-        );
-        // Log top 5 by improvement (including squash type)
-        let mut sorted_preview: Vec<_> = helpful_map.values().collect();
-        sorted_preview.sort_by(|a, b| {
-            b.expected_improvement_percentage
-                .partial_cmp(&a.expected_improvement_percentage)
-                .unwrap_or(Ordering::Equal)
-        });
-        for (i, c) in sorted_preview.iter().take(10).enumerate() {
-            eprintln!(
-                "[NEAT-AI-Discovery][DEBUG] Top {} in map: {} {} -> {} improvement={:.2}%",
-                i + 1,
-                c.squash,
-                &c.source_neuron_uuid[..12.min(c.source_neuron_uuid.len())],
-                &c.target_neuron_uuid[..12.min(c.target_neuron_uuid.len())],
-                c.expected_improvement_percentage * 100.0
-            );
-        }
-    }
-
     let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
 
     // Apply impact-based discounting for hidden neurons (v0.1.123)
@@ -5940,10 +5881,10 @@ fn analyze_neurons_with_cache(
         }
     }
 
-    // v0.1.134: Removed arbitrary MIN_FALLBACK_IMPROVEMENT filtering.
-    // The only criteria is: does the candidate improve the creature's score?
-    // TypeScript will decide if the improvement is worth the cost of growth.
-    // All candidates with positive improvement (after impact discounting) are returned.
+    // v0.1.134: No filtering needed after impact discounting.
+    // For valid creatures (validated by TypeScript), all hidden neurons have a path to
+    // outputs, so zero/negative impact is mathematically impossible. TypeScript will
+    // decide if the improvement is worth the cost of growth by measuring actual score.
 
     helpful_results.sort_by(|a, b| {
         b.expected_improvement_percentage
@@ -5951,46 +5892,8 @@ fn analyze_neurons_with_cache(
             .unwrap_or(Ordering::Equal)
     });
 
-    // DEBUG: Log after sorting
-    if verbose_enabled() && !helpful_results.is_empty() {
-        eprintln!(
-            "[NEAT-AI-Discovery][DEBUG] After sorting, top candidate: {} {} -> {} improvement={:.2}%",
-            helpful_results[0].squash,
-            &helpful_results[0].source_neuron_uuid[..12.min(helpful_results[0].source_neuron_uuid.len())],
-            &helpful_results[0].target_neuron_uuid[..12.min(helpful_results[0].target_neuron_uuid.len())],
-            helpful_results[0].expected_improvement_percentage * 100.0
-        );
-    }
-
     if let Some(limit) = input.max_candidates {
         helpful_results.truncate(limit);
-    }
-
-    // DEBUG: Log final count after truncation
-    if verbose_enabled() {
-        let relu_count = helpful_results
-            .iter()
-            .filter(|c| c.squash == "ReLU")
-            .count();
-        eprintln!(
-            "[NEAT-AI-Discovery][DEBUG] Returning {} candidates, {} are ReLU",
-            helpful_results.len(),
-            relu_count
-        );
-        // Log ALL returned candidates
-        for (i, c) in helpful_results.iter().enumerate() {
-            eprintln!(
-                "[NEAT-AI-Discovery][DEBUG] RETURNED[{}]: {} {} -> {} improvement={:.4}% bias={:.4} inW={:.4} outW={:.4}",
-                i,
-                c.squash,
-                &c.source_neuron_uuid,
-                &c.target_neuron_uuid[..20.min(c.target_neuron_uuid.len())],
-                c.expected_improvement_percentage * 100.0,
-                c.bias,
-                c.incoming_weight,
-                c.outgoing_weight,
-            );
-        }
     }
 
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
