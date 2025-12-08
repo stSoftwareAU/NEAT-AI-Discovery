@@ -6879,6 +6879,93 @@ fn analyze_synapses_with_cache(
             helpful_results.push(candidate);
         }
     }
+
+    // Apply impact-based discounting for synapse candidates targeting hidden neurons (v0.1.133)
+    // This makes Rust the single source of truth for creature-level expected improvement.
+    // TypeScript no longer needs to re-calculate impact - just use the returned value directly.
+    //
+    // Output neurons have impact = 1.0 (no discount).
+    // Hidden neurons have impact in [0, 1] based on their weighted paths to outputs.
+    let impact_scores = compute_impacts_public(&input.creature);
+    let neuron_type_map: HashMap<String, String> = input
+        .creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.clone(), n.neuron_type.clone()))
+        .collect();
+
+    // Discount helpful synapse candidates
+    for candidate in &mut helpful_results {
+        let is_hidden = neuron_type_map
+            .get(&candidate.to_neuron_uuid)
+            .map(|t| t != "output")
+            .unwrap_or(true); // Default to hidden if type unknown
+
+        if is_hidden {
+            if let Some(&impact) = impact_scores.get(&candidate.to_neuron_uuid) {
+                let discount = impact.clamp(0.0, 1.0);
+                let original = candidate.expected_improvement_percentage;
+                candidate.expected_improvement_percentage *= discount;
+                if verbose_enabled() {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Synapse candidate → {} discounted by impact {:.3}: \
+                        {:.4}% → {:.4}%",
+                        &candidate.to_neuron_uuid[..12.min(candidate.to_neuron_uuid.len())],
+                        discount,
+                        original * 100.0,
+                        candidate.expected_improvement_percentage * 100.0
+                    );
+                }
+            } else {
+                // No impact score means disconnected from outputs - heavy discount
+                let original = candidate.expected_improvement_percentage;
+                candidate.expected_improvement_percentage *= 0.1;
+                if verbose_enabled() {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Synapse candidate → {} has no impact score (disconnected?). \
+                        Applying 90% discount: {:.4}% → {:.4}%",
+                        &candidate.to_neuron_uuid[..12.min(candidate.to_neuron_uuid.len())],
+                        original * 100.0,
+                        candidate.expected_improvement_percentage * 100.0
+                    );
+                }
+            }
+        }
+    }
+
+    // Discount harmful synapse candidates (same logic)
+    for candidate in &mut harmful_results {
+        let is_hidden = neuron_type_map
+            .get(&candidate.to_neuron_uuid)
+            .map(|t| t != "output")
+            .unwrap_or(true);
+
+        if is_hidden {
+            if let Some(&impact) = impact_scores.get(&candidate.to_neuron_uuid) {
+                let discount = impact.clamp(0.0, 1.0);
+                candidate.expected_improvement_percentage *= discount;
+            } else {
+                candidate.expected_improvement_percentage *= 0.1;
+            }
+        }
+    }
+
+    // Also discount the fallback candidate if it exists and targets a hidden neuron
+    if let Some(ref mut fallback) = helpful_fallback {
+        let is_hidden = neuron_type_map
+            .get(&fallback.to_neuron_uuid)
+            .map(|t| t != "output")
+            .unwrap_or(true);
+
+        if is_hidden {
+            if let Some(&impact) = impact_scores.get(&fallback.to_neuron_uuid) {
+                fallback.expected_improvement_percentage *= impact.clamp(0.0, 1.0);
+            } else {
+                fallback.expected_improvement_percentage *= 0.1;
+            }
+        }
+    }
+
     helpful_results.sort_by(|a, b| {
         b.expected_improvement_percentage
             .partial_cmp(&a.expected_improvement_percentage)
