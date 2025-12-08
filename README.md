@@ -631,6 +631,34 @@ messages like:
 [NEAT-AI-Discovery][verbose] Using threshold-crossing model for 2 STEP/BIPOLAR neurons: [...]
 ```
 
+#### Synapse candidate impact discounting (v0.1.133)
+
+**IMPORTANT**: The `expectedImprovementPercentage` field in synapse candidates is now
+**creature-level**, not neuron-level. This makes Rust the **single source of truth**
+for expected improvement calculations.
+
+| Candidate Type | Impact Discounted? | TypeScript Action |
+|----------------|-------------------|-------------------|
+| **Neurons** | ✅ Yes (v0.1.123) | Use value directly |
+| **Synapses** | ✅ Yes (v0.1.133) | Use value directly |
+| **Removal** | ✅ Yes (built-in) | Use value directly |
+
+**How it works**:
+- Synapse candidates targeting **output neurons** have impact = 1.0 (no discount)
+- Synapse candidates targeting **hidden neurons** are discounted by the target's impact
+  score (0.0 to 1.0 based on weighted paths to outputs)
+
+**Example**: A synapse candidate improving a hidden neuron by 70% that has impact 0.1:
+- **Old (neuron-level)**: `expectedImprovementPercentage = 0.70` (70%)
+- **New (creature-level)**: `expectedImprovementPercentage = 0.07` (7%)
+
+**TypeScript should NOT re-calculate impact**. The returned `expectedImprovementPercentage`
+is the actual expected improvement on the creature's score. Simply use:
+```typescript
+const creatureLevelImprovement = candidate.expectedImprovementPercentage;
+// Don't multiply by getNeuronShare() or any other impact factor!
+```
+
 ## Verifying the installation
 
 Use the NEAT-AI helper script after copying the library:

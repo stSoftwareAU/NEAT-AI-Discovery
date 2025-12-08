@@ -18,6 +18,10 @@ use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use tempfile::NamedTempFile;
 
 /// Helper to create a simple creature with specified neurons and synapses
+///
+/// Note: Input neurons in the `neurons` parameter are used only to count `input`.
+/// They are NOT included in `creature.neurons` as per the NEAT-AI data model -
+/// input neurons are represented only by the `creature.input` count.
 fn create_creature(
     neurons: Vec<(&str, &str)>,       // (uuid, type)
     synapses: Vec<(&str, &str, f32)>, // (from, to, weight)
@@ -25,8 +29,10 @@ fn create_creature(
     let input_count = neurons.iter().filter(|(_, t)| *t == "input").count();
     let output_count = neurons.iter().filter(|(_, t)| *t == "output").count();
     CreatureJson {
+        // Filter out input neurons - they are only represented by creature.input count
         neurons: neurons
             .into_iter()
+            .filter(|(_, neuron_type)| *neuron_type != "input")
             .map(|(uuid, neuron_type)| NeuronJson {
                 uuid: uuid.to_string(),
                 neuron_type: neuron_type.to_string(),
@@ -726,14 +732,9 @@ fn test_processed_neurons_reports_accurately_when_some_neurons_missing_records()
     // Create a creature with 4 selectable neurons:
     // - hidden-1, hidden-2, hidden-3 (hidden neurons are selectable)
     // - output-0 (output neurons are also selectable, not just hidden)
+    // Note: Input neurons are NOT included in creature.neurons as per the NEAT-AI data model.
     let creature = CreatureJson {
         neurons: vec![
-            NeuronJson {
-                uuid: "input-0".to_string(),
-                neuron_type: "input".to_string(),
-                squash: "IDENTITY".to_string(),
-                bias: 0.0,
-            },
             NeuronJson {
                 uuid: "hidden-1".to_string(),
                 neuron_type: "hidden".to_string(),
