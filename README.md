@@ -282,6 +282,42 @@ ensures predictions match reality.
 This is verified by unit tests: `add_neuron_weight_must_include_bias_in_calculation`
 and integration test: `test_add_neuron_with_hard_tanh_target_uses_bias_aware_weight`.
 
+#### Tighter outgoing weight clamp (v0.1.138)
+
+**CRITICAL IMPROVEMENT**: Analysis of 2030 failed add-neuron candidates vs ~22 successful
+discoveries revealed that outgoing weights were being computed far too large.
+
+**Successful discoveries (survived evolution):**
+- |outgoing_weight|: 0.00002 to 0.03 (all < 0.05)
+- incoming/outgoing ratio: 71x to 104,000x
+- Example: incoming=100, outgoing=-0.00096 (ratio 104,000x)
+
+**Failed discoveries:**
+- 36% had |outgoing_weight| > 0.05 (up to 50!)
+- Many had ratio < 10x (even 1:1)
+- Previous clamp: [-10.0, 10.0] was far too loose
+
+**The fix**: Three-part improvement to weight calculation:
+
+1. **Tighter outgoing weight clamp**: Changed from `[-10.0, 10.0]` to `[-0.1, 0.1]`.
+   New neurons should contribute a SMALL correction, not dominate the network.
+
+2. **Weight ratio validation**: For add-neuron candidates where `incoming_weight > 1.0`,
+   we now validate that `incoming/outgoing >= 50`. Candidates with nearly equal incoming
+   and outgoing weights are rejected as unreliable predictions.
+
+3. **Shared weight function**: Created `calculate_optimal_outgoing_weight()` to ensure
+   consistent weight calculation across add-synapse and add-neuron analysis (DRY).
+
+**Also fixed**: Split-error ReLU evaluation was computing bias from the error subset only,
+which could produce large positive biases that made the ReLU fire for ALL samples (defeating
+the purpose of split-error). Now uses bias=0 for split-error ReLU candidates.
+
+**Expected impact**: ~36% of failed candidates (with |outgoing_weight| > 0.05) will now
+produce tighter, more accurate predictions. The remaining candidates may still fail due
+to other factors (sample overfitting, bias-weight interaction, activation saturation)
+which can be addressed in follow-up improvements.
+
 #### VALUE domain error interpretation (v0.1.117)
 
 **CRITICAL BUG FIX**: The NEAT-AI TypeScript library stores errors in the **VALUE

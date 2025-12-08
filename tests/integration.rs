@@ -586,7 +586,8 @@ fn test_bias_values_are_activation_specific() {
         .expect("Neuron analysis should succeed");
 
     if !result.helpful_neurons.is_empty() {
-        // Check if we have ReLU candidates - they should have non-negative bias
+        // Check if we have ReLU candidates - they should have bias in extended range
+        // (extended to support large incoming weights up to 200)
         let relu_neurons: Vec<_> = result
             .helpful_neurons
             .iter()
@@ -596,19 +597,20 @@ fn test_bias_values_are_activation_specific() {
         if !relu_neurons.is_empty() {
             for neuron in relu_neurons {
                 assert!(
-                    neuron.bias >= -1.0,
-                    "ReLU neuron bias should be >= -1.0 (expanded range for thresholding), got {}",
+                    neuron.bias >= -25.0,
+                    "ReLU neuron bias should be >= -25.0 (extended range for large weights), got {}",
                     neuron.bias
                 );
                 assert!(
-                    neuron.bias <= 1.0,
-                    "ReLU neuron bias should be <= 1.0, got {}",
+                    neuron.bias <= 10.0,
+                    "ReLU neuron bias should be <= 10.0, got {}",
                     neuron.bias
                 );
             }
         }
 
-        // Check if we have TANH or LOGISTIC candidates - they should have symmetric range
+        // Check if we have TANH or LOGISTIC candidates - they should have symmetric extended range
+        // (extended to support large incoming weights up to 200)
         let symmetric_neurons: Vec<_> = result
             .helpful_neurons
             .iter()
@@ -618,8 +620,8 @@ fn test_bias_values_are_activation_specific() {
         if !symmetric_neurons.is_empty() {
             for neuron in symmetric_neurons {
                 assert!(
-                    neuron.bias >= -1.0 && neuron.bias <= 1.0,
-                    "{} neuron bias should be in [-1.0, 1.0], got {}",
+                    neuron.bias >= -10.0 && neuron.bias <= 10.0,
+                    "{} neuron bias should be in [-10.0, 10.0], got {}",
                     neuron.squash,
                     neuron.bias
                 );
