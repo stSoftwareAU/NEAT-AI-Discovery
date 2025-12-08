@@ -395,22 +395,31 @@ than they help the other are filtered out automatically.
 
 #### Split-error fallback candidate fix (v0.1.136)
 
-**BUG FIX**: The split-error evaluation introduced in v0.1.135 had a threshold bug that
+**BUG FIX #1**: The split-error evaluation introduced in v0.1.135 had a threshold bug that
 broke the fallback mechanism. Candidates with small positive improvements (below threshold)
 were silently dropped instead of being returned as fallbacks.
 
 **Root cause**: `evaluate_activation_for_subset` initialised `best_net_improvement` to
 `threshold`, meaning candidates with `0 < improvement <= threshold` failed the comparison
-check and were never returned. The calling code expected to receive sub-threshold candidates
-for fallback tracking.
+check and were never returned.
 
-**Impact**: For split-error cases (50/50 positive/negative errors), valid candidates with
-small improvements were dropped, causing the code to fall through to all-samples evaluation
-which may fail entirely for the cases split-error was designed to handle.
+**Fix**: Changed `best_net_improvement` initialisation from `threshold` to `0.0`.
 
-**Fix**: Changed `best_net_improvement` initialisation from `threshold` to `0.0`. Any
-candidate with positive improvement is now returned. The calling code handles threshold
-vs fallback logic.
+**BUG FIX #2**: When split-error evaluation was attempted (both positive and negative error
+subsets had enough samples) but found NO candidates with positive net improvement, the code
+incorrectly fell back to all-samples evaluation. This produced unreliable small-improvement
+predictions (~0.05%) that consistently failed in production.
+
+**Root cause**: When errors are truly split ~50/50 AND source activations don't correlate
+with error sign, there's NO good weight. Any weight helps one group but hurts the other
+equally. Split-error correctly rejects these candidates. But all-samples would then compute
+a weak weight (due to error cancellation) and return small positive predictions that were
+within the model's error margin - essentially noise.
+
+**Fix**: Track whether split-error evaluation was properly attempted. If both subsets had
+enough samples but NEITHER produced candidates, return None instead of falling through
+to all-samples. The all-samples fallback is now ONLY used when errors aren't clearly split
+(e.g., all positive, all negative, or one subset too small).
 
 **Test added**: `tests/split_error_fallback_candidates.rs` verifies the fix.
 

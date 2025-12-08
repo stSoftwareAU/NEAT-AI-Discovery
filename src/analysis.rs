@@ -4870,6 +4870,15 @@ fn evaluate_activation_candidate(
     // Get target activation function for net improvement calculation
     let target_activation_fn = get_target_simulation_fn(samples, target_squash);
 
+    // v0.1.136: Track whether split-error evaluation was properly attempted.
+    // If BOTH subsets had enough samples but NEITHER produced candidates,
+    // the errors are truly split and there's no reliable weight direction.
+    // In this case, we should NOT fall back to all-samples evaluation,
+    // which would produce unreliable small-improvement predictions.
+    let positive_subset_valid = positive_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT;
+    let negative_subset_valid = negative_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT;
+    let split_error_attempted = positive_subset_valid && negative_subset_valid;
+
     // Evaluate candidates from BOTH error subsets
     // This ensures we find the best direction even with split errors
     for error_samples in [&positive_error_samples, &negative_error_samples] {
@@ -4917,8 +4926,19 @@ fn evaluate_activation_candidate(
         return Ok(best_candidate.or(fallback_candidate));
     }
 
-    // Fall back to original ALL-samples evaluation for cases where errors
-    // aren't clearly split (e.g., all positive or all negative errors)
+    // v0.1.136: If split-error evaluation was properly attempted (both subsets
+    // had enough samples) but found NOTHING, don't fall back to all-samples.
+    // The fact that neither subset produced candidates with positive net improvement
+    // means there's no reliable weight - any weight that helps one subset hurts
+    // the other by at least as much. All-samples would produce unreliable
+    // small-improvement predictions that fail in production.
+    if split_error_attempted {
+        return Ok(None);
+    }
+
+    // Fall back to original ALL-samples evaluation ONLY for cases where errors
+    // aren't clearly split (e.g., all positive or all negative errors, or
+    // one subset has too few samples)
 
     let use_gpu = analyzer.device.is_some();
     for &orientation in spec.orientations {
