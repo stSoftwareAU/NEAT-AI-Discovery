@@ -4672,6 +4672,154 @@ fn evaluate_relu_candidates_split(
     Ok(result)
 }
 
+/// Helper for split-error evaluation: compute optimal weight from subset, evaluate on all samples.
+///
+/// This is the core of the split-error fix for non-ReLU activations. By computing
+/// the optimal weight from a specific error subset (positive or negative), we get
+/// a weight that's tuned to help that subset. We then evaluate the NET improvement
+/// across ALL samples to ensure the candidate doesn't hurt the other subset more
+/// than it helps the target subset.
+#[allow(clippy::too_many_arguments)]
+fn evaluate_activation_for_subset(
+    analyzer: &GpuAnalyzer,
+    source_uuid: &str,
+    target_uuid: &str,
+    subset_samples: &[HelpfulSample], // Used to compute optimal weight
+    all_samples: &[HelpfulSample],    // Used to compute net improvement
+    spec: &ActivationCandidateSpec,
+    target_squash: Option<&str>,
+    total_baseline_error_sq: f32,
+    target_activation_fn: Option<fn(f32) -> f32>,
+) -> Result<Option<CandidateNeuronJson>> {
+    if subset_samples.len() < MIN_NEURON_SAMPLE_COUNT {
+        return Ok(None);
+    }
+
+    let activation_type = activation_name_to_gpu_id(spec.name);
+    let use_gpu = analyzer.device.is_some();
+
+    let mut best_candidate: Option<CandidateNeuronJson> = None;
+    // v0.1.136: Fixed threshold bug - use 0.0 instead of threshold.
+    // The calling code in evaluate_activation_candidate handles threshold vs fallback
+    // logic. If we initialise to threshold here, candidates with 0 < improvement <= threshold
+    // are silently dropped, breaking the fallback mechanism for split-error evaluation.
+    let mut best_net_improvement = 0.0;
+
+    for &orientation in spec.orientations {
+        for &scale in spec.scales {
+            let incoming_weight = orientation * scale;
+
+            // Compute optimal weight from SUBSET samples
+            let (sum_activation_sq, sum_error_activation) = if use_gpu {
+                match analyzer.evaluate_activation_gpu(
+                    subset_samples,
+                    activation_type,
+                    orientation,
+                    scale,
+                ) {
+                    Ok(result) => (result.0, result.1),
+                    Err(_) => {
+                        // Fall back to CPU
+                        let mut sum_act_sq = 0.0;
+                        let mut sum_err_act = 0.0;
+                        for sample in subset_samples {
+                            let pre_activation = incoming_weight * sample.activation;
+                            let output = (spec.activation)(pre_activation);
+                            if output.is_finite() {
+                                sum_act_sq += output * output;
+                                sum_err_act += output * sample.avg_error;
+                            }
+                        }
+                        (sum_act_sq, sum_err_act)
+                    }
+                }
+            } else {
+                let mut sum_act_sq = 0.0;
+                let mut sum_err_act = 0.0;
+                for sample in subset_samples {
+                    let pre_activation = incoming_weight * sample.activation;
+                    let output = (spec.activation)(pre_activation);
+                    if output.is_finite() {
+                        sum_act_sq += output * output;
+                        sum_err_act += output * sample.avg_error;
+                    }
+                }
+                (sum_act_sq, sum_err_act)
+            };
+
+            if sum_activation_sq <= EPSILON {
+                continue;
+            }
+
+            let linear_optimal_weight = sum_error_activation / (sum_activation_sq + EPSILON);
+            if !linear_optimal_weight.is_finite() || linear_optimal_weight.abs() <= EPSILON {
+                continue;
+            }
+
+            // Calculate optimal bias from subset
+            let outgoing_weight = linear_optimal_weight.clamp(-10.0, 10.0);
+            let optimal_bias = calculate_optimal_bias(
+                subset_samples,
+                incoming_weight,
+                outgoing_weight,
+                spec.activation,
+                spec.name,
+                None,
+                target_squash,
+            );
+
+            // CRITICAL: Evaluate NET improvement across ALL samples
+            // This ensures the candidate helps the target subset more than it hurts the other
+            let (net_improvement, improved_count, total_count) =
+                compute_activation_improvement_and_count(
+                    all_samples,
+                    incoming_weight,
+                    outgoing_weight,
+                    optimal_bias,
+                    spec.activation,
+                    total_baseline_error_sq,
+                    target_activation_fn,
+                );
+
+            // Only consider candidates with positive NET improvement
+            if net_improvement <= 0.0 {
+                continue;
+            }
+
+            // Apply validity filters
+            let absolute_improvement = net_improvement * total_baseline_error_sq;
+            if absolute_improvement < 0.001 {
+                continue;
+            }
+
+            if spec.name == "IDENTITY" && optimal_bias.abs() < 0.01 {
+                continue;
+            }
+
+            // Track best candidate
+            if net_improvement > best_net_improvement {
+                best_net_improvement = net_improvement;
+
+                let target_stats = NeuronStats::from_samples(all_samples).map(|s| s.to_json());
+                best_candidate = Some(CandidateNeuronJson {
+                    source_neuron_uuid: source_uuid.to_string(),
+                    target_neuron_uuid: target_uuid.to_string(),
+                    incoming_weight,
+                    outgoing_weight,
+                    squash: spec.name.to_string(),
+                    bias: optimal_bias,
+                    expected_improvement_percentage: net_improvement,
+                    improved_count,
+                    total_count,
+                    target_neuron_stats: target_stats,
+                });
+            }
+        }
+    }
+
+    Ok(best_candidate)
+}
+
 fn evaluate_activation_candidate(
     analyzer: &GpuAnalyzer,
     source_uuid: &str,
@@ -4692,13 +4840,85 @@ fn evaluate_activation_candidate(
     let mut fallback_candidate: Option<CandidateNeuronJson> = None;
     let mut fallback_score = f32::MIN;
 
-    // Compute total_baseline_error_sq once
+    // v0.1.135: Split-error evaluation for all activations (not just ReLU).
+    // When errors are split ~50/50 between positive and negative, computing
+    // optimal weight from ALL samples averages to near-zero, giving weak
+    // predictions that are often wrong in practice.
+    //
+    // The fix: split samples by error sign, compute optimal weight from each
+    // subset, then evaluate NET improvement across ALL samples.
+    let positive_error_samples: Vec<HelpfulSample> = samples
+        .iter()
+        .filter(|s| s.avg_error > EPSILON)
+        .copied()
+        .collect();
+
+    let negative_error_samples: Vec<HelpfulSample> = samples
+        .iter()
+        .filter(|s| s.avg_error < -EPSILON)
+        .copied()
+        .collect();
+
+    // Compute total_baseline_error_sq across ALL samples (for net improvement)
     let mut total_baseline_error_sq = 0.0;
     for sample in samples {
         if sample.avg_error.is_finite() {
             total_baseline_error_sq += sample.avg_error * sample.avg_error;
         }
     }
+
+    // Get target activation function for net improvement calculation
+    let target_activation_fn = get_target_simulation_fn(samples, target_squash);
+
+    // Evaluate candidates from BOTH error subsets
+    // This ensures we find the best direction even with split errors
+    for error_samples in [&positive_error_samples, &negative_error_samples] {
+        if error_samples.len() < MIN_NEURON_SAMPLE_COUNT {
+            continue;
+        }
+
+        // Compute baseline for this subset (used for weight calculation)
+        let subset_baseline_sq: f32 = error_samples
+            .iter()
+            .map(|s| s.avg_error * s.avg_error)
+            .sum();
+
+        if subset_baseline_sq <= EPSILON {
+            continue;
+        }
+
+        if let Some(candidate) = evaluate_activation_for_subset(
+            analyzer,
+            source_uuid,
+            target_uuid,
+            error_samples, // Compute weight from subset
+            samples,       // Evaluate improvement on ALL samples
+            spec,
+            target_squash,
+            total_baseline_error_sq,
+            target_activation_fn,
+        )? {
+            // Track best and fallback candidates from split evaluation
+            if candidate.expected_improvement_percentage > best_score {
+                best_score = candidate.expected_improvement_percentage;
+                best_candidate = Some(candidate.clone());
+            }
+            if candidate.expected_improvement_percentage > fallback_score
+                && candidate.expected_improvement_percentage > 0.0
+            {
+                fallback_score = candidate.expected_improvement_percentage;
+                fallback_candidate = Some(candidate);
+            }
+        }
+    }
+
+    // If split-error evaluation found candidates, return the best
+    if best_candidate.is_some() || fallback_candidate.is_some() {
+        return Ok(best_candidate.or(fallback_candidate));
+    }
+
+    // Fall back to original ALL-samples evaluation for cases where errors
+    // aren't clearly split (e.g., all positive or all negative errors)
 
     let use_gpu = analyzer.device.is_some();
     for &orientation in spec.orientations {

@@ -192,12 +192,11 @@ fn regression_hidden_neurons_must_be_analyzed_not_filtered() {
 /// REGRESSION TEST: Fallback candidates must meet minimum 2% improvement threshold.
 ///
 /// BUG (fixed in v0.1.123): Fallback candidates with very low predicted improvement
-/// (e.g., 0.16%) were returned, but at such low predictions the model's error margin
-/// (~±0.5%) is larger than the prediction itself. This caused actual results to be
-/// NEGATIVE (worse than baseline) while predictions were positive.
+/// v0.1.134: Removed the arbitrary 2% MIN_FALLBACK_IMPROVEMENT threshold.
+/// v0.1.135: Added split-error evaluation - expected_improvement_percentage is now
+/// the NET improvement across ALL samples, not just a subset.
 ///
-/// This test creates a scenario with weak correlation that would produce low
-/// improvement predictions, and verifies that such weak candidates are NOT returned.
+/// The only requirement is positive improvement. TypeScript evaluates actual score.
 #[test]
 fn regression_low_improvement_fallback_candidates_must_be_filtered() {
     skip_without_gpu!();
@@ -271,32 +270,28 @@ fn regression_low_improvement_fallback_candidates_must_be_filtered() {
 
     let result = analyze_neurons(&input).expect("Neuron analysis should succeed");
 
-    // Check all returned candidates - none should have < 2% improvement
+    // v0.1.134/v0.1.135: All returned candidates must have positive improvement.
+    // The expected_improvement_percentage is now the NET improvement across ALL samples
+    // (thanks to split-error evaluation), so TypeScript can trust this value directly.
     for candidate in &result.helpful_neurons {
         assert!(
-            candidate.expected_improvement_percentage >= 0.02,
-            "\n\n\
-            ╔══════════════════════════════════════════════════════════════════════════════╗\n\
-            ║  REGRESSION DETECTED: Low-confidence fallback candidate returned!            ║\n\
-            ╠══════════════════════════════════════════════════════════════════════════════╣\n\
-            ║  Candidate returned with only {:.2}% expected improvement.                   \n\
-            ║                                                                              ║\n\
-            ║  MIN_FALLBACK_IMPROVEMENT (2%) should have filtered this out.                ║\n\
-            ║  Candidates with < 2% predicted improvement are unreliable because           ║\n\
-            ║  the model's error margin (~±0.5%) exceeds the prediction itself.            ║\n\
-            ║                                                                              ║\n\
-            ║  This was fixed in v0.1.123.                                                 ║\n\
-            ║                                                                              ║\n\
-            ║  CHECK: MIN_FALLBACK_IMPROVEMENT = 0.02 in evaluate_activation_candidate()   ║\n\
-            ║                                                                              ║\n\
-            ║  Candidate: {} -> {} ({})                                                    \n\
-            ╚══════════════════════════════════════════════════════════════════════════════╝\n\n",
-            candidate.expected_improvement_percentage * 100.0,
+            candidate.expected_improvement_percentage > 0.0,
+            "Candidate should have positive expected improvement, got {:.4}%",
+            candidate.expected_improvement_percentage * 100.0
+        );
+        eprintln!(
+            "Candidate: {} -> {} ({}), improvement: {:.4}%",
             candidate.source_neuron_uuid,
             candidate.target_neuron_uuid,
-            candidate.squash
+            candidate.squash,
+            candidate.expected_improvement_percentage * 100.0
         );
     }
+
+    eprintln!(
+        "Test passed: {} candidates returned with positive improvement",
+        result.helpful_neurons.len()
+    );
 }
 
 /// REGRESSION TEST: Hidden neuron predictions must be discounted by impact.

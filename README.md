@@ -371,6 +371,49 @@ when simulating, VALUE for linear approximation). This is verified by
 - `compute_relu_improvement_and_count`
 - `compute_activation_improvement_and_count`
 
+#### Split-error evaluation for all activations (v0.1.135)
+
+**BUG FIX**: When target neuron errors are split ~50/50 between positive and negative,
+the standard linear model would predict small positive improvements that were actually
+negative in practice. This caused systematic prediction failures for add-neuron candidates.
+
+**Root cause**: Computing optimal weight from ALL samples averages out when errors
+are balanced. The model predicts +0.08% but actual result is -0.08% because helping
+one group hurts the other equally.
+
+**Fix**: Extended ReLU's split-error handling to ALL activations:
+1. Split samples by error sign (positive vs negative)
+2. For EACH subset, compute optimal weight from that subset
+3. Evaluate NET improvement across ALL samples
+4. Only return candidates where net improvement > 0
+
+**Result**: `expected_improvement_percentage` is now the TRUE net improvement across
+all samples, not just a subset prediction. Candidates that would hurt one group more
+than they help the other are filtered out automatically.
+
+**Test added**: `tests/split_error_all_activations.rs` verifies the fix.
+
+#### Split-error fallback candidate fix (v0.1.136)
+
+**BUG FIX**: The split-error evaluation introduced in v0.1.135 had a threshold bug that
+broke the fallback mechanism. Candidates with small positive improvements (below threshold)
+were silently dropped instead of being returned as fallbacks.
+
+**Root cause**: `evaluate_activation_for_subset` initialised `best_net_improvement` to
+`threshold`, meaning candidates with `0 < improvement <= threshold` failed the comparison
+check and were never returned. The calling code expected to receive sub-threshold candidates
+for fallback tracking.
+
+**Impact**: For split-error cases (50/50 positive/negative errors), valid candidates with
+small improvements were dropped, causing the code to fall through to all-samples evaluation
+which may fail entirely for the cases split-error was designed to handle.
+
+**Fix**: Changed `best_net_improvement` initialisation from `threshold` to `0.0`. Any
+candidate with positive improvement is now returned. The calling code handles threshold
+vs fallback logic.
+
+**Test added**: `tests/split_error_fallback_candidates.rs` verifies the fix.
+
 #### Simplified candidate filtering (v0.1.134)
 
 **SIMPLIFICATION**: Removed all arbitrary percentage thresholds. The creature's score
