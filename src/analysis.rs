@@ -404,11 +404,6 @@ pub enum NeuronNoCandidateReason {
     /// don't receive inputs - they always output a fixed value regardless of
     /// network state, so adding a connection to them has no effect.
     ConstantNeuronFiltered,
-    /// Candidates were found but all fell below MIN_FALLBACK_IMPROVEMENT (2%) after
-    /// impact-based discounting for hidden neurons. The raw predictions passed the
-    /// threshold, but after discounting by the neuron's impact score (distance from
-    /// outputs), the discounted predictions were too low to be reliable.
-    ImpactDiscountedBelowThreshold,
 }
 
 #[derive(Debug, Clone)]
@@ -897,9 +892,6 @@ struct NeuronDiagnosticEntry {
     /// Set to true when this neuron was filtered out because it's a constant neuron
     /// (constant neurons don't receive inputs - they always output a fixed value).
     constant_filtered: bool,
-    /// Set to true when candidates were found but all fell below MIN_FALLBACK_IMPROVEMENT
-    /// after impact-based discounting. This overrides `had_candidate` for reporting purposes.
-    impact_discounted_below_threshold: bool,
 }
 
 impl NeuronDiagnosticEntry {
@@ -916,7 +908,6 @@ impl NeuronDiagnosticEntry {
             hidden_filtered: false,
             input_filtered: false,
             constant_filtered: false,
-            impact_discounted_below_threshold: false,
         }
     }
 
@@ -1036,15 +1027,6 @@ impl NeuronDiagnostics {
         }
     }
 
-    /// Mark a neuron as having candidates that were all filtered out by impact discounting.
-    /// This is called when a hidden neuron had candidates found, but all fell below
-    /// MIN_FALLBACK_IMPROVEMENT (2%) after applying impact-based discounting.
-    fn mark_impact_discounted_below_threshold(&mut self, target_uuid: &str) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
-            entry.impact_discounted_below_threshold = true;
-        }
-    }
-
     fn emit_logs(&self) {
         if !self.log_enabled {
             return;
@@ -1158,38 +1140,10 @@ impl NeuronDiagnostics {
     fn no_candidate_summaries(&self) -> Vec<NeuronNoCandidateSummary> {
         self.entries
             .values()
-            // Include entries that either:
-            // 1. Never had a candidate (!had_candidate), OR
-            // 2. Had candidates but all were filtered by impact discounting
-            .filter(|entry| !entry.had_candidate || entry.impact_discounted_below_threshold)
+            // Include entries that never had a candidate
+            .filter(|entry| !entry.had_candidate)
             .map(|entry| {
-                // Check post-analysis filter FIRST - impact discounting takes precedence
-                // because it indicates candidates WERE found but then filtered out.
-                // This ensures neurons don't silently disappear from the response.
-                if entry.impact_discounted_below_threshold {
-                    return NeuronNoCandidateSummary {
-                        target_uuid: entry.target_uuid.clone(),
-                        reason: NeuronNoCandidateReason::ImpactDiscountedBelowThreshold,
-                        evaluated_sources: entry.evaluated_sources,
-                        sources_with_samples: entry.sources_with_samples,
-                        target_record_count: entry.target_record_count,
-                        detail: entry
-                            .best_rejection
-                            .as_ref()
-                            .map(|best| NeuronNoCandidateDetail {
-                                source_uuid: Some(best.source_uuid.clone()),
-                                orientation: best.orientation.map(|name| name.to_string()),
-                                sample_count: Some(best.sample_count),
-                                improved_count: None,
-                                worsened_count: None,
-                                expected_improvement: Some(best.expected_improvement),
-                                threshold: None,
-                                outgoing_weight: None,
-                            }),
-                    };
-                }
-
-                // Check pre-analysis filters NEXT - these take precedence over other reasons.
+                // Check pre-analysis filters FIRST - these take precedence over other reasons.
                 // These neurons are filtered out before analysis even begins, so they won't
                 // have any other diagnostic data (eligible sources, samples, etc.).
 
@@ -2041,7 +1995,7 @@ const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_WIDE,
         activation: gelu_activation,
-        min_improvement: 0.08,
+        min_improvement: 0.0, // v0.1.134: No arbitrary threshold - TypeScript decides
     },
     ActivationCandidateSpec {
         name: "ELU",
@@ -2062,14 +2016,14 @@ const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_WIDE,
         activation: softplus_activation,
-        min_improvement: 0.07,
+        min_improvement: 0.0, // v0.1.134: No arbitrary threshold - TypeScript decides
     },
     ActivationCandidateSpec {
         name: "LOGISTIC",
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_SMOOTH,
         activation: logistic_activation,
-        min_improvement: 0.05,
+        min_improvement: 0.0, // v0.1.134: No arbitrary threshold - TypeScript decides
     },
     ActivationCandidateSpec {
         name: "TANH",
@@ -2083,9 +2037,8 @@ const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_WIDE,
         activation: identity_activation,
-        // IDENTITY is just a pass-through - require meaningful improvement to justify
-        // adding a neuron instead of adjusting existing synapse weights
-        min_improvement: 0.05,
+        // v0.1.134: No arbitrary threshold - TypeScript decides if improvement is worth cost
+        min_improvement: 0.0,
     },
     ActivationCandidateSpec {
         name: "BIPOLAR",
@@ -4111,48 +4064,15 @@ fn upsert_candidate(
         weight_sign(candidate.outgoing_weight),
     );
 
-    // DEBUG: Log ReLU candidate insertions
-    if verbose_enabled() && candidate.squash == "ReLU" {
-        eprintln!(
-            "[NEAT-AI-Discovery][DEBUG] upsert_candidate ReLU: {} -> {} improvement={:.2}% key=({}, {}, {}, {}, {})",
-            candidate.source_neuron_uuid,
-            candidate.target_neuron_uuid,
-            candidate.expected_improvement_percentage * 100.0,
-            &candidate.source_neuron_uuid[..8.min(candidate.source_neuron_uuid.len())],
-            &candidate.target_neuron_uuid[..8.min(candidate.target_neuron_uuid.len())],
-            candidate.squash,
-            weight_sign(candidate.incoming_weight),
-            weight_sign(candidate.outgoing_weight),
-        );
-    }
-
     match map.entry(key) {
         Entry::Occupied(mut entry) => {
-            let existing = entry.get();
-            if candidate.expected_improvement_percentage > existing.expected_improvement_percentage
+            if candidate.expected_improvement_percentage
+                > entry.get().expected_improvement_percentage
             {
-                if verbose_enabled() && candidate.squash == "ReLU" {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][DEBUG] ReLU replacing existing {} ({:.2}% -> {:.2}%)",
-                        existing.squash,
-                        existing.expected_improvement_percentage * 100.0,
-                        candidate.expected_improvement_percentage * 100.0,
-                    );
-                }
                 entry.insert(candidate);
-            } else if verbose_enabled() && candidate.squash == "ReLU" {
-                eprintln!(
-                    "[NEAT-AI-Discovery][DEBUG] ReLU NOT replacing {} (existing {:.2}% >= new {:.2}%)",
-                    existing.squash,
-                    existing.expected_improvement_percentage * 100.0,
-                    candidate.expected_improvement_percentage * 100.0,
-                );
             }
         }
         Entry::Vacant(entry) => {
-            if verbose_enabled() && candidate.squash == "ReLU" {
-                eprintln!("[NEAT-AI-Discovery][DEBUG] ReLU inserted as NEW entry",);
-            }
             entry.insert(candidate);
         }
     }
@@ -5012,20 +4932,14 @@ fn evaluate_activation_candidate(
             }
 
             // =================================================================
-            // FALLBACK CANDIDATE (best seen so far, but requires minimum improvement)
+            // FALLBACK CANDIDATE (best seen so far with any positive improvement)
             // =================================================================
-            // CRITICAL: Fallback candidates must meet a MINIMUM improvement threshold.
-            // At very low predicted improvements (e.g., 0.16%), the prediction model's
-            // error margin becomes significant. A model error of ±0.5% can turn a
-            // +0.16% prediction into an actual -0.34% result (making things worse).
-            //
-            // We require at least 2% predicted improvement for fallback candidates to
-            // ensure reasonable prediction reliability. This is lower than the typical
-            // 10% threshold for best_candidate, but high enough to filter out noise.
-            const MIN_FALLBACK_IMPROVEMENT: f32 = 0.02; // 2% minimum for fallback
-
+            // Track the best candidate that didn't pass the main threshold.
+            // TypeScript will decide if the improvement is worth the cost of growth.
+            // We don't apply arbitrary minimum thresholds here - any positive
+            // improvement is returned and TypeScript handles candidate selection.
             if expected_improvement_percentage > fallback_score
-                && expected_improvement_percentage >= MIN_FALLBACK_IMPROVEMENT
+                && expected_improvement_percentage > 0.0
             {
                 fallback_score = expected_improvement_percentage;
 
@@ -5269,7 +5183,9 @@ fn analyze_neurons_with_cache(
     input: &AnalyzeNeuronsInput,
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeNeuronsResult> {
-    let threshold = input.improvement_threshold.unwrap_or(0.1);
+    // v0.1.134: Default threshold is 0 - return ALL positive improvements.
+    // TypeScript will decide which candidates are worth the cost of growth.
+    let threshold = input.improvement_threshold.unwrap_or(0.0);
     let ordered_neurons = build_ordered_neurons(&input.creature);
 
     // Build a lookup map for neuron squash functions to identify discrete targets
@@ -5914,36 +5830,10 @@ fn analyze_neurons_with_cache(
         .lock()
         .expect("Mutex poisoned: helpful_map")
         .clone();
-    let mut diagnostics = diagnostics.lock().expect("Mutex poisoned: diagnostics");
+    let diagnostics = diagnostics.lock().expect("Mutex poisoned: diagnostics");
 
     if analysis_timed_out && verbose_enabled() {
         eprintln!("[NEAT-AI-Discovery][verbose] analyse_neurons reached analysis deadline; returning partial results.");
-    }
-
-    // DEBUG: Log contents of helpful_map before conversion
-    if verbose_enabled() {
-        let relu_count = helpful_map.values().filter(|c| c.squash == "ReLU").count();
-        let total_count = helpful_map.len();
-        eprintln!(
-            "[NEAT-AI-Discovery][DEBUG] helpful_map contains {total_count} total candidates, {relu_count} are ReLU"
-        );
-        // Log top 5 by improvement (including squash type)
-        let mut sorted_preview: Vec<_> = helpful_map.values().collect();
-        sorted_preview.sort_by(|a, b| {
-            b.expected_improvement_percentage
-                .partial_cmp(&a.expected_improvement_percentage)
-                .unwrap_or(Ordering::Equal)
-        });
-        for (i, c) in sorted_preview.iter().take(10).enumerate() {
-            eprintln!(
-                "[NEAT-AI-Discovery][DEBUG] Top {} in map: {} {} -> {} improvement={:.2}%",
-                i + 1,
-                c.squash,
-                &c.source_neuron_uuid[..12.min(c.source_neuron_uuid.len())],
-                &c.target_neuron_uuid[..12.min(c.target_neuron_uuid.len())],
-                c.expected_improvement_percentage * 100.0
-            );
-        }
     }
 
     let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
@@ -5991,50 +5881,10 @@ fn analyze_neurons_with_cache(
         }
     }
 
-    // Re-filter discounted candidates against MIN_FALLBACK_IMPROVEMENT (v0.1.124)
-    // After impact discounting, hidden neuron candidates may fall below 2%.
-    // These low predictions are unreliable for the same reason as original fallbacks:
-    // the model's error margin (~±0.5%) exceeds the prediction itself.
-    const MIN_FALLBACK_IMPROVEMENT: f32 = 0.02; // 2% minimum - same as evaluate_activation_candidate
-
-    // Track which target neurons have candidates BEFORE filtering (v0.1.125 fix)
-    // This allows us to report when neurons lose ALL candidates due to impact discounting.
-    let targets_with_candidates_before: HashSet<String> = helpful_results
-        .iter()
-        .map(|c| c.target_neuron_uuid.clone())
-        .collect();
-
-    let pre_filter_count = helpful_results.len();
-    helpful_results.retain(|c| c.expected_improvement_percentage >= MIN_FALLBACK_IMPROVEMENT);
-    let filtered_count = pre_filter_count - helpful_results.len();
-    if filtered_count > 0 && verbose_enabled() {
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Filtered {filtered_count} candidate(s) that fell below \
-            {:.0}% MIN_FALLBACK_IMPROVEMENT after impact discounting",
-            MIN_FALLBACK_IMPROVEMENT * 100.0
-        );
-    }
-
-    // Find target neurons that had candidates but now have NONE after filtering (v0.1.125 fix)
-    // These neurons must appear in no_candidate_reasons, not silently disappear.
-    let targets_with_candidates_after: HashSet<String> = helpful_results
-        .iter()
-        .map(|c| c.target_neuron_uuid.clone())
-        .collect();
-
-    for target_uuid in &targets_with_candidates_before {
-        if !targets_with_candidates_after.contains(target_uuid) {
-            // This target had candidates but all were filtered out by impact discounting
-            diagnostics.mark_impact_discounted_below_threshold(target_uuid);
-            if verbose_enabled() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} lost ALL candidates after impact \
-                    discounting - will report ImpactDiscountedBelowThreshold",
-                    &target_uuid[..20.min(target_uuid.len())]
-                );
-            }
-        }
-    }
+    // v0.1.134: No filtering needed after impact discounting.
+    // For valid creatures (validated by TypeScript), all hidden neurons have a path to
+    // outputs, so zero/negative impact is mathematically impossible. TypeScript will
+    // decide if the improvement is worth the cost of growth by measuring actual score.
 
     helpful_results.sort_by(|a, b| {
         b.expected_improvement_percentage
@@ -6042,46 +5892,8 @@ fn analyze_neurons_with_cache(
             .unwrap_or(Ordering::Equal)
     });
 
-    // DEBUG: Log after sorting
-    if verbose_enabled() && !helpful_results.is_empty() {
-        eprintln!(
-            "[NEAT-AI-Discovery][DEBUG] After sorting, top candidate: {} {} -> {} improvement={:.2}%",
-            helpful_results[0].squash,
-            &helpful_results[0].source_neuron_uuid[..12.min(helpful_results[0].source_neuron_uuid.len())],
-            &helpful_results[0].target_neuron_uuid[..12.min(helpful_results[0].target_neuron_uuid.len())],
-            helpful_results[0].expected_improvement_percentage * 100.0
-        );
-    }
-
     if let Some(limit) = input.max_candidates {
         helpful_results.truncate(limit);
-    }
-
-    // DEBUG: Log final count after truncation
-    if verbose_enabled() {
-        let relu_count = helpful_results
-            .iter()
-            .filter(|c| c.squash == "ReLU")
-            .count();
-        eprintln!(
-            "[NEAT-AI-Discovery][DEBUG] Returning {} candidates, {} are ReLU",
-            helpful_results.len(),
-            relu_count
-        );
-        // Log ALL returned candidates
-        for (i, c) in helpful_results.iter().enumerate() {
-            eprintln!(
-                "[NEAT-AI-Discovery][DEBUG] RETURNED[{}]: {} {} -> {} improvement={:.4}% bias={:.4} inW={:.4} outW={:.4}",
-                i,
-                c.squash,
-                &c.source_neuron_uuid,
-                &c.target_neuron_uuid[..20.min(c.target_neuron_uuid.len())],
-                c.expected_improvement_percentage * 100.0,
-                c.bias,
-                c.incoming_weight,
-                c.outgoing_weight,
-            );
-        }
     }
 
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
@@ -6297,7 +6109,9 @@ fn analyze_synapses_with_cache(
     let mut rng = thread_rng();
     focus_order.shuffle(&mut rng);
 
-    let threshold = input.improvement_threshold.unwrap_or(0.1);
+    // v0.1.134: Default threshold is 0 - return ALL positive improvements.
+    // TypeScript will decide which candidates are worth the cost of growth.
+    let threshold = input.improvement_threshold.unwrap_or(0.0);
 
     // Collect all helpful evaluation work first for batching
     struct HelpfulWork {

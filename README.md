@@ -99,6 +99,47 @@ These steps ensure code quality, proper versioning, and that all tests pass befo
 
 ## Analysis workflow expectations
 
+### Discovery → Evolution Pipeline
+
+The discovery process works as follows:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  RUST (this library)                                                        │
+│  ─────────────────────                                                      │
+│  1. Find ALL candidates with positive expected improvement                  │
+│  2. Apply impact discounting (creature-level predictions)                   │
+│  3. Sort by expected improvement (best first)                               │
+│  4. Return candidates (optionally limited by max_candidates)                │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  TYPESCRIPT (NEAT-AI)                                                       │
+│  ────────────────────                                                       │
+│  1. Receive candidates from Rust (e.g., 100 candidates)                     │
+│  2. Select top N based on available CPUs (e.g., 10-20)                      │
+│  3. Re-score each candidate IN PARALLEL (apply mutation, measure score)     │
+│  4. Keep candidates that ACTUALLY improve the creature's score              │
+│  5. Return improved creatures to population                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  EVOLUTION                                                                  │
+│  ─────────                                                                  │
+│  • Improved creatures compete in the population                             │
+│  • Natural selection breeds out unsuccessful mutations                      │
+│  • No manual filtering needed - evolution handles it                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key principle**: Rust finds structural improvements that reduce error. TypeScript
+validates by measuring actual score. Evolution does the rest. No arbitrary thresholds
+or manual filtering - just physics and natural selection.
+
+### Detailed workflow
+
 - Call `analyze_synapses` once per focused neuron where practical. Passing a
   single `focus_neurons` entry keeps diagnostics easy to map back to the Deno
   request and mirrors how NEAT-AI orchestrates discovery.
@@ -330,40 +371,42 @@ when simulating, VALUE for linear approximation). This is verified by
 - `compute_relu_improvement_and_count`
 - `compute_activation_improvement_and_count`
 
-#### Fallback candidate minimum threshold (v0.1.123)
+#### Simplified candidate filtering (v0.1.134)
 
-**BUG FIX**: Add-neuron candidates with very low predicted improvements (e.g., 0.16%)
-were being returned as "fallback candidates" when no candidate passed the standard
-threshold (typically 10%). At such low predicted improvements, the model's error
-margin becomes significant relative to the prediction itself, causing actual results
-to often be **negative** (worse than baseline).
+**SIMPLIFICATION**: Removed all arbitrary percentage thresholds. The creature's score
+is the **only** measure that matters.
 
-**Example of the issue:**
-- Predicted improvement: +0.16%
-- Model error margin: ±0.5%
-- Possible actual result: -0.34% (making things worse)
+**Rust's job**:
+1. Find ALL candidates with positive expected error reduction
+2. Apply impact discounting (convert to creature-level predictions)
+3. Sort by expected improvement (best first)
+4. Return candidates to TypeScript
 
-**The fix**: Fallback candidates now require a minimum 2% predicted improvement
-(`MIN_FALLBACK_IMPROVEMENT = 0.02`). This filters out unreliable low-confidence
-predictions while still returning useful candidates that don't quite meet the
-standard threshold.
+**TypeScript's job**:
+1. Select top N candidates based on available CPUs
+2. Apply each candidate mutation and measure ACTUAL score change
+3. Keep candidates that improve the score
+4. Return improved creatures to the population
 
-| Candidate Type | Threshold | Purpose |
-|----------------|-----------|---------|
-| **Best candidate** | 10% (configurable) | High-confidence improvements |
-| **Fallback candidate** | 2% (fixed minimum) | Reasonable-confidence when no best found |
-| **Rejected** | < 2% | Too low to be reliable |
+**Evolution's job**:
+- Successful mutations compete in the population
+- Unsuccessful mutations get bred out naturally
+- No manual filtering needed
 
-This resolves the production issue where discovery returned many add-neuron
-candidates showing small positive expected improvements, but all resulted in
-actual error increases when applied.
+**Why no thresholds?** Previous versions had arbitrary thresholds (2%, 0.1%) that
+filtered candidates before TypeScript could evaluate them. This was wrong:
+- The cost of growth is ~1e-7 per neuron, ~1e-8 per synapse
+- Any measurable improvement easily exceeds this cost
+- The old 2% threshold was **10,000x too aggressive**
+- Candidates that looked "too small" in Rust could still improve the actual score
 
-#### Hidden neuron add-neuron analysis (v0.1.123, v0.1.124)
+**Current behaviour**: Return everything positive. Let TypeScript measure. Let evolution decide.
 
-**FEATURE**: Hidden neurons are now valid targets for add-neuron analysis.
-Previously, hidden neurons were filtered out entirely with a 100% failure rate.
-Investigation revealed this was caused by the same low-confidence fallback
-candidates issue (fixed above).
+#### Hidden neuron impact discounting (v0.1.123)
+
+**FEATURE**: Hidden neurons are valid targets for add-neuron and add-synapse analysis.
+Predictions are discounted by the neuron's impact score to give creature-level
+expected improvements.
 
 **How it works**:
 - **Output neurons**: Impact = 1.0 (direct contribution to score). No discount applied.
@@ -374,34 +417,8 @@ For a hidden neuron with impact 0.5:
 - Raw predicted improvement: 10%
 - Discounted improvement: 10% × 0.5 = 5%
 
-This discounting ensures hidden neuron predictions are appropriately penalised
-based on their distance from outputs in the network topology. Hidden neurons
-close to outputs (high impact) have more reliable predictions than those far
-from outputs (low impact).
-
-The impact score is computed using the existing `compute_impacts()` function
-from the focus module, which calculates normalised path weights through the
-network to all outputs.
-
-**v0.1.124 FIX**: After applying impact discounting, candidates are now
-re-filtered against `MIN_FALLBACK_IMPROVEMENT` (2%). Previously, a hidden neuron
-with 3% raw improvement and 0.3 impact would be discounted to 0.9% but still
-returned. This contradicts the low-confidence fallback fix - if 2% is the
-minimum for reliable predictions, discounted predictions below 2% are equally
-unreliable.
-
-**v0.1.125 FIX**: Focus neurons that have all candidates filtered by impact
-discounting now appear in `no_candidate_reasons` with `ImpactDiscountedBelowThreshold`.
-Previously, these neurons would silently disappear from the response:
-- Candidates were found → `had_candidate = true`
-- Impact discounting reduced improvement below 2%
-- Re-filtering removed all candidates
-- `no_candidate_summaries()` excluded the entry (because `had_candidate == true`)
-- Result: neuron appeared in neither `helpful_neurons` nor `no_candidate_reasons`
-
-Now, after re-filtering, any focus neuron that lost ALL its candidates is marked
-with `impact_discounted_below_threshold = true`, ensuring it appears in the
-diagnostics with an appropriate reason code.
+This discounting ensures hidden neuron predictions reflect their actual contribution
+to the creature's score based on their position in the network topology.
 
 #### All other activations
 

@@ -537,40 +537,30 @@ fn regression_discounted_hidden_neurons_must_meet_minimum_threshold() {
 
     let result = analyze_neurons(&input).expect("Neuron analysis should succeed");
 
-    // KEY ASSERTION: ALL returned candidates must have >= 2% improvement
-    // Even after impact discounting
+    // v0.1.134: Removed arbitrary 2% MIN_FALLBACK_IMPROVEMENT threshold.
+    // The only filter is: does the improvement exceed the cost of growth?
+    // Cost of growth for a neuron is ~1e-7, which is tiny compared to any
+    // meaningful improvement percentage.
+    //
+    // KEY ASSERTION: Candidates with positive improvement are returned.
+    // TypeScript will evaluate the actual score change.
     for candidate in &result.helpful_neurons {
         assert!(
-            candidate.expected_improvement_percentage >= 0.02,
-            "\n\n\
-            ╔══════════════════════════════════════════════════════════════════════════════╗\n\
-            ║  REGRESSION DETECTED: Discounted hidden neuron below MIN_FALLBACK!           ║\n\
-            ╠══════════════════════════════════════════════════════════════════════════════╣\n\
-            ║  Candidate returned with {:.2}% expected improvement (after discount).       \n\
-            ║                                                                              ║\n\
-            ║  This hidden neuron candidate was discounted by impact but NOT re-filtered   ║\n\
-            ║  against MIN_FALLBACK_IMPROVEMENT (2%).                                      ║\n\
-            ║                                                                              ║\n\
-            ║  If 2% is the minimum for reliable predictions, then discounted predictions  ║\n\
-            ║  below 2% are equally unreliable.                                            ║\n\
-            ║                                                                              ║\n\
-            ║  This was fixed in v0.1.124.                                                 ║\n\
-            ║                                                                              ║\n\
-            ║  CHECK: After impact discounting, re-filter against MIN_FALLBACK_IMPROVEMENT ║\n\
-            ║                                                                              ║\n\
-            ║  Candidate: {} -> {} ({})                                                    \n\
-            ║  Target neuron type: hidden (impact: {:.3})                                  \n\
-            ╚══════════════════════════════════════════════════════════════════════════════╝\n\n",
-            candidate.expected_improvement_percentage * 100.0,
+            candidate.expected_improvement_percentage > 0.0,
+            "Candidate should have positive expected improvement, got {:.6}%",
+            candidate.expected_improvement_percentage * 100.0
+        );
+        eprintln!(
+            "Candidate: {} -> {} ({}), improvement: {:.4}%",
             candidate.source_neuron_uuid,
             candidate.target_neuron_uuid,
             candidate.squash,
-            low_impact
+            candidate.expected_improvement_percentage * 100.0
         );
     }
 
     eprintln!(
-        "Test passed: {} candidates returned, all >= 2% after discounting",
+        "Test passed: {} candidates returned with positive improvement",
         result.helpful_neurons.len()
     );
 }
