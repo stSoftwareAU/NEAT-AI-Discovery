@@ -184,6 +184,13 @@ fn verbose_enabled() -> bool {
     std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok()
 }
 
+/// Enable detailed prediction tracing for debugging prediction accuracy.
+/// Set NEAT_AI_DISCOVERY_TRACE_PREDICTION=1 to enable.
+/// This logs sample-level details showing exactly how predictions are computed.
+fn prediction_trace_enabled() -> bool {
+    std::env::var("NEAT_AI_DISCOVERY_TRACE_PREDICTION").is_ok()
+}
+
 /// Suppress Mesa/libEGL debug warnings on Linux.
 ///
 /// When wgpu initialises on Linux, it probes multiple GPU backends (EGL, Vulkan, etc.).
@@ -1979,6 +1986,68 @@ fn inverse_activation(x: f32) -> f32 {
     1.0 - x
 }
 
+// ============================================================================
+// NEW ACTIVATION FUNCTIONS (v0.1.139)
+// Based on analysis of successful discoveries that evolved TO these activations
+// ============================================================================
+
+/// LeakyReLU - 4 successful discoveries evolved ReLU → LeakyReLU!
+/// Allows small negative gradients instead of zeroing negative inputs.
+fn leaky_relu_activation(x: f32) -> f32 {
+    if x >= 0.0 {
+        x
+    } else {
+        0.01 * x // Standard leak coefficient
+    }
+}
+
+/// Mish - 2 successful discoveries evolved TO Mish (from ELU and Softplus)
+/// Self-regularised activation: x * tanh(softplus(x))
+fn mish_activation(x: f32) -> f32 {
+    let sp = if x > 20.0 { x } else { (1.0 + x.exp()).ln() };
+    x * sp.tanh()
+}
+
+/// Swish - 1 successful discovery evolved ReLU → Swish
+/// Self-gated activation: x * sigmoid(x)
+fn swish_activation(x: f32) -> f32 {
+    let sigmoid = if x >= 0.0 {
+        1.0 / (1.0 + (-x).exp())
+    } else {
+        let exp_x = x.exp();
+        exp_x / (1.0 + exp_x)
+    };
+    x * sigmoid
+}
+
+/// HARD_TANH - 1 successful discovery evolved CLIPPED → HARD_TANH
+/// Linear in [-1, 1], saturates outside. Same as CLIPPED but named for NEAT-AI.
+fn hard_tanh_activation(x: f32) -> f32 {
+    x.clamp(-1.0, 1.0)
+}
+
+/// SOFTSIGN - 1 successful discovery neuron with SOFTSIGN
+/// Smooth approximation of sign function: x / (1 + |x|)
+fn softsign_activation(x: f32) -> f32 {
+    x / (1.0 + x.abs())
+}
+
+/// BENT_IDENTITY - 1 successful discovery evolved LeakyReLU → BENT_IDENTITY
+/// Smooth, nearly linear: (sqrt(x² + 1) - 1) / 2 + x
+fn bent_identity_activation(x: f32) -> f32 {
+    ((x * x + 1.0).sqrt() - 1.0) / 2.0 + x
+}
+
+/// ArcTan - Similar to SOFTSIGN, bounded output
+fn arctan_activation(x: f32) -> f32 {
+    x.atan()
+}
+
+/// ReLU6 - Capped ReLU at 6, useful for quantisation
+fn relu6_activation(x: f32) -> f32 {
+    x.clamp(0.0, 6.0)
+}
+
 fn activation_name_to_gpu_id(name: &str) -> u32 {
     match name {
         "GELU" => 0,
@@ -1992,17 +2061,29 @@ fn activation_name_to_gpu_id(name: &str) -> u32 {
         "CLIPPED" => 8,
         "ABSOLUTE" => 9,
         "INVERSE" => 10,
+        // New activations (v0.1.139) - use CPU evaluation (GPU fallback to IDENTITY)
+        "LeakyReLU" => 11,
+        "Mish" => 12,
+        "Swish" => 13,
+        "HARD_TANH" => 14,
+        "SOFTSIGN" => 15,
+        "BENT_IDENTITY" => 16,
+        "ArcTan" => 17,
+        "ReLU6" => 18,
         _ => 6, // Default to IDENTITY
     }
 }
 
-const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
+const ACTIVATION_SPECS: [ActivationCandidateSpec; 19] = [
+    // ========================================================================
+    // ORIGINAL ACTIVATIONS (v0.1.x)
+    // ========================================================================
     ActivationCandidateSpec {
         name: "GELU",
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_WIDE,
         activation: gelu_activation,
-        min_improvement: 0.0, // v0.1.134: No arbitrary threshold - TypeScript decides
+        min_improvement: 0.0,
     },
     ActivationCandidateSpec {
         name: "ELU",
@@ -2023,14 +2104,14 @@ const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_WIDE,
         activation: softplus_activation,
-        min_improvement: 0.0, // v0.1.134: No arbitrary threshold - TypeScript decides
+        min_improvement: 0.0,
     },
     ActivationCandidateSpec {
         name: "LOGISTIC",
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_SMOOTH,
         activation: logistic_activation,
-        min_improvement: 0.0, // v0.1.134: No arbitrary threshold - TypeScript decides
+        min_improvement: 0.0,
     },
     ActivationCandidateSpec {
         name: "TANH",
@@ -2044,7 +2125,6 @@ const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_WIDE,
         activation: identity_activation,
-        // v0.1.134: No arbitrary threshold - TypeScript decides if improvement is worth cost
         min_improvement: 0.0,
     },
     ActivationCandidateSpec {
@@ -2074,6 +2154,65 @@ const ACTIVATION_SPECS: [ActivationCandidateSpec; 11] = [
         scales: &SCALES_WIDE,
         activation: inverse_activation,
         min_improvement: 0.0,
+    },
+    // ========================================================================
+    // NEW ACTIVATIONS (v0.1.139) - Based on successful discovery evolutions
+    // ========================================================================
+    ActivationCandidateSpec {
+        name: "LeakyReLU",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_WIDE,
+        activation: leaky_relu_activation,
+        min_improvement: 0.0, // 4 successful discoveries evolved ReLU → LeakyReLU!
+    },
+    ActivationCandidateSpec {
+        name: "Mish",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_SMOOTH,
+        activation: mish_activation,
+        min_improvement: 0.0, // 2 successful discoveries evolved TO Mish
+    },
+    ActivationCandidateSpec {
+        name: "Swish",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_SMOOTH,
+        activation: swish_activation,
+        min_improvement: 0.0, // 1 successful discovery evolved ReLU → Swish
+    },
+    ActivationCandidateSpec {
+        name: "HARD_TANH",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_SMOOTH,
+        activation: hard_tanh_activation,
+        min_improvement: 0.0, // 1 successful discovery evolved CLIPPED → HARD_TANH
+    },
+    ActivationCandidateSpec {
+        name: "SOFTSIGN",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_SMOOTH,
+        activation: softsign_activation,
+        min_improvement: 0.0, // Successful discovery neuron with SOFTSIGN
+    },
+    ActivationCandidateSpec {
+        name: "BENT_IDENTITY",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_WIDE,
+        activation: bent_identity_activation,
+        min_improvement: 0.0, // 1 successful discovery evolved LeakyReLU → BENT_IDENTITY
+    },
+    ActivationCandidateSpec {
+        name: "ArcTan",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_SMOOTH,
+        activation: arctan_activation,
+        min_improvement: 0.0, // Similar to SOFTSIGN, bounded output
+    },
+    ActivationCandidateSpec {
+        name: "ReLU6",
+        orientations: &ORIENTATIONS_BIDIRECTIONAL,
+        scales: &SCALES_WIDE,
+        activation: relu6_activation,
+        min_improvement: 0.0, // Capped ReLU, useful for bounded outputs
     },
 ];
 
@@ -4266,19 +4405,73 @@ fn compute_relu_improvement_and_count(
     total_baseline_error_sq: f32,
     target_activation_fn: Option<fn(f32) -> f32>,
 ) -> (f32, u32, u32) {
+    compute_relu_improvement_and_count_traced(
+        samples,
+        incoming_weight,
+        outgoing_weight,
+        bias,
+        total_baseline_error_sq,
+        target_activation_fn,
+        None, // No trace context
+    )
+}
+
+/// Traced version of compute_relu_improvement_and_count for debugging prediction accuracy.
+/// If trace_context is Some, logs detailed sample-level prediction information.
+fn compute_relu_improvement_and_count_traced(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    bias: f32,
+    total_baseline_error_sq: f32,
+    target_activation_fn: Option<fn(f32) -> f32>,
+    trace_context: Option<&str>,
+) -> (f32, u32, u32) {
     if total_baseline_error_sq <= EPSILON || samples.is_empty() {
         return (0.0, 0, samples.len() as u32);
+    }
+
+    let trace = trace_context.is_some() && prediction_trace_enabled();
+    let ctx = trace_context.unwrap_or("unknown");
+
+    if trace {
+        eprintln!(
+            "[PREDICTION_TRACE][{}] ReLU prediction: in_w={:.6}, out_w={:.6}, bias={:.2}, \
+            samples={}, baseline_sq={:.8}, has_target_fn={}",
+            ctx,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            samples.len(),
+            total_baseline_error_sq,
+            target_activation_fn.is_some()
+        );
     }
 
     let mut baseline_error_sq_sum = 0.0f32; // ACTIVATION domain when simulating
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
+    let mut worsened_count = 0u32;
     let total_count = samples.len() as u32;
 
-    for sample in samples {
+    // Track contribution statistics for trace logging
+    let mut contribution_sum = 0.0f32;
+    let mut contribution_abs_sum = 0.0f32;
+    let mut positive_contrib_count = 0u32;
+    let mut negative_contrib_count = 0u32;
+
+    for (idx, sample) in samples.iter().enumerate() {
         let pre_activation = incoming_weight * sample.activation + bias;
         let relu_output = pre_activation.max(0.0);
         let contribution = outgoing_weight * relu_output;
+
+        contribution_sum += contribution;
+        contribution_abs_sum += contribution.abs();
+        if contribution > 0.0 {
+            positive_contrib_count += 1;
+        } else if contribution < 0.0 {
+            negative_contrib_count += 1;
+        }
 
         let (baseline_error, new_error) = if let Some(target_fn) = target_activation_fn {
             // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
@@ -4294,10 +4487,50 @@ fn compute_relu_improvement_and_count(
             let new_input = target_value + contribution;
             let new_err = expected - target_fn(new_input);
 
+            // Log first few samples for debugging
+            if trace && idx < 5 {
+                eprintln!(
+                    "[PREDICTION_TRACE][{}] Sample {}: src_act={:.4}, avg_err={:.6}, \
+                    target_value={:.4}, target_act={:.4}, desired_value={:.4}, expected={:.4}, \
+                    contribution={:.6}, new_input={:.4}, new_act={:.4}, \
+                    baseline_err={:.6}, new_err={:.6}",
+                    ctx,
+                    idx,
+                    sample.activation,
+                    sample.avg_error,
+                    target_value,
+                    target_activation,
+                    desired_value,
+                    expected,
+                    contribution,
+                    new_input,
+                    target_fn(new_input),
+                    baseline_err,
+                    new_err
+                );
+            }
+
             (baseline_err, new_err)
         } else {
             // Linear approximation: both errors in VALUE domain
-            (sample.avg_error, sample.avg_error - contribution)
+            let baseline_err = sample.avg_error;
+            let new_err = sample.avg_error - contribution;
+
+            if trace && idx < 5 {
+                eprintln!(
+                    "[PREDICTION_TRACE][{}] Sample {} (linear): src_act={:.4}, avg_err={:.6}, \
+                    contribution={:.6}, baseline_err={:.6}, new_err={:.6}",
+                    ctx,
+                    idx,
+                    sample.activation,
+                    sample.avg_error,
+                    contribution,
+                    baseline_err,
+                    new_err
+                );
+            }
+
+            (baseline_err, new_err)
         };
 
         if baseline_error.is_finite() {
@@ -4310,6 +4543,8 @@ fn compute_relu_improvement_and_count(
         // Sample is improved if |new_error| < |baseline_error| (consistent domain)
         if new_error.abs() + EPSILON < baseline_error.abs() {
             improved_count += 1;
+        } else if new_error.abs() > baseline_error.abs() + EPSILON {
+            worsened_count += 1;
         }
     }
 
@@ -4330,6 +4565,44 @@ fn compute_relu_improvement_and_count(
     } else {
         0.0
     };
+
+    if trace {
+        let avg_contribution = if !samples.is_empty() {
+            contribution_sum / samples.len() as f32
+        } else {
+            0.0
+        };
+        let avg_abs_contribution = if !samples.is_empty() {
+            contribution_abs_sum / samples.len() as f32
+        } else {
+            0.0
+        };
+        eprintln!(
+            "[PREDICTION_TRACE][{}] RESULT: baseline_sq_sum={:.8}, new_sq_sum={:.8}, \
+            effective_baseline={:.8}, improvement={:.6} ({:.4}%), \
+            improved={}/{}, worsened={}/{}",
+            ctx,
+            baseline_error_sq_sum,
+            new_error_sq_sum,
+            effective_baseline,
+            improvement,
+            improvement * 100.0,
+            improved_count,
+            total_count,
+            worsened_count,
+            total_count
+        );
+        eprintln!(
+            "[PREDICTION_TRACE][{}] CONTRIBUTIONS: avg={:.6}, avg_abs={:.6}, \
+            positive={}, negative={}, zero={}",
+            ctx,
+            avg_contribution,
+            avg_abs_contribution,
+            positive_contrib_count,
+            negative_contrib_count,
+            total_count - positive_contrib_count - negative_contrib_count
+        );
+    }
 
     (improvement, improved_count, total_count)
 }
@@ -5391,9 +5664,16 @@ fn evaluate_discrete_candidate(
 
     let total_count = samples.len() as u32;
 
-    // Weight scales to try - for discrete functions, we need weights that can
-    // actually push the target across the threshold
-    const SCALES: [f32; 8] = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0];
+    // Incoming weight scales - larger scales help with threshold crossing by amplifying
+    // source activation differences. Keep wide range since these don't directly affect output.
+    const INCOMING_SCALES: [f32; 8] = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0];
+
+    // Outgoing weight scales - MUST be small! Based on analysis of successful vs failed
+    // discoveries: successful add-neuron candidates have |outgoing_weight| < 0.05.
+    // Large outgoing weights (10, 50) consistently fail in production.
+    // These scales match MAX_OUTGOING_WEIGHT (0.1) as upper bound.
+    const OUTGOING_SCALES: [f32; 5] = [0.01, 0.02, 0.05, 0.075, 0.1];
+
     const ORIENTATIONS: [f32; 2] = [1.0, -1.0];
 
     let mut best_candidate: Option<CandidateNeuronJson> = None;
@@ -5404,12 +5684,12 @@ fn evaluate_discrete_candidate(
     let new_neuron_squash = "IDENTITY";
 
     for &orientation in &ORIENTATIONS {
-        for &scale in &SCALES {
+        for &scale in &INCOMING_SCALES {
             let incoming_weight = orientation * scale;
 
             // For IDENTITY squash, new_neuron_output = incoming_weight * source_activation
-            // Try different outgoing weights
-            for &out_scale in &SCALES {
+            // Try different outgoing weights (small scales only for reliable predictions)
+            for &out_scale in &OUTGOING_SCALES {
                 for &out_orientation in &ORIENTATIONS {
                     let outgoing_weight = out_orientation * out_scale;
 
@@ -6279,12 +6559,38 @@ mod tests {
     #[test]
     fn test_specs_include_new_activations() {
         let names: Vec<&str> = ACTIVATION_SPECS.iter().map(|s| s.name).collect();
+        // Original activations
         assert!(names.contains(&"IDENTITY"));
-        assert!(!names.contains(&"LeakyReLU"));
         assert!(names.contains(&"BIPOLAR"));
         assert!(names.contains(&"CLIPPED"));
         assert!(names.contains(&"ABSOLUTE"));
         assert!(names.contains(&"INVERSE"));
+        // New activations (v0.1.139)
+        assert!(
+            names.contains(&"LeakyReLU"),
+            "LeakyReLU should be included - 4 successful discoveries!"
+        );
+        assert!(
+            names.contains(&"Mish"),
+            "Mish should be included - 2 successful discoveries!"
+        );
+        assert!(
+            names.contains(&"Swish"),
+            "Swish should be included - successful discovery!"
+        );
+        assert!(names.contains(&"HARD_TANH"), "HARD_TANH should be included");
+        assert!(
+            names.contains(&"SOFTSIGN"),
+            "SOFTSIGN should be included - successful discovery!"
+        );
+        assert!(
+            names.contains(&"BENT_IDENTITY"),
+            "BENT_IDENTITY should be included - successful discovery!"
+        );
+        assert!(names.contains(&"ArcTan"), "ArcTan should be included");
+        assert!(names.contains(&"ReLU6"), "ReLU6 should be included");
+        // Total count
+        assert_eq!(names.len(), 19, "Should have 19 activation specs");
     }
 }
 
@@ -12052,6 +12358,645 @@ mod tests_optimal_outgoing_weight {
         assert!(
             (result.unwrap().abs() - MAX_OUTGOING_WEIGHT).abs() < EPSILON,
             "Large raw weight should be clamped to MAX_OUTGOING_WEIGHT"
+        );
+    }
+}
+
+/// Synthetic tests to verify prediction accuracy against manual simulation.
+/// These tests create controlled scenarios where we know exactly what the
+/// predicted and actual improvements should be.
+#[cfg(test)]
+mod tests_prediction_accuracy {
+    use super::*;
+
+    /// Hard tanh activation for testing (same as production)
+    fn test_hard_tanh(x: f32) -> f32 {
+        x.clamp(-1.0, 1.0)
+    }
+
+    /// Create synthetic samples with known properties.
+    /// Returns (samples, baseline_error_sq_sum).
+    fn create_synthetic_samples(
+        count: usize,
+        avg_error: f32,
+        source_activation: f32,
+        target_value: f32,
+    ) -> (Vec<HelpfulSample>, f32) {
+        let samples: Vec<HelpfulSample> = (0..count)
+            .map(|_| HelpfulSample {
+                activation: source_activation,
+                avg_error,
+                target_value: Some(target_value),
+                target_activation: Some(test_hard_tanh(target_value)),
+            })
+            .collect();
+
+        let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
+        (samples, baseline_error_sq)
+    }
+
+    /// CORE TEST: Verify that our prediction formula gives the correct result.
+    ///
+    /// This test creates a simple scenario:
+    /// - 100 samples all with the same properties
+    /// - Known source activation, error, target value
+    /// - Compute optimal weight
+    /// - Predict improvement
+    /// - Manually simulate what the actual improvement would be
+    /// - Compare predicted vs manually simulated
+    #[test]
+    fn prediction_matches_manual_simulation_linear_region() {
+        // Scenario: Target in LINEAR region of HARD_TANH (value between -1 and 1)
+        let source_activation = 1.0;
+        let avg_error = 0.2; // VALUE domain: need to ADD 0.2 to target value
+        let target_value = 0.3; // Current pre-activation (in linear region)
+        let incoming_weight = 1.0;
+        let bias = 0.0;
+
+        let (samples, baseline_error_sq) =
+            create_synthetic_samples(100, avg_error, source_activation, target_value);
+
+        // Compute optimal weight using the production formula
+        let error_activation_sum: f32 = samples.iter().map(|s| s.avg_error * s.activation).sum();
+        let activation_sq_sum: f32 = samples.iter().map(|s| s.activation.powi(2)).sum();
+        let raw_outgoing_weight = error_activation_sum / activation_sq_sum;
+        let outgoing_weight = raw_outgoing_weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+
+        eprintln!(
+            "LINEAR REGION TEST: error_act_sum={error_activation_sum:.4}, act_sq_sum={activation_sq_sum:.4}, raw_w={raw_outgoing_weight:.6}, clamped_w={outgoing_weight:.6}"
+        );
+
+        // Predict improvement using production function
+        let (predicted_improvement, improved_count, total_count) =
+            compute_relu_improvement_and_count(
+                &samples,
+                incoming_weight,
+                outgoing_weight,
+                bias,
+                baseline_error_sq,
+                Some(test_hard_tanh),
+            );
+
+        // MANUALLY simulate what the actual improvement would be
+        // This is what TypeScript evaluation does
+        let mut manual_baseline_error_sq = 0.0f32;
+        let mut manual_new_error_sq = 0.0f32;
+
+        for sample in &samples {
+            let target_val = sample.target_value.unwrap();
+            let target_act = sample.target_activation.unwrap();
+            let desired_value = target_val + sample.avg_error;
+            let expected_activation = test_hard_tanh(desired_value);
+
+            // Baseline error in ACTIVATION domain
+            let baseline_err = expected_activation - target_act;
+            manual_baseline_error_sq += baseline_err.powi(2);
+
+            // Simulate the new neuron's contribution
+            let pre_act = incoming_weight * sample.activation + bias;
+            let relu_output = pre_act.max(0.0);
+            let contribution = outgoing_weight * relu_output;
+
+            // New target value after contribution
+            let new_target_value = target_val + contribution;
+            let new_target_activation = test_hard_tanh(new_target_value);
+
+            // New error in ACTIVATION domain
+            let new_err = expected_activation - new_target_activation;
+            manual_new_error_sq += new_err.powi(2);
+        }
+
+        let manual_improvement = if manual_baseline_error_sq > EPSILON {
+            (manual_baseline_error_sq - manual_new_error_sq) / manual_baseline_error_sq
+        } else {
+            0.0
+        };
+
+        eprintln!(
+            "LINEAR REGION RESULT: predicted={:.6} ({:.4}%), manual={:.6} ({:.4}%), diff={:.6}",
+            predicted_improvement,
+            predicted_improvement * 100.0,
+            manual_improvement,
+            manual_improvement * 100.0,
+            (predicted_improvement - manual_improvement).abs()
+        );
+        eprintln!(
+            "  improved_count={improved_count}/{total_count}, manual_baseline_sq={manual_baseline_error_sq:.6}, manual_new_sq={manual_new_error_sq:.6}"
+        );
+
+        // Prediction and manual simulation should match closely
+        let diff = (predicted_improvement - manual_improvement).abs();
+        assert!(
+            diff < 0.01,
+            "Predicted ({predicted_improvement:.6}) and manual ({manual_improvement:.6}) improvement should match within 1%"
+        );
+
+        // Both should be positive (error should decrease)
+        assert!(
+            predicted_improvement > 0.0,
+            "Predicted improvement should be positive"
+        );
+        assert!(
+            manual_improvement > 0.0,
+            "Manual improvement should be positive"
+        );
+    }
+
+    /// Test with target near SATURATION (value close to 1.0)
+    #[test]
+    fn prediction_matches_manual_simulation_saturation_region() {
+        // Scenario: Target near SATURATION of HARD_TANH
+        let source_activation = 1.0;
+        let avg_error = 0.1; // VALUE domain: need to ADD 0.1 to target value
+        let target_value = 0.95; // Current pre-activation (near saturation!)
+        let incoming_weight = 1.0;
+        let bias = 0.0;
+
+        let (samples, baseline_error_sq) =
+            create_synthetic_samples(100, avg_error, source_activation, target_value);
+
+        // Compute optimal weight
+        let error_activation_sum: f32 = samples.iter().map(|s| s.avg_error * s.activation).sum();
+        let activation_sq_sum: f32 = samples.iter().map(|s| s.activation.powi(2)).sum();
+        let raw_outgoing_weight = error_activation_sum / activation_sq_sum;
+        let outgoing_weight = raw_outgoing_weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+
+        eprintln!(
+            "SATURATION TEST: error_act_sum={error_activation_sum:.4}, act_sq_sum={activation_sq_sum:.4}, raw_w={raw_outgoing_weight:.6}, clamped_w={outgoing_weight:.6}"
+        );
+
+        // Predict improvement
+        let (predicted_improvement, improved_count, total_count) =
+            compute_relu_improvement_and_count(
+                &samples,
+                incoming_weight,
+                outgoing_weight,
+                bias,
+                baseline_error_sq,
+                Some(test_hard_tanh),
+            );
+
+        // Manual simulation
+        let mut manual_baseline_error_sq = 0.0f32;
+        let mut manual_new_error_sq = 0.0f32;
+
+        for sample in &samples {
+            let target_val = sample.target_value.unwrap();
+            let target_act = sample.target_activation.unwrap();
+            let desired_value = target_val + sample.avg_error;
+            let expected_activation = test_hard_tanh(desired_value);
+
+            let baseline_err = expected_activation - target_act;
+            manual_baseline_error_sq += baseline_err.powi(2);
+
+            let pre_act = incoming_weight * sample.activation + bias;
+            let relu_output = pre_act.max(0.0);
+            let contribution = outgoing_weight * relu_output;
+
+            let new_target_value = target_val + contribution;
+            let new_target_activation = test_hard_tanh(new_target_value);
+
+            let new_err = expected_activation - new_target_activation;
+            manual_new_error_sq += new_err.powi(2);
+        }
+
+        let manual_improvement = if manual_baseline_error_sq > EPSILON {
+            (manual_baseline_error_sq - manual_new_error_sq) / manual_baseline_error_sq
+        } else {
+            0.0
+        };
+
+        eprintln!(
+            "SATURATION RESULT: predicted={:.6} ({:.4}%), manual={:.6} ({:.4}%), diff={:.6}",
+            predicted_improvement,
+            predicted_improvement * 100.0,
+            manual_improvement,
+            manual_improvement * 100.0,
+            (predicted_improvement - manual_improvement).abs()
+        );
+        eprintln!(
+            "  improved_count={improved_count}/{total_count}, manual_baseline_sq={manual_baseline_error_sq:.6}, manual_new_sq={manual_new_error_sq:.6}"
+        );
+
+        // Prediction and manual simulation should match
+        let diff = (predicted_improvement - manual_improvement).abs();
+        assert!(
+            diff < 0.01,
+            "Predicted ({predicted_improvement:.6}) and manual ({manual_improvement:.6}) improvement should match within 1%"
+        );
+    }
+
+    /// Test with NEGATIVE error (target output should be LOWER)
+    #[test]
+    fn prediction_matches_manual_simulation_negative_error() {
+        // Scenario: Target output is too HIGH, need to REDUCE it
+        let source_activation = 1.0;
+        let avg_error = -0.2; // VALUE domain: need to SUBTRACT 0.2 from target value
+        let target_value = 0.5; // Current pre-activation
+        let incoming_weight = 1.0;
+        let bias = 0.0;
+
+        let (samples, baseline_error_sq) =
+            create_synthetic_samples(100, avg_error, source_activation, target_value);
+
+        // Compute optimal weight (should be NEGATIVE to reduce error)
+        let error_activation_sum: f32 = samples.iter().map(|s| s.avg_error * s.activation).sum();
+        let activation_sq_sum: f32 = samples.iter().map(|s| s.activation.powi(2)).sum();
+        let raw_outgoing_weight = error_activation_sum / activation_sq_sum;
+        let outgoing_weight = raw_outgoing_weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+
+        eprintln!(
+            "NEGATIVE ERROR TEST: error_act_sum={error_activation_sum:.4}, act_sq_sum={activation_sq_sum:.4}, raw_w={raw_outgoing_weight:.6}, clamped_w={outgoing_weight:.6}"
+        );
+
+        // Verify optimal weight is negative (to reduce target value)
+        assert!(
+            outgoing_weight < 0.0,
+            "Outgoing weight should be negative to reduce target value"
+        );
+
+        // Predict improvement
+        let (predicted_improvement, improved_count, total_count) =
+            compute_relu_improvement_and_count(
+                &samples,
+                incoming_weight,
+                outgoing_weight,
+                bias,
+                baseline_error_sq,
+                Some(test_hard_tanh),
+            );
+
+        // Manual simulation
+        let mut manual_baseline_error_sq = 0.0f32;
+        let mut manual_new_error_sq = 0.0f32;
+
+        for sample in &samples {
+            let target_val = sample.target_value.unwrap();
+            let target_act = sample.target_activation.unwrap();
+            let desired_value = target_val + sample.avg_error;
+            let expected_activation = test_hard_tanh(desired_value);
+
+            let baseline_err = expected_activation - target_act;
+            manual_baseline_error_sq += baseline_err.powi(2);
+
+            let pre_act = incoming_weight * sample.activation + bias;
+            let relu_output = pre_act.max(0.0);
+            let contribution = outgoing_weight * relu_output;
+
+            let new_target_value = target_val + contribution;
+            let new_target_activation = test_hard_tanh(new_target_value);
+
+            let new_err = expected_activation - new_target_activation;
+            manual_new_error_sq += new_err.powi(2);
+        }
+
+        let manual_improvement = if manual_baseline_error_sq > EPSILON {
+            (manual_baseline_error_sq - manual_new_error_sq) / manual_baseline_error_sq
+        } else {
+            0.0
+        };
+
+        eprintln!(
+            "NEGATIVE ERROR RESULT: predicted={:.6} ({:.4}%), manual={:.6} ({:.4}%), diff={:.6}",
+            predicted_improvement,
+            predicted_improvement * 100.0,
+            manual_improvement,
+            manual_improvement * 100.0,
+            (predicted_improvement - manual_improvement).abs()
+        );
+        eprintln!(
+            "  improved_count={improved_count}/{total_count}, manual_baseline_sq={manual_baseline_error_sq:.6}, manual_new_sq={manual_new_error_sq:.6}"
+        );
+
+        // Prediction and manual simulation should match
+        let diff = (predicted_improvement - manual_improvement).abs();
+        assert!(
+            diff < 0.01,
+            "Predicted ({predicted_improvement:.6}) and manual ({manual_improvement:.6}) improvement should match within 1%"
+        );
+
+        // Both should be positive (error should decrease)
+        assert!(
+            predicted_improvement > 0.0,
+            "Predicted improvement should be positive"
+        );
+        assert!(
+            manual_improvement > 0.0,
+            "Manual improvement should be positive"
+        );
+    }
+
+    /// Test with MIXED errors (some positive, some negative)
+    /// This simulates real-world scenarios where samples have varied errors.
+    #[test]
+    fn prediction_matches_manual_simulation_mixed_errors() {
+        // Create samples with varied errors
+        let samples: Vec<HelpfulSample> = vec![
+            // Samples that need INCREASE (positive error)
+            HelpfulSample {
+                activation: 1.0,
+                avg_error: 0.2,
+                target_value: Some(0.3),
+                target_activation: Some(0.3),
+            },
+            HelpfulSample {
+                activation: 0.8,
+                avg_error: 0.15,
+                target_value: Some(0.4),
+                target_activation: Some(0.4),
+            },
+            HelpfulSample {
+                activation: 1.2,
+                avg_error: 0.1,
+                target_value: Some(0.2),
+                target_activation: Some(0.2),
+            },
+            // Samples that need DECREASE (negative error)
+            HelpfulSample {
+                activation: 0.9,
+                avg_error: -0.15,
+                target_value: Some(0.6),
+                target_activation: Some(0.6),
+            },
+            HelpfulSample {
+                activation: 1.1,
+                avg_error: -0.1,
+                target_value: Some(0.5),
+                target_activation: Some(0.5),
+            },
+        ];
+
+        let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
+
+        // Compute optimal weight (weighted average)
+        let error_activation_sum: f32 = samples.iter().map(|s| s.avg_error * s.activation).sum();
+        let activation_sq_sum: f32 = samples.iter().map(|s| s.activation.powi(2)).sum();
+        let raw_outgoing_weight = error_activation_sum / activation_sq_sum;
+        let outgoing_weight = raw_outgoing_weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+
+        let incoming_weight = 1.0;
+        let bias = 0.0;
+
+        eprintln!(
+            "MIXED ERRORS TEST: error_act_sum={error_activation_sum:.4}, act_sq_sum={activation_sq_sum:.4}, raw_w={raw_outgoing_weight:.6}, clamped_w={outgoing_weight:.6}"
+        );
+
+        // Predict improvement
+        let (predicted_improvement, improved_count, total_count) =
+            compute_relu_improvement_and_count(
+                &samples,
+                incoming_weight,
+                outgoing_weight,
+                bias,
+                baseline_error_sq,
+                Some(test_hard_tanh),
+            );
+
+        // Manual simulation
+        let mut manual_baseline_error_sq = 0.0f32;
+        let mut manual_new_error_sq = 0.0f32;
+        let mut manual_improved = 0u32;
+        let mut manual_worsened = 0u32;
+
+        for sample in &samples {
+            let target_val = sample.target_value.unwrap();
+            let target_act = sample.target_activation.unwrap();
+            let desired_value = target_val + sample.avg_error;
+            let expected_activation = test_hard_tanh(desired_value);
+
+            let baseline_err = expected_activation - target_act;
+            manual_baseline_error_sq += baseline_err.powi(2);
+
+            let pre_act = incoming_weight * sample.activation + bias;
+            let relu_output = pre_act.max(0.0);
+            let contribution = outgoing_weight * relu_output;
+
+            let new_target_value = target_val + contribution;
+            let new_target_activation = test_hard_tanh(new_target_value);
+
+            let new_err = expected_activation - new_target_activation;
+            manual_new_error_sq += new_err.powi(2);
+
+            if new_err.abs() < baseline_err.abs() - EPSILON {
+                manual_improved += 1;
+            } else if new_err.abs() > baseline_err.abs() + EPSILON {
+                manual_worsened += 1;
+            }
+        }
+
+        let manual_improvement = if manual_baseline_error_sq > EPSILON {
+            (manual_baseline_error_sq - manual_new_error_sq) / manual_baseline_error_sq
+        } else {
+            0.0
+        };
+
+        eprintln!(
+            "MIXED ERRORS RESULT: predicted={:.6} ({:.4}%), manual={:.6} ({:.4}%), diff={:.6}",
+            predicted_improvement,
+            predicted_improvement * 100.0,
+            manual_improvement,
+            manual_improvement * 100.0,
+            (predicted_improvement - manual_improvement).abs()
+        );
+        eprintln!(
+            "  func: improved={improved_count}/{total_count}, manual: improved={manual_improved}, worsened={manual_worsened}"
+        );
+
+        // Prediction and manual simulation should match
+        let diff = (predicted_improvement - manual_improvement).abs();
+        assert!(
+            diff < 0.01,
+            "Predicted ({predicted_improvement:.6}) and manual ({manual_improvement:.6}) improvement should match within 1%"
+        );
+    }
+
+    /// KEY TEST: Simulate what TypeScript evaluation actually does.
+    /// This is the most realistic test - it matches the production evaluation flow.
+    #[test]
+    fn prediction_matches_simulated_typescript_evaluation() {
+        // Create samples that match production data characteristics
+        let samples: Vec<HelpfulSample> = (0..1000)
+            .map(|i| {
+                let variation = (i as f32 / 100.0).sin() * 0.1;
+                let error_variation = (i as f32 / 50.0).cos() * 0.05;
+                HelpfulSample {
+                    activation: 0.5 + variation,
+                    avg_error: 0.1 + error_variation,
+                    target_value: Some(0.4 + variation * 0.5),
+                    target_activation: Some(test_hard_tanh(0.4 + variation * 0.5)),
+                }
+            })
+            .collect();
+
+        let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
+
+        // Compute optimal weight
+        let error_activation_sum: f32 = samples.iter().map(|s| s.avg_error * s.activation).sum();
+        let activation_sq_sum: f32 = samples.iter().map(|s| s.activation.powi(2)).sum();
+        let raw_outgoing_weight = error_activation_sum / activation_sq_sum;
+        let outgoing_weight = raw_outgoing_weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+
+        let incoming_weight = 1.0;
+        let bias = 0.0;
+
+        // Predict improvement (what Rust returns)
+        let (predicted_improvement, _improved_count, _total_count) =
+            compute_relu_improvement_and_count(
+                &samples,
+                incoming_weight,
+                outgoing_weight,
+                bias,
+                baseline_error_sq,
+                Some(test_hard_tanh),
+            );
+
+        // Simulate TypeScript evaluation
+        // TypeScript computes: actualErrorReduction = originalError - candidateError
+        // Where error is typically MSE or similar across all training samples
+
+        // Original creature MSE (before adding neuron)
+        let original_mse: f32 = samples
+            .iter()
+            .map(|s| {
+                let target_act = s.target_activation.unwrap();
+                let desired_value = s.target_value.unwrap() + s.avg_error;
+                let expected = test_hard_tanh(desired_value);
+                (expected - target_act).powi(2)
+            })
+            .sum::<f32>()
+            / samples.len() as f32;
+
+        // Candidate creature MSE (after adding neuron)
+        let candidate_mse: f32 = samples
+            .iter()
+            .map(|s| {
+                let target_val = s.target_value.unwrap();
+                let desired_value = target_val + s.avg_error;
+                let expected = test_hard_tanh(desired_value);
+
+                // New neuron contribution
+                let pre_act = incoming_weight * s.activation + bias;
+                let relu_output = pre_act.max(0.0);
+                let contribution = outgoing_weight * relu_output;
+
+                let new_target_value = target_val + contribution;
+                let new_activation = test_hard_tanh(new_target_value);
+                (expected - new_activation).powi(2)
+            })
+            .sum::<f32>()
+            / samples.len() as f32;
+
+        // TypeScript reports: actualErrorReduction = originalError - candidateError
+        // If we interpret this as raw error change:
+        let original_error = original_mse.sqrt(); // RMSE
+        let candidate_error = candidate_mse.sqrt();
+        let actual_error_reduction = original_error - candidate_error;
+
+        // For comparison with our percentage, convert to ratio
+        let actual_improvement_ratio = actual_error_reduction / original_error;
+
+        // Also compute MSE-based ratio (should match our prediction more closely)
+        let mse_improvement_ratio = (original_mse - candidate_mse) / original_mse;
+
+        eprintln!(
+            "TYPESCRIPT SIMULATION: predicted={:.6} ({:.4}%)",
+            predicted_improvement,
+            predicted_improvement * 100.0
+        );
+        eprintln!(
+            "  original_mse={:.8}, candidate_mse={:.8}, mse_improvement={:.6} ({:.4}%)",
+            original_mse,
+            candidate_mse,
+            mse_improvement_ratio,
+            mse_improvement_ratio * 100.0
+        );
+        eprintln!(
+            "  original_rmse={:.6}, candidate_rmse={:.6}, rmse_reduction={:.6} ({:.4}%)",
+            original_error,
+            candidate_error,
+            actual_improvement_ratio,
+            actual_improvement_ratio * 100.0
+        );
+
+        // Our prediction should match MSE-based improvement
+        let diff = (predicted_improvement - mse_improvement_ratio).abs();
+        assert!(
+            diff < 0.01,
+            "Predicted ({predicted_improvement:.6}) and MSE improvement ({mse_improvement_ratio:.6}) should match within 1%"
+        );
+
+        // Both should be positive (error should decrease)
+        assert!(
+            predicted_improvement > 0.0,
+            "Predicted improvement should be positive"
+        );
+        assert!(
+            mse_improvement_ratio > 0.0,
+            "MSE improvement should be positive"
+        );
+    }
+
+    /// Test that verifies the sign is correct when contribution SHOULD help.
+    /// If this test fails, it indicates a sign error in the formula.
+    #[test]
+    fn contribution_in_correct_direction_reduces_error() {
+        // Simple scenario: positive error, positive activation, positive weight = positive contribution
+        // Positive contribution ADDS to target value, reducing positive error
+        let sample = HelpfulSample {
+            activation: 1.0, // positive source activation
+            avg_error: 0.2,  // positive VALUE error: need to ADD 0.2
+            target_value: Some(0.3),
+            target_activation: Some(0.3),
+        };
+
+        // Optimal weight formula: w = Σ(error×activation) / Σ(activation²) = 0.2/1 = 0.2
+        // Contribution = w × ReLU(source) = 0.2 × 1 = 0.2
+        // New target value = 0.3 + 0.2 = 0.5
+        // Desired value = 0.3 + 0.2 = 0.5 (should match!)
+
+        let outgoing_weight = 0.1; // Clamped from 0.2
+        let incoming_weight = 1.0;
+        let bias = 0.0;
+
+        let pre_activation = incoming_weight * sample.activation + bias;
+        let relu_output = pre_activation.max(0.0);
+        let contribution = outgoing_weight * relu_output;
+
+        // Verify contribution is in the right direction
+        assert!(
+            contribution > 0.0,
+            "Contribution should be positive for positive error"
+        );
+        assert!(
+            contribution.signum() == sample.avg_error.signum(),
+            "Contribution sign ({}) should match error sign ({})",
+            contribution.signum(),
+            sample.avg_error.signum()
+        );
+
+        // Verify new error is smaller
+        let target_value = sample.target_value.unwrap();
+        let target_activation = sample.target_activation.unwrap();
+        let desired_value = target_value + sample.avg_error;
+        let expected = test_hard_tanh(desired_value);
+
+        let baseline_error = expected - target_activation;
+        let new_target_value = target_value + contribution;
+        let new_activation = test_hard_tanh(new_target_value);
+        let new_error = expected - new_activation;
+
+        eprintln!(
+            "DIRECTION TEST: baseline_err={:.4}, new_err={:.4}, reduction={:.4}",
+            baseline_error.abs(),
+            new_error.abs(),
+            baseline_error.abs() - new_error.abs()
+        );
+
+        assert!(
+            new_error.abs() < baseline_error.abs(),
+            "New error ({:.4}) should be smaller than baseline ({:.4})",
+            new_error.abs(),
+            baseline_error.abs()
         );
     }
 }

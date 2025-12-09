@@ -318,6 +318,71 @@ produce tighter, more accurate predictions. The remaining candidates may still f
 to other factors (sample overfitting, bias-weight interaction, activation saturation)
 which can be addressed in follow-up improvements.
 
+#### Expanded activation functions and discrete weight fix (v0.1.139)
+
+**MAJOR FEATURE**: Added 8 new activation functions based on analysis of successful
+discoveries. Many successful neurons evolved TO activations we weren't trying!
+
+| New Activation | Evidence |
+|----------------|----------|
+| **LeakyReLU** | 4 successful discoveries evolved ReLU → LeakyReLU! |
+| **Mish** | 2 successful discoveries evolved TO Mish (from ELU, Softplus) |
+| **Swish** | 1 successful discovery evolved ReLU → Swish |
+| **HARD_TANH** | 1 successful discovery evolved CLIPPED → HARD_TANH |
+| **SOFTSIGN** | Successful discovery neuron with SOFTSIGN |
+| **BENT_IDENTITY** | 1 successful discovery evolved LeakyReLU → BENT_IDENTITY |
+| **ArcTan** | Similar to SOFTSIGN, bounded output |
+| **ReLU6** | Capped ReLU, useful for bounded outputs |
+
+Total activations now: **19** (was 11).
+
+**Philosophy change**: The goal is finding MORE successful candidates, not filtering
+out failures. Failed candidates are excluded after evaluation anyway. "Kiss more frogs
+to find more princes."
+
+**BUG FIX**: Discrete evaluation generating huge outgoing weights
+
+The `evaluate_discrete_candidate` function (for STEP/BIPOLAR targets with IDENTITY neurons)
+was generating outgoing weights up to ±50, far exceeding `MAX_OUTGOING_WEIGHT` (0.1).
+
+| Before | After |
+|--------|-------|
+| OUTGOING_SCALES: [0.1..50.0] | OUTGOING_SCALES: [0.01..0.1] |
+
+**Production evidence**: 455 out of 793 large-weight failed candidates were IDENTITY neurons
+from this code path. None produced real improvements.
+
+#### Prediction tracing and validation (v0.1.140)
+
+**INVESTIGATION**: With ~100k samples, predictions should be accurate. Production data shows
+predictions are inverted (~84% in wrong direction). Added tools to investigate.
+
+**Finding from synthetic tests**: The prediction formula is **mathematically correct**!
+All 6 synthetic tests pass with predictions matching manual simulation to within 0.01%.
+This means the issue is in **sample collection or interpretation**, not the formula.
+
+| Test Scenario | Predicted | Manual | Match? |
+|---------------|-----------|--------|--------|
+| Linear region | 75.00% | 75.00% | ✓ |
+| Near saturation | 100.00% | 100.00% | ✓ |
+| Negative error | 75.00% | 75.00% | ✓ |
+| Mixed errors | 7.10% | 7.10% | ✓ |
+| TypeScript simulation | 66.38% | 66.38% | ✓ |
+
+**New feature**: Prediction tracing for debugging. Set environment variable:
+```bash
+export NEAT_AI_DISCOVERY_TRACE_PREDICTION=1
+```
+
+This logs sample-level details showing:
+- Input parameters (weights, bias, sample count)
+- First 5 samples with detailed calculation breakdown
+- Contribution statistics (average, positive/negative counts)
+- Final improvement calculation
+
+**Next steps**: The investigation suggests recording more data in TypeScript to understand
+why production samples produce inverted predictions despite correct formula.
+
 #### VALUE domain error interpretation (v0.1.117)
 
 **CRITICAL BUG FIX**: The NEAT-AI TypeScript library stores errors in the **VALUE
