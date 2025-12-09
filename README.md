@@ -318,6 +318,114 @@ produce tighter, more accurate predictions. The remaining candidates may still f
 to other factors (sample overfitting, bias-weight interaction, activation saturation)
 which can be addressed in follow-up improvements.
 
+#### Expanded activation functions and discrete weight fix (v0.1.139)
+
+**MAJOR FEATURE**: Added 8 new activation functions based on analysis of successful
+discoveries. Many successful neurons evolved TO activations we weren't trying!
+
+| New Activation | Evidence |
+|----------------|----------|
+| **LeakyReLU** | 4 successful discoveries evolved ReLU → LeakyReLU! |
+| **Mish** | 2 successful discoveries evolved TO Mish (from ELU, Softplus) |
+| **Swish** | 1 successful discovery evolved ReLU → Swish |
+| **HARD_TANH** | 1 successful discovery evolved CLIPPED → HARD_TANH |
+| **SOFTSIGN** | Successful discovery neuron with SOFTSIGN |
+| **BENT_IDENTITY** | 1 successful discovery evolved LeakyReLU → BENT_IDENTITY |
+| **ArcTan** | Similar to SOFTSIGN, bounded output |
+| **ReLU6** | Capped ReLU, useful for bounded outputs |
+
+Total activations now: **19** (was 11).
+
+**Philosophy change**: The goal is finding MORE successful candidates, not filtering
+out failures. Failed candidates are excluded after evaluation anyway. "Kiss more frogs
+to find more princes."
+
+**BUG FIX**: Discrete evaluation generating huge outgoing weights
+
+The `evaluate_discrete_candidate` function (for STEP/BIPOLAR targets with IDENTITY neurons)
+was generating outgoing weights up to ±50, far exceeding `MAX_OUTGOING_WEIGHT` (0.1).
+
+| Before | After |
+|--------|-------|
+| OUTGOING_SCALES: [0.1..50.0] | OUTGOING_SCALES: [0.01..0.1] |
+
+**Production evidence**: 455 out of 793 large-weight failed candidates were IDENTITY neurons
+from this code path. None produced real improvements.
+
+#### Prediction tracing and validation (v0.1.140)
+
+**INVESTIGATION**: With ~100k samples, predictions should be accurate. Production data shows
+predictions are inverted (~84% in wrong direction). Added tools to investigate.
+
+**Finding from synthetic tests**: The prediction formula is **mathematically correct**!
+All 6 synthetic tests pass with predictions matching manual simulation to within 0.01%.
+This means the issue is in **sample collection or interpretation**, not the formula.
+
+| Test Scenario | Predicted | Manual | Match? |
+|---------------|-----------|--------|--------|
+| Linear region | 75.00% | 75.00% | ✓ |
+| Near saturation | 100.00% | 100.00% | ✓ |
+| Negative error | 75.00% | 75.00% | ✓ |
+| Mixed errors | 7.10% | 7.10% | ✓ |
+| TypeScript simulation | 66.38% | 66.38% | ✓ |
+
+**New feature**: Prediction tracing for debugging. Set environment variable:
+```bash
+export NEAT_AI_DISCOVERY_TRACE_PREDICTION=1
+```
+
+This logs sample-level details showing:
+- Input parameters (weights, bias, sample count)
+- First 5 samples with detailed calculation breakdown
+- Contribution statistics (average, positive/negative counts)
+- Final improvement calculation
+
+**Next steps**: The investigation suggests recording more data in TypeScript to understand
+why production samples produce inverted predictions despite correct formula.
+
+#### GPU shader activation function fix (v0.1.141)
+
+**CRITICAL BUG FIX**: New activation functions added in v0.1.139 were not working correctly
+on GPU. The GPU shaders (`activation.wgsl` and `bias.wgsl`) only handled activation IDs 0-10,
+but the new activations were assigned IDs 11-18.
+
+| Activation | GPU ID | Status Before | Status After |
+|------------|--------|---------------|--------------|
+| LeakyReLU | 11 | ❌ IDENTITY fallback | ✅ Correct |
+| Mish | 12 | ❌ IDENTITY fallback | ✅ Correct |
+| Swish | 13 | ❌ IDENTITY fallback | ✅ Correct |
+| HARD_TANH | 14 | ❌ IDENTITY fallback | ✅ Correct |
+| SOFTSIGN | 15 | ❌ IDENTITY fallback | ✅ Correct |
+| BENT_IDENTITY | 16 | ❌ IDENTITY fallback | ✅ Correct |
+| ArcTan | 17 | ❌ IDENTITY fallback | ✅ Correct |
+| ReLU6 | 18 | ❌ IDENTITY fallback | ✅ Correct |
+
+**The bug**: GPU shaders used `default: { return x; }` for unknown IDs, silently returning
+IDENTITY results instead of the correct activation function. This caused incorrect weight
+calculations without any error.
+
+**Example of the bug (LeakyReLU)**:
+- Pre-activation = -1.0
+- LeakyReLU(-1.0) = -0.01 (correct)
+- IDENTITY(-1.0) = -1.0 (100x wrong!)
+
+Weight calculations based on these wrong outputs would be completely incorrect, producing
+candidates that fail when applied in production.
+
+**The fix**: Added all 8 new activation functions to both `activation.wgsl` and `bias.wgsl`
+shaders with correct implementations:
+- LeakyReLU: `x if x >= 0, else 0.01 * x`
+- Mish: `x * tanh(softplus(x))`
+- Swish: `x * sigmoid(x)`
+- HARD_TANH: `clamp(x, -1, 1)`
+- SOFTSIGN: `x / (1 + |x|)`
+- BENT_IDENTITY: `(sqrt(x² + 1) - 1) / 2 + x`
+- ArcTan: `atan(x)`
+- ReLU6: `clamp(x, 0, 6)`
+
+**Test added**: `tests/gpu_activation_shaders.rs` verifies GPU shader correctness for all
+new activation functions.
+
 #### VALUE domain error interpretation (v0.1.117)
 
 **CRITICAL BUG FIX**: The NEAT-AI TypeScript library stores errors in the **VALUE

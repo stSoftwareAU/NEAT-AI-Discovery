@@ -116,6 +116,60 @@ fn relu_activation(x: f32) -> f32 {
     return max(x, 0.0);
 }
 
+// New activations added in v0.1.139 - GPU IDs 11-18 (bias.wgsl uses 11 for ReLU internally)
+fn leaky_relu_activation(x: f32) -> f32 {
+    if (x >= 0.0) {
+        return x;
+    } else {
+        return 0.01 * x; // Standard leak coefficient
+    }
+}
+
+fn mish_activation(x: f32) -> f32 {
+    // Mish(x) = x * tanh(softplus(x))
+    var sp: f32;
+    if (x > 20.0) {
+        sp = x;
+    } else {
+        sp = log(1.0 + exp(x));
+    }
+    return x * tanh(sp);
+}
+
+fn swish_activation(x: f32) -> f32 {
+    // Swish(x) = x * sigmoid(x)
+    var sigmoid: f32;
+    if (x >= 0.0) {
+        sigmoid = 1.0 / (1.0 + exp(-x));
+    } else {
+        let exp_x = exp(x);
+        sigmoid = exp_x / (1.0 + exp_x);
+    }
+    return x * sigmoid;
+}
+
+fn hard_tanh_activation(x: f32) -> f32 {
+    return clamp(x, -1.0, 1.0);
+}
+
+fn softsign_activation(x: f32) -> f32 {
+    // softsign(x) = x / (1 + |x|)
+    return x / (1.0 + abs(x));
+}
+
+fn bent_identity_activation(x: f32) -> f32 {
+    // bent_identity(x) = (sqrt(x² + 1) - 1) / 2 + x
+    return (sqrt(x * x + 1.0) - 1.0) / 2.0 + x;
+}
+
+fn arctan_activation(x: f32) -> f32 {
+    return atan(x);
+}
+
+fn relu6_activation(x: f32) -> f32 {
+    return clamp(x, 0.0, 6.0);
+}
+
 fn apply_activation(x: f32, activation_type: u32) -> f32 {
     switch (activation_type) {
         case 0u: { return gelu_activation(x); }
@@ -129,7 +183,15 @@ fn apply_activation(x: f32, activation_type: u32) -> f32 {
         case 8u: { return clipped_activation(x); }
         case 9u: { return absolute_activation(x); }
         case 10u: { return inverse_activation(x); }
-        case 11u: { return relu_activation(x); }
+        // New activations (v0.1.139) - GPU IDs 11-18
+        case 11u: { return leaky_relu_activation(x); }
+        case 12u: { return mish_activation(x); }
+        case 13u: { return swish_activation(x); }
+        case 14u: { return hard_tanh_activation(x); }
+        case 15u: { return softsign_activation(x); }
+        case 16u: { return bent_identity_activation(x); }
+        case 17u: { return arctan_activation(x); }
+        case 18u: { return relu6_activation(x); }
         default: { return x; }
     }
 }
