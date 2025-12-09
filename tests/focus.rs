@@ -46,6 +46,7 @@ fn create_creature(
                 from_uuid: from.to_string(),
                 to_uuid: to.to_string(),
                 weight,
+                synapse_type: None,
             })
             .collect(),
         input: input_count,

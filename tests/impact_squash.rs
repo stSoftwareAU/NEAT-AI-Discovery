@@ -43,6 +43,7 @@ fn create_creature_with_squash(
                 from_uuid: from.to_string(),
                 to_uuid: to.to_string(),
                 weight,
+                synapse_type: None,
             })
             .collect(),
         input: input_count,
@@ -179,15 +180,14 @@ fn test_bipolar_neuron_threshold_impact() {
 // MINIMUM/MAXIMUM Tests
 // =============================================================================
 
-/// Test that MINIMUM neurons use conservative equal-probability impact.
+/// Test that MINIMUM neurons use activation-based selection probability.
 ///
-/// For MINIMUM/MAXIMUM selection functions, we can't know which synapse "wins"
-/// without activation data. The conservative approach gives each synapse equal
-/// probability (1/N) of winning.
+/// When activation records are available, we compute which synapse actually
+/// "wins" (provides the minimum value) for each observation. The synapse
+/// that wins most often gets the highest impact.
 ///
-/// This is a MAJOR improvement over the old sum-based approach which gave large
-/// weights higher impact in MINIMUM - completely wrong since small weights are
-/// more likely to win in MINIMUM!
+/// This is more accurate than the old 1/N conservative approach because
+/// we're using real data to determine selection probability.
 #[test]
 fn test_minimum_neuron_selection_impact() {
     // Network: Three hidden neurons feeding into a MINIMUM output
@@ -219,6 +219,9 @@ fn test_minimum_neuron_selection_impact() {
     // hidden-small contributes: 0.5 × 0.1 = 0.05 (smallest → WINS in MINIMUM!)
     // hidden-medium contributes: 0.5 × 1.0 = 0.5
     // hidden-large contributes: 0.5 × 10.0 = 5.0 (largest → loses)
+    //
+    // With activation-based impact, hidden-small ALWAYS wins because its
+    // weighted contribution (0.05) is always the minimum. So it gets 100% impact.
     let records = create_records_with_activation(vec![
         ("hidden-small", 0.1, 0.5),
         ("hidden-medium", 0.1, 0.5),
@@ -250,41 +253,38 @@ fn test_minimum_neuron_selection_impact() {
         small.impact, medium.impact, large.impact
     );
 
-    // With the new selection-aware impact calculation, all neurons have equal
-    // probability of "winning" the selection (1/3 each), so equal impact.
+    // With activation-based impact calculation, hidden-small wins 100% of the time
+    // because its weighted contribution (0.05) is always smaller than medium (0.5)
+    // and large (5.0). So hidden-small gets 100% of the impact (1.0).
     //
-    // OLD BROKEN behaviour: large.impact = 90%, small.impact = 1%
-    // NEW FIXED behaviour: all have equal impact = 1/3 ≈ 0.33
-    //
-    // This is much better for MINIMUM because it doesn't incorrectly flag
-    // the small-weight neuron as "low impact" when it actually determines
-    // the output in many cases!
+    // This is the CORRECT behaviour - the synapse that actually determines
+    // the output should have the most impact!
     let epsilon = 0.01;
     assert!(
-        (small.impact - large.impact).abs() < epsilon,
-        "For MINIMUM, all synapses should have equal structural impact (conservative). \
-         small: {}, large: {} - the OLD behaviour gave large weights ~90% impact!",
-        small.impact,
-        large.impact
-    );
-
-    // All should have ~0.33 impact (1/3 probability each)
-    let expected_impact = 1.0 / 3.0;
-    assert!(
-        (small.impact - expected_impact).abs() < epsilon,
-        "Impact should be ~0.33 (1/3 probability), got {}",
+        (small.impact - 1.0).abs() < epsilon,
+        "hidden-small should have ~100% impact (always wins MINIMUM), got {}",
         small.impact
+    );
+    assert!(
+        medium.impact < epsilon,
+        "hidden-medium should have ~0% impact (never wins MINIMUM), got {}",
+        medium.impact
+    );
+    assert!(
+        large.impact < epsilon,
+        "hidden-large should have ~0% impact (never wins MINIMUM), got {}",
+        large.impact
     );
 }
 
-/// Test that MAXIMUM neurons use conservative equal-probability impact.
+/// Test that MAXIMUM neurons use activation-based selection probability.
 ///
-/// For MAXIMUM/MINIMUM selection functions, we can't know which synapse "wins"
-/// without activation data. The conservative approach gives each synapse equal
-/// probability (1/N) of winning, so all have equal structural impact.
+/// When activation records are available, we compute which synapse actually
+/// "wins" (provides the maximum value) for each observation. The synapse
+/// that wins most often gets the highest impact.
 ///
-/// This is better than underestimating (which causes incorrect removal candidates)
-/// even if it doesn't perfectly model which synapse is likely to win.
+/// This is more accurate than the old 1/N conservative approach because
+/// we're using real data to determine selection probability.
 #[test]
 fn test_maximum_neuron_selection_impact() {
     let creature = create_creature_with_squash(
@@ -305,8 +305,9 @@ fn test_maximum_neuron_selection_impact() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    // For MAXIMUM: large weight usually wins in practice
-    // But at the structural level (without activations), we use conservative equal probability
+    // For MAXIMUM with these weights and activations:
+    // hidden-small contributes: 0.5 × 0.1 = 0.05
+    // hidden-large contributes: 0.5 × 10.0 = 5.0 (ALWAYS wins MAXIMUM!)
     let records = create_records_with_activation(vec![
         ("hidden-small", 0.1, 0.5),
         ("hidden-large", 0.1, 0.5),
@@ -332,28 +333,21 @@ fn test_maximum_neuron_selection_impact() {
         small.impact, large.impact
     );
 
-    // With the new selection-aware impact calculation, both neurons have equal
-    // probability of "winning" the selection (1/2 each), so equal impact.
+    // With activation-based impact calculation, hidden-large wins 100% of the time
+    // because its weighted contribution (5.0) is always larger than small (0.05).
+    // So hidden-large gets 100% of the impact (1.0).
     //
-    // This is more conservative than the old behaviour (which gave large weights
-    // higher impact). The conservative approach is better for removal candidate
-    // detection because it won't incorrectly flag neurons as "low impact" when
-    // they could actually be the winning synapse.
-    //
-    // Impact = child_impact / N = 1.0 / 2 = 0.5 for both
+    // This is the CORRECT behaviour - the synapse that actually determines
+    // the output should have the most impact!
     let epsilon = 0.01;
     assert!(
-        (small.impact - large.impact).abs() < epsilon,
-        "For MAXIMUM/MINIMUM, all synapses have equal structural impact (conservative). \
-         small: {}, large: {}",
-        small.impact,
+        (large.impact - 1.0).abs() < epsilon,
+        "hidden-large should have ~100% impact (always wins MAXIMUM), got {}",
         large.impact
     );
-
-    // Both should have ~0.5 impact (1/2 of the output's impact)
     assert!(
-        (small.impact - 0.5).abs() < epsilon,
-        "Impact should be ~0.5 (1/2 probability), got {}",
+        small.impact < epsilon,
+        "hidden-small should have ~0% impact (never wins MAXIMUM), got {}",
         small.impact
     );
 }

@@ -281,19 +281,20 @@ Where:
 ❌ **Old behaviour (BROKEN)**: sum-based normalisation gave large weights ~90% impact
 in MINIMUM, but small weights are more likely to win!
 
-✅ **New behaviour (FIXED)**: all synapses get equal impact (1/N), which is conservative
-but won't incorrectly identify removal candidates.
-
-#### 🔮 Future Enhancement
-
-With activation data, we could compute actual selection probability:
+✅ **New behaviour (v0.1.143+)**: When activation records are available, we compute
+the **actual selection probability** for each synapse:
 
 $$\text{selection\_impact} = P(\text{winning}) \times \text{child\_impact}$$
 
 Where:
 - $P(\text{winning})$ = fraction of samples where this synapse has min/max value 🎲
-- For MINIMUM: smaller weighted contributions win more often
-- For MAXIMUM: larger weighted contributions win more often
+- For MINIMUM: the synapse with smallest weighted contribution wins
+- For MAXIMUM: the synapse with largest weighted contribution wins
+
+**Example**: If hidden-small wins MINIMUM 90% of the time, it gets 90% impact.
+
+When activation records are **not** available (e.g., using `compute_impacts_public`),
+we fall back to the conservative 1/N equal probability approach.
 
 ---
 
@@ -333,10 +334,10 @@ This captures that a neuron with:
 
 ---
 
-## 📋 Implementation Status (v0.1.132+)
+## 📋 Implementation Status (v0.1.143+)
 
-The impact calculation is now **squash-aware**. Different squash functions use
-different impact formulas:
+The impact calculation is now **squash-aware** and uses **activation-based statistics**
+when available. Different squash functions use different impact formulas:
 
 | Squash Function | Impact Model | Accuracy | Notes |
 |-----------------|--------------|----------|-------|
@@ -345,9 +346,9 @@ different impact formulas:
 | **HARD_TANH** | Linear (normalised) | ⚠️ Approx | Clamping not modelled |
 | **STEP** | Threshold (full impact) | ✅ Conservative | Any synapse can flip output 🎚️ |
 | **BIPOLAR** | Threshold (full impact) | ✅ Conservative | Any synapse can flip output 🎚️ |
-| **MINIMUM** | Selection (1/N each) | ✅ Conservative | Equal probability of winning 🏆 |
-| **MAXIMUM** | Selection (1/N each) | ✅ Conservative | Equal probability of winning 🏆 |
-| **IF** | Selection (1/N each) | ✅ Conservative | Conditional selection |
+| **MINIMUM** | Activation-based | ✅ Accurate | Actual win probability from samples 🏆 |
+| **MAXIMUM** | Activation-based | ✅ Accurate | Actual win probability from samples 🏆 |
+| **IF** | Synapse-type-aware | ✅ Accurate | Condition/positive/negative branches |
 | **ReLU** | Linear (normalised) | ⚠️ Approx | Zero region not modelled |
 
 ### 🏷️ Squash Categories
@@ -376,9 +377,22 @@ No normalisation - any synapse can flip output!
 
 **Selection squashes** (MINIMUM/MAXIMUM/IF) 🏆:
 
+When activation records are available:
+
+$$\text{contribution} = P(\text{winning}) \times \text{child\_impact}$$
+
+Where $P(\text{winning})$ is computed from actual activation data.
+
+Without activation records (fallback):
+
 $$\text{contribution} = \frac{\text{child\_impact}}{N}$$
 
 Equal probability for N incoming synapses.
+
+**IF neurons** use synapse type information:
+- `"condition"` synapses: $P = 1.0$ (always active)
+- `"positive"` synapses: $P =$ fraction where condition sum > 0
+- `"negative"` synapses: $P =$ fraction where condition sum ≤ 0
 
 ---
 
@@ -391,15 +405,16 @@ Equal probability for N incoming synapses.
 - [x] Add squash-aware impact functions
 - [x] STEP/BIPOLAR support (conservative full-impact approach) 🎚️
 - [x] MINIMUM/MAXIMUM support (equal-probability approach) 🏆
+- [x] **MINIMUM/MAXIMUM: Compute actual selection probability from samples** 🎲 (v0.1.143)
+- [x] **IF: Synapse-type-aware impact (condition/positive/negative)** (v0.1.143)
 - [x] Integration with removal candidate detection
 - [x] Add tests for new edge cases
 
 ### 📋 Future Enhancements
 
-These could further improve accuracy but require activation data:
+These could further improve accuracy:
 
 - [ ] STEP/BIPOLAR: Compute actual threshold-crossing probability from samples 🎲
-- [ ] MINIMUM/MAXIMUM: Compute actual selection probability from samples 🎲
 - [ ] TANH/LOGISTIC: Model saturation using activation values
 - [ ] ReLU: Model zero region using activation values
 
