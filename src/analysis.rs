@@ -8741,6 +8741,7 @@ mod tests_synapses {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 0.4,
+                synapse_type: None,
             }],
         };
 
@@ -8843,12 +8844,14 @@ mod tests_synapses {
                     from_uuid: "input-0".to_string(),
                     to_uuid: "hidden-0".to_string(),
                     weight: 0.4,
+                    synapse_type: None,
                 },
                 // Output neuron already connected to hidden-0
                 SynapseJson {
                     from_uuid: "hidden-0".to_string(),
                     to_uuid: "output-0".to_string(),
                     weight: 0.5,
+                    synapse_type: None,
                 },
             ],
         };
@@ -8982,11 +8985,13 @@ mod tests_synapses {
                     from_uuid: "input-0".to_string(),
                     to_uuid: "hidden-0".to_string(),
                     weight: 0.4,
+                    synapse_type: None,
                 },
                 SynapseJson {
                     from_uuid: "input-1".to_string(),
                     to_uuid: "hidden-0".to_string(),
                     weight: 0.5,
+                    synapse_type: None,
                 },
             ],
         };
@@ -9183,11 +9188,13 @@ mod tests_synapses {
                     from_uuid: "input-0".to_string(),
                     to_uuid: "output-0".to_string(),
                     weight: 0.8,
+                    synapse_type: None,
                 },
                 SynapseJson {
                     from_uuid: "input-0".to_string(),
                     to_uuid: "output-1".to_string(),
                     weight: 0.6,
+                    synapse_type: None,
                 },
             ],
         };
@@ -9274,6 +9281,7 @@ mod tests_synapses {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 0.4,
+                synapse_type: None,
             }],
         };
 

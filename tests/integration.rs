@@ -195,6 +195,7 @@ fn test_impact_with_very_small_incoming_weight_is_not_zeroed() {
             // Very small but non-zero weight so the total inbound is below
             // any practical threshold, but still represents a valid path.
             weight: 1e-12,
+            synapse_type: None,
         }],
         input: 0,
         output: 1,
@@ -303,11 +304,13 @@ fn test_impact_calculation_with_multiple_incoming_connections() {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "hidden-a".to_string(),
                 weight: 1.0,
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "input-1".to_string(),
                 to_uuid: "hidden-b".to_string(),
                 weight: 1.0,
+                synapse_type: None,
             },
             // Both hidden neurons connect to output with different weights
             // Total incoming weight to output-0 = 10.0 + 5.0 = 15.0
@@ -315,11 +318,13 @@ fn test_impact_calculation_with_multiple_incoming_connections() {
                 from_uuid: "hidden-a".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 10.0,
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "hidden-b".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 5.0,
+                synapse_type: None,
             },
         ],
         input: 2,
@@ -665,17 +670,20 @@ fn test_cumulative_impact_with_multiple_output_connections() {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "hub".to_string(),
                 weight: 1.0,
+                synapse_type: None,
             },
             // Hub connects to BOTH outputs - removing it affects BOTH
             SynapseJson {
                 from_uuid: "hub".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 0.5, // 100% of output-0's inbound
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "hub".to_string(),
                 to_uuid: "output-1".to_string(),
                 weight: 0.5, // 100% of output-1's inbound
+                synapse_type: None,
             },
         ],
         input: 1,
@@ -1114,6 +1122,7 @@ fn test_hidden_neurons_are_analysed_not_filtered() {
             from_uuid: "hidden-0".to_string(),
             to_uuid: "output-0".to_string(),
             weight: 1.0, // Hidden -> Output connection gives hidden-0 impact = 1.0
+            synapse_type: None,
         }],
         input: 2,
         output: 1,
@@ -1263,11 +1272,13 @@ fn test_hidden_neuron_candidates_have_impact_discounted_predictions() {
                 from_uuid: "hidden-0".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 0.5, // Absolute impact = 0.5 × 1.0 = 0.5
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "hidden-1".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 0.5, // Absolute impact = 0.5 × 1.0 = 0.5
+                synapse_type: None,
             },
         ],
         input: 2,

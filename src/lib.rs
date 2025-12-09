@@ -60,11 +60,19 @@ pub struct NeuronJson {
     pub bias: f32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct SynapseJson {
+    #[serde(default)]
     pub from_uuid: String,
+    #[serde(default)]
     pub to_uuid: String,
+    #[serde(default)]
     pub weight: f32,
+    /// Synapse type for IF neurons: "condition", "positive", or "negative".
+    /// Used to determine which synapses contribute to condition evaluation
+    /// versus positive/negative branches. None for non-IF neurons.
+    #[serde(default, rename = "type")]
+    pub synapse_type: Option<String>,
 }
 
 /// Pre-computed neuron data for a single neuron

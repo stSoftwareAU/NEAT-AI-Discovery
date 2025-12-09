@@ -1,10 +1,24 @@
 use crate::parquet_format::{read_all_records_grouped_by_neuron, read_records_from_parquet};
 use crate::types::DiscoverRecord;
-use crate::{CreatureJson, NeuronJson};
+use crate::{CreatureJson, NeuronJson, SynapseJson};
 use anyhow::{anyhow, Context, Result};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
+
+/// Statistics for selection-based neurons (MINIMUM, MAXIMUM, IF).
+/// Maps (from_uuid, to_uuid) -> win probability (0.0 to 1.0).
+/// For MIN/MAX: probability this synapse provides the min/max value.
+/// For IF: probability this synapse's branch is taken (condition always 1.0).
+pub type SelectionStats = HashMap<(String, String), f32>;
+
+/// A synapse key paired with its weighted activation contribution.
+/// Used internally for tracking which synapse wins in MIN/MAX calculations.
+type SynapseContribution = ((String, String), f32);
+
+/// Map from observation index to list of synapse contributions for that observation.
+/// Used to determine which synapse wins (has min/max value) for each observation.
+type ObservationContributions = HashMap<u32, Vec<SynapseContribution>>;
 
 #[derive(Debug)]
 pub struct RankedNeuron {
@@ -208,13 +222,316 @@ impl SquashCategory {
     }
 }
 
+/// Compute selection statistics for MINIMUM, MAXIMUM, and IF neurons using activation records.
+///
+/// For each selection-based neuron, this function analyses the recorded activations to determine
+/// which synapse "wins" (provides the min/max value) for each observation. The result is a map
+/// from (from_uuid, to_uuid) to the probability (0.0 to 1.0) that synapse wins.
+///
+/// For IF neurons with synapse types:
+/// - "condition" synapses: Always contribute, so probability = 1.0
+/// - "positive" synapses: Probability = fraction of observations where condition sum > 0
+/// - "negative" synapses: Probability = fraction of observations where condition sum <= 0
+///
+/// # Arguments
+/// * `creature` - The creature containing neurons and synapses
+/// * `grouped_records` - Activation records grouped by neuron UUID
+///
+/// # Returns
+/// Map from (from_uuid, to_uuid) to win probability for selection-based synapses
+pub fn compute_selection_stats(
+    creature: &CreatureJson,
+    grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
+) -> SelectionStats {
+    let mut stats = SelectionStats::new();
+    let squash_map = build_squash_map(creature);
+
+    // Find all selection-based neurons (MINIMUM, MAXIMUM, IF)
+    let selection_neurons: Vec<&NeuronJson> = creature
+        .neurons
+        .iter()
+        .filter(|n| {
+            let squash = squash_map.get(&n.uuid).map(|s| s.as_str()).unwrap_or("");
+            matches!(squash, "MINIMUM" | "MAXIMUM" | "IF")
+        })
+        .collect();
+
+    for target_neuron in selection_neurons {
+        let squash = squash_map
+            .get(&target_neuron.uuid)
+            .map(|s| s.as_str())
+            .unwrap_or("");
+
+        // Get incoming synapses to this neuron
+        let incoming_synapses: Vec<&SynapseJson> = creature
+            .synapses
+            .iter()
+            .filter(|s| s.to_uuid == target_neuron.uuid)
+            .collect();
+
+        if incoming_synapses.is_empty() {
+            continue;
+        }
+
+        match squash {
+            "MINIMUM" => {
+                compute_min_stats(&incoming_synapses, grouped_records, &mut stats);
+            }
+            "MAXIMUM" => {
+                compute_max_stats(&incoming_synapses, grouped_records, &mut stats);
+            }
+            "IF" => {
+                compute_if_stats(&incoming_synapses, grouped_records, &mut stats);
+            }
+            _ => {}
+        }
+    }
+
+    stats
+}
+
+/// Compute selection statistics for a MINIMUM neuron.
+/// Counts how often each synapse provides the minimum weighted activation.
+fn compute_min_stats(
+    synapses: &[&SynapseJson],
+    grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
+    stats: &mut SelectionStats,
+) {
+    if synapses.is_empty() {
+        return;
+    }
+
+    // Build a map of obs_index -> Vec<(synapse_key, weighted_activation)>
+    let mut obs_contributions: ObservationContributions = HashMap::new();
+
+    for synapse in synapses {
+        if let Some(records) = grouped_records.get(&synapse.from_uuid) {
+            for record in records {
+                if record.activation.is_finite() {
+                    let weighted = synapse.weight * record.activation;
+                    let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+                    obs_contributions
+                        .entry(record.obs_index)
+                        .or_default()
+                        .push((key, weighted));
+                }
+            }
+        }
+    }
+
+    // Count wins for each synapse
+    let mut win_counts: HashMap<(String, String), u32> = HashMap::new();
+    let mut total_obs = 0u32;
+
+    for contributions in obs_contributions.values() {
+        if contributions.is_empty() {
+            continue;
+        }
+        total_obs += 1;
+
+        // Find the minimum weighted activation
+        let min_val = contributions
+            .iter()
+            .map(|(_, v)| *v)
+            .fold(f32::INFINITY, f32::min);
+
+        // Count all synapses that achieved the minimum (handles ties)
+        let winners: Vec<_> = contributions
+            .iter()
+            .filter(|(_, v)| (*v - min_val).abs() < 1e-10)
+            .collect();
+
+        for (key, _) in winners {
+            *win_counts.entry(key.clone()).or_insert(0) += 1;
+        }
+    }
+
+    // Convert counts to probabilities
+    if total_obs > 0 {
+        for synapse in synapses {
+            let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+            let wins = win_counts.get(&key).copied().unwrap_or(0);
+            let probability = wins as f32 / total_obs as f32;
+            stats.insert(key, probability);
+        }
+    }
+}
+
+/// Compute selection statistics for a MAXIMUM neuron.
+/// Counts how often each synapse provides the maximum weighted activation.
+fn compute_max_stats(
+    synapses: &[&SynapseJson],
+    grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
+    stats: &mut SelectionStats,
+) {
+    if synapses.is_empty() {
+        return;
+    }
+
+    // Build a map of obs_index -> Vec<(synapse_key, weighted_activation)>
+    let mut obs_contributions: ObservationContributions = HashMap::new();
+
+    for synapse in synapses {
+        if let Some(records) = grouped_records.get(&synapse.from_uuid) {
+            for record in records {
+                if record.activation.is_finite() {
+                    let weighted = synapse.weight * record.activation;
+                    let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+                    obs_contributions
+                        .entry(record.obs_index)
+                        .or_default()
+                        .push((key, weighted));
+                }
+            }
+        }
+    }
+
+    // Count wins for each synapse
+    let mut win_counts: HashMap<(String, String), u32> = HashMap::new();
+    let mut total_obs = 0u32;
+
+    for contributions in obs_contributions.values() {
+        if contributions.is_empty() {
+            continue;
+        }
+        total_obs += 1;
+
+        // Find the maximum weighted activation
+        let max_val = contributions
+            .iter()
+            .map(|(_, v)| *v)
+            .fold(f32::NEG_INFINITY, f32::max);
+
+        // Count all synapses that achieved the maximum (handles ties)
+        let winners: Vec<_> = contributions
+            .iter()
+            .filter(|(_, v)| (*v - max_val).abs() < 1e-10)
+            .collect();
+
+        for (key, _) in winners {
+            *win_counts.entry(key.clone()).or_insert(0) += 1;
+        }
+    }
+
+    // Convert counts to probabilities
+    if total_obs > 0 {
+        for synapse in synapses {
+            let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+            let wins = win_counts.get(&key).copied().unwrap_or(0);
+            let probability = wins as f32 / total_obs as f32;
+            stats.insert(key, probability);
+        }
+    }
+}
+
+/// Compute selection statistics for an IF neuron.
+///
+/// IF neurons have three synapse types:
+/// - "condition": Always evaluated to determine which branch to take
+/// - "positive": Used when sum of condition synapses > 0
+/// - "negative": Used when sum of condition synapses <= 0
+///
+/// Impact distribution:
+/// - Condition synapses: probability = 1.0 (always active)
+/// - Positive synapses: probability = fraction of observations where condition > 0
+/// - Negative synapses: probability = fraction of observations where condition <= 0
+fn compute_if_stats(
+    synapses: &[&SynapseJson],
+    grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
+    stats: &mut SelectionStats,
+) {
+    // Separate synapses by type
+    let condition_synapses: Vec<_> = synapses
+        .iter()
+        .filter(|s| s.synapse_type.as_deref() == Some("condition"))
+        .collect();
+    let positive_synapses: Vec<_> = synapses
+        .iter()
+        .filter(|s| s.synapse_type.as_deref() == Some("positive"))
+        .collect();
+    let negative_synapses: Vec<_> = synapses
+        .iter()
+        .filter(|s| s.synapse_type.as_deref() == Some("negative"))
+        .collect();
+
+    // If no synapse types are set, fall back to equal probability
+    if condition_synapses.is_empty() && positive_synapses.is_empty() && negative_synapses.is_empty()
+    {
+        // No type information - use equal probability fallback
+        let n = synapses.len() as f32;
+        for synapse in synapses {
+            let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+            stats.insert(key, 1.0 / n);
+        }
+        return;
+    }
+
+    // Condition synapses are always active
+    for synapse in &condition_synapses {
+        let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+        stats.insert(key, 1.0);
+    }
+
+    // Compute condition sum for each observation to determine positive/negative branch usage
+    let mut obs_condition_sums: HashMap<u32, f32> = HashMap::new();
+
+    for synapse in &condition_synapses {
+        if let Some(records) = grouped_records.get(&synapse.from_uuid) {
+            for record in records {
+                if record.activation.is_finite() {
+                    let contribution = synapse.weight * record.activation;
+                    *obs_condition_sums.entry(record.obs_index).or_insert(0.0) += contribution;
+                }
+            }
+        }
+    }
+
+    // Count positive vs negative branch usage
+    let total_obs = obs_condition_sums.len() as f32;
+    if total_obs == 0.0 {
+        // No observations - use equal probability for positive/negative
+        let pos_count = positive_synapses.len().max(1) as f32;
+        let neg_count = negative_synapses.len().max(1) as f32;
+
+        for synapse in &positive_synapses {
+            let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+            stats.insert(key, 0.5 / pos_count);
+        }
+        for synapse in &negative_synapses {
+            let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+            stats.insert(key, 0.5 / neg_count);
+        }
+        return;
+    }
+
+    let positive_obs = obs_condition_sums
+        .values()
+        .filter(|&&sum| sum > 0.0)
+        .count() as f32;
+    let negative_obs = total_obs - positive_obs;
+
+    let positive_prob = positive_obs / total_obs;
+    let negative_prob = negative_obs / total_obs;
+
+    // Distribute probability among synapses in each branch
+    // Each synapse in a branch shares that branch's probability equally
+    let pos_count = positive_synapses.len().max(1) as f32;
+    let neg_count = negative_synapses.len().max(1) as f32;
+
+    for synapse in &positive_synapses {
+        let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+        stats.insert(key, positive_prob / pos_count);
+    }
+
+    for synapse in &negative_synapses {
+        let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+        stats.insert(key, negative_prob / neg_count);
+    }
+}
+
 // NOTE: build_inbound_weights was removed in v0.1.126 as part of the impact
 // calculation fix. The normalisation it supported was causing massive
 // underestimation of neuron impact (see regression_v0_1_126.rs tests).
-
-fn compute_impacts(creature: &CreatureJson) -> HashMap<String, f32> {
-    compute_impacts_internal(creature)
-}
 
 /// Public version of compute_impacts for use in add-neuron analysis.
 /// Computes the structural impact of each neuron on outputs (path weight products).
@@ -236,9 +553,32 @@ struct ImpactContext {
     inbound_count: HashMap<String, usize>,
     squash_map: HashMap<String, String>,
     outputs: HashSet<String>,
+    /// Selection statistics from activation records.
+    /// When available, provides actual win probabilities for MIN/MAX/IF synapses
+    /// instead of the conservative 1/N equal probability fallback.
+    selection_stats: Option<SelectionStats>,
 }
 
 fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
+    compute_impacts_internal_with_stats(creature, None)
+}
+
+/// Compute impacts with optional activation-based selection statistics.
+///
+/// When `grouped_records` is provided, computes actual selection probabilities for
+/// MIN/MAX/IF neurons based on recorded activations. This gives more accurate
+/// impact estimates than the conservative 1/N equal probability fallback.
+///
+/// # Arguments
+/// * `creature` - The creature to compute impacts for
+/// * `grouped_records` - Optional activation records grouped by neuron UUID
+///
+/// # Returns
+/// Map from neuron UUID to impact score
+fn compute_impacts_internal_with_stats(
+    creature: &CreatureJson,
+    grouped_records: Option<&HashMap<String, Vec<DiscoverRecord>>>,
+) -> HashMap<String, f32> {
     let adjacency = build_adjacency(creature);
     let squash_map = build_squash_map(creature);
 
@@ -267,12 +607,16 @@ fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
         .map(|n| n.uuid.clone())
         .collect();
 
+    // Compute selection statistics if activation records are available
+    let selection_stats = grouped_records.map(|records| compute_selection_stats(creature, records));
+
     let ctx = ImpactContext {
         adjacency,
         total_inbound,
         inbound_count,
         squash_map,
         outputs,
+        selection_stats,
     };
 
     let mut cache: HashMap<String, f32> = HashMap::new();
@@ -286,6 +630,25 @@ fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
     }
 
     cache
+}
+
+/// Public version that computes impacts with activation-based selection statistics.
+///
+/// When activation records are provided, this function computes actual win probabilities
+/// for MIN/MAX/IF neurons instead of using the conservative 1/N equal probability.
+/// This results in more accurate impact estimates.
+///
+/// # Arguments
+/// * `creature` - The creature to compute impacts for
+/// * `grouped_records` - Activation records grouped by neuron UUID
+///
+/// # Returns
+/// Map from neuron UUID to impact score
+pub fn compute_impacts_with_activations(
+    creature: &CreatureJson,
+    grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
+) -> HashMap<String, f32> {
+    compute_impacts_internal_with_stats(creature, Some(grouped_records))
 }
 
 fn compute_impact_recursive(
@@ -363,17 +726,27 @@ fn compute_impact_recursive(
                     // For MINIMUM/MAXIMUM neurons, only the min/max synapse contributes to
                     // the output. The others have zero contribution at any given time.
                     //
-                    // Without activation data, we can't know which synapse wins. Conservative
-                    // approach: assume each synapse has 1/N probability of winning (where N
-                    // is the number of incoming synapses), giving impact = child_impact / N.
-                    //
-                    // This is better than the sum-based approach which is completely wrong
-                    // (gives high impact to large weights in MINIMUM when they're least
-                    // likely to win).
+                    // When activation data is available (selection_stats), we use the actual
+                    // win probability for this synapse. Otherwise, we fall back to the
+                    // conservative 1/N equal probability approach.
                     //
                     // See docs/IMPACT_CALCULATION.md for detailed explanation.
-                    let count = ctx.inbound_count.get(to_uuid).copied().unwrap_or(1).max(1);
-                    child_impact / count as f32
+                    let synapse_key = (uuid.to_string(), to_uuid.to_string());
+
+                    if let Some(ref stats) = ctx.selection_stats {
+                        // Use actual win probability from activation records
+                        if let Some(&probability) = stats.get(&synapse_key) {
+                            probability * child_impact
+                        } else {
+                            // Synapse not in stats - use equal probability fallback
+                            let count = ctx.inbound_count.get(to_uuid).copied().unwrap_or(1).max(1);
+                            child_impact / count as f32
+                        }
+                    } else {
+                        // No activation data - use conservative equal probability
+                        let count = ctx.inbound_count.get(to_uuid).copied().unwrap_or(1).max(1);
+                        child_impact / count as f32
+                    }
                 }
             };
             total_impact += contribution;
@@ -449,7 +822,8 @@ pub fn rank_focus_neurons(
             .fold(0.0, f32::max)
     };
 
-    let impact_map = compute_impacts(creature);
+    // Use activation-based impact calculation for more accurate MIN/MAX/IF statistics
+    let impact_map = compute_impacts_with_activations(creature, &grouped_records);
 
     // Now we can safely unwrap since we've verified all selectable neurons have records
     let mut neurons = selectable

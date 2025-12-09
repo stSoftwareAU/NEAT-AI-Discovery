@@ -383,6 +383,38 @@ This logs sample-level details showing:
 **Next steps**: The investigation suggests recording more data in TypeScript to understand
 why production samples produce inverted predictions despite correct formula.
 
+#### Root cause identified: Sample representativeness (v0.1.142)
+
+**CRITICAL FINDING**: Synthetic integration tests (`tests/prediction_validation.rs`) have
+identified the root cause of prediction inversion in production:
+
+**The sampled data may not be representative of the full training data.**
+
+When TypeScript samples 7.5% of training data for discovery:
+1. Rust analyses this sampled subset and finds candidates that improve the samples
+2. TypeScript evaluates candidates on 100% of training data
+3. If the sample has different error patterns than the full data, predictions invert
+
+| Data Set | Pattern | Candidate Effect |
+|----------|---------|------------------|
+| Sampled (7.5%) | Positive correlation | +100% improvement |
+| Full (100%) | Different/opposite | -261% (worse!) |
+
+**Test demonstrating this**: `test_sample_vs_full_evaluation_mismatch` in
+`tests/prediction_validation.rs` creates a scenario where sampled data has one pattern
+but full data has the opposite, causing prediction inversion.
+
+**Other tests verify the formula is correct**:
+- `test_perfect_correlation_positive_weight_helps`: 99.99% match between prediction and simulation
+- `test_split_error_production_like_scenario`: Direction correct even with 50/50 split errors
+- `test_hard_tanh_saturation_aware_prediction`: Saturation-aware model works correctly
+
+**Potential solutions** (future work):
+1. **Stratified sampling**: Ensure sampled data is representative of error distribution
+2. **Cross-validation**: Evaluate candidates on a held-out validation set before returning
+3. **Increase sample rate**: Use more data for more representative samples
+4. **Confidence bounds**: Only return candidates with high-confidence predictions
+
 #### GPU shader activation function fix (v0.1.141)
 
 **CRITICAL BUG FIX**: New activation functions added in v0.1.139 were not working correctly
@@ -809,7 +841,7 @@ functions use different impact formulas to avoid underestimating impact.
 |-----------------|-----------|----------------|-----------|
 | **Linear** | IDENTITY, TANH, LOGISTIC, etc. | `\|w\| / total_inbound × child` | Sum of weighted inputs |
 | **Threshold** | STEP, BIPOLAR | `child_impact` (full, not normalised) | Any synapse can flip output |
-| **Selection** | MINIMUM, MAXIMUM, IF | `child_impact / N` (equal probability) | Only one synapse "wins" |
+| **Selection** | MINIMUM, MAXIMUM, IF | `P(winning) × child_impact` | Actual win probability from activations |
 
 **Why this matters**:
 
@@ -817,9 +849,14 @@ functions use different impact formulas to avoid underestimating impact.
   output from 0→1 if the neuron is near its threshold. The old sum-based formula
   would calculate impact ≈ 0, but the actual effect could be 1.0!
 
-- **MINIMUM/MAXIMUM**: The old formula gave large weights high impact in MINIMUM
-  (~90%), but small weights are actually more likely to win! The new formula gives
-  each synapse equal probability (1/N).
+- **MINIMUM/MAXIMUM (v0.1.143+)**: Uses recorded activation data to compute actual
+  selection probabilities. If a synapse wins MINIMUM 90% of the time in the recorded
+  samples, it gets 90% of the impact. This is more accurate than the previous 1/N
+  equal probability fallback.
+
+- **IF neurons (v0.1.143+)**: Synapse types (`"condition"`, `"positive"`, `"negative"`)
+  are now used to compute accurate impact. Condition synapses always contribute (100%),
+  while positive/negative synapses share impact based on how often each branch is taken.
 
 For detailed explanation with diagrams, see [Impact Calculation](docs/IMPACT_CALCULATION.md).
 

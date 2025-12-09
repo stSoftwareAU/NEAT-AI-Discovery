@@ -168,48 +168,57 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "few-synapses".to_string(),
                 weight: 1e-8,
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "few-synapses".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 1e-8, // Tiny compared to other inputs
+                synapse_type: None,
             },
             // many-synapses: 3 in, 2 out
             SynapseJson {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "many-synapses".to_string(),
                 weight: 1e-8,
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "input-1".to_string(),
                 to_uuid: "many-synapses".to_string(),
                 weight: 1e-8,
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "input-2".to_string(),
                 to_uuid: "many-synapses".to_string(),
                 weight: 1e-8,
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "many-synapses".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 1e-8,
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "many-synapses".to_string(),
                 to_uuid: "output-1".to_string(),
                 weight: 1e-8,
+                synapse_type: None,
             },
             // Add dominant inputs to outputs so test neurons are a small fraction
             SynapseJson {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 1.0, // Dominates: 1e-8 / 1.0 ≈ 1e-8 fraction
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "input-1".to_string(),
                 to_uuid: "output-1".to_string(),
                 weight: 1.0,
+                synapse_type: None,
             },
         ],
     };
@@ -410,18 +419,21 @@ fn regression_threshold_uses_cost_of_growth() {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "moderate-impact".to_string(),
                 weight: 0.5,
+                synapse_type: None,
             },
             // Hidden → output with small weight
             SynapseJson {
                 from_uuid: "moderate-impact".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 1e-2,
+                synapse_type: None,
             },
             // Direct input → output (dominates inbound)
             SynapseJson {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 1.0,
+                synapse_type: None,
             },
         ],
     };
@@ -511,18 +523,21 @@ fn test_removal_reason_includes_synapse_savings() {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "negligible".to_string(),
                 weight: 1e-10,
+                synapse_type: None,
             },
             // Negligible's synapse to output has tiny weight
             SynapseJson {
                 from_uuid: "negligible".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 1e-10,
+                synapse_type: None,
             },
             // Dominant synapse to output (makes negligible's fraction tiny)
             SynapseJson {
                 from_uuid: "input-1".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 10.0,
+                synapse_type: None,
             },
         ],
     };

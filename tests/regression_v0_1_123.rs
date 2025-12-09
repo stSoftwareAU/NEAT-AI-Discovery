@@ -79,6 +79,7 @@ fn regression_hidden_neurons_must_be_analyzed_not_filtered() {
                 from_uuid: "hidden-0".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 1.0,
+                synapse_type: None,
             },
         ],
     };
@@ -331,11 +332,13 @@ fn regression_hidden_neuron_predictions_must_be_impact_discounted() {
                 from_uuid: "hidden-strong".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 1.0, // Strong connection
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "hidden-weak".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 0.1, // Weak connection
+                synapse_type: None,
             },
         ],
     };
@@ -454,11 +457,13 @@ fn regression_discounted_hidden_neurons_must_meet_minimum_threshold() {
                 from_uuid: "hidden-low-impact".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 0.1, // Low weight = low impact
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "hidden-high-impact".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 0.9, // High weight = high impact
+                synapse_type: None,
             },
         ],
     };
@@ -621,11 +626,13 @@ fn regression_impact_discounted_neurons_must_appear_in_response() {
                 from_uuid: "hidden-will-be-discounted".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 0.05, // Very low weight = very low impact (0.05)
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "hidden-high-impact".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 0.95, // High weight = high impact (0.95)
+                synapse_type: None,
             },
         ],
     };

@@ -53,11 +53,13 @@ fn test_impact_normalised_by_total_inbound() {
                     from_uuid: "input-0".to_string(),
                     to_uuid: "candidate".to_string(),
                     weight: 1.0,
+                    synapse_type: None,
                 },
                 SynapseJson {
                     from_uuid: "candidate".to_string(),
                     to_uuid: "output-0".to_string(),
                     weight: 3.0,
+                    synapse_type: None,
                 },
             ];
             // Add 97 units of weight from other inputs
@@ -66,6 +68,7 @@ fn test_impact_normalised_by_total_inbound() {
                     from_uuid: format!("input-{i}"),
                     to_uuid: "output-0".to_string(),
                     weight: 97.0 / 9.0, // ~10.8 each, total ~97
+                    synapse_type: None,
                 });
             }
             synapses
@@ -122,18 +125,21 @@ fn test_deep_network_normalised_impact() {
                     from_uuid: "input-0".to_string(),
                     to_uuid: "candidate".to_string(),
                     weight: 1.0,
+                    synapse_type: None,
                 },
                 // candidate → hidden (1.0 out of total 10)
                 SynapseJson {
                     from_uuid: "candidate".to_string(),
                     to_uuid: "hidden".to_string(),
                     weight: 1.0,
+                    synapse_type: None,
                 },
                 // hidden → output (2.0 out of total 4)
                 SynapseJson {
                     from_uuid: "hidden".to_string(),
                     to_uuid: "output-0".to_string(),
                     weight: 2.0,
+                    synapse_type: None,
                 },
             ];
             // Add 9 more units to hidden (total inbound = 10)
@@ -142,6 +148,7 @@ fn test_deep_network_normalised_impact() {
                     from_uuid: format!("input-{i}"),
                     to_uuid: "hidden".to_string(),
                     weight: 1.0,
+                    synapse_type: None,
                 });
             }
             // Add 2 more units to output (total inbound = 4)
@@ -149,6 +156,7 @@ fn test_deep_network_normalised_impact() {
                 from_uuid: "input-1".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 2.0,
+                synapse_type: None,
             });
             synapses
         },
@@ -193,17 +201,20 @@ fn test_negligible_weight_has_negligible_impact() {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "negligible".to_string(),
                 weight: 1.0,
+                synapse_type: None,
             },
             SynapseJson {
                 from_uuid: "negligible".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 1e-8,
+                synapse_type: None,
             },
             // Add another input so total isn't just the negligible one
             SynapseJson {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "output-0".to_string(),
                 weight: 1.0,
+                synapse_type: None,
             },
         ],
     };
