@@ -383,6 +383,49 @@ This logs sample-level details showing:
 **Next steps**: The investigation suggests recording more data in TypeScript to understand
 why production samples produce inverted predictions despite correct formula.
 
+#### GPU shader activation function fix (v0.1.141)
+
+**CRITICAL BUG FIX**: New activation functions added in v0.1.139 were not working correctly
+on GPU. The GPU shaders (`activation.wgsl` and `bias.wgsl`) only handled activation IDs 0-10,
+but the new activations were assigned IDs 11-18.
+
+| Activation | GPU ID | Status Before | Status After |
+|------------|--------|---------------|--------------|
+| LeakyReLU | 11 | ❌ IDENTITY fallback | ✅ Correct |
+| Mish | 12 | ❌ IDENTITY fallback | ✅ Correct |
+| Swish | 13 | ❌ IDENTITY fallback | ✅ Correct |
+| HARD_TANH | 14 | ❌ IDENTITY fallback | ✅ Correct |
+| SOFTSIGN | 15 | ❌ IDENTITY fallback | ✅ Correct |
+| BENT_IDENTITY | 16 | ❌ IDENTITY fallback | ✅ Correct |
+| ArcTan | 17 | ❌ IDENTITY fallback | ✅ Correct |
+| ReLU6 | 18 | ❌ IDENTITY fallback | ✅ Correct |
+
+**The bug**: GPU shaders used `default: { return x; }` for unknown IDs, silently returning
+IDENTITY results instead of the correct activation function. This caused incorrect weight
+calculations without any error.
+
+**Example of the bug (LeakyReLU)**:
+- Pre-activation = -1.0
+- LeakyReLU(-1.0) = -0.01 (correct)
+- IDENTITY(-1.0) = -1.0 (100x wrong!)
+
+Weight calculations based on these wrong outputs would be completely incorrect, producing
+candidates that fail when applied in production.
+
+**The fix**: Added all 8 new activation functions to both `activation.wgsl` and `bias.wgsl`
+shaders with correct implementations:
+- LeakyReLU: `x if x >= 0, else 0.01 * x`
+- Mish: `x * tanh(softplus(x))`
+- Swish: `x * sigmoid(x)`
+- HARD_TANH: `clamp(x, -1, 1)`
+- SOFTSIGN: `x / (1 + |x|)`
+- BENT_IDENTITY: `(sqrt(x² + 1) - 1) / 2 + x`
+- ArcTan: `atan(x)`
+- ReLU6: `clamp(x, 0, 6)`
+
+**Test added**: `tests/gpu_activation_shaders.rs` verifies GPU shader correctness for all
+new activation functions.
+
 #### VALUE domain error interpretation (v0.1.117)
 
 **CRITICAL BUG FIX**: The NEAT-AI TypeScript library stores errors in the **VALUE

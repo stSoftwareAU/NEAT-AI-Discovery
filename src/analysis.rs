@@ -2061,7 +2061,7 @@ fn activation_name_to_gpu_id(name: &str) -> u32 {
         "CLIPPED" => 8,
         "ABSOLUTE" => 9,
         "INVERSE" => 10,
-        // New activations (v0.1.139) - use CPU evaluation (GPU fallback to IDENTITY)
+        // New activations (v0.1.139) - GPU IDs 11-18
         "LeakyReLU" => 11,
         "Mish" => 12,
         "Swish" => 13,
@@ -4431,7 +4431,8 @@ fn compute_relu_improvement_and_count_traced(
         return (0.0, 0, samples.len() as u32);
     }
 
-    let trace = trace_context.is_some() && prediction_trace_enabled();
+    // FIX: Check env var directly - trace_context is just for the label, not a gate
+    let trace = prediction_trace_enabled();
     let ctx = trace_context.unwrap_or("unknown");
 
     if trace {
@@ -6554,6 +6555,42 @@ mod tests {
         assert_eq!(inverse_activation(1.0), 0.0);
         assert_eq!(inverse_activation(0.0), 1.0);
         assert_eq!(inverse_activation(-1.0), 2.0);
+    }
+
+    /// Test that prediction_trace_enabled() correctly reads the environment variable.
+    /// This verifies the fix for the tracing bug where trace_context.is_some() was
+    /// checked first, short-circuiting the env var check (trace_context was always None).
+    #[test]
+    fn test_prediction_trace_enabled_reads_env_var() {
+        // Save current value to restore later
+        let original = std::env::var("NEAT_AI_DISCOVERY_TRACE_PREDICTION").ok();
+
+        // Test that unset env var returns false
+        std::env::remove_var("NEAT_AI_DISCOVERY_TRACE_PREDICTION");
+        assert!(
+            !prediction_trace_enabled(),
+            "Should return false when env var is not set"
+        );
+
+        // Test that set env var returns true
+        std::env::set_var("NEAT_AI_DISCOVERY_TRACE_PREDICTION", "1");
+        assert!(
+            prediction_trace_enabled(),
+            "Should return true when env var is set to '1'"
+        );
+
+        // Test that any value (not just "1") enables tracing
+        std::env::set_var("NEAT_AI_DISCOVERY_TRACE_PREDICTION", "yes");
+        assert!(
+            prediction_trace_enabled(),
+            "Should return true when env var is set to any value"
+        );
+
+        // Restore original value
+        match original {
+            Some(val) => std::env::set_var("NEAT_AI_DISCOVERY_TRACE_PREDICTION", val),
+            None => std::env::remove_var("NEAT_AI_DISCOVERY_TRACE_PREDICTION"),
+        }
     }
 
     #[test]
