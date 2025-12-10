@@ -44,12 +44,124 @@ const MAX_OUTGOING_WEIGHT: f32 = 0.1;
 fn is_threshold_activation(squash: &str) -> bool {
     matches!(squash.to_uppercase().as_str(), "STEP" | "BIPOLAR")
 }
-/// Number of GPU operations to batch together for better utilisation.
-/// Apple Silicon's Unified Memory Architecture (UMA) eliminates CPU-GPU copy overhead,
-/// allowing larger batches without memory transfer penalty. 512 is tuned for M3/M4
-/// which have more GPU cores than earlier chips. Larger batches improve GPU occupancy
-/// by reducing per-batch overhead and keeping the GPU busy longer.
-const GPU_BATCH_SIZE: usize = 512;
+
+/// Default GPU batch size for GPU operations.
+/// This is tuned for M1/M2/M3 which have moderate GPU core counts.
+const DEFAULT_GPU_BATCH_SIZE: usize = 512;
+
+/// Larger GPU batch size for high-performance GPUs (M4, M3 Pro/Max, etc.).
+/// M4 has significantly more GPU cores and can handle larger batches efficiently.
+const HIGH_PERF_GPU_BATCH_SIZE: usize = 1024;
+
+/// Detected GPU performance tier for auto-tuning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GpuPerformanceTier {
+    /// High-performance GPU (M4, M3 Pro/Max, M2 Pro/Max, dedicated GPUs)
+    High,
+    /// Standard GPU (M1, M2, M3 base, integrated GPUs)
+    Standard,
+    /// Unknown/fallback
+    Unknown,
+}
+
+/// Detect GPU performance tier from adapter info.
+/// Returns High for M4, Pro/Max variants; Standard for base M-series; Unknown otherwise.
+fn detect_gpu_tier(adapter_info: &wgpu::AdapterInfo) -> GpuPerformanceTier {
+    let name = adapter_info.name.to_lowercase();
+
+    // M4 series - highest performance
+    if name.contains("m4") {
+        return GpuPerformanceTier::High;
+    }
+
+    // Pro/Max/Ultra variants of any M-series - high performance
+    if (name.contains("m1") || name.contains("m2") || name.contains("m3"))
+        && (name.contains("pro") || name.contains("max") || name.contains("ultra"))
+    {
+        return GpuPerformanceTier::High;
+    }
+
+    // Base M-series - standard performance
+    if name.contains("m1") || name.contains("m2") || name.contains("m3") {
+        return GpuPerformanceTier::Standard;
+    }
+
+    // Dedicated GPUs are typically high performance
+    if adapter_info.device_type == wgpu::DeviceType::DiscreteGpu {
+        return GpuPerformanceTier::High;
+    }
+
+    // Integrated GPUs - standard
+    if adapter_info.device_type == wgpu::DeviceType::IntegratedGpu {
+        return GpuPerformanceTier::Standard;
+    }
+
+    GpuPerformanceTier::Unknown
+}
+
+/// Get optimised GPU batch size based on detected GPU tier.
+fn get_batch_size_for_tier(tier: GpuPerformanceTier) -> usize {
+    // Check for explicit override first
+    if let Ok(val) = std::env::var("NEAT_AI_DISCOVERY_GPU_BATCH_SIZE") {
+        if let Ok(size) = val.parse::<usize>() {
+            if (64..=4096).contains(&size) {
+                return size;
+            }
+        }
+    }
+
+    match tier {
+        GpuPerformanceTier::High => HIGH_PERF_GPU_BATCH_SIZE,
+        GpuPerformanceTier::Standard | GpuPerformanceTier::Unknown => DEFAULT_GPU_BATCH_SIZE,
+    }
+}
+
+/// Log GPU adapter info once per process for diagnostic purposes.
+/// This helps users understand what hardware is being used and the selected batch size.
+fn log_gpu_info_once(
+    adapter_info: &wgpu::AdapterInfo,
+    tier: GpuPerformanceTier,
+    batch_size: usize,
+) {
+    use std::sync::OnceLock;
+    static LOGGED: OnceLock<bool> = OnceLock::new();
+
+    LOGGED.get_or_init(|| {
+        // Always log GPU info to help diagnose performance issues
+        let tier_str = match tier {
+            GpuPerformanceTier::High => "high-performance",
+            GpuPerformanceTier::Standard => "standard",
+            GpuPerformanceTier::Unknown => "unknown",
+        };
+
+        let device_type = match adapter_info.device_type {
+            wgpu::DeviceType::DiscreteGpu => "discrete",
+            wgpu::DeviceType::IntegratedGpu => "integrated",
+            wgpu::DeviceType::VirtualGpu => "virtual",
+            wgpu::DeviceType::Cpu => "CPU",
+            wgpu::DeviceType::Other => "other",
+        };
+
+        eprintln!(
+            "[NEAT-AI-Discovery] GPU: {} ({} {}) | Tier: {} | Batch size: {}",
+            adapter_info.name,
+            device_type,
+            format!("{:?}", adapter_info.backend).to_lowercase(),
+            tier_str,
+            batch_size
+        );
+
+        // Provide tuning hints for verbose mode
+        if verbose_enabled() {
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] GPU tuning: Set NEAT_AI_DISCOVERY_GPU_BATCH_SIZE=N to override (64-4096). \
+                 Higher values improve GPU utilisation on powerful hardware."
+            );
+        }
+
+        true
+    });
+}
 
 fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
     // Treat deadline_ms as a relative duration (milliseconds from now), not an absolute timestamp.
@@ -180,8 +292,12 @@ mod deadline_override {
     }
 }
 
+/// Check if verbose logging is enabled. Result is cached for performance.
+/// Set `NEAT_AI_DISCOVERY_VERBOSE=1` to enable verbose logging.
 fn verbose_enabled() -> bool {
-    std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok()
+    use std::sync::OnceLock;
+    static VERBOSE: OnceLock<bool> = OnceLock::new();
+    *VERBOSE.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok())
 }
 
 /// Enable detailed prediction tracing for debugging prediction accuracy.
@@ -189,6 +305,15 @@ fn verbose_enabled() -> bool {
 /// This logs sample-level details showing exactly how predictions are computed.
 fn prediction_trace_enabled() -> bool {
     std::env::var("NEAT_AI_DISCOVERY_TRACE_PREDICTION").is_ok()
+}
+
+/// Enable detailed bias optimisation tracing for debugging parameter selection.
+/// Set NEAT_AI_DISCOVERY_TRACE_BIAS=1 to enable.
+/// This logs which bias values are tested, their error reduction, and saturation status.
+fn bias_trace_enabled() -> bool {
+    use std::sync::OnceLock;
+    static TRACE: OnceLock<bool> = OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_TRACE_BIAS").is_ok())
 }
 
 /// Suppress Mesa/libEGL debug warnings on Linux.
@@ -2425,11 +2550,24 @@ fn calculate_optimal_bias(
             .iter()
             .all(|s| s.target_value.is_some() && s.target_activation.is_some());
 
+    let trace = bias_trace_enabled();
+
+    // Track bias evaluation details for tracing
+    #[derive(Debug)]
+    struct BiasEval {
+        bias: f32,
+        error_reduction_pct: f32,
+        saturated_count: usize,
+        total_valid: usize,
+    }
+    let mut bias_evals: Vec<BiasEval> = Vec::new();
+
     // Search over log-spaced bias values
     for &bias in &bias_values {
         // Calculate error with this bias
         let mut total_new_error_sq = 0.0;
         let mut valid_samples = 0;
+        let mut saturated_count = 0usize;
 
         for sample in samples {
             if !sample.avg_error.is_finite() || !sample.activation.is_finite() {
@@ -2442,6 +2580,18 @@ fn calculate_optimal_bias(
 
             if !new_neuron_activation.is_finite() {
                 continue;
+            }
+
+            // Check for saturation (activation near bounds for bounded activations)
+            // TANH saturates at ±1, LOGISTIC at 0/1, HARD_TANH at ±1
+            let is_saturated = match squash {
+                "TANH" | "HARD_TANH" => new_neuron_activation.abs() > 0.99,
+                "LOGISTIC" => !(0.01..=0.99).contains(&new_neuron_activation),
+                "SOFTSIGN" => new_neuron_activation.abs() > 0.95,
+                _ => false, // Unbounded activations don't saturate
+            };
+            if is_saturated {
+                saturated_count += 1;
             }
 
             // Calculate new error at target neuron
@@ -2474,10 +2624,73 @@ fn calculate_optimal_bias(
 
         // Calculate error reduction (positive is good)
         let error_reduction = total_baseline_error_sq - total_new_error_sq;
+        let error_reduction_pct = if total_baseline_error_sq > EPSILON {
+            (error_reduction / total_baseline_error_sq) * 100.0
+        } else {
+            0.0
+        };
+
+        if trace {
+            bias_evals.push(BiasEval {
+                bias,
+                error_reduction_pct,
+                saturated_count,
+                total_valid: valid_samples,
+            });
+        }
 
         if error_reduction > best_error_reduction {
             best_error_reduction = error_reduction;
             best_bias = bias;
+        }
+    }
+
+    // Log detailed bias evaluation results
+    if trace && !bias_evals.is_empty() {
+        let best_reduction_pct = if total_baseline_error_sq > EPSILON {
+            (best_error_reduction / total_baseline_error_sq) * 100.0
+        } else {
+            0.0
+        };
+
+        // Find saturation info for the selected bias
+        let selected_info = bias_evals.iter().find(|e| (e.bias - best_bias).abs() < EPSILON);
+        let saturation_info = selected_info
+            .map(|e| {
+                let sat_pct = (e.saturated_count as f32 / e.total_valid as f32) * 100.0;
+                format!(
+                    "{}/{} samples saturated ({:.1}%)",
+                    e.saturated_count, e.total_valid, sat_pct
+                )
+            })
+            .unwrap_or_else(|| "N/A".to_string());
+
+        eprintln!(
+            "[BIAS-TRACE] {} in={:.2} out={:.4}: selected bias={:.2} (reduction={:.4}%, {}) | model={}",
+            squash,
+            incoming_weight,
+            outgoing_weight,
+            best_bias,
+            best_reduction_pct,
+            saturation_info,
+            if use_hard_tanh { "HARD_TANH" } else { "LINEAR" }
+        );
+
+        // Log all bias evaluations if verbose
+        if verbose_enabled() {
+            eprintln!("[BIAS-TRACE] All evaluated biases:");
+            for eval in &bias_evals {
+                let sat_pct = (eval.saturated_count as f32 / eval.total_valid as f32) * 100.0;
+                let marker = if (eval.bias - best_bias).abs() < EPSILON {
+                    " <-- SELECTED"
+                } else {
+                    ""
+                };
+                eprintln!(
+                    "  bias={:+6.2}: reduction={:+7.4}%, sat={:3.0}%{}",
+                    eval.bias, eval.error_reduction_pct, sat_pct, marker
+                );
+            }
         }
     }
 
@@ -2506,6 +2719,9 @@ pub struct GpuAnalyzer {
     activation_pipeline: Option<wgpu::ComputePipeline>,
     bias_layout: Option<wgpu::BindGroupLayout>,
     bias_pipeline: Option<wgpu::ComputePipeline>,
+    /// Optimised GPU batch size based on detected hardware.
+    /// Higher values improve GPU utilisation on high-performance hardware.
+    batch_size: usize,
 }
 
 /// Result of GPU availability check with detailed diagnostics.
@@ -2656,6 +2872,14 @@ impl GpuAnalyzer {
             }
         };
 
+        // Detect GPU tier for auto-tuning batch size
+        let adapter_info = adapter.get_info();
+        let gpu_tier = detect_gpu_tier(&adapter_info);
+        let batch_size = get_batch_size_for_tier(gpu_tier);
+
+        // Log GPU info once per process (helps diagnose performance issues)
+        log_gpu_info_once(&adapter_info, gpu_tier, batch_size);
+
         let (device, queue) = match pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("NEAT-AI Discovery GPU device"),
@@ -2699,6 +2923,7 @@ impl GpuAnalyzer {
             activation_pipeline: Some(activation_pipeline),
             bias_layout: Some(bias_layout),
             bias_pipeline: Some(bias_pipeline),
+            batch_size,
         })
     }
 
@@ -3207,7 +3432,7 @@ impl GpuAnalyzer {
         // Apple Silicon optimisation: Use single encoder per batch to reduce Metal driver overhead
         let mut all_results = Vec::with_capacity(samples_batch.len());
 
-        for batch_chunk in samples_batch.chunks(GPU_BATCH_SIZE) {
+        for batch_chunk in samples_batch.chunks(self.batch_size) {
             let mut empty_flags = Vec::with_capacity(batch_chunk.len());
             let mut batch_staging_buffers = Vec::new();
             let mut batch_contribution_sizes = Vec::new();
@@ -3941,7 +4166,7 @@ impl GpuAnalyzer {
         // Apple Silicon optimisation: Use single encoder per batch to reduce Metal driver overhead
         let mut all_results = Vec::with_capacity(samples_batch.len());
 
-        for batch_chunk in samples_batch.chunks(GPU_BATCH_SIZE) {
+        for batch_chunk in samples_batch.chunks(self.batch_size) {
             let mut empty_flags = Vec::with_capacity(batch_chunk.len());
             let mut batch_staging_buffers = Vec::new();
             let mut batch_contribution_sizes = Vec::new();
@@ -6578,6 +6803,159 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
 mod tests {
     use super::*;
     use crate::analysis::ACTIVATION_SPECS;
+
+    // ==================== GPU Tier Detection Tests ====================
+
+    /// Test that M4 is detected as high-performance tier.
+    #[test]
+    fn gpu_tier_detects_m4_as_high_performance() {
+        let info = wgpu::AdapterInfo {
+            name: "Apple M4".to_string(),
+            vendor: 0,
+            device: 0,
+            device_type: wgpu::DeviceType::IntegratedGpu,
+            driver: String::new(),
+            driver_info: String::new(),
+            backend: wgpu::Backend::Metal,
+        };
+        assert_eq!(
+            detect_gpu_tier(&info),
+            GpuPerformanceTier::High,
+            "M4 should be detected as high-performance"
+        );
+    }
+
+    /// Test that M4 Pro/Max are detected as high-performance tier.
+    #[test]
+    fn gpu_tier_detects_m4_pro_max_as_high_performance() {
+        for name in ["Apple M4 Pro", "Apple M4 Max", "Apple M4 Ultra"] {
+            let info = wgpu::AdapterInfo {
+                name: name.to_string(),
+                vendor: 0,
+                device: 0,
+                device_type: wgpu::DeviceType::IntegratedGpu,
+                driver: String::new(),
+                driver_info: String::new(),
+                backend: wgpu::Backend::Metal,
+            };
+            assert_eq!(
+                detect_gpu_tier(&info),
+                GpuPerformanceTier::High,
+                "{name} should be detected as high-performance"
+            );
+        }
+    }
+
+    /// Test that M3 Pro/Max are detected as high-performance tier.
+    #[test]
+    fn gpu_tier_detects_m3_pro_max_as_high_performance() {
+        for name in ["Apple M3 Pro", "Apple M3 Max"] {
+            let info = wgpu::AdapterInfo {
+                name: name.to_string(),
+                vendor: 0,
+                device: 0,
+                device_type: wgpu::DeviceType::IntegratedGpu,
+                driver: String::new(),
+                driver_info: String::new(),
+                backend: wgpu::Backend::Metal,
+            };
+            assert_eq!(
+                detect_gpu_tier(&info),
+                GpuPerformanceTier::High,
+                "{name} should be detected as high-performance"
+            );
+        }
+    }
+
+    /// Test that base M1/M2/M3 are detected as standard tier.
+    #[test]
+    fn gpu_tier_detects_base_m_series_as_standard() {
+        for name in ["Apple M1", "Apple M2", "Apple M3"] {
+            let info = wgpu::AdapterInfo {
+                name: name.to_string(),
+                vendor: 0,
+                device: 0,
+                device_type: wgpu::DeviceType::IntegratedGpu,
+                driver: String::new(),
+                driver_info: String::new(),
+                backend: wgpu::Backend::Metal,
+            };
+            assert_eq!(
+                detect_gpu_tier(&info),
+                GpuPerformanceTier::Standard,
+                "{name} should be detected as standard"
+            );
+        }
+    }
+
+    /// Test that discrete GPUs are detected as high-performance.
+    #[test]
+    fn gpu_tier_detects_discrete_gpu_as_high_performance() {
+        let info = wgpu::AdapterInfo {
+            name: "NVIDIA GeForce RTX 4090".to_string(),
+            vendor: 0,
+            device: 0,
+            device_type: wgpu::DeviceType::DiscreteGpu,
+            driver: String::new(),
+            driver_info: String::new(),
+            backend: wgpu::Backend::Vulkan,
+        };
+        assert_eq!(
+            detect_gpu_tier(&info),
+            GpuPerformanceTier::High,
+            "Discrete GPUs should be detected as high-performance"
+        );
+    }
+
+    /// Test that unknown integrated GPUs are detected as standard.
+    #[test]
+    fn gpu_tier_detects_unknown_integrated_as_standard() {
+        let info = wgpu::AdapterInfo {
+            name: "Intel UHD Graphics 630".to_string(),
+            vendor: 0,
+            device: 0,
+            device_type: wgpu::DeviceType::IntegratedGpu,
+            driver: String::new(),
+            driver_info: String::new(),
+            backend: wgpu::Backend::Vulkan,
+        };
+        assert_eq!(
+            detect_gpu_tier(&info),
+            GpuPerformanceTier::Standard,
+            "Unknown integrated GPUs should be detected as standard"
+        );
+    }
+
+    /// Test that batch size is correct for each tier.
+    #[test]
+    fn batch_size_correct_for_each_tier() {
+        assert_eq!(
+            get_batch_size_for_tier(GpuPerformanceTier::High),
+            HIGH_PERF_GPU_BATCH_SIZE,
+            "High-performance tier should use larger batch size"
+        );
+        assert_eq!(
+            get_batch_size_for_tier(GpuPerformanceTier::Standard),
+            DEFAULT_GPU_BATCH_SIZE,
+            "Standard tier should use default batch size"
+        );
+        assert_eq!(
+            get_batch_size_for_tier(GpuPerformanceTier::Unknown),
+            DEFAULT_GPU_BATCH_SIZE,
+            "Unknown tier should use default batch size"
+        );
+    }
+
+    /// Test that verbose_enabled() is cached (doesn't re-read env var each time).
+    #[test]
+    fn verbose_enabled_is_cached() {
+        // Call twice - should return same value without re-reading env
+        let first = verbose_enabled();
+        let second = verbose_enabled();
+        assert_eq!(first, second, "verbose_enabled() should be deterministic");
+    }
+
+    // ==================== Activation Function Tests ====================
 
     #[test]
     fn test_identity_activation() {

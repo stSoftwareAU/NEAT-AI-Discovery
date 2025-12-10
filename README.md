@@ -380,6 +380,28 @@ This logs sample-level details showing:
 - Contribution statistics (average, positive/negative counts)
 - Final improvement calculation
 
+**Bias optimisation tracing** (v0.1.144): Set environment variable:
+```bash
+export NEAT_AI_DISCOVERY_TRACE_BIAS=1
+```
+
+This logs bias selection details showing:
+- Selected bias value and error reduction percentage
+- Saturation status (how many samples are near activation bounds)
+- Whether LINEAR or HARD_TANH model was used for calculation
+
+Example output:
+```
+[BIAS-TRACE] TANH in=10.00 out=0.0850: selected bias=10.00 (reduction=95.39%, 27/27 samples saturated (100.0%)) | model=LINEAR
+```
+
+**Key insight**: Large bias values (e.g., 10) combined with large incoming weights cause saturation,
+making the neuron behave like a constant. This appears "optimal" on small samples but fails to generalise.
+
+**Note (Dec 2024)**: This hypothesis (bias+weight saturation causing overfitting) requires production
+validation. The tracing tools added here help investigate, but the root cause may be elsewhere.
+See `tests/fixed_vs_optimised_params.rs` for investigation tests.
+
 **Next steps**: The investigation suggests recording more data in TypeScript to understand
 why production samples produce inverted predictions despite correct formula.
 
@@ -1059,6 +1081,91 @@ whether discovery should be enabled:
   `analysis_deadline_ms` is not provided. If a timeout is explicitly provided
   but is less than 3 seconds or greater than 1 hour, it will be clamped to the
   10-minute default with a warning message.
+- **Low GPU utilisation**: If you're seeing low GPU utilisation (e.g., 20%) during
+  analysis, see the [GPU Performance Tuning](#gpu-performance-tuning) section below.
+
+## GPU Performance Tuning
+
+The library auto-detects GPU capabilities and optimises batch sizes accordingly.
+On startup, it logs the detected GPU and selected configuration:
+
+```
+[NEAT-AI-Discovery] GPU: Apple M4 (integrated metal) | Tier: high-performance | Batch size: 1024
+```
+
+### Automatic GPU Detection
+
+| GPU Type | Detected Tier | Default Batch Size |
+|----------|--------------|-------------------|
+| M4, M4 Pro, M4 Max, M4 Ultra | High | 1024 |
+| M3 Pro, M3 Max, M2 Pro, M2 Max | High | 1024 |
+| M1, M2, M3 (base) | Standard | 512 |
+| Discrete GPUs (NVIDIA, AMD) | High | 1024 |
+| Integrated GPUs (Intel, etc.) | Standard | 512 |
+
+### Manual Tuning
+
+Override the batch size with an environment variable:
+
+```bash
+# For M4 Mac or high-end GPUs - larger batches for better utilisation
+export NEAT_AI_DISCOVERY_GPU_BATCH_SIZE=1024
+
+# For older machines or memory-constrained systems - smaller batches
+export NEAT_AI_DISCOVERY_GPU_BATCH_SIZE=256
+
+# Experimental: Very large batches for M4 Max/Ultra with lots of GPU memory
+export NEAT_AI_DISCOVERY_GPU_BATCH_SIZE=2048
+```
+
+Valid range: 64 to 4096. Values outside this range are ignored.
+
+### Understanding GPU Utilisation
+
+Low GPU utilisation during analysis is typically caused by:
+
+1. **CPU-bound sample building**: The library builds sample data on CPU before
+   sending to GPU. This is intentional - it reduces GPU memory pressure and
+   allows parallel processing. If your analysis is CPU-bound, you'll see bursts
+   of GPU activity followed by idle periods.
+
+2. **Small workloads**: If your creature has few neurons or samples, the GPU
+   completes work faster than the CPU can prepare new batches.
+
+3. **I/O bottlenecks**: Reading from Parquet files or slow storage can cause
+   the GPU to wait for data.
+
+### Tuning for M4 Mac
+
+M4 Macs have significantly more GPU cores than earlier Apple Silicon. The library
+automatically detects M4 and uses larger batch sizes (1024 vs 512). For M4 Max
+or Ultra, you may benefit from even larger batches:
+
+```bash
+# M4 Max/Ultra with 128GB+ RAM
+export NEAT_AI_DISCOVERY_GPU_BATCH_SIZE=2048
+```
+
+### Compatibility with Older Machines
+
+All tuning options are backwards-compatible. Older machines will:
+- Use smaller default batch sizes (512)
+- Automatically fall back to safe values if specified batch size is too large
+- Continue to work without any environment variables set
+
+### Verbose GPU Diagnostics
+
+Enable verbose logging to see detailed GPU information:
+
+```bash
+export NEAT_AI_DISCOVERY_VERBOSE=1
+```
+
+This logs:
+- GPU adapter name and type
+- Detected performance tier
+- Selected batch size
+- Tuning hints
 
 ## Additional documentation
 
