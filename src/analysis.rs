@@ -5652,12 +5652,22 @@ fn build_discrete_samples(
 /// For STEP/BIPOLAR, the only meaningful improvement is flipping the output:
 /// - If error > 0 (output should be higher), we want to flip 0→1 or -1→1
 /// - If error < 0 (output should be lower), we want to flip 1→0 or 1→-1
+///
+/// **IMPORTANT**: The `expected_improvement_percentage` returned is the FLIP RATE,
+/// not the actual error reduction! For OUTPUT neurons, flip rate ≈ error reduction.
+/// For HIDDEN neurons, the actual error reduction depends on the neuron's impact
+/// on outputs - the impact discount must be applied by the caller.
+///
+/// # Arguments
+/// * `is_output_target` - Whether the target neuron is an output neuron. If false,
+///   the prediction is less reliable and should only be used with impact discounting.
 fn evaluate_discrete_candidate(
     source_uuid: &str,
     target_uuid: &str,
     samples: &[DiscreteHelpfulSample],
     threshold_type: ThresholdType,
     threshold: f32,
+    is_output_target: bool,
 ) -> Option<CandidateNeuronJson> {
     if samples.len() < MIN_NEURON_SAMPLE_COUNT {
         return None;
@@ -5728,7 +5738,35 @@ fn evaluate_discrete_candidate(
 
                     // Net improvement: proportion of samples that would be corrected
                     let net_flips = helpful_flips - harmful_flips;
-                    let improvement = net_flips as f32 / samples_with_error as f32;
+                    let flip_rate = net_flips as f32 / samples_with_error as f32;
+
+                    // IMPORTANT: For HIDDEN targets, flip_rate ≠ error_reduction!
+                    // Flip rate only tells us how many samples would change the hidden neuron's
+                    // output (0↔1), but the actual error reduction depends on how that propagates
+                    // to output neurons through weighted connections.
+                    //
+                    // For OUTPUT targets: flip_rate ≈ error_reduction (each flip changes MSE by ~1)
+                    // For HIDDEN targets: flip_rate is misleading - must be heavily discounted
+                    //
+                    // Apply a severe penalty for hidden targets to account for the fundamental
+                    // mismatch between "% of samples that flip" and "% of error reduced".
+                    // The impact discount (0-1) will be applied later, but even that isn't enough
+                    // because flip_rate assumes each flip = 100% error reduction on that sample.
+                    //
+                    // For hidden STEP neurons, a flip changes the contribution to downstream
+                    // neurons by ±1 × outgoing_weight. This is typically a small fraction of
+                    // the total input to downstream neurons, so the actual error reduction is
+                    // much less than the flip rate suggests.
+                    let improvement = if is_output_target {
+                        flip_rate
+                    } else {
+                        // For hidden targets: heavily penalise because flip_rate ≠ error_reduction
+                        // Use the outgoing_weight magnitude as a proxy for impact.
+                        // If outgoing is 0.1 and flip_rate is 50%, actual impact is ~5%
+                        // (since the hidden neuron contributes 0.1 × 1 = 0.1 per flip, not 1.0)
+                        let outgoing_magnitude = outgoing_weight.abs();
+                        flip_rate * outgoing_magnitude.min(1.0)
+                    };
 
                     // IMPORTANT: Require meaningful improvement (at least 1%) for IDENTITY neurons.
                     // IDENTITY with bias=0 is mathematically equivalent to a direct synapse:
@@ -5741,6 +5779,13 @@ fn evaluate_discrete_candidate(
                     if improvement > best_improvement.max(MIN_DISCRETE_IMPROVEMENT)
                         && helpful_flips > harmful_flips
                     {
+                        // IDENTITY+bias=0 is mathematically equivalent to a direct synapse.
+                        // These should be handled by add-synapse analysis, not add-neuron.
+                        // Skip these candidates entirely - they waste a neuron for no benefit.
+                        if new_neuron_squash == "IDENTITY" {
+                            // bias is always 0 for discrete evaluation, so skip all IDENTITY
+                            continue;
+                        }
                         best_improvement = improvement;
 
                         // Create target neuron stats from samples
@@ -6142,6 +6187,12 @@ fn analyze_neurons_with_cache(
                 .get(target_uuid)
                 .and_then(|squash| ThresholdType::from_squash(squash));
 
+            // Check if target is an output neuron (needed for discrete evaluation accuracy)
+            let is_output_target = neuron_type_map
+                .get(target_uuid.as_str())
+                .map(|t| t == "output")
+                .unwrap_or(false);
+
             let target_index = match order_map_arc.get(target_uuid.as_str()) {
                 Some(index) => *index,
                 None => return Ok(()),
@@ -6307,6 +6358,7 @@ fn analyze_neurons_with_cache(
                         &discrete_samples,
                         t_type,
                         threshold,
+                        is_output_target,
                     ) {
                         if verbose_enabled() {
                             eprintln!(
@@ -10485,7 +10537,13 @@ mod tests_synapses {
         );
     }
 
-    /// Test evaluate_discrete_candidate finds candidates for STEP targets
+    /// Test evaluate_discrete_candidate correctly filters IDENTITY+bias=0 candidates.
+    ///
+    /// IDENTITY neurons with bias=0 are mathematically equivalent to a direct synapse:
+    ///   IDENTITY(source × incoming_weight + 0) × outgoing_weight = source × (incoming × outgoing)
+    ///
+    /// For STEP/BIPOLAR targets, we should NOT recommend IDENTITY add-neuron candidates
+    /// because add-synapse would achieve the same effect without wasting a neuron.
     #[test]
     fn test_evaluate_discrete_candidate_step() {
         // Create samples where source activation correlates with whether the target
@@ -10508,25 +10566,25 @@ mod tests_synapses {
             "target-step",
             &samples,
             ThresholdType::Step,
-            0.0, // threshold
+            0.0,  // threshold
+            true, // is_output_target - test assumes target is output
         );
 
-        assert!(candidate.is_some(), "Should find a candidate for STEP");
-        let c = candidate.unwrap();
+        // Should NOT find a candidate because IDENTITY+bias=0 is filtered
+        // (equivalent to synapse - use add-synapse analysis instead)
         assert!(
-            c.expected_improvement_percentage > 0.0,
-            "Should have positive improvement"
+            candidate.is_none(),
+            "Should NOT return IDENTITY candidate for STEP (equivalent to synapse). \
+            Use add-synapse analysis for STEP targets instead."
         );
-        assert!(c.improved_count > 0, "Should have some helpful flips");
     }
 
-    /// Test that discrete evaluation filters out low-improvement IDENTITY candidates.
-    /// IDENTITY neurons with bias=0 are mathematically equivalent to synapses,
-    /// and candidates with very low flip rates (<1%) don't reliably improve the model.
+    /// Test that discrete evaluation filters ALL IDENTITY candidates (not just low-improvement).
+    /// IDENTITY neurons with bias=0 are mathematically equivalent to synapses, so they
+    /// should never be recommended for STEP/BIPOLAR targets.
     ///
-    /// The MIN_DISCRETE_IMPROVEMENT threshold (1%) is the key filter being tested here.
-    /// The test creates samples where ALL have error (to pass MIN_NEURON_SAMPLE_COUNT check)
-    /// but only a tiny fraction would actually flip in the helpful direction.
+    /// Previously this test checked the MIN_DISCRETE_IMPROVEMENT threshold, but now
+    /// ALL IDENTITY candidates are filtered regardless of improvement rate.
     #[test]
     fn test_discrete_evaluation_filters_low_improvement_identity() {
         // Create a sample set where ALL samples have error (passing the sample count check)
@@ -10577,7 +10635,8 @@ mod tests_synapses {
             "target-step",
             &samples,
             ThresholdType::Step,
-            0.0, // Zero threshold - MIN_DISCRETE_IMPROVEMENT (1%) should filter
+            0.0,  // Zero threshold - MIN_DISCRETE_IMPROVEMENT (1%) should filter
+            true, // is_output_target
         );
 
         // Should NOT return a candidate because improvement would be <1%
@@ -10593,12 +10652,17 @@ mod tests_synapses {
         );
     }
 
-    /// Complementary test: verify that improvement ABOVE 1% DOES return a candidate.
-    /// This ensures the MIN_DISCRETE_IMPROVEMENT threshold is the actual filter,
-    /// not some other logic (like MIN_NEURON_SAMPLE_COUNT).
+    /// Test that even high-improvement IDENTITY candidates are filtered for STEP targets.
+    ///
+    /// IDENTITY+bias=0 is mathematically equivalent to a synapse:
+    ///   IDENTITY(source × w1 + 0) × w2 = source × (w1 × w2)
+    ///
+    /// If this pattern would help, add-synapse analysis will find it at lower cost
+    /// (1 synapse vs 1 neuron + 2 synapses). So we filter ALL IDENTITY candidates
+    /// from discrete evaluation, regardless of improvement rate.
     #[test]
-    fn test_discrete_evaluation_accepts_above_threshold_improvement() {
-        // Same structure as the filter test, but with 2% flippable samples (> 1% threshold)
+    fn test_discrete_evaluation_filters_identity_even_with_high_improvement() {
+        // Create samples with high improvement potential (2% > 1% threshold)
         let mut samples = Vec::new();
 
         for i in 0..1000 {
@@ -10628,20 +10692,17 @@ mod tests_synapses {
             &samples,
             ThresholdType::Step,
             0.0,
+            true, // is_output_target
         );
 
-        // SHOULD return a candidate because improvement = 20/1000 = 2% > 1% threshold
+        // Should NOT return a candidate even with 2% improvement
+        // because IDENTITY+bias=0 is equivalent to a synapse.
+        // Add-synapse will find this pattern at lower cost (1 synapse vs 1 neuron + 2 synapses).
         assert!(
-            candidate.is_some(),
-            "Should return candidate when improvement (2%) exceeds MIN_DISCRETE_IMPROVEMENT (1%)"
-        );
-
-        let c = candidate.unwrap();
-        // Verify the improvement is roughly what we expect (2%)
-        assert!(
-            c.expected_improvement_percentage > 0.015 && c.expected_improvement_percentage < 0.025,
-            "Expected ~2% improvement, got {}%",
-            c.expected_improvement_percentage * 100.0
+            candidate.is_none(),
+            "Should NOT return IDENTITY candidate for STEP even with high improvement. \
+            IDENTITY(source × w1 + 0) × w2 = source × (w1 × w2), which is equivalent to a synapse. \
+            Add-synapse analysis will find this pattern at lower cost."
         );
     }
 
