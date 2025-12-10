@@ -1062,6 +1062,8 @@ whether discovery should be enabled:
 
 ## Additional documentation
 
+- [CodeWiki](https://codewiki.google/github.com/stsoftwareau/neat-ai-discovery) -
+  AI-powered documentation and code exploration for this repository.
 - [Impact Calculation](docs/IMPACT_CALCULATION.md) - Detailed explanation of how
   neuron impact is calculated, including special handling for threshold (STEP/BIPOLAR)
   and selection (MINIMUM/MAXIMUM) squash functions.
