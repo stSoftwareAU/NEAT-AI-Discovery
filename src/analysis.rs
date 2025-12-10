@@ -5653,14 +5653,19 @@ fn build_discrete_samples(
 /// - If error > 0 (output should be higher), we want to flip 0→1 or -1→1
 /// - If error < 0 (output should be lower), we want to flip 1→0 or 1→-1
 ///
-/// **IMPORTANT**: The `expected_improvement_percentage` returned is the FLIP RATE,
-/// not the actual error reduction! For OUTPUT neurons, flip rate ≈ error reduction.
-/// For HIDDEN neurons, the actual error reduction depends on the neuron's impact
-/// on outputs - the impact discount must be applied by the caller.
+/// **CURRENTLY DISABLED**: This function always returns `None` because IDENTITY+bias=0
+/// candidates are equivalent to a direct synapse and are filtered out. For STEP/BIPOLAR
+/// targets, use **add-synapse analysis** instead - it can find direct connections that
+/// flip the output without wasting a neuron.
+///
+/// The function is retained for potential future use with non-IDENTITY squash functions
+/// (e.g., evaluating STEP→STEP chains) but currently does nothing useful.
 ///
 /// # Arguments
-/// * `is_output_target` - Whether the target neuron is an output neuron. If false,
-///   the prediction is less reliable and should only be used with impact discounting.
+/// * `is_output_target` - Whether the target neuron is an output neuron. (Currently unused.
+///   Impact discounting for hidden targets is handled after candidate evaluation via
+///   `compute_impacts_public()`, which correctly uses the target's weighted paths to outputs.)
+#[allow(unused_variables)]
 fn evaluate_discrete_candidate(
     source_uuid: &str,
     target_uuid: &str,
@@ -5669,6 +5674,21 @@ fn evaluate_discrete_candidate(
     threshold: f32,
     is_output_target: bool,
 ) -> Option<CandidateNeuronJson> {
+    // EARLY RETURN: Discrete evaluation only considers IDENTITY squash for new neurons.
+    // IDENTITY+bias=0 is mathematically equivalent to a direct synapse:
+    //   IDENTITY(source × incoming_weight + 0) × outgoing_weight = source × (incoming × outgoing)
+    //
+    // For STEP/BIPOLAR targets, add-synapse analysis handles this case more efficiently
+    // (1 synapse vs 1 neuron + 2 synapses). Returning None immediately avoids wasted
+    // computation from iterating through weight combinations.
+    //
+    // TODO: If discrete evaluation should support non-IDENTITY squash functions in future
+    // (e.g., STEP→STEP chains), remove this early return and add those squash types.
+    return None;
+
+    // The following code is unreachable but retained for reference if we add
+    // support for non-IDENTITY squash functions in the future.
+    #[allow(unreachable_code)]
     if samples.len() < MIN_NEURON_SAMPLE_COUNT {
         return None;
     }
@@ -5740,33 +5760,21 @@ fn evaluate_discrete_candidate(
                     let net_flips = helpful_flips - harmful_flips;
                     let flip_rate = net_flips as f32 / samples_with_error as f32;
 
-                    // IMPORTANT: For HIDDEN targets, flip_rate ≠ error_reduction!
-                    // Flip rate only tells us how many samples would change the hidden neuron's
-                    // output (0↔1), but the actual error reduction depends on how that propagates
-                    // to output neurons through weighted connections.
+                    // For both OUTPUT and HIDDEN targets, use flip_rate as the raw improvement.
                     //
                     // For OUTPUT targets: flip_rate ≈ error_reduction (each flip changes MSE by ~1)
-                    // For HIDDEN targets: flip_rate is misleading - must be heavily discounted
+                    // For HIDDEN targets: flip_rate is the neuron-level improvement. The actual
+                    // creature-level error reduction is computed later via impact discounting
+                    // (see lines ~6511-6550) which uses compute_impacts_public() to determine
+                    // the target's weighted path to outputs.
                     //
-                    // Apply a severe penalty for hidden targets to account for the fundamental
-                    // mismatch between "% of samples that flip" and "% of error reduced".
-                    // The impact discount (0-1) will be applied later, but even that isn't enough
-                    // because flip_rate assumes each flip = 100% error reduction on that sample.
-                    //
-                    // For hidden STEP neurons, a flip changes the contribution to downstream
-                    // neurons by ±1 × outgoing_weight. This is typically a small fraction of
-                    // the total input to downstream neurons, so the actual error reduction is
-                    // much less than the flip rate suggests.
-                    let improvement = if is_output_target {
-                        flip_rate
-                    } else {
-                        // For hidden targets: heavily penalise because flip_rate ≠ error_reduction
-                        // Use the outgoing_weight magnitude as a proxy for impact.
-                        // If outgoing is 0.1 and flip_rate is 50%, actual impact is ~5%
-                        // (since the hidden neuron contributes 0.1 × 1 = 0.1 per flip, not 1.0)
-                        let outgoing_magnitude = outgoing_weight.abs();
-                        flip_rate * outgoing_magnitude.min(1.0)
-                    };
+                    // NOTE: Previously this code incorrectly used `outgoing_weight.abs()` as a
+                    // proxy for hidden target impact. That was WRONG because `outgoing_weight`
+                    // is the NEW→TARGET connection weight, NOT the TARGET's outgoing connections
+                    // to downstream output neurons. When a hidden STEP neuron flips (0→1), its
+                    // impact on outputs depends on its own synapses to outputs, not the incoming
+                    // synapse weight. The proper impact is computed by compute_impacts_public().
+                    let improvement = flip_rate;
 
                     // IMPORTANT: Require meaningful improvement (at least 1%) for IDENTITY neurons.
                     // IDENTITY with bias=0 is mathematically equivalent to a direct synapse:
