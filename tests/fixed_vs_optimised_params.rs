@@ -76,21 +76,21 @@ fn generate_sample_subset_data(
 
     for i in 0..sample_count {
         let obs_idx = i as u32;
-        
+
         // Pseudo-random based on seed and index to create reproducible but varied samples
         let pseudo_random = ((seed as f32 * 0.618 + i as f32 * 0.381).sin() * 1000.0).fract();
-        
+
         // Target in linear region of activation
         let target_value = 0.3 * (pseudo_random - 0.5);
         let target_activation = target_value; // Assuming IDENTITY or linear region
-        
+
         // Error with sample-specific bias (simulates different samples having different distributions)
         let base_error = 0.1 * (pseudo_random - 0.5);
         let error = base_error + error_bias * (pseudo_random - 0.5).signum();
-        
+
         // Source activation - weak correlation with error
         let source_activation = 0.5 * (1.0 - pseudo_random);
-        
+
         records.push(DiscoverRecord::new(
             obs_idx,
             "output-0".to_string(),
@@ -98,7 +98,7 @@ fn generate_sample_subset_data(
             target_activation,
             vec![error],
         ));
-        
+
         records.push(DiscoverRecord::new(
             obs_idx,
             "input-1".to_string(),
@@ -107,7 +107,7 @@ fn generate_sample_subset_data(
             Vec::new(),
         ));
     }
-    
+
     records
 }
 
@@ -153,7 +153,7 @@ fn test_optimised_params_vary_by_sample() {
         };
 
         let result = analyze_neurons(&input).unwrap();
-        
+
         // Collect candidate descriptions for comparison
         let candidate_info: Vec<String> = result
             .helpful_neurons
@@ -165,7 +165,7 @@ fn test_optimised_params_vary_by_sample() {
                 )
             })
             .collect();
-        
+
         eprintln!(
             "Sample seed={}, error_bias={:.2}: {} candidates",
             seed,
@@ -175,14 +175,14 @@ fn test_optimised_params_vary_by_sample() {
         for info in &candidate_info {
             eprintln!("  {}", info);
         }
-        
+
         candidates_per_sample.push(candidate_info);
     }
 
     // Key observation: if parameters are sample-specific, different samples
     // will produce different "best" candidates with different params.
     // ReLU (if present) would have the same params across all samples.
-    
+
     // This test documents the behaviour - the assertion is primarily informational
     eprintln!("\n=== Key Observation ===");
     eprintln!("If optimised params cause overfitting, different samples should produce");
@@ -237,7 +237,7 @@ fn test_conservative_params_more_stable_across_samples() {
 
     for candidate in &subset_result.helpful_neurons {
         let is_conservative = candidate.incoming_weight.abs() <= 2.0 && candidate.bias.abs() <= 1.0;
-        
+
         if is_conservative {
             conservative_candidates += 1;
             eprintln!(
@@ -260,7 +260,10 @@ fn test_conservative_params_more_stable_across_samples() {
     }
 
     eprintln!("\n=== Parameter Distribution ===");
-    eprintln!("Conservative (|in|≤2, |bias|≤1): {}", conservative_candidates);
+    eprintln!(
+        "Conservative (|in|≤2, |bias|≤1): {}",
+        conservative_candidates
+    );
     eprintln!("Extreme (|in|>2 or |bias|>1): {}", extreme_candidates);
     eprintln!("\nHypothesis: Extreme params are more likely to fail on full dataset");
 }
@@ -275,31 +278,39 @@ fn test_conservative_params_more_stable_across_samples() {
 #[test]
 fn test_large_bias_causes_saturation() {
     // This is a unit test that doesn't need GPU - it demonstrates the math
-    
+
     // TANH behaviour with different biases
     let test_inputs: Vec<f32> = vec![-1.0, -0.5, 0.0, 0.5, 1.0];
-    
+
     eprintln!("=== TANH Saturation with Bias ===");
     eprintln!("Inputs: {:?}\n", test_inputs);
-    
+
     for bias in [0.0, 1.0, 5.0, 10.0] {
         let incoming = 1.0;
         let outputs: Vec<f32> = test_inputs
             .iter()
             .map(|&x| (incoming * x + bias).tanh())
             .collect();
-        
+
         let range = outputs.iter().cloned().fold(f32::MAX, f32::min)
             ..=outputs.iter().cloned().fold(f32::MIN, f32::max);
         let spread = *range.end() - *range.start();
-        
+
         eprintln!(
             "Bias={:5.1}: outputs={:?}",
             bias,
-            outputs.iter().map(|x| format!("{:.4}", x)).collect::<Vec<_>>()
+            outputs
+                .iter()
+                .map(|x| format!("{:.4}", x))
+                .collect::<Vec<_>>()
         );
-        eprintln!("           Range: {:.4} to {:.4} (spread={:.4})\n", range.start(), range.end(), spread);
-        
+        eprintln!(
+            "           Range: {:.4} to {:.4} (spread={:.4})\n",
+            range.start(),
+            range.end(),
+            spread
+        );
+
         // With bias=10, spread should be very small (saturated)
         if bias >= 10.0 {
             assert!(
@@ -310,7 +321,7 @@ fn test_large_bias_causes_saturation() {
             );
         }
     }
-    
+
     eprintln!("=== Conclusion ===");
     eprintln!("Large bias causes saturation, making the neuron output nearly constant.");
     eprintln!("A constant neuron can only help samples in ONE direction.");
@@ -381,15 +392,14 @@ fn test_relu_fixed_params_consistent_across_samples() {
             "ReLU incoming_weight should be ±1.0, got {}",
             incoming
         );
-        assert!(
-            bias.abs() < 0.001,
-            "ReLU bias should be 0.0, got {}",
-            bias
-        );
+        assert!(bias.abs() < 0.001, "ReLU bias should be 0.0, got {}", bias);
     }
 
     eprintln!("\n=== ReLU Consistency ===");
-    eprintln!("All {} ReLU candidates have identical params (±1.0, 0.0)", relu_params.len());
+    eprintln!(
+        "All {} ReLU candidates have identical params (±1.0, 0.0)",
+        relu_params.len()
+    );
     eprintln!("This is why ReLU succeeds: no sample-specific overfitting!");
 }
 
@@ -460,13 +470,10 @@ fn test_synapse_candidates_no_bias_optimisation() {
         vec![
             ("input-0", "input", "IDENTITY"),
             ("input-1", "input", "IDENTITY"),
-            ("hidden-0", "hidden", "TANH"),  // Hidden neuron to receive new synapses
+            ("hidden-0", "hidden", "TANH"), // Hidden neuron to receive new synapses
             ("output-0", "output", "IDENTITY"),
         ],
-        vec![
-            ("input-0", "hidden-0", 1.0),
-            ("hidden-0", "output-0", 1.0),
-        ],
+        vec![("input-0", "hidden-0", 1.0), ("hidden-0", "output-0", 1.0)],
     );
 
     let temp_file = NamedTempFile::new().unwrap();
@@ -474,7 +481,7 @@ fn test_synapse_candidates_no_bias_optimisation() {
 
     // Generate sample data with same characteristics as neuron tests
     let records = generate_sample_subset_data(42, 100, 0.05);
-    
+
     // Need to add records for hidden neuron as well
     let mut all_records = records.clone();
     for i in 0..100 {
@@ -483,7 +490,7 @@ fn test_synapse_candidates_no_bias_optimisation() {
         // Hidden neuron with TANH activation
         let hidden_value = 0.4 * (pseudo_random - 0.5);
         let hidden_activation = hidden_value.tanh();
-        
+
         all_records.push(DiscoverRecord::new(
             obs_idx,
             "hidden-0".to_string(),
@@ -492,13 +499,13 @@ fn test_synapse_candidates_no_bias_optimisation() {
             vec![0.05 * (pseudo_random - 0.5)],
         ));
     }
-    
+
     write_records_to_parquet(file_path, &all_records).unwrap();
 
     // Analyse synapses (not neurons)
-    use neat_ai_discovery::AnalyzeSynapsesInput;
     use neat_ai_discovery::analysis::analyze_synapses;
-    
+    use neat_ai_discovery::AnalyzeSynapsesInput;
+
     let input = AnalyzeSynapsesInput {
         parquet_file: file_path.to_string(),
         creature,
@@ -509,11 +516,11 @@ fn test_synapse_candidates_no_bias_optimisation() {
     };
 
     let result = analyze_synapses(&input).unwrap();
-    
+
     eprintln!("\n=== Synapse Analysis Results ===");
     eprintln!("Helpful synapses found: {}", result.helpful_synapses.len());
     eprintln!("Harmful synapses found: {}", result.harmful_synapses.len());
-    
+
     for synapse in &result.helpful_synapses {
         eprintln!(
             "  {} -> {}: weight={:.4}, expected={:.4}%",
@@ -523,7 +530,7 @@ fn test_synapse_candidates_no_bias_optimisation() {
             synapse.expected_improvement_percentage * 100.0
         );
     }
-    
+
     eprintln!("\nKey difference from neuron analysis:");
     eprintln!("- Synapse candidates have NO bias parameter");
     eprintln!("- Only a single weight is computed");
@@ -556,9 +563,9 @@ fn test_synapse_weight_distribution() {
         let records = generate_sample_subset_data(seed, 100, 0.01);
         write_records_to_parquet(temp_file.path().to_str().unwrap(), &records).unwrap();
 
-        use neat_ai_discovery::AnalyzeSynapsesInput;
         use neat_ai_discovery::analysis::analyze_synapses;
-        
+        use neat_ai_discovery::AnalyzeSynapsesInput;
+
         let input = AnalyzeSynapsesInput {
             parquet_file: temp_file.path().to_str().unwrap().to_string(),
             creature: creature.clone(),
@@ -569,14 +576,16 @@ fn test_synapse_weight_distribution() {
         };
 
         let result = analyze_synapses(&input).unwrap();
-        
-        eprintln!("\nSample seed={}: {} helpful synapses", seed, result.helpful_synapses.len());
+
+        eprintln!(
+            "\nSample seed={}: {} helpful synapses",
+            seed,
+            result.helpful_synapses.len()
+        );
         for synapse in &result.helpful_synapses {
             eprintln!(
                 "  {} -> {}: weight={:.6}",
-                synapse.from_neuron_uuid,
-                synapse.to_neuron_uuid,
-                synapse.weight
+                synapse.from_neuron_uuid, synapse.to_neuron_uuid, synapse.weight
             );
             all_weights.push(synapse.weight);
         }
@@ -591,13 +600,13 @@ fn test_synapse_weight_distribution() {
     let min_weight = all_weights.iter().cloned().fold(f32::MAX, f32::min);
     let max_weight = all_weights.iter().cloned().fold(f32::MIN, f32::max);
     let avg_weight = all_weights.iter().sum::<f32>() / all_weights.len() as f32;
-    
+
     eprintln!("\n=== Synapse Weight Distribution ===");
     eprintln!("Min weight: {:.6}", min_weight);
     eprintln!("Max weight: {:.6}", max_weight);
     eprintln!("Avg weight: {:.6}", avg_weight);
     eprintln!("Range: {:.6}", max_weight - min_weight);
-    
+
     // Key insight: If synapse weights vary significantly across samples,
     // then weight calculation also has sample-specific overfitting issues.
     // If weights are consistent, then bias is the main problem.
@@ -613,34 +622,34 @@ fn test_synapse_weight_distribution() {
 #[test]
 fn document_current_parameter_search_ranges() {
     // This test documents the search ranges without needing GPU
-    
+
     eprintln!("=== Current Parameter Search Ranges ===\n");
-    
+
     eprintln!("SCALES_WIDE (for GELU, ELU, etc.):");
     eprintln!("  [0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0]");
     eprintln!("  -> Up to 200x amplification!\n");
-    
+
     eprintln!("SCALES_SMOOTH (for TANH, LOGISTIC, etc.):");
     eprintln!("  [0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 4.0, 10.0, 25.0, 50.0]");
     eprintln!("  -> Still up to 50x amplification\n");
-    
+
     eprintln!("Bias values (TANH/LOGISTIC):");
     eprintln!("  [-10.0, -5.0, -2.0, -1.0, -0.5, -0.1, 0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]");
     eprintln!("  -> Bias of ±10 causes saturation!\n");
-    
+
     eprintln!("Versus ReLU (fixed):");
     eprintln!("  incoming_weight = ±1.0 (ONLY two options)");
     eprintln!("  bias = 0.0 (ALWAYS zero)");
     eprintln!("  -> Total combinations: 2\n");
-    
+
     eprintln!("Other activations:");
     eprintln!("  2 orientations × 10+ scales × 13+ biases = 260+ combinations");
     eprintln!("  -> Much more opportunity to find sample-specific 'optimal' params");
-    
+
     // Quantify the difference
     let relu_combinations = 2;
     let other_combinations = 2 * 10 * 13; // orientations × scales × biases
-    
+
     assert!(
         other_combinations > 100 * relu_combinations,
         "Non-ReLU activations should have 100x+ more parameter combinations"

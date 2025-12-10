@@ -2654,7 +2654,9 @@ fn calculate_optimal_bias(
         };
 
         // Find saturation info for the selected bias
-        let selected_info = bias_evals.iter().find(|e| (e.bias - best_bias).abs() < EPSILON);
+        let selected_info = bias_evals
+            .iter()
+            .find(|e| (e.bias - best_bias).abs() < EPSILON);
         let saturation_info = selected_info
             .map(|e| {
                 let sat_pct = (e.saturated_count as f32 / e.total_valid as f32) * 100.0;
