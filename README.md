@@ -161,6 +161,17 @@ or manual filtering - just physics and natural selection.
   all ~1000+ source neurons. Previously this HashMap was rebuilt for each source,
   causing significant CPU overhead. With 64 focus neurons, this eliminated ~64,000
   redundant HashMap constructions.
+- **Centralised GPU work queue (v0.1.151)**: Instead of each parallel focus neuron
+  thread creating its own GPU device (expensive ~100ms overhead per device), a
+  single `GpuWorkQueue` is created and shared via Arc. The queue owns a dedicated
+  GPU thread that processes all operations, eliminating device creation overhead.
+  The `GpuEvaluator` trait allows helper functions to work with either direct
+  `GpuAnalyzer` access or the shared queue. This improves GPU utilisation when
+  processing many focus neurons in parallel.
+- **Batch buffer mapping optimisation (v0.1.151)**: GPU buffer mapping now calls
+  `map_async` on ALL staging buffers first, then performs a single `device.poll(Wait)`
+  to wait for all buffers simultaneously. This reduces GPU-CPU round trips compared
+  to the previous sequential mapping approach.
 - The GPU kernels (helpful/harmful statistics) produce sufficient aggregates to
   derive the suggested weight and the expected error reduction. Results are sorted
   by expected improvement before being returned, so callers can simply read the
