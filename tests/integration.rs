@@ -401,19 +401,24 @@ fn test_impact_calculation_with_multiple_incoming_connections() {
         .as_f64()
         .expect("impact should be a number") as f32;
 
-    // With NORMALISED impact: |weight| / total_inbound × downstream_impact
-    // Output has 2 incoming synapses: weight 10 + weight 5 = total 15
-    // - hidden-a: 10/15 × 1.0 = 0.667 (67% of output's input)
-    // - hidden-b: 5/15 × 1.0 = 0.333 (33% of output's input)
+    // v0.1.145: Changed to ABSOLUTE impact: |weight| × downstream_impact
     //
-    // This is CORRECT: if we remove hidden-a, output loses 67% of its input, not 1000%!
+    // The old normalised approach (|weight| / total_inbound) was fundamentally wrong
+    // for removal prediction. It caused impacts to be underestimated by up to
+    // 145 billion times in production (calculated 1e-12, actual 20% error increase).
+    //
+    // With absolute impact:
+    // - hidden-a: 10 × 1.0 = 10.0 (removing loses 10 units of contribution)
+    // - hidden-b: 5 × 1.0 = 5.0 (removing loses 5 units of contribution)
+    //
+    // The ratio should still be 2:1 (proportional to weights)
     assert!(
-        (impact_a - 0.667).abs() < 0.01,
-        "hidden-a impact should be ~0.667 (10/15 of output's input), got {impact_a}",
+        (impact_a - 10.0).abs() < 0.01,
+        "hidden-a impact should be 10.0 (weight × downstream), got {impact_a}",
     );
     assert!(
-        (impact_b - 0.333).abs() < 0.01,
-        "hidden-b impact should be ~0.333 (5/15 of output's input), got {impact_b}",
+        (impact_b - 5.0).abs() < 0.01,
+        "hidden-b impact should be 5.0 (weight × downstream), got {impact_b}",
     );
 
     // The ratio of impacts should still be 2:1 (proportional to weights)

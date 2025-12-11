@@ -549,7 +549,6 @@ pub fn compute_impacts_public(creature: &CreatureJson) -> HashMap<String, f32> {
 /// This struct groups related parameters to avoid clippy::too_many_arguments.
 struct ImpactContext {
     adjacency: HashMap<String, Vec<(String, f32)>>,
-    total_inbound: HashMap<String, f32>,
     inbound_count: HashMap<String, usize>,
     squash_map: HashMap<String, String>,
     outputs: HashSet<String>,
@@ -582,16 +581,7 @@ fn compute_impacts_internal_with_stats(
     let adjacency = build_adjacency(creature);
     let squash_map = build_squash_map(creature);
 
-    // Build total inbound |weight| for each neuron (for normalisation)
-    let total_inbound: HashMap<String, f32> = {
-        let mut map: HashMap<String, f32> = HashMap::new();
-        for synapse in &creature.synapses {
-            *map.entry(synapse.to_uuid.clone()).or_insert(0.0) += synapse.weight.abs();
-        }
-        map
-    };
-
-    // Build inbound synapse count for selection squashes
+    // Build inbound synapse count for selection squashes (MIN/MAX/IF neurons)
     let inbound_count: HashMap<String, usize> = {
         let mut map: HashMap<String, usize> = HashMap::new();
         for synapse in &creature.synapses {
@@ -612,7 +602,6 @@ fn compute_impacts_internal_with_stats(
 
     let ctx = ImpactContext {
         adjacency,
-        total_inbound,
         inbound_count,
         squash_map,
         outputs,
@@ -687,23 +676,25 @@ fn compute_impact_recursive(
 
             let contribution = match category {
                 SquashCategory::Linear => {
-                    // NORMALISED impact: what fraction of the target's input does this neuron provide?
+                    // ABSOLUTE impact: what is the actual contribution magnitude?
                     //
-                    // If target has 100 incoming synapses with total |weight| = 343,
-                    // and this synapse has |weight| = 3, then this neuron contributes:
-                    //   3 / 343 ≈ 0.9% of the target's input
+                    // v0.1.145: CRITICAL FIX - normalisation was causing massive underestimation.
                     //
-                    // This is recursive - the fraction propagates through the network.
-                    // A neuron 2 hops from output, going through a target with 100 inputs,
-                    // has its impact diluted by that factor.
-                    let target_total = ctx
-                        .total_inbound
-                        .get(to_uuid)
-                        .copied()
-                        .unwrap_or(1.0)
-                        .max(1e-10);
-                    let fraction = weight.abs() / target_total;
-                    fraction * child_impact
+                    // Previously we computed `|weight| / total_inbound × child_impact`, which
+                    // gave "what fraction of inputs is this?" but this is WRONG for removal
+                    // prediction. Production data showed impact underestimated by up to
+                    // 145 BILLION times (calculated 1e-12, actual 20% error increase).
+                    //
+                    // The correct formula for removal impact is:
+                    //   impact = |weight| × child_impact
+                    //
+                    // This gives the actual magnitude of change when the neuron is removed.
+                    // Values are no longer bounded to [0,1] but that's fine - we only care
+                    // about relative ordering for removal candidates.
+                    //
+                    // The old normalisation made sense for "blame assignment" but not for
+                    // predicting what happens when a neuron is removed from the network.
+                    weight.abs() * child_impact
                 }
                 SquashCategory::Threshold => {
                     // THRESHOLD impact (STEP/BIPOLAR): Any synapse could flip the output!
@@ -878,7 +869,7 @@ pub fn rank_focus_neurons(
     // Identify removal candidates: neurons with activation_weighted_impact < costOfGrowth.
     //
     // activation_weighted_impact = structural_impact × mean_activation
-    // where structural_impact = NORMALISED impact through the network
+    // where structural_impact = ABSOLUTE impact through the network (v0.1.145 fix)
     //
     // Neurons with impact below costOfGrowth are net negative - removing them
     // reduces complexity more than it affects error.
@@ -886,7 +877,11 @@ pub fn rank_focus_neurons(
     // We provide complexity savings info for each neuron based on NEAT-AI's formula:
     //   savings = growthCost × (1 + (N + M) / 10)
     // where N = incoming synapses, M = outgoing synapses
-    const COST_OF_GROWTH: f32 = 1e-7;
+    //
+    // v0.1.145: Changed from 1e-7 to 0.01 to match TypeScript default.
+    // The old 1e-7 was calibrated for NORMALISED impacts which massively
+    // underestimated actual impact (by up to 145 billion times in production).
+    const COST_OF_GROWTH: f32 = 0.01;
 
     // Return ALL neurons with impact below costOfGrowth as removal candidates
     let mut removal_candidates: Vec<RemovalCandidate> = neurons
