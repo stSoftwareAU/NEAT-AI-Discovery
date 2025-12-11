@@ -41,8 +41,9 @@ use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use tempfile::NamedTempFile;
 
-/// Default growth cost matching NEAT-AI's typical value
-const COST_OF_GROWTH: f32 = 1e-7;
+/// Default growth cost matching NEAT-AI's typical value (0.01 per TypeScript default)
+/// v0.1.145: Changed from 1e-7 to 0.01 to match TypeScript and work with absolute impacts.
+const COST_OF_GROWTH: f32 = 0.01;
 
 /// Test the removal savings calculation matches NEAT-AI's Score.ts formula.
 ///
@@ -362,47 +363,47 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
     );
 
     // Verify the savings match the NEAT-AI formula: growthCost × (1 + totalSynapses/10)
-    let expected_few_savings = COST_OF_GROWTH * (1.0 + 2.0 / 10.0); // 1.2e-7
-    let expected_many_savings = COST_OF_GROWTH * (1.0 + 5.0 / 10.0); // 1.5e-7
+    // v0.1.145: COST_OF_GROWTH changed from 1e-7 to 0.01 to match TypeScript
+    let expected_few_savings = COST_OF_GROWTH * (1.0 + 2.0 / 10.0); // 0.012
+    let expected_many_savings = COST_OF_GROWTH * (1.0 + 5.0 / 10.0); // 0.015
 
     assert!(
-        (few_candidate.removal_savings - expected_few_savings).abs() < 1e-15,
+        (few_candidate.removal_savings - expected_few_savings).abs() < 1e-6,
         "few-synapses savings should be {:.2e}, got {:.2e}",
         expected_few_savings,
         few_candidate.removal_savings
     );
     assert!(
-        (many_candidate.removal_savings - expected_many_savings).abs() < 1e-15,
+        (many_candidate.removal_savings - expected_many_savings).abs() < 1e-6,
         "many-synapses savings should be {:.2e}, got {:.2e}",
         expected_many_savings,
         many_candidate.removal_savings
     );
 }
 
-/// REGRESSION TEST: Threshold must use costOfGrowth (1e-7).
+/// REGRESSION TEST: Threshold must use costOfGrowth (0.01 per TypeScript).
+///
+/// v0.1.145: costOfGrowth changed from 1e-7 to 0.01 to match TypeScript
+/// and work with absolute (non-normalised) impacts.
 ///
 /// Neurons are removal candidates when:
-///   activation_weighted_impact < costOfGrowth (1e-7)
+///   activation_weighted_impact < costOfGrowth (0.01)
 ///
 /// This test creates a neuron with impact ABOVE costOfGrowth that should NOT
 /// be a removal candidate.
 #[test]
 fn regression_threshold_uses_cost_of_growth() {
-    // Create a neuron with activation_weighted_impact = 1e-3 (0.1%)
-    // This is:
-    //   - LARGER than costOfGrowth (1e-7) - should NOT be a candidate
-    //
-    // With normalised impact:
-    //   total_inbound to output = 1e-2 + 1.0 = 1.02
-    //   structural_impact = 1e-2 / 1.02 × 1.0 ≈ 0.0098 (0.98%)
-    //   mean_activation = 0.1
-    //   activation_weighted_impact ≈ 0.0098 × 0.1 = 9.8e-4 >> 1e-7
+    // Create a neuron with significant weight to output
+    // With ABSOLUTE impact (v0.1.145):
+    //   structural_impact = 0.5 × 1.0 = 0.5 (weight × downstream)
+    //   mean_activation = 0.5
+    //   activation_weighted_impact = 0.5 × 0.5 = 0.25 >> 0.01
     let creature = CreatureJson {
         input: 1,
         output: 1,
         neurons: vec![
             NeuronJson {
-                uuid: "moderate-impact".to_string(),
+                uuid: "high-impact".to_string(),
                 neuron_type: "hidden".to_string(),
                 squash: "IDENTITY".to_string(),
                 bias: 0.0,
@@ -417,22 +418,15 @@ fn regression_threshold_uses_cost_of_growth() {
         synapses: vec![
             SynapseJson {
                 from_uuid: "input-0".to_string(),
-                to_uuid: "moderate-impact".to_string(),
-                weight: 0.5,
-                synapse_type: None,
-            },
-            // Hidden → output with small weight
-            SynapseJson {
-                from_uuid: "moderate-impact".to_string(),
-                to_uuid: "output-0".to_string(),
-                weight: 1e-2,
-                synapse_type: None,
-            },
-            // Direct input → output (dominates inbound)
-            SynapseJson {
-                from_uuid: "input-0".to_string(),
-                to_uuid: "output-0".to_string(),
+                to_uuid: "high-impact".to_string(),
                 weight: 1.0,
+                synapse_type: None,
+            },
+            // Hidden → output with moderate weight
+            SynapseJson {
+                from_uuid: "high-impact".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 0.5,
                 synapse_type: None,
             },
         ],
@@ -441,10 +435,10 @@ fn regression_threshold_uses_cost_of_growth() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    // Records with mean_activation = 0.1
+    // Records with mean_activation = 0.5
     let records = vec![
-        DiscoverRecord::new(0, "moderate-impact".to_string(), Some(0.1), 0.1, vec![0.1]),
-        DiscoverRecord::new(1, "moderate-impact".to_string(), Some(0.1), 0.1, vec![0.1]),
+        DiscoverRecord::new(0, "high-impact".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(1, "high-impact".to_string(), Some(0.5), 0.5, vec![0.1]),
         DiscoverRecord::new(0, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
         DiscoverRecord::new(1, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
     ];
@@ -456,30 +450,29 @@ fn regression_threshold_uses_cost_of_growth() {
     let neuron = result
         .neurons
         .iter()
-        .find(|n| n.neuron_uuid == "moderate-impact")
-        .expect("moderate-impact should be in ranked neurons");
+        .find(|n| n.neuron_uuid == "high-impact")
+        .expect("high-impact should be in ranked neurons");
 
-    // Verify impact is above costOfGrowth
-    let cost_of_growth: f32 = 1e-7;
+    // Verify impact is above costOfGrowth (0.01)
     assert!(
-        neuron.activation_weighted_impact > cost_of_growth,
+        neuron.activation_weighted_impact > COST_OF_GROWTH,
         "activation_weighted_impact ({:.2e}) should be LARGER than costOfGrowth ({:.0e})",
         neuron.activation_weighted_impact,
-        cost_of_growth
+        COST_OF_GROWTH
     );
 
     // Should NOT be a removal candidate (impact > costOfGrowth)
     let candidate = result
         .removal_candidates
         .iter()
-        .find(|c| c.neuron_uuid == "moderate-impact");
+        .find(|c| c.neuron_uuid == "high-impact");
 
     assert!(
         candidate.is_none(),
         "Neuron with activation_weighted_impact ({:.2e}) > costOfGrowth ({:.0e}) should NOT \
          be a removal candidate. Found candidates: {:?}",
         neuron.activation_weighted_impact,
-        cost_of_growth,
+        COST_OF_GROWTH,
         result
             .removal_candidates
             .iter()
