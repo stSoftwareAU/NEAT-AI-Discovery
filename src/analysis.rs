@@ -99,15 +99,24 @@ fn detect_gpu_tier(adapter_info: &wgpu::AdapterInfo) -> GpuPerformanceTier {
     GpuPerformanceTier::Unknown
 }
 
+/// Get cached batch size override from environment variable.
+/// Returns None if not set or invalid.
+fn get_batch_size_override() -> Option<usize> {
+    use std::sync::OnceLock;
+    static OVERRIDE: OnceLock<Option<usize>> = OnceLock::new();
+    *OVERRIDE.get_or_init(|| {
+        std::env::var("NEAT_AI_DISCOVERY_GPU_BATCH_SIZE")
+            .ok()
+            .and_then(|val| val.parse::<usize>().ok())
+            .filter(|size| (64..=4096).contains(size))
+    })
+}
+
 /// Get optimised GPU batch size based on detected GPU tier.
 fn get_batch_size_for_tier(tier: GpuPerformanceTier) -> usize {
-    // Check for explicit override first
-    if let Ok(val) = std::env::var("NEAT_AI_DISCOVERY_GPU_BATCH_SIZE") {
-        if let Ok(size) = val.parse::<usize>() {
-            if (64..=4096).contains(&size) {
-                return size;
-            }
-        }
+    // Check for explicit override first (cached)
+    if let Some(size) = get_batch_size_override() {
+        return size;
     }
 
     match tier {
@@ -664,7 +673,7 @@ struct TargetDiagnostics {
 
 impl TargetDiagnostics {
     fn new(targets: &[&String]) -> Self {
-        let log_enabled = std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok();
+        let log_enabled = verbose_enabled();
         let mut entries = HashMap::new();
         for target in targets {
             entries.insert(target.to_string(), TargetDiagnosticEntry::new(target));
@@ -1059,7 +1068,7 @@ struct NeuronDiagnostics {
 
 impl NeuronDiagnostics {
     fn new(targets: &[&String]) -> Self {
-        let log_enabled = std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok();
+        let log_enabled = verbose_enabled();
         let mut entries = HashMap::new();
         for target in targets {
             entries.insert(target.to_string(), NeuronDiagnosticEntry::new(target));
@@ -2642,8 +2651,13 @@ impl GpuAnalyzer {
     /// - **macOS**: GPU should always be available (Metal). Missing GPU is an error.
     /// - **Linux**: GPU may not be available on headless servers without GPU hardware
     ///   or proper permissions. Missing GPU gracefully disables discovery.
+    ///
+    /// **Note**: Result is cached for consistency. Creating wgpu instances is expensive
+    /// and can give inconsistent results under parallel load (e.g., CI environments).
     pub fn gpu_is_available() -> bool {
-        Self::check_gpu_availability().available
+        use std::sync::OnceLock;
+        static GPU_AVAILABLE: OnceLock<bool> = OnceLock::new();
+        *GPU_AVAILABLE.get_or_init(|| Self::check_gpu_availability().available)
     }
 
     /// Check GPU availability with detailed diagnostics.

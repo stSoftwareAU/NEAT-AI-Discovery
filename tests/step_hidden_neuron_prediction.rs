@@ -15,11 +15,21 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::analyze_neurons;
+use neat_ai_discovery::analysis::{analyze_neurons, GpuAnalyzer};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson, SynapseJson};
 use tempfile::NamedTempFile;
+
+/// Skip test if no GPU available
+macro_rules! skip_without_gpu {
+    () => {
+        if !GpuAnalyzer::gpu_is_available() {
+            eprintln!("Skipping test: no GPU available");
+            return;
+        }
+    };
+}
 
 /// Helper to create a creature matching the problematic structure from GRQ-18-1:
 /// - Source neuron (input or hidden)
@@ -145,6 +155,8 @@ fn generate_step_flip_records() -> Vec<DiscoverRecord> {
 /// 3. This tiny change barely affects MSE
 #[test]
 fn test_step_hidden_neuron_prediction_vs_reality() {
+    skip_without_gpu!();
+
     let creature = create_step_hidden_creature();
     let records = generate_step_flip_records();
 
@@ -234,6 +246,8 @@ fn test_step_hidden_neuron_prediction_vs_reality() {
 /// The discrete evaluation now correctly filters these candidates.
 #[test]
 fn test_identity_zero_bias_should_not_be_recommended() {
+    skip_without_gpu!();
+
     let creature = create_step_hidden_creature();
     let records = generate_step_flip_records();
 
@@ -286,6 +300,8 @@ fn test_identity_zero_bias_should_not_be_recommended() {
 /// The discrete evaluation correctly filters these for all STEP/BIPOLAR targets.
 #[test]
 fn test_step_output_neuron_no_identity_candidates() {
+    skip_without_gpu!();
+
     // Create a simple creature with STEP output
     let creature = CreatureJson {
         input: 2,
