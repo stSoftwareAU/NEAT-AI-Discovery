@@ -99,15 +99,24 @@ fn detect_gpu_tier(adapter_info: &wgpu::AdapterInfo) -> GpuPerformanceTier {
     GpuPerformanceTier::Unknown
 }
 
+/// Get cached batch size override from environment variable.
+/// Returns None if not set or invalid.
+fn get_batch_size_override() -> Option<usize> {
+    use std::sync::OnceLock;
+    static OVERRIDE: OnceLock<Option<usize>> = OnceLock::new();
+    *OVERRIDE.get_or_init(|| {
+        std::env::var("NEAT_AI_DISCOVERY_GPU_BATCH_SIZE")
+            .ok()
+            .and_then(|val| val.parse::<usize>().ok())
+            .filter(|size| (64..=4096).contains(size))
+    })
+}
+
 /// Get optimised GPU batch size based on detected GPU tier.
 fn get_batch_size_for_tier(tier: GpuPerformanceTier) -> usize {
-    // Check for explicit override first
-    if let Ok(val) = std::env::var("NEAT_AI_DISCOVERY_GPU_BATCH_SIZE") {
-        if let Ok(size) = val.parse::<usize>() {
-            if (64..=4096).contains(&size) {
-                return size;
-            }
-        }
+    // Check for explicit override first (cached)
+    if let Some(size) = get_batch_size_override() {
+        return size;
     }
 
     match tier {
@@ -298,25 +307,6 @@ fn verbose_enabled() -> bool {
     use std::sync::OnceLock;
     static VERBOSE: OnceLock<bool> = OnceLock::new();
     *VERBOSE.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok())
-}
-
-/// Enable detailed prediction tracing for debugging prediction accuracy.
-/// Set NEAT_AI_DISCOVERY_TRACE_PREDICTION=1 to enable.
-/// This logs sample-level details showing exactly how predictions are computed.
-/// Result is cached for performance - env var is only checked once.
-fn prediction_trace_enabled() -> bool {
-    use std::sync::OnceLock;
-    static TRACE: OnceLock<bool> = OnceLock::new();
-    *TRACE.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_TRACE_PREDICTION").is_ok())
-}
-
-/// Enable detailed bias optimisation tracing for debugging parameter selection.
-/// Set NEAT_AI_DISCOVERY_TRACE_BIAS=1 to enable.
-/// This logs which bias values are tested, their error reduction, and saturation status.
-fn bias_trace_enabled() -> bool {
-    use std::sync::OnceLock;
-    static TRACE: OnceLock<bool> = OnceLock::new();
-    *TRACE.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_TRACE_BIAS").is_ok())
 }
 
 /// Suppress Mesa/libEGL debug warnings on Linux.
@@ -683,7 +673,7 @@ struct TargetDiagnostics {
 
 impl TargetDiagnostics {
     fn new(targets: &[&String]) -> Self {
-        let log_enabled = std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok();
+        let log_enabled = verbose_enabled();
         let mut entries = HashMap::new();
         for target in targets {
             entries.insert(target.to_string(), TargetDiagnosticEntry::new(target));
@@ -1078,7 +1068,7 @@ struct NeuronDiagnostics {
 
 impl NeuronDiagnostics {
     fn new(targets: &[&String]) -> Self {
-        let log_enabled = std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok();
+        let log_enabled = verbose_enabled();
         let mut entries = HashMap::new();
         for target in targets {
             entries.insert(target.to_string(), NeuronDiagnosticEntry::new(target));
@@ -2553,24 +2543,11 @@ fn calculate_optimal_bias(
             .iter()
             .all(|s| s.target_value.is_some() && s.target_activation.is_some());
 
-    let trace = bias_trace_enabled();
-
-    // Track bias evaluation details for tracing
-    #[derive(Debug)]
-    struct BiasEval {
-        bias: f32,
-        error_reduction_pct: f32,
-        saturated_count: usize,
-        total_valid: usize,
-    }
-    let mut bias_evals: Vec<BiasEval> = Vec::new();
-
     // Search over log-spaced bias values
     for &bias in &bias_values {
         // Calculate error with this bias
         let mut total_new_error_sq = 0.0;
         let mut valid_samples = 0;
-        let mut saturated_count = 0usize;
 
         for sample in samples {
             if !sample.avg_error.is_finite() || !sample.activation.is_finite() {
@@ -2583,18 +2560,6 @@ fn calculate_optimal_bias(
 
             if !new_neuron_activation.is_finite() {
                 continue;
-            }
-
-            // Check for saturation (activation near bounds for bounded activations)
-            // TANH saturates at ±1, LOGISTIC at 0/1, HARD_TANH at ±1
-            let is_saturated = match squash {
-                "TANH" | "HARD_TANH" => new_neuron_activation.abs() > 0.99,
-                "LOGISTIC" => !(0.01..=0.99).contains(&new_neuron_activation),
-                "SOFTSIGN" => new_neuron_activation.abs() > 0.95,
-                _ => false, // Unbounded activations don't saturate
-            };
-            if is_saturated {
-                saturated_count += 1;
             }
 
             // Calculate new error at target neuron
@@ -2627,75 +2592,10 @@ fn calculate_optimal_bias(
 
         // Calculate error reduction (positive is good)
         let error_reduction = total_baseline_error_sq - total_new_error_sq;
-        let error_reduction_pct = if total_baseline_error_sq > EPSILON {
-            (error_reduction / total_baseline_error_sq) * 100.0
-        } else {
-            0.0
-        };
-
-        if trace {
-            bias_evals.push(BiasEval {
-                bias,
-                error_reduction_pct,
-                saturated_count,
-                total_valid: valid_samples,
-            });
-        }
 
         if error_reduction > best_error_reduction {
             best_error_reduction = error_reduction;
             best_bias = bias;
-        }
-    }
-
-    // Log detailed bias evaluation results
-    if trace && !bias_evals.is_empty() {
-        let best_reduction_pct = if total_baseline_error_sq > EPSILON {
-            (best_error_reduction / total_baseline_error_sq) * 100.0
-        } else {
-            0.0
-        };
-
-        // Find saturation info for the selected bias
-        let selected_info = bias_evals
-            .iter()
-            .find(|e| (e.bias - best_bias).abs() < EPSILON);
-        let saturation_info = selected_info
-            .map(|e| {
-                let sat_pct = (e.saturated_count as f32 / e.total_valid as f32) * 100.0;
-                format!(
-                    "{}/{} samples saturated ({:.1}%)",
-                    e.saturated_count, e.total_valid, sat_pct
-                )
-            })
-            .unwrap_or_else(|| "N/A".to_string());
-
-        eprintln!(
-            "[BIAS-TRACE] {} in={:.2} out={:.4}: selected bias={:.2} (reduction={:.4}%, {}) | model={}",
-            squash,
-            incoming_weight,
-            outgoing_weight,
-            best_bias,
-            best_reduction_pct,
-            saturation_info,
-            if use_hard_tanh { "HARD_TANH" } else { "LINEAR" }
-        );
-
-        // Log all bias evaluations if verbose
-        if verbose_enabled() {
-            eprintln!("[BIAS-TRACE] All evaluated biases:");
-            for eval in &bias_evals {
-                let sat_pct = (eval.saturated_count as f32 / eval.total_valid as f32) * 100.0;
-                let marker = if (eval.bias - best_bias).abs() < EPSILON {
-                    " <-- SELECTED"
-                } else {
-                    ""
-                };
-                eprintln!(
-                    "  bias={:+6.2}: reduction={:+7.4}%, sat={:3.0}%{}",
-                    eval.bias, eval.error_reduction_pct, sat_pct, marker
-                );
-            }
         }
     }
 
@@ -2751,8 +2651,13 @@ impl GpuAnalyzer {
     /// - **macOS**: GPU should always be available (Metal). Missing GPU is an error.
     /// - **Linux**: GPU may not be available on headless servers without GPU hardware
     ///   or proper permissions. Missing GPU gracefully disables discovery.
+    ///
+    /// **Note**: Result is cached for consistency. Creating wgpu instances is expensive
+    /// and can give inconsistent results under parallel load (e.g., CI environments).
     pub fn gpu_is_available() -> bool {
-        Self::check_gpu_availability().available
+        use std::sync::OnceLock;
+        static GPU_AVAILABLE: OnceLock<bool> = OnceLock::new();
+        *GPU_AVAILABLE.get_or_init(|| Self::check_gpu_availability().available)
     }
 
     /// Check GPU availability with detailed diagnostics.
@@ -4646,8 +4551,8 @@ fn compute_relu_improvement_and_count(
     )
 }
 
-/// Traced version of compute_relu_improvement_and_count for debugging prediction accuracy.
-/// If trace_context is Some, logs detailed sample-level prediction information.
+/// Compute ReLU improvement and count.
+/// Returns (improvement_fraction, improved_count, total_count).
 fn compute_relu_improvement_and_count_traced(
     samples: &[HelpfulSample],
     incoming_weight: f32,
@@ -4655,54 +4560,21 @@ fn compute_relu_improvement_and_count_traced(
     bias: f32,
     total_baseline_error_sq: f32,
     target_activation_fn: Option<fn(f32) -> f32>,
-    trace_context: Option<&str>,
+    _trace_context: Option<&str>, // Kept for API compatibility, no longer used
 ) -> (f32, u32, u32) {
     if total_baseline_error_sq <= EPSILON || samples.is_empty() {
         return (0.0, 0, samples.len() as u32);
-    }
-
-    // FIX: Check env var directly - trace_context is just for the label, not a gate
-    let trace = prediction_trace_enabled();
-    let ctx = trace_context.unwrap_or("unknown");
-
-    if trace {
-        eprintln!(
-            "[PREDICTION_TRACE][{}] ReLU prediction: in_w={:.6}, out_w={:.6}, bias={:.2}, \
-            samples={}, baseline_sq={:.8}, has_target_fn={}",
-            ctx,
-            incoming_weight,
-            outgoing_weight,
-            bias,
-            samples.len(),
-            total_baseline_error_sq,
-            target_activation_fn.is_some()
-        );
     }
 
     let mut baseline_error_sq_sum = 0.0f32; // ACTIVATION domain when simulating
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
     let mut worsened_count = 0u32;
-    let total_count = samples.len() as u32;
 
-    // Track contribution statistics for trace logging
-    let mut contribution_sum = 0.0f32;
-    let mut contribution_abs_sum = 0.0f32;
-    let mut positive_contrib_count = 0u32;
-    let mut negative_contrib_count = 0u32;
-
-    for (idx, sample) in samples.iter().enumerate() {
+    for sample in samples.iter() {
         let pre_activation = incoming_weight * sample.activation + bias;
         let relu_output = pre_activation.max(0.0);
         let contribution = outgoing_weight * relu_output;
-
-        contribution_sum += contribution;
-        contribution_abs_sum += contribution.abs();
-        if contribution > 0.0 {
-            positive_contrib_count += 1;
-        } else if contribution < 0.0 {
-            negative_contrib_count += 1;
-        }
 
         let (baseline_error, new_error) = if let Some(target_fn) = target_activation_fn {
             // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
@@ -4718,48 +4590,11 @@ fn compute_relu_improvement_and_count_traced(
             let new_input = target_value + contribution;
             let new_err = expected - target_fn(new_input);
 
-            // Log first few samples for debugging
-            if trace && idx < 5 {
-                eprintln!(
-                    "[PREDICTION_TRACE][{}] Sample {}: src_act={:.4}, avg_err={:.6}, \
-                    target_value={:.4}, target_act={:.4}, desired_value={:.4}, expected={:.4}, \
-                    contribution={:.6}, new_input={:.4}, new_act={:.4}, \
-                    baseline_err={:.6}, new_err={:.6}",
-                    ctx,
-                    idx,
-                    sample.activation,
-                    sample.avg_error,
-                    target_value,
-                    target_activation,
-                    desired_value,
-                    expected,
-                    contribution,
-                    new_input,
-                    target_fn(new_input),
-                    baseline_err,
-                    new_err
-                );
-            }
-
             (baseline_err, new_err)
         } else {
             // Linear approximation: both errors in VALUE domain
             let baseline_err = sample.avg_error;
             let new_err = sample.avg_error - contribution;
-
-            if trace && idx < 5 {
-                eprintln!(
-                    "[PREDICTION_TRACE][{}] Sample {} (linear): src_act={:.4}, avg_err={:.6}, \
-                    contribution={:.6}, baseline_err={:.6}, new_err={:.6}",
-                    ctx,
-                    idx,
-                    sample.activation,
-                    sample.avg_error,
-                    contribution,
-                    baseline_err,
-                    new_err
-                );
-            }
 
             (baseline_err, new_err)
         };
@@ -4797,44 +4632,8 @@ fn compute_relu_improvement_and_count_traced(
         0.0
     };
 
-    if trace {
-        let avg_contribution = if !samples.is_empty() {
-            contribution_sum / samples.len() as f32
-        } else {
-            0.0
-        };
-        let avg_abs_contribution = if !samples.is_empty() {
-            contribution_abs_sum / samples.len() as f32
-        } else {
-            0.0
-        };
-        eprintln!(
-            "[PREDICTION_TRACE][{}] RESULT: baseline_sq_sum={:.8}, new_sq_sum={:.8}, \
-            effective_baseline={:.8}, improvement={:.6} ({:.4}%), \
-            improved={}/{}, worsened={}/{}",
-            ctx,
-            baseline_error_sq_sum,
-            new_error_sq_sum,
-            effective_baseline,
-            improvement,
-            improvement * 100.0,
-            improved_count,
-            total_count,
-            worsened_count,
-            total_count
-        );
-        eprintln!(
-            "[PREDICTION_TRACE][{}] CONTRIBUTIONS: avg={:.6}, avg_abs={:.6}, \
-            positive={}, negative={}, zero={}",
-            ctx,
-            avg_contribution,
-            avg_abs_contribution,
-            positive_contrib_count,
-            negative_contrib_count,
-            total_count - positive_contrib_count - negative_contrib_count
-        );
-    }
-
+    let total_count = samples.len() as u32;
+    let _ = worsened_count; // Kept for potential future use
     (improvement, improved_count, total_count)
 }
 
@@ -6998,34 +6797,6 @@ mod tests {
         assert_eq!(inverse_activation(1.0), 0.0);
         assert_eq!(inverse_activation(0.0), 1.0);
         assert_eq!(inverse_activation(-1.0), 2.0);
-    }
-
-    /// Test that prediction_trace_enabled() is cached for performance.
-    ///
-    /// CRITICAL: The env var check is cached via OnceLock to avoid repeated system calls.
-    /// Without caching, a large creature (1947 neurons, 16563 synapses) would make
-    /// millions of std::env::var() calls, causing massive slowdown.
-    ///
-    /// The test verifies the function returns consistent values (proving it's cached).
-    /// The actual env var value depends on whether it was set before the first call.
-    #[test]
-    fn test_prediction_trace_enabled_is_cached() {
-        // Call multiple times - should always return the same value (cached)
-        let first_result = prediction_trace_enabled();
-        let second_result = prediction_trace_enabled();
-        let third_result = prediction_trace_enabled();
-
-        assert_eq!(
-            first_result, second_result,
-            "prediction_trace_enabled() should return cached value"
-        );
-        assert_eq!(
-            second_result, third_result,
-            "prediction_trace_enabled() should return cached value"
-        );
-
-        // Note: We cannot test changing the env var because OnceLock caches the value
-        // on first call. This is intentional for performance.
     }
 
     #[test]
