@@ -4327,6 +4327,74 @@ struct TargetData {
     activation: f32,
 }
 
+/// Pre-built target map for efficient sample building across multiple sources.
+/// This avoids rebuilding the HashMap for each source when analysing a single target.
+struct TargetMap {
+    map: HashMap<u32, TargetData>,
+}
+
+impl TargetMap {
+    /// Build a target map from target records.
+    /// This should be done ONCE per focus neuron, then reused for all sources.
+    fn from_records(target_records: &[DiscoverRecord]) -> Self {
+        let mut map: HashMap<u32, TargetData> = HashMap::with_capacity(target_records.len());
+        for record in target_records {
+            if record.errors.is_empty() || !record.activation.is_finite() {
+                continue;
+            }
+            let mut sum = 0.0;
+            let mut count = 0;
+            for error in &record.errors {
+                if error.is_finite() {
+                    sum += *error;
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                continue;
+            }
+            map.insert(
+                record.obs_index,
+                TargetData {
+                    avg_error: sum / count as f32,
+                    value: record.value,
+                    activation: record.activation,
+                },
+            );
+        }
+        Self { map }
+    }
+
+    /// Build samples by matching source records against this pre-built target map.
+    /// This is much faster than build_samples() when processing multiple sources
+    /// against the same target.
+    fn build_samples_from(&self, from_records: &[DiscoverRecord]) -> Vec<HelpfulSample> {
+        if self.map.is_empty() || from_records.is_empty() {
+            return Vec::new();
+        }
+
+        let mut samples = Vec::with_capacity(from_records.len().min(self.map.len()));
+        for record in from_records {
+            if let Some(target) = self.map.get(&record.obs_index) {
+                if record.activation.is_finite() && target.avg_error.is_finite() {
+                    samples.push(HelpfulSample {
+                        activation: record.activation,
+                        avg_error: target.avg_error,
+                        target_value: target.value,
+                        target_activation: Some(target.activation),
+                    });
+                }
+            }
+        }
+
+        samples
+    }
+}
+
+/// Build samples for testing. In production, use TargetMap::from_records() and
+/// TargetMap::build_samples_from() for better performance when processing
+/// multiple sources against the same target.
+#[cfg(test)]
 fn build_samples(
     target_records: &[DiscoverRecord],
     from_records: &[DiscoverRecord],
@@ -4336,51 +4404,13 @@ fn build_samples(
     }
 
     // Build map from obs_index to target data (error, value, activation)
-    let mut target_map: HashMap<u32, TargetData> = HashMap::with_capacity(target_records.len());
-    for record in target_records {
-        if record.errors.is_empty() || !record.activation.is_finite() {
-            continue;
-        }
-        let mut sum = 0.0;
-        let mut count = 0;
-        for error in &record.errors {
-            if error.is_finite() {
-                sum += *error;
-                count += 1;
-            }
-        }
-        if count == 0 {
-            continue;
-        }
-        target_map.insert(
-            record.obs_index,
-            TargetData {
-                avg_error: sum / count as f32,
-                value: record.value,
-                activation: record.activation,
-            },
-        );
-    }
+    let target_map = TargetMap::from_records(target_records);
 
-    if target_map.is_empty() {
+    if target_map.map.is_empty() {
         return Vec::new();
     }
 
-    let mut samples = Vec::new();
-    for record in from_records {
-        if let Some(target) = target_map.get(&record.obs_index) {
-            if record.activation.is_finite() && target.avg_error.is_finite() {
-                samples.push(HelpfulSample {
-                    activation: record.activation,
-                    avg_error: target.avg_error,
-                    target_value: target.value,
-                    target_activation: Some(target.activation),
-                });
-            }
-        }
-    }
-
-    samples
+    target_map.build_samples_from(from_records)
 }
 
 /// Computes the sign of a weight as an i8 for use in the candidate key.
@@ -6337,7 +6367,13 @@ fn analyze_neurons_with_cache(
             }
 
             // Phase 2: Build samples in parallel using CPU (much faster than sequential GPU calls)
-            // This is the key optimization - parallel sample building on CPU cores
+            // OPTIMIZATION: Pre-build target map ONCE, reuse for all sources.
+            // This avoids rebuilding the HashMap for each of ~1000+ source neurons.
+            let target_map = TargetMap::from_records(target_records);
+            let target_map_ref = &target_map;
+
+            // Even if target_map is empty, we continue to record diagnostics
+            // about what sources were evaluated.
             struct NeuronWorkResult {
                 source_uuid: String,
                 samples: Vec<HelpfulSample>,
@@ -6348,8 +6384,8 @@ fn analyze_neurons_with_cache(
                 .map(|(source, from_records_arc)| {
                     let source_uuid = source.uuid.as_str();
                     let from_records = from_records_arc.as_ref();
-                    // Use CPU for sample building - enables true parallelism
-                    let samples = build_samples(target_records, from_records);
+                    // Use pre-built target map - avoids rebuilding HashMap for each source
+                    let samples = target_map_ref.build_samples_from(from_records);
                     NeuronWorkResult {
                         source_uuid: source_uuid.to_string(),
                         samples,
@@ -7264,7 +7300,13 @@ fn analyze_synapses_with_cache(
             }
 
             // Build samples on CPU (fast hashmap matching, no GPU sync overhead)
-            // This enables parallel sample building for better throughput
+            // OPTIMIZATION: Pre-build target map ONCE, reuse for all sources.
+            // This avoids rebuilding the HashMap for each of ~1000+ source neurons.
+            let target_map = TargetMap::from_records(target_records);
+            let target_map_ref = &target_map;
+
+            // Even if target_map is empty, we continue to record diagnostics
+            // about what sources were evaluated (important for debugging).
             let source_results: Vec<SourceWorkResult> = sources_to_process
                 .par_iter()
                 .map(|(source, from_records_arc)| {
@@ -7272,8 +7314,8 @@ fn analyze_synapses_with_cache(
                     let from_records = from_records_arc.as_ref();
                     let record_count = from_records.len();
 
-                    // Use CPU for sample building - fast and avoids GPU sync overhead
-                    let samples = build_samples(target_records, from_records);
+                    // Use pre-built target map - avoids rebuilding HashMap for each source
+                    let samples = target_map_ref.build_samples_from(from_records);
                     let had_samples = !samples.is_empty();
 
                     let work = if had_samples {
@@ -7467,6 +7509,7 @@ fn analyze_synapses_with_cache(
             if !*analysis_timed_out.lock().expect("Mutex poisoned") {
                 if let Some(existing) = synapses_by_target_arc.get(target_uuid.as_str()) {
                     // Phase 1: Build all samples on CPU (fast, parallel-friendly)
+                    // Reuse the target_map we already built for helpful synapse processing
                     struct HarmfulWork {
                         synapse: SynapseJson,
                         samples: Vec<HelpfulSample>,
@@ -7482,8 +7525,8 @@ fn analyze_synapses_with_cache(
                             continue;
                         }
                         let from_records = from_records_arc.as_ref();
-                        // Use CPU sample building to avoid GPU sync overhead per synapse
-                        let samples = build_samples(target_records, from_records);
+                        // Use pre-built target map - avoids rebuilding HashMap for each synapse
+                        let samples = target_map_ref.build_samples_from(from_records);
                         if samples.is_empty() {
                             continue;
                         }
