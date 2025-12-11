@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use once_cell::sync::OnceCell;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -14,6 +15,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{mpsc, Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 use wgpu::util::DeviceExt;
 
@@ -2639,6 +2641,381 @@ pub struct GpuAvailabilityResult {
     pub is_error: bool,
 }
 
+// =============================================================================
+// GPU Evaluator Trait - Abstracts over GpuAnalyzer and GpuWorkQueue
+// =============================================================================
+
+/// Trait for GPU-based evaluation operations.
+/// This allows helper functions to work with either a direct GpuAnalyzer
+/// or a shared GpuWorkQueue without code duplication.
+trait GpuEvaluator {
+    /// Evaluate ReLU activation for neuron candidates.
+    /// Returns (positive_stats, negative_stats, baseline_error_sq).
+    fn evaluate_relu(
+        &self,
+        samples: &[HelpfulSample],
+        threshold: f32,
+    ) -> Result<(ReluStats, ReluStats, f32)>;
+
+    /// Evaluate general activation function for neuron candidates.
+    /// Returns (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count).
+    fn evaluate_activation(
+        &self,
+        samples: &[HelpfulSample],
+        activation_type: u32,
+        orientation: f32,
+        scale: f32,
+    ) -> Result<(f32, f32, f32, u32)>;
+}
+
+/// Implementation for direct GpuAnalyzer access.
+impl GpuEvaluator for GpuAnalyzer {
+    fn evaluate_relu(
+        &self,
+        samples: &[HelpfulSample],
+        threshold: f32,
+    ) -> Result<(ReluStats, ReluStats, f32)> {
+        self.evaluate_relu_gpu(samples, threshold)
+    }
+
+    fn evaluate_activation(
+        &self,
+        samples: &[HelpfulSample],
+        activation_type: u32,
+        orientation: f32,
+        scale: f32,
+    ) -> Result<(f32, f32, f32, u32)> {
+        self.evaluate_activation_gpu(samples, activation_type, orientation, scale)
+    }
+}
+
+/// Implementation for shared GpuWorkQueue.
+impl GpuEvaluator for GpuWorkQueue {
+    fn evaluate_relu(
+        &self,
+        samples: &[HelpfulSample],
+        threshold: f32,
+    ) -> Result<(ReluStats, ReluStats, f32)> {
+        // Clone samples to send to the GPU thread
+        self.evaluate_relu_gpu(samples.to_vec(), threshold)
+    }
+
+    fn evaluate_activation(
+        &self,
+        samples: &[HelpfulSample],
+        activation_type: u32,
+        orientation: f32,
+        scale: f32,
+    ) -> Result<(f32, f32, f32, u32)> {
+        self.evaluate_activation_gpu(samples.to_vec(), activation_type, orientation, scale)
+    }
+}
+
+// =============================================================================
+// GPU Work Queue - Centralised GPU thread for improved utilisation
+// =============================================================================
+
+/// Work request types for the GPU queue.
+/// Each variant contains the data needed for a specific GPU operation.
+enum GpuWorkRequest {
+    /// Batch of helpful synapse/neuron evaluations.
+    /// Each item is a slice of samples to evaluate.
+    HelpfulBatch {
+        /// Samples for each evaluation, indexed by request ID.
+        samples: Vec<Vec<HelpfulSample>>,
+        /// Channel to send results back.
+        response_tx: Sender<Result<Vec<HelpfulStats>>>,
+    },
+    /// Batch of harmful synapse evaluations.
+    /// Each item is (samples, weight) pair.
+    HarmfulBatch {
+        /// (samples, weight) pairs for each evaluation.
+        samples_with_weights: Vec<(Vec<HelpfulSample>, f32)>,
+        /// Channel to send results back.
+        response_tx: Sender<Result<Vec<HarmfulStats>>>,
+    },
+    /// ReLU activation evaluation for neuron candidates.
+    ReluEval {
+        samples: Vec<HelpfulSample>,
+        threshold: f32,
+        response_tx: Sender<Result<(ReluStats, ReluStats, f32)>>,
+    },
+    /// General activation function evaluation for neuron candidates.
+    ActivationEval {
+        samples: Vec<HelpfulSample>,
+        activation_type: u32,
+        orientation: f32,
+        scale: f32,
+        response_tx: Sender<Result<(f32, f32, f32, u32)>>,
+    },
+    /// Request to shut down the GPU thread.
+    Shutdown,
+}
+
+/// Centralised GPU work queue that processes all GPU operations on a single thread.
+///
+/// This eliminates the overhead of creating multiple GPU devices (one per parallel
+/// focus neuron) and improves GPU utilisation by batching work from multiple sources.
+///
+/// # Architecture
+///
+/// ```text
+/// ┌─────────────────────────────────────────────────────────────┐
+/// │  CPU Threads (rayon par_iter)                               │
+/// │  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐                    │
+/// │  │Focus1│  │Focus2│  │Focus3│  │Focus4│  ...               │
+/// │  └──┬───┘  └──┬───┘  └──┬───┘  └──┬───┘                    │
+/// │     │         │         │         │                         │
+/// │     └────┬────┴────┬────┴────┬────┘                         │
+/// │          │         │         │                              │
+/// │          ▼         ▼         ▼                              │
+/// │  ┌─────────────────────────────────────────────────┐       │
+/// │  │           GPU Work Queue (crossbeam channel)     │       │
+/// │  └──────────────────────┬──────────────────────────┘       │
+/// │                         │                                   │
+/// │                         ▼                                   │
+/// │  ┌─────────────────────────────────────────────────┐       │
+/// │  │           GPU Thread (owns GpuAnalyzer)          │       │
+/// │  │  • Batches work from multiple focus neurons      │       │
+/// │  │  • Single GPU device for all operations          │       │
+/// │  │  • Optimal GPU utilisation                       │       │
+/// │  └─────────────────────────────────────────────────┘       │
+/// └─────────────────────────────────────────────────────────────┘
+/// ```
+struct GpuWorkQueue {
+    /// Channel to send work to the GPU thread.
+    work_tx: Sender<GpuWorkRequest>,
+    /// Handle to the GPU thread (for clean shutdown).
+    thread_handle: Option<JoinHandle<()>>,
+    /// GPU batch size (copied from GpuAnalyzer for convenience).
+    /// Reserved for future cross-focus-neuron batching optimisation.
+    #[allow(dead_code)]
+    batch_size: usize,
+}
+
+impl GpuWorkQueue {
+    /// Create a new GPU work queue with a dedicated GPU thread.
+    ///
+    /// The GPU thread is spawned immediately and owns the GpuAnalyzer.
+    /// All GPU operations are processed sequentially on this thread,
+    /// eliminating device creation overhead and improving utilisation.
+    pub fn new() -> Result<Self> {
+        // Create the channel for sending work to the GPU thread.
+        // Bounded channel with capacity to hold work from multiple focus neurons.
+        let (work_tx, work_rx): (Sender<GpuWorkRequest>, Receiver<GpuWorkRequest>) = bounded(64);
+
+        // Create the GPU analyzer on the current thread to get batch_size,
+        // then move it to the GPU thread.
+        let analyzer = GpuAnalyzer::new()?;
+        let batch_size = analyzer.batch_size;
+
+        // Spawn dedicated GPU thread
+        let thread_handle = thread::spawn(move || {
+            Self::gpu_thread_loop(analyzer, work_rx);
+        });
+
+        Ok(Self {
+            work_tx,
+            thread_handle: Some(thread_handle),
+            batch_size,
+        })
+    }
+
+    /// The main loop for the GPU thread.
+    /// Processes work requests until shutdown is requested.
+    fn gpu_thread_loop(analyzer: GpuAnalyzer, work_rx: Receiver<GpuWorkRequest>) {
+        while let Ok(request) = work_rx.recv() {
+            match request {
+                GpuWorkRequest::HelpfulBatch {
+                    samples,
+                    response_tx,
+                } => {
+                    // Convert Vec<Vec<HelpfulSample>> to &[&[HelpfulSample]] for the API
+                    let samples_refs: Vec<&[HelpfulSample]> =
+                        samples.iter().map(|v| v.as_slice()).collect();
+                    let result = analyzer.evaluate_helpful_batch(&samples_refs);
+                    // Send result back (ignore send errors - receiver may have dropped)
+                    let _ = response_tx.send(result);
+                }
+                GpuWorkRequest::HarmfulBatch {
+                    samples_with_weights,
+                    response_tx,
+                } => {
+                    // Convert to the format expected by evaluate_harmful_batch
+                    let batch_refs: Vec<(&[HelpfulSample], f32)> = samples_with_weights
+                        .iter()
+                        .map(|(samples, weight)| (samples.as_slice(), *weight))
+                        .collect();
+                    let result = analyzer.evaluate_harmful_batch(&batch_refs);
+                    let _ = response_tx.send(result);
+                }
+                GpuWorkRequest::ReluEval {
+                    samples,
+                    threshold,
+                    response_tx,
+                } => {
+                    let result = analyzer.evaluate_relu_gpu(&samples, threshold);
+                    let _ = response_tx.send(result);
+                }
+                GpuWorkRequest::ActivationEval {
+                    samples,
+                    activation_type,
+                    orientation,
+                    scale,
+                    response_tx,
+                } => {
+                    let result = analyzer.evaluate_activation_gpu(
+                        &samples,
+                        activation_type,
+                        orientation,
+                        scale,
+                    );
+                    let _ = response_tx.send(result);
+                }
+                GpuWorkRequest::Shutdown => {
+                    // Clean shutdown requested
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Get the GPU batch size (for callers that need to know how to batch work).
+    /// Reserved for future cross-focus-neuron batching optimisation.
+    #[allow(dead_code)]
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
+    }
+
+    /// Submit a batch of helpful evaluations and wait for results.
+    ///
+    /// This is a synchronous call that blocks until the GPU thread processes
+    /// the batch and returns results.
+    pub fn evaluate_helpful_batch(
+        &self,
+        samples: Vec<Vec<HelpfulSample>>,
+    ) -> Result<Vec<HelpfulStats>> {
+        if samples.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Create a one-shot channel for the response
+        let (response_tx, response_rx) = bounded(1);
+
+        // Send the work request
+        self.work_tx
+            .send(GpuWorkRequest::HelpfulBatch {
+                samples,
+                response_tx,
+            })
+            .map_err(|_| anyhow!("GPU work queue channel closed"))?;
+
+        // Wait for the response
+        response_rx
+            .recv()
+            .map_err(|_| anyhow!("GPU response channel closed"))?
+    }
+
+    /// Submit a batch of harmful evaluations and wait for results.
+    pub fn evaluate_harmful_batch(
+        &self,
+        samples_with_weights: Vec<(Vec<HelpfulSample>, f32)>,
+    ) -> Result<Vec<HarmfulStats>> {
+        if samples_with_weights.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let (response_tx, response_rx) = bounded(1);
+
+        self.work_tx
+            .send(GpuWorkRequest::HarmfulBatch {
+                samples_with_weights,
+                response_tx,
+            })
+            .map_err(|_| anyhow!("GPU work queue channel closed"))?;
+
+        response_rx
+            .recv()
+            .map_err(|_| anyhow!("GPU response channel closed"))?
+    }
+
+    /// Submit a ReLU evaluation and wait for results.
+    /// Returns (positive_stats, negative_stats, baseline_error_sq).
+    fn evaluate_relu_gpu(
+        &self,
+        samples: Vec<HelpfulSample>,
+        threshold: f32,
+    ) -> Result<(ReluStats, ReluStats, f32)> {
+        if samples.is_empty() {
+            return Ok((
+                ReluStats::new(ReluOrientation::Positive),
+                ReluStats::new(ReluOrientation::Negative),
+                0.0,
+            ));
+        }
+
+        let (response_tx, response_rx) = bounded(1);
+
+        self.work_tx
+            .send(GpuWorkRequest::ReluEval {
+                samples,
+                threshold,
+                response_tx,
+            })
+            .map_err(|_| anyhow!("GPU work queue channel closed"))?;
+
+        response_rx
+            .recv()
+            .map_err(|_| anyhow!("GPU response channel closed"))?
+    }
+
+    /// Submit an activation evaluation and wait for results.
+    /// Returns (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count).
+    fn evaluate_activation_gpu(
+        &self,
+        samples: Vec<HelpfulSample>,
+        activation_type: u32,
+        orientation: f32,
+        scale: f32,
+    ) -> Result<(f32, f32, f32, u32)> {
+        if samples.is_empty() {
+            return Ok((0.0, 0.0, 0.0, 0));
+        }
+
+        let (response_tx, response_rx) = bounded(1);
+
+        self.work_tx
+            .send(GpuWorkRequest::ActivationEval {
+                samples,
+                activation_type,
+                orientation,
+                scale,
+                response_tx,
+            })
+            .map_err(|_| anyhow!("GPU work queue channel closed"))?;
+
+        response_rx
+            .recv()
+            .map_err(|_| anyhow!("GPU response channel closed"))?
+    }
+
+    /// Request the GPU thread to shut down.
+    /// This should be called before dropping the queue to ensure clean shutdown.
+    pub fn shutdown(&self) {
+        let _ = self.work_tx.send(GpuWorkRequest::Shutdown);
+    }
+}
+
+impl Drop for GpuWorkQueue {
+    fn drop(&mut self) {
+        // Request shutdown and wait for the GPU thread to finish
+        self.shutdown();
+        if let Some(handle) = self.thread_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 impl GpuAnalyzer {
     /// Lightweight probe to determine whether a usable GPU device is available.
     ///
@@ -3458,42 +3835,46 @@ impl GpuAnalyzer {
                 queue.submit(Some(encoder.finish()));
             }
 
+            // OPTIMISATION: Map ALL buffers first, then poll ONCE for all.
+            // This reduces GPU-CPU round trips compared to mapping each buffer individually.
+            let mut map_receivers = Vec::with_capacity(batch_staging_buffers.len());
+            for staging_buffer in &batch_staging_buffers {
+                let buffer_slice = staging_buffer.slice(..);
+                let (sender, receiver) = mpsc::channel();
+                buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                    sender
+                        .send(result)
+                        .expect("Failed to send map_async result");
+                });
+                map_receivers.push(receiver);
+            }
+
+            // Single poll to wait for ALL buffers to be mapped
+            device.poll(wgpu::Maintain::Wait);
+
             // Process results - maintain order with empty flags
-            let mut staging_iter = batch_staging_buffers.into_iter();
+            let mut buffer_idx = 0;
             for is_empty in empty_flags {
                 if is_empty {
                     all_results.push(HarmfulStats::default());
                 } else {
-                    let staging_buffer = staging_iter.next().expect("Staging buffer mismatch");
-                    let buffer_slice = staging_buffer.slice(..);
-                    let (sender, receiver) = mpsc::channel();
-                    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                        sender
-                            .send(result)
-                            .expect("Failed to send map_async result");
-                    });
-
-                    // Poll until this buffer is ready
-                    loop {
-                        device.poll(wgpu::Maintain::Poll);
-                        match receiver.try_recv() {
-                            Ok(Ok(())) => break,
-                            Ok(Err(err)) => {
-                                return Err(anyhow!(
-                                    "Failed to map harmful contributions buffer: {err}"
-                                ));
-                            }
-                            Err(mpsc::TryRecvError::Empty) => {
-                                std::thread::yield_now();
-                            }
-                            Err(mpsc::TryRecvError::Disconnected) => {
-                                return Err(anyhow!(
-                                    "Channel disconnected waiting for harmful buffer map"
-                                ));
-                            }
+                    // Check that the mapping succeeded
+                    match map_receivers[buffer_idx].try_recv() {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => {
+                            return Err(anyhow!(
+                                "Failed to map harmful contributions buffer: {err}"
+                            ));
+                        }
+                        Err(_) => {
+                            return Err(anyhow!(
+                                "Channel disconnected waiting for harmful buffer map"
+                            ));
                         }
                     }
 
+                    let staging_buffer = &batch_staging_buffers[buffer_idx];
+                    let buffer_slice = staging_buffer.slice(..);
                     let data = buffer_slice.get_mapped_range();
                     let contributions: &[HarmfulContribution] = bytemuck::cast_slice(&data);
 
@@ -3508,6 +3889,7 @@ impl GpuAnalyzer {
                     staging_buffer.unmap();
 
                     all_results.push(stats);
+                    buffer_idx += 1;
                 }
             }
         }
@@ -4195,15 +4577,10 @@ impl GpuAnalyzer {
                 queue.submit(Some(encoder.finish()));
             }
 
-            // Wait for all results (single poll for entire batch)
-            let mut batch_results = Vec::with_capacity(batch_contribution_sizes.len());
-            for (staging_buffer, (_contribution_size, _sample_len), _samples_ref) in
-                batch_staging_buffers
-                    .into_iter()
-                    .zip(batch_contribution_sizes)
-                    .zip(batch_sample_refs)
-                    .map(|((buffer, size), samples)| (buffer, size, samples))
-            {
+            // OPTIMISATION: Map ALL buffers first, then poll ONCE for all.
+            // This reduces GPU-CPU round trips compared to mapping each buffer individually.
+            let mut map_receivers = Vec::with_capacity(batch_staging_buffers.len());
+            for staging_buffer in &batch_staging_buffers {
                 let buffer_slice = staging_buffer.slice(..);
                 let (sender, receiver) = mpsc::channel();
                 buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -4211,27 +4588,27 @@ impl GpuAnalyzer {
                         .send(result)
                         .expect("Failed to send map_async result");
                 });
+                map_receivers.push(receiver);
+            }
 
-                // Poll until this specific buffer is ready
-                loop {
-                    device.poll(wgpu::Maintain::Poll);
-                    match receiver.try_recv() {
-                        Ok(Ok(())) => break,
-                        Ok(Err(err)) => {
-                            return Err(anyhow!(
-                                "Failed to map helpful contributions buffer: {err}"
-                            ));
-                        }
-                        Err(mpsc::TryRecvError::Empty) => {
-                            // Continue polling
-                            continue;
-                        }
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            return Err(anyhow!("Failed to receive helpful map_async completion"));
-                        }
+            // Single poll to wait for ALL buffers to be mapped
+            device.poll(wgpu::Maintain::Wait);
+
+            // Now read all the mapped data
+            let mut batch_results = Vec::with_capacity(batch_contribution_sizes.len());
+            for (i, staging_buffer) in batch_staging_buffers.iter().enumerate() {
+                // Check that the mapping succeeded
+                match map_receivers[i].try_recv() {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => {
+                        return Err(anyhow!("Failed to map helpful contributions buffer: {err}"));
+                    }
+                    Err(_) => {
+                        return Err(anyhow!("Failed to receive helpful map_async completion"));
                     }
                 }
 
+                let buffer_slice = staging_buffer.slice(..);
                 let data = buffer_slice.get_mapped_range();
                 let contributions: &[HelpfulContribution] = bytemuck::cast_slice(&data);
 
@@ -4957,8 +5334,8 @@ fn count_improved_samples(
 /// - ReLU can only push output in ONE direction (based on outgoing weight sign)
 /// - Averaging over all samples cancels out when errors are split ~50/50
 /// - We evaluate source activations as-is (we don't care how they were calculated)
-fn evaluate_relu_candidates_split(
-    analyzer: &GpuAnalyzer,
+fn evaluate_relu_candidates_split<G: GpuEvaluator>(
+    gpu: &G,
     source_uuid: &str,
     target_uuid: &str,
     samples: &[HelpfulSample],
@@ -4998,7 +5375,7 @@ fn evaluate_relu_candidates_split(
     // We evaluate BOTH ReLU orientations (positive and negative incoming weight) and pick best.
     if positive_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT {
         let (positive_stats, negative_stats, pos_baseline_error_sq) =
-            analyzer.evaluate_relu_gpu(&positive_error_samples, threshold)?;
+            gpu.evaluate_relu(&positive_error_samples, threshold)?;
 
         // Try both orientations and pick the best
         let orientations = [positive_stats, negative_stats];
@@ -5040,7 +5417,7 @@ fn evaluate_relu_candidates_split(
     // We evaluate BOTH ReLU orientations (positive and negative incoming weight) and pick best.
     if negative_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT {
         let (positive_stats, negative_stats, neg_baseline_error_sq) =
-            analyzer.evaluate_relu_gpu(&negative_error_samples, threshold)?;
+            gpu.evaluate_relu(&negative_error_samples, threshold)?;
 
         // Try both orientations and pick the best
         let orientations = [positive_stats, negative_stats];
@@ -5089,8 +5466,8 @@ fn evaluate_relu_candidates_split(
 /// across ALL samples to ensure the candidate doesn't hurt the other subset more
 /// than it helps the target subset.
 #[allow(clippy::too_many_arguments)]
-fn evaluate_activation_for_subset(
-    analyzer: &GpuAnalyzer,
+fn evaluate_activation_for_subset<G: GpuEvaluator>(
+    gpu: &G,
     source_uuid: &str,
     target_uuid: &str,
     subset_samples: &[HelpfulSample], // Used to compute optimal weight
@@ -5105,7 +5482,6 @@ fn evaluate_activation_for_subset(
     }
 
     let activation_type = activation_name_to_gpu_id(spec.name);
-    let use_gpu = analyzer.device.is_some();
 
     let mut best_candidate: Option<CandidateNeuronJson> = None;
     // v0.1.136: Fixed threshold bug - use 0.0 instead of threshold.
@@ -5118,42 +5494,28 @@ fn evaluate_activation_for_subset(
         for &scale in spec.scales {
             let incoming_weight = orientation * scale;
 
-            // Compute optimal weight from SUBSET samples
-            let (sum_activation_sq, sum_error_activation) = if use_gpu {
-                match analyzer.evaluate_activation_gpu(
-                    subset_samples,
-                    activation_type,
-                    orientation,
-                    scale,
-                ) {
-                    Ok(result) => (result.0, result.1),
-                    Err(_) => {
-                        // Fall back to CPU
-                        let mut sum_act_sq = 0.0;
-                        let mut sum_err_act = 0.0;
-                        for sample in subset_samples {
-                            let pre_activation = incoming_weight * sample.activation;
-                            let output = (spec.activation)(pre_activation);
-                            if output.is_finite() {
-                                sum_act_sq += output * output;
-                                sum_err_act += output * sample.avg_error;
-                            }
+            // Compute optimal weight from SUBSET samples using GPU
+            let (sum_activation_sq, sum_error_activation) = match gpu.evaluate_activation(
+                subset_samples,
+                activation_type,
+                orientation,
+                scale,
+            ) {
+                Ok(result) => (result.0, result.1),
+                Err(_) => {
+                    // Fall back to CPU on GPU error
+                    let mut sum_act_sq = 0.0;
+                    let mut sum_err_act = 0.0;
+                    for sample in subset_samples {
+                        let pre_activation = incoming_weight * sample.activation;
+                        let output = (spec.activation)(pre_activation);
+                        if output.is_finite() {
+                            sum_act_sq += output * output;
+                            sum_err_act += output * sample.avg_error;
                         }
-                        (sum_act_sq, sum_err_act)
                     }
+                    (sum_act_sq, sum_err_act)
                 }
-            } else {
-                let mut sum_act_sq = 0.0;
-                let mut sum_err_act = 0.0;
-                for sample in subset_samples {
-                    let pre_activation = incoming_weight * sample.activation;
-                    let output = (spec.activation)(pre_activation);
-                    if output.is_finite() {
-                        sum_act_sq += output * output;
-                        sum_err_act += output * sample.avg_error;
-                    }
-                }
-                (sum_act_sq, sum_err_act)
             };
 
             // Use shared weight calculation with ratio validation
@@ -5229,8 +5591,8 @@ fn evaluate_activation_for_subset(
     Ok(best_candidate)
 }
 
-fn evaluate_activation_candidate(
-    analyzer: &GpuAnalyzer,
+fn evaluate_activation_candidate<G: GpuEvaluator>(
+    gpu: &G,
     source_uuid: &str,
     target_uuid: &str,
     samples: &[HelpfulSample],
@@ -5306,7 +5668,7 @@ fn evaluate_activation_candidate(
         }
 
         if let Some(candidate) = evaluate_activation_for_subset(
-            analyzer,
+            gpu,
             source_uuid,
             target_uuid,
             error_samples, // Compute weight from subset
@@ -5349,7 +5711,6 @@ fn evaluate_activation_candidate(
     // aren't clearly split (e.g., all positive or all negative errors, or
     // one subset has too few samples)
 
-    let use_gpu = analyzer.device.is_some();
     for &orientation in spec.orientations {
         for &scale in spec.scales {
             let incoming_weight = orientation * scale;
@@ -5359,55 +5720,32 @@ fn evaluate_activation_candidate(
                 gpu_baseline_sq,
                 _gpu_improved_count, // Ignored - calculated after weight validation
                 gpu_succeeded,
-            ) = if use_gpu {
-                // Use GPU-accelerated evaluation
-                match analyzer.evaluate_activation_gpu(samples, activation_type, orientation, scale)
-                {
-                    Ok(result) => (result.0, result.1, result.2, result.3, true),
-                    Err(_) => {
-                        // Fall back to CPU if GPU fails
-                        let mut sum_activation_sq = 0.0;
-                        let mut sum_error_activation = 0.0;
-                        for sample in samples {
-                            let pre_activation = incoming_weight * sample.activation;
-                            let output = (spec.activation)(pre_activation);
-                            if output.is_finite() {
-                                sum_activation_sq += output * output;
-                                sum_error_activation += output * sample.avg_error;
-                            }
+            ) = match gpu.evaluate_activation(samples, activation_type, orientation, scale) {
+                Ok(result) => (result.0, result.1, result.2, result.3, true),
+                Err(_) => {
+                    // Fall back to CPU if GPU fails
+                    let mut sum_activation_sq = 0.0;
+                    let mut sum_error_activation = 0.0;
+                    for sample in samples {
+                        let pre_activation = incoming_weight * sample.activation;
+                        let output = (spec.activation)(pre_activation);
+                        if output.is_finite() {
+                            sum_activation_sq += output * output;
+                            sum_error_activation += output * sample.avg_error;
                         }
-                        (
-                            sum_activation_sq,
-                            sum_error_activation,
-                            total_baseline_error_sq,
-                            0,
-                            false,
-                        )
                     }
+                    (
+                        sum_activation_sq,
+                        sum_error_activation,
+                        total_baseline_error_sq,
+                        0,
+                        false,
+                    )
                 }
-            } else {
-                // CPU path
-                let mut sum_activation_sq = 0.0;
-                let mut sum_error_activation = 0.0;
-                for sample in samples {
-                    let pre_activation = incoming_weight * sample.activation;
-                    let output = (spec.activation)(pre_activation);
-                    if output.is_finite() {
-                        sum_activation_sq += output * output;
-                        sum_error_activation += output * sample.avg_error;
-                    }
-                }
-                (
-                    sum_activation_sq,
-                    sum_error_activation,
-                    total_baseline_error_sq,
-                    0,
-                    false,
-                )
             };
 
-            // Use GPU baseline if available, otherwise use CPU baseline
-            let baseline_sq = if use_gpu && gpu_succeeded {
+            // Use GPU baseline if GPU succeeded, otherwise use CPU baseline
+            let baseline_sq = if gpu_succeeded {
                 gpu_baseline_sq
             } else {
                 total_baseline_error_sq
@@ -6196,6 +6534,11 @@ fn analyze_neurons_with_cache(
     let order_map_arc = Arc::new(order_map);
     let neuron_squash_map_arc = Arc::new(neuron_squash_map);
 
+    // Create a shared GPU work queue ONCE before the parallel loop.
+    // This eliminates the overhead of creating multiple GPU devices (one per thread).
+    // All GPU operations are processed by a single dedicated thread, improving utilisation.
+    let gpu_queue = Arc::new(GpuWorkQueue::new()?);
+
     // Process each focus neuron in parallel. Deadline checks happen at the start of
     // each focus target so that once analysis for a neuron begins, we prefer to
     // complete its upstream evaluation rather than abandoning it mid-stream. This
@@ -6209,8 +6552,9 @@ fn analyze_neurons_with_cache(
                 return Ok(());
             }
 
-            // Each thread gets its own GpuAnalyzer (wgpu devices are not thread-safe)
-            let analyzer = GpuAnalyzer::new()?;
+            // Use the shared GPU work queue instead of creating a new GpuAnalyzer per thread.
+            // This eliminates device creation overhead and improves GPU utilisation.
+            let gpu = &*gpu_queue;
 
             let target_records_arc = match cache.get(target_uuid.as_str()) {
                 Ok(records) => records,
@@ -6481,7 +6825,7 @@ fn analyze_neurons_with_cache(
                     // NOTE: We don't use "averaging over all samples" because when errors are
                     // split ~50/50, the average cancels out and no candidate is found.
                     let split_result = evaluate_relu_candidates_split(
-                        &analyzer,
+                        gpu,
                         &result.source_uuid,
                         target_uuid,
                         &result.samples,
@@ -6525,7 +6869,7 @@ fn analyze_neurons_with_cache(
 
                     for spec in ACTIVATION_SPECS.iter() {
                         if let Some(candidate) = evaluate_activation_candidate(
-                            &analyzer,
+                            gpu,
                             &result.source_uuid,
                             target_uuid,
                             &result.samples,
@@ -7066,6 +7410,11 @@ fn analyze_synapses_with_cache(
         .collect();
     let input_neuron_uuids_arc = Arc::new(input_neuron_uuids);
 
+    // Create a shared GPU work queue ONCE before the parallel loop.
+    // This eliminates the overhead of creating multiple GPU devices (one per thread).
+    // All GPU operations are processed by a single dedicated thread, improving utilisation.
+    let gpu_queue = Arc::new(GpuWorkQueue::new()?);
+
     // Process each focus neuron in parallel
     focus_order_arc
         .par_iter()
@@ -7075,8 +7424,9 @@ fn analyze_synapses_with_cache(
                 return Ok(());
             }
 
-            // Each thread gets its own GpuAnalyzer (wgpu devices are not thread-safe)
-            let analyzer = GpuAnalyzer::new()?;
+            // Use the shared GPU work queue instead of creating a new GpuAnalyzer per thread.
+            // This eliminates device creation overhead and improves GPU utilisation.
+            let gpu = &*gpu_queue;
 
             let target_records_arc = cache.get(target_uuid.as_str())?;
             if target_records_arc.is_empty() {
@@ -7367,11 +7717,12 @@ fn analyze_synapses_with_cache(
             // Process helpful work in batches for better GPU utilization
             // Vertical timeout: Complete all GPU batch processing for the current focus neuron
             if !helpful_work_batch.is_empty() {
-                let helpful_samples_refs: Vec<&[HelpfulSample]> = helpful_work_batch
+                // Clone samples for the GPU queue (queue takes ownership)
+                let helpful_samples: Vec<Vec<HelpfulSample>> = helpful_work_batch
                     .iter()
-                    .map(|w| w.samples.as_slice())
+                    .map(|w| w.samples.clone())
                     .collect();
-                let helpful_stats_batch = analyzer.evaluate_helpful_batch(&helpful_samples_refs)?;
+                let helpful_stats_batch = gpu.evaluate_helpful_batch(helpful_samples)?;
 
                 // Process results - collect all updates first, then apply in batches (reduces mutex contention)
                 let mut candidates_to_add = Vec::new();
@@ -7539,12 +7890,13 @@ fn analyze_synapses_with_cache(
 
                     // Phase 2: Batch GPU evaluation (single submission for all synapses)
                     if !harmful_work.is_empty() {
-                        let batch_input: Vec<(&[HelpfulSample], f32)> = harmful_work
+                        // Clone samples for the GPU queue (queue takes ownership)
+                        let batch_input: Vec<(Vec<HelpfulSample>, f32)> = harmful_work
                             .iter()
-                            .map(|w| (w.samples.as_slice(), w.synapse.weight))
+                            .map(|w| (w.samples.clone(), w.synapse.weight))
                             .collect();
 
-                        let batch_stats = analyzer.evaluate_harmful_batch(&batch_input)?;
+                        let batch_stats = gpu.evaluate_harmful_batch(batch_input)?;
 
                         // Phase 3: Process results
                         let mut harmful_candidates = Vec::with_capacity(batch_stats.len());
