@@ -173,7 +173,7 @@ fn test_optimised_params_vary_by_sample() {
             candidate_info.len()
         );
         for info in &candidate_info {
-            eprintln!("  {}", info);
+            eprintln!("  {info}");
         }
 
         candidates_per_sample.push(candidate_info);
@@ -260,11 +260,8 @@ fn test_conservative_params_more_stable_across_samples() {
     }
 
     eprintln!("\n=== Parameter Distribution ===");
-    eprintln!(
-        "Conservative (|in|≤2, |bias|≤1): {}",
-        conservative_candidates
-    );
-    eprintln!("Extreme (|in|>2 or |bias|>1): {}", extreme_candidates);
+    eprintln!("Conservative (|in|≤2, |bias|≤1): {conservative_candidates}");
+    eprintln!("Extreme (|in|>2 or |bias|>1): {extreme_candidates}");
     eprintln!("\nHypothesis: Extreme params are more likely to fail on full dataset");
 }
 
@@ -283,7 +280,7 @@ fn test_large_bias_causes_saturation() {
     let test_inputs: Vec<f32> = vec![-1.0, -0.5, 0.0, 0.5, 1.0];
 
     eprintln!("=== TANH Saturation with Bias ===");
-    eprintln!("Inputs: {:?}\n", test_inputs);
+    eprintln!("Inputs: {test_inputs:?}\n");
 
     for bias in [0.0, 1.0, 5.0, 10.0] {
         let incoming = 1.0;
@@ -301,7 +298,7 @@ fn test_large_bias_causes_saturation() {
             bias,
             outputs
                 .iter()
-                .map(|x| format!("{:.4}", x))
+                .map(|x| format!("{x:.4}"))
                 .collect::<Vec<_>>()
         );
         eprintln!(
@@ -315,9 +312,7 @@ fn test_large_bias_causes_saturation() {
         if bias >= 10.0 {
             assert!(
                 spread < 0.01,
-                "TANH with bias={} should be nearly saturated (spread={:.4})",
-                bias,
-                spread
+                "TANH with bias={bias} should be nearly saturated (spread={spread:.4})"
             );
         }
     }
@@ -389,10 +384,9 @@ fn test_relu_fixed_params_consistent_across_samples() {
     for (incoming, bias) in &relu_params {
         assert!(
             incoming.abs() == 1.0,
-            "ReLU incoming_weight should be ±1.0, got {}",
-            incoming
+            "ReLU incoming_weight should be ±1.0, got {incoming}"
         );
-        assert!(bias.abs() < 0.001, "ReLU bias should be 0.0, got {}", bias);
+        assert!(bias.abs() < 0.001, "ReLU bias should be 0.0, got {bias}");
     }
 
     eprintln!("\n=== ReLU Consistency ===");
@@ -602,9 +596,9 @@ fn test_synapse_weight_distribution() {
     let avg_weight = all_weights.iter().sum::<f32>() / all_weights.len() as f32;
 
     eprintln!("\n=== Synapse Weight Distribution ===");
-    eprintln!("Min weight: {:.6}", min_weight);
-    eprintln!("Max weight: {:.6}", max_weight);
-    eprintln!("Avg weight: {:.6}", avg_weight);
+    eprintln!("Min weight: {min_weight:.6}");
+    eprintln!("Max weight: {max_weight:.6}");
+    eprintln!("Avg weight: {avg_weight:.6}");
     eprintln!("Range: {:.6}", max_weight - min_weight);
 
     // Key insight: If synapse weights vary significantly across samples,
