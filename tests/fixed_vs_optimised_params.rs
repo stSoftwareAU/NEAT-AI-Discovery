@@ -397,57 +397,6 @@ fn test_relu_fixed_params_consistent_across_samples() {
     eprintln!("This is why ReLU succeeds: no sample-specific overfitting!");
 }
 
-/// Test that bias tracing can be enabled and shows useful information.
-///
-/// Set NEAT_AI_DISCOVERY_TRACE_BIAS=1 to see detailed bias selection.
-/// This test verifies the tracing doesn't break normal operation.
-#[test]
-fn test_bias_tracing_can_be_enabled() {
-    skip_without_gpu!();
-
-    // Enable bias tracing for this test
-    std::env::set_var("NEAT_AI_DISCOVERY_TRACE_BIAS", "1");
-
-    let creature = create_test_creature(
-        vec![
-            ("input-0", "input", "IDENTITY"),
-            ("input-1", "input", "IDENTITY"),
-            ("output-0", "output", "IDENTITY"),
-        ],
-        vec![("input-0", "output-0", 1.0)],
-    );
-
-    let temp_file = NamedTempFile::new().unwrap();
-    let file_path = temp_file.path().to_str().unwrap();
-
-    // Generate data that would trigger bias optimisation
-    let records = generate_sample_subset_data(42, 100, 0.05);
-    write_records_to_parquet(file_path, &records).unwrap();
-
-    let input = AnalyzeNeuronsInput {
-        parquet_file: file_path.to_string(),
-        creature,
-        focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
-        max_candidates: Some(50),
-        analysis_deadline_ms: None,
-    };
-
-    // Run analysis - should log bias trace information to stderr
-    eprintln!("\n=== Running analysis with bias tracing enabled ===");
-    let result = analyze_neurons(&input).unwrap();
-    eprintln!("=== Analysis complete ===\n");
-
-    // Clean up
-    std::env::remove_var("NEAT_AI_DISCOVERY_TRACE_BIAS");
-
-    // Verify analysis still works with tracing enabled
-    eprintln!(
-        "Found {} candidates with bias tracing enabled",
-        result.helpful_neurons.len()
-    );
-}
-
 /// Test synapse-only analysis to compare prediction accuracy vs neuron analysis.
 ///
 /// Synapse candidates don't have bias optimisation - they only have a single

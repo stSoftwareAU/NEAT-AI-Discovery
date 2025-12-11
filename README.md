@@ -352,10 +352,10 @@ was generating outgoing weights up to ±50, far exceeding `MAX_OUTGOING_WEIGHT` 
 **Production evidence**: 455 out of 793 large-weight failed candidates were IDENTITY neurons
 from this code path. None produced real improvements.
 
-#### Prediction tracing and validation (v0.1.140)
+#### Prediction validation (v0.1.140)
 
 **INVESTIGATION**: With ~100k samples, predictions should be accurate. Production data shows
-predictions are inverted (~84% in wrong direction). Added tools to investigate.
+predictions are inverted (~84% in wrong direction).
 
 **Finding from synthetic tests**: The prediction formula is **mathematically correct**!
 All 6 synthetic tests pass with predictions matching manual simulation to within 0.01%.
@@ -369,41 +369,9 @@ This means the issue is in **sample collection or interpretation**, not the form
 | Mixed errors | 7.10% | 7.10% | ✓ |
 | TypeScript simulation | 66.38% | 66.38% | ✓ |
 
-**New feature**: Prediction tracing for debugging. Set environment variable:
-```bash
-export NEAT_AI_DISCOVERY_TRACE_PREDICTION=1
-```
-
-This logs sample-level details showing:
-- Input parameters (weights, bias, sample count)
-- First 5 samples with detailed calculation breakdown
-- Contribution statistics (average, positive/negative counts)
-- Final improvement calculation
-
-**Bias optimisation tracing** (v0.1.144): Set environment variable:
-```bash
-export NEAT_AI_DISCOVERY_TRACE_BIAS=1
-```
-
-This logs bias selection details showing:
-- Selected bias value and error reduction percentage
-- Saturation status (how many samples are near activation bounds)
-- Whether LINEAR or HARD_TANH model was used for calculation
-
-Example output:
-```
-[BIAS-TRACE] TANH in=10.00 out=0.0850: selected bias=10.00 (reduction=95.39%, 27/27 samples saturated (100.0%)) | model=LINEAR
-```
-
 **Key insight**: Large bias values (e.g., 10) combined with large incoming weights cause saturation,
 making the neuron behave like a constant. This appears "optimal" on small samples but fails to generalise.
-
-**Note (Dec 2024)**: This hypothesis (bias+weight saturation causing overfitting) requires production
-validation. The tracing tools added here help investigate, but the root cause may be elsewhere.
 See `tests/fixed_vs_optimised_params.rs` for investigation tests.
-
-**Next steps**: The investigation suggests recording more data in TypeScript to understand
-why production samples produce inverted predictions despite correct formula.
 
 #### Root cause identified: Sample representativeness (v0.1.142)
 
