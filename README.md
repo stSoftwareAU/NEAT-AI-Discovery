@@ -153,9 +153,14 @@ or manual filtering - just physics and natural selection.
   observations × 450+ hidden neurons).
 - **GPU batching for improved utilisation (v0.1.118)**: Both helpful and harmful
   synapse analysis now batch multiple GPU operations into single command buffer
-  submissions (batch size 512). This reduces CPU-GPU round trips and keeps the
-  GPU busy with larger workloads. Sample building is done on CPU in parallel to
-  avoid GPU sync overhead per source.
+  submissions (batch size 512 default, 1024 on M4/high-perf GPUs). This reduces
+  CPU-GPU round trips and keeps the GPU busy with larger workloads. Sample
+  building is done on CPU in parallel to avoid GPU sync overhead per source.
+- **TargetMap pre-building (v0.1.150)**: When analysing a focus neuron, the target
+  HashMap (mapping obs_index to target data) is now built **once** and reused for
+  all ~1000+ source neurons. Previously this HashMap was rebuilt for each source,
+  causing significant CPU overhead. With 64 focus neurons, this eliminated ~64,000
+  redundant HashMap constructions.
 - The GPU kernels (helpful/harmful statistics) produce sufficient aggregates to
   derive the suggested weight and the expected error reduction. Results are sorted
   by expected improvement before being returned, so callers can simply read the
@@ -404,6 +409,34 @@ but full data has the opposite, causing prediction inversion.
 2. **Cross-validation**: Evaluate candidates on a held-out validation set before returning
 3. **Increase sample rate**: Use more data for more representative samples
 4. **Confidence bounds**: Only return candidates with high-confidence predictions
+
+#### Impact calculation fix: Absolute not normalised (v0.1.145)
+
+**CRITICAL BUG FIX**: The impact calculation for removal candidates was massively
+underestimating actual impact by up to **145 billion times**.
+
+| Calculated Impact | Actual Error Increase | Underestimation |
+|-------------------|----------------------|-----------------|
+| 1.39e-12          | 20% (0.2)            | 145 billion x   |
+| 4.94e-13          | 0.0054%              | 100 million x   |
+| 1.87e-10          | 0.44%                | 24 million x    |
+
+**Root cause**: The old formula normalised by total incoming weights:
+```
+impact = |weight| / total_inbound × child_impact  // WRONG
+```
+
+This answered "what fraction of blame?" not "what happens when removed?"
+
+**The fix**: Use absolute impact (weight × downstream):
+```
+impact = |weight| × child_impact  // CORRECT
+```
+
+**Also fixed**: `COST_OF_GROWTH` changed from `1e-7` to `0.01` to match TypeScript default.
+
+**Tests added**: `tests/impact_calculation_production.rs` captures the production failure
+patterns and verifies the fix prevents regression.
 
 #### GPU shader activation function fix (v0.1.141)
 
