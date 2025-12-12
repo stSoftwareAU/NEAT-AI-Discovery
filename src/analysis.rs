@@ -4253,6 +4253,11 @@ impl GpuAnalyzer {
                     buffer_idx += 1;
                 }
             }
+
+            // CRITICAL: Ensure Metal releases command buffers before creating new ones.
+            // Without this, we can exhaust Metal's command buffer pool when processing
+            // many batches, causing the GPU thread to hang in semaphore_wait_trap.
+            device.poll(wgpu::Maintain::Wait);
         }
 
         Ok(all_results)
@@ -4964,6 +4969,11 @@ impl GpuAnalyzer {
 
             let merged_results = Self::merge_batch_results(&empty_flags, batch_results);
             all_results.extend(merged_results);
+
+            // CRITICAL: Ensure Metal releases command buffers before creating new ones.
+            // Without this, we can exhaust Metal's command buffer pool when processing
+            // many batches, causing the GPU thread to hang in semaphore_wait_trap.
+            device.poll(wgpu::Maintain::Wait);
         }
 
         Ok(all_results)
