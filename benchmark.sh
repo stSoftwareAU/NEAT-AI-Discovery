@@ -27,12 +27,12 @@ run_benchmark() {
     local cmd="$2"
     local start end duration
     
-    echo "⏱️  Running: $label"
+    echo "⏱️  Running: $label" >&2
     start=$(date +%s.%N)
     eval "$cmd" > /dev/null 2>&1 || true
     end=$(date +%s.%N)
     duration=$(echo "$end - $start" | bc)
-    echo "   Duration: ${duration}s"
+    echo "   Duration: ${duration}s" >&2
     echo "$duration"
 }
 

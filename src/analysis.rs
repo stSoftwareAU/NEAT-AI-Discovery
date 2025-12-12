@@ -320,7 +320,9 @@ fn get_memory_info() -> (u64, u64) {
     let available = vm_stat
         .map(|o| {
             let output = String::from_utf8_lossy(&o.stdout);
-            let page_size: u64 = 16384; // Default for Apple Silicon
+            // Parse page size from vm_stat header - handles both Apple Silicon (16KB)
+            // and Intel Macs (4KB) correctly
+            let page_size = parse_vm_stat_page_size(&output);
 
             let mut free_pages: u64 = 0;
             let mut inactive_pages: u64 = 0;
@@ -350,6 +352,40 @@ fn parse_vm_stat_line(line: &str) -> u64 {
         .nth(1)
         .and_then(|s| s.trim().trim_end_matches('.').parse::<u64>().ok())
         .unwrap_or(0)
+}
+
+/// Parse the page size from vm_stat output's header line.
+/// Example: "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
+/// Returns the page size in bytes, or a default based on architecture.
+///
+/// Apple Silicon uses 16KB pages, Intel Macs use 4KB pages.
+/// Parsing dynamically ensures correct memory calculations on both.
+#[cfg(target_os = "macos")]
+fn parse_vm_stat_page_size(output: &str) -> u64 {
+    // Default page sizes by architecture
+    // Apple Silicon (ARM64): 16384 bytes (16KB)
+    // Intel (x86_64): 4096 bytes (4KB)
+    #[cfg(target_arch = "aarch64")]
+    let default_page_size: u64 = 16384;
+    #[cfg(not(target_arch = "aarch64"))]
+    let default_page_size: u64 = 4096;
+
+    // Parse from first line: "Mach Virtual Memory Statistics: (page size of XXXX bytes)"
+    output
+        .lines()
+        .next()
+        .and_then(|first_line| {
+            // Find "page size of " and extract the number before " bytes"
+            let marker = "page size of ";
+            first_line.find(marker).and_then(|start| {
+                let after_marker = &first_line[start + marker.len()..];
+                after_marker
+                    .split_whitespace()
+                    .next()
+                    .and_then(|num_str| num_str.parse::<u64>().ok())
+            })
+        })
+        .unwrap_or(default_page_size)
 }
 
 /// Get memory information from the OS (Linux version).
@@ -7379,6 +7415,91 @@ mod tests {
         let first = verbose_enabled();
         let second = verbose_enabled();
         assert_eq!(first, second, "verbose_enabled() should be deterministic");
+    }
+
+    // ==================== Memory Info / Page Size Tests ====================
+
+    /// Test parsing page size from vm_stat output - Apple Silicon (16KB pages).
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn parse_vm_stat_page_size_apple_silicon() {
+        let vm_stat_output = r#"Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                               15417.
+Pages active:                            624277.
+Pages inactive:                          601916.
+Pages speculative:                        23646.
+"#;
+        assert_eq!(
+            parse_vm_stat_page_size(vm_stat_output),
+            16384,
+            "Should parse 16384 byte page size for Apple Silicon"
+        );
+    }
+
+    /// Test parsing page size from vm_stat output - Intel Mac (4KB pages).
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn parse_vm_stat_page_size_intel_mac() {
+        let vm_stat_output = r#"Mach Virtual Memory Statistics: (page size of 4096 bytes)
+Pages free:                               45123.
+Pages active:                           1234567.
+Pages inactive:                          876543.
+Pages speculative:                        12345.
+"#;
+        assert_eq!(
+            parse_vm_stat_page_size(vm_stat_output),
+            4096,
+            "Should parse 4096 byte page size for Intel Mac"
+        );
+    }
+
+    /// Test parsing page size handles malformed output gracefully.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn parse_vm_stat_page_size_malformed_output() {
+        // Empty string should return architecture-appropriate default
+        let result = parse_vm_stat_page_size("");
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(
+            result, 16384,
+            "Empty output should default to 16KB on ARM64"
+        );
+        #[cfg(not(target_arch = "aarch64"))]
+        assert_eq!(result, 4096, "Empty output should default to 4KB on Intel");
+
+        // Missing "page size of" should return default
+        let malformed = "Some random output without page size info";
+        let result = parse_vm_stat_page_size(malformed);
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(
+            result, 16384,
+            "Malformed output should default to 16KB on ARM64"
+        );
+        #[cfg(not(target_arch = "aarch64"))]
+        assert_eq!(
+            result, 4096,
+            "Malformed output should default to 4KB on Intel"
+        );
+    }
+
+    /// Test that the parser handles various page size values.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn parse_vm_stat_page_size_various_sizes() {
+        // Test 4KB pages (Intel)
+        let output_4k =
+            "Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages free: 100.";
+        assert_eq!(parse_vm_stat_page_size(output_4k), 4096);
+
+        // Test 16KB pages (Apple Silicon)
+        let output_16k =
+            "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 100.";
+        assert_eq!(parse_vm_stat_page_size(output_16k), 16384);
+
+        // Test hypothetical larger page size (future-proofing)
+        let output_64k =
+            "Mach Virtual Memory Statistics: (page size of 65536 bytes)\nPages free: 100.";
+        assert_eq!(parse_vm_stat_page_size(output_64k), 65536);
     }
 
     // ==================== Activation Function Tests ====================
