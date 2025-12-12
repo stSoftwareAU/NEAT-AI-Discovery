@@ -55,6 +55,141 @@ const DEFAULT_GPU_BATCH_SIZE: usize = 512;
 /// M4 has significantly more GPU cores and can handle larger batches efficiently.
 const HIGH_PERF_GPU_BATCH_SIZE: usize = 1024;
 
+/// Smaller GPU batch size for memory-constrained systems.
+/// Used when available memory is low to prevent memory pressure.
+const LOW_MEMORY_GPU_BATCH_SIZE: usize = 256;
+
+/// Memory threshold (in GB) below which we use conservative settings.
+/// Systems with less than 8GB available should use low-memory mode.
+const LOW_MEMORY_THRESHOLD_GB: f64 = 8.0;
+
+/// Memory threshold (in GB) for standard settings.
+/// Systems with 8-16GB use standard settings.
+const STANDARD_MEMORY_THRESHOLD_GB: f64 = 16.0;
+
+/// Minimum total system memory (in GB) required for discovery.
+/// Systems with less than 4GB total RAM cannot reliably run GPU discovery
+/// without risking hangs from memory pressure/swap thrashing.
+const MINIMUM_TOTAL_MEMORY_GB: f64 = 4.0;
+
+/// Minimum available memory (in GB) required for discovery.
+/// If less than 2GB is available, discovery is disabled to prevent hangs.
+const MINIMUM_AVAILABLE_MEMORY_GB: f64 = 2.0;
+
+/// Timeout for individual GPU operations (in seconds).
+/// If a GPU operation takes longer than this, we assume the GPU is stuck
+/// and return an error rather than hanging forever. This allows recovery
+/// on unattended machines.
+const GPU_OPERATION_TIMEOUT_SECS: u64 = 60;
+
+/// Timeout for GPU thread initialisation (in seconds).
+/// GPU device creation should be fast; if it takes longer, something is wrong.
+const GPU_INIT_TIMEOUT_SECS: u64 = 30;
+
+/// Wait for a GPU buffer mapping to complete, with timeout.
+///
+/// This is event-driven: `map_async` registers a callback that fires when the buffer
+/// is ready. We poll the device (non-blocking) to let wgpu process work, and check
+/// if the callback has fired via the channel.
+///
+/// Returns Ok(()) when the buffer is mapped, or Err if timeout or mapping failed.
+fn wait_for_buffer_map(
+    device: &wgpu::Device,
+    receiver: &std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    timeout_secs: u64,
+) -> Result<()> {
+    let start = std::time::Instant::now();
+    let timeout = Duration::from_secs(timeout_secs);
+
+    loop {
+        // Non-blocking poll to let wgpu process pending work and fire callbacks
+        device.poll(wgpu::Maintain::Poll);
+
+        // Check if the map_async callback has fired (event-driven)
+        match receiver.try_recv() {
+            Ok(Ok(())) => return Ok(()), // Buffer is mapped
+            Ok(Err(err)) => return Err(anyhow!("Buffer mapping failed: {err}")),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // Callback hasn't fired yet - check timeout
+                if start.elapsed() > timeout {
+                    return Err(anyhow!(
+                        "GPU buffer mapping timed out after {timeout_secs}s. \
+                         The GPU may be unresponsive."
+                    ));
+                }
+                // Yield to avoid busy-spinning (let other threads run)
+                std::thread::yield_now();
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                return Err(anyhow!("GPU callback channel disconnected"));
+            }
+        }
+    }
+}
+
+/// Wait for multiple GPU buffer mappings to complete, with timeout.
+///
+/// Event-driven: polls non-blocking and checks all callback channels.
+/// Returns Ok(()) when ALL buffers are mapped, or Err if timeout or any mapping failed.
+fn wait_for_buffer_maps_batch(
+    device: &wgpu::Device,
+    receivers: &[std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>],
+    timeout_secs: u64,
+) -> Result<()> {
+    if receivers.is_empty() {
+        return Ok(());
+    }
+
+    let start = std::time::Instant::now();
+    let timeout = Duration::from_secs(timeout_secs);
+    let mut completed = vec![false; receivers.len()];
+    let mut remaining = receivers.len();
+
+    while remaining > 0 {
+        // Non-blocking poll to let wgpu process pending work and fire callbacks
+        device.poll(wgpu::Maintain::Poll);
+
+        // Check all receivers that haven't completed yet
+        for (i, receiver) in receivers.iter().enumerate() {
+            if completed[i] {
+                continue;
+            }
+
+            match receiver.try_recv() {
+                Ok(Ok(())) => {
+                    completed[i] = true;
+                    remaining -= 1;
+                }
+                Ok(Err(err)) => {
+                    return Err(anyhow!("Buffer {i} mapping failed: {err}"));
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Not ready yet
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    return Err(anyhow!("Buffer {i} callback channel disconnected"));
+                }
+            }
+        }
+
+        // Check timeout
+        if remaining > 0 && start.elapsed() > timeout {
+            return Err(anyhow!(
+                "GPU batch buffer mapping timed out after {timeout_secs}s. \
+                 {remaining}/{} buffers incomplete. The GPU may be unresponsive.",
+                receivers.len()
+            ));
+        }
+
+        // Yield if work still pending
+        if remaining > 0 {
+            std::thread::yield_now();
+        }
+    }
+
+    Ok(())
+}
+
 /// Detected GPU performance tier for auto-tuning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GpuPerformanceTier {
@@ -101,6 +236,276 @@ fn detect_gpu_tier(adapter_info: &wgpu::AdapterInfo) -> GpuPerformanceTier {
     GpuPerformanceTier::Unknown
 }
 
+/// System resource information for adaptive configuration.
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)] // Fields kept for diagnostic logging
+struct SystemResources {
+    /// Available memory in bytes (not total - what's actually free)
+    available_memory_bytes: u64,
+    /// Total physical memory in bytes
+    total_memory_bytes: u64,
+    /// Memory pressure level
+    memory_tier: MemoryTier,
+}
+
+/// Memory tier for adaptive configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemoryTier {
+    /// Less than 8GB available - use conservative settings
+    Low,
+    /// 8-16GB available - use standard settings
+    Standard,
+    /// More than 16GB available - use aggressive settings
+    High,
+}
+
+/// Detect available system memory and categorise into tiers.
+/// This is cached for the lifetime of the process.
+fn detect_system_resources() -> SystemResources {
+    use std::sync::OnceLock;
+    static RESOURCES: OnceLock<SystemResources> = OnceLock::new();
+
+    *RESOURCES.get_or_init(|| {
+        let (available, total) = get_memory_info();
+        let available_gb = available as f64 / (1024.0 * 1024.0 * 1024.0);
+        let total_gb = total as f64 / (1024.0 * 1024.0 * 1024.0);
+
+        let memory_tier = if available_gb < LOW_MEMORY_THRESHOLD_GB {
+            MemoryTier::Low
+        } else if available_gb < STANDARD_MEMORY_THRESHOLD_GB {
+            MemoryTier::Standard
+        } else {
+            MemoryTier::High
+        };
+
+        // Log memory info once
+        let tier_str = match memory_tier {
+            MemoryTier::Low => "low",
+            MemoryTier::Standard => "standard",
+            MemoryTier::High => "high",
+        };
+        eprintln!(
+            "[NEAT-AI-Discovery] Memory: {available_gb:.1}GB available / {total_gb:.1}GB total | Tier: {tier_str}"
+        );
+
+        SystemResources {
+            available_memory_bytes: available,
+            total_memory_bytes: total,
+            memory_tier,
+        }
+    })
+}
+
+/// Get memory information from the OS.
+/// Returns (available_bytes, total_bytes).
+#[cfg(target_os = "macos")]
+fn get_memory_info() -> (u64, u64) {
+    use std::process::Command;
+
+    // Get total memory from sysctl
+    let total = Command::new("sysctl")
+        .args(["-n", "hw.memsize"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(8 * 1024 * 1024 * 1024); // Default 8GB
+
+    // Get page size and free/inactive pages from vm_stat
+    let vm_stat = Command::new("vm_stat").output().ok();
+    let available = vm_stat
+        .map(|o| {
+            let output = String::from_utf8_lossy(&o.stdout);
+            // Parse page size from vm_stat header - handles both Apple Silicon (16KB)
+            // and Intel Macs (4KB) correctly
+            let page_size = parse_vm_stat_page_size(&output);
+
+            let mut free_pages: u64 = 0;
+            let mut inactive_pages: u64 = 0;
+            let mut purgeable_pages: u64 = 0;
+
+            for line in output.lines() {
+                if line.starts_with("Pages free:") {
+                    free_pages = parse_vm_stat_line(line);
+                } else if line.starts_with("Pages inactive:") {
+                    inactive_pages = parse_vm_stat_line(line);
+                } else if line.starts_with("Pages purgeable:") {
+                    purgeable_pages = parse_vm_stat_line(line);
+                }
+            }
+
+            // Available = free + inactive + purgeable (memory that can be reclaimed)
+            (free_pages + inactive_pages + purgeable_pages) * page_size
+        })
+        .unwrap_or(total / 2); // Default to half of total
+
+    (available, total)
+}
+
+#[cfg(target_os = "macos")]
+fn parse_vm_stat_line(line: &str) -> u64 {
+    line.split(':')
+        .nth(1)
+        .and_then(|s| s.trim().trim_end_matches('.').parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+/// Parse the page size from vm_stat output's header line.
+/// Example: "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
+/// Returns the page size in bytes, or a default based on architecture.
+///
+/// Apple Silicon uses 16KB pages, Intel Macs use 4KB pages.
+/// Parsing dynamically ensures correct memory calculations on both.
+#[cfg(target_os = "macos")]
+fn parse_vm_stat_page_size(output: &str) -> u64 {
+    // Default page sizes by architecture
+    // Apple Silicon (ARM64): 16384 bytes (16KB)
+    // Intel (x86_64): 4096 bytes (4KB)
+    #[cfg(target_arch = "aarch64")]
+    let default_page_size: u64 = 16384;
+    #[cfg(not(target_arch = "aarch64"))]
+    let default_page_size: u64 = 4096;
+
+    // Parse from first line: "Mach Virtual Memory Statistics: (page size of XXXX bytes)"
+    output
+        .lines()
+        .next()
+        .and_then(|first_line| {
+            // Find "page size of " and extract the number before " bytes"
+            let marker = "page size of ";
+            first_line.find(marker).and_then(|start| {
+                let after_marker = &first_line[start + marker.len()..];
+                after_marker
+                    .split_whitespace()
+                    .next()
+                    .and_then(|num_str| num_str.parse::<u64>().ok())
+            })
+        })
+        .unwrap_or(default_page_size)
+}
+
+/// Get memory information from the OS (Linux version).
+#[cfg(target_os = "linux")]
+fn get_memory_info() -> (u64, u64) {
+    use std::fs;
+
+    let meminfo = fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    let mut total: u64 = 8 * 1024 * 1024; // Default 8GB in KB
+    let mut available: u64 = 4 * 1024 * 1024; // Default 4GB in KB
+
+    for line in meminfo.lines() {
+        if line.starts_with("MemTotal:") {
+            total = parse_meminfo_line(line);
+        } else if line.starts_with("MemAvailable:") {
+            available = parse_meminfo_line(line);
+        }
+    }
+
+    // Convert KB to bytes
+    (available * 1024, total * 1024)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_meminfo_line(line: &str) -> u64 {
+    line.split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+/// Fallback for other platforms.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn get_memory_info() -> (u64, u64) {
+    // Conservative defaults: 8GB total, 4GB available
+    (4 * 1024 * 1024 * 1024, 8 * 1024 * 1024 * 1024)
+}
+
+/// Get the GPU work queue capacity based on system resources.
+/// Lower capacity = more backpressure = less memory usage.
+fn get_work_queue_capacity() -> usize {
+    let resources = detect_system_resources();
+
+    match resources.memory_tier {
+        MemoryTier::Low => 4,      // Aggressive backpressure
+        MemoryTier::Standard => 8, // Moderate backpressure
+        MemoryTier::High => 16,    // Allow more parallelism
+    }
+}
+
+/// Check if the system meets minimum requirements for GPU discovery.
+///
+/// Very old machines with insufficient memory cannot reliably run GPU operations
+/// without risking hangs from memory pressure. This check runs before GPU
+/// initialisation to allow discovery to be disabled gracefully.
+///
+/// Returns `Some(GpuAvailabilityResult)` if requirements are NOT met (discovery disabled).
+/// Returns `None` if requirements ARE met (continue with GPU check).
+fn check_minimum_system_requirements() -> Option<GpuAvailabilityResult> {
+    let (available, total) = get_memory_info();
+    let available_gb = available as f64 / (1024.0 * 1024.0 * 1024.0);
+    let total_gb = total as f64 / (1024.0 * 1024.0 * 1024.0);
+
+    // Check total system memory
+    if total_gb < MINIMUM_TOTAL_MEMORY_GB {
+        eprintln!(
+            "[NEAT-AI-Discovery] System has only {total_gb:.1}GB total RAM (minimum: {MINIMUM_TOTAL_MEMORY_GB}GB). Discovery disabled."
+        );
+        return Some(GpuAvailabilityResult {
+            available: false,
+            reason: Some(format!(
+                "Insufficient system memory: {total_gb:.1}GB total (minimum: {MINIMUM_TOTAL_MEMORY_GB}GB required). \
+                 Discovery is disabled to prevent hangs on memory-constrained machines. \
+                 Evolution will continue without discovery."
+            )),
+            is_error: false, // Not an error - graceful disable
+        });
+    }
+
+    // Check available memory
+    if available_gb < MINIMUM_AVAILABLE_MEMORY_GB {
+        eprintln!(
+            "[NEAT-AI-Discovery] Only {available_gb:.1}GB memory available (minimum: {MINIMUM_AVAILABLE_MEMORY_GB}GB). Discovery disabled."
+        );
+        return Some(GpuAvailabilityResult {
+            available: false,
+            reason: Some(format!(
+                "Insufficient available memory: {available_gb:.1}GB available (minimum: {MINIMUM_AVAILABLE_MEMORY_GB}GB required). \
+                 Discovery is disabled to prevent hangs from memory pressure. \
+                 Try closing other applications or reboot to free memory."
+            )),
+            is_error: false, // Not an error - graceful disable
+        });
+    }
+
+    // Requirements met
+    None
+}
+
+/// Adjust batch size based on both GPU tier and memory availability.
+fn get_adjusted_batch_size(gpu_tier: GpuPerformanceTier) -> usize {
+    // Check for explicit override first
+    if let Some(size) = get_batch_size_override() {
+        return size;
+    }
+
+    let resources = detect_system_resources();
+    let base_size = match gpu_tier {
+        GpuPerformanceTier::High => HIGH_PERF_GPU_BATCH_SIZE,
+        GpuPerformanceTier::Standard | GpuPerformanceTier::Unknown => DEFAULT_GPU_BATCH_SIZE,
+    };
+
+    // Reduce batch size if memory is constrained
+    match resources.memory_tier {
+        MemoryTier::Low => LOW_MEMORY_GPU_BATCH_SIZE.min(base_size),
+        MemoryTier::Standard => base_size,
+        MemoryTier::High => base_size,
+    }
+}
+
 /// Get cached batch size override from environment variable.
 /// Returns None if not set or invalid.
 fn get_batch_size_override() -> Option<usize> {
@@ -114,7 +519,9 @@ fn get_batch_size_override() -> Option<usize> {
     })
 }
 
-/// Get optimised GPU batch size based on detected GPU tier.
+/// Get optimised GPU batch size based on detected GPU tier (without memory adjustment).
+/// Used by tests. Production code uses `get_adjusted_batch_size()` which also considers memory.
+#[cfg(test)]
 fn get_batch_size_for_tier(tier: GpuPerformanceTier) -> usize {
     // Check for explicit override first (cached)
     if let Some(size) = get_batch_size_override() {
@@ -2801,8 +3208,12 @@ impl GpuWorkQueue {
     /// moved across threads, causing deadlocks in device.poll().
     pub fn new() -> Result<Self> {
         // Create the channel for sending work to the GPU thread.
-        // Bounded channel with capacity to hold work from multiple focus neurons.
-        let (work_tx, work_rx): (Sender<GpuWorkRequest>, Receiver<GpuWorkRequest>) = bounded(64);
+        // Capacity is dynamically sized based on available system memory.
+        // Lower capacity = more backpressure = less memory usage.
+        // This prevents Metal command buffer exhaustion on memory-constrained systems.
+        let queue_capacity = get_work_queue_capacity();
+        let (work_tx, work_rx): (Sender<GpuWorkRequest>, Receiver<GpuWorkRequest>) =
+            bounded(queue_capacity);
 
         // Channel to receive initialization result from the GPU thread.
         // This ensures the GpuAnalyzer is created ON the GPU thread, not moved to it.
@@ -2825,10 +3236,22 @@ impl GpuWorkQueue {
             }
         });
 
-        // Wait for initialization to complete
-        init_rx
-            .recv()
-            .map_err(|_| anyhow!("GPU thread failed to start"))??;
+        // Wait for initialization to complete with timeout
+        let init_timeout = Duration::from_secs(GPU_INIT_TIMEOUT_SECS);
+        match init_rx.recv_timeout(init_timeout) {
+            Ok(Ok(())) => {} // Success
+            Ok(Err(e)) => return Err(e),
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                return Err(anyhow!(
+                    "GPU initialisation timed out after {GPU_INIT_TIMEOUT_SECS}s. \
+                     The GPU may be unresponsive or overwhelmed. \
+                     Try restarting the process or reducing workload."
+                ));
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                return Err(anyhow!("GPU thread failed to start (channel disconnected)"));
+            }
+        }
 
         Ok(Self {
             work_tx,
@@ -2918,10 +3341,18 @@ impl GpuWorkQueue {
             })
             .map_err(|_| anyhow!("GPU work queue channel closed"))?;
 
-        // Wait for the response
-        response_rx
-            .recv()
-            .map_err(|_| anyhow!("GPU response channel closed"))?
+        // Wait for the response with timeout
+        let timeout = Duration::from_secs(GPU_OPERATION_TIMEOUT_SECS);
+        match response_rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
+                "GPU helpful batch evaluation timed out after {GPU_OPERATION_TIMEOUT_SECS}s. \
+                     The GPU may be unresponsive. Consider reducing batch size or restarting."
+            )),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                Err(anyhow!("GPU response channel closed unexpectedly"))
+            }
+        }
     }
 
     /// Submit a batch of harmful evaluations and wait for results.
@@ -2942,9 +3373,17 @@ impl GpuWorkQueue {
             })
             .map_err(|_| anyhow!("GPU work queue channel closed"))?;
 
-        response_rx
-            .recv()
-            .map_err(|_| anyhow!("GPU response channel closed"))?
+        let timeout = Duration::from_secs(GPU_OPERATION_TIMEOUT_SECS);
+        match response_rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
+                "GPU harmful batch evaluation timed out after {GPU_OPERATION_TIMEOUT_SECS}s. \
+                     The GPU may be unresponsive. Consider reducing batch size or restarting."
+            )),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                Err(anyhow!("GPU response channel closed unexpectedly"))
+            }
+        }
     }
 
     /// Submit a ReLU evaluation and wait for results.
@@ -2972,9 +3411,17 @@ impl GpuWorkQueue {
             })
             .map_err(|_| anyhow!("GPU work queue channel closed"))?;
 
-        response_rx
-            .recv()
-            .map_err(|_| anyhow!("GPU response channel closed"))?
+        let timeout = Duration::from_secs(GPU_OPERATION_TIMEOUT_SECS);
+        match response_rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
+                "GPU ReLU evaluation timed out after {GPU_OPERATION_TIMEOUT_SECS}s. \
+                     The GPU may be unresponsive. Consider reducing batch size or restarting."
+            )),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                Err(anyhow!("GPU response channel closed unexpectedly"))
+            }
+        }
     }
 
     /// Submit an activation evaluation and wait for results.
@@ -3002,9 +3449,17 @@ impl GpuWorkQueue {
             })
             .map_err(|_| anyhow!("GPU work queue channel closed"))?;
 
-        response_rx
-            .recv()
-            .map_err(|_| anyhow!("GPU response channel closed"))?
+        let timeout = Duration::from_secs(GPU_OPERATION_TIMEOUT_SECS);
+        match response_rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
+                "GPU activation evaluation timed out after {GPU_OPERATION_TIMEOUT_SECS}s. \
+                     The GPU may be unresponsive. Consider reducing batch size or restarting."
+            )),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                Err(anyhow!("GPU response channel closed unexpectedly"))
+            }
+        }
     }
 
     /// Request the GPU thread to shut down.
@@ -3051,6 +3506,12 @@ impl GpuAnalyzer {
     /// On macOS, missing GPU is treated as an error (Metal should always work).
     /// On Linux, missing GPU gracefully disables discovery (common on headless servers).
     pub fn check_gpu_availability() -> GpuAvailabilityResult {
+        // Check minimum system requirements FIRST before any GPU operations.
+        // This prevents hangs on very old/constrained machines by disabling discovery early.
+        if let Some(result) = check_minimum_system_requirements() {
+            return result;
+        }
+
         // Suppress Mesa/libEGL warnings if requested (must be called before GPU init)
         suppress_mesa_warnings_if_requested();
 
@@ -3167,10 +3628,11 @@ impl GpuAnalyzer {
             }
         };
 
-        // Detect GPU tier for auto-tuning batch size
+        // Detect GPU tier and system resources for auto-tuning
         let adapter_info = adapter.get_info();
         let gpu_tier = detect_gpu_tier(&adapter_info);
-        let batch_size = get_batch_size_for_tier(gpu_tier);
+        // Batch size is adjusted based on BOTH GPU tier AND available memory
+        let batch_size = get_adjusted_batch_size(gpu_tier);
 
         // Log GPU info once per process (helps diagnose performance issues)
         log_gpu_info_once(&adapter_info, gpu_tier, batch_size);
@@ -3706,30 +4168,18 @@ impl GpuAnalyzer {
                 map_receivers.push(receiver);
             }
 
-            // Single poll to wait for ALL buffers to be mapped
-            device.poll(wgpu::Maintain::Wait);
+            // Event-driven wait: poll non-blocking, check all callback channels
+            wait_for_buffer_maps_batch(device, &map_receivers, GPU_OPERATION_TIMEOUT_SECS)
+                .context("Harmful batch buffer mapping failed")?;
 
             // Process results - maintain order with empty flags
+            // Note: wait_for_buffer_maps_batch already verified all buffers are mapped
             let mut buffer_idx = 0;
             for is_empty in empty_flags {
                 if is_empty {
                     all_results.push(HarmfulStats::default());
                 } else {
-                    // Check that the mapping succeeded
-                    match map_receivers[buffer_idx].try_recv() {
-                        Ok(Ok(())) => {}
-                        Ok(Err(err)) => {
-                            return Err(anyhow!(
-                                "Failed to map harmful contributions buffer: {err}"
-                            ));
-                        }
-                        Err(_) => {
-                            return Err(anyhow!(
-                                "Channel disconnected waiting for harmful buffer map"
-                            ));
-                        }
-                    }
-
+                    // Buffer is already mapped and verified by wait_for_buffer_maps_batch
                     let staging_buffer = &batch_staging_buffers[buffer_idx];
                     let buffer_slice = staging_buffer.slice(..);
                     let data = buffer_slice.get_mapped_range();
@@ -3877,17 +4327,10 @@ impl GpuAnalyzer {
                 .send(result)
                 .expect("Failed to send map_async result");
         });
-        device.poll(wgpu::Maintain::Wait);
 
-        match receiver.recv() {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                return Err(anyhow!("Failed to map ReLU contributions buffer: {err}"));
-            }
-            Err(_) => {
-                return Err(anyhow!("Failed to receive ReLU map_async completion"));
-            }
-        }
+        // Event-driven wait: poll non-blocking, check callback channel
+        wait_for_buffer_map(device, &receiver, GPU_OPERATION_TIMEOUT_SECS)
+            .context("ReLU buffer mapping failed")?;
 
         let data = buffer_slice.get_mapped_range();
         let contributions: &[ReluContribution] = bytemuck::cast_slice(&data);
@@ -4056,17 +4499,10 @@ impl GpuAnalyzer {
                 .send(result)
                 .expect("Failed to send map_async result");
         });
-        device.poll(wgpu::Maintain::Wait);
 
-        match receiver.recv() {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                return Err(anyhow!("Failed to map activation outputs buffer: {err}"));
-            }
-            Err(_) => {
-                return Err(anyhow!("Failed to receive activation map_async completion"));
-            }
-        }
+        // Event-driven wait: poll non-blocking, check callback channel
+        wait_for_buffer_map(device, &receiver, GPU_OPERATION_TIMEOUT_SECS)
+            .context("Activation buffer mapping failed")?;
 
         let data = buffer_slice.get_mapped_range();
         let outputs: &[ActivationOutput] = bytemuck::cast_slice(&data);
@@ -4249,17 +4685,10 @@ impl GpuAnalyzer {
                 .send(result)
                 .expect("Failed to send map_async result");
         });
-        device.poll(wgpu::Maintain::Wait);
 
-        match receiver.recv() {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                return Err(anyhow!("Failed to map bias results buffer: {err}"));
-            }
-            Err(_) => {
-                return Err(anyhow!("Failed to receive bias map_async completion"));
-            }
-        }
+        // Event-driven wait: poll non-blocking, check callback channel
+        wait_for_buffer_map(device, &receiver, GPU_OPERATION_TIMEOUT_SECS)
+            .context("Bias buffer mapping failed")?;
 
         let data = buffer_slice.get_mapped_range();
         let results: &[BiasResult] = bytemuck::cast_slice(&data);
@@ -4448,23 +4877,14 @@ impl GpuAnalyzer {
                 map_receivers.push(receiver);
             }
 
-            // Single poll to wait for ALL buffers to be mapped
-            device.poll(wgpu::Maintain::Wait);
+            // Event-driven wait: poll non-blocking, check all callback channels
+            wait_for_buffer_maps_batch(device, &map_receivers, GPU_OPERATION_TIMEOUT_SECS)
+                .context("Helpful batch buffer mapping failed")?;
 
-            // Now read all the mapped data
+            // Now read all the mapped data (buffers are already mapped)
             let mut batch_results = Vec::with_capacity(batch_contribution_sizes.len());
-            for (i, staging_buffer) in batch_staging_buffers.iter().enumerate() {
-                // Check that the mapping succeeded
-                match map_receivers[i].try_recv() {
-                    Ok(Ok(())) => {}
-                    Ok(Err(err)) => {
-                        return Err(anyhow!("Failed to map helpful contributions buffer: {err}"));
-                    }
-                    Err(_) => {
-                        return Err(anyhow!("Failed to receive helpful map_async completion"));
-                    }
-                }
-
+            // Buffer mappings already verified by wait_for_buffer_maps_batch
+            for staging_buffer in batch_staging_buffers.iter() {
                 let buffer_slice = staging_buffer.slice(..);
                 let data = buffer_slice.get_mapped_range();
                 let contributions: &[HelpfulContribution] = bytemuck::cast_slice(&data);
@@ -6995,6 +7415,91 @@ mod tests {
         let first = verbose_enabled();
         let second = verbose_enabled();
         assert_eq!(first, second, "verbose_enabled() should be deterministic");
+    }
+
+    // ==================== Memory Info / Page Size Tests ====================
+
+    /// Test parsing page size from vm_stat output - Apple Silicon (16KB pages).
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn parse_vm_stat_page_size_apple_silicon() {
+        let vm_stat_output = r#"Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                               15417.
+Pages active:                            624277.
+Pages inactive:                          601916.
+Pages speculative:                        23646.
+"#;
+        assert_eq!(
+            parse_vm_stat_page_size(vm_stat_output),
+            16384,
+            "Should parse 16384 byte page size for Apple Silicon"
+        );
+    }
+
+    /// Test parsing page size from vm_stat output - Intel Mac (4KB pages).
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn parse_vm_stat_page_size_intel_mac() {
+        let vm_stat_output = r#"Mach Virtual Memory Statistics: (page size of 4096 bytes)
+Pages free:                               45123.
+Pages active:                           1234567.
+Pages inactive:                          876543.
+Pages speculative:                        12345.
+"#;
+        assert_eq!(
+            parse_vm_stat_page_size(vm_stat_output),
+            4096,
+            "Should parse 4096 byte page size for Intel Mac"
+        );
+    }
+
+    /// Test parsing page size handles malformed output gracefully.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn parse_vm_stat_page_size_malformed_output() {
+        // Empty string should return architecture-appropriate default
+        let result = parse_vm_stat_page_size("");
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(
+            result, 16384,
+            "Empty output should default to 16KB on ARM64"
+        );
+        #[cfg(not(target_arch = "aarch64"))]
+        assert_eq!(result, 4096, "Empty output should default to 4KB on Intel");
+
+        // Missing "page size of" should return default
+        let malformed = "Some random output without page size info";
+        let result = parse_vm_stat_page_size(malformed);
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(
+            result, 16384,
+            "Malformed output should default to 16KB on ARM64"
+        );
+        #[cfg(not(target_arch = "aarch64"))]
+        assert_eq!(
+            result, 4096,
+            "Malformed output should default to 4KB on Intel"
+        );
+    }
+
+    /// Test that the parser handles various page size values.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn parse_vm_stat_page_size_various_sizes() {
+        // Test 4KB pages (Intel)
+        let output_4k =
+            "Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages free: 100.";
+        assert_eq!(parse_vm_stat_page_size(output_4k), 4096);
+
+        // Test 16KB pages (Apple Silicon)
+        let output_16k =
+            "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 100.";
+        assert_eq!(parse_vm_stat_page_size(output_16k), 16384);
+
+        // Test hypothetical larger page size (future-proofing)
+        let output_64k =
+            "Mach Virtual Memory Statistics: (page size of 65536 bytes)\nPages free: 100.";
+        assert_eq!(parse_vm_stat_page_size(output_64k), 65536);
     }
 
     // ==================== Activation Function Tests ====================
