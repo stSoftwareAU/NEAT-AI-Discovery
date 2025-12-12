@@ -389,6 +389,8 @@ fn parse_vm_stat_page_size(output: &str) -> u64 {
 }
 
 /// Get memory information from the OS (Linux version).
+/// Works on Ubuntu, AWS Linux (Amazon Linux 2/2023), and other Linux distributions.
+/// All Linux systems expose memory info via /proc/meminfo.
 #[cfg(target_os = "linux")]
 fn get_memory_info() -> (u64, u64) {
     use std::fs;
@@ -399,9 +401,15 @@ fn get_memory_info() -> (u64, u64) {
 
     for line in meminfo.lines() {
         if line.starts_with("MemTotal:") {
-            total = parse_meminfo_line(line);
+            // Only update if parsing succeeds - don't overwrite defaults with 0
+            if let Some(value) = parse_meminfo_line(line) {
+                total = value;
+            }
         } else if line.starts_with("MemAvailable:") {
-            available = parse_meminfo_line(line);
+            // Only update if parsing succeeds - don't overwrite defaults with 0
+            if let Some(value) = parse_meminfo_line(line) {
+                available = value;
+            }
         }
     }
 
@@ -409,18 +417,23 @@ fn get_memory_info() -> (u64, u64) {
     (available * 1024, total * 1024)
 }
 
+/// Parse a memory value from a /proc/meminfo line.
+/// Returns None if the line is malformed (missing or non-numeric value).
+/// Example: "MemTotal:       16384000 kB" -> Some(16384000)
 #[cfg(target_os = "linux")]
-fn parse_meminfo_line(line: &str) -> u64 {
+fn parse_meminfo_line(line: &str) -> Option<u64> {
     line.split_whitespace()
         .nth(1)
         .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(0)
 }
 
-/// Fallback for other platforms.
+/// Fallback for other platforms (Windows, FreeBSD, etc.).
+/// Returns conservative defaults since we don't have platform-specific memory detection.
+/// GPU discovery will still work via wgpu (DirectX 12 on Windows, Vulkan elsewhere).
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn get_memory_info() -> (u64, u64) {
     // Conservative defaults: 8GB total, 4GB available
+    // These are safe values that won't trigger low-memory protections on modern machines
     (4 * 1024 * 1024 * 1024, 8 * 1024 * 1024 * 1024)
 }
 
@@ -7500,6 +7513,61 @@ Pages speculative:                        12345.
         let output_64k =
             "Mach Virtual Memory Statistics: (page size of 65536 bytes)\nPages free: 100.";
         assert_eq!(parse_vm_stat_page_size(output_64k), 65536);
+    }
+
+    /// Test Linux meminfo parsing with valid input.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn parse_meminfo_line_valid_input() {
+        // Standard format from /proc/meminfo
+        assert_eq!(
+            parse_meminfo_line("MemTotal:       16384000 kB"),
+            Some(16384000)
+        );
+        assert_eq!(
+            parse_meminfo_line("MemAvailable:    8192000 kB"),
+            Some(8192000)
+        );
+        // Single digit
+        assert_eq!(parse_meminfo_line("MemFree:        1 kB"), Some(1));
+    }
+
+    /// Test Linux meminfo parsing with malformed input returns None (not 0).
+    /// This is critical: returning None allows defaults to be preserved.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn parse_meminfo_line_malformed_returns_none() {
+        // Missing value
+        assert_eq!(parse_meminfo_line("MemTotal:"), None);
+        // Non-numeric value
+        assert_eq!(parse_meminfo_line("MemTotal:       abc kB"), None);
+        // Empty string
+        assert_eq!(parse_meminfo_line(""), None);
+        // Just whitespace after colon
+        assert_eq!(parse_meminfo_line("MemTotal:       "), None);
+    }
+
+    /// Test that Linux get_memory_info preserves defaults when parsing fails.
+    /// This prevents misleading "0.0GB" error messages.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn linux_memory_info_preserves_defaults_on_malformed_input() {
+        // This test verifies the fix by checking that parse_meminfo_line
+        // returns None for malformed input, which allows get_memory_info
+        // to preserve its default values instead of overwriting with 0.
+        //
+        // The actual get_memory_info function reads /proc/meminfo, so we
+        // can't easily test it with mock data. Instead, we verify the
+        // building blocks work correctly:
+
+        // 1. Valid input should return Some(value)
+        assert!(parse_meminfo_line("MemTotal:       16384000 kB").is_some());
+
+        // 2. Malformed input should return None (not Some(0))
+        assert!(parse_meminfo_line("MemTotal:").is_none());
+        assert!(parse_meminfo_line("MemTotal:       abc").is_none());
+
+        // 3. This ensures the if-let pattern in get_memory_info preserves defaults
     }
 
     // ==================== Activation Function Tests ====================
