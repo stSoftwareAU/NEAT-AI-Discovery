@@ -3207,6 +3207,9 @@ struct GpuWorkQueue {
     work_tx: Sender<GpuWorkRequest>,
     /// Handle to the GPU thread (for clean shutdown).
     thread_handle: Option<JoinHandle<()>>,
+    /// Channel to receive notification when GPU thread exits.
+    /// This allows Drop to use a timeout instead of blocking forever.
+    exit_rx: Receiver<()>,
 }
 
 impl GpuWorkQueue {
@@ -3232,6 +3235,10 @@ impl GpuWorkQueue {
         // This ensures the GpuAnalyzer is created ON the GPU thread, not moved to it.
         let (init_tx, init_rx): (Sender<Result<()>>, Receiver<Result<()>>) = bounded(1);
 
+        // Channel to receive notification when GPU thread exits.
+        // This allows Drop to use a timeout instead of blocking forever if the GPU hangs.
+        let (exit_tx, exit_rx): (Sender<()>, Receiver<()>) = bounded(1);
+
         // Spawn dedicated GPU thread - analyzer is created INSIDE this thread
         let thread_handle = thread::spawn(move || {
             // Create analyzer on THIS thread to avoid wgpu thread-local state issues
@@ -3247,6 +3254,8 @@ impl GpuWorkQueue {
                     let _ = init_tx.send(Err(e));
                 }
             }
+            // Always signal exit, even if initialization failed or loop panicked
+            let _ = exit_tx.send(());
         });
 
         // Wait for initialization to complete with timeout
@@ -3269,6 +3278,7 @@ impl GpuWorkQueue {
         Ok(Self {
             work_tx,
             thread_handle: Some(thread_handle),
+            exit_rx,
         })
     }
 
@@ -3477,17 +3487,58 @@ impl GpuWorkQueue {
 
     /// Request the GPU thread to shut down.
     /// This should be called before dropping the queue to ensure clean shutdown.
+    ///
+    /// Uses a timeout to avoid blocking forever if the queue is full and the GPU
+    /// thread is hung. If the send times out, the GPU thread is likely unresponsive
+    /// and the Drop implementation will handle cleanup via the exit_rx timeout.
     pub fn shutdown(&self) {
-        let _ = self.work_tx.send(GpuWorkRequest::Shutdown);
+        // Use timeout to avoid blocking forever if queue is full and GPU thread is hung.
+        // 2 seconds is generous - if the GPU thread is responsive, it should drain
+        // items much faster. If this times out, proceed to exit_rx timeout in Drop.
+        let shutdown_send_timeout = Duration::from_secs(2);
+        let _ = self
+            .work_tx
+            .send_timeout(GpuWorkRequest::Shutdown, shutdown_send_timeout);
     }
 }
 
+/// Timeout for GPU thread shutdown during Drop.
+/// If the GPU thread doesn't exit within this time, we abandon it.
+/// This prevents the process from hanging forever if the GPU driver is stuck.
+const GPU_SHUTDOWN_TIMEOUT_SECS: u64 = 10;
+
 impl Drop for GpuWorkQueue {
     fn drop(&mut self) {
-        // Request shutdown and wait for the GPU thread to finish
+        // Request shutdown
         self.shutdown();
-        if let Some(handle) = self.thread_handle.take() {
-            let _ = handle.join();
+
+        // Wait for GPU thread to exit with timeout
+        // This prevents hanging forever if the GPU driver is stuck (e.g., Metal semaphore wait)
+        let timeout = Duration::from_secs(GPU_SHUTDOWN_TIMEOUT_SECS);
+        match self.exit_rx.recv_timeout(timeout) {
+            Ok(()) => {
+                // Thread exited cleanly, now safe to join
+                if let Some(handle) = self.thread_handle.take() {
+                    let _ = handle.join();
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                // GPU thread is stuck (likely in Metal driver)
+                // Log warning and abandon the thread - it will be cleaned up on process exit
+                eprintln!(
+                    "[NEAT-AI-Discovery] WARNING: GPU thread did not exit within {GPU_SHUTDOWN_TIMEOUT_SECS}s. \
+                     The GPU driver may be hung. Abandoning thread to prevent deadlock. \
+                     Consider restarting the process."
+                );
+                // Don't join - the thread is stuck and joining would block forever
+                let _ = self.thread_handle.take();
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                // Channel disconnected - thread already exited (possibly via panic)
+                if let Some(handle) = self.thread_handle.take() {
+                    let _ = handle.join();
+                }
+            }
         }
     }
 }
@@ -4212,6 +4263,11 @@ impl GpuAnalyzer {
                     buffer_idx += 1;
                 }
             }
+
+            // CRITICAL: Ensure Metal releases command buffers before creating new ones.
+            // Without this, we can exhaust Metal's command buffer pool when processing
+            // many batches, causing the GPU thread to hang in semaphore_wait_trap.
+            device.poll(wgpu::Maintain::Wait);
         }
 
         Ok(all_results)
@@ -4923,6 +4979,11 @@ impl GpuAnalyzer {
 
             let merged_results = Self::merge_batch_results(&empty_flags, batch_results);
             all_results.extend(merged_results);
+
+            // CRITICAL: Ensure Metal releases command buffers before creating new ones.
+            // Without this, we can exhaust Metal's command buffer pool when processing
+            // many batches, causing the GPU thread to hang in semaphore_wait_trap.
+            device.poll(wgpu::Maintain::Wait);
         }
 
         Ok(all_results)
