@@ -4291,7 +4291,7 @@ impl GpuAnalyzer {
                 .send(result)
                 .expect("Failed to send map_async result");
         });
-        
+
         // Event-driven wait: poll non-blocking, check callback channel
         wait_for_buffer_map(device, &receiver, GPU_OPERATION_TIMEOUT_SECS)
             .context("ReLU buffer mapping failed")?;
@@ -4463,7 +4463,7 @@ impl GpuAnalyzer {
                 .send(result)
                 .expect("Failed to send map_async result");
         });
-        
+
         // Event-driven wait: poll non-blocking, check callback channel
         wait_for_buffer_map(device, &receiver, GPU_OPERATION_TIMEOUT_SECS)
             .context("Activation buffer mapping failed")?;
@@ -4649,7 +4649,7 @@ impl GpuAnalyzer {
                 .send(result)
                 .expect("Failed to send map_async result");
         });
-        
+
         // Event-driven wait: poll non-blocking, check callback channel
         wait_for_buffer_map(device, &receiver, GPU_OPERATION_TIMEOUT_SECS)
             .context("Bias buffer mapping failed")?;
