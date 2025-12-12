@@ -150,29 +150,18 @@ fn install_signal_handler() {
 /// Dump backtraces of all threads to stderr.
 ///
 /// This is called when SIGUSR1 (kill -USR1) is received.
-/// Unlike Java, Rust doesn't have built-in thread enumeration, so we print
-/// the current thread's backtrace plus any deadlock information.
+/// On macOS, automatically runs `sample` to get full thread backtraces.
+/// On other platforms, provides instructions for manual debugging.
 fn dump_all_threads() {
-    use std::backtrace::Backtrace;
-
     let timestamp = chrono_lite_timestamp();
+    let pid = std::process::id();
 
     eprintln!("\n{}", "=".repeat(80));
     eprintln!("THREAD DUMP - {timestamp} (kill -USR1 received)");
+    eprintln!("Process ID: {pid}");
     eprintln!("{}\n", "=".repeat(80));
 
-    // Print current thread info
-    let current = thread::current();
-    eprintln!("--- Main/Signal Thread ---");
-    eprintln!("Name: {:?}", current.name().unwrap_or("<unnamed>"));
-    eprintln!("ID: {:?}", current.id());
-
-    // Capture backtrace of current thread (force capture)
-    let bt = Backtrace::force_capture();
-    eprintln!("Backtrace:\n{bt}");
-    eprintln!();
-
-    // Check for any deadlocked threads (this gives us visibility into blocked threads)
+    // Check for any deadlocked threads first (this is fast)
     let deadlocks = parking_lot::deadlock::check_deadlock();
     if !deadlocks.is_empty() {
         eprintln!("--- DEADLOCKED THREADS DETECTED ---");
@@ -187,26 +176,116 @@ fn dump_all_threads() {
         }
         eprintln!();
     } else {
-        eprintln!("--- No deadlocks detected ---\n");
+        eprintln!("--- No mutex deadlocks detected ---\n");
     }
 
-    // Note about Rust's thread model
-    eprintln!("Note: Rust does not have a built-in way to enumerate all threads.");
-    eprintln!("To see all thread backtraces, use a debugger:");
-    eprintln!(
-        "  lldb -p {} -o 'thread backtrace all' -o 'quit'",
-        std::process::id()
-    );
-    eprintln!("Or:");
-    eprintln!(
-        "  sudo sample {} 1 -file /tmp/sample.txt",
-        std::process::id()
-    );
-    eprintln!();
+    // On macOS, run `sample` to get full thread backtraces
+    #[cfg(target_os = "macos")]
+    {
+        eprintln!("--- Running 'sample' for full thread analysis (1 second) ---\n");
+        run_sample_command(pid);
+    }
+
+    // On non-macOS, show manual instructions
+    #[cfg(not(target_os = "macos"))]
+    {
+        use std::backtrace::Backtrace;
+
+        // Print current thread backtrace as fallback
+        let current = thread::current();
+        eprintln!("--- Signal Handler Thread ---");
+        eprintln!("Name: {:?}", current.name().unwrap_or("<unnamed>"));
+        eprintln!("ID: {:?}", current.id());
+        let bt = Backtrace::force_capture();
+        eprintln!("Backtrace:\n{bt}");
+        eprintln!();
+
+        eprintln!("Note: For full thread backtraces on Linux, use:");
+        eprintln!("  gdb -p {pid} -ex 'thread apply all bt' -ex 'quit'");
+    }
 
     eprintln!("{}", "=".repeat(80));
     eprintln!("END THREAD DUMP");
     eprintln!("{}\n", "=".repeat(80));
+}
+
+/// Run macOS `sample` command to capture all thread backtraces.
+#[cfg(target_os = "macos")]
+fn run_sample_command(pid: u32) {
+    use std::process::Command;
+
+    // Run sample for 1 millisecond to get a snapshot (not a profile)
+    let output = Command::new("sample")
+        .args([&pid.to_string(), "1", "-mayDie"])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                let stdout = String::from_utf8_lossy(&result.stdout);
+                // Filter to show the most relevant parts
+                print_filtered_sample_output(&stdout);
+            } else {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                eprintln!("'sample' command failed: {stderr}");
+                eprintln!("Try manually: sample {pid} 1 -file /tmp/sample.txt");
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to run 'sample': {e}");
+            eprintln!("Try manually: sample {pid} 1 -file /tmp/sample.txt");
+        }
+    }
+}
+
+/// Filter sample output to show the most relevant thread information.
+#[cfg(target_os = "macos")]
+fn print_filtered_sample_output(output: &str) {
+    let mut in_call_graph = false;
+    let mut thread_count = 0;
+
+    for line in output.lines() {
+        // Start of call graph section
+        if line.starts_with("Call graph:") {
+            in_call_graph = true;
+            eprintln!("{line}");
+            continue;
+        }
+
+        // End markers
+        if line.starts_with("Total number in stack") || line.starts_with("Binary Images:") {
+            if in_call_graph {
+                eprintln!("\n--- End of call graph ({thread_count} threads) ---\n");
+            }
+            in_call_graph = false;
+            continue;
+        }
+
+        if in_call_graph {
+            // Thread headers
+            if line.contains("Thread_") {
+                thread_count += 1;
+                eprintln!("\n{line}");
+            }
+            // Show lines containing our library or interesting keywords
+            else if line.contains("neat_ai_discovery")
+                || line.contains("wgpu")
+                || line.contains("metal")
+                || line.contains("Metal")
+                || line.contains("crossbeam")
+                || line.contains("rayon")
+                || line.contains("recv")
+                || line.contains("poll")
+                || line.contains("wait")
+                || line.contains("park")
+                || line.contains("sleep")
+                || line.contains("pthread_cond")
+                || line.contains("kevent")
+            {
+                eprintln!("{line}");
+            }
+        }
+    }
 }
 
 /// Simple timestamp without heavy dependencies.

@@ -29,6 +29,23 @@ discovery phase. This is by design:
 - **Optional feature**: Discovery is an optimisation, not a requirement. NEAT-AI
   works fine without it.
 
+### Minimum System Requirements
+
+Discovery is automatically disabled on machines that don't meet minimum requirements:
+
+| Requirement | Minimum | Reason |
+|-------------|---------|--------|
+| **Total RAM** | 4 GB | GPU operations require memory for staging buffers |
+| **Available RAM** | 2 GB | Prevents hangs from memory pressure/swap thrashing |
+| **GPU** | Metal (macOS) or Vulkan (Linux) | Required for compute shaders |
+
+When requirements aren't met, `check_gpu_available()` returns `gpuAvailable: false`
+with a descriptive reason. NEAT-AI's evolution process continues normally - only
+the discovery optimisation is skipped.
+
+**Very old machines** (pre-2015 Macs, old Linux servers without GPU) will have
+discovery disabled gracefully. This prevents hangs while allowing evolution to run.
+
 ## Quick start
 
 1. Install prerequisites (`rustup`, `cargo`, build tools, and `jq`). The
@@ -1097,25 +1114,55 @@ whether discovery should be enabled:
   analysis, see the [GPU Performance Tuning](#gpu-performance-tuning) section below.
 - **Deadlock or stuck process**: If the process appears stuck (0% CPU/GPU), see the
   [Debugging Deadlocks](#debugging-deadlocks) section below.
+- **GPU timeout errors**: The library includes automatic timeout protection for GPU
+  operations (default: 60 seconds per operation). If the GPU becomes unresponsive,
+  you'll see an error like:
+  
+  ```
+  GPU helpful batch evaluation timed out after 60s. The GPU may be unresponsive.
+  Consider reducing batch size or restarting.
+  ```
+  
+  **Causes and solutions:**
+  - **GPU driver hang**: Restart the process. If persistent, restart the machine.
+  - **GPU memory exhaustion**: Reduce `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` (try 256 or 128).
+  - **System memory pressure**: Close other applications or reduce workload.
+  - **Hardware issue**: Check system logs (`dmesg` on Linux, Console.app on macOS).
+  
+  **Unattended recovery**: The timeout ensures the process returns an error rather
+  than hanging forever, allowing orchestration systems to retry or skip the operation.
 
 ## GPU Performance Tuning
 
-The library auto-detects GPU capabilities and optimises batch sizes accordingly.
-On startup, it logs the detected GPU and selected configuration:
+The library auto-detects GPU capabilities **and available system memory** to optimise
+settings. On startup, it logs the detected configuration:
 
 ```
-[NEAT-AI-Discovery] GPU: Apple M4 (integrated metal) | Tier: high-performance | Batch size: 1024
+[NEAT-AI-Discovery] Memory: 12.3GB available / 24.0GB total | Tier: standard
+[NEAT-AI-Discovery] GPU: Apple M4 (integrated metal) | Tier: high-performance | Batch size: 512
 ```
 
-### Automatic GPU Detection
+### Automatic Adaptation
 
-| GPU Type | Detected Tier | Default Batch Size |
-|----------|--------------|-------------------|
-| M4, M4 Pro, M4 Max, M4 Ultra | High | 1024 |
-| M3 Pro, M3 Max, M2 Pro, M2 Max | High | 1024 |
-| M1, M2, M3 (base) | Standard | 512 |
-| Discrete GPUs (NVIDIA, AMD) | High | 1024 |
-| Integrated GPUs (Intel, etc.) | Standard | 512 |
+The library adapts to your machine's capabilities:
+
+| System Memory | Memory Tier | Work Queue | Batch Size Adjustment |
+|---------------|-------------|------------|----------------------|
+| < 8GB available | Low | 4 | Reduced to 256 |
+| 8-16GB available | Standard | 8 | GPU tier default |
+| > 16GB available | High | 16 | GPU tier default |
+
+| GPU Type | GPU Tier | Default Batch Size |
+|----------|----------|-------------------|
+| M4, M4 Pro, M4 Max, M4 Ultra | High | 1024 (or 256 if low memory) |
+| M3 Pro, M3 Max, M2 Pro, M2 Max | High | 1024 (or 256 if low memory) |
+| M1, M2, M3 (base) | Standard | 512 (or 256 if low memory) |
+| Discrete GPUs (NVIDIA, AMD) | High | 1024 (or 256 if low memory) |
+| Integrated GPUs (Intel, etc.) | Standard | 512 (or 256 if low memory) |
+
+**Why memory matters**: GPU operations require staging buffers in system RAM.
+On memory-constrained systems, smaller batches and fewer in-flight requests
+prevent swap thrashing which can cause GPU driver hangs.
 
 ### Manual Tuning
 
@@ -1220,16 +1267,46 @@ Send `SIGUSR1` to dump thread information without terminating the process:
 
 ```bash
 # Find the process ID
-ps aux | grep neat
+ps aux | grep deno
 
-# Send SIGUSR1 - prints thread dump without exiting
+# Send SIGUSR1 - prints full thread dump without exiting
 kill -USR1 <pid>
 ```
 
-This prints:
-- Current thread backtrace
-- Any detected deadlocks
-- Instructions for getting full thread dumps using debuggers
+**On macOS**, this automatically runs the `sample` command and prints:
+- Deadlock detection results (mutex contention)
+- **Full thread backtraces** for ALL threads (filtered to show relevant frames)
+- Threads stuck in `neat_ai_discovery`, `wgpu`, `Metal`, `crossbeam`, `rayon`
+- Threads waiting in `recv`, `poll`, `wait`, `park`, `sleep`, `pthread_cond`
+
+**On Linux**, this prints:
+- Deadlock detection results
+- Signal handler thread backtrace
+- Instructions for using `gdb` to get full thread dumps
+
+**Example output** (filtered for brevity):
+```
+================================================================================
+THREAD DUMP - 2025-day359 01:20:39 UTC (kill -USR1 received)
+Process ID: 8229
+================================================================================
+
+--- No mutex deadlocks detected ---
+
+--- Running 'sample' for full thread analysis (1 second) ---
+
+Call graph:
+
+    803 Thread_1343597: deadlock-detector
+    +   803 std::thread::sleep  (in libneat_ai_discovery.dylib)
+
+    803 Thread_1343620
+    +   803 neat_ai_discovery::analysis::GpuWorkQueue::evaluate_helpful_batch
+    +     803 crossbeam_channel::channel::Receiver::recv
+    +       803 std::thread::park
+
+--- End of call graph (37 threads) ---
+```
 
 **Note**: We use `SIGUSR1` (user-defined signal) which has no default action,
 making it safe for diagnostics. Java uses `SIGQUIT` (kill -3).
@@ -1343,7 +1420,14 @@ the same functional behavior.
    - Ensure code formatting and quality standards are maintained
    - **Never commit code without running `./quality.sh` first**
 
-3. **Dependency License Requirements**: All dependencies must be Apache-2.0 compatible
+3. **Code Organisation**: Maintain reasonable file sizes for readability
+   - **Target**: Individual source files should be under ~1,500 lines where practical
+   - **Split large files**: When a file exceeds ~2,000 lines, consider splitting into modules
+   - **Separate concerns**: GPU infrastructure, business logic, and types should be in separate files
+   - **Test files**: Extract tests to `tests/` directory when they grow beyond ~500 lines
+   - **Rationale**: Large files (10,000+ lines) are difficult to navigate, review, and maintain
+
+4. **Dependency License Requirements**: All dependencies must be Apache-2.0 compatible
    - **Allowed licenses**: Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, Unlicense
    - **Not allowed**: GPL, LGPL, AGPL, MPL (copyleft licenses)
    - **Prefer built-in**: Use Rust standard library features over external crates when possible
