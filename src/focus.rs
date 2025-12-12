@@ -52,6 +52,11 @@ pub struct RemovalCandidate {
     pub outgoing_synapses: usize,
     /// The complexity savings from removing this neuron (based on NEAT-AI Score.ts formula)
     pub removal_savings: f32,
+    /// Expected creature-level error reduction from removing this neuron.
+    /// This is based on activation_weighted_impact, NOT the neuron's error.
+    /// Issue #117: Previously, total_error was incorrectly used as expected error reduction,
+    /// leading to predictions like 27% when actual reduction was ~0%.
+    pub expected_error_reduction: f32,
     pub reason: String,
 }
 
@@ -891,6 +896,14 @@ pub fn rank_focus_neurons(
             let (incoming, outgoing) = count_synapses_for_neuron(&n.neuron_uuid, creature);
             let savings = calculate_removal_savings(incoming, outgoing, COST_OF_GROWTH);
 
+            // Issue #117: expected_error_reduction should be based on activation_weighted_impact,
+            // NOT total_error. The activation_weighted_impact represents the actual contribution
+            // this neuron makes to the output. Removing it changes error by approximately this amount.
+            //
+            // Previously, total_error (neuron's average error) was incorrectly used, leading to
+            // predictions like 27% when actual reduction was ~0% (for low-impact neurons).
+            let expected_error_reduction = n.activation_weighted_impact;
+
             RemovalCandidate {
                 neuron_uuid: n.neuron_uuid.clone(),
                 total_error: n.total_error,
@@ -900,6 +913,7 @@ pub fn rank_focus_neurons(
                 incoming_synapses: incoming,
                 outgoing_synapses: outgoing,
                 removal_savings: savings,
+                expected_error_reduction,
                 reason: format!(
                     "Impact {:.2e} < costOfGrowth ({:.0e}), {} synapses, saves {:.2e}",
                     n.activation_weighted_impact,

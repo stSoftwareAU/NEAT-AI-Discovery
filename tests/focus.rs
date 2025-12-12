@@ -1099,3 +1099,111 @@ fn test_cumulative_impact_mixed_direct_and_indirect_paths() {
         hub.impact
     );
 }
+
+/// Issue #117: expected_error_reduction should reflect the creature's expected error change,
+/// NOT the neuron's error. For removal candidates, this should be based on activation_weighted_impact.
+///
+/// The bug was that `total_error` (the neuron's average error) was being used as
+/// `expectedErrorReduction` on the TypeScript side, leading to predictions like 27%
+/// when the actual error change was ~0%.
+///
+/// The fix is to provide `expected_error_reduction` that reflects the ACTUAL expected
+/// creature-level error change from removing the neuron. For removal candidates (low-impact
+/// neurons), this should be very small - approximately equal to activation_weighted_impact.
+#[test]
+fn test_removal_candidate_expected_error_reduction_is_impact_based_not_neuron_error() {
+    // Scenario: A neuron with HIGH error (0.27 normalised) but NEGLIGIBLE impact (1e-8).
+    // The bug would predict 27% error reduction, but actual reduction is ~1e-8 (0.000001%).
+    //
+    // Network: input-0 -> negligible -> output-0 (tiny weights)
+    //          input-0 -> output-0 (direct, large weight)
+    let creature = create_creature(
+        vec![
+            ("input-0", "input"),
+            ("negligible", "hidden"), // Negligible impact due to tiny weights
+            ("output-0", "output"),
+        ],
+        vec![
+            // Negligible neuron has tiny weights
+            ("input-0", "negligible", 1e-6),
+            ("negligible", "output-0", 1e-6),
+            // Direct path dominates
+            ("input-0", "output-0", 1.0),
+        ],
+    );
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    // Negligible neuron has HIGH error (0.27 or 27% when normalised)
+    // but tiny activation-weighted impact
+    let records = create_records_with_activation(vec![
+        ("negligible", 0.27, 0.5), // High error, moderate activation -> still tiny impact
+        ("output-0", 0.5, 0.8),    // Normal error for output
+    ]);
+    write_records_to_parquet(file_path, &records).unwrap();
+
+    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+
+    // The negligible neuron should be a removal candidate
+    let negligible_removal = result
+        .removal_candidates
+        .iter()
+        .find(|c| c.neuron_uuid == "negligible");
+    assert!(
+        negligible_removal.is_some(),
+        "Negligible neuron should be a removal candidate. All candidates: {:?}",
+        result
+            .removal_candidates
+            .iter()
+            .map(|c| &c.neuron_uuid)
+            .collect::<Vec<_>>()
+    );
+
+    let candidate = negligible_removal.unwrap();
+
+    // CRITICAL: The expected_error_reduction should be tiny (based on impact),
+    // NOT the neuron's error (0.27).
+    //
+    // activation_weighted_impact = structural_impact × mean_activation
+    // structural_impact ≈ 1e-6 × 1e-6 = 1e-12 (tiny!)
+    // mean_activation = 0.5
+    // activation_weighted_impact ≈ 5e-13
+    //
+    // The expected_error_reduction should be approximately activation_weighted_impact
+    // (the actual contribution being removed).
+    assert!(
+        candidate.expected_error_reduction < 0.01, // Less than 1%
+        "expected_error_reduction should be tiny (based on impact), not the neuron's error (0.27). \
+         Got: {:.6} ({:.4}%). Neuron error was: {:.2}. Impact: {:.2e}. \
+         Bug #117: This would have been ~0.27 (27%) if using neuron error!",
+        candidate.expected_error_reduction,
+        candidate.expected_error_reduction * 100.0,
+        candidate.total_error,
+        candidate.activation_weighted_impact
+    );
+
+    // The expected_error_reduction should be in the same order of magnitude as impact
+    // (within 10x) since removing a low-impact neuron has minimal effect on error.
+    let impact_ratio = if candidate.activation_weighted_impact > 1e-10 {
+        candidate.expected_error_reduction / candidate.activation_weighted_impact
+    } else {
+        // For extremely tiny impacts, just verify it's also tiny
+        1.0
+    };
+    assert!(
+        impact_ratio < 100.0,
+        "expected_error_reduction ({:.2e}) should be within ~100x of activation_weighted_impact ({:.2e}). \
+         Ratio: {:.1}x. Bug #117: This ratio would be ~billions if using neuron error!",
+        candidate.expected_error_reduction,
+        candidate.activation_weighted_impact,
+        impact_ratio
+    );
+
+    // Verify total_error is high (this is what was incorrectly used before)
+    assert!(
+        candidate.total_error > 0.1,
+        "Neuron should have high error (0.27), got {:.4}",
+        candidate.total_error
+    );
+}

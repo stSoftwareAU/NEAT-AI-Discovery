@@ -307,6 +307,10 @@ pub struct RemovalCandidateJson {
     pub outgoing_synapses: usize,
     /// The complexity savings from removing this neuron (based on NEAT-AI Score.ts formula)
     pub removal_savings: f32,
+    /// Expected creature-level error reduction from removing this neuron.
+    /// Issue #117: This is based on activation_weighted_impact, NOT total_error.
+    /// For low-impact removal candidates, this will be very small (as it should be).
+    pub expected_error_reduction: f32,
     /// Explains why removal improves score
     pub reason: String,
 }
@@ -790,6 +794,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                     incoming_synapses: c.incoming_synapses,
                     outgoing_synapses: c.outgoing_synapses,
                     removal_savings: c.removal_savings,
+                    expected_error_reduction: c.expected_error_reduction,
                     reason: c.reason,
                 })
                 .collect();
