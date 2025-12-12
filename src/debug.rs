@@ -149,11 +149,11 @@ fn install_signal_handler() {
 
 /// Dump backtraces of all threads to stderr.
 ///
-/// This is called when SIGQUIT (kill -3) is received.
+/// This is called when SIGUSR1 (kill -USR1) is received.
 /// Unlike Java, Rust doesn't have built-in thread enumeration, so we print
 /// the current thread's backtrace plus any deadlock information.
 fn dump_all_threads() {
-    use backtrace::Backtrace;
+    use std::backtrace::Backtrace;
 
     let timestamp = chrono_lite_timestamp();
 
@@ -167,9 +167,9 @@ fn dump_all_threads() {
     eprintln!("Name: {:?}", current.name().unwrap_or("<unnamed>"));
     eprintln!("ID: {:?}", current.id());
 
-    // Capture backtrace of current thread
-    let bt = Backtrace::new();
-    eprintln!("Backtrace:\n{bt:?}");
+    // Capture backtrace of current thread (force capture)
+    let bt = Backtrace::force_capture();
+    eprintln!("Backtrace:\n{bt}");
     eprintln!();
 
     // Check for any deadlocked threads (this gives us visibility into blocked threads)

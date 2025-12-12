@@ -1343,6 +1343,23 @@ the same functional behavior.
    - Ensure code formatting and quality standards are maintained
    - **Never commit code without running `./quality.sh` first**
 
+3. **Dependency License Requirements**: All dependencies must be Apache-2.0 compatible
+   - **Allowed licenses**: Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, Unlicense
+   - **Not allowed**: GPL, LGPL, AGPL, MPL (copyleft licenses)
+   - **Prefer built-in**: Use Rust standard library features over external crates when possible
+   - **Check before adding**: Run `cargo license` to verify new dependencies
+   - **CI enforcement**: Pull requests are checked by dependency review workflow
+   
+   Current dependencies and their licenses:
+   | Crate | License | Purpose |
+   |-------|---------|---------|
+   | serde | MIT/Apache-2.0 | JSON serialisation |
+   | parquet/arrow | Apache-2.0 | Data storage |
+   | wgpu | MIT/Apache-2.0 | GPU compute |
+   | rayon | MIT/Apache-2.0 | Parallelism |
+   | parking_lot | MIT/Apache-2.0 | Deadlock detection |
+   | signal-hook | MIT/Apache-2.0 | Signal handling |
+
 ### Prerequisites
 
 **User-installable (automatically handled by `runlib.sh`):**
