@@ -76,11 +76,18 @@ const MINIMUM_TOTAL_MEMORY_GB: f64 = 4.0;
 /// If less than 2GB is available, discovery is disabled to prevent hangs.
 const MINIMUM_AVAILABLE_MEMORY_GB: f64 = 2.0;
 
-/// Timeout for individual GPU operations (in seconds).
-/// If a GPU operation takes longer than this, we assume the GPU is stuck
-/// and return an error rather than hanging forever. This allows recovery
-/// on unattended machines.
-const GPU_OPERATION_TIMEOUT_SECS: u64 = 60;
+/// Timeout (seconds) for the GPU work queue waiting for a response from the GPU thread.
+/// This is the OUTER timeout - if the GPU thread doesn't respond within this time,
+/// the queue gives up and returns an error.
+const GPU_QUEUE_TIMEOUT_SECS: u64 = 60;
+
+/// Timeout (seconds) for individual GPU buffer mapping operations.
+/// This MUST be shorter than GPU_QUEUE_TIMEOUT_SECS to avoid a race condition:
+/// if both timeouts are the same, the queue might timeout before the GPU thread
+/// has a chance to return its own timeout error, leaving the thread stuck.
+/// By making this 5 seconds shorter, the GPU thread has time to detect the timeout,
+/// build an error response, and send it back before the queue gives up.
+const GPU_BUFFER_MAP_TIMEOUT_SECS: u64 = 55;
 
 /// Timeout for GPU thread initialisation (in seconds).
 /// GPU device creation should be fast; if it takes longer, something is wrong.
@@ -3365,11 +3372,11 @@ impl GpuWorkQueue {
             .map_err(|_| anyhow!("GPU work queue channel closed"))?;
 
         // Wait for the response with timeout
-        let timeout = Duration::from_secs(GPU_OPERATION_TIMEOUT_SECS);
+        let timeout = Duration::from_secs(GPU_QUEUE_TIMEOUT_SECS);
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU helpful batch evaluation timed out after {GPU_OPERATION_TIMEOUT_SECS}s. \
+                "GPU helpful batch evaluation timed out after {GPU_QUEUE_TIMEOUT_SECS}s. \
                      The GPU may be unresponsive. Consider reducing batch size or restarting."
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -3396,11 +3403,11 @@ impl GpuWorkQueue {
             })
             .map_err(|_| anyhow!("GPU work queue channel closed"))?;
 
-        let timeout = Duration::from_secs(GPU_OPERATION_TIMEOUT_SECS);
+        let timeout = Duration::from_secs(GPU_QUEUE_TIMEOUT_SECS);
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU harmful batch evaluation timed out after {GPU_OPERATION_TIMEOUT_SECS}s. \
+                "GPU harmful batch evaluation timed out after {GPU_QUEUE_TIMEOUT_SECS}s. \
                      The GPU may be unresponsive. Consider reducing batch size or restarting."
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -3434,11 +3441,11 @@ impl GpuWorkQueue {
             })
             .map_err(|_| anyhow!("GPU work queue channel closed"))?;
 
-        let timeout = Duration::from_secs(GPU_OPERATION_TIMEOUT_SECS);
+        let timeout = Duration::from_secs(GPU_QUEUE_TIMEOUT_SECS);
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU ReLU evaluation timed out after {GPU_OPERATION_TIMEOUT_SECS}s. \
+                "GPU ReLU evaluation timed out after {GPU_QUEUE_TIMEOUT_SECS}s. \
                      The GPU may be unresponsive. Consider reducing batch size or restarting."
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -3472,11 +3479,11 @@ impl GpuWorkQueue {
             })
             .map_err(|_| anyhow!("GPU work queue channel closed"))?;
 
-        let timeout = Duration::from_secs(GPU_OPERATION_TIMEOUT_SECS);
+        let timeout = Duration::from_secs(GPU_QUEUE_TIMEOUT_SECS);
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU activation evaluation timed out after {GPU_OPERATION_TIMEOUT_SECS}s. \
+                "GPU activation evaluation timed out after {GPU_QUEUE_TIMEOUT_SECS}s. \
                      The GPU may be unresponsive. Consider reducing batch size or restarting."
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -4233,7 +4240,7 @@ impl GpuAnalyzer {
             }
 
             // Event-driven wait: poll non-blocking, check all callback channels
-            wait_for_buffer_maps_batch(device, &map_receivers, GPU_OPERATION_TIMEOUT_SECS)
+            wait_for_buffer_maps_batch(device, &map_receivers, GPU_BUFFER_MAP_TIMEOUT_SECS)
                 .context("Harmful batch buffer mapping failed")?;
 
             // Process results - maintain order with empty flags
@@ -4398,7 +4405,7 @@ impl GpuAnalyzer {
         });
 
         // Event-driven wait: poll non-blocking, check callback channel
-        wait_for_buffer_map(device, &receiver, GPU_OPERATION_TIMEOUT_SECS)
+        wait_for_buffer_map(device, &receiver, GPU_BUFFER_MAP_TIMEOUT_SECS)
             .context("ReLU buffer mapping failed")?;
 
         let data = buffer_slice.get_mapped_range();
@@ -4570,7 +4577,7 @@ impl GpuAnalyzer {
         });
 
         // Event-driven wait: poll non-blocking, check callback channel
-        wait_for_buffer_map(device, &receiver, GPU_OPERATION_TIMEOUT_SECS)
+        wait_for_buffer_map(device, &receiver, GPU_BUFFER_MAP_TIMEOUT_SECS)
             .context("Activation buffer mapping failed")?;
 
         let data = buffer_slice.get_mapped_range();
@@ -4756,7 +4763,7 @@ impl GpuAnalyzer {
         });
 
         // Event-driven wait: poll non-blocking, check callback channel
-        wait_for_buffer_map(device, &receiver, GPU_OPERATION_TIMEOUT_SECS)
+        wait_for_buffer_map(device, &receiver, GPU_BUFFER_MAP_TIMEOUT_SECS)
             .context("Bias buffer mapping failed")?;
 
         let data = buffer_slice.get_mapped_range();
@@ -4947,7 +4954,7 @@ impl GpuAnalyzer {
             }
 
             // Event-driven wait: poll non-blocking, check all callback channels
-            wait_for_buffer_maps_batch(device, &map_receivers, GPU_OPERATION_TIMEOUT_SECS)
+            wait_for_buffer_maps_batch(device, &map_receivers, GPU_BUFFER_MAP_TIMEOUT_SECS)
                 .context("Helpful batch buffer mapping failed")?;
 
             // Now read all the mapped data (buffers are already mapped)

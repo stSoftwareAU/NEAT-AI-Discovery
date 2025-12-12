@@ -1115,13 +1115,20 @@ whether discovery should be enabled:
 - **Deadlock or stuck process**: If the process appears stuck (0% CPU/GPU), see the
   [Debugging Deadlocks](#debugging-deadlocks) section below.
 - **GPU timeout errors**: The library includes automatic timeout protection for GPU
-  operations (default: 60 seconds per operation). If the GPU becomes unresponsive,
-  you'll see an error like:
+  operations. If the GPU becomes unresponsive, you'll see an error like:
   
   ```
   GPU helpful batch evaluation timed out after 60s. The GPU may be unresponsive.
   Consider reducing batch size or restarting.
   ```
+  
+  **Two-tier timeout architecture** (v0.1.156):
+  - **Buffer mapping timeout**: 55 seconds - allows GPU operations to timeout internally
+  - **Queue timeout**: 60 seconds - ensures the work queue doesn't block forever
+  - **Shutdown timeout**: 12 seconds max (2s send + 10s exit wait) - prevents hung cleanup
+  
+  This layered approach ensures the GPU thread always has time to detect timeouts and
+  return errors before the queue gives up, preventing deadlocks when the GPU driver hangs.
   
   **Causes and solutions:**
   - **GPU driver hang**: Restart the process. If persistent, restart the machine.
