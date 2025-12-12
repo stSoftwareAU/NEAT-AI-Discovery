@@ -2787,10 +2787,6 @@ struct GpuWorkQueue {
     work_tx: Sender<GpuWorkRequest>,
     /// Handle to the GPU thread (for clean shutdown).
     thread_handle: Option<JoinHandle<()>>,
-    /// GPU batch size (copied from GpuAnalyzer for convenience).
-    /// Reserved for future cross-focus-neuron batching optimisation.
-    #[allow(dead_code)]
-    batch_size: usize,
 }
 
 impl GpuWorkQueue {
@@ -2799,25 +2795,44 @@ impl GpuWorkQueue {
     /// The GPU thread is spawned immediately and owns the GpuAnalyzer.
     /// All GPU operations are processed sequentially on this thread,
     /// eliminating device creation overhead and improving utilisation.
+    ///
+    /// CRITICAL: The GpuAnalyzer is created INSIDE the GPU thread, not before.
+    /// wgpu devices have thread-local state that doesn't transfer properly when
+    /// moved across threads, causing deadlocks in device.poll().
     pub fn new() -> Result<Self> {
         // Create the channel for sending work to the GPU thread.
         // Bounded channel with capacity to hold work from multiple focus neurons.
         let (work_tx, work_rx): (Sender<GpuWorkRequest>, Receiver<GpuWorkRequest>) = bounded(64);
 
-        // Create the GPU analyzer on the current thread to get batch_size,
-        // then move it to the GPU thread.
-        let analyzer = GpuAnalyzer::new()?;
-        let batch_size = analyzer.batch_size;
+        // Channel to receive initialization result from the GPU thread.
+        // This ensures the GpuAnalyzer is created ON the GPU thread, not moved to it.
+        let (init_tx, init_rx): (Sender<Result<()>>, Receiver<Result<()>>) = bounded(1);
 
-        // Spawn dedicated GPU thread
+        // Spawn dedicated GPU thread - analyzer is created INSIDE this thread
         let thread_handle = thread::spawn(move || {
-            Self::gpu_thread_loop(analyzer, work_rx);
+            // Create analyzer on THIS thread to avoid wgpu thread-local state issues
+            match GpuAnalyzer::new() {
+                Ok(analyzer) => {
+                    // Signal successful initialization
+                    let _ = init_tx.send(Ok(()));
+                    // Run the main loop
+                    Self::gpu_thread_loop(analyzer, work_rx);
+                }
+                Err(e) => {
+                    // Signal initialization failure
+                    let _ = init_tx.send(Err(e));
+                }
+            }
         });
+
+        // Wait for initialization to complete
+        init_rx
+            .recv()
+            .map_err(|_| anyhow!("GPU thread failed to start"))??;
 
         Ok(Self {
             work_tx,
             thread_handle: Some(thread_handle),
-            batch_size,
         })
     }
 
@@ -2878,13 +2893,6 @@ impl GpuWorkQueue {
                 }
             }
         }
-    }
-
-    /// Get the GPU batch size (for callers that need to know how to batch work).
-    /// Reserved for future cross-focus-neuron batching optimisation.
-    #[allow(dead_code)]
-    pub fn batch_size(&self) -> usize {
-        self.batch_size
     }
 
     /// Submit a batch of helpful evaluations and wait for results.
@@ -3531,157 +3539,6 @@ impl GpuAnalyzer {
         });
 
         (layout, pipeline)
-    }
-
-    #[allow(dead_code)] // Used in tests and may be useful for single evaluations
-    fn evaluate_helpful(&self, samples: &[HelpfulSample]) -> Result<HelpfulStats> {
-        if samples.is_empty() {
-            return Ok(HelpfulStats::default());
-        }
-
-        // GPU is always required - TypeScript layer calls check_gpu_available() and skips
-        // discovery entirely on machines without GPU. Reaching here without GPU is a bug.
-        let device = self
-            .device
-            .as_ref()
-            .expect("GPU device must be available - discovery should be disabled without GPU");
-        let queue = self
-            .queue
-            .as_ref()
-            .context("GPU queue not initialised for helpful analysis")?;
-        let helpful_layout = self
-            .helpful_layout
-            .as_ref()
-            .context("GPU layout not initialised for helpful analysis")?;
-        let helpful_pipeline = self
-            .helpful_pipeline
-            .as_ref()
-            .context("GPU pipeline not initialised for helpful analysis")?;
-
-        let gpu_samples: Vec<GpuHelpfulSample> = samples
-            .iter()
-            .copied()
-            .map(GpuHelpfulSample::from)
-            .collect();
-        let contributions_zeroed = vec![HelpfulContribution::zeroed(); samples.len()];
-
-        let sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("helpful-samples-buffer"),
-            contents: bytemuck::cast_slice(&gpu_samples),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        let contributions_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("helpful-contributions-buffer"),
-            contents: bytemuck::cast_slice(&contributions_zeroed),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let uniforms = HelpfulUniforms {
-            length: samples.len() as u32,
-            pad0: 0,
-            epsilon: EPSILON,
-            pad1: 0.0,
-        };
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("helpful-uniform-buffer"),
-            contents: bytemuck::bytes_of(&uniforms),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: helpful_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: sample_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: contributions_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("helpful-bind-group"),
-        });
-
-        let contribution_size = (std::mem::size_of::<HelpfulContribution>() * samples.len()) as u64;
-        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("helpful-staging-buffer"),
-            size: contribution_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("helpful-command-encoder"),
-        });
-
-        {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("helpful-compute-pass"),
-                timestamp_writes: None,
-            });
-            compute_pass.set_pipeline(helpful_pipeline);
-            compute_pass.set_bind_group(0, &bind_group, &[]);
-            let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
-            compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
-        }
-
-        encoder.copy_buffer_to_buffer(
-            &contributions_buffer,
-            0,
-            &staging_buffer,
-            0,
-            contribution_size,
-        );
-
-        queue.submit(Some(encoder.finish()));
-
-        let buffer_slice = staging_buffer.slice(..);
-        let (sender, receiver) = mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender
-                .send(result)
-                .expect("Failed to send map_async result");
-        });
-        device.poll(wgpu::Maintain::Wait);
-
-        match receiver.recv() {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                return Err(anyhow!("Failed to map helpful contributions buffer: {err}"));
-            }
-            Err(_) => {
-                return Err(anyhow!("Failed to receive helpful map_async completion"));
-            }
-        }
-
-        let data = buffer_slice.get_mapped_range();
-        let contributions: &[HelpfulContribution] = bytemuck::cast_slice(&data);
-
-        let mut stats = HelpfulStats::default();
-        for contribution in contributions {
-            stats.positive_count += contribution.positive_flag;
-            stats.negative_count += contribution.negative_flag;
-            stats.positive_improvement_sum += contribution.positive_improvement;
-            stats.negative_improvement_sum += contribution.negative_improvement;
-            stats.positive_activation_sum += contribution.positive_activation;
-            stats.negative_activation_sum += contribution.negative_activation;
-            stats.error_sq_sum += contribution.error_squared;
-            stats.activation_sq_sum += contribution.activation_squared;
-            stats.error_activation_sum += contribution.error_activation;
-        }
-
-        drop(data);
-        staging_buffer.unmap();
-
-        Ok(stats)
     }
 
     /// Batch evaluate multiple harmful synapse operations to improve GPU utilisation.
@@ -6537,6 +6394,7 @@ fn analyze_neurons_with_cache(
     // Create a shared GPU work queue ONCE before the parallel loop.
     // This eliminates the overhead of creating multiple GPU devices (one per thread).
     // All GPU operations are processed by a single dedicated thread, improving utilisation.
+    // CRITICAL: The GpuAnalyzer is created INSIDE the GPU thread to avoid wgpu deadlocks.
     let gpu_queue = Arc::new(GpuWorkQueue::new()?);
 
     // Process each focus neuron in parallel. Deadline checks happen at the start of
@@ -7413,6 +7271,7 @@ fn analyze_synapses_with_cache(
     // Create a shared GPU work queue ONCE before the parallel loop.
     // This eliminates the overhead of creating multiple GPU devices (one per thread).
     // All GPU operations are processed by a single dedicated thread, improving utilisation.
+    // CRITICAL: The GpuAnalyzer is created INSIDE the GPU thread to avoid wgpu deadlocks.
     let gpu_queue = Arc::new(GpuWorkQueue::new()?);
 
     // Process each focus neuron in parallel

@@ -1095,6 +1095,8 @@ whether discovery should be enabled:
   10-minute default with a warning message.
 - **Low GPU utilisation**: If you're seeing low GPU utilisation (e.g., 20%) during
   analysis, see the [GPU Performance Tuning](#gpu-performance-tuning) section below.
+- **Deadlock or stuck process**: If the process appears stuck (0% CPU/GPU), see the
+  [Debugging Deadlocks](#debugging-deadlocks) section below.
 
 ## GPU Performance Tuning
 
@@ -1178,6 +1180,79 @@ This logs:
 - Detected performance tier
 - Selected batch size
 - Tuning hints
+
+## Debugging Deadlocks
+
+The library includes built-in debugging tools for diagnosing stuck processes and
+deadlocks, similar to Java's `kill -3` thread dump.
+
+### Automatic Deadlock Detection
+
+The library automatically detects deadlocks every 10 seconds using `parking_lot`'s
+deadlock detection feature. When a deadlock is detected, the process panics with
+full backtrace information for all involved threads.
+
+```
+================================================================================
+DEADLOCK DETECTED - 2 deadlock(s) found
+================================================================================
+
+--- Deadlock #1 (2 threads involved) ---
+
+Thread ID: ThreadId(5)
+Backtrace:
+   0: parking_lot_core::parking_lot::park
+   1: neat_ai_discovery::analysis::GpuWorkQueue::evaluate_helpful_batch
+   ...
+
+Thread ID: ThreadId(3)
+Backtrace:
+   ...
+
+================================================================================
+PANICKING due to deadlock. See above for thread backtraces.
+================================================================================
+```
+
+### Thread Dump on Signal (kill -USR1)
+
+Send `SIGUSR1` to dump thread information without terminating the process:
+
+```bash
+# Find the process ID
+ps aux | grep neat
+
+# Send SIGUSR1 - prints thread dump without exiting
+kill -USR1 <pid>
+```
+
+This prints:
+- Current thread backtrace
+- Any detected deadlocks
+- Instructions for getting full thread dumps using debuggers
+
+**Note**: We use `SIGUSR1` (user-defined signal) which has no default action,
+making it safe for diagnostics. Java uses `SIGQUIT` (kill -3).
+
+### Manual Thread Inspection with LLDB
+
+For full thread dumps (Rust doesn't have built-in thread enumeration like Java):
+
+```bash
+# On macOS - attach debugger and print all thread backtraces
+lldb -p <pid> -o 'thread backtrace all' -o 'quit'
+
+# Or use the sample tool
+sudo sample <pid> 1 -file /tmp/sample.txt
+cat /tmp/sample.txt
+```
+
+### On Linux with GDB
+
+```bash
+# Attach to running process
+gdb -p <pid> -ex 'thread apply all bt' -ex 'quit'
+```
 
 ## Additional documentation
 
