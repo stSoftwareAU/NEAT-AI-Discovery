@@ -36,8 +36,13 @@ Discovery is automatically disabled on machines that don't meet minimum requirem
 | Requirement | Minimum | Reason |
 |-------------|---------|--------|
 | **Total RAM** | 4 GB | GPU operations require memory for staging buffers |
-| **Available RAM** | 2 GB | Prevents hangs from memory pressure/swap thrashing |
+| **Available RAM** | 1 GB | Prevents hangs from memory pressure/swap thrashing |
 | **GPU** | Metal (macOS) or Vulkan (Linux) | Required for compute shaders |
+
+**Note on macOS memory reporting**: Apple Silicon Macs aggressively cache files in
+memory, so "available" RAM may appear low (e.g., 1-2GB on an 8GB machine). This is
+normal – macOS can quickly reclaim cached memory when needed. The 1GB minimum is
+sufficient for modern Macs with unified memory architecture.
 
 When requirements aren't met, `check_gpu_available()` returns `gpuAvailable: false`
 with a descriptive reason. NEAT-AI's evolution process continues normally - only
