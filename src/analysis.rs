@@ -73,8 +73,11 @@ const STANDARD_MEMORY_THRESHOLD_GB: f64 = 16.0;
 const MINIMUM_TOTAL_MEMORY_GB: f64 = 4.0;
 
 /// Minimum available memory (in GB) required for discovery.
-/// If less than 2GB is available, discovery is disabled to prevent hangs.
-const MINIMUM_AVAILABLE_MEMORY_GB: f64 = 2.0;
+/// If less than 1GB is available, discovery is disabled to prevent hangs.
+/// Note: macOS on Apple Silicon aggressively uses memory for caching, so
+/// "available" memory is often reported low even when plenty can be reclaimed.
+/// 1GB is sufficient since macOS can quickly reclaim cached/inactive pages.
+const MINIMUM_AVAILABLE_MEMORY_GB: f64 = 1.0;
 
 /// Timeout (seconds) for the GPU work queue waiting for a response from the GPU thread.
 /// This is the OUTER timeout - if the GPU thread doesn't respond within this time,
