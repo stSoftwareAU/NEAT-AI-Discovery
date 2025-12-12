@@ -93,104 +93,73 @@ const GPU_BUFFER_MAP_TIMEOUT_SECS: u64 = 55;
 /// GPU device creation should be fast; if it takes longer, something is wrong.
 const GPU_INIT_TIMEOUT_SECS: u64 = 30;
 
-/// Wait for a GPU buffer mapping to complete, with timeout.
+/// Wait for a GPU buffer mapping to complete.
 ///
-/// This is event-driven: `map_async` registers a callback that fires when the buffer
-/// is ready. We poll the device (non-blocking) to let wgpu process work, and check
-/// if the callback has fired via the channel.
+/// Uses `Maintain::Wait` which blocks until all submitted GPU work completes.
+/// This is more reliable than polling in a loop, especially on Metal/M4 where
+/// non-blocking polls can fail to properly schedule GPU work.
 ///
-/// Returns Ok(()) when the buffer is mapped, or Err if timeout or mapping failed.
+/// The timeout parameter is kept for API compatibility but is not used since
+/// `Maintain::Wait` blocks until completion. Timeouts are enforced at the
+/// work queue level (GPU_QUEUE_TIMEOUT_SECS).
 fn wait_for_buffer_map(
     device: &wgpu::Device,
     receiver: &std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
-    timeout_secs: u64,
+    _timeout_secs: u64,
 ) -> Result<()> {
-    let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(timeout_secs);
+    // Block until all GPU work completes - this is the reliable way to wait
+    // for buffer mapping on all backends, especially Metal/M4.
+    device.poll(wgpu::Maintain::Wait);
 
-    loop {
-        // Non-blocking poll to let wgpu process pending work and fire callbacks
-        device.poll(wgpu::Maintain::Poll);
-
-        // Check if the map_async callback has fired (event-driven)
-        match receiver.try_recv() {
-            Ok(Ok(())) => return Ok(()), // Buffer is mapped
-            Ok(Err(err)) => return Err(anyhow!("Buffer mapping failed: {err}")),
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // Callback hasn't fired yet - check timeout
-                if start.elapsed() > timeout {
-                    return Err(anyhow!(
-                        "GPU buffer mapping timed out after {timeout_secs}s. \
-                         The GPU may be unresponsive."
-                    ));
-                }
-                // Yield to avoid busy-spinning (let other threads run)
-                std::thread::yield_now();
-            }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                return Err(anyhow!("GPU callback channel disconnected"));
-            }
+    // After Wait completes, the callback should have fired
+    match receiver.try_recv() {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(anyhow!("Buffer mapping failed: {err}")),
+        Err(std::sync::mpsc::TryRecvError::Empty) => {
+            // This shouldn't happen after Maintain::Wait, but handle it
+            Err(anyhow!(
+                "Buffer mapping callback did not fire after device.poll(Wait). \
+                 This may indicate a GPU driver issue."
+            ))
+        }
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            Err(anyhow!("GPU callback channel disconnected"))
         }
     }
 }
 
-/// Wait for multiple GPU buffer mappings to complete, with timeout.
+/// Wait for multiple GPU buffer mappings to complete.
 ///
-/// Event-driven: polls non-blocking and checks all callback channels.
-/// Returns Ok(()) when ALL buffers are mapped, or Err if timeout or any mapping failed.
+/// Uses `Maintain::Wait` which blocks until all submitted GPU work completes.
+/// This is more reliable than polling in a loop, especially on Metal/M4.
 fn wait_for_buffer_maps_batch(
     device: &wgpu::Device,
     receivers: &[std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>],
-    timeout_secs: u64,
+    _timeout_secs: u64,
 ) -> Result<()> {
     if receivers.is_empty() {
         return Ok(());
     }
 
-    let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(timeout_secs);
-    let mut completed = vec![false; receivers.len()];
-    let mut remaining = receivers.len();
+    // Block until all GPU work completes
+    device.poll(wgpu::Maintain::Wait);
 
-    while remaining > 0 {
-        // Non-blocking poll to let wgpu process pending work and fire callbacks
-        device.poll(wgpu::Maintain::Poll);
-
-        // Check all receivers that haven't completed yet
-        for (i, receiver) in receivers.iter().enumerate() {
-            if completed[i] {
-                continue;
+    // After Wait completes, all callbacks should have fired
+    for (i, receiver) in receivers.iter().enumerate() {
+        match receiver.try_recv() {
+            Ok(Ok(())) => {} // Buffer mapped successfully
+            Ok(Err(err)) => {
+                return Err(anyhow!("Buffer {i} mapping failed: {err}"));
             }
-
-            match receiver.try_recv() {
-                Ok(Ok(())) => {
-                    completed[i] = true;
-                    remaining -= 1;
-                }
-                Ok(Err(err)) => {
-                    return Err(anyhow!("Buffer {i} mapping failed: {err}"));
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    // Not ready yet
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    return Err(anyhow!("Buffer {i} callback channel disconnected"));
-                }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                return Err(anyhow!(
+                    "Buffer {i} mapping callback did not fire after device.poll(Wait). \
+                     This may indicate a GPU driver issue."
+                ));
             }
-        }
-
-        // Check timeout
-        if remaining > 0 && start.elapsed() > timeout {
-            return Err(anyhow!(
-                "GPU batch buffer mapping timed out after {timeout_secs}s. \
-                 {remaining}/{} buffers incomplete. The GPU may be unresponsive.",
-                receivers.len()
-            ));
-        }
-
-        // Yield if work still pending
-        if remaining > 0 {
-            std::thread::yield_now();
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                return Err(anyhow!("Buffer {i} callback channel disconnected"));
+            }
         }
     }
 
@@ -519,9 +488,10 @@ fn get_adjusted_batch_size(gpu_tier: GpuPerformanceTier) -> usize {
     };
 
     // Reduce batch size if memory is constrained
+    // Standard memory tier should also reduce batch size to prevent Metal command buffer exhaustion
     match resources.memory_tier {
         MemoryTier::Low => LOW_MEMORY_GPU_BATCH_SIZE.min(base_size),
-        MemoryTier::Standard => base_size,
+        MemoryTier::Standard => DEFAULT_GPU_BATCH_SIZE.min(base_size), // Use 512 max, not 1024
         MemoryTier::High => base_size,
     }
 }
@@ -3737,6 +3707,11 @@ impl GpuAnalyzer {
         let (activation_layout, activation_pipeline) =
             Self::build_activation_pipeline(&device, "activation-pipeline");
         let (bias_layout, bias_pipeline) = Self::build_bias_pipeline(&device, "bias-pipeline");
+
+        // CRITICAL: Warm up the GPU by polling to ensure all pipeline creation work is complete.
+        // On Metal/M4, the GPU can get into a bad state if we start submitting compute work
+        // before shader compilation has finished. This blocking poll ensures the GPU is ready.
+        device.poll(wgpu::Maintain::Wait);
 
         Ok(Self {
             device: Some(device),

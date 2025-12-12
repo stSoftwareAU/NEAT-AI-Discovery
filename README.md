@@ -1156,16 +1156,16 @@ The library adapts to your machine's capabilities:
 | System Memory | Memory Tier | Work Queue | Batch Size Adjustment |
 |---------------|-------------|------------|----------------------|
 | < 8GB available | Low | 4 | Reduced to 256 |
-| 8-16GB available | Standard | 8 | GPU tier default |
+| 8-16GB available | Standard | 8 | Capped at 512 (v0.1.158) |
 | > 16GB available | High | 16 | GPU tier default |
 
 | GPU Type | GPU Tier | Default Batch Size |
 |----------|----------|-------------------|
-| M4, M4 Pro, M4 Max, M4 Ultra | High | 1024 (or 256 if low memory) |
-| M3 Pro, M3 Max, M2 Pro, M2 Max | High | 1024 (or 256 if low memory) |
-| M1, M2, M3 (base) | Standard | 512 (or 256 if low memory) |
-| Discrete GPUs (NVIDIA, AMD) | High | 1024 (or 256 if low memory) |
-| Integrated GPUs (Intel, etc.) | Standard | 512 (or 256 if low memory) |
+| M4, M4 Pro, M4 Max, M4 Ultra | High | 1024 (512 if standard memory, 256 if low) |
+| M3 Pro, M3 Max, M2 Pro, M2 Max | High | 1024 (512 if standard memory, 256 if low) |
+| M1, M2, M3 (base) | Standard | 512 (256 if low memory) |
+| Discrete GPUs (NVIDIA, AMD) | High | 1024 (512 if standard memory, 256 if low) |
+| Integrated GPUs (Intel, etc.) | Standard | 512 (256 if low memory) |
 
 **Why memory matters**: GPU operations require staging buffers in system RAM.
 On memory-constrained systems, smaller batches and fewer in-flight requests
