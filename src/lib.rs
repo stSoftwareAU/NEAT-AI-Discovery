@@ -5,6 +5,7 @@
 //! beneficial new synapses/neurons that would reduce error.
 
 pub mod analysis;
+pub mod debug;
 pub mod focus;
 pub mod parquet_format;
 pub mod record;
@@ -25,6 +26,8 @@ static VERSION_LOGGED: OnceCell<()> = OnceCell::new();
 fn log_version_once() {
     VERSION_LOGGED.get_or_init(|| {
         eprintln!("[NEAT-AI-Discovery] Library version {LIB_VERSION} initialized (compiled version embedded in binary)");
+        // Initialise debug handlers (deadlock detection + kill -3 thread dump)
+        debug::init_debug_handlers();
     });
 }
 
