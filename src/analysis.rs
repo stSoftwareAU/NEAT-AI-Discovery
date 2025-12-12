@@ -3487,8 +3487,18 @@ impl GpuWorkQueue {
 
     /// Request the GPU thread to shut down.
     /// This should be called before dropping the queue to ensure clean shutdown.
+    ///
+    /// Uses a timeout to avoid blocking forever if the queue is full and the GPU
+    /// thread is hung. If the send times out, the GPU thread is likely unresponsive
+    /// and the Drop implementation will handle cleanup via the exit_rx timeout.
     pub fn shutdown(&self) {
-        let _ = self.work_tx.send(GpuWorkRequest::Shutdown);
+        // Use timeout to avoid blocking forever if queue is full and GPU thread is hung.
+        // 2 seconds is generous - if the GPU thread is responsive, it should drain
+        // items much faster. If this times out, proceed to exit_rx timeout in Drop.
+        let shutdown_send_timeout = Duration::from_secs(2);
+        let _ = self
+            .work_tx
+            .send_timeout(GpuWorkRequest::Shutdown, shutdown_send_timeout);
     }
 }
 
