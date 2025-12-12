@@ -519,9 +519,10 @@ fn get_adjusted_batch_size(gpu_tier: GpuPerformanceTier) -> usize {
     };
 
     // Reduce batch size if memory is constrained
+    // Standard memory tier should also reduce batch size to prevent Metal command buffer exhaustion
     match resources.memory_tier {
         MemoryTier::Low => LOW_MEMORY_GPU_BATCH_SIZE.min(base_size),
-        MemoryTier::Standard => base_size,
+        MemoryTier::Standard => DEFAULT_GPU_BATCH_SIZE.min(base_size), // Use 512 max, not 1024
         MemoryTier::High => base_size,
     }
 }
@@ -3737,6 +3738,11 @@ impl GpuAnalyzer {
         let (activation_layout, activation_pipeline) =
             Self::build_activation_pipeline(&device, "activation-pipeline");
         let (bias_layout, bias_pipeline) = Self::build_bias_pipeline(&device, "bias-pipeline");
+
+        // CRITICAL: Warm up the GPU by polling to ensure all pipeline creation work is complete.
+        // On Metal/M4, the GPU can get into a bad state if we start submitting compute work
+        // before shader compilation has finished. This blocking poll ensures the GPU is ready.
+        device.poll(wgpu::Maintain::Wait);
 
         Ok(Self {
             device: Some(device),
