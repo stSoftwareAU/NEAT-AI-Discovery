@@ -459,6 +459,44 @@ This means the issue is in **sample collection or interpretation**, not the form
 making the neuron behave like a constant. This appears "optimal" on small samples but fails to generalise.
 See `tests/fixed_vs_optimised_params.rs` for investigation tests.
 
+#### Saturation detection for add-neuron candidates (v0.1.167, Issue #123)
+
+**CRITICAL FIX**: Candidates with saturated neurons are now detected and rejected before being
+returned. This prevents massive prediction failures where expected improvement is orders of
+magnitude higher than actual improvement.
+
+**The problem** (Issue #123):
+- Expected error reduction: 4.67%
+- Actual error reduction: ~0% (2.5×10⁻¹⁴)
+- This is a 12 orders of magnitude prediction error!
+
+**Root cause**: When bias is large relative to the input range, the neuron saturates and outputs
+nearly-constant values regardless of input:
+
+| Activation | Bias | Input Range | Output Range | Status |
+|------------|------|-------------|--------------|--------|
+| SOFTSIGN | 5.0 | [-1, 1] | [0.78, 0.85] | **Saturated** ❌ |
+| TANH | 10.0 | [-1, 1] | [0.9999, 1.0] | **Saturated** ❌ |
+| TANH | 1.0 | [-1, 1] | [-0.76, 0.96] | Normal ✓ |
+
+A constant-output neuron **cannot** reduce error correlation - it just adds a fixed offset.
+The prediction model incorrectly assumes output varies with input.
+
+**The fix**: Before returning a candidate, the library now checks if:
+1. The INPUT activations have variance (source data varies)
+2. The OUTPUT would have variance (neuron not saturated)
+
+If input varies but output doesn't, the candidate is rejected. This is implemented via
+`has_sufficient_output_variance()` with threshold `MIN_NEURON_OUTPUT_STD_DEV = 0.01`.
+
+**Note**: If the input itself is constant (all samples have same source activation), the
+candidate is NOT rejected - constant output is expected and predictions remain valid.
+
+**Tests added**:
+- `test_saturation_detection_rejects_constant_output`: SOFTSIGN with bias=5 rejected
+- `test_saturation_detection_tanh_large_bias`: TANH with bias=10 rejected
+- `test_saturation_detection_allows_constant_input`: Constant input not incorrectly rejected
+
 #### Root cause identified: Sample representativeness (v0.1.142)
 
 **CRITICAL FINDING**: Synthetic integration tests (`tests/prediction_validation.rs`) have
@@ -1051,6 +1089,41 @@ const expectedChange = candidate.expectedErrorReduction;
 // WRONG: Don't use neuron error as the prediction!
 // const expectedChange = candidate.totalError;  // BUG!
 ```
+
+#### Field naming and percentage calculations (Issue #124)
+
+**IMPORTANT**: Rust returns two types of improvement/error metrics with different semantics:
+
+| Field | Type | Value Range | To Display as % |
+|-------|------|-------------|-----------------|
+| `expectedImprovementPercentage` | **Ratio** | 0.0 - 1.0 | `value × 100` |
+| `expectedErrorReduction` | **Absolute** | Any positive | `(value / originalError) × 100` |
+
+**`expectedImprovementPercentage`** is already a ratio (decimal percentage):
+- Value `0.07` means 7% improvement
+- Calculated as `(baseline_error - new_error) / baseline_error`
+- **To display**: multiply by 100 → `0.07 × 100 = 7%`
+
+**`expectedErrorReduction`** is an **absolute value**, NOT a ratio:
+- Value `0.0656` is a raw error delta, not a percentage
+- **WRONG**: `0.0656 × 100 = 6.56%` ❌ (this is meaningless)
+- **CORRECT**: `(0.0656 / 0.5827) × 100 = 11.26%` ✓ (reduction as percentage of original error)
+
+TypeScript should NOT create `*Pct` fields by simply multiplying by 100:
+```typescript
+// WRONG: Multiplying absolute value by 100 is not a valid percentage
+const expectedErrorReductionPct = expectedErrorReduction * 100;  // BUG!
+
+// CORRECT: Use expectedImprovementPercentage directly (it's already a ratio)
+const improvementPercent = candidate.expectedImprovementPercentage * 100;
+
+// CORRECT: If you need error reduction as %, divide by original error first
+const errorReductionPercent = (expectedErrorReduction / originalError) * 100;
+```
+
+**Recommendation**: Use `expectedImprovementPercentage` for all percentage displays.
+The `expectedErrorReduction` field is provided for reference but should not be
+converted to a percentage by simple multiplication.
 
 ## Verifying the installation
 

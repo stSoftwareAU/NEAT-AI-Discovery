@@ -26,6 +26,21 @@ const EPSILON: f32 = 1e-8;
 const WORKGROUP_SIZE: u32 = 256;
 const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 
+/// Minimum variance of new neuron output across samples.
+///
+/// Issue #123: When bias is too large relative to the input range, the neuron becomes
+/// saturated and outputs nearly-constant values regardless of input. For example:
+/// - SOFTSIGN(5 + 0.35×x) ≈ 0.83 for all typical x values
+/// - TANH(10 + x) ≈ 1.0 for all x > -9
+///
+/// A constant-output neuron CANNOT reduce error correlation - it just adds a fixed offset.
+/// The prediction model incorrectly assumes the output varies with input, leading to
+/// massive prediction failures (e.g., predicting 4.67% improvement when actual is ~0%).
+///
+/// This threshold rejects candidates where the output standard deviation is below 0.01,
+/// meaning the neuron produces nearly identical output across all samples.
+const MIN_NEURON_OUTPUT_STD_DEV: f32 = 0.01;
+
 /// Maximum absolute value for outgoing weights in add-neuron candidates.
 ///
 /// Based on analysis of successful discoveries vs failures:
@@ -45,6 +60,79 @@ const MAX_OUTGOING_WEIGHT: f32 = 0.1;
 #[inline]
 fn is_threshold_activation(squash: &str) -> bool {
     matches!(squash.to_uppercase().as_str(), "STEP" | "BIPOLAR")
+}
+
+/// Check if a new neuron would be saturated (producing nearly-constant output).
+///
+/// Issue #123: Neurons with large bias values relative to typical inputs become saturated
+/// and output nearly the same value regardless of input. This causes massive prediction
+/// failures because the linear error model assumes output varies with input.
+///
+/// Returns `true` if the neuron is NOT saturated (output has sufficient variance).
+/// Returns `false` if the neuron IS saturated (should be rejected).
+///
+/// IMPORTANT: We only reject when INPUT has variance but OUTPUT doesn't. If input is
+/// already constant (low variance), then constant output is expected and predictions
+/// will still be valid.
+///
+/// # Arguments
+/// * `samples` - The samples to evaluate
+/// * `incoming_weight` - Weight from source to new neuron
+/// * `bias` - Bias of the new neuron
+/// * `activation_fn` - Activation function of the new neuron
+fn has_sufficient_output_variance(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    bias: f32,
+    activation_fn: fn(f32) -> f32,
+) -> bool {
+    if samples.len() < 2 {
+        return false;
+    }
+
+    // Compute mean and variance of both input and output
+    let mut input_sum = 0.0f64;
+    let mut input_sum_sq = 0.0f64;
+    let mut output_sum = 0.0f64;
+    let mut output_sum_sq = 0.0f64;
+    let mut count = 0u32;
+
+    for sample in samples {
+        let input = sample.activation;
+        let pre_activation = incoming_weight * input + bias;
+        let output = activation_fn(pre_activation);
+        if output.is_finite() && input.is_finite() {
+            input_sum += input as f64;
+            input_sum_sq += (input as f64) * (input as f64);
+            output_sum += output as f64;
+            output_sum_sq += (output as f64) * (output as f64);
+            count += 1;
+        }
+    }
+
+    if count < 2 {
+        return false;
+    }
+
+    let n = count as f64;
+
+    // Calculate input variance
+    let input_mean = input_sum / n;
+    let input_variance = (input_sum_sq / n) - (input_mean * input_mean);
+    let input_std_dev = input_variance.max(0.0).sqrt() as f32;
+
+    // Calculate output variance
+    let output_mean = output_sum / n;
+    let output_variance = (output_sum_sq / n) - (output_mean * output_mean);
+    let output_std_dev = output_variance.max(0.0).sqrt() as f32;
+
+    // If input already has low variance, constant output is expected - allow it
+    if input_std_dev < MIN_NEURON_OUTPUT_STD_DEV {
+        return true;
+    }
+
+    // If input has variance but output doesn't, the neuron is saturated - reject
+    output_std_dev >= MIN_NEURON_OUTPUT_STD_DEV
 }
 
 /// Default GPU batch size for GPU operations.
@@ -6225,6 +6313,19 @@ fn evaluate_activation_for_subset<G: GpuEvaluator>(
                 target_squash,
             );
 
+            // Issue #123: Check for saturation - reject if neuron output is nearly constant.
+            // Large bias values (e.g., 5.0 for SOFTSIGN) can cause the neuron to saturate,
+            // producing nearly identical output regardless of input. Such neurons cannot
+            // reduce error correlation and lead to massive prediction failures.
+            if !has_sufficient_output_variance(
+                all_samples,
+                incoming_weight,
+                optimal_bias,
+                spec.activation,
+            ) {
+                continue;
+            }
+
             // CRITICAL: Evaluate NET improvement across ALL samples
             // This ensures the candidate helps the target subset more than it hurts the other
             let (net_improvement, improved_count, total_count) =
@@ -6590,6 +6691,19 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
             // They must be checked BEFORE setting fallback_candidate to prevent
             // invalid candidates from being returned through the fallback path.
             // =================================================================
+
+            // Issue #123: Check for saturation - reject if neuron output is nearly constant.
+            // Large bias values (e.g., 5.0 for SOFTSIGN) can cause the neuron to saturate,
+            // producing nearly identical output regardless of input. Such neurons cannot
+            // reduce error correlation and lead to massive prediction failures.
+            if !has_sufficient_output_variance(
+                samples,
+                incoming_weight,
+                optimal_bias,
+                spec.activation,
+            ) {
+                continue;
+            }
 
             // Require minimum ABSOLUTE error reduction, not just percentage.
             // A 1% improvement on baseline_sq=0.0001 is only 0.000001 absolute reduction,
@@ -8057,6 +8171,136 @@ Pages speculative:                        12345.
         assert!(names.contains(&"ReLU6"), "ReLU6 should be included");
         // Total count
         assert_eq!(names.len(), 19, "Should have 19 activation specs");
+    }
+
+    // ==================== Saturation Detection Tests (Issue #123) ====================
+
+    /// Test that has_sufficient_output_variance detects saturated neurons.
+    /// Issue #123: Large bias values cause neurons to output nearly-constant values,
+    /// leading to massive prediction failures (e.g., predicting 4.67% when actual is ~0%).
+    #[test]
+    fn test_saturation_detection_rejects_constant_output() {
+        // Create samples with typical activation range [-1, 1]
+        let samples: Vec<HelpfulSample> = (-10..=10)
+            .map(|i| HelpfulSample {
+                activation: i as f32 / 10.0,
+                avg_error: 0.1,
+                target_value: None,
+                target_activation: None,
+            })
+            .collect();
+
+        // SOFTSIGN with bias=5 and incoming=0.35 (from issue #123)
+        // Output ≈ (5 + 0.35×x) / (1 + |5 + 0.35×x|) ≈ 0.83 for all x
+        let saturated = !has_sufficient_output_variance(
+            &samples,
+            0.35, // incoming_weight
+            5.0,  // bias (too large!)
+            softsign_activation,
+        );
+        assert!(
+            saturated,
+            "SOFTSIGN with bias=5 should be detected as saturated (constant output)"
+        );
+
+        // SOFTSIGN with bias=0 should NOT be saturated
+        let not_saturated = has_sufficient_output_variance(
+            &samples,
+            1.0, // incoming_weight
+            0.0, // bias
+            softsign_activation,
+        );
+        assert!(
+            not_saturated,
+            "SOFTSIGN with bias=0 should NOT be saturated"
+        );
+    }
+
+    /// Test that TANH with large bias is detected as saturated.
+    #[test]
+    fn test_saturation_detection_tanh_large_bias() {
+        let samples: Vec<HelpfulSample> = (-10..=10)
+            .map(|i| HelpfulSample {
+                activation: i as f32 / 10.0,
+                avg_error: 0.1,
+                target_value: None,
+                target_activation: None,
+            })
+            .collect();
+
+        // TANH with bias=10 is heavily saturated (output ≈ 1.0 for all inputs)
+        let saturated = !has_sufficient_output_variance(
+            &samples,
+            1.0,  // incoming_weight
+            10.0, // bias (way too large!)
+            |x| x.tanh(),
+        );
+        assert!(
+            saturated,
+            "TANH with bias=10 should be detected as saturated"
+        );
+
+        // TANH with moderate bias=1 should still have variance
+        let not_saturated = has_sufficient_output_variance(
+            &samples,
+            1.0, // incoming_weight
+            1.0, // bias (reasonable)
+            |x| x.tanh(),
+        );
+        assert!(
+            not_saturated,
+            "TANH with bias=1 should NOT be saturated - still has output variance"
+        );
+    }
+
+    /// Test that ReLU is not incorrectly flagged as saturated.
+    /// ReLU naturally has "half" of samples at 0, but the other half varies.
+    #[test]
+    fn test_saturation_detection_relu_not_false_positive() {
+        let samples: Vec<HelpfulSample> = (-10..=10)
+            .map(|i| HelpfulSample {
+                activation: i as f32 / 10.0,
+                avg_error: 0.1,
+                target_value: None,
+                target_activation: None,
+            })
+            .collect();
+
+        // ReLU with bias=0 should NOT be flagged as saturated
+        // Half the outputs are 0, but the other half varies from 0 to 1
+        let not_saturated = has_sufficient_output_variance(&samples, 1.0, 0.0, |x| x.max(0.0));
+        assert!(
+            not_saturated,
+            "ReLU with bias=0 should NOT be flagged as saturated"
+        );
+    }
+
+    /// Test that constant input samples are NOT incorrectly rejected.
+    /// If input is constant, output will be constant too, but predictions are still valid.
+    #[test]
+    fn test_saturation_detection_allows_constant_input() {
+        // All samples have the same input activation (constant input)
+        let samples: Vec<HelpfulSample> = (0..20)
+            .map(|_| HelpfulSample {
+                activation: -1.0, // Constant input
+                avg_error: 0.3,
+                target_value: None,
+                target_activation: None,
+            })
+            .collect();
+
+        // Even with large bias, constant input should be allowed
+        // because predictions are still valid when input doesn't vary
+        let should_allow = has_sufficient_output_variance(
+            &samples,
+            1.0,
+            5.0, // Large bias, but input is constant so it's OK
+            |x| x.tanh(),
+        );
+        assert!(
+            should_allow,
+            "Constant input samples should NOT be rejected - predictions are valid"
+        );
     }
 }
 
