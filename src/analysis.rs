@@ -574,65 +574,82 @@ fn log_gpu_info_once(
     });
 }
 
+/// Constants for deadline calculation - shared between `calculate_effective_timeout_ms` and `build_deadline`.
+const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes (10 * 60 * 1000)
+const YEAR_2000_MS: u64 = 946_684_800_000;
+const MIN_DURATION_MS: u64 = 3_000; // 3 seconds
+const MAX_DURATION_MS: u64 = 3_600_000; // 1 hour (60 * 60 * 1000)
+
+/// Calculate the effective timeout duration in milliseconds.
+///
+/// This function applies the same logic as `build_deadline`:
+/// 1. Converts absolute timestamps (values >= year 2000 in ms) to relative durations
+/// 2. Clamps values outside the 3-second to 1-hour range to the 10-minute default
+///
+/// Returns `None` if the deadline is in the past (for absolute timestamps), or
+/// `Some(effective_duration_ms)` otherwise.
+///
+/// Used by both `build_deadline` (to create the SystemTime) and `log_analysis_start`
+/// (to display the effective timeout to users).
+fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
+    let target_ms = deadline_ms.unwrap_or(DEFAULT_DURATION_MS);
+
+    // Heuristic: if the value is less than year 2000 in milliseconds,
+    // treat it as a relative duration. Otherwise, it's likely an absolute timestamp
+    // from the calling code, so convert it to a relative duration.
+    let relative_ms = if target_ms < YEAR_2000_MS {
+        // Small value - treat as relative duration (milliseconds from now)
+        target_ms
+    } else {
+        // Large value - likely an absolute timestamp from calling code.
+        // Convert to relative duration by subtracting current time.
+        let now_ms = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()?
+            .as_millis() as u64;
+
+        // If the timestamp is in the past, return None (deadline already passed)
+        if target_ms <= now_ms {
+            return None;
+        }
+
+        // Calculate relative duration
+        target_ms - now_ms
+    };
+
+    // Validate duration bounds: minimum 3 seconds, maximum 1 hour
+    // If invalid, default to 10 minutes (expected typical value)
+    // NOTE: If these warnings appear, it's a bug in the calling code (NEAT-AI or GRQ)
+    // that should be fixed to pass valid timeout values.
+    let validated_ms = if relative_ms < MIN_DURATION_MS {
+        eprintln!(
+            "⚠️  [NEAT-AI-Discovery] BUG: analysis_deadline_ms ({:.1}s) is less than minimum (3s). \
+             Using default 10 minute timeout. Please fix the calling code (NEAT-AI/GRQ) to pass a valid timeout.",
+            relative_ms as f64 / 1000.0
+        );
+        DEFAULT_DURATION_MS
+    } else if relative_ms > MAX_DURATION_MS {
+        eprintln!(
+            "⚠️  [NEAT-AI-Discovery] BUG: analysis_deadline_ms ({:.1}s) exceeds maximum (1 hour). \
+             Using default 10 minute timeout. Please fix the calling code (NEAT-AI/GRQ) to pass a valid timeout.",
+            relative_ms as f64 / 1000.0
+        );
+        DEFAULT_DURATION_MS
+    } else {
+        relative_ms
+    };
+
+    Some(validated_ms)
+}
+
 fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
     // Treat deadline_ms as a relative duration (milliseconds from now), not an absolute timestamp.
     // The calling code (TypeScript) calculates this as Date.now() + duration, but we want to treat
     // it as a duration to avoid issues with clock skew and to match the expected semantics.
     // If the calling code passes an absolute timestamp, we need to convert it to a relative duration.
     // If None is passed, apply default 10 minute timeout to prevent runaway analysis.
-    const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes (10 * 60 * 1000)
-
-    let target_ms = deadline_ms.unwrap_or(DEFAULT_DURATION_MS);
-
-    Some(target_ms).and_then(|target_ms| {
-        // Heuristic: if the value is less than year 2000 in milliseconds (946684800000),
-        // treat it as a relative duration. Otherwise, it's likely an absolute timestamp
-        // from the calling code, so convert it to a relative duration.
-        const YEAR_2000_MS: u64 = 946_684_800_000;
-
-        let relative_ms = if target_ms < YEAR_2000_MS {
-            // Small value - treat as relative duration (milliseconds from now)
-            target_ms
-        } else {
-            // Large value - likely an absolute timestamp from calling code.
-            // Convert to relative duration by subtracting current time.
-            let now_ms = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .ok()?
-                .as_millis() as u64;
-
-            // If the timestamp is in the past, return None (deadline already passed)
-            if target_ms <= now_ms {
-                return None;
-            }
-
-            // Calculate relative duration
-            target_ms - now_ms
-        };
-
-        // Validate duration bounds: minimum 3 seconds, maximum 1 hour
-        // If invalid, default to 10 minutes (expected typical value)
-        const MIN_DURATION_MS: u64 = 3_000; // 3 seconds
-        const MAX_DURATION_MS: u64 = 3_600_000; // 1 hour (60 * 60 * 1000)
-
-        let validated_ms = if relative_ms < MIN_DURATION_MS {
-            eprintln!(
-                "⚠️  WARNING: analysis_deadline_ms ({:.1}s) is less than minimum (3s). Using default 10 minute timeout.",
-                relative_ms as f64 / 1000.0
-            );
-            DEFAULT_DURATION_MS
-        } else if relative_ms > MAX_DURATION_MS {
-            eprintln!(
-                "⚠️  WARNING: analysis_deadline_ms ({:.1}s) exceeds maximum (1 hour). Using default 10 minute timeout.",
-                relative_ms as f64 / 1000.0
-            );
-            DEFAULT_DURATION_MS
-        } else {
-            relative_ms
-        };
-
-        SystemTime::now().checked_add(Duration::from_millis(validated_ms))
-    })
+    calculate_effective_timeout_ms(deadline_ms)
+        .and_then(|validated_ms| SystemTime::now().checked_add(Duration::from_millis(validated_ms)))
 }
 
 fn deadline_passed(deadline: &Option<SystemTime>) -> bool {
@@ -644,6 +661,53 @@ fn deadline_passed(deadline: &Option<SystemTime>) -> bool {
     }
 
     matches!(deadline, Some(limit) if SystemTime::now() >= *limit)
+}
+
+/// Log analysis start information including deadline and focus neuron count.
+/// This provides visibility into timeout configuration without requiring verbose mode.
+fn log_analysis_start(
+    analysis_type: &str,
+    deadline_ms: Option<u64>,
+    focus_count: usize,
+    shuffled_order: &[String],
+) {
+    // Calculate the effective deadline duration using the same logic as build_deadline.
+    // This ensures the logged timeout matches what's actually used.
+    let deadline_duration_ms =
+        calculate_effective_timeout_ms(deadline_ms).unwrap_or(DEFAULT_DURATION_MS);
+    let deadline_secs = deadline_duration_ms as f64 / 1000.0;
+
+    // Format the timeout nicely
+    let timeout_str = if deadline_secs >= 60.0 {
+        let minutes = deadline_secs / 60.0;
+        format!("{minutes:.1} minutes")
+    } else {
+        format!("{deadline_secs:.1} seconds")
+    };
+
+    eprintln!(
+        "[NEAT-AI-Discovery] Starting {analysis_type} analysis: {focus_count} focus neurons, timeout: {timeout_str}"
+    );
+
+    // Log the shuffled order if verbose mode is enabled
+    if verbose_enabled() && !shuffled_order.is_empty() {
+        let preview: Vec<&str> = shuffled_order.iter().take(5).map(|s| s.as_str()).collect();
+        let extra = shuffled_order.len().saturating_sub(5);
+        let suffix = if extra > 0 {
+            format!("... (+{extra} more)")
+        } else {
+            String::new()
+        };
+        eprintln!("[NEAT-AI-Discovery][verbose] Randomised focus order: {preview:?}{suffix}");
+    }
+}
+
+/// Log when analysis timeout is reached. Always prints (not verbose-only).
+fn log_analysis_timeout(analysis_type: &str, completed_count: usize, total_count: usize) {
+    eprintln!(
+        "[NEAT-AI-Discovery] {analysis_type} analysis reached timeout. Completed {completed_count}/{total_count} focus neurons. \
+         Returning partial results."
+    );
 }
 
 #[cfg(test)]
@@ -6865,6 +6929,18 @@ fn analyze_neurons_with_cache(
     let mut rng = thread_rng();
     focus_order.shuffle(&mut rng);
 
+    // Log analysis start with timeout duration and randomised order
+    log_analysis_start(
+        "neuron",
+        input.analysis_deadline_ms,
+        focus_order.len(),
+        &focus_order,
+    );
+
+    // Track completed focus neurons for timeout logging
+    let total_focus_count = focus_order.len();
+    let completed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
     let order_map_arc = Arc::new(order_map);
@@ -7225,6 +7301,8 @@ fn analyze_neurons_with_cache(
                 }
             }
 
+            // Track completion of this focus neuron for timeout reporting
+            completed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         })?;
 
@@ -7237,8 +7315,10 @@ fn analyze_neurons_with_cache(
         .clone();
     let diagnostics = diagnostics.lock().expect("Mutex poisoned: diagnostics");
 
-    if analysis_timed_out && verbose_enabled() {
-        eprintln!("[NEAT-AI-Discovery][verbose] analyse_neurons reached analysis deadline; returning partial results.");
+    // Log timeout with completion stats (always visible, not just verbose)
+    if analysis_timed_out {
+        let completed = completed_count.load(std::sync::atomic::Ordering::Relaxed);
+        log_analysis_timeout("neuron", completed, total_focus_count);
     }
 
     let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
@@ -7833,6 +7913,18 @@ fn analyze_synapses_with_cache(
     let mut rng = thread_rng();
     focus_order.shuffle(&mut rng);
 
+    // Log analysis start with timeout duration and randomised order
+    log_analysis_start(
+        "synapse",
+        input.analysis_deadline_ms,
+        focus_order.len(),
+        &focus_order,
+    );
+
+    // Track completed focus neurons for timeout logging
+    let total_focus_count = focus_order.len();
+    let completed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
     // v0.1.134: Default threshold is 0 - return ALL positive improvements.
     // TypeScript will decide which candidates are worth the cost of growth.
     let threshold = input.improvement_threshold.unwrap_or(0.0);
@@ -8416,6 +8508,8 @@ fn analyze_synapses_with_cache(
                 }
             }
 
+            // Track completion of this focus neuron for timeout reporting
+            completed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         })?;
 
@@ -8425,8 +8519,10 @@ fn analyze_synapses_with_cache(
     let mut helpful_fallback = helpful_fallback.lock().expect("Mutex poisoned").take();
     let mut diagnostics = diagnostics.lock().expect("Mutex poisoned");
 
-    if analysis_timed_out && verbose_enabled() {
-        eprintln!("[NEAT-AI-Discovery][verbose] analyse_synapses reached analysis deadline; returning partial results.");
+    // Log timeout with completion stats (always visible, not just verbose)
+    if analysis_timed_out {
+        let completed = completed_count.load(std::sync::atomic::Ordering::Relaxed);
+        log_analysis_timeout("synapse", completed, total_focus_count);
     }
 
     if helpful_results.is_empty() {
@@ -8761,6 +8857,73 @@ mod tests_synapses {
         } else {
             panic!("Maximum deadline should be in the future");
         }
+    }
+
+    /// Test that calculate_effective_timeout_ms applies the same logic as build_deadline.
+    /// This is critical for ensuring log_analysis_start displays the correct timeout.
+    #[test]
+    fn calculate_effective_timeout_ms_matches_build_deadline_logic() {
+        let now_ms = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("SystemTime should be after UNIX_EPOCH")
+            .as_millis() as u64;
+
+        // Test 1: Relative duration (15 minutes) should pass through unchanged
+        let fifteen_minutes_ms = 15 * 60 * 1000u64;
+        let result = calculate_effective_timeout_ms(Some(fifteen_minutes_ms));
+        assert_eq!(
+            result,
+            Some(fifteen_minutes_ms),
+            "15 minute relative duration should pass through unchanged"
+        );
+
+        // Test 2: Absolute timestamp (now + 15 minutes) should convert to ~15 minutes
+        let absolute_15min = now_ms + fifteen_minutes_ms;
+        let result = calculate_effective_timeout_ms(Some(absolute_15min));
+        assert!(
+            result.is_some(),
+            "Future absolute timestamp should return Some"
+        );
+        let effective_ms = result.unwrap();
+        // Allow 2 second tolerance for timing variance
+        assert!(
+            effective_ms >= fifteen_minutes_ms - 2000 && effective_ms <= fifteen_minutes_ms + 2000,
+            "Absolute timestamp should convert to ~15 minutes, got {effective_ms}ms"
+        );
+
+        // Test 3: Duration below minimum (1 second) should default to 10 minutes
+        let too_short_ms = 1_000u64;
+        let result = calculate_effective_timeout_ms(Some(too_short_ms));
+        assert_eq!(
+            result,
+            Some(DEFAULT_DURATION_MS),
+            "Duration below 3 seconds should default to 10 minutes"
+        );
+
+        // Test 4: Duration above maximum (2 hours) should default to 10 minutes
+        let too_long_ms = 2 * 3_600_000u64;
+        let result = calculate_effective_timeout_ms(Some(too_long_ms));
+        assert_eq!(
+            result,
+            Some(DEFAULT_DURATION_MS),
+            "Duration above 1 hour should default to 10 minutes"
+        );
+
+        // Test 5: Past absolute timestamp should return None
+        let past_timestamp_ms = 1_700_000_000_000u64; // Circa late 2023
+        let result = calculate_effective_timeout_ms(Some(past_timestamp_ms));
+        assert!(
+            result.is_none(),
+            "Past timestamp should return None (deadline already passed)"
+        );
+
+        // Test 6: None should default to 10 minutes
+        let result = calculate_effective_timeout_ms(None);
+        assert_eq!(
+            result,
+            Some(DEFAULT_DURATION_MS),
+            "None should default to 10 minutes"
+        );
     }
 
     #[test]
