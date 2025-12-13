@@ -161,7 +161,7 @@ fn test_optimised_params_vary_by_sample() {
             .map(|c| {
                 format!(
                     "{}:in={:.2},bias={:.2},exp={:.4}%",
-                    c.squash, c.incoming_weight, c.bias, c.expected_improvement_percentage
+                    c.squash, c.incoming_weight, c.bias, c.expected_creature_score_gain
                 )
             })
             .collect();
@@ -245,7 +245,7 @@ fn test_conservative_params_more_stable_across_samples() {
                 candidate.squash,
                 candidate.incoming_weight,
                 candidate.bias,
-                candidate.expected_improvement_percentage
+                candidate.expected_creature_score_gain
             );
         } else {
             extreme_candidates += 1;
@@ -254,7 +254,7 @@ fn test_conservative_params_more_stable_across_samples() {
                 candidate.squash,
                 candidate.incoming_weight,
                 candidate.bias,
-                candidate.expected_improvement_percentage
+                candidate.expected_creature_score_gain
             );
         }
     }
@@ -470,7 +470,7 @@ fn test_synapse_candidates_no_bias_optimisation() {
             synapse.from_neuron_uuid,
             synapse.to_neuron_uuid,
             synapse.weight,
-            synapse.expected_improvement_percentage * 100.0
+            synapse.expected_creature_score_gain * 100.0
         );
     }
 

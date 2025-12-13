@@ -194,7 +194,7 @@ fn regression_hidden_neurons_must_be_analyzed_not_filtered() {
 ///
 /// BUG (fixed in v0.1.123): Fallback candidates with very low predicted improvement
 /// v0.1.134: Removed the arbitrary 2% MIN_FALLBACK_IMPROVEMENT threshold.
-/// v0.1.135: Added split-error evaluation - expected_improvement_percentage is now
+/// v0.1.135: Added split-error evaluation - expected_creature_score_gain is now
 /// the NET improvement across ALL samples, not just a subset.
 ///
 /// The only requirement is positive improvement. TypeScript evaluates actual score.
@@ -272,20 +272,20 @@ fn regression_low_improvement_fallback_candidates_must_be_filtered() {
     let result = analyze_neurons(&input).expect("Neuron analysis should succeed");
 
     // v0.1.134/v0.1.135: All returned candidates must have positive improvement.
-    // The expected_improvement_percentage is now the NET improvement across ALL samples
+    // The expected_creature_score_gain is now the NET improvement across ALL samples
     // (thanks to split-error evaluation), so TypeScript can trust this value directly.
     for candidate in &result.helpful_neurons {
         assert!(
-            candidate.expected_improvement_percentage > 0.0,
+            candidate.expected_creature_score_gain > 0.0,
             "Candidate should have positive expected improvement, got {:.4}%",
-            candidate.expected_improvement_percentage * 100.0
+            candidate.expected_creature_score_gain * 100.0
         );
         eprintln!(
             "Candidate: {} -> {} ({}), improvement: {:.4}%",
             candidate.source_neuron_uuid,
             candidate.target_neuron_uuid,
             candidate.squash,
-            candidate.expected_improvement_percentage * 100.0
+            candidate.expected_creature_score_gain * 100.0
         );
     }
 
@@ -546,16 +546,16 @@ fn regression_discounted_hidden_neurons_must_meet_minimum_threshold() {
     // TypeScript will evaluate the actual score change.
     for candidate in &result.helpful_neurons {
         assert!(
-            candidate.expected_improvement_percentage > 0.0,
+            candidate.expected_creature_score_gain > 0.0,
             "Candidate should have positive expected improvement, got {:.6}%",
-            candidate.expected_improvement_percentage * 100.0
+            candidate.expected_creature_score_gain * 100.0
         );
         eprintln!(
             "Candidate: {} -> {} ({}), improvement: {:.4}%",
             candidate.source_neuron_uuid,
             candidate.target_neuron_uuid,
             candidate.squash,
-            candidate.expected_improvement_percentage * 100.0
+            candidate.expected_creature_score_gain * 100.0
         );
     }
 

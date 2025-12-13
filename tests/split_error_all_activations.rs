@@ -172,7 +172,7 @@ fn test_non_relu_activations_use_split_error_evaluation() {
             "  {} via {}: {:.4}% expected",
             c.target_neuron_uuid,
             c.squash,
-            c.expected_improvement_percentage * 100.0
+            c.expected_creature_score_gain * 100.0
         );
     }
 
@@ -187,17 +187,17 @@ fn test_non_relu_activations_use_split_error_evaluation() {
     for candidate in &input1_candidates {
         // This assertion will help us verify the fix works
         assert!(
-            candidate.expected_improvement_percentage > 0.0,
+            candidate.expected_creature_score_gain > 0.0,
             "Returned candidates must have positive expected improvement"
         );
 
         // ADDITIONAL CHECK: With 50/50 split and weak correlation,
         // improvements should be small and close to zero
         // Large improvements (>10%) with 50/50 split suggests a bug
-        if candidate.expected_improvement_percentage > 0.10 {
+        if candidate.expected_creature_score_gain > 0.10 {
             eprintln!(
                 "WARNING: Large improvement ({:.2}%) with 50/50 split errors - verify accuracy",
-                candidate.expected_improvement_percentage * 100.0
+                candidate.expected_creature_score_gain * 100.0
             );
         }
     }
@@ -295,14 +295,14 @@ fn test_skewed_errors_return_candidates() {
             c.source_neuron_uuid,
             c.target_neuron_uuid,
             c.squash,
-            c.expected_improvement_percentage * 100.0
+            c.expected_creature_score_gain * 100.0
         );
     }
 
     // Verify all returned candidates have positive improvement
     for candidate in &result.helpful_neurons {
         assert!(
-            candidate.expected_improvement_percentage > 0.0,
+            candidate.expected_creature_score_gain > 0.0,
             "All candidates should have positive expected improvement"
         );
     }

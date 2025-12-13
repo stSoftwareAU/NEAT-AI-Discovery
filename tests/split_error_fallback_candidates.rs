@@ -181,8 +181,8 @@ fn regression_split_error_must_return_fallback_candidates() {
             "  {} via {}: {:.4}% expected (threshold check: {})",
             c.target_neuron_uuid,
             c.squash,
-            c.expected_improvement_percentage * 100.0,
-            if c.expected_improvement_percentage >= 0.50 {
+            c.expected_creature_score_gain * 100.0,
+            if c.expected_creature_score_gain >= 0.50 {
                 "PASS"
             } else {
                 "FALLBACK"
@@ -199,16 +199,14 @@ fn regression_split_error_must_return_fallback_candidates() {
     let positive_candidates: Vec<_> = result
         .helpful_neurons
         .iter()
-        .filter(|c| c.expected_improvement_percentage > 0.0)
+        .filter(|c| c.expected_creature_score_gain > 0.0)
         .collect();
 
     // Also check if any candidates have improvement below threshold (the fallback case)
     let below_threshold_candidates: Vec<_> = result
         .helpful_neurons
         .iter()
-        .filter(|c| {
-            c.expected_improvement_percentage > 0.0 && c.expected_improvement_percentage < 0.50
-        })
+        .filter(|c| c.expected_creature_score_gain > 0.0 && c.expected_creature_score_gain < 0.50)
         .collect();
 
     eprintln!(
@@ -349,7 +347,7 @@ fn test_fallback_candidates_below_threshold_are_returned() {
             c.source_neuron_uuid,
             c.target_neuron_uuid,
             c.squash,
-            c.expected_improvement_percentage * 100.0
+            c.expected_creature_score_gain * 100.0
         );
     }
 
@@ -358,7 +356,7 @@ fn test_fallback_candidates_below_threshold_are_returned() {
     let positive_candidates: Vec<_> = result
         .helpful_neurons
         .iter()
-        .filter(|c| c.expected_improvement_percentage > 0.0)
+        .filter(|c| c.expected_creature_score_gain > 0.0)
         .collect();
 
     eprintln!(
@@ -371,7 +369,7 @@ fn test_fallback_candidates_below_threshold_are_returned() {
     // specifically targets the split-error path where the bug manifests.
     for candidate in &positive_candidates {
         assert!(
-            candidate.expected_improvement_percentage > 0.0,
+            candidate.expected_creature_score_gain > 0.0,
             "All returned candidates should have positive improvement"
         );
     }

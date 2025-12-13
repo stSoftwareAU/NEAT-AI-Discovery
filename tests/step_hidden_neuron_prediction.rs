@@ -184,7 +184,7 @@ fn test_step_hidden_neuron_prediction_vs_reality() {
     // If we found any candidates for this STEP hidden neuron, check the prediction accuracy
     for candidate in &result.helpful_neurons {
         if candidate.target_neuron_uuid == "hidden-step" {
-            let expected_pct = candidate.expected_improvement_percentage;
+            let expected_pct = candidate.expected_creature_score_gain;
             println!(
                 "Candidate {} -> {}: expected improvement = {:.4}%",
                 candidate.source_neuron_uuid,
@@ -192,7 +192,7 @@ fn test_step_hidden_neuron_prediction_vs_reality() {
                 expected_pct * 100.0
             );
 
-            // The bug: For STEP hidden neurons, `expected_improvement_percentage` is "flip rate"
+            // The bug: For STEP hidden neurons, `expected_creature_score_gain` is "flip rate"
             // not actual error reduction. If this is > 5%, the prediction is likely wrong.
             //
             // With our test data, ~50% of samples would flip, so expected_pct might be ~0.5 (50%)
@@ -276,7 +276,7 @@ fn test_identity_zero_bias_should_not_be_recommended() {
                 This is equivalent to a synapse: IDENTITY(x×{} + 0) × {} = x × {}",
                 candidate.source_neuron_uuid,
                 candidate.target_neuron_uuid,
-                candidate.expected_improvement_percentage * 100.0,
+                candidate.expected_creature_score_gain * 100.0,
                 candidate.incoming_weight,
                 candidate.outgoing_weight,
                 candidate.incoming_weight * candidate.outgoing_weight
