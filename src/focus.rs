@@ -726,6 +726,10 @@ pub fn compute_impacts_public(creature: &CreatureJson) -> HashMap<String, f32> {
 struct ImpactContext {
     adjacency: HashMap<String, Vec<(String, f32)>>,
     inbound_count: HashMap<String, usize>,
+    /// Sum of |weight| for all synapses INTO each target neuron.
+    /// Used for normalising Linear squash impact: |w| / total_inbound_weight × child_impact
+    /// This ensures hidden neurons always have impact < 1.0 (Issue #130).
+    total_inbound_weight: HashMap<String, f32>,
     squash_map: HashMap<String, String>,
     outputs: HashSet<String>,
     /// Selection statistics from activation records.
@@ -767,6 +771,18 @@ fn compute_impacts_internal_with_stats(
         map
     };
 
+    // Build total inbound weight for Linear squash normalisation (Issue #130).
+    // Sum of |weight| for all synapses INTO each target neuron.
+    // This ensures hidden neurons always have impact < 1.0:
+    //   contribution = |weight| / total_inbound_weight × child_impact
+    let total_inbound_weight: HashMap<String, f32> = {
+        let mut map: HashMap<String, f32> = HashMap::new();
+        for synapse in &creature.synapses {
+            *map.entry(synapse.to_uuid.clone()).or_insert(0.0) += synapse.weight.abs();
+        }
+        map
+    };
+
     let outputs: HashSet<String> = creature
         .neurons
         .iter()
@@ -782,6 +798,7 @@ fn compute_impacts_internal_with_stats(
     let ctx = ImpactContext {
         adjacency,
         inbound_count,
+        total_inbound_weight,
         squash_map,
         outputs,
         selection_stats,
@@ -863,7 +880,22 @@ fn compute_impact_with_shared_cache(
             let category = SquashCategory::from_squash(squash);
 
             let contribution = match category {
-                SquashCategory::Linear => weight.abs() * child_impact,
+                SquashCategory::Linear => {
+                    // Issue #130: Normalise by total inbound weight to ensure hidden neurons
+                    // always have impact < 1.0. This matches the documented formula:
+                    //   contribution = |weight| / total_inbound_weight × child_impact
+                    //
+                    // Without normalisation, a hidden neuron with weight 3.0 to an output
+                    // would get impact = 3.0, which is mathematically incorrect for the
+                    // PURPOSE of prediction discounting (measuring fraction of influence).
+                    let total = ctx
+                        .total_inbound_weight
+                        .get(to_uuid)
+                        .copied()
+                        .unwrap_or(1.0)
+                        .max(weight.abs()); // Safety: never divide by less than this weight
+                    (weight.abs() / total) * child_impact
+                }
                 SquashCategory::Threshold => child_impact,
                 SquashCategory::Selection => {
                     if let Some(ref stats) = ctx.selection_stats {

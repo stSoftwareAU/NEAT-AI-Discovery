@@ -129,12 +129,14 @@ fn impact_caching_handles_diamond_topology() {
         "hidden-1 ({impact_1}) and hidden-2 ({impact_2}) should have same impact"
     );
 
-    // hidden-1's impact should be sum of paths through hidden-3 and hidden-4
-    // impact = weight_to_3 × impact_3 + weight_to_4 × impact_4
-    //        = 1.0 × 0.5 + 1.0 × 0.5 = 1.0
+    // hidden-1's impact should be sum of normalised paths through hidden-3 and hidden-4
+    // hidden-3 = 0.5 / (0.5+0.5) × 1.0 = 0.5 (shares output with hidden-4)
+    // hidden-1 → hidden-3: 1.0 / (1.0+1.0) × 0.5 = 0.25 (shares hidden-3 with hidden-2)
+    // hidden-1 → hidden-4: 1.0 / (1.0+1.0) × 0.5 = 0.25 (shares hidden-4 with hidden-2)
+    // Total: 0.25 + 0.25 = 0.5
     assert!(
-        (impact_1 - 1.0).abs() < 0.001,
-        "hidden-1 should have impact ~1.0, got {impact_1}"
+        (impact_1 - 0.5).abs() < 0.001,
+        "hidden-1 should have impact ~0.5, got {impact_1}"
     );
 }
 
@@ -190,39 +192,35 @@ fn impact_caching_handles_deep_networks() {
     // Verify impacts are computed correctly along the chain
     assert_eq!(impacts.get("output-0").copied().unwrap_or(0.0), 1.0);
 
-    // hidden-9 -> output with weight 1.0, so impact = 1.0
+    // hidden-9 -> output with weight 1.0, and it's the SOLE input to output
+    // Normalised impact: 1.0 / 1.0 × 1.0 = 1.0
     assert!(
         (impacts.get("hidden-9").copied().unwrap_or(0.0) - 1.0).abs() < 0.001,
         "hidden-9 should have impact ~1.0"
     );
 
-    // With ABSOLUTE impact (v0.1.145), each hop multiplies by the weight.
-    // hidden-0 connects through 10 hops with weight 0.9 each, then weight 1.0 to output.
-    // So impact = 0.9^10 × 1.0 = 0.3486784401
-    // But the important thing is that it's GREATER than zero and LESS than 1.0
+    // With NORMALISED impact (Issue #130 fix), in a chain of sole connections:
+    // Each neuron is the ONLY input to the next, so each has 100% of that neuron's
+    // input weight. Therefore, all neurons in a sole-connection chain have impact = 1.0.
+    //
+    // Example: hidden-8 → hidden-9 (weight 0.9, sole input)
+    // Normalised impact = 0.9 / 0.9 × 1.0 = 1.0
+    //
+    // This is correct! If you're the ONLY input, you have 100% influence.
+    // Impact only dilutes when there are COMPETING inputs.
     let impact_0 = impacts.get("hidden-0").copied().unwrap_or(0.0);
     assert!(
-        impact_0 > 0.0 && impact_0 < 1.0,
-        "hidden-0 should have impact between 0 and 1, got {impact_0}"
+        (impact_0 - 1.0).abs() < 0.001,
+        "hidden-0 should have impact ~1.0 (sole connection chain), got {impact_0}"
     );
 
-    // Each step should have diminishing impact (closer to output = higher impact)
-    let mut prev_impact = 2.0; // Start higher than 1.0
-    for i in (0..10).rev() {
+    // All neurons in a sole-connection chain should have the same impact (1.0)
+    for i in 0..10 {
         let current_impact = impacts.get(&format!("hidden-{i}")).copied().unwrap_or(0.0);
         assert!(
-            current_impact > 0.0,
-            "hidden-{i} should have positive impact"
+            (current_impact - 1.0).abs() < 0.001,
+            "hidden-{i} should have impact ~1.0 (sole connection), got {current_impact}"
         );
-        assert!(
-            current_impact < prev_impact,
-            "hidden-{} ({}) should have less impact than hidden-{} ({})",
-            i,
-            current_impact,
-            i + 1,
-            prev_impact
-        );
-        prev_impact = current_impact;
     }
 }
 

@@ -780,7 +780,7 @@ expected improvements.
 
 **How it works**:
 - **Output neurons**: Impact = 1.0 (direct contribution to score). No discount applied.
-- **Hidden neurons**: Impact = path weight product to outputs. Predictions are
+- **Hidden neurons**: Impact = normalised path weight to outputs. Predictions are
   discounted by impact factor.
 
 For a hidden neuron with impact 0.5:
@@ -789,6 +789,39 @@ For a hidden neuron with impact 0.5:
 
 This discounting ensures hidden neuron predictions reflect their actual contribution
 to the creature's score based on their position in the network topology.
+
+#### Normalised impact calculation (v0.2.1, Issue #130)
+
+**BUG FIX**: Hidden neurons were incorrectly getting `targetNeuronImpact = 1.0`
+(same as output neurons) when they had large weights to outputs. This caused
+predictions to NOT be discounted, leading to massive overestimation.
+
+**The problem**: The impact formula was using absolute weights:
+```
+contribution = |weight| × child_impact
+```
+
+With weight 3.0 to output: `3.0 × 1.0 = 3.0` (then clamped to 1.0).
+Result: Hidden neuron treated like output → NO discounting applied.
+
+**The fix**: Use normalised weights as documented:
+```
+contribution = |weight| / total_inbound_weight × child_impact
+```
+
+This measures **attribution** (fraction of influence), not sensitivity:
+
+| Scenario | Normalised Impact | Meaning |
+|----------|-------------------|---------|
+| Sole input to output | 1.0 | 100% influence |
+| 50% of output's input weight | 0.5 | 50% influence |
+| 1% of output's input weight | 0.01 | 1% influence |
+
+**Key properties**:
+- Output neurons: impact = 1.0 (always)
+- Hidden neurons: impact ≤ 1.0 (depending on fraction of total input weight)
+- Multiple competing inputs: impact dilutes proportionally
+- Sum of all inputs to a neuron = 1.0 (fractions sum to whole)
 
 #### All other activations
 

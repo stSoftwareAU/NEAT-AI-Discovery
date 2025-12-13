@@ -334,10 +334,14 @@ This captures that a neuron with:
 
 ---
 
-## 📋 Implementation Status (v0.1.143+)
+## 📋 Implementation Status (v0.2.1+)
 
 The impact calculation is now **squash-aware** and uses **activation-based statistics**
 when available. Different squash functions use different impact formulas:
+
+> **Issue #130 fix (v0.2.1)**: The Linear squash formula now correctly uses normalised
+> weights (`|w|/T × child_impact`) as documented. Previously, it incorrectly used
+> absolute weights (`|w| × child_impact`), causing hidden neurons to get impact >= 1.0.
 
 | Squash Function | Impact Model | Accuracy | Notes |
 |-----------------|--------------|----------|-------|
