@@ -51,6 +51,54 @@ the discovery optimisation is skipped.
 **Very old machines** (pre-2015 Macs, old Linux servers without GPU) will have
 discovery disabled gracefully. This prevents hangs while allowing evolution to run.
 
+### Parquet File Memory Check (v0.1.165+)
+
+Before loading a parquet file, the library checks if there's enough available memory.
+Parquet files are compressed, so they typically expand to 2-4× their file size when
+loaded into memory. The library uses conservative checks to prevent memory pressure
+that causes the system to become unresponsive:
+
+1. **3× file size** for in-memory representation
+2. **1GB headroom** after loading (for GPU buffers, etc.)
+3. **50% RAM limit** - won't use more than half of total RAM for parquet data
+
+If insufficient memory is detected, you'll see an error like:
+
+```
+Parquet file too large for system memory.
+• Parquet file: 1231 MB (/path/to/records.parquet)
+• Estimated memory needed: 3693 MB (46% of 8 GB total RAM)
+• Maximum safe usage: 4096 MB (50% of RAM = 4.0 GB)
+• Maximum parquet file size for this machine: 1365 MB
+
+Suggestions:
+• Reduce sample rate (e.g., discoverySampleRate: 0.02)
+• Reduce recording time (discoveryRecordTimeOutMinutes)
+• Use a machine with more RAM (16GB+ recommended for large creatures)
+```
+
+**Maximum parquet file sizes by RAM:**
+| Total RAM | Max Parquet File | Explanation |
+|-----------|------------------|-------------|
+| 8 GB      | ~1.3 GB          | 50% limit = 4GB, ÷3 decompression = 1.3GB |
+| 16 GB     | ~2.6 GB          | 50% limit = 8GB, ÷3 decompression = 2.6GB |
+| 32 GB     | ~5.3 GB          | 50% limit = 16GB, ÷3 decompression = 5.3GB |
+
+To reduce parquet file size:
+- Lower `discoverySampleRate` (e.g., from 0.05 to 0.02)
+- Reduce `discoveryRecordTimeOutMinutes`
+- Use fewer training data files
+
+### Parallel Focus Selection (v0.1.165)
+
+Focus neuron selection is now parallelised using rayon for better CPU utilisation:
+- Neuron ranking (computing errors/impacts for each neuron)
+- Selection statistics for MIN/MAX/IF neurons
+- Removal candidate identification
+
+This can significantly speed up focus selection on multi-core systems, especially for
+large creatures with hundreds of neurons.
+
 ## Quick start
 
 1. Install prerequisites (`rustup`, `cargo`, build tools, and `jq`). The
@@ -1180,17 +1228,37 @@ whether discovery should be enabled:
   operations. If the GPU becomes unresponsive, you'll see an error like:
   
   ```
-  GPU helpful batch evaluation timed out after 60s. The GPU may be unresponsive.
+  GPU helpful batch evaluation timed out after 150s. The GPU may be unresponsive.
   Consider reducing batch size or restarting.
   ```
   
-  **Two-tier timeout architecture** (v0.1.156):
-  - **Buffer mapping timeout**: 55 seconds - allows GPU operations to timeout internally
-  - **Queue timeout**: 60 seconds - ensures the work queue doesn't block forever
+  **Adaptive timeout architecture** (v0.1.166):
+  - **Minimum GPU batch timeout**: 60 seconds - catches unresponsive GPU quickly
+  - **Maximum GPU batch timeout**: 5 minutes - prevents infinite waits
+  - **Deadline-aware**: When analysis has a deadline, uses up to half remaining time
+  - **Non-blocking work submission**: `send_timeout()` prevents deadlock if GPU hangs
   - **Shutdown timeout**: 12 seconds max (2s send + 10s exit wait) - prevents hung cleanup
   
-  This layered approach ensures the GPU thread always has time to detect timeouts and
-  return errors before the queue gives up, preventing deadlocks when the GPU driver hangs.
+  The adaptive timeout scales with the analysis deadline. For large datasets (>1GB
+  Parquet files), GPU batch evaluations may legitimately take longer than 60 seconds.
+  Previously, this caused false "GPU unresponsive" errors. Now the timeout adapts:
+  - With 15 minute deadline: batch timeout = min(7.5min, 5min) = 5 minutes
+  - With 10 minute deadline: batch timeout = 5 minutes
+  - With 3 minute deadline: batch timeout = 1.5 minutes
+  - Without deadline: batch timeout = 5 minutes (maximum)
+  
+  **Critical deadlock fix (v0.1.166)**: Previous versions could hang forever if the GPU
+  thread became unresponsive. The work queue channel had limited capacity (4-16 items),
+  and if the GPU hung, sending threads would block forever waiting to submit work.
+  Now all work submissions use `send_timeout()` which returns an error instead of
+  blocking indefinitely:
+  ```
+  GPU work queue full - send timed out after 300s. The GPU thread may be hung.
+  Consider restarting the process.
+  ```
+  
+  This ensures the process always returns (possibly with errors) instead of hanging
+  for hours.
   
   **Causes and solutions:**
   - **GPU driver hang**: Restart the process. If persistent, restart the machine.

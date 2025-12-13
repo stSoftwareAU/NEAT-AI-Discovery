@@ -79,32 +79,73 @@ const MINIMUM_TOTAL_MEMORY_GB: f64 = 4.0;
 /// 1GB is sufficient since macOS can quickly reclaim cached/inactive pages.
 const MINIMUM_AVAILABLE_MEMORY_GB: f64 = 1.0;
 
-/// Timeout (seconds) for the GPU work queue waiting for a response from the GPU thread.
+/// Minimum timeout (seconds) for the GPU work queue waiting for a response from the GPU thread.
 /// This is the OUTER timeout - if the GPU thread doesn't respond within this time,
 /// the queue gives up and returns an error.
-const GPU_QUEUE_TIMEOUT_SECS: u64 = 60;
+/// For large datasets (>1GB Parquet files), batch evaluation may take longer than 60 seconds.
+const GPU_QUEUE_TIMEOUT_MIN_SECS: u64 = 60;
 
-/// Timeout (seconds) for individual GPU buffer mapping operations.
-/// This MUST be shorter than GPU_QUEUE_TIMEOUT_SECS to avoid a race condition:
-/// if both timeouts are the same, the queue might timeout before the GPU thread
+/// Maximum timeout (seconds) for GPU batch operations.
+/// Even with large datasets, if the GPU hasn't responded in 5 minutes, something is wrong.
+const GPU_QUEUE_TIMEOUT_MAX_SECS: u64 = 300;
+
+/// Buffer map timeout is always 5 seconds shorter than queue timeout to avoid race conditions.
+/// If both timeouts are the same, the queue might timeout before the GPU thread
 /// has a chance to return its own timeout error, leaving the thread stuck.
-/// By making this 5 seconds shorter, the GPU thread has time to detect the timeout,
-/// build an error response, and send it back before the queue gives up.
-const GPU_BUFFER_MAP_TIMEOUT_SECS: u64 = 55;
+const GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS: u64 = 5;
+
+/// Default buffer map timeout for internal GPU operations (in seconds).
+/// This is used inside the GPU thread where we don't have access to the external deadline.
+/// Set to max queue timeout minus margin for safety.
+const GPU_BUFFER_MAP_TIMEOUT_SECS: u64 =
+    GPU_QUEUE_TIMEOUT_MAX_SECS - GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS;
 
 /// Timeout for GPU thread initialisation (in seconds).
 /// GPU device creation should be fast; if it takes longer, something is wrong.
 const GPU_INIT_TIMEOUT_SECS: u64 = 30;
 
+/// Calculate adaptive GPU batch timeout based on remaining deadline.
+///
+/// For large datasets (>1GB Parquet files), GPU batch evaluations may take
+/// longer than the minimum 60 seconds. This function calculates a reasonable
+/// timeout based on:
+/// - Minimum: GPU_QUEUE_TIMEOUT_MIN_SECS (60s) - catches unresponsive GPU
+/// - Maximum: GPU_QUEUE_TIMEOUT_MAX_SECS (5 min) - prevents infinite waits
+/// - If deadline is available: uses up to half remaining time (capped at max)
+fn calculate_gpu_batch_timeout(deadline: &Option<std::time::SystemTime>) -> Duration {
+    let min_timeout = Duration::from_secs(GPU_QUEUE_TIMEOUT_MIN_SECS);
+    let max_timeout = Duration::from_secs(GPU_QUEUE_TIMEOUT_MAX_SECS);
+
+    match deadline {
+        Some(dl) => {
+            if let Ok(remaining) = dl.duration_since(std::time::SystemTime::now()) {
+                // Use half of remaining time, but capped between min and max
+                let half_remaining = remaining / 2;
+                if half_remaining < min_timeout {
+                    min_timeout
+                } else if half_remaining > max_timeout {
+                    max_timeout
+                } else {
+                    half_remaining
+                }
+            } else {
+                // Deadline already passed - use minimum
+                min_timeout
+            }
+        }
+        // No deadline - use maximum
+        None => max_timeout,
+    }
+}
+
 /// Wait for a GPU buffer mapping to complete.
 ///
 /// Uses `Maintain::Wait` which blocks until all submitted GPU work completes.
-/// This is more reliable than polling in a loop, especially on Metal/M4 where
-/// non-blocking polls can fail to properly schedule GPU work.
+/// This is the reliable way to wait for buffer mapping on all backends,
+/// especially Metal where non-blocking polls can fail to progress GPU work.
 ///
-/// The timeout parameter is kept for API compatibility but is not used since
-/// `Maintain::Wait` blocks until completion. Timeouts are enforced at the
-/// work queue level (GPU_QUEUE_TIMEOUT_SECS).
+/// The timeout_secs parameter is for documentation and future use - currently
+/// timeouts are enforced at the work queue level (channel recv_timeout).
 fn wait_for_buffer_map(
     device: &wgpu::Device,
     receiver: &std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
@@ -112,6 +153,8 @@ fn wait_for_buffer_map(
 ) -> Result<()> {
     // Block until all GPU work completes - this is the reliable way to wait
     // for buffer mapping on all backends, especially Metal/M4.
+    // Note: If GPU hangs, this blocks forever, but the work queue timeout
+    // at the channel level will fire and the main thread will continue.
     device.poll(wgpu::Maintain::Wait);
 
     // After Wait completes, the callback should have fired
@@ -134,7 +177,8 @@ fn wait_for_buffer_map(
 /// Wait for multiple GPU buffer mappings to complete.
 ///
 /// Uses `Maintain::Wait` which blocks until all submitted GPU work completes.
-/// This is more reliable than polling in a loop, especially on Metal/M4.
+/// This is the reliable way to wait for buffer mapping on all backends,
+/// especially Metal where non-blocking polls can fail to progress GPU work.
 fn wait_for_buffer_maps_batch(
     device: &wgpu::Device,
     receivers: &[std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>],
@@ -416,6 +460,87 @@ fn get_memory_info() -> (u64, u64) {
     (4 * 1024 * 1024 * 1024, 8 * 1024 * 1024 * 1024)
 }
 
+/// Check if there's enough memory to load a parquet file.
+///
+/// Parquet files are compressed; in-memory representation is typically 2-4x larger.
+/// This function estimates memory needed and returns an error if insufficient.
+///
+/// We use conservative checks to avoid memory pressure that causes the system to
+/// become unresponsive (stuck with low CPU/GPU, eventually OOM killed):
+/// 1. Require 3× file size for in-memory representation
+/// 2. Require at least 1GB headroom after loading (for GPU buffers, etc.)
+/// 3. Don't use more than 50% of total RAM for parquet data
+///
+/// This is a public function so it can be used by focus.rs and analysis.rs.
+pub fn check_memory_for_parquet(parquet_file: &str) -> Result<()> {
+    const MEMORY_MULTIPLIER: f64 = 3.0;
+    const BYTES_PER_GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    const MIN_HEADROOM_GB: f64 = 1.0; // Keep at least 1GB free for GPU/system
+    const MAX_MEMORY_FRACTION: f64 = 0.5; // Don't use more than 50% of total RAM
+
+    let file_size_bytes = std::fs::metadata(parquet_file)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let file_size_gb = file_size_bytes as f64 / BYTES_PER_GB;
+    let estimated_memory_gb = file_size_gb * MEMORY_MULTIPLIER;
+
+    let (available_bytes, total_bytes) = get_memory_info();
+    let available_gb = available_bytes as f64 / BYTES_PER_GB;
+    let total_gb = total_bytes as f64 / BYTES_PER_GB;
+
+    let file_size_mb = file_size_bytes as f64 / (1024.0 * 1024.0);
+    let estimated_mb = estimated_memory_gb * 1024.0;
+    let available_mb = available_gb * 1024.0;
+
+    // Check 1: Do we have enough available memory (with headroom)?
+    let memory_needed_with_headroom = estimated_memory_gb + MIN_HEADROOM_GB;
+    if memory_needed_with_headroom > available_gb {
+        return Err(anyhow::anyhow!(
+            "Insufficient memory to load parquet file.\n\
+             • Parquet file: {file_size_mb:.0} MB ({parquet_file})\n\
+             • Estimated memory needed: {estimated_mb:.0} MB (parquet decompresses to ~3x in memory)\n\
+             • Plus 1 GB headroom for GPU buffers and system\n\
+             • Available memory: {available_mb:.0} MB / {total_gb:.1} GB total\n\n\
+             Suggestions:\n\
+             • Close other applications to free memory\n\
+             • Reduce sample rate (e.g., discoverySampleRate: 0.02) to create smaller parquet files\n\
+             • Reduce recording time (discoveryRecordTimeOutMinutes)\n\
+             • Use a machine with more RAM (16GB+ recommended for large creatures)"
+        ));
+    }
+
+    // Check 2: Don't exceed 50% of total RAM (prevents system instability)
+    let max_allowed_gb = total_gb * MAX_MEMORY_FRACTION;
+    if estimated_memory_gb > max_allowed_gb {
+        let max_parquet_mb = (max_allowed_gb / MEMORY_MULTIPLIER) * 1024.0;
+        return Err(anyhow::anyhow!(
+            "Parquet file too large for system memory.\n\
+             • Parquet file: {file_size_mb:.0} MB ({parquet_file})\n\
+             • Estimated memory needed: {estimated_mb:.0} MB ({:.0}% of {total_gb:.0} GB total RAM)\n\
+             • Maximum safe usage: {:.0} MB (50% of RAM = {max_allowed_gb:.1} GB)\n\
+             • Maximum parquet file size for this machine: {max_parquet_mb:.0} MB\n\n\
+             Suggestions:\n\
+             • Reduce sample rate (e.g., discoverySampleRate: 0.02)\n\
+             • Reduce recording time (discoveryRecordTimeOutMinutes)\n\
+             • Use a machine with more RAM (16GB+ recommended for large creatures)",
+            (estimated_memory_gb / total_gb) * 100.0,
+            max_allowed_gb * 1024.0
+        ));
+    }
+
+    // Log memory usage for large files (helps diagnose issues)
+    if file_size_gb > 0.5 {
+        let usage_percent = (estimated_memory_gb / total_gb) * 100.0;
+        eprintln!(
+            "[NEAT-AI-Discovery] Loading {file_size_mb:.0} MB parquet file \
+             (estimated {estimated_mb:.0} MB in memory = {usage_percent:.0}% of RAM, \
+             {available_mb:.0} MB available)"
+        );
+    }
+
+    Ok(())
+}
+
 /// Get the GPU work queue capacity based on system resources.
 /// Lower capacity = more backpressure = less memory usage.
 fn get_work_queue_capacity() -> usize {
@@ -677,6 +802,41 @@ fn log_analysis_start(
         calculate_effective_timeout_ms(deadline_ms).unwrap_or(DEFAULT_DURATION_MS);
     let deadline_secs = deadline_duration_ms as f64 / 1000.0;
 
+    // Debug: Log the raw deadline_ms value if verbose to help diagnose timeout issues
+    if verbose_enabled() {
+        if let Some(raw_ms) = deadline_ms {
+            let now_ms = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            if raw_ms >= YEAR_2000_MS {
+                // Absolute timestamp
+                let elapsed_secs =
+                    now_ms.saturating_sub(raw_ms.saturating_sub(deadline_duration_ms)) as f64
+                        / 1000.0;
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] {analysis_type} deadline_ms={raw_ms} (absolute timestamp), \
+                     {elapsed_secs:.1}s elapsed since timeout was set, {deadline_secs:.1}s remaining"
+                );
+            } else {
+                // Relative duration
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] {analysis_type} deadline_ms={raw_ms} (relative duration)"
+                );
+            }
+        }
+    }
+
+    // Warn if timeout is very short - likely means focus selection took most of the allotted time
+    const MIN_USEFUL_TIMEOUT_SECS: f64 = 60.0; // 1 minute minimum for useful analysis
+    if deadline_secs < MIN_USEFUL_TIMEOUT_SECS {
+        eprintln!(
+            "⚠️  [NEAT-AI-Discovery] WARNING: Only {deadline_secs:.1}s remaining for {analysis_type} analysis. \
+             Focus selection may have consumed most of the timeout. \
+             Consider increasing discoveryAnalysisTimeoutMinutes."
+        );
+    }
+
     // Format the timeout nicely
     let timeout_str = if deadline_secs >= 60.0 {
         let minutes = deadline_secs / 60.0;
@@ -769,7 +929,9 @@ mod deadline_override {
 
 /// Check if verbose logging is enabled. Result is cached for performance.
 /// Set `NEAT_AI_DISCOVERY_VERBOSE=1` to enable verbose logging.
-fn verbose_enabled() -> bool {
+/// Check if verbose logging is enabled via NEAT_AI_DISCOVERY_VERBOSE environment variable.
+/// This is public so it can be used by focus.rs and other modules.
+pub fn verbose_enabled() -> bool {
     use std::sync::OnceLock;
     static VERBOSE: OnceLock<bool> = OnceLock::new();
     *VERBOSE.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok())
@@ -1847,10 +2009,58 @@ impl NeuronDiagnostics {
 }
 
 impl RecordCache {
-    /// Create a pre-loaded cache that reads the entire parquet file once.
-    /// This is MUCH faster when you need records for many neurons (e.g., ~2000),
-    /// as it avoids scanning the file 2000 times.
-    fn new_preloaded(parquet_file: &str) -> Result<Self> {
+    /// Create a cache that automatically chooses the best loading strategy based on
+    /// available system memory:
+    ///
+    /// - **Pre-loaded mode** (fast): Loads entire parquet file into memory upfront.
+    ///   Used when there's sufficient RAM (3× file size + 1GB headroom).
+    ///
+    /// - **Lazy-loaded mode** (memory-efficient): Loads records on-demand per neuron.
+    ///   Slower (O(N) parquet scans for N neurons) but works on memory-constrained systems.
+    ///
+    /// This ensures discovery works on any modern Mac/PC, adapting to available resources.
+    fn new_adaptive(parquet_file: &str) -> Result<Self> {
+        // Check if we have enough memory for pre-loading
+        match check_memory_for_parquet(parquet_file) {
+            Ok(()) => {
+                // Sufficient memory - use fast pre-loaded mode
+                Self::new_preloaded_internal(parquet_file)
+            }
+            Err(memory_error) => {
+                // Insufficient memory - fall back to lazy loading
+                eprintln!(
+                    "[NEAT-AI-Discovery] Insufficient memory for pre-loading. \
+                     Falling back to lazy-loading mode (slower but memory-efficient)."
+                );
+                if verbose_enabled() {
+                    eprintln!("[NEAT-AI-Discovery][verbose] Memory check failed: {memory_error}");
+                }
+                Self::new_lazy(parquet_file)
+            }
+        }
+    }
+
+    /// Create a lazy-loading cache that loads records on-demand.
+    /// Slower than pre-loaded mode but uses minimal memory.
+    fn new_lazy(parquet_file: &str) -> Result<Self> {
+        use crate::parquet_format::read_records_from_parquet;
+
+        eprintln!(
+            "[NEAT-AI-Discovery] Using lazy-loading mode for parquet file. \
+             This is slower but uses less memory."
+        );
+
+        Ok(Self {
+            parquet_file: parquet_file.to_string(),
+            cache: Mutex::new(HashMap::new()),
+            loader: Arc::new(move |file: &str, neuron_uuid: &str| {
+                read_records_from_parquet(file, neuron_uuid)
+            }),
+        })
+    }
+
+    /// Internal pre-loaded implementation (called when memory check passes).
+    fn new_preloaded_internal(parquet_file: &str) -> Result<Self> {
         use crate::parquet_format::read_all_records_grouped_by_neuron;
         use std::time::Instant;
 
@@ -3154,6 +3364,8 @@ impl GpuEvaluator for GpuAnalyzer {
 }
 
 /// Implementation for shared GpuWorkQueue.
+/// NOTE: These trait methods use `None` deadline, which gives maximum timeout (5 minutes).
+/// For deadline-aware evaluation, use the batch methods directly with an explicit deadline.
 impl GpuEvaluator for GpuWorkQueue {
     fn evaluate_relu(
         &self,
@@ -3161,7 +3373,8 @@ impl GpuEvaluator for GpuWorkQueue {
         threshold: f32,
     ) -> Result<(ReluStats, ReluStats, f32)> {
         // Clone samples to send to the GPU thread
-        self.evaluate_relu_gpu(samples.to_vec(), threshold)
+        // Uses None deadline = maximum timeout (5 minutes)
+        self.evaluate_relu_gpu(samples.to_vec(), threshold, &None)
     }
 
     fn evaluate_activation(
@@ -3171,7 +3384,8 @@ impl GpuEvaluator for GpuWorkQueue {
         orientation: f32,
         scale: f32,
     ) -> Result<(f32, f32, f32, u32)> {
-        self.evaluate_activation_gpu(samples.to_vec(), activation_type, orientation, scale)
+        // Uses None deadline = maximum timeout (5 minutes)
+        self.evaluate_activation_gpu(samples.to_vec(), activation_type, orientation, scale, &None)
     }
 }
 
@@ -3389,9 +3603,14 @@ impl GpuWorkQueue {
     ///
     /// This is a synchronous call that blocks until the GPU thread processes
     /// the batch and returns results.
+    ///
+    /// The `deadline` parameter is used to calculate an adaptive timeout:
+    /// - With deadline: uses up to half remaining time (60s-5min)
+    /// - Without deadline: uses maximum timeout (5 minutes)
     pub fn evaluate_helpful_batch(
         &self,
         samples: Vec<Vec<HelpfulSample>>,
+        deadline: &Option<std::time::SystemTime>,
     ) -> Result<Vec<HelpfulStats>> {
         if samples.is_empty() {
             return Ok(Vec::new());
@@ -3400,20 +3619,36 @@ impl GpuWorkQueue {
         // Create a one-shot channel for the response
         let (response_tx, response_rx) = bounded(1);
 
-        // Send the work request
-        self.work_tx
-            .send(GpuWorkRequest::HelpfulBatch {
+        // Calculate timeout based on remaining deadline
+        let timeout = calculate_gpu_batch_timeout(deadline);
+        let timeout_secs = timeout.as_secs();
+
+        // Send the work request with timeout to prevent deadlock if GPU thread is hung
+        // If the channel is full (GPU not processing), this will timeout instead of blocking forever
+        match self.work_tx.send_timeout(
+            GpuWorkRequest::HelpfulBatch {
                 samples,
                 response_tx,
-            })
-            .map_err(|_| anyhow!("GPU work queue channel closed"))?;
+            },
+            timeout,
+        ) {
+            Ok(()) => {}
+            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
+                return Err(anyhow!(
+                    "GPU work queue full - send timed out after {timeout_secs}s. \
+                     The GPU thread may be hung. Consider restarting the process."
+                ));
+            }
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                return Err(anyhow!("GPU work queue channel closed"));
+            }
+        }
 
         // Wait for the response with timeout
-        let timeout = Duration::from_secs(GPU_QUEUE_TIMEOUT_SECS);
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU helpful batch evaluation timed out after {GPU_QUEUE_TIMEOUT_SECS}s. \
+                "GPU helpful batch evaluation timed out after {timeout_secs}s. \
                      The GPU may be unresponsive. Consider reducing batch size or restarting."
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -3423,28 +3658,45 @@ impl GpuWorkQueue {
     }
 
     /// Submit a batch of harmful evaluations and wait for results.
+    ///
+    /// The `deadline` parameter is used to calculate an adaptive timeout (60s-5min).
     pub fn evaluate_harmful_batch(
         &self,
         samples_with_weights: Vec<(Vec<HelpfulSample>, f32)>,
+        deadline: &Option<std::time::SystemTime>,
     ) -> Result<Vec<HarmfulStats>> {
         if samples_with_weights.is_empty() {
             return Ok(Vec::new());
         }
 
         let (response_tx, response_rx) = bounded(1);
+        let timeout = calculate_gpu_batch_timeout(deadline);
+        let timeout_secs = timeout.as_secs();
 
-        self.work_tx
-            .send(GpuWorkRequest::HarmfulBatch {
+        // Send with timeout to prevent deadlock if GPU thread is hung
+        match self.work_tx.send_timeout(
+            GpuWorkRequest::HarmfulBatch {
                 samples_with_weights,
                 response_tx,
-            })
-            .map_err(|_| anyhow!("GPU work queue channel closed"))?;
+            },
+            timeout,
+        ) {
+            Ok(()) => {}
+            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
+                return Err(anyhow!(
+                    "GPU work queue full - send timed out after {timeout_secs}s. \
+                     The GPU thread may be hung. Consider restarting the process."
+                ));
+            }
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                return Err(anyhow!("GPU work queue channel closed"));
+            }
+        }
 
-        let timeout = Duration::from_secs(GPU_QUEUE_TIMEOUT_SECS);
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU harmful batch evaluation timed out after {GPU_QUEUE_TIMEOUT_SECS}s. \
+                "GPU harmful batch evaluation timed out after {timeout_secs}s. \
                      The GPU may be unresponsive. Consider reducing batch size or restarting."
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -3455,10 +3707,13 @@ impl GpuWorkQueue {
 
     /// Submit a ReLU evaluation and wait for results.
     /// Returns (positive_stats, negative_stats, baseline_error_sq).
+    ///
+    /// The `deadline` parameter is used to calculate an adaptive timeout (60s-5min).
     fn evaluate_relu_gpu(
         &self,
         samples: Vec<HelpfulSample>,
         threshold: f32,
+        deadline: &Option<std::time::SystemTime>,
     ) -> Result<(ReluStats, ReluStats, f32)> {
         if samples.is_empty() {
             return Ok((
@@ -3469,20 +3724,34 @@ impl GpuWorkQueue {
         }
 
         let (response_tx, response_rx) = bounded(1);
+        let timeout = calculate_gpu_batch_timeout(deadline);
+        let timeout_secs = timeout.as_secs();
 
-        self.work_tx
-            .send(GpuWorkRequest::ReluEval {
+        // Send with timeout to prevent deadlock if GPU thread is hung
+        match self.work_tx.send_timeout(
+            GpuWorkRequest::ReluEval {
                 samples,
                 threshold,
                 response_tx,
-            })
-            .map_err(|_| anyhow!("GPU work queue channel closed"))?;
+            },
+            timeout,
+        ) {
+            Ok(()) => {}
+            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
+                return Err(anyhow!(
+                    "GPU work queue full - send timed out after {timeout_secs}s. \
+                     The GPU thread may be hung. Consider restarting the process."
+                ));
+            }
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                return Err(anyhow!("GPU work queue channel closed"));
+            }
+        }
 
-        let timeout = Duration::from_secs(GPU_QUEUE_TIMEOUT_SECS);
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU ReLU evaluation timed out after {GPU_QUEUE_TIMEOUT_SECS}s. \
+                "GPU ReLU evaluation timed out after {timeout_secs}s. \
                      The GPU may be unresponsive. Consider reducing batch size or restarting."
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -3493,34 +3762,51 @@ impl GpuWorkQueue {
 
     /// Submit an activation evaluation and wait for results.
     /// Returns (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count).
+    ///
+    /// The `deadline` parameter is used to calculate an adaptive timeout (60s-5min).
     fn evaluate_activation_gpu(
         &self,
         samples: Vec<HelpfulSample>,
         activation_type: u32,
         orientation: f32,
         scale: f32,
+        deadline: &Option<std::time::SystemTime>,
     ) -> Result<(f32, f32, f32, u32)> {
         if samples.is_empty() {
             return Ok((0.0, 0.0, 0.0, 0));
         }
 
         let (response_tx, response_rx) = bounded(1);
+        let timeout = calculate_gpu_batch_timeout(deadline);
+        let timeout_secs = timeout.as_secs();
 
-        self.work_tx
-            .send(GpuWorkRequest::ActivationEval {
+        // Send with timeout to prevent deadlock if GPU thread is hung
+        match self.work_tx.send_timeout(
+            GpuWorkRequest::ActivationEval {
                 samples,
                 activation_type,
                 orientation,
                 scale,
                 response_tx,
-            })
-            .map_err(|_| anyhow!("GPU work queue channel closed"))?;
+            },
+            timeout,
+        ) {
+            Ok(()) => {}
+            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
+                return Err(anyhow!(
+                    "GPU work queue full - send timed out after {timeout_secs}s. \
+                     The GPU thread may be hung. Consider restarting the process."
+                ));
+            }
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                return Err(anyhow!("GPU work queue channel closed"));
+            }
+        }
 
-        let timeout = Duration::from_secs(GPU_QUEUE_TIMEOUT_SECS);
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU activation evaluation timed out after {GPU_QUEUE_TIMEOUT_SECS}s. \
+                "GPU activation evaluation timed out after {timeout_secs}s. \
                      The GPU may be unresponsive. Consider reducing batch size or restarting."
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -7396,7 +7682,7 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
     require_unique_focus(&input.focus_neurons, "Neuron analysis")?;
 
     // Pre-load all records for faster analysis (1 scan vs ~2000 scans)
-    let cache = Arc::new(RecordCache::new_preloaded(&input.parquet_file)?);
+    let cache = Arc::new(RecordCache::new_adaptive(&input.parquet_file)?);
     analyze_neurons_with_cache(input, cache)
 }
 
@@ -7787,7 +8073,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
     // Pre-load ALL records from parquet in one pass. This is MUCH faster than
     // lazy-loading each neuron separately (1 scan vs ~2000 scans for large creatures).
-    let shared_cache = Arc::new(RecordCache::new_preloaded(&input.parquet_file)?);
+    let shared_cache = Arc::new(RecordCache::new_adaptive(&input.parquet_file)?);
 
     let synapse_input = if include_synapse {
         Some(AnalyzeSynapsesInput {
@@ -8292,7 +8578,7 @@ fn analyze_synapses_with_cache(
                     .iter()
                     .map(|w| w.samples.clone())
                     .collect();
-                let helpful_stats_batch = gpu.evaluate_helpful_batch(helpful_samples)?;
+                let helpful_stats_batch = gpu.evaluate_helpful_batch(helpful_samples, &deadline)?;
 
                 // Process results - collect all updates first, then apply in batches (reduces mutex contention)
                 let mut candidates_to_add = Vec::new();
@@ -8466,7 +8752,7 @@ fn analyze_synapses_with_cache(
                             .map(|w| (w.samples.clone(), w.synapse.weight))
                             .collect();
 
-                        let batch_stats = gpu.evaluate_harmful_batch(batch_input)?;
+                        let batch_stats = gpu.evaluate_harmful_batch(batch_input, &deadline)?;
 
                         // Phase 3: Process results
                         let mut harmful_candidates = Vec::with_capacity(batch_stats.len());
@@ -8639,7 +8925,7 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
     require_unique_focus(&input.focus_neurons, "Synapse analysis")?;
 
     // Pre-load all records for faster analysis (1 scan vs ~2000 scans)
-    let cache = Arc::new(RecordCache::new_preloaded(&input.parquet_file)?);
+    let cache = Arc::new(RecordCache::new_adaptive(&input.parquet_file)?);
     analyze_synapses_with_cache(input, cache)
 }
 
