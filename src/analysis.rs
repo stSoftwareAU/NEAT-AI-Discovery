@@ -673,7 +673,8 @@ fn log_analysis_start(
 ) {
     // Calculate the effective deadline duration using the same logic as build_deadline.
     // This ensures the logged timeout matches what's actually used.
-    let deadline_duration_ms = calculate_effective_timeout_ms(deadline_ms).unwrap_or(DEFAULT_DURATION_MS);
+    let deadline_duration_ms =
+        calculate_effective_timeout_ms(deadline_ms).unwrap_or(DEFAULT_DURATION_MS);
     let deadline_secs = deadline_duration_ms as f64 / 1000.0;
 
     // Format the timeout nicely
@@ -8879,7 +8880,10 @@ mod tests_synapses {
         // Test 2: Absolute timestamp (now + 15 minutes) should convert to ~15 minutes
         let absolute_15min = now_ms + fifteen_minutes_ms;
         let result = calculate_effective_timeout_ms(Some(absolute_15min));
-        assert!(result.is_some(), "Future absolute timestamp should return Some");
+        assert!(
+            result.is_some(),
+            "Future absolute timestamp should return Some"
+        );
         let effective_ms = result.unwrap();
         // Allow 2 second tolerance for timing variance
         assert!(
