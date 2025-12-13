@@ -1,9 +1,12 @@
+use crate::analysis::{check_memory_for_parquet, verbose_enabled};
 use crate::parquet_format::{read_all_records_grouped_by_neuron, read_records_from_parquet};
 use crate::types::DiscoverRecord;
 use crate::{CreatureJson, NeuronJson, SynapseJson};
 use anyhow::{anyhow, Context, Result};
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 use std::time::Instant;
 
 /// Statistics for selection-based neurons (MINIMUM, MAXIMUM, IF).
@@ -248,7 +251,6 @@ pub fn compute_selection_stats(
     creature: &CreatureJson,
     grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
 ) -> SelectionStats {
-    let mut stats = SelectionStats::new();
     let squash_map = build_squash_map(creature);
 
     // Find all selection-based neurons (MINIMUM, MAXIMUM, IF)
@@ -261,37 +263,48 @@ pub fn compute_selection_stats(
         })
         .collect();
 
-    for target_neuron in selection_neurons {
-        let squash = squash_map
-            .get(&target_neuron.uuid)
-            .map(|s| s.as_str())
-            .unwrap_or("");
+    // Process each selection neuron in parallel and collect local stats
+    let partial_stats: Vec<SelectionStats> = selection_neurons
+        .par_iter()
+        .filter_map(|target_neuron| {
+            let squash = squash_map
+                .get(&target_neuron.uuid)
+                .map(|s| s.as_str())
+                .unwrap_or("");
 
-        // Get incoming synapses to this neuron
-        let incoming_synapses: Vec<&SynapseJson> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.to_uuid == target_neuron.uuid)
-            .collect();
+            // Get incoming synapses to this neuron
+            let incoming_synapses: Vec<&SynapseJson> = creature
+                .synapses
+                .iter()
+                .filter(|s| s.to_uuid == target_neuron.uuid)
+                .collect();
 
-        if incoming_synapses.is_empty() {
-            continue;
-        }
+            if incoming_synapses.is_empty() {
+                return None;
+            }
 
-        match squash {
-            "MINIMUM" => {
-                compute_min_stats(&incoming_synapses, grouped_records, &mut stats);
+            let mut local_stats = SelectionStats::new();
+            match squash {
+                "MINIMUM" => {
+                    compute_min_stats(&incoming_synapses, grouped_records, &mut local_stats);
+                }
+                "MAXIMUM" => {
+                    compute_max_stats(&incoming_synapses, grouped_records, &mut local_stats);
+                }
+                "IF" => {
+                    compute_if_stats(&incoming_synapses, grouped_records, &mut local_stats);
+                }
+                _ => {}
             }
-            "MAXIMUM" => {
-                compute_max_stats(&incoming_synapses, grouped_records, &mut stats);
-            }
-            "IF" => {
-                compute_if_stats(&incoming_synapses, grouped_records, &mut stats);
-            }
-            _ => {}
-        }
+            Some(local_stats)
+        })
+        .collect();
+
+    // Merge all partial stats into final result
+    let mut stats = SelectionStats::new();
+    for partial in partial_stats {
+        stats.extend(partial);
     }
-
     stats
 }
 
@@ -613,17 +626,114 @@ fn compute_impacts_internal_with_stats(
         selection_stats,
     };
 
-    let mut cache: HashMap<String, f32> = HashMap::new();
+    // Parallel impact computation using thread-local caches
+    // Each thread computes impacts for a subset of neurons, then we merge results.
+    // This trades some redundant computation for better CPU utilization.
+    let selectable_neurons: Vec<&NeuronJson> = creature
+        .neurons
+        .iter()
+        .filter(|n| is_selectable_type(&n.neuron_type))
+        .collect();
 
-    for neuron in &creature.neurons {
-        if !is_selectable_type(&neuron.neuron_type) {
-            continue;
+    // Use a shared cache protected by a mutex for thread-safe updates
+    let shared_cache: Mutex<HashMap<String, f32>> = Mutex::new(HashMap::new());
+
+    selectable_neurons.par_iter().for_each(|neuron| {
+        // Check if already computed (another thread might have done it)
+        {
+            let cache = shared_cache.lock().unwrap();
+            if cache.contains_key(&neuron.uuid) {
+                return;
+            }
         }
+
+        // Compute with a local visiting set (cycle detection is per-path)
         let mut visiting = HashSet::new();
-        compute_impact_recursive(&neuron.uuid, &ctx, &mut cache, &mut visiting);
+
+        // We need to compute recursively, but with shared cache access
+        let impact =
+            compute_impact_with_shared_cache(&neuron.uuid, &ctx, &shared_cache, &mut visiting);
+
+        // Store result
+        let mut cache = shared_cache.lock().unwrap();
+        cache.insert(neuron.uuid.clone(), impact);
+    });
+
+    shared_cache.into_inner().unwrap()
+}
+
+/// Compute impact with a shared cache for parallel execution.
+fn compute_impact_with_shared_cache(
+    uuid: &str,
+    ctx: &ImpactContext,
+    shared_cache: &Mutex<HashMap<String, f32>>,
+    visiting: &mut HashSet<String>,
+) -> f32 {
+    // Check cache first
+    {
+        let cache = shared_cache.lock().unwrap();
+        if let Some(&value) = cache.get(uuid) {
+            return value;
+        }
     }
 
-    cache
+    if !visiting.insert(uuid.to_string()) {
+        // Cycle detected; treat as zero contribution
+        return 0.0;
+    }
+
+    let impact = if ctx.outputs.contains(uuid) {
+        1.0
+    } else if let Some(edges) = ctx.adjacency.get(uuid) {
+        // Sum across all outgoing edges
+        let mut total_impact = 0.0;
+        for (to_uuid, weight) in edges {
+            let child_impact =
+                compute_impact_with_shared_cache(to_uuid, ctx, shared_cache, visiting);
+            if child_impact <= 0.0 {
+                continue;
+            }
+
+            let squash = ctx
+                .squash_map
+                .get(to_uuid)
+                .map(|s| s.as_str())
+                .unwrap_or("IDENTITY");
+            let category = SquashCategory::from_squash(squash);
+
+            let contribution = match category {
+                SquashCategory::Linear => weight.abs() * child_impact,
+                SquashCategory::Threshold => child_impact,
+                SquashCategory::Selection => {
+                    if let Some(ref stats) = ctx.selection_stats {
+                        let key = (uuid.to_string(), to_uuid.clone());
+                        let win_prob = stats.get(&key).copied().unwrap_or_else(|| {
+                            let n = ctx.inbound_count.get(to_uuid).copied().unwrap_or(1).max(1);
+                            1.0 / n as f32
+                        });
+                        win_prob * child_impact
+                    } else {
+                        let n = ctx.inbound_count.get(to_uuid).copied().unwrap_or(1).max(1);
+                        (1.0 / n as f32) * child_impact
+                    }
+                }
+            };
+            total_impact += contribution;
+        }
+        total_impact
+    } else {
+        0.0
+    };
+
+    visiting.remove(uuid);
+
+    // Cache the result
+    {
+        let mut cache = shared_cache.lock().unwrap();
+        cache.insert(uuid.to_string(), impact);
+    }
+
+    impact
 }
 
 /// Public version that computes impacts with activation-based selection statistics.
@@ -643,118 +753,6 @@ pub fn compute_impacts_with_activations(
     grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
 ) -> HashMap<String, f32> {
     compute_impacts_internal_with_stats(creature, Some(grouped_records))
-}
-
-fn compute_impact_recursive(
-    uuid: &str,
-    ctx: &ImpactContext,
-    cache: &mut HashMap<String, f32>,
-    visiting: &mut HashSet<String>,
-) -> f32 {
-    if let Some(value) = cache.get(uuid) {
-        return *value;
-    }
-
-    if !visiting.insert(uuid.to_string()) {
-        // Cycle detected; treat as zero contribution
-        return 0.0;
-    }
-
-    let impact = if ctx.outputs.contains(uuid) {
-        1.0
-    } else if let Some(edges) = ctx.adjacency.get(uuid) {
-        // Sum across all outgoing edges (neuron may connect to multiple targets)
-        let mut total_impact = 0.0;
-        for (to_uuid, weight) in edges {
-            let child_impact = compute_impact_recursive(to_uuid, ctx, cache, visiting);
-            if child_impact <= 0.0 {
-                continue;
-            }
-
-            // Get the target neuron's squash category
-            let squash = ctx
-                .squash_map
-                .get(to_uuid)
-                .map(|s| s.as_str())
-                .unwrap_or("IDENTITY");
-            let category = SquashCategory::from_squash(squash);
-
-            let contribution = match category {
-                SquashCategory::Linear => {
-                    // ABSOLUTE impact: what is the actual contribution magnitude?
-                    //
-                    // v0.1.145: CRITICAL FIX - normalisation was causing massive underestimation.
-                    //
-                    // Previously we computed `|weight| / total_inbound × child_impact`, which
-                    // gave "what fraction of inputs is this?" but this is WRONG for removal
-                    // prediction. Production data showed impact underestimated by up to
-                    // 145 BILLION times (calculated 1e-12, actual 20% error increase).
-                    //
-                    // The correct formula for removal impact is:
-                    //   impact = |weight| × child_impact
-                    //
-                    // This gives the actual magnitude of change when the neuron is removed.
-                    // Values are no longer bounded to [0,1] but that's fine - we only care
-                    // about relative ordering for removal candidates.
-                    //
-                    // The old normalisation made sense for "blame assignment" but not for
-                    // predicting what happens when a neuron is removed from the network.
-                    weight.abs() * child_impact
-                }
-                SquashCategory::Threshold => {
-                    // THRESHOLD impact (STEP/BIPOLAR): Any synapse could flip the output!
-                    //
-                    // For STEP/BIPOLAR neurons, even tiny weights can cause the full output
-                    // swing if they push the neuron across the threshold (0).
-                    //
-                    // Conservative approach: Don't normalise by total_inbound. Instead,
-                    // use the full child_impact as if this synapse alone determines output.
-                    //
-                    // This may overestimate impact, but it's better than underestimating
-                    // (which causes incorrect removal candidates).
-                    //
-                    // See docs/IMPACT_CALCULATION.md for detailed explanation.
-                    child_impact
-                }
-                SquashCategory::Selection => {
-                    // SELECTION impact (MINIMUM/MAXIMUM/IF): Only one synapse "wins"!
-                    //
-                    // For MINIMUM/MAXIMUM neurons, only the min/max synapse contributes to
-                    // the output. The others have zero contribution at any given time.
-                    //
-                    // When activation data is available (selection_stats), we use the actual
-                    // win probability for this synapse. Otherwise, we fall back to the
-                    // conservative 1/N equal probability approach.
-                    //
-                    // See docs/IMPACT_CALCULATION.md for detailed explanation.
-                    let synapse_key = (uuid.to_string(), to_uuid.to_string());
-
-                    if let Some(ref stats) = ctx.selection_stats {
-                        // Use actual win probability from activation records
-                        if let Some(&probability) = stats.get(&synapse_key) {
-                            probability * child_impact
-                        } else {
-                            // Synapse not in stats - use equal probability fallback
-                            let count = ctx.inbound_count.get(to_uuid).copied().unwrap_or(1).max(1);
-                            child_impact / count as f32
-                        }
-                    } else {
-                        // No activation data - use conservative equal probability
-                        let count = ctx.inbound_count.get(to_uuid).copied().unwrap_or(1).max(1);
-                        child_impact / count as f32
-                    }
-                }
-            };
-            total_impact += contribution;
-        }
-        total_impact
-    } else {
-        0.0
-    };
-
-    visiting.remove(uuid);
-    cache.insert(uuid.to_string(), impact);
-    impact
 }
 
 pub fn rank_focus_neurons(
@@ -781,10 +779,48 @@ pub fn rank_focus_neurons(
         });
     }
 
-    // Read all records once and group by neuron UUID for efficient access
-    // This avoids reading the parquet file 460+ times (once per neuron)
-    let grouped_records = read_all_records_grouped_by_neuron(parquet_file)
-        .context("Failed to read discovery records from parquet file")?;
+    // Try to load all records if we have enough memory.
+    // If not enough memory, fall back to lazy loading (slower but works).
+    let (grouped_records, is_lazy_mode) = match check_memory_for_parquet(parquet_file) {
+        Ok(()) => {
+            // Sufficient memory - load all records upfront for best performance
+            let records = read_all_records_grouped_by_neuron(parquet_file)
+                .context("Failed to read discovery records from parquet file")?;
+            (records, false)
+        }
+        Err(_) => {
+            // Insufficient memory - use lazy loading
+            eprintln!(
+                "[NEAT-AI-Discovery] Insufficient memory for full pre-load in focus ranking. \
+                 Using lazy-loading mode (slower but memory-efficient)."
+            );
+            // Load records lazily as needed
+            let mut lazy_records: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
+            for neuron in &selectable {
+                match read_records_from_parquet(parquet_file, &neuron.uuid) {
+                    Ok(records) => {
+                        lazy_records.insert(neuron.uuid.clone(), records);
+                    }
+                    Err(e) => {
+                        if verbose_enabled() {
+                            eprintln!(
+                                "[NEAT-AI-Discovery][verbose] Failed to load records for {}: {e}",
+                                neuron.uuid
+                            );
+                        }
+                    }
+                }
+            }
+            (lazy_records, true)
+        }
+    };
+
+    if is_lazy_mode && verbose_enabled() {
+        eprintln!(
+            "[NEAT-AI-Discovery][verbose] Lazy-loaded records for {} neurons",
+            grouped_records.len()
+        );
+    }
 
     // Verify that all selectable neurons have records (restore old error behavior)
     // This maintains data integrity by failing fast if records are missing
@@ -822,8 +858,9 @@ pub fn rank_focus_neurons(
     let impact_map = compute_impacts_with_activations(creature, &grouped_records);
 
     // Now we can safely unwrap since we've verified all selectable neurons have records
-    let mut neurons = selectable
-        .iter()
+    // Use parallel iteration for faster processing on multi-core systems
+    let mut neurons: Vec<RankedNeuron> = selectable
+        .par_iter()
         .map(|neuron| {
             let records = grouped_records
                 .get(&neuron.uuid)
@@ -853,7 +890,7 @@ pub fn rank_focus_neurons(
                 activation_weighted_impact,
             }
         })
-        .collect::<Vec<_>>();
+        .collect();
 
     // Sort by weighted score (error × impact) to prioritise neurons that:
     // 1. Have high error (potential for improvement)
@@ -889,8 +926,9 @@ pub fn rank_focus_neurons(
     const COST_OF_GROWTH: f32 = 0.01;
 
     // Return ALL neurons with impact below costOfGrowth as removal candidates
+    // Use parallel iteration for faster processing on multi-core systems
     let mut removal_candidates: Vec<RemovalCandidate> = neurons
-        .iter()
+        .par_iter()
         .filter(|n| n.activation_weighted_impact < COST_OF_GROWTH)
         .map(|n| {
             let (incoming, outgoing) = count_synapses_for_neuron(&n.neuron_uuid, creature);
