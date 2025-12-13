@@ -5,8 +5,8 @@ use crate::{CreatureJson, NeuronJson, SynapseJson};
 use anyhow::{anyhow, Context, Result};
 use rayon::prelude::*;
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Statistics for selection-based neurons (MINIMUM, MAXIMUM, IF).
@@ -22,6 +22,151 @@ type SynapseContribution = ((String, String), f32);
 /// Map from observation index to list of synapse contributions for that observation.
 /// Used to determine which synapse wins (has min/max value) for each observation.
 type ObservationContributions = HashMap<u32, Vec<SynapseContribution>>;
+
+/// Provides access to recorded discovery data without assuming an in-memory HashMap.
+/// Implementations may pre-load all records or stream them on demand with bounded caching.
+pub trait RecordProvider: Send + Sync {
+    fn get(&self, neuron_uuid: &str) -> Result<Option<Arc<Vec<DiscoverRecord>>>>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+type RecordLoader = dyn Fn(&str, &str) -> Result<Vec<DiscoverRecord>> + Send + Sync + 'static;
+
+struct EagerRecordProvider {
+    records: HashMap<String, Arc<Vec<DiscoverRecord>>>,
+}
+
+impl EagerRecordProvider {
+    fn new(records: HashMap<String, Vec<DiscoverRecord>>) -> Self {
+        let records = records
+            .into_iter()
+            .map(|(uuid, mut recs)| {
+                recs.sort_by_key(|r| r.obs_index);
+                (uuid, Arc::new(recs))
+            })
+            .collect();
+        Self { records }
+    }
+}
+
+impl RecordProvider for EagerRecordProvider {
+    fn get(&self, neuron_uuid: &str) -> Result<Option<Arc<Vec<DiscoverRecord>>>> {
+        Ok(self.records.get(neuron_uuid).map(Arc::clone))
+    }
+
+    fn len(&self) -> usize {
+        self.records.len()
+    }
+}
+
+struct LazyRecordProvider {
+    parquet_file: String,
+    cache: Mutex<LazyCache>,
+    loader: Arc<RecordLoader>,
+}
+
+struct LazyCache {
+    entries: HashMap<String, Arc<Vec<DiscoverRecord>>>,
+    order: VecDeque<String>,
+    capacity: usize,
+}
+
+impl LazyCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            capacity,
+        }
+    }
+
+    fn insert(&mut self, key: String, value: Arc<Vec<DiscoverRecord>>) {
+        if self.entries.contains_key(&key) {
+            self.order.retain(|k| k != &key);
+        }
+
+        self.entries.insert(key.clone(), value);
+        self.order.push_back(key);
+        self.evict();
+    }
+
+    fn evict(&mut self) {
+        while self.entries.len() > self.capacity {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
+    }
+}
+
+impl LazyRecordProvider {
+    const DEFAULT_CACHE_CAPACITY: usize = 8;
+
+    fn new(parquet_file: &str) -> Self {
+        Self {
+            parquet_file: parquet_file.to_string(),
+            cache: Mutex::new(LazyCache::new(Self::DEFAULT_CACHE_CAPACITY)),
+            loader: Arc::new(read_records_from_parquet),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_loader_for_tests(
+        parquet_file: &str,
+        capacity: usize,
+        loader: Arc<RecordLoader>,
+    ) -> Self {
+        Self {
+            parquet_file: parquet_file.to_string(),
+            cache: Mutex::new(LazyCache::new(capacity)),
+            loader,
+        }
+    }
+}
+
+impl RecordProvider for LazyRecordProvider {
+    fn get(&self, neuron_uuid: &str) -> Result<Option<Arc<Vec<DiscoverRecord>>>> {
+        {
+            let cache = self.cache.lock().expect("lazy record cache poisoned");
+            if let Some(records) = cache.entries.get(neuron_uuid) {
+                return Ok(Some(Arc::clone(records)));
+            }
+        }
+
+        let mut records = (self.loader)(&self.parquet_file, neuron_uuid).with_context(|| {
+            format!(
+                "Failed to load discovery records for {neuron_uuid} from {}",
+                self.parquet_file
+            )
+        })?;
+        if records.is_empty() {
+            return Ok(None);
+        }
+        records.sort_by_key(|r| r.obs_index);
+        let arc_records = Arc::new(records);
+
+        let mut cache = self.cache.lock().expect("lazy record cache poisoned");
+        cache.insert(neuron_uuid.to_string(), Arc::clone(&arc_records));
+        Ok(Some(arc_records))
+    }
+
+    fn len(&self) -> usize {
+        let cache = self.cache.lock().expect("lazy record cache poisoned");
+        cache.entries.len()
+    }
+}
+
+fn get_records_or_error(
+    provider: &dyn RecordProvider,
+    neuron_uuid: &str,
+) -> Result<Arc<Vec<DiscoverRecord>>> {
+    provider
+        .get(neuron_uuid)?
+        .ok_or_else(|| anyhow!("Missing discovery records for selectable neuron: {neuron_uuid}"))
+}
 
 #[derive(Debug)]
 pub struct RankedNeuron {
@@ -249,8 +394,8 @@ impl SquashCategory {
 /// Map from (from_uuid, to_uuid) to win probability for selection-based synapses
 pub fn compute_selection_stats(
     creature: &CreatureJson,
-    grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
-) -> SelectionStats {
+    grouped_records: &dyn RecordProvider,
+) -> Result<SelectionStats> {
     let squash_map = build_squash_map(creature);
 
     // Find all selection-based neurons (MINIMUM, MAXIMUM, IF)
@@ -266,7 +411,7 @@ pub fn compute_selection_stats(
     // Process each selection neuron in parallel and collect local stats
     let partial_stats: Vec<SelectionStats> = selection_neurons
         .par_iter()
-        .filter_map(|target_neuron| {
+        .map(|target_neuron| -> Result<Option<SelectionStats>> {
             let squash = squash_map
                 .get(&target_neuron.uuid)
                 .map(|s| s.as_str())
@@ -280,24 +425,25 @@ pub fn compute_selection_stats(
                 .collect();
 
             if incoming_synapses.is_empty() {
-                return None;
+                return Ok(None);
             }
 
             let mut local_stats = SelectionStats::new();
             match squash {
                 "MINIMUM" => {
-                    compute_min_stats(&incoming_synapses, grouped_records, &mut local_stats);
+                    compute_min_stats(&incoming_synapses, grouped_records, &mut local_stats)?
                 }
                 "MAXIMUM" => {
-                    compute_max_stats(&incoming_synapses, grouped_records, &mut local_stats);
+                    compute_max_stats(&incoming_synapses, grouped_records, &mut local_stats)?
                 }
-                "IF" => {
-                    compute_if_stats(&incoming_synapses, grouped_records, &mut local_stats);
-                }
+                "IF" => compute_if_stats(&incoming_synapses, grouped_records, &mut local_stats)?,
                 _ => {}
             }
-            Some(local_stats)
+            Ok(Some(local_stats))
         })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
         .collect();
 
     // Merge all partial stats into final result
@@ -305,33 +451,36 @@ pub fn compute_selection_stats(
     for partial in partial_stats {
         stats.extend(partial);
     }
-    stats
+    Ok(stats)
 }
 
 /// Compute selection statistics for a MINIMUM neuron.
 /// Counts how often each synapse provides the minimum weighted activation.
 fn compute_min_stats(
     synapses: &[&SynapseJson],
-    grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
+    grouped_records: &dyn RecordProvider,
     stats: &mut SelectionStats,
-) {
+) -> Result<()> {
     if synapses.is_empty() {
-        return;
+        return Ok(());
     }
 
     // Build a map of obs_index -> Vec<(synapse_key, weighted_activation)>
     let mut obs_contributions: ObservationContributions = HashMap::new();
 
     for synapse in synapses {
-        if let Some(records) = grouped_records.get(&synapse.from_uuid) {
-            for record in records {
-                if record.activation.is_finite() {
-                    let weighted = synapse.weight * record.activation;
-                    let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
-                    obs_contributions
-                        .entry(record.obs_index)
-                        .or_default()
-                        .push((key, weighted));
+        match grouped_records.get(&synapse.from_uuid)? {
+            None => continue,
+            Some(records) => {
+                for record in records.iter() {
+                    if record.activation.is_finite() {
+                        let weighted = synapse.weight * record.activation;
+                        let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+                        obs_contributions
+                            .entry(record.obs_index)
+                            .or_default()
+                            .push((key, weighted));
+                    }
                 }
             }
         }
@@ -373,32 +522,36 @@ fn compute_min_stats(
             stats.insert(key, probability);
         }
     }
+    Ok(())
 }
 
 /// Compute selection statistics for a MAXIMUM neuron.
 /// Counts how often each synapse provides the maximum weighted activation.
 fn compute_max_stats(
     synapses: &[&SynapseJson],
-    grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
+    grouped_records: &dyn RecordProvider,
     stats: &mut SelectionStats,
-) {
+) -> Result<()> {
     if synapses.is_empty() {
-        return;
+        return Ok(());
     }
 
     // Build a map of obs_index -> Vec<(synapse_key, weighted_activation)>
     let mut obs_contributions: ObservationContributions = HashMap::new();
 
     for synapse in synapses {
-        if let Some(records) = grouped_records.get(&synapse.from_uuid) {
-            for record in records {
-                if record.activation.is_finite() {
-                    let weighted = synapse.weight * record.activation;
-                    let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
-                    obs_contributions
-                        .entry(record.obs_index)
-                        .or_default()
-                        .push((key, weighted));
+        match grouped_records.get(&synapse.from_uuid)? {
+            None => continue,
+            Some(records) => {
+                for record in records.iter() {
+                    if record.activation.is_finite() {
+                        let weighted = synapse.weight * record.activation;
+                        let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+                        obs_contributions
+                            .entry(record.obs_index)
+                            .or_default()
+                            .push((key, weighted));
+                    }
                 }
             }
         }
@@ -440,6 +593,7 @@ fn compute_max_stats(
             stats.insert(key, probability);
         }
     }
+    Ok(())
 }
 
 /// Compute selection statistics for an IF neuron.
@@ -455,9 +609,9 @@ fn compute_max_stats(
 /// - Negative synapses: probability = fraction of observations where condition <= 0
 fn compute_if_stats(
     synapses: &[&SynapseJson],
-    grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
+    grouped_records: &dyn RecordProvider,
     stats: &mut SelectionStats,
-) {
+) -> Result<()> {
     // Separate synapses by type
     let condition_synapses: Vec<_> = synapses
         .iter()
@@ -481,7 +635,7 @@ fn compute_if_stats(
             let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
             stats.insert(key, 1.0 / n);
         }
-        return;
+        return Ok(());
     }
 
     // Condition synapses are always active
@@ -494,11 +648,14 @@ fn compute_if_stats(
     let mut obs_condition_sums: HashMap<u32, f32> = HashMap::new();
 
     for synapse in &condition_synapses {
-        if let Some(records) = grouped_records.get(&synapse.from_uuid) {
-            for record in records {
-                if record.activation.is_finite() {
-                    let contribution = synapse.weight * record.activation;
-                    *obs_condition_sums.entry(record.obs_index).or_insert(0.0) += contribution;
+        match grouped_records.get(&synapse.from_uuid)? {
+            None => continue,
+            Some(records) => {
+                for record in records.iter() {
+                    if record.activation.is_finite() {
+                        let contribution = synapse.weight * record.activation;
+                        *obs_condition_sums.entry(record.obs_index).or_insert(0.0) += contribution;
+                    }
                 }
             }
         }
@@ -519,7 +676,7 @@ fn compute_if_stats(
             let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
             stats.insert(key, 0.5 / neg_count);
         }
-        return;
+        return Ok(());
     }
 
     let positive_obs = obs_condition_sums
@@ -545,6 +702,7 @@ fn compute_if_stats(
         let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
         stats.insert(key, negative_prob / neg_count);
     }
+    Ok(())
 }
 
 // NOTE: build_inbound_weights was removed in v0.1.126 as part of the impact
@@ -578,6 +736,7 @@ struct ImpactContext {
 
 fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
     compute_impacts_internal_with_stats(creature, None)
+        .expect("impact computation without records should not fail")
 }
 
 /// Compute impacts with optional activation-based selection statistics.
@@ -594,8 +753,8 @@ fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
 /// Map from neuron UUID to impact score
 fn compute_impacts_internal_with_stats(
     creature: &CreatureJson,
-    grouped_records: Option<&HashMap<String, Vec<DiscoverRecord>>>,
-) -> HashMap<String, f32> {
+    grouped_records: Option<&dyn RecordProvider>,
+) -> Result<HashMap<String, f32>> {
     let adjacency = build_adjacency(creature);
     let squash_map = build_squash_map(creature);
 
@@ -616,7 +775,9 @@ fn compute_impacts_internal_with_stats(
         .collect();
 
     // Compute selection statistics if activation records are available
-    let selection_stats = grouped_records.map(|records| compute_selection_stats(creature, records));
+    let selection_stats = grouped_records
+        .map(|records| compute_selection_stats(creature, records))
+        .transpose()?;
 
     let ctx = ImpactContext {
         adjacency,
@@ -659,7 +820,7 @@ fn compute_impacts_internal_with_stats(
         cache.insert(neuron.uuid.clone(), impact);
     });
 
-    shared_cache.into_inner().unwrap()
+    Ok(shared_cache.into_inner().unwrap())
 }
 
 /// Compute impact with a shared cache for parallel execution.
@@ -750,8 +911,8 @@ fn compute_impact_with_shared_cache(
 /// Map from neuron UUID to impact score
 pub fn compute_impacts_with_activations(
     creature: &CreatureJson,
-    grouped_records: &HashMap<String, Vec<DiscoverRecord>>,
-) -> HashMap<String, f32> {
+    grouped_records: &dyn RecordProvider,
+) -> Result<HashMap<String, f32>> {
     compute_impacts_internal_with_stats(creature, Some(grouped_records))
 }
 
@@ -780,58 +941,37 @@ pub fn rank_focus_neurons(
     }
 
     // Try to load all records if we have enough memory.
-    // If not enough memory, fall back to lazy loading (slower but works).
-    let (grouped_records, is_lazy_mode) = match check_memory_for_parquet(parquet_file) {
-        Ok(()) => {
-            // Sufficient memory - load all records upfront for best performance
-            let records = read_all_records_grouped_by_neuron(parquet_file)
-                .context("Failed to read discovery records from parquet file")?;
-            (records, false)
-        }
-        Err(_) => {
-            // Insufficient memory - use lazy loading
-            eprintln!(
-                "[NEAT-AI-Discovery] Insufficient memory for full pre-load in focus ranking. \
-                 Using lazy-loading mode (slower but memory-efficient)."
-            );
-            // Load records lazily as needed
-            let mut lazy_records: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
-            for neuron in &selectable {
-                match read_records_from_parquet(parquet_file, &neuron.uuid) {
-                    Ok(records) => {
-                        lazy_records.insert(neuron.uuid.clone(), records);
-                    }
-                    Err(e) => {
-                        if verbose_enabled() {
-                            eprintln!(
-                                "[NEAT-AI-Discovery][verbose] Failed to load records for {}: {e}",
-                                neuron.uuid
-                            );
-                        }
-                    }
-                }
+    // If not enough memory, fall back to lazy loading with a bounded cache.
+    let (records_provider, is_lazy_mode): (Arc<dyn RecordProvider>, bool) =
+        match check_memory_for_parquet(parquet_file) {
+            Ok(()) => {
+                let records = read_all_records_grouped_by_neuron(parquet_file)
+                    .context("Failed to read discovery records from parquet file")?;
+                (Arc::new(EagerRecordProvider::new(records)), false)
             }
-            (lazy_records, true)
-        }
-    };
+            Err(memory_error) => {
+                eprintln!(
+                    "[NEAT-AI-Discovery] Insufficient memory for full pre-load in focus ranking. \
+                     Using lazy-loading mode (slower but memory-efficient)."
+                );
+                if verbose_enabled() {
+                    eprintln!("[NEAT-AI-Discovery][verbose] Memory check failed: {memory_error}");
+                }
+                (Arc::new(LazyRecordProvider::new(parquet_file)), true)
+            }
+        };
 
     if is_lazy_mode && verbose_enabled() {
         eprintln!(
-            "[NEAT-AI-Discovery][verbose] Lazy-loaded records for {} neurons",
-            grouped_records.len()
+            "[NEAT-AI-Discovery][verbose] Lazy record cache initialised (cached: {} neurons)",
+            records_provider.len()
         );
     }
 
-    // Verify that all selectable neurons have records (restore old error behavior)
-    // This maintains data integrity by failing fast if records are missing
+    // Verify that all selectable neurons have records (restore old error behaviour)
     for neuron in &selectable {
-        if !grouped_records.contains_key(&neuron.uuid) {
-            return Err(anyhow!(
-                "Missing discovery records for selectable neuron: {}",
-                neuron.uuid
-            )
-            .context("Failed to read discovery records for all selectable neurons"));
-        }
+        get_records_or_error(records_provider.as_ref(), &neuron.uuid)
+            .context("Failed to read discovery records for all selectable neurons")?;
     }
 
     let output_neurons: Vec<&NeuronJson> = creature
@@ -843,31 +983,29 @@ pub fn rank_focus_neurons(
     let max_output_error = if output_neurons.is_empty() {
         0.0
     } else {
-        output_neurons
+        let errors: Vec<f32> = output_neurons
             .iter()
             .map(|neuron| {
-                let records = grouped_records
-                    .get(&neuron.uuid)
-                    .expect("Output neuron should have records (already verified above)");
-                average_absolute_error_from_records(records)
+                let records = get_records_or_error(records_provider.as_ref(), &neuron.uuid)?;
+                Ok(average_absolute_error_from_records(&records))
             })
-            .fold(0.0, f32::max)
+            .collect::<Result<Vec<_>>>()?;
+
+        errors.into_iter().fold(0.0, f32::max)
     };
 
     // Use activation-based impact calculation for more accurate MIN/MAX/IF statistics
-    let impact_map = compute_impacts_with_activations(creature, &grouped_records);
+    let impact_map = compute_impacts_with_activations(creature, records_provider.as_ref())?;
 
     // Now we can safely unwrap since we've verified all selectable neurons have records
     // Use parallel iteration for faster processing on multi-core systems
     let mut neurons: Vec<RankedNeuron> = selectable
         .par_iter()
-        .map(|neuron| {
-            let records = grouped_records
-                .get(&neuron.uuid)
-                .expect("Selectable neuron should have records (already verified above)");
-            let avg_error = average_absolute_error_from_records(records);
+        .map(|neuron| -> Result<RankedNeuron> {
+            let records = get_records_or_error(records_provider.as_ref(), &neuron.uuid)?;
+            let avg_error = average_absolute_error_from_records(&records);
             let structural_impact = *impact_map.get(&neuron.uuid).unwrap_or(&0.0);
-            let mean_activation = mean_absolute_activation_from_records(records);
+            let mean_activation = mean_absolute_activation_from_records(&records);
 
             // Activation-weighted impact reflects the ACTUAL contribution during inference.
             // A neuron with tiny structural impact but massive activations still contributes
@@ -882,15 +1020,15 @@ pub fn rank_focus_neurons(
             } else {
                 avg_error
             };
-            RankedNeuron {
+            Ok(RankedNeuron {
                 neuron_uuid: neuron.uuid.clone(),
                 total_error,
                 impact: structural_impact,
                 mean_activation,
                 activation_weighted_impact,
-            }
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     // Sort by weighted score (error × impact) to prioritise neurons that:
     // 1. Have high error (potential for improvement)
@@ -984,6 +1122,74 @@ pub fn rank_focus_neurons(
         total_neurons,
         duration_ms: start.elapsed().as_millis(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn lazy_provider_defers_loading_and_bounds_cache() -> Result<()> {
+        let loads = Arc::new(AtomicUsize::new(0));
+        let provider = LazyRecordProvider::with_loader_for_tests("unused.parquet", 2, {
+            let loads = Arc::clone(&loads);
+            Arc::new(move |_file, neuron_uuid| {
+                loads.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![DiscoverRecord {
+                    obs_index: 0,
+                    neuron_uuid: neuron_uuid.to_string(),
+                    value: None,
+                    activation: 0.0,
+                    errors: vec![0.0],
+                }])
+            })
+        });
+
+        // No eager loads during initialisation
+        assert_eq!(0, loads.load(Ordering::SeqCst));
+
+        // First load hits the loader, subsequent load for same neuron is cached
+        provider.get("a")?.expect("records should be present");
+        assert_eq!(1, loads.load(Ordering::SeqCst));
+        provider.get("a")?.expect("records should be cached");
+        assert_eq!(1, loads.load(Ordering::SeqCst));
+
+        // Loading a second neuron increments once and cache remains bounded
+        provider.get("b")?.expect("records should be present");
+        assert_eq!(2, loads.load(Ordering::SeqCst));
+        assert!(provider.len() <= 2);
+        Ok(())
+    }
+
+    #[test]
+    fn lazy_provider_returns_loader_errors_with_context() {
+        let provider = LazyRecordProvider::with_loader_for_tests("failing.parquet", 2, {
+            Arc::new(|file, neuron_uuid| {
+                Err(anyhow!(
+                    "Simulated parquet read failure for {neuron_uuid} in {file}"
+                ))
+            })
+        });
+
+        let err = provider
+            .get("hidden-1")
+            .expect_err("loader error should surface");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Simulated parquet read failure"),
+            "expected loader error, got: {msg}"
+        );
+        assert!(
+            msg.contains("hidden-1"),
+            "neuron context should be present: {msg}"
+        );
+        assert!(
+            msg.contains("failing.parquet"),
+            "file context should be present: {msg}"
+        );
+    }
 }
 
 // NOTE: Tests for focus module have been moved to tests/focus.rs
