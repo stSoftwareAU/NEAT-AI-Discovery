@@ -213,7 +213,7 @@ fn test_synapse_candidate_hidden_neuron_is_impact_discounted() {
         println!(
             "Found candidate: {} → hidden-b, expected_improvement: {:.4}%",
             candidate.from_neuron_uuid,
-            candidate.expected_improvement_percentage * 100.0
+            candidate.expected_creature_score_gain * 100.0
         );
 
         // hidden-b has impact ≈ 0.1 (10%), so the expected improvement should be
@@ -222,23 +222,23 @@ fn test_synapse_candidate_hidden_neuron_is_impact_discounted() {
         // The key assertion: this value is CREATURE-LEVEL, not neuron-level.
         // TypeScript should use this directly without re-calculation.
         assert!(
-            candidate.expected_improvement_percentage >= 0.0,
+            candidate.expected_creature_score_gain >= 0.0,
             "Expected improvement should be non-negative"
         );
 
         // With impact ≈ 0.1, even a 100% neuron-level improvement becomes ~10% creature-level
         // So we expect the value to be relatively small
         assert!(
-            candidate.expected_improvement_percentage <= 0.5,
+            candidate.expected_creature_score_gain <= 0.5,
             "Expected improvement should be discounted (≤50% for low-impact hidden neuron), got {:.2}%",
-            candidate.expected_improvement_percentage * 100.0
+            candidate.expected_creature_score_gain * 100.0
         );
     }
 }
 
 /// Test that synapse candidates targeting output neurons have full impact (no discount).
 ///
-/// Output neurons have impact = 1.0, so their expected_improvement_percentage
+/// Output neurons have impact = 1.0, so their expected_creature_score_gain
 /// should not be discounted at all.
 #[test]
 fn test_synapse_candidate_output_neuron_no_discount() {
@@ -313,11 +313,11 @@ fn test_synapse_candidate_output_neuron_no_discount() {
         println!(
             "Output candidate: {} → output-0, expected_improvement: {:.4}%",
             candidate.from_neuron_uuid,
-            candidate.expected_improvement_percentage * 100.0
+            candidate.expected_creature_score_gain * 100.0
         );
 
         // Output neurons have impact = 1.0, so no discount should be applied
-        // The expected_improvement_percentage IS the creature-level improvement
+        // The expected_creature_score_gain IS the creature-level improvement
     }
 }
 
@@ -403,7 +403,7 @@ fn test_harmful_synapse_candidate_is_impact_discounted() {
             "  {} → {}, expected_improvement: {:.4}%",
             candidate.from_neuron_uuid,
             candidate.to_neuron_uuid,
-            candidate.expected_improvement_percentage * 100.0
+            candidate.expected_creature_score_gain * 100.0
         );
     }
 

@@ -2680,6 +2680,8 @@ impl ReluStats {
         let target_stats = NeuronStats::from_samples(original_samples).map(|s| s.to_json());
         let total_count = self.samples.len() as u32;
 
+        // Issue #128: Use creature-level metrics instead of neuron-level percentage.
+        // target_neuron_impact will be updated during impact discounting.
         Some(CandidateNeuronJson {
             source_neuron_uuid: source_uuid.to_string(),
             target_neuron_uuid: target_uuid.to_string(),
@@ -2687,7 +2689,9 @@ impl ReluStats {
             outgoing_weight,
             squash: "ReLU".to_string(),
             bias: optimal_bias,
-            expected_improvement_percentage: expected_improvement,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: expected_improvement,
+            expected_creature_score_gain: expected_improvement,
             improved_count,
             total_count,
             target_neuron_stats: target_stats,
@@ -5514,9 +5518,8 @@ fn upsert_candidate(
 
     match map.entry(key) {
         Entry::Occupied(mut entry) => {
-            if candidate.expected_improvement_percentage
-                > entry.get().expected_improvement_percentage
-            {
+            // Issue #128: Compare by expected creature score gain
+            if candidate.expected_creature_score_gain > entry.get().expected_creature_score_gain {
                 entry.insert(candidate);
             }
         }
@@ -6094,8 +6097,10 @@ fn evaluate_relu_candidates_split<G: GpuEvaluator>(
                 candidate.improved_count = improved;
                 candidate.total_count = total;
 
+                // Issue #128: Update creature-level metrics
                 if net_improvement > best_improvement {
-                    candidate.expected_improvement_percentage = net_improvement;
+                    candidate.expected_creature_error_reduction = net_improvement;
+                    candidate.expected_creature_score_gain = net_improvement;
                     best_improvement = net_improvement;
                     best_candidate = Some(candidate);
                 }
@@ -6136,8 +6141,10 @@ fn evaluate_relu_candidates_split<G: GpuEvaluator>(
                 candidate.improved_count = improved;
                 candidate.total_count = total;
 
+                // Issue #128: Update creature-level metrics
                 if net_improvement > best_improvement {
-                    candidate.expected_improvement_percentage = net_improvement;
+                    candidate.expected_creature_error_reduction = net_improvement;
+                    candidate.expected_creature_score_gain = net_improvement;
                     best_improvement = net_improvement;
                     best_candidate = Some(candidate);
                 }
@@ -6276,6 +6283,7 @@ fn evaluate_activation_for_subset<G: GpuEvaluator>(
                 best_net_improvement = net_improvement;
 
                 let target_stats = NeuronStats::from_samples(all_samples).map(|s| s.to_json());
+                // Issue #128: Use creature-level metrics
                 best_candidate = Some(CandidateNeuronJson {
                     source_neuron_uuid: source_uuid.to_string(),
                     target_neuron_uuid: target_uuid.to_string(),
@@ -6283,7 +6291,9 @@ fn evaluate_activation_for_subset<G: GpuEvaluator>(
                     outgoing_weight,
                     squash: spec.name.to_string(),
                     bias: optimal_bias,
-                    expected_improvement_percentage: net_improvement,
+                    target_neuron_impact: 1.0,
+                    expected_creature_error_reduction: net_improvement,
+                    expected_creature_score_gain: net_improvement,
                     improved_count,
                     total_count,
                     target_neuron_stats: target_stats,
@@ -6383,14 +6393,15 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
             target_activation_fn,
         )? {
             // Track best and fallback candidates from split evaluation
-            if candidate.expected_improvement_percentage > best_score {
-                best_score = candidate.expected_improvement_percentage;
+            // Issue #128: Use expected_creature_score_gain for comparison
+            if candidate.expected_creature_score_gain > best_score {
+                best_score = candidate.expected_creature_score_gain;
                 best_candidate = Some(candidate.clone());
             }
-            if candidate.expected_improvement_percentage > fallback_score
-                && candidate.expected_improvement_percentage > 0.0
+            if candidate.expected_creature_score_gain > fallback_score
+                && candidate.expected_creature_score_gain > 0.0
             {
-                fallback_score = candidate.expected_improvement_percentage;
+                fallback_score = candidate.expected_creature_score_gain;
                 fallback_candidate = Some(candidate);
             }
         }
@@ -6478,7 +6489,7 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
             let (
                 outgoing_weight,
                 optimal_bias,
-                expected_improvement_percentage,
+                neuron_error_improvement, // Issue #128: Renamed - this is neuron-level, not creature-level
                 final_improved_count,
             ) = if target_activation_fn.is_some() {
                 // Weight candidates: base weight and scaled versions
@@ -6626,7 +6637,7 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
             // A 1% improvement on baseline_sq=0.0001 is only 0.000001 absolute reduction,
             // which won't meaningfully affect the creature's total error.
             // Minimum absolute improvement = 0.001 (0.1% of typical baseline ~1.0)
-            let absolute_improvement = expected_improvement_percentage * baseline_sq;
+            let absolute_improvement = neuron_error_improvement * baseline_sq;
             if absolute_improvement < 0.001 {
                 continue;
             }
@@ -6644,12 +6655,11 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
             // TypeScript will decide if the improvement is worth the cost of growth.
             // We don't apply arbitrary minimum thresholds here - any positive
             // improvement is returned and TypeScript handles candidate selection.
-            if expected_improvement_percentage > fallback_score
-                && expected_improvement_percentage > 0.0
-            {
-                fallback_score = expected_improvement_percentage;
+            if neuron_error_improvement > fallback_score && neuron_error_improvement > 0.0 {
+                fallback_score = neuron_error_improvement;
 
                 let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
+                // Issue #128: Use creature-level metrics (impact discounting applied later)
                 fallback_candidate = Some(CandidateNeuronJson {
                     source_neuron_uuid: source_uuid.to_string(),
                     target_neuron_uuid: target_uuid.to_string(),
@@ -6657,7 +6667,9 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
                     outgoing_weight,
                     squash: spec.name.to_string(),
                     bias: optimal_bias,
-                    expected_improvement_percentage,
+                    target_neuron_impact: 1.0,
+                    expected_creature_error_reduction: neuron_error_improvement,
+                    expected_creature_score_gain: neuron_error_improvement,
                     improved_count: final_improved_count,
                     total_count,
                     target_neuron_stats: target_stats,
@@ -6672,18 +6684,18 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
             // If spec requires 0% and caller passes 1%, we require 1%
             let improvement_cutoff = threshold.max(spec.min_improvement);
 
-            if expected_improvement_percentage <= improvement_cutoff
+            if neuron_error_improvement <= improvement_cutoff
                 || final_improved_count < MIN_NEURON_SAMPLE_COUNT as u32
             {
                 continue;
             }
 
             // Current iteration passed threshold - create best_candidate with current iteration's values
-            if expected_improvement_percentage > best_score {
-                best_score = expected_improvement_percentage;
+            if neuron_error_improvement > best_score {
+                best_score = neuron_error_improvement;
 
                 let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
-                // Use current iteration's values, not fallback candidate's values
+                // Issue #128: Use creature-level metrics (impact discounting applied later)
                 best_candidate = Some(CandidateNeuronJson {
                     source_neuron_uuid: source_uuid.to_string(),
                     target_neuron_uuid: target_uuid.to_string(),
@@ -6691,9 +6703,11 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
                     outgoing_weight,
                     squash: spec.name.to_string(),
                     bias: optimal_bias,
-                    expected_improvement_percentage, // Use current iteration's value
-                    improved_count: final_improved_count, // Use current iteration's value
-                    total_count,                     // Use current iteration's value
+                    target_neuron_impact: 1.0,
+                    expected_creature_error_reduction: neuron_error_improvement,
+                    expected_creature_score_gain: neuron_error_improvement,
+                    improved_count: final_improved_count,
+                    total_count,
                     target_neuron_stats: target_stats,
                 });
             }
@@ -6924,6 +6938,7 @@ fn evaluate_discrete_candidate(
                             NeuronStats::from_samples(&helper_samples).map(|s| s.to_json())
                         };
 
+                        // Issue #128: Use creature-level metrics
                         best_candidate = Some(CandidateNeuronJson {
                             source_neuron_uuid: source_uuid.to_string(),
                             target_neuron_uuid: target_uuid.to_string(),
@@ -6931,7 +6946,9 @@ fn evaluate_discrete_candidate(
                             outgoing_weight,
                             squash: new_neuron_squash.to_string(),
                             bias: 0.0, // IDENTITY doesn't need bias for threshold crossing
-                            expected_improvement_percentage: improvement,
+                            target_neuron_impact: 1.0,
+                            expected_creature_error_reduction: improvement,
+                            expected_creature_score_gain: improvement,
                             improved_count: helpful_flips as u32,
                             total_count,
                             target_neuron_stats: target_stats,
@@ -7513,7 +7530,7 @@ pub(crate) fn analyze_neurons_with_cache(
                                 source.uuid,
                                 target_uuid,
                                 discrete_samples.len(),
-                                candidate.expected_improvement_percentage * 100.0,
+                                candidate.expected_creature_score_gain * 100.0,
                                 candidate.improved_count
                             );
                         }
@@ -7569,7 +7586,7 @@ pub(crate) fn analyze_neurons_with_cache(
                                 "[NEAT-AI-Discovery][verbose] ReLU (push UP) {} -> {}: {:.2}% improvement",
                                 result.source_uuid,
                                 target_uuid,
-                                candidate.expected_improvement_percentage * 100.0
+                                candidate.expected_creature_score_gain * 100.0
                             );
                         }
                         diagnostics
@@ -7586,7 +7603,7 @@ pub(crate) fn analyze_neurons_with_cache(
                                 "[NEAT-AI-Discovery][verbose] ReLU (push DOWN) {} -> {}: {:.2}% improvement",
                                 result.source_uuid,
                                 target_uuid,
-                                candidate.expected_improvement_percentage * 100.0
+                                candidate.expected_creature_score_gain * 100.0
                             );
                         }
                         diagnostics
@@ -7640,10 +7657,9 @@ pub(crate) fn analyze_neurons_with_cache(
 
     let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
 
-    // Apply impact-based discounting for hidden neurons (v0.1.123)
-    // Hidden neuron errors are backpropagated approximations, so their predictions
-    // are less reliable than output neurons. We discount by their impact score
-    // (path weight product to outputs).
+    // Issue #128: Apply impact-based discounting and set creature-level metrics.
+    // Output neurons have impact = 1.0 (no discount).
+    // Hidden neurons have impact in [0, 1] based on their weighted paths to outputs.
     let impact_scores = compute_impacts_public(&input.creature);
     for candidate in &mut helpful_results {
         let is_hidden = neuron_type_map
@@ -7651,46 +7667,40 @@ pub(crate) fn analyze_neurons_with_cache(
             .map(|t| t != "output")
             .unwrap_or(true); // Default to true if type unknown (treat as hidden)
 
-        if is_hidden {
+        let impact = if is_hidden {
             if let Some(&impact) = impact_scores.get(&candidate.target_neuron_uuid) {
-                let discount = impact.clamp(0.0, 1.0);
-                let original = candidate.expected_improvement_percentage;
-                candidate.expected_improvement_percentage *= discount;
-                if verbose_enabled() {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Hidden neuron {} prediction discounted by impact {:.3}: \
-                        {:.4}% -> {:.4}%",
-                        &candidate.target_neuron_uuid[..12.min(candidate.target_neuron_uuid.len())],
-                        discount,
-                        original * 100.0,
-                        candidate.expected_improvement_percentage * 100.0
-                    );
-                }
+                impact.clamp(0.0, 1.0)
             } else {
                 // No impact score means disconnected from outputs - heavy discount
-                let original = candidate.expected_improvement_percentage;
-                candidate.expected_improvement_percentage *= 0.1;
-                if verbose_enabled() {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Hidden neuron {} has no impact score (disconnected?). \
-                        Applying 90% discount: {:.4}% -> {:.4}%",
-                        &candidate.target_neuron_uuid[..12.min(candidate.target_neuron_uuid.len())],
-                        original * 100.0,
-                        candidate.expected_improvement_percentage * 100.0
-                    );
-                }
+                0.1
             }
+        } else {
+            // Output neuron - full impact
+            1.0
+        };
+
+        // Update creature-level metrics
+        candidate.target_neuron_impact = impact;
+        let original = candidate.expected_creature_error_reduction;
+        candidate.expected_creature_error_reduction *= impact;
+        candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
+
+        if verbose_enabled() && is_hidden {
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Neuron candidate → {} impact {:.3}: \
+                {:.4}% → {:.4}%",
+                &candidate.target_neuron_uuid[..12.min(candidate.target_neuron_uuid.len())],
+                impact,
+                original * 100.0,
+                candidate.expected_creature_score_gain * 100.0
+            );
         }
     }
 
-    // v0.1.134: No filtering needed after impact discounting.
-    // For valid creatures (validated by TypeScript), all hidden neurons have a path to
-    // outputs, so zero/negative impact is mathematically impossible. TypeScript will
-    // decide if the improvement is worth the cost of growth by measuring actual score.
-
+    // Sort by expected creature score gain (highest first) - Issue #128
     helpful_results.sort_by(|a, b| {
-        b.expected_improvement_percentage
-            .partial_cmp(&a.expected_improvement_percentage)
+        b.expected_creature_score_gain
+            .partial_cmp(&a.expected_creature_score_gain)
             .unwrap_or(Ordering::Equal)
     });
 
@@ -8727,7 +8737,8 @@ pub(crate) fn analyze_synapses_with_cache(
                     // Falls back to linear model when target_value/target_activation are not recorded.
                     // Both improved_count and worsened_count now use the same CPU-based saturation-aware
                     // methodology for consistency (previously worsened_count came from GPU linear model).
-                    let (expected_improvement_percentage, improved_count, worsened_count) = {
+                    // Issue #128: This is neuron-level improvement - impact discounting converts to creature-level.
+                    let (neuron_error_improvement, improved_count, worsened_count) = {
                         let baseline_error_sq = stats.error_sq_sum;
                         let (improvement, improved, worsened, _) =
                             compute_synapse_improvement_and_count(
@@ -8741,19 +8752,19 @@ pub(crate) fn analyze_synapses_with_cache(
 
                     // Accept all positive improvements as candidates (not just those above threshold)
                     // Only reject if improvement is non-positive (<= 0.0)
-                    if expected_improvement_percentage <= 0.0 {
+                    if neuron_error_improvement <= 0.0 {
                         // Skip non-positive improvements
                         continue;
                     }
 
                     // If positive but below threshold, still accept as candidate but log for diagnostics
-                    if expected_improvement_percentage <= threshold {
+                    if neuron_error_improvement <= threshold {
                         diagnostics_below_threshold.push((
                             work.target_uuid.clone(),
                             work.source_uuid.clone(),
                             ThresholdContext {
                                 sample_count: work.samples.len(),
-                                expected_improvement: expected_improvement_percentage,
+                                expected_improvement: neuron_error_improvement,
                                 threshold,
                                 improved_count,
                                 worsened_count,
@@ -8768,11 +8779,14 @@ pub(crate) fn analyze_synapses_with_cache(
                         .ok()
                         .and_then(|records| NeuronStats::from_records(records.as_ref()))
                         .map(|s| s.to_json());
+                    // Issue #128: Use creature-level metrics (impact discounting applied later)
                     candidates_to_add.push(CandidateSynapseJson {
                         from_neuron_uuid: work.source_uuid.clone(),
                         to_neuron_uuid: work.target_uuid.clone(),
                         weight,
-                        expected_improvement_percentage,
+                        target_neuron_impact: 1.0,
+                        expected_creature_error_reduction: neuron_error_improvement,
+                        expected_creature_score_gain: neuron_error_improvement,
                         improved_count,
                         total_count,
                         target_neuron_stats: target_stats,
@@ -8863,15 +8877,19 @@ pub(crate) fn analyze_synapses_with_cache(
                                 continue;
                             }
 
-                            let expected_improvement_percentage = (stats.harmful_count as f32
+                            // Issue #128: This is neuron-level - impact discounting converts to creature-level
+                            let neuron_error_improvement = (stats.harmful_count as f32
                                 - stats.helpful_count as f32)
                                 / total_count as f32;
 
+                            // Issue #128: Use creature-level metrics (impact discounting applied later)
                             harmful_candidates.push(CandidateSynapseJson {
                                 from_neuron_uuid: work.synapse.from_uuid.clone(),
                                 to_neuron_uuid: work.synapse.to_uuid.clone(),
                                 weight: work.synapse.weight,
-                                expected_improvement_percentage,
+                                target_neuron_impact: 1.0,
+                                expected_creature_error_reduction: neuron_error_improvement,
+                                expected_creature_score_gain: neuron_error_improvement,
                                 improved_count: stats.harmful_count,
                                 total_count,
                                 target_neuron_stats: target_stats.clone(),
@@ -8913,10 +8931,7 @@ pub(crate) fn analyze_synapses_with_cache(
         }
     }
 
-    // Apply impact-based discounting for synapse candidates targeting hidden neurons (v0.1.133)
-    // This makes Rust the single source of truth for creature-level expected improvement.
-    // TypeScript no longer needs to re-calculate impact - just use the returned value directly.
-    //
+    // Issue #128: Apply impact-based discounting and set creature-level metrics.
     // Output neurons have impact = 1.0 (no discount).
     // Hidden neurons have impact in [0, 1] based on their weighted paths to outputs.
     let impact_scores = compute_impacts_public(&input.creature);
@@ -8927,60 +8942,63 @@ pub(crate) fn analyze_synapses_with_cache(
         .map(|n| (n.uuid.clone(), n.neuron_type.clone()))
         .collect();
 
-    // Discount helpful synapse candidates
+    // Apply impact discounting to helpful synapse candidates
     for candidate in &mut helpful_results {
         let is_hidden = neuron_type_map
             .get(&candidate.to_neuron_uuid)
             .map(|t| t != "output")
             .unwrap_or(true); // Default to hidden if type unknown
 
-        if is_hidden {
+        let impact = if is_hidden {
             if let Some(&impact) = impact_scores.get(&candidate.to_neuron_uuid) {
-                let discount = impact.clamp(0.0, 1.0);
-                let original = candidate.expected_improvement_percentage;
-                candidate.expected_improvement_percentage *= discount;
-                if verbose_enabled() {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Synapse candidate → {} discounted by impact {:.3}: \
-                        {:.4}% → {:.4}%",
-                        &candidate.to_neuron_uuid[..12.min(candidate.to_neuron_uuid.len())],
-                        discount,
-                        original * 100.0,
-                        candidate.expected_improvement_percentage * 100.0
-                    );
-                }
+                impact.clamp(0.0, 1.0)
             } else {
                 // No impact score means disconnected from outputs - heavy discount
-                let original = candidate.expected_improvement_percentage;
-                candidate.expected_improvement_percentage *= 0.1;
-                if verbose_enabled() {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Synapse candidate → {} has no impact score (disconnected?). \
-                        Applying 90% discount: {:.4}% → {:.4}%",
-                        &candidate.to_neuron_uuid[..12.min(candidate.to_neuron_uuid.len())],
-                        original * 100.0,
-                        candidate.expected_improvement_percentage * 100.0
-                    );
-                }
+                0.1
             }
+        } else {
+            // Output neuron - full impact
+            1.0
+        };
+
+        // Update creature-level metrics
+        candidate.target_neuron_impact = impact;
+        let original = candidate.expected_creature_error_reduction;
+        candidate.expected_creature_error_reduction *= impact;
+        candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
+
+        if verbose_enabled() && is_hidden {
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Synapse candidate → {} impact {:.3}: \
+                {:.4}% → {:.4}%",
+                &candidate.to_neuron_uuid[..12.min(candidate.to_neuron_uuid.len())],
+                impact,
+                original * 100.0,
+                candidate.expected_creature_score_gain * 100.0
+            );
         }
     }
 
-    // Discount harmful synapse candidates (same logic)
+    // Apply impact discounting to harmful synapse candidates (same logic)
     for candidate in &mut harmful_results {
         let is_hidden = neuron_type_map
             .get(&candidate.to_neuron_uuid)
             .map(|t| t != "output")
             .unwrap_or(true);
 
-        if is_hidden {
+        let impact = if is_hidden {
             if let Some(&impact) = impact_scores.get(&candidate.to_neuron_uuid) {
-                let discount = impact.clamp(0.0, 1.0);
-                candidate.expected_improvement_percentage *= discount;
+                impact.clamp(0.0, 1.0)
             } else {
-                candidate.expected_improvement_percentage *= 0.1;
+                0.1
             }
-        }
+        } else {
+            1.0
+        };
+
+        candidate.target_neuron_impact = impact;
+        candidate.expected_creature_error_reduction *= impact;
+        candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
     }
 
     // Note: helpful_fallback does NOT need separate discounting here.
@@ -8989,13 +9007,14 @@ pub(crate) fn analyze_synapses_with_cache(
     // empty, the fallback is intentionally not returned (we have better candidates).
 
     helpful_results.sort_by(|a, b| {
-        b.expected_improvement_percentage
-            .partial_cmp(&a.expected_improvement_percentage)
+        // Issue #128: Sort by expected creature score gain (highest first)
+        b.expected_creature_score_gain
+            .partial_cmp(&a.expected_creature_score_gain)
             .unwrap_or(Ordering::Equal)
     });
     harmful_results.sort_by(|a, b| {
-        b.expected_improvement_percentage
-            .partial_cmp(&a.expected_improvement_percentage)
+        b.expected_creature_score_gain
+            .partial_cmp(&a.expected_creature_score_gain)
             .unwrap_or(Ordering::Equal)
     });
 
@@ -11579,10 +11598,11 @@ mod tests_synapses {
             }
         } else {
             // We have candidates - verify at least one has positive improvement
+            // Issue #128: Use expected_creature_score_gain (creature-level, not neuron-level)
             let has_positive_improvement = result
                 .helpful_synapses
                 .iter()
-                .any(|synapse| synapse.expected_improvement_percentage > 0.0);
+                .any(|synapse| synapse.expected_creature_score_gain > 0.0);
 
             assert!(
                 has_positive_improvement,
@@ -11653,10 +11673,11 @@ mod tests_synapses {
 
         // Non-positive improvements should be rejected (not appear in helpful_synapses)
         // Even though we now accept positive improvements below threshold, we still reject <= 0.0
+        // Issue #128: Use expected_creature_score_gain (creature-level metric)
         let has_non_positive = result
             .helpful_synapses
             .iter()
-            .any(|synapse| synapse.expected_improvement_percentage <= 0.0);
+            .any(|synapse| synapse.expected_creature_score_gain <= 0.0);
 
         assert!(
             !has_non_positive,
@@ -11727,10 +11748,11 @@ mod tests_synapses {
 
         // Positive improvements above threshold should definitely be accepted
         // This is a regression test to ensure we didn't break existing behavior
+        // Issue #128: Use expected_creature_score_gain (creature-level metric)
         let has_above_threshold = result
             .helpful_synapses
             .iter()
-            .any(|synapse| synapse.expected_improvement_percentage > 0.1);
+            .any(|synapse| synapse.expected_creature_score_gain > 0.1);
 
         // Note: This test may pass even if no candidates are found due to other reasons
         // (e.g., no samples, zero improvement). The key is that if we have candidates,
@@ -11741,7 +11763,7 @@ mod tests_synapses {
                     || result
                         .helpful_synapses
                         .iter()
-                        .any(|s| s.expected_improvement_percentage > 0.0),
+                        .any(|s| s.expected_creature_score_gain > 0.0),
                 "Should have candidates with positive improvement (above or below threshold)"
             );
         }
@@ -12446,6 +12468,7 @@ mod tests_synapses {
             HashMap::new();
 
         // Positive-orientation ReLU candidate
+        // Issue #128: Use creature-level metrics
         let positive_candidate = CandidateNeuronJson {
             source_neuron_uuid: "source-1".to_string(),
             target_neuron_uuid: "target-1".to_string(),
@@ -12453,7 +12476,9 @@ mod tests_synapses {
             outgoing_weight: 0.5,
             squash: "ReLU".to_string(),
             bias: 0.0,
-            expected_improvement_percentage: 0.15,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: 0.15,
+            expected_creature_score_gain: 0.15,
             improved_count: 30,
             total_count: 50,
             target_neuron_stats: None,
@@ -12467,7 +12492,9 @@ mod tests_synapses {
             outgoing_weight: 0.4,  // Same outgoing sign
             squash: "ReLU".to_string(),
             bias: 0.0,
-            expected_improvement_percentage: 0.12,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: 0.12,
+            expected_creature_score_gain: 0.12,
             improved_count: 25,
             total_count: 50,
             target_neuron_stats: None,
@@ -12522,6 +12549,7 @@ mod tests_synapses {
 
         // Candidate for positive errors: same source/target, positive outgoing_weight
         // This pushes output UP when source is high
+        // Issue #128: Use creature-level metrics
         let positive_error_candidate = CandidateNeuronJson {
             source_neuron_uuid: "source-1".to_string(),
             target_neuron_uuid: "target-1".to_string(),
@@ -12529,7 +12557,9 @@ mod tests_synapses {
             outgoing_weight: 0.5, // POSITIVE: pushes output UP
             squash: "ReLU".to_string(),
             bias: 0.0,
-            expected_improvement_percentage: 0.10,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: 0.10,
+            expected_creature_score_gain: 0.10,
             improved_count: 25,
             total_count: 50,
             target_neuron_stats: None,
@@ -12544,7 +12574,9 @@ mod tests_synapses {
             outgoing_weight: -0.4, // NEGATIVE: pushes output DOWN
             squash: "ReLU".to_string(),
             bias: 0.0,
-            expected_improvement_percentage: 0.08,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: 0.08,
+            expected_creature_score_gain: 0.08,
             improved_count: 20,
             total_count: 50,
             target_neuron_stats: None,

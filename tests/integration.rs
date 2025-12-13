@@ -876,9 +876,9 @@ fn test_add_neuron_finds_candidates_with_correlated_errors() {
     // Verify the candidate makes sense
     let best = &result.helpful_neurons[0];
     assert!(
-        best.expected_improvement_percentage > 0.0,
+        best.expected_creature_score_gain > 0.0,
         "Best candidate should show positive improvement, got {}",
-        best.expected_improvement_percentage
+        best.expected_creature_score_gain
     );
 
     // The source should be input-0 (the correlated input)
@@ -982,19 +982,19 @@ fn test_add_neuron_with_hard_tanh_target_uses_bias_aware_weight() {
     // Verify the candidate has reasonable expected improvement
     let best = &result.helpful_neurons[0];
     assert!(
-        best.expected_improvement_percentage > 0.0,
+        best.expected_creature_score_gain > 0.0,
         "Expected improvement should be positive, got {}",
-        best.expected_improvement_percentage
+        best.expected_creature_score_gain
     );
 
     // Key assertion: the improvement prediction should be realistic (not inflated)
     // With the bug, predictions were often 10x higher than reality
     // After the fix, predictions should be < 50% (a reasonable upper bound)
     assert!(
-        best.expected_improvement_percentage < 50.0,
+        best.expected_creature_score_gain < 50.0,
         "Expected improvement should be realistic (< 50%), got {}%. \
          This may indicate the bias-aware weight calculation is not working.",
-        best.expected_improvement_percentage
+        best.expected_creature_score_gain
     );
 
     // Note: bias=0 is a valid value (the optimal bias search includes 0.0)
@@ -1075,17 +1075,17 @@ fn test_bias_improves_neuron_performance() {
     if !result.helpful_neurons.is_empty() {
         for neuron in &result.helpful_neurons {
             assert!(
-                neuron.expected_improvement_percentage > 0.0,
+                neuron.expected_creature_score_gain > 0.0,
                 "Neuron candidate should show positive improvement, got {}",
-                neuron.expected_improvement_percentage
+                neuron.expected_creature_score_gain
             );
 
             // The fact that the neuron passed the threshold with the calculated bias
             // means the bias is helping (otherwise it wouldn't have passed)
             assert!(
-                neuron.expected_improvement_percentage >= 0.01,
+                neuron.expected_creature_score_gain >= 0.01,
                 "Neuron should meet improvement threshold of 0.01, got {}",
-                neuron.expected_improvement_percentage
+                neuron.expected_creature_score_gain
             );
         }
     }
@@ -1227,7 +1227,7 @@ fn test_hidden_neurons_are_analysed_not_filtered() {
 
 /// REGRESSION TEST: Hidden neuron candidates must have discounted predictions.
 ///
-/// When a candidate targets a hidden neuron, the expected_improvement_percentage
+/// When a candidate targets a hidden neuron, the expected_creature_score_gain
 /// should be discounted by the hidden neuron's impact score (path to outputs).
 ///
 /// Impact is calculated as: (weight to child / total inbound to child) × child_impact
@@ -1388,18 +1388,18 @@ fn test_hidden_neuron_candidates_have_impact_discounted_predictions() {
             // With impact = 0.5, predictions should be discounted by 50%
             // So maximum possible is 50% even if raw prediction was 100%
             assert!(
-                candidate.expected_improvement_percentage <= 0.5,
+                candidate.expected_creature_score_gain <= 0.5,
                 "Hidden neuron candidate improvement {:.4}% exceeds impact-adjusted maximum of 50%. \
                 Hidden-0 has impact ~0.5, so predictions should be discounted. \
                 This suggests impact discounting is not being applied.",
-                candidate.expected_improvement_percentage * 100.0
+                candidate.expected_creature_score_gain * 100.0
             );
 
             eprintln!(
                 "Hidden neuron candidate (impact ~0.5): {} -> {} improvement={:.4}%",
                 candidate.source_neuron_uuid,
                 candidate.target_neuron_uuid,
-                candidate.expected_improvement_percentage * 100.0
+                candidate.expected_creature_score_gain * 100.0
             );
         }
     } else {

@@ -162,7 +162,7 @@ fn test_leaky_relu_gpu_shader_produces_correct_results() {
             "  incoming={:.4}, outgoing={:.4}, improvement={:.4}%",
             c.incoming_weight,
             c.outgoing_weight,
-            c.expected_improvement_percentage * 100.0
+            c.expected_creature_score_gain * 100.0
         );
     }
 
@@ -287,7 +287,7 @@ fn test_mish_gpu_shader_produces_correct_results() {
             "  incoming={:.4}, outgoing={:.4}, improvement={:.4}%",
             c.incoming_weight,
             c.outgoing_weight,
-            c.expected_improvement_percentage * 100.0
+            c.expected_creature_score_gain * 100.0
         );
     }
 

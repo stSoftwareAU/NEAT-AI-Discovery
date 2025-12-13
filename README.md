@@ -705,7 +705,7 @@ one group hurts the other equally.
 3. Evaluate NET improvement across ALL samples
 4. Only return candidates where net improvement > 0
 
-**Result**: `expected_improvement_percentage` is now the TRUE net improvement across
+**Result**: The improvement metric is now the TRUE net improvement across
 all samples, not just a subset prediction. Candidates that would hurt one group more
 than they help the other are filtered out automatically.
 
@@ -1023,32 +1023,50 @@ messages like:
 [NEAT-AI-Discovery][verbose] Using threshold-crossing model for 2 STEP/BIPOLAR neurons: [...]
 ```
 
-#### Synapse candidate impact discounting (v0.1.133)
+#### Creature-level metrics (v0.1.169, Issue #128)
 
-**IMPORTANT**: The `expectedImprovementPercentage` field in synapse candidates is now
-**creature-level**, not neuron-level. This makes Rust the **single source of truth**
-for expected improvement calculations.
+**CRITICAL CHANGE**: All discovery candidates now return **creature-level** metrics instead
+of neuron-level percentages. The old `expectedImprovementPercentage` field has been
+**removed** and replaced with clearer creature-level fields.
 
-| Candidate Type | Impact Discounted? | TypeScript Action |
-|----------------|-------------------|-------------------|
-| **Neurons** | ✅ Yes (v0.1.123) | Use value directly |
-| **Synapses** | ✅ Yes (v0.1.133) | Use value directly |
-| **Removal** | ✅ Yes (built-in) | Use value directly |
+**The goal of discovery is to improve the CREATURE'S SCORE.** Every candidate now includes:
+
+| Field | Description | Value Range |
+|-------|-------------|-------------|
+| `targetNeuronImpact` | Impact of target neuron on creature (output=1.0, hidden<1.0) | 0.0 - 1.0 |
+| `expectedCreatureErrorReduction` | Expected reduction in creature's error | 0.0 - 1.0 (ratio) |
+| `expectedCreatureScoreGain` | Expected improvement in creature's score | 0.0 - 1.0 (ratio) |
+
+**Why the change?** The old `expectedImprovementPercentage` was measuring the **target
+neuron's** error reduction, not the **creature's** error reduction. A hidden neuron with
+0.0001 impact and 33% neuron-level improvement would contribute only 0.0033% to the
+creature's score - less than the cost of growth! The new fields make this transparent.
 
 **How it works**:
-- Synapse candidates targeting **output neurons** have impact = 1.0 (no discount)
-- Synapse candidates targeting **hidden neurons** are discounted by the target's impact
-  score (0.0 to 1.0 based on weighted paths to outputs)
+- `targetNeuronImpact` shows the target neuron's weighted path to outputs
+- `expectedCreatureErrorReduction` = neuron-level improvement × targetNeuronImpact
+- `expectedCreatureScoreGain` = expectedCreatureErrorReduction (since score = 1 - error)
 
-**Example**: A synapse candidate improving a hidden neuron by 70% that has impact 0.1:
-- **Old (neuron-level)**: `expectedImprovementPercentage = 0.70` (70%)
-- **New (creature-level)**: `expectedImprovementPercentage = 0.07` (7%)
+**Example**: A candidate improving a hidden neuron's error by 70% where the neuron has impact 0.1:
+```
+targetNeuronImpact: 0.1
+expectedCreatureErrorReduction: 0.07  (70% × 0.1 = 7% creature-level)
+expectedCreatureScoreGain: 0.07
+```
 
-**TypeScript should NOT re-calculate impact**. The returned `expectedImprovementPercentage`
-is the actual expected improvement on the creature's score. Simply use:
+**Candidates are sorted by `expectedCreatureScoreGain`** (highest first), so the best
+candidates for the creature appear at the top.
+
+**TypeScript usage**:
 ```typescript
-const creatureLevelImprovement = candidate.expectedImprovementPercentage;
-// Don't multiply by getNeuronShare() or any other impact factor!
+// Use the creature-level score gain directly
+const creatureLevelImprovement = candidate.expectedCreatureScoreGain;
+
+// The impact is also available for transparency
+console.log(`Target impact: ${candidate.targetNeuronImpact}`);
+
+// Display as percentage
+console.log(`Expected score gain: ${creatureLevelImprovement * 100}%`);
 ```
 
 #### Removal candidate expected error reduction fix (v0.1.162)
@@ -1090,40 +1108,33 @@ const expectedChange = candidate.expectedErrorReduction;
 // const expectedChange = candidate.totalError;  // BUG!
 ```
 
-#### Field naming and percentage calculations (Issue #124)
+#### Field naming and percentage calculations (Issues #124, #128)
 
-**IMPORTANT**: Rust returns two types of improvement/error metrics with different semantics:
+**IMPORTANT**: Rust returns creature-level metrics that are already ratios (0.0 - 1.0).
+Multiply by 100 to display as a percentage.
 
 | Field | Type | Value Range | To Display as % |
 |-------|------|-------------|-----------------|
-| `expectedImprovementPercentage` | **Ratio** | 0.0 - 1.0 | `value × 100` |
-| `expectedErrorReduction` | **Absolute** | Any positive | `(value / originalError) × 100` |
+| `expectedCreatureScoreGain` | **Ratio** | 0.0 - 1.0 | `value × 100` |
+| `expectedCreatureErrorReduction` | **Ratio** | 0.0 - 1.0 | `value × 100` |
+| `targetNeuronImpact` | **Ratio** | 0.0 - 1.0 | `value × 100` |
 
-**`expectedImprovementPercentage`** is already a ratio (decimal percentage):
-- Value `0.07` means 7% improvement
-- Calculated as `(baseline_error - new_error) / baseline_error`
-- **To display**: multiply by 100 → `0.07 × 100 = 7%`
+**These fields are creature-level ratios**, calculated as:
+- `expectedCreatureScoreGain` = (baseline_creature_error - new_creature_error) / baseline_creature_error
+- This accounts for the target neuron's impact on the creature
 
-**`expectedErrorReduction`** is an **absolute value**, NOT a ratio:
-- Value `0.0656` is a raw error delta, not a percentage
-- **WRONG**: `0.0656 × 100 = 6.56%` ❌ (this is meaningless)
-- **CORRECT**: `(0.0656 / 0.5827) × 100 = 11.26%` ✓ (reduction as percentage of original error)
-
-TypeScript should NOT create `*Pct` fields by simply multiplying by 100:
 ```typescript
-// WRONG: Multiplying absolute value by 100 is not a valid percentage
-const expectedErrorReductionPct = expectedErrorReduction * 100;  // BUG!
+// Display as percentage - just multiply by 100
+const scoreGainPercent = candidate.expectedCreatureScoreGain * 100;
+console.log(`Expected score gain: ${scoreGainPercent.toFixed(2)}%`);
 
-// CORRECT: Use expectedImprovementPercentage directly (it's already a ratio)
-const improvementPercent = candidate.expectedImprovementPercentage * 100;
-
-// CORRECT: If you need error reduction as %, divide by original error first
-const errorReductionPercent = (expectedErrorReduction / originalError) * 100;
+// The impact shows how much the target neuron affects the creature
+const targetImpactPercent = candidate.targetNeuronImpact * 100;
+console.log(`Target neuron contributes ${targetImpactPercent.toFixed(1)}% to creature output`);
 ```
 
-**Recommendation**: Use `expectedImprovementPercentage` for all percentage displays.
-The `expectedErrorReduction` field is provided for reference but should not be
-converted to a percentage by simple multiplication.
+**Recommendation**: Use `expectedCreatureScoreGain` for ranking and displaying candidates.
+All fields are already creature-level, so no additional calculations are needed.
 
 ## Verifying the installation
 

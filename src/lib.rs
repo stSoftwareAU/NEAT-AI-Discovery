@@ -115,7 +115,15 @@ pub struct CandidateSynapseJson {
     pub from_neuron_uuid: String,
     pub to_neuron_uuid: String,
     pub weight: f32,
-    pub expected_improvement_percentage: f32,
+    /// Impact of the target neuron on the creature's output (0.0 to 1.0).
+    /// Output neurons have impact = 1.0, hidden neurons have discounted impact.
+    pub target_neuron_impact: f32,
+    /// Expected reduction in creature's error from adding this synapse.
+    /// Formula: neuron_error_reduction × target_neuron_impact
+    pub expected_creature_error_reduction: f32,
+    /// Expected improvement in creature's score from adding this synapse.
+    /// Since score = 1 - error, this equals expected_creature_error_reduction.
+    pub expected_creature_score_gain: f32,
     pub improved_count: u32,
     pub total_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,7 +152,15 @@ pub struct CandidateNeuronJson {
     pub outgoing_weight: f32,
     pub squash: String,
     pub bias: f32,
-    pub expected_improvement_percentage: f32,
+    /// Impact of the target neuron on the creature's output (0.0 to 1.0).
+    /// Output neurons have impact = 1.0, hidden neurons have discounted impact.
+    pub target_neuron_impact: f32,
+    /// Expected reduction in creature's error from adding this neuron.
+    /// Formula: neuron_error_reduction × target_neuron_impact
+    pub expected_creature_error_reduction: f32,
+    /// Expected improvement in creature's score from adding this neuron.
+    /// Since score = 1 - error, this equals expected_creature_error_reduction.
+    pub expected_creature_score_gain: f32,
     pub improved_count: u32,
     pub total_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -371,7 +387,7 @@ pub struct SynapseDiagnosticDetailJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worsened_count: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub expected_improvement_percentage: Option<f32>,
+    pub expected_creature_error_reduction: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub threshold: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -426,7 +442,7 @@ pub struct NeuronDiagnosticDetailJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worsened_count: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub expected_improvement_percentage: Option<f32>,
+    pub expected_creature_error_reduction: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub threshold: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -473,7 +489,7 @@ fn synapse_diagnostics_json(
                         source_record_count: detail.source_record_count,
                         improved_count: detail.improved_count,
                         worsened_count: detail.worsened_count,
-                        expected_improvement_percentage: detail.expected_improvement,
+                        expected_creature_error_reduction: detail.expected_improvement,
                         threshold: detail.threshold,
                         suggested_weight: detail.suggested_weight,
                     }),
@@ -534,7 +550,7 @@ fn neuron_diagnostics_json(
                         sample_count: detail.sample_count,
                         improved_count: detail.improved_count,
                         worsened_count: detail.worsened_count,
-                        expected_improvement_percentage: detail.expected_improvement,
+                        expected_creature_error_reduction: detail.expected_improvement,
                         threshold: detail.threshold,
                         outgoing_weight: detail.outgoing_weight,
                     }),
