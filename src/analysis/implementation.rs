@@ -1,10 +1,17 @@
 use crate::focus::compute_impacts_public;
 use crate::types::DiscoverRecord;
 use crate::{
-    AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson,
-    CandidateSynapseJson, SynapseJson,
+    AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson, CandidateSynapseJson,
+    SynapseJson,
 };
 use anyhow::{anyhow, Context, Result};
+
+// Import shared types from the new module structure
+use crate::analysis::shared::{
+    AnalyzeNeuronsResult, AnalyzeSynapsesResult, NeuronNoCandidateDetail, NeuronNoCandidateReason,
+    NeuronNoCandidateSummary, SynapseNoCandidateDetail, SynapseNoCandidateReason,
+    SynapseNoCandidateSummary,
+};
 use bytemuck::{Pod, Zeroable};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use once_cell::sync::OnceCell;
@@ -1187,97 +1194,7 @@ fn create_wgpu_instance_safely() -> Option<wgpu::Instance> {
     }
 }
 
-pub struct AnalyzeSynapsesResult {
-    pub helpful_synapses: Vec<CandidateSynapseJson>,
-    pub harmful_synapses: Vec<CandidateSynapseJson>,
-    pub gpu_used: bool,
-    pub no_candidate_reasons: Vec<SynapseNoCandidateSummary>,
-}
-
-pub struct AnalyzeNeuronsResult {
-    pub helpful_neurons: Vec<CandidateNeuronJson>,
-    pub gpu_used: bool,
-    pub no_candidate_reasons: Vec<NeuronNoCandidateSummary>,
-}
-
-pub struct AnalyzeAllResult {
-    pub synapse: Option<AnalyzeSynapsesResult>,
-    pub neuron: Option<AnalyzeNeuronsResult>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SynapseNoCandidateReason {
-    NoEligibleSources,
-    NoDiagnostics,
-    NoSamples,
-    ZeroImprovement,
-    BelowThreshold,
-}
-
-#[derive(Debug, Clone)]
-pub struct SynapseNoCandidateDetail {
-    pub source_uuid: Option<String>,
-    pub sample_count: Option<usize>,
-    pub source_record_count: Option<usize>,
-    pub improved_count: Option<u32>,
-    pub worsened_count: Option<u32>,
-    pub expected_improvement: Option<f32>,
-    pub threshold: Option<f32>,
-    pub suggested_weight: Option<f32>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SynapseNoCandidateSummary {
-    pub target_uuid: String,
-    pub reason: SynapseNoCandidateReason,
-    pub evaluated_candidates: u32,
-    pub candidates_with_samples: u32,
-    pub target_record_count: usize,
-    pub detail: Option<SynapseNoCandidateDetail>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NeuronNoCandidateReason {
-    NoEligibleSources,
-    NoDiagnostics,
-    NoSamples,
-    NotEnoughActivations,
-    WeightDegenerate,
-    BelowThreshold,
-    /// Hidden neurons are filtered out from add-neuron analysis because their
-    /// backpropagated errors don't reliably translate to output error reduction.
-    HiddenNeuronFiltered,
-    /// Input neurons are filtered out from add-neuron analysis because they're
-    /// observation sources, not computation nodes - they have no activation function
-    /// or error to reduce.
-    InputNeuronFiltered,
-    /// Constant neurons are filtered out from add-neuron analysis because they
-    /// don't receive inputs - they always output a fixed value regardless of
-    /// network state, so adding a connection to them has no effect.
-    ConstantNeuronFiltered,
-}
-
-#[derive(Debug, Clone)]
-pub struct NeuronNoCandidateDetail {
-    pub source_uuid: Option<String>,
-    pub orientation: Option<String>,
-    pub sample_count: Option<usize>,
-    pub improved_count: Option<u32>,
-    pub worsened_count: Option<u32>,
-    pub expected_improvement: Option<f32>,
-    pub threshold: Option<f32>,
-    pub outgoing_weight: Option<f32>,
-}
-
-#[derive(Debug, Clone)]
-pub struct NeuronNoCandidateSummary {
-    pub target_uuid: String,
-    pub reason: NeuronNoCandidateReason,
-    pub evaluated_sources: u32,
-    pub sources_with_samples: u32,
-    pub target_record_count: usize,
-    pub detail: Option<NeuronNoCandidateDetail>,
-}
+// Types moved to shared.rs - using imports from there
 
 struct OrderedNeuron {
     uuid: String,
@@ -1287,7 +1204,7 @@ struct OrderedNeuron {
 type RecordCacheLoader = dyn Fn(&str, &str) -> Result<Vec<DiscoverRecord>> + Send + Sync + 'static;
 type CachedNeuronRecords = OnceCell<Arc<Vec<DiscoverRecord>>>;
 
-struct RecordCache {
+pub(crate) struct RecordCache {
     parquet_file: String,
     cache: Mutex<HashMap<String, Arc<CachedNeuronRecords>>>,
     loader: Arc<RecordCacheLoader>,
@@ -2107,7 +2024,7 @@ impl RecordCache {
     ///   Slower (O(N) parquet scans for N neurons) but works on memory-constrained systems.
     ///
     /// This ensures discovery works on any modern Mac/PC, adapting to available resources.
-    fn new_adaptive(parquet_file: &str) -> Result<Self> {
+    pub(crate) fn new_adaptive(parquet_file: &str) -> Result<Self> {
         // Check if we have enough memory for pre-loading
         match check_memory_for_parquet(parquet_file) {
             Ok(()) => {
@@ -2778,7 +2695,7 @@ impl ReluStats {
     }
 }
 
-struct ActivationCandidateSpec {
+pub struct ActivationCandidateSpec {
     name: &'static str,
     orientations: &'static [f32],
     scales: &'static [f32],
@@ -2956,7 +2873,7 @@ fn activation_name_to_gpu_id(name: &str) -> u32 {
     }
 }
 
-const ACTIVATION_SPECS: [ActivationCandidateSpec; 19] = [
+pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 19] = [
     // ========================================================================
     // ORIGINAL ACTIVATIONS (v0.1.x)
     // ========================================================================
@@ -5441,15 +5358,15 @@ impl GpuAnalyzer {
     }
 }
 
-const HELPFUL_SHADER: &str = include_str!("shaders/helpful.wgsl");
+const HELPFUL_SHADER: &str = include_str!("../shaders/helpful.wgsl");
 
-const HARMFUL_SHADER: &str = include_str!("shaders/harmful.wgsl");
+const HARMFUL_SHADER: &str = include_str!("../shaders/harmful.wgsl");
 
-const RELU_SHADER: &str = include_str!("shaders/relu.wgsl");
+const RELU_SHADER: &str = include_str!("../shaders/relu.wgsl");
 
-const ACTIVATION_SHADER: &str = include_str!("shaders/activation.wgsl");
+const ACTIVATION_SHADER: &str = include_str!("../shaders/activation.wgsl");
 
-const BIAS_SHADER: &str = include_str!("shaders/bias.wgsl");
+const BIAS_SHADER: &str = include_str!("../shaders/bias.wgsl");
 
 fn build_ordered_neurons(creature: &crate::CreatureJson) -> Vec<OrderedNeuron> {
     let mut ordered = Vec::with_capacity(creature.input + creature.neurons.len());
@@ -7028,7 +6945,7 @@ fn evaluate_discrete_candidate(
     best_candidate
 }
 
-fn analyze_neurons_with_cache(
+pub(crate) fn analyze_neurons_with_cache(
     input: &AnalyzeNeuronsInput,
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeNeuronsResult> {
@@ -8304,75 +8221,9 @@ Pages speculative:                        12345.
     }
 }
 
-pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
-    let include_synapse = input.include_synapse_analysis.unwrap_or(true);
-    let include_neuron = input.include_neuron_analysis.unwrap_or(true);
+// analyze_all has been moved to src/analysis/mod.rs
 
-    if !include_synapse && !include_neuron {
-        return Ok(AnalyzeAllResult {
-            synapse: None,
-            neuron: None,
-        });
-    }
-
-    // Pre-load ALL records from parquet in one pass. This is MUCH faster than
-    // lazy-loading each neuron separately (1 scan vs ~2000 scans for large creatures).
-    let shared_cache = Arc::new(RecordCache::new_adaptive(&input.parquet_file)?);
-
-    let synapse_input = if include_synapse {
-        Some(AnalyzeSynapsesInput {
-            parquet_file: input.parquet_file.clone(),
-            creature: input.creature.clone(),
-            focus_neurons: input.focus_neurons.clone(),
-            improvement_threshold: input.improvement_threshold,
-            max_candidates: input.max_synapse_candidates,
-            analysis_deadline_ms: input.analysis_deadline_ms,
-        })
-    } else {
-        None
-    };
-
-    let neuron_input = if include_neuron {
-        Some(AnalyzeNeuronsInput {
-            parquet_file: input.parquet_file.clone(),
-            creature: input.creature.clone(),
-            focus_neurons: input.focus_neurons.clone(),
-            improvement_threshold: input.improvement_threshold,
-            max_candidates: input.max_neuron_candidates,
-            analysis_deadline_ms: input.analysis_deadline_ms,
-        })
-    } else {
-        None
-    };
-
-    // Run neuron analysis FIRST (priority), then synapse analysis.
-    // Neuron discovery is more valuable as it can create new network structure.
-    // With pre-loaded cache, both run fast, but neurons get priority if timeout approaches.
-    let neuron_result = if let Some(inner) = neuron_input.clone() {
-        Some(analyze_neurons_with_cache(
-            &inner,
-            Arc::clone(&shared_cache),
-        )?)
-    } else {
-        None
-    };
-
-    let synapse_result = if let Some(inner) = synapse_input.clone() {
-        Some(analyze_synapses_with_cache(
-            &inner,
-            Arc::clone(&shared_cache),
-        )?)
-    } else {
-        None
-    };
-
-    Ok(AnalyzeAllResult {
-        synapse: synapse_result,
-        neuron: neuron_result,
-    })
-}
-
-fn analyze_synapses_with_cache(
+pub(crate) fn analyze_synapses_with_cache(
     input: &AnalyzeSynapsesInput,
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeSynapsesResult> {
@@ -9176,8 +9027,9 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 #[cfg(test)]
 mod tests_synapses {
     use super::*;
+    use crate::analysis::analyze_all;
     use crate::parquet_format::write_records_to_parquet;
-    use crate::{CreatureJson, NeuronJson, SynapseJson};
+    use crate::{AnalyzeAllInput, CreatureJson, NeuronJson, SynapseJson};
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -10452,8 +10304,7 @@ mod tests_synapses {
         };
 
         let err = analyze_neurons(&input)
-            .err()
-            .expect("Neuron analysis should refuse duplicate focus neurons");
+            .expect_err("Neuron analysis should refuse duplicate focus neurons");
         let message = format!("{err}");
         assert!(
             message.contains("duplicate focus neurons"),
@@ -10527,8 +10378,7 @@ mod tests_synapses {
         };
 
         let err = analyze_synapses(&input)
-            .err()
-            .expect("Synapse analysis should refuse duplicate focus neurons");
+            .expect_err("Synapse analysis should refuse duplicate focus neurons");
         let message = format!("{err}");
         assert!(
             message.contains("duplicate focus neurons"),
@@ -10827,9 +10677,8 @@ mod tests_synapses {
             analysis_deadline_ms: None,
         };
 
-        let err = analyze_synapses(&input)
-            .err()
-            .expect("Synapse analysis should refuse empty focus lists");
+        let err =
+            analyze_synapses(&input).expect_err("Synapse analysis should refuse empty focus lists");
         let message = format!("{err}");
         assert!(
             message.contains("at least one focus neuron"),

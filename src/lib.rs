@@ -691,12 +691,12 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 harmful_synapses: synapse.as_ref().map(|s| s.harmful_synapses.clone()),
                 synapse_diagnostics: synapse
                     .as_ref()
-                    .and_then(|s| synapse_diagnostics_json(&s.no_candidate_reasons)),
+                    .and_then(|s| synapse_diagnostics_json(s.no_candidate_reasons.as_slice())),
                 synapse_gpu_used: synapse.as_ref().map(|s| s.gpu_used),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 neuron_diagnostics: neuron
                     .as_ref()
-                    .and_then(|n| neuron_diagnostics_json(&n.no_candidate_reasons)),
+                    .and_then(|n| neuron_diagnostics_json(n.no_candidate_reasons.as_slice())),
                 neuron_gpu_used: neuron.as_ref().map(|n| n.gpu_used),
                 error: None,
             };
