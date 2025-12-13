@@ -646,6 +646,52 @@ fn deadline_passed(deadline: &Option<SystemTime>) -> bool {
     matches!(deadline, Some(limit) if SystemTime::now() >= *limit)
 }
 
+/// Log analysis start information including deadline and focus neuron count.
+/// This provides visibility into timeout configuration without requiring verbose mode.
+fn log_analysis_start(
+    analysis_type: &str,
+    deadline_ms: Option<u64>,
+    focus_count: usize,
+    shuffled_order: &[String],
+) {
+    // Calculate the effective deadline duration
+    const DEFAULT_DURATION_MS: u64 = 600_000; // 10 minutes (matches build_deadline)
+    let deadline_duration_ms = deadline_ms.unwrap_or(DEFAULT_DURATION_MS);
+    let deadline_secs = deadline_duration_ms as f64 / 1000.0;
+
+    // Format the timeout nicely
+    let timeout_str = if deadline_secs >= 60.0 {
+        let minutes = deadline_secs / 60.0;
+        format!("{minutes:.1} minutes")
+    } else {
+        format!("{deadline_secs:.1} seconds")
+    };
+
+    eprintln!(
+        "[NEAT-AI-Discovery] Starting {analysis_type} analysis: {focus_count} focus neurons, timeout: {timeout_str}"
+    );
+
+    // Log the shuffled order if verbose mode is enabled
+    if verbose_enabled() && !shuffled_order.is_empty() {
+        let preview: Vec<&str> = shuffled_order.iter().take(5).map(|s| s.as_str()).collect();
+        let extra = shuffled_order.len().saturating_sub(5);
+        let suffix = if extra > 0 {
+            format!("... (+{extra} more)")
+        } else {
+            String::new()
+        };
+        eprintln!("[NEAT-AI-Discovery][verbose] Randomised focus order: {preview:?}{suffix}");
+    }
+}
+
+/// Log when analysis timeout is reached. Always prints (not verbose-only).
+fn log_analysis_timeout(analysis_type: &str, completed_count: usize, total_count: usize) {
+    eprintln!(
+        "[NEAT-AI-Discovery] {analysis_type} analysis reached timeout. Completed {completed_count}/{total_count} focus neurons. \
+         Returning partial results."
+    );
+}
+
 #[cfg(test)]
 mod deadline_override {
     use std::collections::VecDeque;
@@ -6865,6 +6911,18 @@ fn analyze_neurons_with_cache(
     let mut rng = thread_rng();
     focus_order.shuffle(&mut rng);
 
+    // Log analysis start with timeout duration and randomised order
+    log_analysis_start(
+        "neuron",
+        input.analysis_deadline_ms,
+        focus_order.len(),
+        &focus_order,
+    );
+
+    // Track completed focus neurons for timeout logging
+    let total_focus_count = focus_order.len();
+    let completed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
     let order_map_arc = Arc::new(order_map);
@@ -7225,6 +7283,8 @@ fn analyze_neurons_with_cache(
                 }
             }
 
+            // Track completion of this focus neuron for timeout reporting
+            completed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         })?;
 
@@ -7237,8 +7297,10 @@ fn analyze_neurons_with_cache(
         .clone();
     let diagnostics = diagnostics.lock().expect("Mutex poisoned: diagnostics");
 
-    if analysis_timed_out && verbose_enabled() {
-        eprintln!("[NEAT-AI-Discovery][verbose] analyse_neurons reached analysis deadline; returning partial results.");
+    // Log timeout with completion stats (always visible, not just verbose)
+    if analysis_timed_out {
+        let completed = completed_count.load(std::sync::atomic::Ordering::Relaxed);
+        log_analysis_timeout("neuron", completed, total_focus_count);
     }
 
     let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
@@ -7833,6 +7895,18 @@ fn analyze_synapses_with_cache(
     let mut rng = thread_rng();
     focus_order.shuffle(&mut rng);
 
+    // Log analysis start with timeout duration and randomised order
+    log_analysis_start(
+        "synapse",
+        input.analysis_deadline_ms,
+        focus_order.len(),
+        &focus_order,
+    );
+
+    // Track completed focus neurons for timeout logging
+    let total_focus_count = focus_order.len();
+    let completed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
     // v0.1.134: Default threshold is 0 - return ALL positive improvements.
     // TypeScript will decide which candidates are worth the cost of growth.
     let threshold = input.improvement_threshold.unwrap_or(0.0);
@@ -8416,6 +8490,8 @@ fn analyze_synapses_with_cache(
                 }
             }
 
+            // Track completion of this focus neuron for timeout reporting
+            completed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         })?;
 
@@ -8425,8 +8501,10 @@ fn analyze_synapses_with_cache(
     let mut helpful_fallback = helpful_fallback.lock().expect("Mutex poisoned").take();
     let mut diagnostics = diagnostics.lock().expect("Mutex poisoned");
 
-    if analysis_timed_out && verbose_enabled() {
-        eprintln!("[NEAT-AI-Discovery][verbose] analyse_synapses reached analysis deadline; returning partial results.");
+    // Log timeout with completion stats (always visible, not just verbose)
+    if analysis_timed_out {
+        let completed = completed_count.load(std::sync::atomic::Ordering::Relaxed);
+        log_analysis_timeout("synapse", completed, total_focus_count);
     }
 
     if helpful_results.is_empty() {

@@ -1154,6 +1154,24 @@ whether discovery should be enabled:
   `analysis_deadline_ms` is not provided. If a timeout is explicitly provided
   but is less than 3 seconds or greater than 1 hour, it will be clamped to the
   10-minute default with a warning message.
+  
+  **Timeout logging** (v0.1.163): The library now logs when analysis starts and
+  when a timeout is reached:
+  
+  ```
+  [NEAT-AI-Discovery] Starting neuron analysis: 5 focus neurons, timeout: 10.0 minutes
+  [NEAT-AI-Discovery] neuron analysis reached timeout. Completed 3/5 focus neurons. Returning partial results.
+  ```
+  
+  **Focus neuron randomisation**: When a timeout is configured, focus neurons are
+  processed in randomised order. This ensures that repeated runs with timeouts
+  will eventually cover all neurons, rather than always processing (and timing
+  out on) the same neurons. Enable verbose logging (`NEAT_AI_DISCOVERY_VERBOSE=1`)
+  to see the randomised order:
+  
+  ```
+  [NEAT-AI-Discovery][verbose] Randomised focus order: ["output-3", "output-1", "output-4"]... (+2 more)
+  ```
 - **Low GPU utilisation**: If you're seeing low GPU utilisation (e.g., 20%) during
   analysis, see the [GPU Performance Tuning](#gpu-performance-tuning) section below.
 - **Deadlock or stuck process**: If the process appears stuck (0% CPU/GPU), see the
