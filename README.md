@@ -965,6 +965,45 @@ const creatureLevelImprovement = candidate.expectedImprovementPercentage;
 // Don't multiply by getNeuronShare() or any other impact factor!
 ```
 
+#### Removal candidate expected error reduction fix (v0.1.162)
+
+**CRITICAL BUG FIX (Issue #117)**: The `expectedErrorReduction` for removal candidates was
+completely wrong. It was showing the **neuron's error** instead of the **creature's expected
+error change** from removing the neuron.
+
+| Field | Old (WRONG) | New (CORRECT) |
+|-------|-------------|---------------|
+| `expectedErrorReduction` | Neuron's `totalError` | `activationWeightedImpact` |
+| Example value | 27% (neuron's error) | 0.000001% (actual impact) |
+| Actual error change | ~0% | ~0% |
+
+**The bug**: TypeScript was using `totalError` (the neuron's average error from recorded
+samples) as the expected error reduction for the creature. This led to predictions like
+"removing this neuron will reduce error by 27%" when the actual reduction was ~0%.
+
+**The fix**: A new `expectedErrorReduction` field is now provided that reflects the
+**actual expected creature-level error change**. For removal candidates (low-impact neurons),
+this is approximately equal to `activationWeightedImpact` - the actual contribution the
+neuron makes to the output.
+
+**Why this makes sense**: Removal candidates have low `activationWeightedImpact` by definition
+(that's why they're candidates for removal). Removing them changes the creature's error by
+approximately this small amount. The neuron's own error (`totalError`) is irrelevant because
+the neuron doesn't significantly affect the output.
+
+**Removal candidate JSON response** now includes:
+- `expectedErrorReduction`: The creature-level expected error change (based on impact)
+- `totalError`: The neuron's error (for reference, but NOT for prediction)
+
+**TypeScript should use `expectedErrorReduction`** for predictions:
+```typescript
+// CORRECT: Use the impact-based prediction
+const expectedChange = candidate.expectedErrorReduction;
+
+// WRONG: Don't use neuron error as the prediction!
+// const expectedChange = candidate.totalError;  // BUG!
+```
+
 ## Verifying the installation
 
 Use the NEAT-AI helper script after copying the library:
