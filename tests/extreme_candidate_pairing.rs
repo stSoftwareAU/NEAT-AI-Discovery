@@ -11,6 +11,35 @@ use neat_ai_discovery::{
 };
 
 #[test]
+fn extreme_candidate_comment_does_not_claim_pairing_when_limit_prevents_variant() {
+    let candidate = CandidateNeuronJson {
+        source_neuron_uuid: "source-1".to_string(),
+        target_neuron_uuid: "target-1".to_string(),
+        incoming_weight: 3.0, // extreme (above clamp max)
+        outgoing_weight: 0.1,
+        squash: "TANH".to_string(),
+        bias: 0.0,
+        comment: None,
+        target_neuron_impact: 1.0,
+        expected_creature_error_reduction: 0.2,
+        expected_creature_score_gain: 0.2,
+        improved_count: 10,
+        total_count: 20,
+        target_neuron_stats: None,
+    };
+
+    // Limit leaves no room for the conservative variant.
+    let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], Some(1));
+
+    assert_eq!(paired.len(), 1, "expected only the original candidate");
+    assert_eq!(
+        paired[0].comment.as_deref(),
+        Some("Extreme candidate (conservative variant not included)"),
+        "comment should not claim pairing when the variant cannot be returned"
+    );
+}
+
+#[test]
 fn extreme_candidate_pairing_considers_outgoing_weight_differences() {
     // This is the edge case highlighted in PR review:
     // - incoming is barely above the clamp threshold, but within 1e-6 after clamping

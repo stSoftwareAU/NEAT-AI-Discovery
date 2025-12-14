@@ -107,18 +107,16 @@ pub fn pair_extreme_candidates_with_conservative_variants(
 
     let mut output = Vec::with_capacity(sorted_candidates.len().min(limit));
 
-    for mut candidate in sorted_candidates.into_iter() {
+    for candidate in sorted_candidates.into_iter() {
         if output.len() >= limit {
             break;
         }
 
         let should_pair = is_extreme_add_neuron_candidate(&candidate);
-        if should_pair && candidate.comment.is_none() {
-            candidate.comment =
-                Some("Extreme candidate (paired with conservative variant)".to_string());
-        }
+        let original_index = output.len();
         output.push(candidate.clone());
 
+        let mut added_conservative = false;
         if should_pair && output.len() < limit {
             let conservative = make_conservative_add_neuron_variant(&candidate);
             // Only add if it meaningfully differs (avoid duplicates).
@@ -127,7 +125,21 @@ pub fn pair_extreme_candidates_with_conservative_variants(
                 || (conservative.outgoing_weight - candidate.outgoing_weight).abs() > 1e-6
             {
                 output.push(conservative);
+                added_conservative = true;
             }
+        }
+
+        // Avoid misleading diagnostics: only claim "paired" once we have actually returned
+        // the conservative variant (and we had room under max_candidates).
+        if should_pair && output[original_index].comment.is_none() {
+            output[original_index].comment = Some(
+                if added_conservative {
+                    "Extreme candidate (paired with conservative variant)"
+                } else {
+                    "Extreme candidate (conservative variant not included)"
+                }
+                .to_string(),
+            );
         }
     }
 
