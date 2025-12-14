@@ -9682,6 +9682,89 @@ mod tests_synapses {
         );
     }
 
+    /// Issue #134: Regression - target simulation can flip improvement direction.
+    ///
+    /// We construct a small sample set where:
+    /// - The linear VALUE-domain model predicts a small positive improvement.
+    /// - The correct ACTIVATION-domain model (simulating BENT_IDENTITY target squash)
+    ///   predicts a negative net improvement.
+    ///
+    /// This demonstrates why non-linear target simulation must be enabled for
+    /// production squashes like BENT_IDENTITY when evaluating add-neuron candidates.
+    #[test]
+    fn issue_134_bent_identity_target_simulation_can_flip_direction_vs_linear() {
+        // Two samples with opposing error signs.
+        //
+        // Sample A: positive error, but target_value is strongly negative → low local slope.
+        // Sample B: negative error, but target_value is strongly positive → high local slope.
+        //
+        // A constant positive contribution can look beneficial in VALUE domain, but harmful
+        // in ACTIVATION domain because the harm is amplified where the target slope is large.
+        let samples: Vec<HelpfulSample> = vec![
+            HelpfulSample {
+                activation: 1.0,
+                avg_error: 0.2,
+                target_value: Some(-10.0),
+                target_activation: Some(bent_identity_activation(-10.0)),
+            },
+            HelpfulSample {
+                activation: 1.0,
+                avg_error: -0.1,
+                target_value: Some(10.0),
+                target_activation: Some(bent_identity_activation(10.0)),
+            },
+        ];
+
+        // Configure an ArcTan new neuron that produces a constant positive contribution.
+        let incoming_weight = 1.0_f32;
+        let bias = 0.0_f32;
+        let neuron_output = arctan_activation(1.0); // atan(1) ≈ 0.7854
+        assert!(neuron_output.is_finite() && neuron_output > 0.0);
+
+        // Choose outgoing_weight so contribution ~= +0.05 for both samples.
+        let desired_contribution = 0.05_f32;
+        let outgoing_weight = desired_contribution / neuron_output;
+
+        let total_baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        assert!(
+            total_baseline_error_sq > EPSILON,
+            "Baseline error must be non-zero for meaningful improvement"
+        );
+
+        // Linear VALUE-domain model (no target simulation).
+        let (linear_improvement, _, _) = compute_activation_improvement_and_count(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            arctan_activation,
+            total_baseline_error_sq,
+            None,
+        );
+        assert!(
+            linear_improvement > 0.0,
+            "Linear model should predict positive improvement for this constructed scenario (got {linear_improvement})"
+        );
+
+        // Correct ACTIVATION-domain model: simulate the target's BENT_IDENTITY activation.
+        let target_simulation_fn = get_target_simulation_fn(&samples, Some("BENT_IDENTITY"))
+            .expect("BENT_IDENTITY target simulation must be available (Issue #134)");
+        let (simulated_improvement, _, _) = compute_activation_improvement_and_count(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            arctan_activation,
+            total_baseline_error_sq,
+            Some(target_simulation_fn),
+        );
+
+        assert!(
+            simulated_improvement < 0.0,
+            "BENT_IDENTITY simulation should reveal net harm (direction flip) for this scenario (got {simulated_improvement})"
+        );
+    }
+
     /// Regression test: Add-neuron predictions must use weight computed WITH bias.
     ///
     /// BUG: Previously, the optimal outgoing weight was computed WITHOUT bias:
