@@ -1102,6 +1102,36 @@ console.log(`Target impact: ${candidate.targetNeuronImpact}`);
 console.log(`Expected score gain: ${creatureLevelImprovement * 100}%`);
 ```
 
+#### Source variance discounting (v0.2.2, Issue #130)
+
+**CRITICAL BUG FIX**: Predictions were massively over-estimated when source neurons had
+constant or near-constant activation. A constant source cannot reduce error correlation
+because it only adds a fixed offset to the target - like adjusting the bias.
+
+**Production example**: `input-1244` had variance 0.000000 (completely constant), yet the
+model predicted 29.6% error reduction. Actual result was 0%.
+
+| Source std dev | Discount factor | Effect |
+|---------------|-----------------|--------|
+| ≥ 0.05 | 1.0 (100%) | Full prediction |
+| 0.025 | 0.5 (50%) | Half prediction |
+| 0.01 | 0.2 (20%) | Heavy discount |
+| 0.0 | 0.0 (0%) | Skip entirely |
+
+**How it works**:
+1. Compute source activation variance from recorded samples
+2. Calculate discount factor: `min(1.0, source_std_dev / 0.05)`
+3. Apply discount to predicted improvements
+
+**Why 0.05 threshold?** Production analysis showed sources with std dev < 0.05 consistently
+produced unreliable predictions. Sources need meaningful variation to correlate with
+target error.
+
+**Key insight**: The prediction model assumes `weight × source_activation` correlates with
+target error. If `source_activation` is constant, the correlation is zero regardless of weight.
+TypeScript already replaces constant neurons with constants - this fix makes the Rust
+predictions match that reality.
+
 #### Removal candidate expected error reduction fix (v0.1.162)
 
 **CRITICAL BUG FIX (Issue #117)**: The `expectedErrorReduction` for removal candidates was

@@ -34,6 +34,11 @@ fn main() -> anyhow::Result<()> {
     let mut error_count = 0usize;
     let mut has_value_count = 0usize;
     let mut activation_sum = 0.0f64;
+    let mut activation_abs_sum = 0.0f64;
+    let mut activation_min = f64::MAX;
+    let mut activation_max = f64::MIN;
+    let mut value_min = f64::MAX;
+    let mut value_max = f64::MIN;
 
     for r in &records {
         for &e in &r.errors {
@@ -42,10 +47,24 @@ fn main() -> anyhow::Result<()> {
                 error_count += 1;
             }
         }
-        if r.value.is_some() {
+        if let Some(v) = r.value {
             has_value_count += 1;
+            if (v as f64) < value_min {
+                value_min = v as f64;
+            }
+            if (v as f64) > value_max {
+                value_max = v as f64;
+            }
         }
-        activation_sum += r.activation as f64;
+        let act = r.activation as f64;
+        activation_sum += act;
+        activation_abs_sum += act.abs();
+        if act < activation_min {
+            activation_min = act;
+        }
+        if act > activation_max {
+            activation_max = act;
+        }
     }
 
     println!("\nStats:");
@@ -60,10 +79,25 @@ fn main() -> anyhow::Result<()> {
             total_error / error_count as f64
         );
     }
+    let mean_activation = activation_sum / records.len() as f64;
+    println!("  Mean activation: {mean_activation:.6}");
     println!(
-        "  Mean activation: {:.6}",
-        activation_sum / records.len() as f64
+        "  Mean |activation|: {:.6}",
+        activation_abs_sum / records.len() as f64
     );
+    println!("  Activation range: [{activation_min:.6}, {activation_max:.6}]");
+    println!("  Value (input) range: [{value_min:.6}, {value_max:.6}]");
+
+    // Compute variance
+    let mut variance_sum = 0.0f64;
+    for r in &records {
+        let diff = r.activation as f64 - mean_activation;
+        variance_sum += diff * diff;
+    }
+    let variance = variance_sum / records.len() as f64;
+    let std_dev = variance.sqrt();
+    println!("  Activation variance: {variance:.6}");
+    println!("  Activation std dev: {std_dev:.6}");
 
     // Error distribution
     let mut positive_errors = 0;
