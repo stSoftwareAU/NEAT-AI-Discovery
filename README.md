@@ -988,7 +988,7 @@ const complexityPenalty = hiddenNeuronCount * growthCost +
 savings = growthCost × (1 + (N + M) / 10)
 ```
 
-**The fix**: ALL neurons with `activation_weighted_impact < costOfGrowth` (1e-7) are
+**The fix**: ALL neurons with `activation_weighted_impact < costOfGrowth` (0.01) are
 returned as removal candidates, sorted by impact ascending.
 
 ```

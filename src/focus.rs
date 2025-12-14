@@ -1095,7 +1095,11 @@ pub fn rank_focus_neurons(
     // Identify removal candidates: neurons with activation_weighted_impact < costOfGrowth.
     //
     // activation_weighted_impact = structural_impact × mean_activation
-    // where structural_impact = ABSOLUTE impact through the network (v0.1.145 fix)
+    // where structural_impact = NORMALISED impact through the network (Issue #130 fix)
+    //
+    // With normalised impact, structural_impact represents the FRACTION of influence
+    // a neuron has on outputs (attribution), always in range [0, 1] per output.
+    // This correctly represents how much removing the neuron would affect results.
     //
     // Neurons with impact below costOfGrowth are net negative - removing them
     // reduces complexity more than it affects error.
@@ -1104,9 +1108,8 @@ pub fn rank_focus_neurons(
     //   savings = growthCost × (1 + (N + M) / 10)
     // where N = incoming synapses, M = outgoing synapses
     //
-    // v0.1.145: Changed from 1e-7 to 0.01 to match TypeScript default.
-    // The old 1e-7 was calibrated for NORMALISED impacts which massively
-    // underestimated actual impact (by up to 145 billion times in production).
+    // Threshold 0.01 means "contributes less than 1% weighted activation to outputs".
+    // This matches the TypeScript default costOfGrowth.
     const COST_OF_GROWTH: f32 = 0.01;
 
     // Return ALL neurons with impact below costOfGrowth as removal candidates
