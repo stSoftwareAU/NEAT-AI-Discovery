@@ -891,15 +891,20 @@ fn compute_impact_with_shared_cache(
                     //
                     // Edge case: If all inbound weights are 0.0, total is 0.0, and we'd get
                     // 0.0 / 0.0 = NaN. Handle this by returning 0.0 (zero weight = zero contribution).
+                    //
+                    // Near-zero protection: The `.max(weight.abs())` ensures total >= weight.abs(),
+                    // so the ratio weight.abs() / total is ALWAYS in [0, 1] and cannot explode.
+                    // Example: weight=1e-10, total_inbound=1e-10 → total=1e-10 → ratio=1.0 ✓
+                    // The only problematic case is weight=0.0 AND total=0.0 → 0/0=NaN, handled below.
                     let total = ctx
                         .total_inbound_weight
                         .get(to_uuid)
                         .copied()
                         .unwrap_or(1.0)
-                        .max(weight.abs()); // Safety: never divide by less than this weight
+                        .max(weight.abs()); // Bounds ratio to [0,1]: total >= weight.abs() always
 
                     if total <= 0.0 {
-                        // All weights are zero → zero contribution
+                        // All weights are zero (including this one) → zero contribution
                         0.0
                     } else {
                         (weight.abs() / total) * child_impact
