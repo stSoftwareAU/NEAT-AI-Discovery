@@ -5,6 +5,10 @@
 //! but the GPU shaders (`activation.wgsl` and `bias.wgsl`) only handle IDs 0-10.
 //! Unknown IDs fall back to `default: { return x; }` which is IDENTITY.
 //!
+//! Note (Issue #134 follow-up): `ACTIVATION_SPECS` no longer proposes `LeakyReLU` as an
+//! add-neuron candidate, but the GPU shaders must still support `LeakyReLU` because it can
+//! appear in existing creatures (targets/sources) and has a stable GPU ID mapping.
+//!
 //! This causes GPU evaluation to silently return incorrect (IDENTITY-based) results
 //! instead of the correct activation function output.
 //!
@@ -61,157 +65,6 @@ fn create_test_creature(
         input: input_count,
         output: output_count,
     }
-}
-
-/// Test that new activation functions produce correct GPU results.
-///
-/// This tests the bug where GPU IDs 11-18 fall back to IDENTITY in the shader.
-/// We verify LeakyReLU candidates are evaluated correctly by comparing the
-/// GPU-computed values against expected behaviour.
-///
-/// LeakyReLU(x) = x if x >= 0, else 0.01 * x
-/// IDENTITY(x) = x
-///
-/// For negative inputs, LeakyReLU produces 0.01*x whilst IDENTITY produces x.
-/// If the GPU incorrectly uses IDENTITY, the predictions will be wrong.
-#[test]
-fn test_leaky_relu_gpu_shader_produces_correct_results() {
-    skip_without_gpu!();
-
-    let creature = create_test_creature(
-        vec![
-            ("input-0", "input", "IDENTITY"),
-            ("input-1", "input", "IDENTITY"),
-            ("output-0", "output", "IDENTITY"),
-        ],
-        vec![("input-0", "output-0", 1.0)],
-    );
-
-    let temp_file = NamedTempFile::new().unwrap();
-    let file_path = temp_file.path().to_str().unwrap();
-
-    // Create samples where LeakyReLU and IDENTITY differ significantly.
-    // For negative source activations:
-    // - LeakyReLU: 0.01 * activation (small output)
-    // - IDENTITY: activation (large negative output)
-    //
-    // If GPU incorrectly uses IDENTITY, the neuron output will be ~100x larger
-    // for negative inputs, producing completely wrong weight calculations.
-    let mut records = Vec::new();
-
-    for i in 0..200 {
-        let obs_idx = i as u32;
-
-        // Target has positive error - needs positive correction
-        let target_value = 0.5;
-        let target_activation = 0.5;
-        let error = 0.3; // Positive error: output should be higher
-
-        records.push(DiscoverRecord::new(
-            obs_idx,
-            "output-0".to_string(),
-            Some(target_value),
-            target_activation,
-            vec![error],
-        ));
-
-        // Source: NEGATIVE activations where LeakyReLU differs from IDENTITY
-        // LeakyReLU(-1.0) = -0.01, IDENTITY(-1.0) = -1.0 (100x different!)
-        // v0.2.2: Add variance to avoid source variance discounting
-        let base_activation = -1.0;
-        let variation = (i as f32 / 20.0).sin() * 0.2;
-        let source_activation = base_activation + variation;
-
-        records.push(DiscoverRecord::new(
-            obs_idx,
-            "input-1".to_string(),
-            Some(source_activation),
-            source_activation,
-            vec![0.0],
-        ));
-
-        records.push(DiscoverRecord::new(
-            obs_idx,
-            "input-0".to_string(),
-            Some(0.5),
-            0.5,
-            vec![0.0],
-        ));
-    }
-
-    write_records_to_parquet(file_path, &records).unwrap();
-
-    let input = AnalyzeNeuronsInput {
-        parquet_file: file_path.to_string(),
-        creature,
-        focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0), // Accept all positive improvements
-        max_candidates: Some(100),
-        analysis_deadline_ms: None,
-    };
-
-    let result = analyze_neurons(&input).expect("Analysis should succeed");
-
-    // Find LeakyReLU candidates
-    let leaky_relu_candidates: Vec<_> = result
-        .helpful_neurons
-        .iter()
-        .filter(|c| c.squash == "LeakyReLU" && c.source_neuron_uuid == "input-1")
-        .collect();
-
-    eprintln!("LeakyReLU candidates from input-1:");
-    for c in &leaky_relu_candidates {
-        eprintln!(
-            "  incoming={:.4}, outgoing={:.4}, improvement={:.4}%",
-            c.incoming_weight,
-            c.outgoing_weight,
-            c.expected_creature_score_gain * 100.0
-        );
-    }
-
-    // Key verification:
-    // With source activation = -1.0 and positive error = 0.3:
-    // - LeakyReLU(-1.0) = -0.01, so to correct positive error, need negative outgoing weight
-    // - The outgoing weight magnitude should be based on LeakyReLU output (small)
-    //
-    // If GPU incorrectly uses IDENTITY:
-    // - IDENTITY(-1.0) = -1.0, so optimal weight would be 100x smaller magnitude
-    // - The predictions would be wildly off
-
-    assert!(
-        !leaky_relu_candidates.is_empty(),
-        "Should find LeakyReLU candidates"
-    );
-
-    for candidate in &leaky_relu_candidates {
-        // With source = -1.0 and positive error needing correction:
-        // LeakyReLU produces -0.01, so outgoing_weight should be negative
-        // to produce positive correction (-0.01 * negative = positive)
-        //
-        // If IDENTITY were used, output would be -1.0 and weight would be
-        // ~100x smaller to produce same effect
-
-        // The key check: LeakyReLU should produce sensible weight magnitudes
-        // IDENTITY would produce weights ~100x too small for the actual activation
-        let incoming = candidate.incoming_weight.abs();
-        let outgoing = candidate.outgoing_weight.abs();
-
-        eprintln!("  Checking: incoming={incoming}, outgoing={outgoing}");
-
-        // LeakyReLU(-1.0*incoming) = -0.01*incoming (for negative input)
-        // To correct error=0.3, need: outgoing * (-0.01*incoming) = -0.3 (approx)
-        // So outgoing should be relatively large (30+ for incoming=1)
-        //
-        // If IDENTITY were used: outgoing * (-1.0*incoming) = -0.3
-        // So outgoing would be ~0.3 (100x smaller)
-
-        assert!(
-            outgoing > 0.0,
-            "LeakyReLU should produce non-zero outgoing weight"
-        );
-    }
-
-    eprintln!("Test passed: LeakyReLU GPU shader produces correct results");
 }
 
 /// Test that Mish activation produces correct GPU results.
@@ -330,28 +183,14 @@ fn test_all_new_activations_produce_candidates() {
     let file_path = temp_file.path().to_str().unwrap();
 
     // Create samples with varied source activations to exercise different
-    // regions of each activation function
+    // regions of each activation function.
+    //
+    // IMPORTANT: Ensure the target error is correlated with the source activation so
+    // the analysis can reliably produce add-neuron candidates across multiple squashes.
     let mut records = Vec::new();
 
     for i in 0..500 {
         let obs_idx = i as u32;
-
-        // Varying target error to ensure some correlation patterns
-        let error = if i % 3 == 0 {
-            0.4
-        } else if i % 3 == 1 {
-            0.2
-        } else {
-            0.1
-        };
-
-        records.push(DiscoverRecord::new(
-            obs_idx,
-            "output-0".to_string(),
-            Some(0.5),
-            0.5,
-            vec![error],
-        ));
 
         // Source with varying activations (both positive and negative)
         let source = match i % 5 {
@@ -361,6 +200,18 @@ fn test_all_new_activations_produce_candidates() {
             3 => 0.5,
             _ => 2.0,
         };
+
+        // Correlated error (VALUE domain): when source is positive, output should
+        // increase; when source is negative, output should decrease.
+        let error = source * 0.2; // [-0.4, 0.4]
+
+        records.push(DiscoverRecord::new(
+            obs_idx,
+            "output-0".to_string(),
+            Some(0.5),
+            0.5,
+            vec![error],
+        ));
 
         records.push(DiscoverRecord::new(
             obs_idx,
@@ -392,9 +243,9 @@ fn test_all_new_activations_produce_candidates() {
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
 
-    // Check each new activation function
-    let new_activations = [
-        "LeakyReLU",
+    // Check each proposed new activation function (Issue #134: LeakyReLU is supported
+    // but intentionally not proposed as a new neuron candidate).
+    let proposed_new_activations = [
         "Mish",
         "Swish",
         "HARD_TANH",
@@ -406,7 +257,7 @@ fn test_all_new_activations_produce_candidates() {
 
     let mut activations_with_candidates = 0;
     eprintln!("\nNew activation function candidates:");
-    for activation in &new_activations {
+    for activation in &proposed_new_activations {
         let count = result
             .helpful_neurons
             .iter()
@@ -426,11 +277,11 @@ fn test_all_new_activations_produce_candidates() {
     assert!(
         activations_with_candidates >= 3,
         "At least 3 new activations should produce candidates, got {activations_with_candidates}/{}",
-        new_activations.len()
+        proposed_new_activations.len()
     );
 
     eprintln!(
         "\nTest passed: {activations_with_candidates}/{} new activations produce candidates",
-        new_activations.len()
+        proposed_new_activations.len()
     );
 }
