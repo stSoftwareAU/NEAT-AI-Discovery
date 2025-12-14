@@ -152,6 +152,12 @@ pub struct CandidateNeuronJson {
     pub outgoing_weight: f32,
     pub squash: String,
     pub bias: f32,
+    /// Optional human-readable comment for diagnostics and production experiments.
+    ///
+    /// This is intentionally optional to maintain backwards compatibility with older
+    /// consumers that don't expect the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
     /// Impact of the target neuron on the creature's output (0.0 to 1.0).
     /// Output neurons have impact = 1.0, hidden neurons have discounted impact.
     pub target_neuron_impact: f32,

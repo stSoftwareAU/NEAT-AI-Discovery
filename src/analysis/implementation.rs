@@ -2749,6 +2749,7 @@ impl ReluStats {
             outgoing_weight,
             squash: "ReLU".to_string(),
             bias: optimal_bias,
+            comment: None,
             target_neuron_impact: 1.0,
             expected_creature_error_reduction: expected_improvement,
             expected_creature_score_gain: expected_improvement,
@@ -5557,6 +5558,10 @@ fn weight_sign(weight: f32) -> i8 {
     }
 }
 
+/// Returns true if this add-neuron candidate is "extreme" enough to warrant a conservative pair.
+///
+/// We intentionally base this on incoming weight and bias (not outgoing), because outgoing
+/// weight is already clamped and ReLU candidates commonly use outgoing=0.1 by design.
 fn upsert_candidate(
     map: &mut HashMap<(String, String, String, i8, i8), CandidateNeuronJson>,
     candidate: CandidateNeuronJson,
@@ -6345,6 +6350,7 @@ fn evaluate_activation_for_subset<G: GpuEvaluator>(
                     outgoing_weight,
                     squash: spec.name.to_string(),
                     bias: optimal_bias,
+                    comment: None,
                     target_neuron_impact: 1.0,
                     expected_creature_error_reduction: net_improvement,
                     expected_creature_score_gain: net_improvement,
@@ -6721,6 +6727,7 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
                     outgoing_weight,
                     squash: spec.name.to_string(),
                     bias: optimal_bias,
+                    comment: None,
                     target_neuron_impact: 1.0,
                     expected_creature_error_reduction: neuron_error_improvement,
                     expected_creature_score_gain: neuron_error_improvement,
@@ -6757,6 +6764,7 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
                     outgoing_weight,
                     squash: spec.name.to_string(),
                     bias: optimal_bias,
+                    comment: None,
                     target_neuron_impact: 1.0,
                     expected_creature_error_reduction: neuron_error_improvement,
                     expected_creature_score_gain: neuron_error_improvement,
@@ -7000,6 +7008,7 @@ fn evaluate_discrete_candidate(
                             outgoing_weight,
                             squash: new_neuron_squash.to_string(),
                             bias: 0.0, // IDENTITY doesn't need bias for threshold crossing
+                            comment: None,
                             target_neuron_impact: 1.0,
                             expected_creature_error_reduction: improvement,
                             expected_creature_score_gain: improvement,
@@ -7780,9 +7789,13 @@ pub(crate) fn analyze_neurons_with_cache(
             .unwrap_or(Ordering::Equal)
     });
 
-    if let Some(limit) = input.max_candidates {
-        helpful_results.truncate(limit);
-    }
+    // Production experiment: pair "extreme" candidates with a conservative variant.
+    // This keeps the output size bounded by max_candidates while increasing
+    // evaluation diversity in TypeScript.
+    helpful_results = crate::analysis::utils::pair_extreme_candidates_with_conservative_variants(
+        helpful_results,
+        input.max_candidates,
+    );
 
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
     diagnostics.emit_logs();
@@ -12571,6 +12584,7 @@ mod tests_synapses {
             outgoing_weight: 0.5,
             squash: "ReLU".to_string(),
             bias: 0.0,
+            comment: None,
             target_neuron_impact: 1.0,
             expected_creature_error_reduction: 0.15,
             expected_creature_score_gain: 0.15,
@@ -12587,6 +12601,7 @@ mod tests_synapses {
             outgoing_weight: 0.4,  // Same outgoing sign
             squash: "ReLU".to_string(),
             bias: 0.0,
+            comment: None,
             target_neuron_impact: 1.0,
             expected_creature_error_reduction: 0.12,
             expected_creature_score_gain: 0.12,
@@ -12652,6 +12667,7 @@ mod tests_synapses {
             outgoing_weight: 0.5, // POSITIVE: pushes output UP
             squash: "ReLU".to_string(),
             bias: 0.0,
+            comment: None,
             target_neuron_impact: 1.0,
             expected_creature_error_reduction: 0.10,
             expected_creature_score_gain: 0.10,
@@ -12669,6 +12685,7 @@ mod tests_synapses {
             outgoing_weight: -0.4, // NEGATIVE: pushes output DOWN
             squash: "ReLU".to_string(),
             bias: 0.0,
+            comment: None,
             target_neuron_impact: 1.0,
             expected_creature_error_reduction: 0.08,
             expected_creature_score_gain: 0.08,
