@@ -124,6 +124,7 @@ pub fn pair_extreme_candidates_with_conservative_variants(
             // Only add if it meaningfully differs (avoid duplicates).
             if (conservative.incoming_weight - candidate.incoming_weight).abs() > 1e-6
                 || (conservative.bias - candidate.bias).abs() > 1e-6
+                || (conservative.outgoing_weight - candidate.outgoing_weight).abs() > 1e-6
             {
                 output.push(conservative);
             }
