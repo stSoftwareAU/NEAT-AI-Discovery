@@ -1888,6 +1888,10 @@ Small, focused test files make it **obvious when tests change**:
 - Clear separation of concerns
 - Don't need to make APIs public just for testing
 
+**Rule of thumb**: Put new tests under `tests/` whenever practical. Only place tests under
+`src/` (`#[cfg(test)]`) when the behaviour cannot be exercised cleanly via the public API
+without making implementation details public.
+
 #### 3. Don't make APIs public just for testing
 
 If a function is internal, keep it internal. Use integration tests to verify
