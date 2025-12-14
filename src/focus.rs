@@ -888,13 +888,22 @@ fn compute_impact_with_shared_cache(
                     // Without normalisation, a hidden neuron with weight 3.0 to an output
                     // would get impact = 3.0, which is mathematically incorrect for the
                     // PURPOSE of prediction discounting (measuring fraction of influence).
+                    //
+                    // Edge case: If all inbound weights are 0.0, total is 0.0, and we'd get
+                    // 0.0 / 0.0 = NaN. Handle this by returning 0.0 (zero weight = zero contribution).
                     let total = ctx
                         .total_inbound_weight
                         .get(to_uuid)
                         .copied()
                         .unwrap_or(1.0)
                         .max(weight.abs()); // Safety: never divide by less than this weight
-                    (weight.abs() / total) * child_impact
+
+                    if total <= 0.0 {
+                        // All weights are zero → zero contribution
+                        0.0
+                    } else {
+                        (weight.abs() / total) * child_impact
+                    }
                 }
                 SquashCategory::Threshold => child_impact,
                 SquashCategory::Selection => {

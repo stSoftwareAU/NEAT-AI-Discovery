@@ -823,6 +823,10 @@ This measures **attribution** (fraction of influence), not sensitivity:
 - Multiple competing inputs: impact dilutes proportionally
 - Sum of all inputs to a neuron = 1.0 (fractions sum to whole)
 
+**Zero-weight edge case (v0.2.2)**: When all inbound synapses to a neuron have
+`weight == 0.0`, the normalised formula would compute `0.0 / 0.0 = NaN`. This is
+now handled: zero total weight means zero contribution, so impact = 0.0.
+
 #### All other activations
 
 All other activation functions (including IDENTITY, INVERSE, IF, MAXIMUM,

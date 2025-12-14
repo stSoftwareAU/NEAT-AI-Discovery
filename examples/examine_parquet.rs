@@ -86,7 +86,11 @@ fn main() -> anyhow::Result<()> {
         activation_abs_sum / records.len() as f64
     );
     println!("  Activation range: [{activation_min:.6}, {activation_max:.6}]");
-    println!("  Value (input) range: [{value_min:.6}, {value_max:.6}]");
+    if has_value_count > 0 {
+        println!("  Value (input) range: [{value_min:.6}, {value_max:.6}]");
+    } else {
+        println!("  Value (input) range: N/A (no records have value field)");
+    }
 
     // Compute variance
     let mut variance_sum = 0.0f64;
