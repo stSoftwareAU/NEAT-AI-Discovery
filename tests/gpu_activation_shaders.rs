@@ -5,6 +5,10 @@
 //! but the GPU shaders (`activation.wgsl` and `bias.wgsl`) only handle IDs 0-10.
 //! Unknown IDs fall back to `default: { return x; }` which is IDENTITY.
 //!
+//! Note (Issue #134 follow-up): `ACTIVATION_SPECS` no longer proposes `LeakyReLU` as an
+//! add-neuron candidate, but the GPU shaders must still support `LeakyReLU` because it can
+//! appear in existing creatures (targets/sources) and has a stable GPU ID mapping.
+//!
 //! This causes GPU evaluation to silently return incorrect (IDENTITY-based) results
 //! instead of the correct activation function output.
 //!
@@ -179,28 +183,14 @@ fn test_all_new_activations_produce_candidates() {
     let file_path = temp_file.path().to_str().unwrap();
 
     // Create samples with varied source activations to exercise different
-    // regions of each activation function
+    // regions of each activation function.
+    //
+    // IMPORTANT: Ensure the target error is correlated with the source activation so
+    // the analysis can reliably produce add-neuron candidates across multiple squashes.
     let mut records = Vec::new();
 
     for i in 0..500 {
         let obs_idx = i as u32;
-
-        // Varying target error to ensure some correlation patterns
-        let error = if i % 3 == 0 {
-            0.4
-        } else if i % 3 == 1 {
-            0.2
-        } else {
-            0.1
-        };
-
-        records.push(DiscoverRecord::new(
-            obs_idx,
-            "output-0".to_string(),
-            Some(0.5),
-            0.5,
-            vec![error],
-        ));
 
         // Source with varying activations (both positive and negative)
         let source = match i % 5 {
@@ -210,6 +200,18 @@ fn test_all_new_activations_produce_candidates() {
             3 => 0.5,
             _ => 2.0,
         };
+
+        // Correlated error (VALUE domain): when source is positive, output should
+        // increase; when source is negative, output should decrease.
+        let error = source * 0.2; // [-0.4, 0.4]
+
+        records.push(DiscoverRecord::new(
+            obs_idx,
+            "output-0".to_string(),
+            Some(0.5),
+            0.5,
+            vec![error],
+        ));
 
         records.push(DiscoverRecord::new(
             obs_idx,
@@ -241,9 +243,9 @@ fn test_all_new_activations_produce_candidates() {
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
 
-    // Check each new activation function
-    let new_activations = [
-        "LeakyReLU",
+    // Check each proposed new activation function (Issue #134: LeakyReLU is supported
+    // but intentionally not proposed as a new neuron candidate).
+    let proposed_new_activations = [
         "Mish",
         "Swish",
         "HARD_TANH",
@@ -255,7 +257,7 @@ fn test_all_new_activations_produce_candidates() {
 
     let mut activations_with_candidates = 0;
     eprintln!("\nNew activation function candidates:");
-    for activation in &new_activations {
+    for activation in &proposed_new_activations {
         let count = result
             .helpful_neurons
             .iter()
@@ -275,11 +277,11 @@ fn test_all_new_activations_produce_candidates() {
     assert!(
         activations_with_candidates >= 3,
         "At least 3 new activations should produce candidates, got {activations_with_candidates}/{}",
-        new_activations.len()
+        proposed_new_activations.len()
     );
 
     eprintln!(
         "\nTest passed: {activations_with_candidates}/{} new activations produce candidates",
-        new_activations.len()
+        proposed_new_activations.len()
     );
 }
