@@ -123,7 +123,7 @@ fn test_output_neurons_prioritised_due_to_high_impact() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Output should be ranked first due to impact × error
     // output-0: 0.5 × 1.0 = 0.5
@@ -186,7 +186,7 @@ fn test_weighted_ranking_prefers_high_impact_moderate_error_over_low_impact_high
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
     assert_eq!(result.neurons.len(), 3);
 
     // Output should rank first: 0.6 * 1.0 = 0.6
@@ -258,7 +258,7 @@ fn test_hidden_neuron_can_rank_first_with_very_high_weighted_score() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
     assert_eq!(result.neurons.len(), 2);
 
     // hidden-1 should rank first: 10.0 × ~1.0 = 10.0
@@ -302,7 +302,7 @@ fn test_impact_epsilon_prevents_zero_impact_neurons_from_being_ignored() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Orphan should still appear in results (not filtered out)
     let orphan = result.neurons.iter().find(|n| n.neuron_uuid == "orphan");
@@ -356,9 +356,9 @@ fn test_disconnected_neurons_are_removal_candidates() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
-    // Orphan should be a removal candidate because impact (0) < costOfGrowth (0.01)
+    // Orphan should be a removal candidate because impact (0) < costOfGrowth (1e-7)
     assert!(
         !result.removal_candidates.is_empty(),
         "Should have at least one removal candidate. Neurons: {:?}",
@@ -411,14 +411,14 @@ fn test_high_impact_neurons_not_returned_as_removal_candidates() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    // Both have high error, but both have high impact (well above costOfGrowth 0.01)
+    // Both have high error, but both have high impact (well above costOfGrowth 1e-7)
     let records = create_records(vec![
         ("hidden-1", 100.0), // Very high error, ~100% impact
         ("output-0", 100.0), // Very high error, 100% impact
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // High impact neurons should NOT be removal candidates
     // Both hidden-1 and output-0 have activation_weighted_impact >> 0.01
@@ -435,7 +435,7 @@ fn test_high_impact_neurons_not_returned_as_removal_candidates() {
 
 #[test]
 fn test_only_low_impact_neurons_returned_as_removal_candidates() {
-    // Scenario: Only neurons with activation_weighted_impact < costOfGrowth (0.01)
+    // Scenario: Only neurons with activation_weighted_impact < costOfGrowth (1e-7)
     // are returned as removal candidates. High impact neurons are filtered out.
     let creature = create_creature(
         vec![
@@ -457,8 +457,8 @@ fn test_only_low_impact_neurons_returned_as_removal_candidates() {
 
     // Both neurons have normal activations (0.5), so their activation_weighted_impact
     // will be structural_impact × 0.5:
-    // - low-impact: 0.05 × 0.5 = 0.025 (>> 0.01, NOT a candidate)
-    // - connected: 0.95 × 0.5 = 0.475 (>> 0.01, NOT a candidate)
+    // - low-impact: 0.05 × 0.5 = 0.025 (>> 1e-7, NOT a candidate)
+    // - connected: 0.95 × 0.5 = 0.475 (>> 1e-7, NOT a candidate)
     let records = create_records(vec![
         ("low-impact", 0.1), // Low error, ~5% impact × 0.5 activation = 0.025
         ("connected", 10.0), // High error, 95% impact × 0.5 activation = 0.475
@@ -466,7 +466,7 @@ fn test_only_low_impact_neurons_returned_as_removal_candidates() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // All neurons have impact >> costOfGrowth, so none should be removal candidates
     assert!(
@@ -519,7 +519,7 @@ fn test_negligible_impact_neurons_sorted_first_as_best_removal_candidates() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Verify the negligible neuron has essentially zero impact
     let negligible_neuron = result
@@ -607,7 +607,7 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Verify high-activation neuron has high activation-weighted impact
     let high_act = result
@@ -622,19 +622,19 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
     );
     // Activation-weighted impact should be ~0.1 (10%)
     assert!(
-        high_act.activation_weighted_impact > 0.01,
-        "high-activation should have activation_weighted_impact > 1% (threshold), got {}",
+        high_act.activation_weighted_impact > 1e-7,
+        "high-activation should have activation_weighted_impact > 1e-7 (threshold), got {}",
         high_act.activation_weighted_impact
     );
 
-    // high-activation should NOT be a removal candidate (impact 0.1 >> 0.01)
+    // high-activation should NOT be a removal candidate (impact 0.1 >> 1e-7)
     let high_act_removal = result
         .removal_candidates
         .iter()
         .find(|c| c.neuron_uuid == "high-activation");
     assert!(
         high_act_removal.is_none(),
-        "high-activation should NOT be a removal candidate (impact {:.2e} >> costOfGrowth 0.01)",
+        "high-activation should NOT be a removal candidate (impact {:.2e} >> costOfGrowth 1e-7)",
         high_act.activation_weighted_impact
     );
 
@@ -655,14 +655,14 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         low_act.activation_weighted_impact
     );
 
-    // low-activation SHOULD be a removal candidate (impact 1e-15 << 0.01)
+    // low-activation SHOULD be a removal candidate (impact 1e-15 << 1e-7)
     let low_act_removal = result
         .removal_candidates
         .iter()
         .find(|c| c.neuron_uuid == "low-activation");
     assert!(
         low_act_removal.is_some(),
-        "low-activation SHOULD be a removal candidate (impact {:.2e} < costOfGrowth 0.01)",
+        "low-activation SHOULD be a removal candidate (impact {:.2e} < costOfGrowth 1e-7)",
         low_act.activation_weighted_impact
     );
 
@@ -706,7 +706,7 @@ fn test_removal_candidates_sorted_by_activation_weighted_impact() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // All three should be removal candidates (disconnected from output)
     assert!(
@@ -782,7 +782,7 @@ fn test_processed_neurons_reports_accurately_when_some_neurons_missing_records()
     write_records_to_parquet(file_path, &records).unwrap();
 
     // Call rank_focus_neurons
-    let result = rank_focus_neurons(file_path, &creature, None);
+    let result = rank_focus_neurons(file_path, &creature, None, None);
 
     // The function should error because hidden-3 and output-0 are missing records
     // (restore old behavior where missing records cause an error)
@@ -852,7 +852,7 @@ fn test_cumulative_impact_for_multiple_outgoing_synapses() {
     let records = create_records(vec![("hub", 0.5), ("output-0", 0.5), ("output-1", 0.5)]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Find the hub neuron's impact
     let hub = result
@@ -934,7 +934,7 @@ fn test_non_finite_activations_handled_gracefully() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Verify the ranking is not corrupted by NaN
     assert!(
@@ -1025,7 +1025,7 @@ fn test_all_non_finite_activations_returns_zero_mean() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Find the all-nan neuron
     let all_nan = result
@@ -1081,7 +1081,7 @@ fn test_cumulative_impact_mixed_direct_and_indirect_paths() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let hub = result
         .neurons
@@ -1112,21 +1112,25 @@ fn test_cumulative_impact_mixed_direct_and_indirect_paths() {
 /// neurons), this should be very small - approximately equal to activation_weighted_impact.
 #[test]
 fn test_removal_candidate_expected_error_reduction_is_impact_based_not_neuron_error() {
-    // Scenario: A neuron with HIGH error (0.27 normalised) but NEGLIGIBLE impact (1e-8).
-    // The bug would predict 27% error reduction, but actual reduction is ~1e-8 (0.000001%).
+    // Scenario: A neuron with HIGH error (0.27 normalised) but NEGLIGIBLE impact (< 1e-7).
+    // The bug would predict 27% error reduction, but actual reduction is tiny.
     //
-    // Network: input-0 -> negligible -> output-0 (tiny weights)
+    // Network: input-0 -> negligible -> output-0 (very tiny weights)
     //          input-0 -> output-0 (direct, large weight)
+    //
+    // Impact calculation (v0.2.3 with 1e-7 threshold):
+    // - negligible → output-0: weight 1e-8 / total_inbound(1.0 + 1e-8) × 1.0 ≈ 1e-8
+    // - activation_weighted_impact = 1e-8 × 0.5 = 5e-9 < 1e-7 ✓
     let creature = create_creature(
         vec![
             ("input-0", "input"),
-            ("negligible", "hidden"), // Negligible impact due to tiny weights
+            ("negligible", "hidden"), // Negligible impact due to very tiny weights
             ("output-0", "output"),
         ],
         vec![
-            // Negligible neuron has tiny weights
-            ("input-0", "negligible", 1e-6),
-            ("negligible", "output-0", 1e-6),
+            // Negligible neuron has very tiny weights (to get impact < 1e-7)
+            ("input-0", "negligible", 1e-8),
+            ("negligible", "output-0", 1e-8),
             // Direct path dominates
             ("input-0", "output-0", 1.0),
         ],
@@ -1136,14 +1140,14 @@ fn test_removal_candidate_expected_error_reduction_is_impact_based_not_neuron_er
     let file_path = temp_file.path().to_str().unwrap();
 
     // Negligible neuron has HIGH error (0.27 or 27% when normalised)
-    // but tiny activation-weighted impact
+    // but very tiny activation-weighted impact (< 1e-7)
     let records = create_records_with_activation(vec![
-        ("negligible", 0.27, 0.5), // High error, moderate activation -> still tiny impact
+        ("negligible", 0.27, 0.5), // High error, moderate activation -> very tiny impact
         ("output-0", 0.5, 0.8),    // Normal error for output
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // The negligible neuron should be a removal candidate
     let negligible_removal = result

@@ -41,9 +41,10 @@ use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use tempfile::NamedTempFile;
 
-/// Default growth cost matching NEAT-AI's typical value (0.01 per TypeScript default)
-/// v0.1.145: Changed from 1e-7 to 0.01 to match TypeScript and work with absolute impacts.
-const COST_OF_GROWTH: f32 = 0.01;
+/// Default growth cost matching NEAT-AI's typical value (1e-7 per Score.ts formula)
+/// v0.1.145: Incorrectly changed to 0.01
+/// v0.2.3 (Issue #132): Reverted to correct value of 1e-7
+const COST_OF_GROWTH: f32 = 1e-7;
 
 /// Test the removal savings calculation matches NEAT-AI's Score.ts formula.
 ///
@@ -240,7 +241,7 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Verify both neurons have similar low activation_weighted_impact
     let few = result
@@ -363,9 +364,9 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
     );
 
     // Verify the savings match the NEAT-AI formula: growthCost × (1 + totalSynapses/10)
-    // v0.1.145: COST_OF_GROWTH changed from 1e-7 to 0.01 to match TypeScript
-    let expected_few_savings = COST_OF_GROWTH * (1.0 + 2.0 / 10.0); // 0.012
-    let expected_many_savings = COST_OF_GROWTH * (1.0 + 5.0 / 10.0); // 0.015
+    // v0.2.3 (Issue #132): COST_OF_GROWTH is 1e-7 (correct value per Score.ts)
+    let expected_few_savings = COST_OF_GROWTH * (1.0 + 2.0 / 10.0); // 1.2e-7
+    let expected_many_savings = COST_OF_GROWTH * (1.0 + 5.0 / 10.0); // 1.5e-7
 
     assert!(
         (few_candidate.removal_savings - expected_few_savings).abs() < 1e-6,
@@ -381,23 +382,23 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
     );
 }
 
-/// REGRESSION TEST: Threshold must use costOfGrowth (0.01 per TypeScript).
+/// REGRESSION TEST: Threshold must use costOfGrowth (1e-7 per Score.ts).
 ///
-/// v0.1.145: costOfGrowth changed from 1e-7 to 0.01 to match TypeScript
-/// and work with absolute (non-normalised) impacts.
+/// v0.2.3 (Issue #132): costOfGrowth reverted to correct value of 1e-7
+/// (v0.1.145 incorrectly changed it to 0.01)
 ///
 /// Neurons are removal candidates when:
-///   activation_weighted_impact < costOfGrowth (0.01)
+///   activation_weighted_impact < costOfGrowth (1e-7)
 ///
 /// This test creates a neuron with impact ABOVE costOfGrowth that should NOT
 /// be a removal candidate.
 #[test]
 fn regression_threshold_uses_cost_of_growth() {
     // Create a neuron with significant weight to output
-    // With ABSOLUTE impact (v0.1.145):
-    //   structural_impact = 0.5 × 1.0 = 0.5 (weight × downstream)
+    // With NORMALISED impact (v0.2.1+):
+    //   structural_impact = 1.0 (sole input to output)
     //   mean_activation = 0.5
-    //   activation_weighted_impact = 0.5 × 0.5 = 0.25 >> 0.01
+    //   activation_weighted_impact = 1.0 × 0.5 = 0.5 >> 1e-7
     let creature = CreatureJson {
         input: 1,
         output: 1,
@@ -444,7 +445,7 @@ fn regression_threshold_uses_cost_of_growth() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Find the neuron in ranked neurons
     let neuron = result
@@ -453,7 +454,7 @@ fn regression_threshold_uses_cost_of_growth() {
         .find(|n| n.neuron_uuid == "high-impact")
         .expect("high-impact should be in ranked neurons");
 
-    // Verify impact is above costOfGrowth (0.01)
+    // Verify impact is above costOfGrowth (1e-7)
     assert!(
         neuron.activation_weighted_impact > COST_OF_GROWTH,
         "activation_weighted_impact ({:.2e}) should be LARGER than costOfGrowth ({:.0e})",
@@ -547,7 +548,7 @@ fn test_removal_reason_includes_synapse_savings() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // The negligible neuron should be a removal candidate
     let negligible_removal = result

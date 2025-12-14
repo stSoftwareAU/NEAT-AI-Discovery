@@ -287,6 +287,13 @@ pub struct RankFocusNeuronsInput {
     pub creature: CreatureJson,
     #[serde(default)]
     pub max_results: Option<usize>,
+    /// The cost of growth from NEAT-AI (default: 1e-7).
+    /// Neurons with activation_weighted_impact below this threshold are
+    /// candidates for removal. The default 1e-7 matches NEAT-AI's Score.ts formula.
+    /// Lower values (e.g., 1e-9) encourage creature expansion for evolution.
+    /// Issue #132: Pass this from NEAT-AI's configured costOfGrowth for consistency.
+    #[serde(default)]
+    pub cost_of_growth: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -785,7 +792,12 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
         }
     };
 
-    match focus::rank_focus_neurons(&input.parquet_file, &input.creature, input.max_results) {
+    match focus::rank_focus_neurons(
+        &input.parquet_file,
+        &input.creature,
+        input.max_results,
+        input.cost_of_growth,
+    ) {
         Ok(stats) => {
             let neurons: Vec<RankedNeuronJson> = stats
                 .neurons

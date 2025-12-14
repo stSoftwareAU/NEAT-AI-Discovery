@@ -329,7 +329,8 @@ fn test_activation_weighted_impact_with_recorded_activations() {
         ],
     };
 
-    let result = rank_focus_neurons(parquet_path, &creature, None).expect("Ranking should succeed");
+    let result =
+        rank_focus_neurons(parquet_path, &creature, None, None).expect("Ranking should succeed");
 
     // Find the neurons in results
     let high = result
