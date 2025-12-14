@@ -780,7 +780,7 @@ expected improvements.
 
 **How it works**:
 - **Output neurons**: Impact = 1.0 (direct contribution to score). No discount applied.
-- **Hidden neurons**: Impact = path weight product to outputs. Predictions are
+- **Hidden neurons**: Impact = normalised path weight to outputs. Predictions are
   discounted by impact factor.
 
 For a hidden neuron with impact 0.5:
@@ -789,6 +789,43 @@ For a hidden neuron with impact 0.5:
 
 This discounting ensures hidden neuron predictions reflect their actual contribution
 to the creature's score based on their position in the network topology.
+
+#### Normalised impact calculation (v0.2.1, Issue #130)
+
+**BUG FIX**: Hidden neurons were incorrectly getting `targetNeuronImpact = 1.0`
+(same as output neurons) when they had large weights to outputs. This caused
+predictions to NOT be discounted, leading to massive overestimation.
+
+**The problem**: The impact formula was using absolute weights:
+```
+contribution = |weight| × child_impact
+```
+
+With weight 3.0 to output: `3.0 × 1.0 = 3.0` (then clamped to 1.0).
+Result: Hidden neuron treated like output → NO discounting applied.
+
+**The fix**: Use normalised weights as documented:
+```
+contribution = |weight| / total_inbound_weight × child_impact
+```
+
+This measures **attribution** (fraction of influence), not sensitivity:
+
+| Scenario | Normalised Impact | Meaning |
+|----------|-------------------|---------|
+| Sole input to output | 1.0 | 100% influence |
+| 50% of output's input weight | 0.5 | 50% influence |
+| 1% of output's input weight | 0.01 | 1% influence |
+
+**Key properties**:
+- Output neurons: impact = 1.0 (always)
+- Hidden neurons: impact ≤ 1.0 (depending on fraction of total input weight)
+- Multiple competing inputs: impact dilutes proportionally
+- Sum of all inputs to a neuron = 1.0 (fractions sum to whole)
+
+**Zero-weight edge case (v0.2.2)**: When all inbound synapses to a neuron have
+`weight == 0.0`, the normalised formula would compute `0.0 / 0.0 = NaN`. This is
+now handled: zero total weight means zero contribution, so impact = 0.0.
 
 #### All other activations
 
@@ -951,7 +988,7 @@ const complexityPenalty = hiddenNeuronCount * growthCost +
 savings = growthCost × (1 + (N + M) / 10)
 ```
 
-**The fix**: ALL neurons with `activation_weighted_impact < costOfGrowth` (1e-7) are
+**The fix**: ALL neurons with `activation_weighted_impact < costOfGrowth` (0.01) are
 returned as removal candidates, sorted by impact ascending.
 
 ```
@@ -1068,6 +1105,36 @@ console.log(`Target impact: ${candidate.targetNeuronImpact}`);
 // Display as percentage
 console.log(`Expected score gain: ${creatureLevelImprovement * 100}%`);
 ```
+
+#### Source variance discounting (v0.2.2, Issue #130)
+
+**CRITICAL BUG FIX**: Predictions were massively over-estimated when source neurons had
+constant or near-constant activation. A constant source cannot reduce error correlation
+because it only adds a fixed offset to the target - like adjusting the bias.
+
+**Production example**: `input-1244` had variance 0.000000 (completely constant), yet the
+model predicted 29.6% error reduction. Actual result was 0%.
+
+| Source std dev | Discount factor | Effect |
+|---------------|-----------------|--------|
+| ≥ 0.05 | 1.0 (100%) | Full prediction |
+| 0.025 | 0.5 (50%) | Half prediction |
+| 0.01 | 0.2 (20%) | Heavy discount |
+| 0.0 | 0.0 (0%) | Skip entirely |
+
+**How it works**:
+1. Compute source activation variance from recorded samples
+2. Calculate discount factor: `min(1.0, source_std_dev / 0.05)`
+3. Apply discount to predicted improvements
+
+**Why 0.05 threshold?** Production analysis showed sources with std dev < 0.05 consistently
+produced unreliable predictions. Sources need meaningful variation to correlate with
+target error.
+
+**Key insight**: The prediction model assumes `weight × source_activation` correlates with
+target error. If `source_activation` is constant, the correlation is zero regardless of weight.
+TypeScript already replaces constant neurons with constants - this fix makes the Rust
+predictions match that reality.
 
 #### Removal candidate expected error reduction fix (v0.1.162)
 

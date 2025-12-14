@@ -142,6 +142,66 @@ fn has_sufficient_output_variance(
     output_std_dev >= MIN_NEURON_OUTPUT_STD_DEV
 }
 
+/// Compute source activation variance discount factor.
+///
+/// Issue #130 (v0.2.2): When a source neuron has constant or near-constant activation,
+/// adding a connection from it cannot reduce error correlation - it only adds a constant
+/// offset. The prediction model must discount improvements based on source variance.
+///
+/// **Key insight**: If source activation is constant, the new connection acts like a
+/// bias change, not a meaningful signal. A constant cannot correlate with varying error.
+///
+/// **Production example**: input-1244 had variance 0.000000 (completely constant), yet
+/// the model predicted 29.6% error reduction. Actual result was 0%.
+///
+/// # Returns
+/// A discount factor in [0, 1]:
+/// - 1.0: Source has high variance (no discount)
+/// - 0.0: Source is constant (full discount → zero improvement)
+/// - Between: Proportional discount based on variance ratio
+///
+/// # Formula
+/// `discount = min(1.0, source_std_dev / MIN_SOURCE_STD_DEV)`
+///
+/// Where MIN_SOURCE_STD_DEV = 0.05 (sources with std dev < 0.05 are progressively discounted)
+fn compute_source_variance_discount(samples: &[HelpfulSample]) -> f32 {
+    if samples.len() < 2 {
+        return 0.0;
+    }
+
+    // Minimum source standard deviation for full credit.
+    // Sources with std dev below this are progressively discounted.
+    // Value chosen based on production analysis: input-1064 had std dev 0.01 and caused
+    // massive over-prediction. Sources should have at least 0.05 std dev for reliable correlation.
+    const MIN_SOURCE_STD_DEV: f32 = 0.05;
+
+    let mut activation_sum = 0.0f64;
+    let mut activation_sq_sum = 0.0f64;
+    let mut count = 0u32;
+
+    for sample in samples {
+        if sample.activation.is_finite() {
+            let a = sample.activation as f64;
+            activation_sum += a;
+            activation_sq_sum += a * a;
+            count += 1;
+        }
+    }
+
+    if count < 2 {
+        return 0.0;
+    }
+
+    let n = count as f64;
+    let mean = activation_sum / n;
+    let variance = (activation_sq_sum / n) - (mean * mean);
+    let std_dev = variance.max(0.0).sqrt() as f32;
+
+    // Linear discount: full credit at MIN_SOURCE_STD_DEV, zero at 0
+    // Values above MIN_SOURCE_STD_DEV get full credit (capped at 1.0)
+    (std_dev / MIN_SOURCE_STD_DEV).clamp(0.0, 1.0)
+}
+
 /// Default GPU batch size for GPU operations.
 /// This is tuned for M1/M2/M3 which have moderate GPU core counts.
 const DEFAULT_GPU_BATCH_SIZE: usize = 512;
@@ -7558,6 +7618,14 @@ pub(crate) fn analyze_neurons_with_cache(
                     // Get target_squash for accurate HARD_TANH modelling
                     let target_squash = neuron_squash_map_arc.get(target_uuid).map(|s| s.as_str());
 
+                    // Issue #130 (v0.2.2): Compute source variance discount.
+                    // If source activation has low variance, predictions are unreliable.
+                    let source_variance_discount = compute_source_variance_discount(&result.samples);
+                    if source_variance_discount <= EPSILON {
+                        // Source is constant - skip evaluation entirely
+                        continue;
+                    }
+
                     // ReLU evaluation: split by TARGET neuron's error sign.
                     //
                     // ReLU can only push output in ONE direction (based on outgoing weight sign),
@@ -7580,13 +7648,18 @@ pub(crate) fn analyze_neurons_with_cache(
                         target_squash,
                     )?;
 
-                    if let Some(candidate) = split_result.positive_error_candidate {
+                    if let Some(mut candidate) = split_result.positive_error_candidate {
+                        // Issue #130: Apply source variance discount
+                        candidate.expected_creature_error_reduction *= source_variance_discount;
+                        candidate.expected_creature_score_gain *= source_variance_discount;
+
                         if verbose_enabled() {
                             eprintln!(
-                                "[NEAT-AI-Discovery][verbose] ReLU (push UP) {} -> {}: {:.2}% improvement",
+                                "[NEAT-AI-Discovery][verbose] ReLU (push UP) {} -> {}: {:.2}% improvement (variance discount: {:.2})",
                                 result.source_uuid,
                                 target_uuid,
-                                candidate.expected_creature_score_gain * 100.0
+                                candidate.expected_creature_score_gain * 100.0,
+                                source_variance_discount
                             );
                         }
                         diagnostics
@@ -7597,13 +7670,18 @@ pub(crate) fn analyze_neurons_with_cache(
                         upsert_candidate(&mut map, candidate);
                     }
 
-                    if let Some(candidate) = split_result.negative_error_candidate {
+                    if let Some(mut candidate) = split_result.negative_error_candidate {
+                        // Issue #130: Apply source variance discount
+                        candidate.expected_creature_error_reduction *= source_variance_discount;
+                        candidate.expected_creature_score_gain *= source_variance_discount;
+
                         if verbose_enabled() {
                             eprintln!(
-                                "[NEAT-AI-Discovery][verbose] ReLU (push DOWN) {} -> {}: {:.2}% improvement",
+                                "[NEAT-AI-Discovery][verbose] ReLU (push DOWN) {} -> {}: {:.2}% improvement (variance discount: {:.2})",
                                 result.source_uuid,
                                 target_uuid,
-                                candidate.expected_creature_score_gain * 100.0
+                                candidate.expected_creature_score_gain * 100.0,
+                                source_variance_discount
                             );
                         }
                         diagnostics
@@ -7615,7 +7693,7 @@ pub(crate) fn analyze_neurons_with_cache(
                     }
 
                     for spec in ACTIVATION_SPECS.iter() {
-                        if let Some(candidate) = evaluate_activation_candidate(
+                        if let Some(mut candidate) = evaluate_activation_candidate(
                             gpu,
                             &result.source_uuid,
                             target_uuid,
@@ -7624,6 +7702,10 @@ pub(crate) fn analyze_neurons_with_cache(
                             spec,
                             target_squash,
                         )? {
+                            // Issue #130: Apply source variance discount
+                            candidate.expected_creature_error_reduction *= source_variance_discount;
+                            candidate.expected_creature_score_gain *= source_variance_discount;
+
                             diagnostics
                                 .lock()
                                 .expect("Mutex poisoned: diagnostics")

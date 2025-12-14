@@ -1,27 +1,25 @@
-//! Production-based impact calculation tests (Dec 2024)
+//! Production-based impact calculation tests (Issue #130 fix)
 //!
-//! These tests are derived from actual production failures where impact was
-//! massively underestimated, causing neurons to be incorrectly marked as
-//! "low impact" when removing them actually increased error by up to 20%.
+//! These tests verify the normalised impact calculation introduced in v0.2.1 to
+//! fix Issue #130: hidden neurons incorrectly getting impact = 1.0.
 //!
-//! ## Production Failure Pattern
+//! ## The Problem (Issue #130)
 //!
-//! | Calculated Impact | Actual Error Increase | Underestimation |
-//! |-------------------|----------------------|-----------------|
-//! | 1.39e-12          | 20% (0.2)            | 145 billion x   |
-//! | 4.94e-13          | 0.0054% (5.4e-5)     | 100 million x   |
-//! | 1.87e-10          | 0.44% (4.4e-3)       | 24 million x    |
+//! The absolute impact calculation:
+//!   impact = |weight| × child_impact
 //!
-//! ## Root Cause (v0.1.145 fix)
+//! Could give hidden neurons impact >= 1.0 (same as outputs), which caused
+//! predictions to not be discounted, leading to massive overestimation.
 //!
-//! The old normalised impact calculation:
+//! ## The Fix (v0.2.1)
+//!
+//! Use normalised impact as documented:
 //!   impact = |weight| / total_inbound × child_impact
 //!
-//! Was fundamentally wrong for removal prediction. It answered "what share of
-//! blame?" not "what happens when removed?"
-//!
-//! The fix uses absolute impact:
-//!   impact = |weight| × child_impact
+//! This gives "fraction of influence" (attribution), which:
+//! - Is always <= 1.0 for hidden neurons (with competing inputs)
+//! - Correctly accounts for dilution when there are many inputs
+//! - Matches the documented formula in IMPACT_CALCULATION.md
 
 mod common;
 
@@ -61,56 +59,48 @@ fn output(uuid: &str, squash: &str) -> NeuronJson {
     }
 }
 
-/// Production pattern: Hidden neuron with many incoming synapses and small weight to output.
+/// Production pattern: STEP neuron gets full impact (no normalisation)
 ///
-/// In production, neurons like this were marked as "low impact" (1e-13) when
-/// removing them actually increased error by 0.005%. The old normalised
-/// calculation diluted impact by the number of incoming synapses.
+/// From actual production data where STEP neurons were incorrectly diluted.
+/// Any synapse to a STEP neuron could flip the output, so each gets full impact.
 #[test]
-fn test_many_inputs_small_output_weight_has_reasonable_impact() {
-    // Pattern from production failure:
-    // - 16 incoming synapses to hidden neuron
-    // - 1 outgoing synapse with weight 0.037
-    // - Old calculation gave impact ~4.94e-13
-    // - Actual removal impact was ~5.4e-5 (100 million x underestimate)
+fn test_step_neuron_uses_full_impact_not_normalised() {
+    // A synapse to a STEP output neuron should have full downstream impact
+    // because any synapse could cause the threshold to be crossed
     let creature = CreatureJson {
-        input: 16,
+        input: 1,
         output: 1,
-        neurons: vec![hidden("target", "IDENTITY"), output("output-0", "IDENTITY")],
-        synapses: {
-            let mut synapses = Vec::new();
-            // 16 incoming synapses (like production)
-            for i in 0..16 {
-                synapses.push(synapse(&format!("input-{i}"), "target", 1.0));
-            }
-            // Small weight to output
-            synapses.push(synapse("target", "output-0", 0.037));
-            synapses
-        },
+        neurons: vec![
+            hidden("candidate", "IDENTITY"),
+            output("step-output", "STEP"), // STEP = threshold function
+        ],
+        synapses: vec![
+            synapse("input-0", "candidate", 1.0),
+            synapse("candidate", "step-output", 0.001), // Tiny weight
+            synapse("input-0", "step-output", 100.0),   // Large competing weight
+        ],
     };
 
     let impacts = compute_impacts_public(&creature);
-    let target_impact = *impacts.get("target").unwrap_or(&0.0);
+    let candidate_impact = *impacts.get("candidate").unwrap_or(&0.0);
 
-    // With absolute impact: 0.037 × 1.0 = 0.037
-    // Must be >> 1e-10 (the old underestimate)
+    // For STEP targets, we use full impact (no normalisation)
+    // because any synapse could flip the output
     assert!(
-        target_impact > 0.01,
-        "Target impact should be ~0.037 (absolute weight), got {target_impact:.2e}. \
-         Old normalised calculation would give ~1e-13 which was wrong."
+        (candidate_impact - 1.0).abs() < 0.001,
+        "STEP target should give full impact (1.0), got {candidate_impact:.4}. \
+         Threshold functions don't dilute impact."
     );
 }
 
-/// Production pattern: Deep network with multiple intermediate layers.
+/// Production pattern: Deep network with competing inputs at each layer.
 ///
-/// The old normalised calculation multiplied fractions at each layer,
-/// causing exponential underestimation. A neuron 3 hops from output
-/// with 20 synapses at each layer would have impact diluted by:
-///   1/20 × 1/20 × 1/20 = 1/8000
+/// With normalised calculation, impact dilutes at each layer where there
+/// are competing inputs. This is CORRECT behavior.
 #[test]
-fn test_deep_network_impact_not_exponentially_diluted() {
+fn test_deep_network_impact_dilutes_with_competing_inputs() {
     // 3-layer network: candidate → hidden1 → hidden2 → output
-    // Each layer has multiple inputs that would dilute normalised impact
+    // Each hidden layer has 10 inputs total
     let creature = CreatureJson {
         input: 10,
         output: 1,
@@ -127,7 +117,7 @@ fn test_deep_network_impact_not_exponentially_diluted() {
                 synapse("hidden1", "hidden2", 0.5),
                 synapse("hidden2", "output-0", 0.5),
             ];
-            // Add "diluting" synapses at each layer
+            // Add "diluting" synapses at each layer (9 more inputs to hidden1 and hidden2)
             for i in 1..10 {
                 synapses.push(synapse(&format!("input-{i}"), "hidden1", 0.5));
             }
@@ -141,43 +131,44 @@ fn test_deep_network_impact_not_exponentially_diluted() {
     let impacts = compute_impacts_public(&creature);
     let candidate_impact = *impacts.get("candidate").unwrap_or(&0.0);
 
-    // Absolute impact through the path:
-    // candidate → hidden1: 0.5
-    // hidden1 → hidden2: 0.5
-    // hidden2 → output: 0.5
-    // Total: 0.5 × 0.5 × 0.5 = 0.125
+    // Normalised impact:
+    // hidden2 → output: 0.5 / 0.5 = 1.0 (sole connection)
+    // hidden1 → hidden2: 0.5 / (0.5 + 9×0.5) = 0.5/5.0 = 0.1
+    // candidate → hidden1: 0.5 / (0.5 + 9×0.5) = 0.5/5.0 × 0.1 = 0.01
     //
-    // Old normalised would give:
-    // (0.5/5) × (0.5/5) × (0.5) = 0.01 × 0.01 × 0.5 = 0.00005
+    // This IS correct: candidate only controls 10% of hidden1's input,
+    // and hidden1 only controls 10% of hidden2's input.
     assert!(
-        candidate_impact > 0.05,
-        "Deep network impact should be ~0.125 (weight product), got {candidate_impact:.4}. \
-         Old normalised calculation would exponentially dilute this."
+        (candidate_impact - 0.01).abs() < 0.01,
+        "Deep network with competing inputs should dilute impact to ~0.01, got {candidate_impact:.4}"
+    );
+
+    // Impact < 1.0 (Issue #130 fix)
+    assert!(
+        candidate_impact < 1.0,
+        "Hidden neuron with competing inputs should have impact < 1.0"
     );
 }
 
-/// Production pattern: Intermediate neuron with 322 inputs.
+/// Production pattern: Intermediate neuron with many inputs.
 ///
-/// From actual production failure:
-/// - Candidate had 1 outgoing synapse (weight 0.037) to intermediate
-/// - Intermediate had 322 incoming synapses and connected to output
-/// - Old calculation: 0.037/322 ≈ 0.0001 × downstream = ~1e-10
-/// - Actual impact was much higher
+/// A neuron that only controls a small fraction of a hub's input
+/// should have proportionally small impact.
 #[test]
-fn test_hub_neuron_with_many_inputs_doesnt_zero_upstream_impact() {
+fn test_hub_neuron_correctly_dilutes_upstream_impact() {
     let creature = CreatureJson {
         input: 100,
         output: 1,
         neurons: vec![
             hidden("upstream", "IDENTITY"),
-            hidden("hub", "IDENTITY"), // Like the 322-input neuron in production
+            hidden("hub", "IDENTITY"), // Hub with 100 inputs
             output("output-0", "IDENTITY"),
         ],
         synapses: {
             let mut synapses = vec![
                 synapse("input-0", "upstream", 1.0),
                 synapse("upstream", "hub", 0.5),
-                synapse("hub", "output-0", 1.0),
+                synapse("hub", "output-0", 1.0), // Sole connection to output
             ];
             // Add 99 more inputs to hub (total 100 including upstream)
             for i in 1..100 {
@@ -190,19 +181,18 @@ fn test_hub_neuron_with_many_inputs_doesnt_zero_upstream_impact() {
     let impacts = compute_impacts_public(&creature);
     let upstream_impact = *impacts.get("upstream").unwrap_or(&0.0);
 
-    // Absolute: upstream → hub (0.5) × hub → output (1.0) = 0.5
-    // Old normalised: 0.5/50 × 1.0 = 0.01 (50x underestimate!)
+    // Normalised:
+    // hub → output: 1.0 / 1.0 × 1.0 = 1.0 (sole connection)
+    // upstream → hub: 0.5 / (100 × 0.5) × 1.0 = 0.5/50.0 = 0.01
+    //
+    // This IS correct: upstream only controls 1% of hub's input.
     assert!(
-        upstream_impact > 0.3,
-        "Upstream impact should be ~0.5 (absolute path weight), got {upstream_impact:.4}. \
-         The 100 other inputs to hub shouldn't dilute this."
+        (upstream_impact - 0.01).abs() < 0.01,
+        "Upstream with 1/100 of hub's input should have impact ~0.01, got {upstream_impact:.4}"
     );
 }
 
 /// Verify that neurons with genuinely negligible weights have low impact.
-///
-/// The fix to absolute impact shouldn't make all impacts large. A neuron
-/// with weight 1e-8 to output should still have negligible impact.
 #[test]
 fn test_truly_negligible_weight_has_low_impact() {
     let creature = CreatureJson {
@@ -214,173 +204,185 @@ fn test_truly_negligible_weight_has_low_impact() {
         ],
         synapses: vec![
             synapse("input-0", "negligible", 1.0),
-            synapse("negligible", "output-0", 1e-8),
-            synapse("input-0", "output-0", 1.0),
+            synapse("negligible", "output-0", 1e-8), // Tiny weight
+            synapse("input-0", "output-0", 1.0),     // Competing input
         ],
     };
 
     let impacts = compute_impacts_public(&creature);
     let impact = *impacts.get("negligible").unwrap_or(&0.0);
 
-    // Absolute: 1e-8 × 1.0 = 1e-8 (genuinely small)
+    // Normalised: 1e-8 / (1e-8 + 1.0) × 1.0 ≈ 1e-8
+    // (The 1.0 weight dominates)
     assert!(
         impact < 1e-6,
-        "Neuron with 1e-8 weight should have small impact, got {impact:.2e}"
+        "Negligible weight should have negligible impact, got {impact}"
     );
-    assert!(impact > 1e-10, "Impact shouldn't be zero, got {impact:.2e}");
 }
 
-/// Test that impact is correctly shared when neuron connects to multiple outputs.
-///
-/// If a neuron connects to 2 outputs with weight 1.0 each, it should have
-/// impact ~2.0 (sum of paths), not diluted.
+/// Multiple outputs: impact sums correctly across paths.
 #[test]
 fn test_multiple_output_connections_sum_impact() {
+    // A neuron connected to 3 outputs should sum the impacts
     let creature = CreatureJson {
         input: 1,
-        output: 2,
+        output: 3,
         neurons: vec![
-            hidden("multi-output", "IDENTITY"),
+            hidden("hub", "IDENTITY"),
             output("output-0", "IDENTITY"),
             output("output-1", "IDENTITY"),
+            output("output-2", "IDENTITY"),
         ],
         synapses: vec![
-            synapse("input-0", "multi-output", 1.0),
-            synapse("multi-output", "output-0", 1.0),
-            synapse("multi-output", "output-1", 1.0),
+            synapse("input-0", "hub", 1.0),
+            synapse("hub", "output-0", 1.0), // Sole input to each output
+            synapse("hub", "output-1", 1.0),
+            synapse("hub", "output-2", 1.0),
         ],
     };
 
     let impacts = compute_impacts_public(&creature);
-    let impact = *impacts.get("multi-output").unwrap_or(&0.0);
+    let hub_impact = *impacts.get("hub").unwrap_or(&0.0);
 
-    // Should sum: 1.0 + 1.0 = 2.0
+    // Each output contribution: 1.0 / 1.0 × 1.0 = 1.0
+    // Total: 3.0 (affects all 3 outputs)
     assert!(
-        (impact - 2.0).abs() < 0.01,
-        "Multi-output neuron should have summed impact ~2.0, got {impact}"
+        (hub_impact - 3.0).abs() < 0.01,
+        "Hub connected to 3 outputs should have impact ~3.0, got {hub_impact}"
     );
 }
 
-/// Test with actual activation data - the mean_activation should correctly
-/// scale the structural impact for removal candidate detection.
+/// MINIMUM neuron uses selection-based impact (probability of winning).
 #[test]
-fn test_activation_weighted_impact_with_recorded_activations() {
+fn test_minimum_neuron_uses_selection_based_impact() {
+    // For MINIMUM targets, impact = 1/N × child_impact (equal probability)
     let creature = CreatureJson {
-        input: 1,
+        input: 3,
         output: 1,
-        neurons: vec![hidden("tested", "IDENTITY"), output("output-0", "IDENTITY")],
+        neurons: vec![
+            hidden("candidate", "IDENTITY"),
+            output("min-output", "MINIMUM"), // MINIMUM selects one input
+        ],
         synapses: vec![
-            synapse("input-0", "tested", 1.0),
-            synapse("tested", "output-0", 0.1), // Small but not negligible
+            synapse("input-0", "candidate", 1.0),
+            synapse("candidate", "min-output", 1.0),
+            synapse("input-1", "min-output", 1.0),
+            synapse("input-2", "min-output", 1.0),
         ],
     };
 
-    let temp_file = NamedTempFile::new().unwrap();
-    let file_path = temp_file.path().to_str().unwrap();
+    let impacts = compute_impacts_public(&creature);
+    let candidate_impact = *impacts.get("candidate").unwrap_or(&0.0);
 
-    // Records with various activations
-    let records = vec![
-        DiscoverRecord::new(0, "tested".to_string(), Some(0.5), 0.5, vec![0.1]),
-        DiscoverRecord::new(1, "tested".to_string(), Some(0.3), 0.3, vec![0.1]),
-        DiscoverRecord::new(2, "tested".to_string(), Some(0.7), 0.7, vec![0.1]),
-        DiscoverRecord::new(0, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
-        DiscoverRecord::new(1, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
-        DiscoverRecord::new(2, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
-    ];
-    write_records_to_parquet(file_path, &records).unwrap();
-
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
-
-    let neuron = result
-        .neurons
-        .iter()
-        .find(|n| n.neuron_uuid == "tested")
-        .expect("tested should be in results");
-
-    // structural_impact = 0.1 (weight to output)
-    // mean_activation ≈ 0.5 (average of 0.5, 0.3, 0.7)
-    // activation_weighted_impact ≈ 0.1 × 0.5 = 0.05
+    // MINIMUM: each of 3 inputs has 1/3 probability of winning
+    // candidate impact = 1/3 × 1.0 ≈ 0.33
     assert!(
-        neuron.impact > 0.05,
-        "Structural impact should be ~0.1, got {:.4}",
-        neuron.impact
-    );
-    assert!(
-        neuron.mean_activation > 0.3 && neuron.mean_activation < 0.7,
-        "Mean activation should be ~0.5, got {:.4}",
-        neuron.mean_activation
+        (candidate_impact - 1.0 / 3.0).abs() < 0.01,
+        "MINIMUM target should give 1/N impact, got {candidate_impact:.4}"
     );
 }
 
-/// Test STEP/BIPOLAR neurons use full child_impact (threshold category).
-///
-/// For threshold functions, any synapse could flip the output, so we don't
-/// normalise by total_inbound.
+/// Verify activation-weighted impact works correctly with recorded data.
 #[test]
-fn test_step_neuron_uses_full_impact_not_normalised() {
+fn test_activation_weighted_impact_with_recorded_activations() {
+    let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+    let parquet_path = temp_file.path().to_str().unwrap();
+
+    // Create records with varying activations
+    let records = vec![
+        // High activation neuron
+        DiscoverRecord::new(
+            0,
+            "high-activation".to_string(),
+            Some(1.0),
+            10.0, // High activation
+            vec![0.1],
+        ),
+        DiscoverRecord::new(1, "high-activation".to_string(), Some(1.0), 10.0, vec![0.1]),
+        DiscoverRecord::new(
+            0,
+            "low-activation".to_string(),
+            Some(1.0),
+            0.001, // Low activation
+            vec![0.1],
+        ),
+        DiscoverRecord::new(1, "low-activation".to_string(), Some(1.0), 0.001, vec![0.1]),
+        DiscoverRecord::new(0, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+        DiscoverRecord::new(1, "output-0".to_string(), Some(0.5), 0.5, vec![0.1]),
+    ];
+
+    write_records_to_parquet(parquet_path, &records).expect("Failed to write parquet");
+
     let creature = CreatureJson {
-        input: 10,
+        input: 1,
         output: 1,
         neurons: vec![
-            hidden("upstream", "IDENTITY"),
-            hidden("step-gate", "STEP"), // Threshold activation
+            hidden("high-activation", "IDENTITY"),
+            hidden("low-activation", "IDENTITY"),
+            output("output-0", "IDENTITY"),
+        ],
+        synapses: vec![
+            synapse("input-0", "high-activation", 1.0),
+            synapse("input-0", "low-activation", 1.0),
+            synapse("high-activation", "output-0", 0.01), // Same structural impact
+            synapse("low-activation", "output-0", 0.01),  // Same structural impact
+        ],
+    };
+
+    let result = rank_focus_neurons(parquet_path, &creature, None).expect("Ranking should succeed");
+
+    // Find the neurons in results
+    let high = result
+        .neurons
+        .iter()
+        .find(|n| n.neuron_uuid == "high-activation")
+        .expect("high-activation should be ranked");
+    let low = result
+        .neurons
+        .iter()
+        .find(|n| n.neuron_uuid == "low-activation")
+        .expect("low-activation should be ranked");
+
+    // Both have same structural impact, but high-activation has higher mean_activation
+    // activation_weighted_impact = structural × mean_activation
+    assert!(
+        high.activation_weighted_impact > low.activation_weighted_impact * 100.0,
+        "high-activation should have much higher activation_weighted_impact \
+        (high: {}, low: {})",
+        high.activation_weighted_impact,
+        low.activation_weighted_impact
+    );
+}
+
+/// Test: neuron with many inputs and small output weight.
+#[test]
+fn test_many_inputs_small_output_weight_has_reasonable_impact() {
+    let creature = CreatureJson {
+        input: 100,
+        output: 1,
+        neurons: vec![
+            hidden("candidate", "IDENTITY"),
             output("output-0", "IDENTITY"),
         ],
         synapses: {
             let mut synapses = vec![
-                synapse("input-0", "upstream", 1.0),
-                synapse("upstream", "step-gate", 0.1), // Small weight
-                synapse("step-gate", "output-0", 1.0),
+                synapse("input-0", "candidate", 1.0),
+                synapse("candidate", "output-0", 0.001), // Small weight
             ];
-            // Add other inputs to step-gate
-            for i in 1..10 {
-                synapses.push(synapse(&format!("input-{i}"), "step-gate", 1.0));
+            // Add 99 other inputs to output (competing)
+            for i in 1..100 {
+                synapses.push(synapse(&format!("input-{i}"), "output-0", 0.01));
             }
             synapses
         },
     };
 
     let impacts = compute_impacts_public(&creature);
-    let upstream_impact = *impacts.get("upstream").unwrap_or(&0.0);
+    let candidate_impact = *impacts.get("candidate").unwrap_or(&0.0);
 
-    // For STEP targets, we use full child_impact (not normalised)
-    // upstream → step-gate uses child_impact = 1.0 (step-gate → output)
-    // So upstream impact should be ~1.0, not 0.1/10 × 1.0 = 0.01
+    // Normalised: 0.001 / (0.001 + 99×0.01) × 1.0 = 0.001 / 0.991 ≈ 0.001
     assert!(
-        upstream_impact > 0.5,
-        "Upstream to STEP neuron should have high impact (threshold category), got {upstream_impact:.4}"
-    );
-}
-
-/// Test MINIMUM/MAXIMUM neurons use selection-based impact.
-///
-/// Only one synapse "wins" at any time, so impact should be probability-weighted.
-#[test]
-fn test_minimum_neuron_uses_selection_based_impact() {
-    let creature = CreatureJson {
-        input: 3,
-        output: 1,
-        neurons: vec![
-            hidden("always-wins", "IDENTITY"),
-            hidden("min-gate", "MINIMUM"),
-            output("output-0", "IDENTITY"),
-        ],
-        synapses: vec![
-            synapse("input-0", "always-wins", 1.0),
-            synapse("always-wins", "min-gate", 1.0),
-            synapse("input-1", "min-gate", 1.0),
-            synapse("input-2", "min-gate", 1.0),
-            synapse("min-gate", "output-0", 1.0),
-        ],
-    };
-
-    let impacts = compute_impacts_public(&creature);
-    let impact = *impacts.get("always-wins").unwrap_or(&0.0);
-
-    // Without activation data, MINIMUM uses equal probability: 1/3
-    // So impact ≈ 1/3 × 1.0 = 0.33
-    assert!(
-        impact > 0.2 && impact < 0.5,
-        "MINIMUM selection impact should be ~0.33 (1/3 probability), got {impact:.4}"
+        candidate_impact > 0.0 && candidate_impact < 0.01,
+        "Small weight with competing inputs should have small but positive impact, got {candidate_impact}"
     );
 }

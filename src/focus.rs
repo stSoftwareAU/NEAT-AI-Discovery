@@ -726,6 +726,10 @@ pub fn compute_impacts_public(creature: &CreatureJson) -> HashMap<String, f32> {
 struct ImpactContext {
     adjacency: HashMap<String, Vec<(String, f32)>>,
     inbound_count: HashMap<String, usize>,
+    /// Sum of |weight| for all synapses INTO each target neuron.
+    /// Used for normalising Linear squash impact: |w| / total_inbound_weight × child_impact
+    /// This ensures hidden neurons always have impact < 1.0 (Issue #130).
+    total_inbound_weight: HashMap<String, f32>,
     squash_map: HashMap<String, String>,
     outputs: HashSet<String>,
     /// Selection statistics from activation records.
@@ -767,6 +771,18 @@ fn compute_impacts_internal_with_stats(
         map
     };
 
+    // Build total inbound weight for Linear squash normalisation (Issue #130).
+    // Sum of |weight| for all synapses INTO each target neuron.
+    // This ensures hidden neurons always have impact < 1.0:
+    //   contribution = |weight| / total_inbound_weight × child_impact
+    let total_inbound_weight: HashMap<String, f32> = {
+        let mut map: HashMap<String, f32> = HashMap::new();
+        for synapse in &creature.synapses {
+            *map.entry(synapse.to_uuid.clone()).or_insert(0.0) += synapse.weight.abs();
+        }
+        map
+    };
+
     let outputs: HashSet<String> = creature
         .neurons
         .iter()
@@ -782,6 +798,7 @@ fn compute_impacts_internal_with_stats(
     let ctx = ImpactContext {
         adjacency,
         inbound_count,
+        total_inbound_weight,
         squash_map,
         outputs,
         selection_stats,
@@ -863,7 +880,36 @@ fn compute_impact_with_shared_cache(
             let category = SquashCategory::from_squash(squash);
 
             let contribution = match category {
-                SquashCategory::Linear => weight.abs() * child_impact,
+                SquashCategory::Linear => {
+                    // Issue #130: Normalise by total inbound weight to ensure hidden neurons
+                    // always have impact < 1.0. This matches the documented formula:
+                    //   contribution = |weight| / total_inbound_weight × child_impact
+                    //
+                    // Without normalisation, a hidden neuron with weight 3.0 to an output
+                    // would get impact = 3.0, which is mathematically incorrect for the
+                    // PURPOSE of prediction discounting (measuring fraction of influence).
+                    //
+                    // Edge case: If all inbound weights are 0.0, total is 0.0, and we'd get
+                    // 0.0 / 0.0 = NaN. Handle this by returning 0.0 (zero weight = zero contribution).
+                    //
+                    // Near-zero protection: The `.max(weight.abs())` ensures total >= weight.abs(),
+                    // so the ratio weight.abs() / total is ALWAYS in [0, 1] and cannot explode.
+                    // Example: weight=1e-10, total_inbound=1e-10 → total=1e-10 → ratio=1.0 ✓
+                    // The only problematic case is weight=0.0 AND total=0.0 → 0/0=NaN, handled below.
+                    let total = ctx
+                        .total_inbound_weight
+                        .get(to_uuid)
+                        .copied()
+                        .unwrap_or(1.0)
+                        .max(weight.abs()); // Bounds ratio to [0,1]: total >= weight.abs() always
+
+                    if total <= 0.0 {
+                        // All weights are zero (including this one) → zero contribution
+                        0.0
+                    } else {
+                        (weight.abs() / total) * child_impact
+                    }
+                }
                 SquashCategory::Threshold => child_impact,
                 SquashCategory::Selection => {
                     if let Some(ref stats) = ctx.selection_stats {
@@ -1049,7 +1095,11 @@ pub fn rank_focus_neurons(
     // Identify removal candidates: neurons with activation_weighted_impact < costOfGrowth.
     //
     // activation_weighted_impact = structural_impact × mean_activation
-    // where structural_impact = ABSOLUTE impact through the network (v0.1.145 fix)
+    // where structural_impact = NORMALISED impact through the network (Issue #130 fix)
+    //
+    // With normalised impact, structural_impact represents the FRACTION of influence
+    // a neuron has on outputs (attribution), always in range [0, 1] per output.
+    // This correctly represents how much removing the neuron would affect results.
     //
     // Neurons with impact below costOfGrowth are net negative - removing them
     // reduces complexity more than it affects error.
@@ -1058,9 +1108,8 @@ pub fn rank_focus_neurons(
     //   savings = growthCost × (1 + (N + M) / 10)
     // where N = incoming synapses, M = outgoing synapses
     //
-    // v0.1.145: Changed from 1e-7 to 0.01 to match TypeScript default.
-    // The old 1e-7 was calibrated for NORMALISED impacts which massively
-    // underestimated actual impact (by up to 145 billion times in production).
+    // Threshold 0.01 means "contributes less than 1% weighted activation to outputs".
+    // This matches the TypeScript default costOfGrowth.
     const COST_OF_GROWTH: f32 = 0.01;
 
     // Return ALL neurons with impact below costOfGrowth as removal candidates

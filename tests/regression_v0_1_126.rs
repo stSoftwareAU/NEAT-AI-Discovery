@@ -1,45 +1,54 @@
-//! REGRESSION TESTS for impact calculation (v0.1.126 → v0.1.145)
+//! REGRESSION TESTS for impact calculation (Issue #130 fix)
 //!
 //! ## History:
 //!
-//! v0.1.126 introduced NORMALISED impact calculation:
+//! v0.1.126 introduced NORMALISED impact calculation (which was correct):
 //!   impact = |weight| / total_inbound × downstream_impact
 //!
-//! This was WRONG. Production data (Dec 2024) showed impacts underestimated
-//! by up to 145 BILLION times:
-//!   - Calculated: 1.39e-12
-//!   - Actual: -20% error increase (0.2)
-//!
-//! v0.1.145 fixes this with ABSOLUTE impact:
+//! v0.1.145 changed to ABSOLUTE impact (which was WRONG for prediction discounting):
 //!   impact = |weight| × downstream_impact
 //!
-//! ## Why normalisation was wrong:
+//! The absolute approach was introduced to fix removal candidate assessment, but it
+//! broke prediction discounting by allowing hidden neurons to have impact >= 1.0.
 //!
-//! When you remove a neuron, the network doesn't "redistribute" its inputs.
-//! If a neuron contributes 3 units to an output with total input 100:
-//!   - Normalised said: "removing loses 3% of output" (impact 0.03)
-//!   - Reality: "removing loses 3 units of contribution" (impact 3.0)
+//! ## Issue #130: Why absolute was wrong for prediction discounting
 //!
-//! The normalised approach answered "what share of blame?" not "what happens
-//! when removed?" - a fundamentally different question.
+//! Production data showed `targetNeuronImpact = 1.0` for hidden neurons with large
+//! weights to outputs. This caused predictions to NOT be discounted, leading to
+//! massive overestimation (35% predicted vs 0% actual improvement).
+//!
+//! ## v0.2.1 fix (Issue #130): Restore normalised calculation
+//!
+//! The impact calculation now uses the documented formula:
+//!   impact = |weight| / total_inbound × downstream_impact
+//!
+//! This is correct because it measures ATTRIBUTION (fraction of influence),
+//! not SENSITIVITY (absolute change). For prediction discounting, we need attribution.
+//!
+//! Key properties of normalised impact:
+//! - Output neurons: impact = 1.0 (always)
+//! - Hidden neurons: impact <= 1.0 (depending on fraction of total input weight)
+//! - Sole input: impact = 1.0 (100% of target's input comes from this neuron)
+//! - Competing inputs: impact < 1.0 (shared influence)
 
 mod common;
 
 use neat_ai_discovery::focus::compute_impacts_public;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Test: Impact is ABSOLUTE (weight × downstream_impact), not normalised.
+/// Test: Impact is NORMALISED as documented.
 ///
-/// v0.1.145: This test was updated to verify the fix. Previously it tested
-/// normalised impact which caused massive underestimation in production.
+/// v0.2.1 (Issue #130): This test verifies the fix. The old absolute formula
+/// gave impact = 3.0, which was then clamped to 1.0, incorrectly treating the
+/// hidden neuron as having full output-level impact.
 #[test]
-fn test_impact_is_absolute_not_normalised() {
+fn test_impact_is_normalised_as_documented() {
     // Network:
     //   candidate → output (weight 3.0)
     //   other inputs → output (total weight 97.0)
     //
-    // With ABSOLUTE impact: candidate impact = 3.0 × 1.0 = 3.0
-    // (The old normalised approach gave 0.03, which was wrong)
+    // With NORMALISED impact: candidate impact = 3.0 / 100.0 × 1.0 = 0.03
+    // (The incorrect absolute approach gave 3.0)
     let creature = CreatureJson {
         input: 10,
         output: 1,
@@ -73,7 +82,7 @@ fn test_impact_is_absolute_not_normalised() {
                     synapse_type: None,
                 },
             ];
-            // Add 97 units of weight from other inputs (shouldn't affect candidate's impact)
+            // Add 97 units of weight from other inputs (dilutes candidate's impact)
             for i in 1..10 {
                 synapses.push(SynapseJson {
                     from_uuid: format!("input-{i}"),
@@ -89,23 +98,34 @@ fn test_impact_is_absolute_not_normalised() {
     let impacts = compute_impacts_public(&creature);
     let candidate_impact = *impacts.get("candidate").unwrap_or(&0.0);
 
-    // ABSOLUTE impact: weight × downstream = 3.0 × 1.0 = 3.0
-    // (Other inputs don't dilute this - they're independent contributions)
+    // NORMALISED impact: weight / total × downstream = 3.0 / 100.0 × 1.0 = 0.03
+    // Other inputs DILUTE this - they're competing for influence
     assert!(
-        (candidate_impact - 3.0).abs() < 0.01,
-        "candidate impact should be 3.0 (absolute weight × downstream), got {candidate_impact}"
+        (candidate_impact - 0.03).abs() < 0.01,
+        "candidate impact should be 0.03 (3/100 normalised), got {candidate_impact}"
+    );
+
+    // Crucially: impact < 1.0 (Issue #130 fix)
+    assert!(
+        candidate_impact < 1.0,
+        "hidden neuron should have impact < 1.0, got {candidate_impact}"
     );
 }
 
-/// Test: Deep network impact multiplies weights (not fractions).
+/// Test: Deep network impact uses normalised weights at each layer.
+///
+/// v0.2.1 (Issue #130): With normalisation, impact dilutes through deep networks.
 #[test]
-fn test_deep_network_absolute_impact() {
+fn test_deep_network_normalised_impact() {
     // Network:
     //   candidate → hidden (weight 1.0)
     //   hidden → output (weight 2.0)
+    //   + 9 other inputs to hidden (weight 1.0 each)
+    //   + 1 other input to output (weight 2.0)
     //
-    // With ABSOLUTE impact: candidate = 1.0 × 2.0 = 2.0
-    // (The old normalised approach gave 0.05, which was wrong)
+    // hidden → output: 2.0 / (2.0 + 2.0) = 0.5 (half the output's input weight)
+    // candidate → hidden: 1.0 / (1.0 + 9.0) = 0.1 (10% of hidden's input weight)
+    // candidate total: 0.1 × 0.5 = 0.05
     let creature = CreatureJson {
         input: 10,
         output: 1,
@@ -152,7 +172,7 @@ fn test_deep_network_absolute_impact() {
                     synapse_type: None,
                 },
             ];
-            // Add other synapses (shouldn't affect candidate's impact)
+            // Add 9 other inputs to hidden (dilutes candidate's contribution)
             for i in 1..10 {
                 synapses.push(SynapseJson {
                     from_uuid: format!("input-{i}"),
@@ -161,6 +181,7 @@ fn test_deep_network_absolute_impact() {
                     synapse_type: None,
                 });
             }
+            // Add direct input to output (dilutes hidden's contribution)
             synapses.push(SynapseJson {
                 from_uuid: "input-1".to_string(),
                 to_uuid: "output-0".to_string(),
@@ -174,17 +195,22 @@ fn test_deep_network_absolute_impact() {
     let impacts = compute_impacts_public(&creature);
     let candidate_impact = *impacts.get("candidate").unwrap_or(&0.0);
 
-    // ABSOLUTE: candidate → hidden (1.0) × hidden → output (2.0) = 2.0
+    // NORMALISED:
+    // hidden → output: 2.0 / (2.0 + 2.0) × 1.0 = 0.5
+    // candidate → hidden: 1.0 / 10.0 × 0.5 = 0.05
     assert!(
-        (candidate_impact - 2.0).abs() < 0.01,
-        "candidate impact should be 2.0 (1.0 × 2.0), got {candidate_impact}"
+        (candidate_impact - 0.05).abs() < 0.01,
+        "candidate impact should be 0.05 (normalised through layers), got {candidate_impact}"
     );
 }
 
-/// Test: Negligible weight neuron has negligible absolute impact.
+/// Test: Negligible weight neuron has negligible normalised impact.
+///
+/// Even with normalisation, a tiny weight gives tiny impact.
 #[test]
 fn test_negligible_weight_has_negligible_impact() {
-    // A neuron with weight 1e-8 to output should have impact ~1e-8
+    // A neuron with weight 1e-8 to output (competing with weight 1.0)
+    // Normalised impact: 1e-8 / (1e-8 + 1.0) × 1.0 ≈ 1e-8
     let creature = CreatureJson {
         input: 1,
         output: 1,
@@ -216,7 +242,7 @@ fn test_negligible_weight_has_negligible_impact() {
                 weight: 1e-8,
                 synapse_type: None,
             },
-            // Normal weight direct connection
+            // Normal weight direct connection (competes with negligible)
             SynapseJson {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "output-0".to_string(),
@@ -229,8 +255,7 @@ fn test_negligible_weight_has_negligible_impact() {
     let impacts = compute_impacts_public(&creature);
     let impact = *impacts.get("negligible").unwrap_or(&0.0);
 
-    // With absolute impact: 1e-8 × 1.0 = 1e-8
-    // The direct connection doesn't affect this neuron's impact
+    // Normalised impact: 1e-8 / (1e-8 + 1.0) ≈ 1e-8
     assert!(
         impact < 1e-6 && impact > 1e-10,
         "negligible neuron impact should be ~1e-8, got {impact}"

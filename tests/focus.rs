@@ -358,7 +358,7 @@ fn test_disconnected_neurons_are_removal_candidates() {
 
     let result = rank_focus_neurons(file_path, &creature, None).unwrap();
 
-    // Orphan should be a removal candidate because impact (0) < costOfGrowth (1e-7)
+    // Orphan should be a removal candidate because impact (0) < costOfGrowth (0.01)
     assert!(
         !result.removal_candidates.is_empty(),
         "Should have at least one removal candidate. Neurons: {:?}",
@@ -381,7 +381,7 @@ fn test_disconnected_neurons_are_removal_candidates() {
     let orphan = orphan_removal.unwrap();
     assert!(
         orphan.impact < 1e-7,
-        "Orphan should have impact below costOfGrowth (1e-7), got {}",
+        "Orphan should have negligible impact (< 1e-7), got {}",
         orphan.impact
     );
     // Verify the reason contains impact info
@@ -411,7 +411,7 @@ fn test_high_impact_neurons_not_returned_as_removal_candidates() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    // Both have high error, but both have high impact (well above costOfGrowth 1e-7)
+    // Both have high error, but both have high impact (well above costOfGrowth 0.01)
     let records = create_records(vec![
         ("hidden-1", 100.0), // Very high error, ~100% impact
         ("output-0", 100.0), // Very high error, 100% impact
@@ -421,7 +421,7 @@ fn test_high_impact_neurons_not_returned_as_removal_candidates() {
     let result = rank_focus_neurons(file_path, &creature, None).unwrap();
 
     // High impact neurons should NOT be removal candidates
-    // Both hidden-1 and output-0 have activation_weighted_impact >> 1e-7
+    // Both hidden-1 and output-0 have activation_weighted_impact >> 0.01
     assert!(
         result.removal_candidates.is_empty(),
         "High impact neurons should NOT be removal candidates. Found: {:?}",
@@ -435,7 +435,7 @@ fn test_high_impact_neurons_not_returned_as_removal_candidates() {
 
 #[test]
 fn test_only_low_impact_neurons_returned_as_removal_candidates() {
-    // Scenario: Only neurons with activation_weighted_impact < costOfGrowth (1e-7)
+    // Scenario: Only neurons with activation_weighted_impact < costOfGrowth (0.01)
     // are returned as removal candidates. High impact neurons are filtered out.
     let creature = create_creature(
         vec![
@@ -457,8 +457,8 @@ fn test_only_low_impact_neurons_returned_as_removal_candidates() {
 
     // Both neurons have normal activations (0.5), so their activation_weighted_impact
     // will be structural_impact × 0.5:
-    // - low-impact: 0.05 × 0.5 = 0.025 (>> 1e-7, NOT a candidate)
-    // - connected: 0.95 × 0.5 = 0.475 (>> 1e-7, NOT a candidate)
+    // - low-impact: 0.05 × 0.5 = 0.025 (>> 0.01, NOT a candidate)
+    // - connected: 0.95 × 0.5 = 0.475 (>> 0.01, NOT a candidate)
     let records = create_records(vec![
         ("low-impact", 0.1), // Low error, ~5% impact × 0.5 activation = 0.025
         ("connected", 10.0), // High error, 95% impact × 0.5 activation = 0.475
@@ -529,7 +529,7 @@ fn test_negligible_impact_neurons_sorted_first_as_best_removal_candidates() {
         .expect("negligible neuron should be in results");
     assert!(
         negligible_neuron.impact < 1e-7,
-        "Negligible neuron should have impact < 1e-7, got {}",
+        "Negligible neuron should have negligible impact (< 1e-7), got {}",
         negligible_neuron.impact
     );
 
@@ -627,14 +627,14 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         high_act.activation_weighted_impact
     );
 
-    // high-activation should NOT be a removal candidate (impact 0.1 >> 1e-7)
+    // high-activation should NOT be a removal candidate (impact 0.1 >> 0.01)
     let high_act_removal = result
         .removal_candidates
         .iter()
         .find(|c| c.neuron_uuid == "high-activation");
     assert!(
         high_act_removal.is_none(),
-        "high-activation should NOT be a removal candidate (impact {:.2e} >> costOfGrowth 1e-7)",
+        "high-activation should NOT be a removal candidate (impact {:.2e} >> costOfGrowth 0.01)",
         high_act.activation_weighted_impact
     );
 
@@ -655,14 +655,14 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
         low_act.activation_weighted_impact
     );
 
-    // low-activation SHOULD be a removal candidate (impact 1e-15 << 1e-7)
+    // low-activation SHOULD be a removal candidate (impact 1e-15 << 0.01)
     let low_act_removal = result
         .removal_candidates
         .iter()
         .find(|c| c.neuron_uuid == "low-activation");
     assert!(
         low_act_removal.is_some(),
-        "low-activation SHOULD be a removal candidate (impact {:.2e} < costOfGrowth 1e-7)",
+        "low-activation SHOULD be a removal candidate (impact {:.2e} < costOfGrowth 0.01)",
         low_act.activation_weighted_impact
     );
 
