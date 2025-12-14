@@ -2856,6 +2856,7 @@ fn inverse_activation(x: f32) -> f32 {
 
 /// LeakyReLU - 4 successful discoveries evolved ReLU → LeakyReLU!
 /// Allows small negative gradients instead of zeroing negative inputs.
+#[allow(dead_code)] // Still used for target simulation, but not proposed as a candidate squash.
 fn leaky_relu_activation(x: f32) -> f32 {
     if x >= 0.0 {
         x
@@ -2937,7 +2938,7 @@ fn activation_name_to_gpu_id(name: &str) -> u32 {
     }
 }
 
-pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 19] = [
+pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 18] = [
     // ========================================================================
     // ORIGINAL ACTIVATIONS (v0.1.x)
     // ========================================================================
@@ -3021,13 +3022,11 @@ pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 19] = [
     // ========================================================================
     // NEW ACTIVATIONS (v0.1.139) - Based on successful discovery evolutions
     // ========================================================================
-    ActivationCandidateSpec {
-        name: "LeakyReLU",
-        orientations: &ORIENTATIONS_BIDIRECTIONAL,
-        scales: &SCALES_WIDE,
-        activation: leaky_relu_activation,
-        min_improvement: 0.0, // 4 successful discoveries evolved ReLU → LeakyReLU!
-    },
+    //
+    // NOTE (Issue #134 follow-up): We intentionally do NOT propose LeakyReLU as a
+    // new neuron type. In practice it behaves very similarly to ReLU (α=0.01),
+    // and production runs show many low-quality LeakyReLU candidates. We still
+    // fully support LeakyReLU in existing creatures (targets and sources).
     ActivationCandidateSpec {
         name: "Mish",
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
@@ -5609,16 +5608,6 @@ fn relu(x: f32) -> f32 {
     x.max(0.0)
 }
 
-/// LeakyReLU activation for target simulation
-#[inline(always)]
-fn leaky_relu(x: f32) -> f32 {
-    if x > 0.0 {
-        x
-    } else {
-        0.01 * x
-    }
-}
-
 /// Get the activation function for a given squash name.
 /// Returns None for activations that are approximately linear and don't need simulation.
 ///
@@ -5635,7 +5624,7 @@ fn get_target_activation_fn(squash: &str) -> Option<fn(f32) -> f32> {
         "BIPOLAR" => Some(bipolar_activation),
         // ReLU family - simulation important for threshold behaviour
         "ReLU" => Some(relu),
-        "LeakyReLU" => Some(leaky_relu),
+        "LeakyReLU" => Some(leaky_relu_activation),
         // Smooth non-linear activations - simulation improves accuracy (v0.1.121)
         "ELU" => Some(elu_activation),
         "SELU" => Some(selu_activation),
@@ -8161,8 +8150,8 @@ Pages speculative:                        12345.
         assert!(names.contains(&"INVERSE"));
         // New activations (v0.1.139)
         assert!(
-            names.contains(&"LeakyReLU"),
-            "LeakyReLU should be included - 4 successful discoveries!"
+            !names.contains(&"LeakyReLU"),
+            "LeakyReLU should not be suggested as a new neuron activation"
         );
         assert!(
             names.contains(&"Mish"),
@@ -8184,7 +8173,7 @@ Pages speculative:                        12345.
         assert!(names.contains(&"ArcTan"), "ArcTan should be included");
         assert!(names.contains(&"ReLU6"), "ReLU6 should be included");
         // Total count
-        assert_eq!(names.len(), 19, "Should have 19 activation specs");
+        assert_eq!(names.len(), 18, "Should have 18 activation specs");
     }
 
     // ==================== Saturation Detection Tests (Issue #123) ====================
