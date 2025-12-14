@@ -119,7 +119,7 @@ fn test_step_saturated_positive_has_discounted_impact() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let upstream = result
         .neurons
@@ -186,7 +186,7 @@ fn test_step_saturated_negative_has_discounted_impact() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let upstream = result
         .neurons
@@ -245,7 +245,7 @@ fn test_step_flipping_has_full_impact() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let upstream = result
         .neurons
@@ -304,7 +304,7 @@ fn test_bipolar_saturated_positive_has_discounted_impact() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let upstream = result
         .neurons
@@ -356,7 +356,7 @@ fn test_bipolar_flipping_has_full_impact() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let upstream = result
         .neurons
@@ -413,7 +413,7 @@ fn test_step_insufficient_data_uses_conservative_impact() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let upstream = result
         .neurons
@@ -476,7 +476,7 @@ fn test_chained_step_neurons_compound_impact() {
     ];
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let upstream = result
         .neurons

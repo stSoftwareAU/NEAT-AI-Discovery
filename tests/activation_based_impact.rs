@@ -140,7 +140,7 @@ fn test_minimum_neuron_with_dominant_synapse_gets_proportional_impact() {
 
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Find the hidden neurons' impacts
     let dominant = result
@@ -269,7 +269,7 @@ fn test_maximum_neuron_with_dominant_synapse_gets_proportional_impact() {
 
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let dominant = result
         .neurons
@@ -395,7 +395,7 @@ fn test_if_neuron_synapse_type_based_impact() {
 
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let condition = result
         .neurons
@@ -535,7 +535,7 @@ fn test_if_neuron_without_synapse_types_uses_equal_probability() {
 
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let a = result
         .neurons

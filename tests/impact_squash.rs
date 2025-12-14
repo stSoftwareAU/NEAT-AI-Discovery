@@ -103,7 +103,7 @@ fn test_step_neuron_tiny_weight_impact_not_underestimated() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Find hidden-a's impact
     let hidden_a = result
@@ -159,7 +159,7 @@ fn test_bipolar_neuron_threshold_impact() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let hidden_a = result
         .neurons
@@ -230,7 +230,7 @@ fn test_minimum_neuron_selection_impact() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let small = result
         .neurons
@@ -315,7 +315,7 @@ fn test_maximum_neuron_selection_impact() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     let small = result
         .neurons
@@ -385,7 +385,7 @@ fn test_removal_candidate_step_output_interaction() {
     ]);
     write_records_to_parquet(file_path, &records).unwrap();
 
-    let result = rank_focus_neurons(file_path, &creature, None).unwrap();
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
 
     // Check if hidden-critical is flagged as a removal candidate
     let is_removal_candidate = result

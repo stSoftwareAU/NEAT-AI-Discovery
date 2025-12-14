@@ -552,7 +552,9 @@ This answered "what fraction of blame?" not "what happens when removed?"
 impact = |weight| × child_impact  // CORRECT
 ```
 
-**Also fixed**: `COST_OF_GROWTH` changed from `1e-7` to `0.01` to match TypeScript default.
+**BUG INTRODUCED**: `COST_OF_GROWTH` was incorrectly changed from `1e-7` to `0.01` in this version
+based on a false assumption. **NEAT-AI has always used `1e-7`** (never 0.01). This caused 418
+false removal candidates in production. Reverted in v0.2.3 (Issue #132).
 
 **Tests added**: `tests/impact_calculation_production.rs` captures the production failure
 patterns and verifies the fix prevents regression.
@@ -988,8 +990,48 @@ const complexityPenalty = hiddenNeuronCount * growthCost +
 savings = growthCost × (1 + (N + M) / 10)
 ```
 
-**The fix**: ALL neurons with `activation_weighted_impact < costOfGrowth` (0.01) are
+**The fix**: ALL neurons with `activation_weighted_impact < costOfGrowth` are
 returned as removal candidates, sorted by impact ascending.
+
+#### Configurable costOfGrowth (v0.2.3, Issue #132)
+
+**CRITICAL BUG FIX**: The `costOfGrowth` threshold was incorrectly hardcoded to `0.01`
+(since v0.1.145) based on a false assumption that "TypeScript used 0.01". **NEAT-AI has
+always used `1e-7`** - it was never 0.01. This bug caused **418 false removal candidates**
+in production!
+
+The threshold is now **configurable** with the correct default of `1e-7`:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `costOfGrowth` | `Option<f32>` | `1e-7` | Threshold for removal candidates |
+
+**JSON input example**:
+```json
+{
+  "parquetFile": "/path/to/records.parquet",
+  "creature": { ... },
+  "maxResults": 100,
+  "costOfGrowth": 1e-7
+}
+```
+
+**Behaviour**:
+- Neurons with `activation_weighted_impact < costOfGrowth` are removal candidates
+- Default `1e-7` matches NEAT-AI's Score.ts complexity formula
+- NEAT-AI should pass its configured `costOfGrowth` value for consistency
+
+**Common costOfGrowth values**:
+| Value | Purpose |
+|-------|---------|
+| `1e-7` | Default - standard complexity penalty per neuron |
+| `1e-9` or lower | Encourages creature expansion for evolution on new neurons |
+| Higher values | More aggressive pruning (use with caution) |
+
+**Why the old hardcoded `0.01` was wrong**: With threshold `0.01`, neurons with impact `1e-5`
+were incorrectly flagged for removal even though they contribute meaningfully to output.
+The correct default `1e-7` ensures only truly negligible neurons are removal candidates,
+while still allowing users to override for specific use cases like expansion.
 
 ```
 activation_weighted_impact = structural_impact × mean_absolute_activation

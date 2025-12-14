@@ -366,8 +366,8 @@ fn rank_focus_neurons_uses_cached_impacts() {
         ],
     };
 
-    let result =
-        rank_focus_neurons(&parquet_file, &creature, None).expect("Focus ranking should succeed");
+    let result = rank_focus_neurons(&parquet_file, &creature, None, None)
+        .expect("Focus ranking should succeed");
 
     // All neurons should be processed
     assert_eq!(

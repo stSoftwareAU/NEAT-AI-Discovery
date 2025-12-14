@@ -966,6 +966,7 @@ pub fn rank_focus_neurons(
     parquet_file: &str,
     creature: &CreatureJson,
     max_results: Option<usize>,
+    cost_of_growth: Option<f32>,
 ) -> Result<RankFocusStats> {
     let start = Instant::now();
     let selectable: Vec<&NeuronJson> = creature
@@ -1108,18 +1109,20 @@ pub fn rank_focus_neurons(
     //   savings = growthCost × (1 + (N + M) / 10)
     // where N = incoming synapses, M = outgoing synapses
     //
-    // Threshold 0.01 means "contributes less than 1% weighted activation to outputs".
-    // This matches the TypeScript default costOfGrowth.
-    const COST_OF_GROWTH: f32 = 0.01;
+    // Issue #132: costOfGrowth should be passed from NEAT-AI, not hardcoded.
+    // The correct default is 1e-7 (per hidden neuron) as per NEAT-AI's Score.ts formula.
+    // v0.1.145 incorrectly changed this to 0.01 which caused 418 false removal candidates.
+    const DEFAULT_COST_OF_GROWTH: f32 = 1e-7;
+    let cost_of_growth_threshold = cost_of_growth.unwrap_or(DEFAULT_COST_OF_GROWTH);
 
     // Return ALL neurons with impact below costOfGrowth as removal candidates
     // Use parallel iteration for faster processing on multi-core systems
     let mut removal_candidates: Vec<RemovalCandidate> = neurons
         .par_iter()
-        .filter(|n| n.activation_weighted_impact < COST_OF_GROWTH)
+        .filter(|n| n.activation_weighted_impact < cost_of_growth_threshold)
         .map(|n| {
             let (incoming, outgoing) = count_synapses_for_neuron(&n.neuron_uuid, creature);
-            let savings = calculate_removal_savings(incoming, outgoing, COST_OF_GROWTH);
+            let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
 
             // Issue #117: expected_error_reduction should be based on activation_weighted_impact,
             // NOT total_error. The activation_weighted_impact represents the actual contribution
@@ -1140,9 +1143,9 @@ pub fn rank_focus_neurons(
                 removal_savings: savings,
                 expected_error_reduction,
                 reason: format!(
-                    "Impact {:.2e} < costOfGrowth ({:.0e}), {} synapses, saves {:.2e}",
+                    "Impact {:.2e} < costOfGrowth ({:.2e}), {} synapses, saves {:.2e}",
                     n.activation_weighted_impact,
-                    COST_OF_GROWTH,
+                    cost_of_growth_threshold,
                     incoming + outgoing,
                     savings
                 ),
