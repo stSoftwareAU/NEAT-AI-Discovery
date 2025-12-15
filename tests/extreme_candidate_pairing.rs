@@ -15,6 +15,8 @@ fn extreme_candidate_comment_does_not_claim_pairing_when_limit_prevents_variant(
     let candidate = CandidateNeuronJson {
         source_neuron_uuid: "source-1".to_string(),
         target_neuron_uuid: "target-1".to_string(),
+        source_neuron_index: None,
+        target_neuron_index: None,
         incoming_weight: 3.0, // extreme (above clamp max)
         outgoing_weight: 0.1,
         squash: "TANH".to_string(),
@@ -51,6 +53,8 @@ fn extreme_candidate_pairing_considers_outgoing_weight_differences() {
     let candidate = CandidateNeuronJson {
         source_neuron_uuid: "source-1".to_string(),
         target_neuron_uuid: "target-1".to_string(),
+        source_neuron_index: None,
+        target_neuron_index: None,
         incoming_weight: 2.0 + 5e-7,
         outgoing_weight: 0.1,
         squash: "TANH".to_string(),

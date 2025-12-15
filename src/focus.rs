@@ -1082,10 +1082,15 @@ pub fn rank_focus_neurons(
     // 2. Have high impact (changes will affect output)
     // This ensures output neurons and neurons close to outputs are prioritised
     // over high-error hidden neurons with minimal impact on the creature's score.
+    //
+    // Dec 2025: We deliberately soften (but do not remove) the output bias by applying a
+    // sub-linear exponent to impact. This increases exploration of hidden neurons without
+    // letting low-impact neurons dominate purely due to noisy per-neuron errors.
     const IMPACT_EPSILON: f32 = 0.0001;
+    const IMPACT_GAMMA: f32 = 0.8;
     neurons.sort_by(|a, b| {
-        let a_weighted = a.total_error * (a.impact + IMPACT_EPSILON);
-        let b_weighted = b.total_error * (b.impact + IMPACT_EPSILON);
+        let a_weighted = a.total_error * (a.impact + IMPACT_EPSILON).powf(IMPACT_GAMMA);
+        let b_weighted = b.total_error * (b.impact + IMPACT_EPSILON).powf(IMPACT_GAMMA);
         b_weighted
             .partial_cmp(&a_weighted)
             .unwrap_or(Ordering::Equal)

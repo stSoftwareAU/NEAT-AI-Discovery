@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 
 [lib]
@@ -19,6 +19,7 @@ bytemuck = { version = "1.14", features = ["derive"] }
 rayon = "1.8"
 rand = "0.8"
 once_cell = "1.19"
+uuid = { version = "1.6", features = ["v4"] }  # Session ID generation for streaming API
 
 crossbeam-channel = "0.5"  # Efficient multi-producer work queues for GPU thread
 parking_lot = { version = "0.12", features = ["deadlock_detection"] }  # Deadlock detection
