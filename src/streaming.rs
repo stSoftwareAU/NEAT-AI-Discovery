@@ -29,11 +29,11 @@
 
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
+use rand::Rng;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::parquet_format::ParquetRecordWriter;
 use crate::types::DiscoverRecord;
@@ -98,8 +98,12 @@ pub fn start_session(creature: CreatureJson, temp_dir: String) -> Result<String>
         );
     }
 
-    // Generate session ID
-    let session_id = Uuid::new_v4().to_string();
+    // Generate session ID using rand (already a dependency)
+    let session_id: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(32)
+        .map(char::from)
+        .collect();
 
     // Create Parquet file path
     let parquet_file = temp_path.join("discovery_data.parquet");
