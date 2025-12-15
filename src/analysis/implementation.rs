@@ -6616,17 +6616,6 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
                 total_baseline_error_sq
             };
 
-            // Use shared weight calculation with validation
-            // For non-linear targets, we'll search over scaled versions of this weight
-            let base_weight = match calculate_optimal_outgoing_weight(
-                sum_error_activation,
-                sum_activation_sq,
-                incoming_weight,
-            ) {
-                Some(w) => w,
-                None => continue, // Skip if weight is invalid or ratio too small
-            };
-
             let total_count = samples.len() as u32;
             if total_count == 0 {
                 continue;
@@ -6660,6 +6649,17 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
 
                 (outgoing_weight, optimal_bias, improvement, improved_count)
             } else if target_activation_fn.is_some() {
+                // Use shared weight calculation with validation.
+                // For non-linear targets, we'll search over scaled versions of this base weight.
+                let base_weight = match calculate_optimal_outgoing_weight(
+                    sum_error_activation,
+                    sum_activation_sq,
+                    incoming_weight,
+                ) {
+                    Some(w) => w,
+                    None => continue, // Skip if weight is invalid or ratio too small
+                };
+
                 // Weight candidates: base weight and scaled versions
                 // All candidates are already within MAX_OUTGOING_WEIGHT since base_weight is clamped
                 let weight_candidates: [f32; 9] = [
@@ -6731,6 +6731,16 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
                     best_improved_count,
                 )
             } else {
+                // For linear targets or when target data unavailable, use the base weight.
+                let base_weight = match calculate_optimal_outgoing_weight(
+                    sum_error_activation,
+                    sum_activation_sq,
+                    incoming_weight,
+                ) {
+                    Some(w) => w,
+                    None => continue, // Skip if weight is invalid or ratio too small
+                };
+
                 // For linear targets or when target data unavailable, use the base weight
                 let optimal_bias = calculate_optimal_bias(
                     samples,
@@ -14133,6 +14143,106 @@ mod tests_synapses {
 #[cfg(test)]
 mod tests_optimal_outgoing_weight {
     use super::*;
+    use anyhow::anyhow;
+
+    struct AlwaysFailGpuEvaluator;
+
+    impl GpuEvaluator for AlwaysFailGpuEvaluator {
+        fn evaluate_relu(
+            &self,
+            _samples: &[HelpfulSample],
+            _threshold: f32,
+        ) -> Result<(ReluStats, ReluStats, f32)> {
+            Err(anyhow!(
+                "AlwaysFailGpuEvaluator: GPU not available for test"
+            ))
+        }
+
+        fn evaluate_activation(
+            &self,
+            _samples: &[HelpfulSample],
+            _activation_type: u32,
+            _orientation: f32,
+            _scale: f32,
+        ) -> Result<(f32, f32, f32, u32)> {
+            Err(anyhow!(
+                "AlwaysFailGpuEvaluator: GPU not available for test"
+            ))
+        }
+    }
+
+    /// Regression: IDENTITY candidates must not be skipped in the all-samples fallback path.
+    ///
+    /// `evaluate_activation_candidate` previously computed `base_weight` (no-intercept fit)
+    /// before checking `spec.name == "IDENTITY"`. If the no-intercept fit returned None (for
+    /// example, when Σ(activation×error) cancels to ~0), the function would `continue` and the
+    /// IDENTITY-specific affine fit (with intercept/bias) was never attempted.
+    ///
+    /// This test constructs a dataset where:
+    /// - split-error evaluation is NOT "properly attempted" (negative subset < MIN sample count),
+    /// - subset evaluation returns None (positive subset has constant error ⇒ best slope is 0),
+    /// - the all-samples no-intercept fit produces `None` (Σ(activation×error) cancels to 0),
+    /// - but the all-samples affine fit *does* succeed and should yield a candidate.
+    #[test]
+    fn identity_all_samples_fallback_uses_affine_fit_even_when_base_weight_is_none() {
+        let gpu = AlwaysFailGpuEvaluator;
+
+        // Use a minimal spec so this test is deterministic.
+        static ORIENTATIONS: [f32; 1] = [1.0];
+        static SCALES: [f32; 1] = [1.0];
+        let spec = ActivationCandidateSpec {
+            name: "IDENTITY",
+            orientations: &ORIENTATIONS,
+            scales: &SCALES,
+            activation: identity_activation,
+            min_improvement: 0.0,
+        };
+
+        // 11 positive-error samples with varying activation: affine fit slope should be ~0 here,
+        // so IDENTITY subset evaluation returns None and we fall through to all-samples fallback.
+        let mut samples: Vec<HelpfulSample> = (0..=10)
+            .map(|i| HelpfulSample {
+                activation: 100.0 + (i as f32) * 10.0, // 100..200
+                avg_error: 1.0,
+                target_value: None,
+                target_activation: None,
+            })
+            .collect();
+
+        // 9 negative-error samples whose activation sum matches the positive group (1650),
+        // making Σ(activation×error) == 0 for the all-samples no-intercept fit.
+        let negative_activations: [f32; 9] = [
+            200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 150.0, 150.0, 150.0,
+        ];
+        for activation in negative_activations {
+            samples.push(HelpfulSample {
+                activation,
+                avg_error: -1.0,
+                target_value: None,
+                target_activation: None,
+            });
+        }
+
+        let candidate =
+            evaluate_activation_candidate(&gpu, "source-0", "target-0", &samples, 0.0, &spec, None)
+                .expect("Evaluation should succeed");
+
+        assert!(
+            candidate.is_some(),
+            "Expected an IDENTITY candidate from the all-samples affine fit. \
+             This is a regression if None is returned."
+        );
+        let candidate = candidate.unwrap();
+        assert_eq!(candidate.squash, "IDENTITY");
+        assert!(
+            candidate.bias.abs() >= 0.01,
+            "IDENTITY candidate should have a meaningful bias (not equivalent to a direct synapse)"
+        );
+        assert!(
+            candidate.outgoing_weight.is_finite() && candidate.outgoing_weight.abs() > EPSILON,
+            "IDENTITY candidate should have a valid outgoing weight"
+        );
+    }
 
     /// Test that calculate_optimal_outgoing_weight returns None for insufficient activation
     #[test]
