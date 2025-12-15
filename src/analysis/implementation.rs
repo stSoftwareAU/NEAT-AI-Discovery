@@ -9315,6 +9315,10 @@ pub(crate) fn analyze_synapses_with_cache(
 
     // Apply impact discounting to helpful synapse candidates
     for candidate in &mut helpful_results {
+        // Populate indices for debugging/analysis (consistent with CandidateNeuronJson).
+        candidate.from_neuron_index = order_map_arc.get(&candidate.from_neuron_uuid).copied();
+        candidate.to_neuron_index = order_map_arc.get(&candidate.to_neuron_uuid).copied();
+
         let is_hidden = neuron_type_map
             .get(&candidate.to_neuron_uuid)
             .map(|t| t != "output")
@@ -9352,6 +9356,10 @@ pub(crate) fn analyze_synapses_with_cache(
 
     // Apply impact discounting to harmful synapse candidates (same logic)
     for candidate in &mut harmful_results {
+        // Populate indices for debugging/analysis (consistent with CandidateNeuronJson).
+        candidate.from_neuron_index = order_map_arc.get(&candidate.from_neuron_uuid).copied();
+        candidate.to_neuron_index = order_map_arc.get(&candidate.to_neuron_uuid).copied();
+
         let is_hidden = neuron_type_map
             .get(&candidate.to_neuron_uuid)
             .map(|t| t != "output")
