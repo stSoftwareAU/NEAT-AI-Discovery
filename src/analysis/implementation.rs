@@ -2846,10 +2846,6 @@ fn absolute_activation(x: f32) -> f32 {
     x.abs()
 }
 
-fn inverse_activation(x: f32) -> f32 {
-    1.0 - x
-}
-
 // ============================================================================
 // NEW ACTIVATION FUNCTIONS (v0.1.139)
 // Based on analysis of successful discoveries that evolved TO these activations
@@ -2939,7 +2935,7 @@ fn activation_name_to_gpu_id(name: &str) -> u32 {
     }
 }
 
-pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 18] = [
+pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 17] = [
     // ========================================================================
     // ORIGINAL ACTIVATIONS (v0.1.x)
     // ========================================================================
@@ -3011,13 +3007,6 @@ pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 18] = [
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_WIDE,
         activation: absolute_activation,
-        min_improvement: 0.0,
-    },
-    ActivationCandidateSpec {
-        name: "INVERSE",
-        orientations: &ORIENTATIONS_BIDIRECTIONAL,
-        scales: &SCALES_WIDE,
-        activation: inverse_activation,
         min_improvement: 0.0,
     },
     // ========================================================================
@@ -3098,7 +3087,7 @@ fn get_bias_range(squash: &str) -> (f32, f32, f32) {
         // Softplus and GELU: extended negative thresholds
         "Softplus" | "GELU" => (-10.0, 10.0, 0.5),
         // Other activation functions get expanded range
-        "INVERSE" | "ABSOLUTE" | "CLIPPED" => (-10.0, 10.0, 0.5),
+        "ABSOLUTE" | "CLIPPED" => (-10.0, 10.0, 0.5),
         "BIPOLAR" => (-10.0, 10.0, 1.0),
         _ => (-10.0, 10.0, 0.5), // Generous default
     }
@@ -3209,6 +3198,98 @@ fn calculate_optimal_outgoing_weight(
     }
 
     Some(clamped)
+}
+
+/// Special-case optimisation for IDENTITY candidates: fit an affine correction.
+///
+/// For IDENTITY, the new neuron's output is linear in the source activation:
+/// `output = incoming_weight * activation + bias`.
+///
+/// The generic search path computes `outgoing_weight` without bias, then searches bias with that
+/// fixed outgoing weight. For complement-like shapes (eg `1 - x`) this can miss the optimum
+/// because the best `outgoing_weight` depends on the bias/intercept.
+///
+/// We address that by directly fitting a 2-parameter model:
+/// `avg_error ≈ outgoing_weight * (incoming_weight * activation) + intercept`,
+/// then converting `intercept` to `bias` via `bias = intercept / outgoing_weight`.
+fn calculate_optimal_identity_outgoing_and_bias(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+) -> Option<(f32, f32)> {
+    let mut n: f32 = 0.0;
+    let mut sum_a = 0.0f32;
+    let mut sum_aa = 0.0f32;
+    let mut sum_u = 0.0f32;
+    let mut sum_uu = 0.0f32;
+    let mut sum_e = 0.0f32;
+    let mut sum_eu = 0.0f32;
+
+    for sample in samples {
+        if !sample.activation.is_finite() || !sample.avg_error.is_finite() {
+            continue;
+        }
+        sum_a += sample.activation;
+        sum_aa += sample.activation * sample.activation;
+        let u = incoming_weight * sample.activation;
+        n += 1.0;
+        sum_u += u;
+        sum_uu += u * u;
+        sum_e += sample.avg_error;
+        sum_eu += sample.avg_error * u;
+    }
+
+    if n <= 0.0 {
+        return None;
+    }
+
+    // If the source activation has low variance, explicitly fitting an intercept (bias)
+    // tends to overfit constant-ish sources. We already apply variance discounting later,
+    // but keeping IDENTITY bias at 0.0 here avoids inflating the *raw* prediction before
+    // the discount is applied (see Issue #130 tests).
+    //
+    // Use the same threshold as compute_source_variance_discount().
+    const MIN_SOURCE_STD_DEV: f32 = 0.05;
+    let mean_a = sum_a / n;
+    let var_a = (sum_aa / n) - (mean_a * mean_a);
+    let std_dev_a = var_a.max(0.0).sqrt();
+    if std_dev_a < MIN_SOURCE_STD_DEV {
+        let outgoing_weight = calculate_optimal_outgoing_weight(sum_eu, sum_uu, incoming_weight)?;
+        return Some((outgoing_weight, 0.0));
+    }
+
+    // Solve normal equations for `e ≈ w*u + c` (w = outgoing_weight, c = intercept).
+    // If the determinant is ~0, fall back to the no-intercept weight and compute the best intercept.
+    let det = sum_uu * n - sum_u * sum_u;
+
+    let outgoing_weight_raw = if det.abs() > EPSILON {
+        (sum_eu * n - sum_e * sum_u) / det
+    } else {
+        sum_eu / (sum_uu + EPSILON)
+    };
+
+    if !outgoing_weight_raw.is_finite() || outgoing_weight_raw.abs() <= EPSILON {
+        return None;
+    }
+
+    let outgoing_weight = outgoing_weight_raw.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+
+    // Apply the same reliability guard as the generic path.
+    if incoming_weight.abs() > 1.0 {
+        let ratio = incoming_weight.abs() / (outgoing_weight.abs() + EPSILON);
+        if ratio < MIN_WEIGHT_RATIO {
+            return None;
+        }
+    }
+
+    // Best intercept for fixed outgoing_weight (least squares).
+    let intercept = (sum_e - outgoing_weight * sum_u) / n;
+    let bias = intercept / outgoing_weight;
+
+    if !bias.is_finite() {
+        return None;
+    }
+
+    Some((outgoing_weight, bias))
 }
 
 /// Calculate optimal bias for a neuron candidate using grid search.
@@ -5640,7 +5721,7 @@ fn get_target_activation_fn(squash: &str) -> Option<fn(f32) -> f32> {
         "SOFTSIGN" => Some(softsign_activation),
         "ArcTan" => Some(arctan_activation),
         "ReLU6" => Some(relu6_activation),
-        // IDENTITY, INVERSE are linear - no simulation needed
+        // IDENTITY (and other linear-ish squashes) don't need simulation
         _ => None,
     }
 }
@@ -6275,26 +6356,35 @@ fn evaluate_activation_for_subset<G: GpuEvaluator>(
                 }
             };
 
-            // Use shared weight calculation with ratio validation
-            let outgoing_weight = match calculate_optimal_outgoing_weight(
-                sum_error_activation,
-                sum_activation_sq,
-                incoming_weight,
-            ) {
-                Some(w) => w,
-                None => continue, // Skip if weight is invalid or ratio too small
-            };
+            let (outgoing_weight, optimal_bias) = if spec.name == "IDENTITY" {
+                match calculate_optimal_identity_outgoing_and_bias(subset_samples, incoming_weight)
+                {
+                    Some((w, b)) => (w, b),
+                    None => continue,
+                }
+            } else {
+                // Use shared weight calculation with ratio validation
+                let outgoing_weight = match calculate_optimal_outgoing_weight(
+                    sum_error_activation,
+                    sum_activation_sq,
+                    incoming_weight,
+                ) {
+                    Some(w) => w,
+                    None => continue, // Skip if weight is invalid or ratio too small
+                };
 
-            // Calculate optimal bias from subset
-            let optimal_bias = calculate_optimal_bias(
-                subset_samples,
-                incoming_weight,
-                outgoing_weight,
-                spec.activation,
-                spec.name,
-                None,
-                target_squash,
-            );
+                // Calculate optimal bias from subset
+                let optimal_bias = calculate_optimal_bias(
+                    subset_samples,
+                    incoming_weight,
+                    outgoing_weight,
+                    spec.activation,
+                    spec.name,
+                    None,
+                    target_squash,
+                );
+                (outgoing_weight, optimal_bias)
+            };
 
             // Issue #123: Check for saturation - reject if neuron output is nearly constant.
             // Large bias values (e.g., 5.0 for SOFTSIGN) can cause the neuron to saturate,
@@ -6526,17 +6616,6 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
                 total_baseline_error_sq
             };
 
-            // Use shared weight calculation with validation
-            // For non-linear targets, we'll search over scaled versions of this weight
-            let base_weight = match calculate_optimal_outgoing_weight(
-                sum_error_activation,
-                sum_activation_sq,
-                incoming_weight,
-            ) {
-                Some(w) => w,
-                None => continue, // Skip if weight is invalid or ratio too small
-            };
-
             let total_count = samples.len() as u32;
             if total_count == 0 {
                 continue;
@@ -6551,7 +6630,36 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
                 optimal_bias,
                 neuron_error_improvement, // Issue #128: Renamed - this is neuron-level, not creature-level
                 final_improved_count,
-            ) = if target_activation_fn.is_some() {
+            ) = if spec.name == "IDENTITY" {
+                let (outgoing_weight, optimal_bias) =
+                    match calculate_optimal_identity_outgoing_and_bias(samples, incoming_weight) {
+                        Some((w, b)) => (w, b),
+                        None => continue,
+                    };
+
+                let (improvement, improved_count, _) = compute_activation_improvement_and_count(
+                    samples,
+                    incoming_weight,
+                    outgoing_weight,
+                    optimal_bias,
+                    spec.activation,
+                    baseline_sq,
+                    target_activation_fn,
+                );
+
+                (outgoing_weight, optimal_bias, improvement, improved_count)
+            } else if target_activation_fn.is_some() {
+                // Use shared weight calculation with validation.
+                // For non-linear targets, we'll search over scaled versions of this base weight.
+                let base_weight = match calculate_optimal_outgoing_weight(
+                    sum_error_activation,
+                    sum_activation_sq,
+                    incoming_weight,
+                ) {
+                    Some(w) => w,
+                    None => continue, // Skip if weight is invalid or ratio too small
+                };
+
                 // Weight candidates: base weight and scaled versions
                 // All candidates are already within MAX_OUTGOING_WEIGHT since base_weight is clamped
                 let weight_candidates: [f32; 9] = [
@@ -6623,6 +6731,16 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
                     best_improved_count,
                 )
             } else {
+                // For linear targets or when target data unavailable, use the base weight.
+                let base_weight = match calculate_optimal_outgoing_weight(
+                    sum_error_activation,
+                    sum_activation_sq,
+                    incoming_weight,
+                ) {
+                    Some(w) => w,
+                    None => continue, // Skip if weight is invalid or ratio too small
+                };
+
                 // For linear targets or when target data unavailable, use the base weight
                 let optimal_bias = calculate_optimal_bias(
                     samples,
@@ -8146,13 +8264,6 @@ Pages speculative:                        12345.
     }
 
     #[test]
-    fn test_inverse_activation() {
-        assert_eq!(inverse_activation(1.0), 0.0);
-        assert_eq!(inverse_activation(0.0), 1.0);
-        assert_eq!(inverse_activation(-1.0), 2.0);
-    }
-
-    #[test]
     fn test_specs_include_new_activations() {
         let names: Vec<&str> = ACTIVATION_SPECS.iter().map(|s| s.name).collect();
         // Original activations
@@ -8160,7 +8271,11 @@ Pages speculative:                        12345.
         assert!(names.contains(&"BIPOLAR"));
         assert!(names.contains(&"CLIPPED"));
         assert!(names.contains(&"ABSOLUTE"));
-        assert!(names.contains(&"INVERSE"));
+        assert!(
+            !names.contains(&"INVERSE"),
+            "INVERSE (complement) should not be suggested as a new neuron activation. \
+             It can be represented via IDENTITY with bias and negative incoming weights."
+        );
         // New activations (v0.1.139)
         assert!(
             !names.contains(&"LeakyReLU"),
@@ -8186,7 +8301,7 @@ Pages speculative:                        12345.
         assert!(names.contains(&"ArcTan"), "ArcTan should be included");
         assert!(names.contains(&"ReLU6"), "ReLU6 should be included");
         // Total count
-        assert_eq!(names.len(), 18, "Should have 18 activation specs");
+        assert_eq!(names.len(), 17, "Should have 17 activation specs");
     }
 
     // ==================== Saturation Detection Tests (Issue #123) ====================
@@ -11581,7 +11696,7 @@ mod tests_synapses {
         let mut zero_bias_error_sq = 0.0;
         for sample in &samples {
             let pre_activation = incoming * sample.activation;
-            let new_neuron_activation = inverse_activation(pre_activation);
+            let new_neuron_activation = identity_activation(pre_activation);
             let correction = outgoing * new_neuron_activation;
             let new_error = sample.avg_error - correction;
             zero_bias_error_sq += new_error * new_error;
@@ -11592,8 +11707,8 @@ mod tests_synapses {
             &samples,
             incoming,
             outgoing,
-            inverse_activation,
-            "INVERSE",
+            identity_activation,
+            "IDENTITY",
             None,
             None,
         );
@@ -11602,7 +11717,7 @@ mod tests_synapses {
         let mut optimal_bias_error_sq = 0.0;
         for sample in &samples {
             let pre_activation = incoming * sample.activation + optimal_bias;
-            let new_neuron_activation = inverse_activation(pre_activation);
+            let new_neuron_activation = identity_activation(pre_activation);
             let correction = outgoing * new_neuron_activation;
             let new_error = sample.avg_error - correction;
             optimal_bias_error_sq += new_error * new_error;
@@ -14028,6 +14143,106 @@ mod tests_synapses {
 #[cfg(test)]
 mod tests_optimal_outgoing_weight {
     use super::*;
+    use anyhow::anyhow;
+
+    struct AlwaysFailGpuEvaluator;
+
+    impl GpuEvaluator for AlwaysFailGpuEvaluator {
+        fn evaluate_relu(
+            &self,
+            _samples: &[HelpfulSample],
+            _threshold: f32,
+        ) -> Result<(ReluStats, ReluStats, f32)> {
+            Err(anyhow!(
+                "AlwaysFailGpuEvaluator: GPU not available for test"
+            ))
+        }
+
+        fn evaluate_activation(
+            &self,
+            _samples: &[HelpfulSample],
+            _activation_type: u32,
+            _orientation: f32,
+            _scale: f32,
+        ) -> Result<(f32, f32, f32, u32)> {
+            Err(anyhow!(
+                "AlwaysFailGpuEvaluator: GPU not available for test"
+            ))
+        }
+    }
+
+    /// Regression: IDENTITY candidates must not be skipped in the all-samples fallback path.
+    ///
+    /// `evaluate_activation_candidate` previously computed `base_weight` (no-intercept fit)
+    /// before checking `spec.name == "IDENTITY"`. If the no-intercept fit returned None (for
+    /// example, when Σ(activation×error) cancels to ~0), the function would `continue` and the
+    /// IDENTITY-specific affine fit (with intercept/bias) was never attempted.
+    ///
+    /// This test constructs a dataset where:
+    /// - split-error evaluation is NOT "properly attempted" (negative subset < MIN sample count),
+    /// - subset evaluation returns None (positive subset has constant error ⇒ best slope is 0),
+    /// - the all-samples no-intercept fit produces `None` (Σ(activation×error) cancels to 0),
+    /// - but the all-samples affine fit *does* succeed and should yield a candidate.
+    #[test]
+    fn identity_all_samples_fallback_uses_affine_fit_even_when_base_weight_is_none() {
+        let gpu = AlwaysFailGpuEvaluator;
+
+        // Use a minimal spec so this test is deterministic.
+        static ORIENTATIONS: [f32; 1] = [1.0];
+        static SCALES: [f32; 1] = [1.0];
+        let spec = ActivationCandidateSpec {
+            name: "IDENTITY",
+            orientations: &ORIENTATIONS,
+            scales: &SCALES,
+            activation: identity_activation,
+            min_improvement: 0.0,
+        };
+
+        // 11 positive-error samples with varying activation: affine fit slope should be ~0 here,
+        // so IDENTITY subset evaluation returns None and we fall through to all-samples fallback.
+        let mut samples: Vec<HelpfulSample> = (0..=10)
+            .map(|i| HelpfulSample {
+                activation: 100.0 + (i as f32) * 10.0, // 100..200
+                avg_error: 1.0,
+                target_value: None,
+                target_activation: None,
+            })
+            .collect();
+
+        // 9 negative-error samples whose activation sum matches the positive group (1650),
+        // making Σ(activation×error) == 0 for the all-samples no-intercept fit.
+        let negative_activations: [f32; 9] = [
+            200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 150.0, 150.0, 150.0,
+        ];
+        for activation in negative_activations {
+            samples.push(HelpfulSample {
+                activation,
+                avg_error: -1.0,
+                target_value: None,
+                target_activation: None,
+            });
+        }
+
+        let candidate =
+            evaluate_activation_candidate(&gpu, "source-0", "target-0", &samples, 0.0, &spec, None)
+                .expect("Evaluation should succeed");
+
+        assert!(
+            candidate.is_some(),
+            "Expected an IDENTITY candidate from the all-samples affine fit. \
+             This is a regression if None is returned."
+        );
+        let candidate = candidate.unwrap();
+        assert_eq!(candidate.squash, "IDENTITY");
+        assert!(
+            candidate.bias.abs() >= 0.01,
+            "IDENTITY candidate should have a meaningful bias (not equivalent to a direct synapse)"
+        );
+        assert!(
+            candidate.outgoing_weight.is_finite() && candidate.outgoing_weight.abs() > EPSILON,
+            "IDENTITY candidate should have a valid outgoing weight"
+        );
+    }
 
     /// Test that calculate_optimal_outgoing_weight returns None for insufficient activation
     #[test]
