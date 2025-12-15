@@ -1,4 +1,4 @@
-use crate::focus::compute_impacts_public;
+use crate::focus::{compute_impacts_public, compute_impacts_with_activations, RecordProvider};
 use crate::types::DiscoverRecord;
 use crate::{
     AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson, CandidateSynapseJson,
@@ -1268,6 +1268,58 @@ pub(crate) struct RecordCache {
     parquet_file: String,
     cache: Mutex<HashMap<String, Arc<CachedNeuronRecords>>>,
     loader: Arc<RecordCacheLoader>,
+}
+
+/// Adapter to allow `RecordCache` to be used where focus impact code expects a `RecordProvider`.
+///
+/// This lets us compute squash-aware impacts using *recorded activations* for selection squashes
+/// (MINIMUM/MAXIMUM/IF) during candidate discounting, rather than falling back to the conservative
+/// 1/N probability model.
+struct RecordCacheProvider<'a> {
+    cache: &'a RecordCache,
+}
+
+impl RecordProvider for RecordCacheProvider<'_> {
+    fn get(&self, neuron_uuid: &str) -> Result<Option<Arc<Vec<DiscoverRecord>>>> {
+        let records = self.cache.get(neuron_uuid)?;
+        if records.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(records))
+        }
+    }
+
+    fn len(&self) -> usize {
+        let cache = self
+            .cache
+            .cache
+            .lock()
+            .expect("record cache mutex poisoned");
+        cache.len()
+    }
+}
+
+/// Compute neuron impact scores for candidate discounting.
+///
+/// We prefer activation-based selection statistics when available so MINIMUM/MAXIMUM/IF neurons
+/// don't get incorrectly diluted via the 1/N fallback.
+fn compute_impact_scores_for_discounting(
+    creature: &crate::CreatureJson,
+    cache: &RecordCache,
+) -> HashMap<String, f32> {
+    let provider = RecordCacheProvider { cache };
+    match compute_impacts_with_activations(creature, &provider) {
+        Ok(scores) => scores,
+        Err(err) => {
+            if verbose_enabled() {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Falling back to conservative impact calculation \
+                    (no activation-based selection stats). Reason: {err}"
+                );
+            }
+            compute_impacts_public(creature)
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -2745,6 +2797,8 @@ impl ReluStats {
         Some(CandidateNeuronJson {
             source_neuron_uuid: source_uuid.to_string(),
             target_neuron_uuid: target_uuid.to_string(),
+            source_neuron_index: None, // Set during impact discounting
+            target_neuron_index: None, // Set during impact discounting
             incoming_weight,
             outgoing_weight,
             squash: "ReLU".to_string(),
@@ -6436,6 +6490,8 @@ fn evaluate_activation_for_subset<G: GpuEvaluator>(
                 best_candidate = Some(CandidateNeuronJson {
                     source_neuron_uuid: source_uuid.to_string(),
                     target_neuron_uuid: target_uuid.to_string(),
+                    source_neuron_index: None, // Set during impact discounting
+                    target_neuron_index: None, // Set during impact discounting
                     incoming_weight,
                     outgoing_weight,
                     squash: spec.name.to_string(),
@@ -6841,6 +6897,8 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
                 fallback_candidate = Some(CandidateNeuronJson {
                     source_neuron_uuid: source_uuid.to_string(),
                     target_neuron_uuid: target_uuid.to_string(),
+                    source_neuron_index: None, // Set during impact discounting
+                    target_neuron_index: None, // Set during impact discounting
                     incoming_weight,
                     outgoing_weight,
                     squash: spec.name.to_string(),
@@ -6878,6 +6936,8 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
                 best_candidate = Some(CandidateNeuronJson {
                     source_neuron_uuid: source_uuid.to_string(),
                     target_neuron_uuid: target_uuid.to_string(),
+                    source_neuron_index: None, // Set during impact discounting
+                    target_neuron_index: None, // Set during impact discounting
                     incoming_weight,
                     outgoing_weight,
                     squash: spec.name.to_string(),
@@ -7122,6 +7182,8 @@ fn evaluate_discrete_candidate(
                         best_candidate = Some(CandidateNeuronJson {
                             source_neuron_uuid: source_uuid.to_string(),
                             target_neuron_uuid: target_uuid.to_string(),
+                            source_neuron_index: None, // Set during impact discounting
+                            target_neuron_index: None, // Set during impact discounting
                             incoming_weight,
                             outgoing_weight,
                             squash: new_neuron_squash.to_string(),
@@ -7863,8 +7925,11 @@ pub(crate) fn analyze_neurons_with_cache(
     // Issue #128: Apply impact-based discounting and set creature-level metrics.
     // Output neurons have impact = 1.0 (no discount).
     // Hidden neurons have impact in [0, 1] based on their weighted paths to outputs.
-    let impact_scores = compute_impacts_public(&input.creature);
+    let impact_scores = compute_impact_scores_for_discounting(&input.creature, cache.as_ref());
     for candidate in &mut helpful_results {
+        candidate.source_neuron_index = order_map_arc.get(&candidate.source_neuron_uuid).copied();
+        candidate.target_neuron_index = order_map_arc.get(&candidate.target_neuron_uuid).copied();
+
         let is_hidden = neuron_type_map
             .get(&candidate.target_neuron_uuid)
             .map(|t| t != "output")
@@ -7940,6 +8005,104 @@ mod tests {
     use crate::analysis::ACTIVATION_SPECS;
 
     // ==================== GPU Tier Detection Tests ====================
+
+    #[test]
+    fn impact_discounting_uses_activation_based_selection_stats_for_minimum() -> Result<()> {
+        // This is a targeted regression test for impact discounting consistency:
+        // - MINIMUM/MAXIMUM/IF impacts should use activation-based win probabilities when
+        //   recorded activations are available (via RecordCache).
+        //
+        // Without activation stats, MINIMUM uses a conservative 1/N model, which can
+        // under-estimate impact and cause downstream discounting to be too aggressive.
+
+        let creature = crate::CreatureJson {
+            neurons: vec![
+                crate::NeuronJson {
+                    uuid: "hidden-a".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                crate::NeuronJson {
+                    uuid: "hidden-b".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                crate::NeuronJson {
+                    uuid: "min-0".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "MINIMUM".to_string(),
+                    bias: 0.0,
+                },
+                crate::NeuronJson {
+                    uuid: "output-0".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![
+                crate::SynapseJson {
+                    from_uuid: "hidden-a".to_string(),
+                    to_uuid: "min-0".to_string(),
+                    weight: 1.0,
+                    synapse_type: None,
+                },
+                crate::SynapseJson {
+                    from_uuid: "hidden-b".to_string(),
+                    to_uuid: "min-0".to_string(),
+                    weight: 1.0,
+                    synapse_type: None,
+                },
+                crate::SynapseJson {
+                    from_uuid: "min-0".to_string(),
+                    to_uuid: "output-0".to_string(),
+                    weight: 1.0,
+                    synapse_type: None,
+                },
+            ],
+            input: 0,
+            output: 1,
+        };
+
+        // Build a cache that returns activations where hidden-a ALWAYS wins MINIMUM.
+        let cache = Arc::new(RecordCache::with_loader(
+            "unused.parquet",
+            Arc::new(|_file, uuid| {
+                let mut records = Vec::new();
+                for obs_index in 0..10u32 {
+                    let activation = match uuid {
+                        "hidden-a" => 0.0,
+                        "hidden-b" => 1.0,
+                        _ => 0.0,
+                    };
+                    records.push(DiscoverRecord {
+                        obs_index,
+                        neuron_uuid: uuid.to_string(),
+                        value: None,
+                        activation,
+                        errors: vec![0.0],
+                    });
+                }
+                Ok(records)
+            }),
+        ));
+
+        let impacts = compute_impact_scores_for_discounting(&creature, cache.as_ref());
+        let a = impacts.get("hidden-a").copied().unwrap_or(0.0);
+        let b = impacts.get("hidden-b").copied().unwrap_or(0.0);
+
+        assert!(
+            a > 0.9,
+            "hidden-a should have near-full impact via MINIMUM win probability, got {a}"
+        );
+        assert!(
+            b < 0.1,
+            "hidden-b should have near-zero impact via MINIMUM win probability, got {b}"
+        );
+        Ok(())
+    }
 
     /// Test that M4 is detected as high-performance tier.
     #[test]
@@ -8987,6 +9150,8 @@ pub(crate) fn analyze_synapses_with_cache(
                     candidates_to_add.push(CandidateSynapseJson {
                         from_neuron_uuid: work.source_uuid.clone(),
                         to_neuron_uuid: work.target_uuid.clone(),
+                        from_neuron_index: None,
+                        to_neuron_index: None,
                         weight,
                         target_neuron_impact: 1.0,
                         expected_creature_error_reduction: neuron_error_improvement,
@@ -9090,6 +9255,8 @@ pub(crate) fn analyze_synapses_with_cache(
                             harmful_candidates.push(CandidateSynapseJson {
                                 from_neuron_uuid: work.synapse.from_uuid.clone(),
                                 to_neuron_uuid: work.synapse.to_uuid.clone(),
+                                from_neuron_index: None,
+                                to_neuron_index: None,
                                 weight: work.synapse.weight,
                                 target_neuron_impact: 1.0,
                                 expected_creature_error_reduction: neuron_error_improvement,
@@ -9138,7 +9305,7 @@ pub(crate) fn analyze_synapses_with_cache(
     // Issue #128: Apply impact-based discounting and set creature-level metrics.
     // Output neurons have impact = 1.0 (no discount).
     // Hidden neurons have impact in [0, 1] based on their weighted paths to outputs.
-    let impact_scores = compute_impacts_public(&input.creature);
+    let impact_scores = compute_impact_scores_for_discounting(&input.creature, cache.as_ref());
     let neuron_type_map: HashMap<String, String> = input
         .creature
         .neurons
@@ -12695,6 +12862,8 @@ mod tests_synapses {
         let positive_candidate = CandidateNeuronJson {
             source_neuron_uuid: "source-1".to_string(),
             target_neuron_uuid: "target-1".to_string(),
+            source_neuron_index: None,
+            target_neuron_index: None,
             incoming_weight: 1.0, // Positive orientation
             outgoing_weight: 0.5,
             squash: "ReLU".to_string(),
@@ -12712,6 +12881,8 @@ mod tests_synapses {
         let negative_candidate = CandidateNeuronJson {
             source_neuron_uuid: "source-1".to_string(),
             target_neuron_uuid: "target-1".to_string(),
+            source_neuron_index: None,
+            target_neuron_index: None,
             incoming_weight: -1.0, // Negative orientation
             outgoing_weight: 0.4,  // Same outgoing sign
             squash: "ReLU".to_string(),
@@ -12778,6 +12949,8 @@ mod tests_synapses {
         let positive_error_candidate = CandidateNeuronJson {
             source_neuron_uuid: "source-1".to_string(),
             target_neuron_uuid: "target-1".to_string(),
+            source_neuron_index: None,
+            target_neuron_index: None,
             incoming_weight: 1.0, // Same orientation
             outgoing_weight: 0.5, // POSITIVE: pushes output UP
             squash: "ReLU".to_string(),
@@ -12796,6 +12969,8 @@ mod tests_synapses {
         let negative_error_candidate = CandidateNeuronJson {
             source_neuron_uuid: "source-1".to_string(),
             target_neuron_uuid: "target-1".to_string(),
+            source_neuron_index: None,
+            target_neuron_index: None,
             incoming_weight: 1.0,  // Same orientation
             outgoing_weight: -0.4, // NEGATIVE: pushes output DOWN
             squash: "ReLU".to_string(),

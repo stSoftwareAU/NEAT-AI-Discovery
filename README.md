@@ -2014,6 +2014,15 @@ Many data tools support Parquet natively (Tableau, Apache Spark, etc.)
 - **No mixing**: Never mix data from different training records within a single discovery record write
 - **Matching by obs_index**: TypeScript matches records across neurons by `obs_index` (not by array position), so record order from Rust doesn't matter
 
+## CRITICAL REQUIREMENT: Forward-only activation order (no feedback)
+
+Discovery assumes **forward-only** networks (no recurrent feedback). This is critical for both recording and for applying discovery candidates:
+
+- **Evaluation order matters**: A neuron may only read activations from **earlier** neurons in the creature's evaluation order. In NEAT-AI this means the `creature.neurons[]` list must be in a valid *topological* order for feed-forward execution.
+- **Synapse direction constraint**: For feed-forward creatures, synapses must point from an **earlier** neuron to a **later** neuron. If a new neuron is inserted, it must appear **before** any neuron that consumes it.
+- **Discovered neurons must be inserted, not appended**: When applying an add-neuron candidate, the new neuron must be inserted at the correct index so it is activated before its outgoing synapse is used by the target neuron.
+- **No “remembering” across samples**: If feedback/recurrent connections were enabled, a later neuron could effectively read an activation from a *previous* training sample (stateful recurrence). Discovery explicitly does **not** support that mode - every recorded activation/error is for a single training sample with no cross-sample state.
+
 ## JSON Interface
 
 ### Input Format
@@ -2068,6 +2077,140 @@ Error:
   "error": "Error message here"
 }
 ```
+
+### Streaming Recording API (v0.2.8+)
+
+The streaming API solves the JavaScript "Invalid string length" error that occurs when
+trying to serialise large datasets (6+ minutes of recording) into a single JSON string.
+Instead of one monolithic `record_discovery` call, data is streamed incrementally.
+
+**Why this matters**: JavaScript/V8 has a maximum string length (~2^28 chars). When
+TypeScript accumulated 6+ minutes of discovery data and tried to JSON.stringify it all
+at once for the FFI call, it hit this limit. The streaming API keeps each FFI call small.
+
+#### Usage Pattern
+
+```text
+TypeScript                              Rust (this library)
+────────────────────────────────────────────────────────────────────────
+1. start_discovery_session()       →    Creates session + Parquet file
+   ↓ returns sessionId
+
+2. Loop while collecting data:
+   - Collect records (estimate size)
+   - When batch reaches ~50MB or ~10,000 records:
+     append_discovery_records()    →    Writes batch to Parquet
+
+3. finish_discovery_session()      →    Finalises Parquet file
+   ↓ returns { tempDir, file, totalRecords }
+```
+
+#### FFI Functions
+
+**`start_discovery_session`** - Start a new recording session
+
+Input:
+```json
+{
+  "creature": { "neurons": [...], "synapses": [...], "input": 20, "output": 2 },
+  "tempDir": ".discovery/abc123_456789"
+}
+```
+
+Output:
+```json
+{
+  "success": true,
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**`append_discovery_records`** - Append records to an existing session
+
+Input:
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+  "observations": [
+    {
+      "obsIndex": 0,
+      "neuronData": [
+        { "neuronUuid": "hidden-1", "activation": 0.5, "value": 0.4, "errors": [0.1] }
+      ],
+      "inputs": [0.1, 0.2, 0.3]
+    }
+  ]
+}
+```
+
+Output:
+```json
+{
+  "success": true,
+  "recordsWritten": 42
+}
+```
+
+**`finish_discovery_session`** - Finalise and close the Parquet file
+
+Input:
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+Output:
+```json
+{
+  "success": true,
+  "tempDir": ".discovery/abc123_456789",
+  "file": "discovery_data.parquet",
+  "totalRecords": 12345
+}
+```
+
+**`cancel_discovery_session`** - Cancel a session (cleanup without finalising)
+
+Input:
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+Output:
+```json
+{
+  "success": true
+}
+```
+
+#### Size Estimation for TypeScript
+
+To decide when to flush, estimate the JSON size before serialising:
+
+```typescript
+// Rough estimate: ~200 bytes per neuron record + input array
+const estimatedBytes = observations.length * (
+  200 * creature.neurons.length + 
+  4 * creature.input
+);
+
+// Flush when approaching 50MB (well under JS string limits)
+const FLUSH_THRESHOLD = 50 * 1024 * 1024;
+if (estimatedBytes > FLUSH_THRESHOLD) {
+  await appendDiscoveryRecords(sessionId, observations);
+  observations = []; // Reset batch
+}
+```
+
+#### Benefits
+
+- **No string length limits**: Each batch is small enough to serialise
+- **Unlimited sample sizes**: Can record for hours without memory issues
+- **Fail-safe**: If process crashes, already-written data is preserved in the Parquet file
+- **Reduced memory pressure**: TypeScript can discard batches after flushing
 
 ## Code Quality
 

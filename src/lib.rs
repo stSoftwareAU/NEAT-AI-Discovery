@@ -9,6 +9,7 @@ pub mod debug;
 pub mod focus;
 pub mod parquet_format;
 pub mod record;
+pub mod streaming;
 pub mod types;
 
 use anyhow::Result;
@@ -109,11 +110,113 @@ pub struct RecordDiscoveryOutput {
     pub error: Option<String>,
 }
 
+// ============================================================================
+// Streaming Recording API Types
+// ============================================================================
+// These support incremental recording to avoid JavaScript "Invalid string length"
+// errors when serialising large datasets.
+
+/// JSON input for start_discovery_session function
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartSessionInput {
+    pub creature: CreatureJson,
+    pub temp_dir: String,
+}
+
+/// JSON output from start_discovery_session function
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartSessionOutput {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// A single observation to append to a streaming session
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamingObservation {
+    pub obs_index: u32,
+    pub neuron_data: Vec<NeuronData>,
+    pub inputs: Vec<f32>,
+}
+
+/// JSON input for append_discovery_records function
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendRecordsInput {
+    pub session_id: String,
+    pub observations: Vec<StreamingObservation>,
+}
+
+/// JSON output from append_discovery_records function
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendRecordsOutput {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub records_written: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// JSON input for finish_discovery_session function
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinishSessionInput {
+    pub session_id: String,
+}
+
+/// JSON output from finish_discovery_session function
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinishSessionOutput {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temp_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_records: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// JSON input for cancel_discovery_session function
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelSessionInput {
+    pub session_id: String,
+}
+
+/// JSON output from cancel_discovery_session function
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelSessionOutput {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CandidateSynapseJson {
     pub from_neuron_uuid: String,
     pub to_neuron_uuid: String,
+    /// Index of `from_neuron_uuid` in the creature's forward-only evaluation order.
+    ///
+    /// This includes input neurons (`input-0..`) followed by `creature.neurons[]` in order.
+    /// Provided for debugging and ranking analysis (eg why candidates cluster near the end).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_neuron_index: Option<usize>,
+    /// Index of `to_neuron_uuid` in the creature's forward-only evaluation order.
+    ///
+    /// This includes input neurons (`input-0..`) followed by `creature.neurons[]` in order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_neuron_index: Option<usize>,
     pub weight: f32,
     /// Impact of the target neuron on the creature's output (0.0 to 1.0).
     /// Output neurons have impact = 1.0, hidden neurons have discounted impact.
@@ -148,6 +251,16 @@ pub struct NeuronStatsJson {
 pub struct CandidateNeuronJson {
     pub source_neuron_uuid: String,
     pub target_neuron_uuid: String,
+    /// Index of `source_neuron_uuid` in the creature's forward-only evaluation order.
+    ///
+    /// This includes input neurons (`input-0..`) followed by `creature.neurons[]` in order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_neuron_index: Option<usize>,
+    /// Index of `target_neuron_uuid` in the creature's forward-only evaluation order.
+    ///
+    /// This includes input neurons (`input-0..`) followed by `creature.neurons[]` in order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_neuron_index: Option<usize>,
     pub incoming_weight: f32,
     pub outgoing_weight: f32,
     pub squash: String,
@@ -938,6 +1051,403 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
             msg.replace('\\', "\\\\").replace('"', "\\\"")
         );
         // This should never fail, but if it does, we return null pointer
+        CString::new(error_json)
+            .unwrap_or_else(|_| {
+                CString::new(r#"{"success":false,"error":"Failed to create panic error string"}"#)
+                    .unwrap()
+            })
+            .into_raw()
+    })
+}
+
+// ============================================================================
+// Streaming Recording API - FFI Entry Points
+// ============================================================================
+// These functions support incremental recording to avoid JavaScript
+// "Invalid string length" errors when serialising large datasets.
+//
+// Usage pattern from TypeScript:
+//   1. start_discovery_session() → returns session_id
+//   2. Loop: append_discovery_records() as data accumulates
+//   3. finish_discovery_session() → finalises Parquet file
+//
+// Benefits:
+//   - Each append call is small enough to serialise (e.g., ~50MB)
+//   - Unlimited total sample size
+//   - Partial data preserved if process crashes
+
+/// Start a new streaming discovery session.
+///
+/// Creates a Parquet file and returns a session ID for subsequent append/finish calls.
+///
+/// Input JSON:
+/// ```json
+/// {
+///   "creature": { ... },
+///   "tempDir": "/path/to/temp/dir"
+/// }
+/// ```
+///
+/// Output JSON:
+/// ```json
+/// {
+///   "success": true,
+///   "sessionId": "uuid-string"
+/// }
+/// ```
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn start_discovery_session(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+    use std::panic;
+
+    panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        log_version_once();
+
+        let input_str = unsafe {
+            if input_json.is_null() {
+                let error = r#"{"success":false,"error":"Null input pointer"}"#;
+                return CString::new(error).unwrap().into_raw();
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
+                    return CString::new(error).unwrap().into_raw();
+                }
+            }
+        };
+
+        let input: StartSessionInput = match serde_json::from_str(input_str) {
+            Ok(input) => input,
+            Err(e) => {
+                let output = StartSessionOutput {
+                    success: false,
+                    session_id: None,
+                    error: Some(format!("Failed to parse input JSON: {e}")),
+                };
+                let json = serde_json::to_string(&output).unwrap();
+                return CString::new(json).unwrap().into_raw();
+            }
+        };
+
+        let output = match streaming::start_session(input.creature, input.temp_dir) {
+            Ok(session_id) => StartSessionOutput {
+                success: true,
+                session_id: Some(session_id),
+                error: None,
+            },
+            Err(e) => StartSessionOutput {
+                success: false,
+                session_id: None,
+                error: Some(e.to_string()),
+            },
+        };
+
+        let json = serde_json::to_string(&output).unwrap();
+        CString::new(json).unwrap().into_raw()
+    }))
+    .unwrap_or_else(|panic_info| {
+        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+        let error_json = format!(
+            "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
+            msg.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        CString::new(error_json)
+            .unwrap_or_else(|_| {
+                CString::new(r#"{"success":false,"error":"Failed to create panic error string"}"#)
+                    .unwrap()
+            })
+            .into_raw()
+    })
+}
+
+/// Append records to an existing streaming session.
+///
+/// Input JSON:
+/// ```json
+/// {
+///   "sessionId": "uuid-string",
+///   "observations": [
+///     {
+///       "obsIndex": 0,
+///       "neuronData": [{ "neuronUuid": "...", "activation": 0.5, "value": 0.4, "errors": [0.1] }],
+///       "inputs": [0.1, 0.2, 0.3]
+///     }
+///   ]
+/// }
+/// ```
+///
+/// Output JSON:
+/// ```json
+/// {
+///   "success": true,
+///   "recordsWritten": 42
+/// }
+/// ```
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn append_discovery_records(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+    use std::panic;
+
+    panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let input_str = unsafe {
+            if input_json.is_null() {
+                let error = r#"{"success":false,"error":"Null input pointer"}"#;
+                return CString::new(error).unwrap().into_raw();
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
+                    return CString::new(error).unwrap().into_raw();
+                }
+            }
+        };
+
+        let input: AppendRecordsInput = match serde_json::from_str(input_str) {
+            Ok(input) => input,
+            Err(e) => {
+                let output = AppendRecordsOutput {
+                    success: false,
+                    records_written: None,
+                    error: Some(format!("Failed to parse input JSON: {e}")),
+                };
+                let json = serde_json::to_string(&output).unwrap();
+                return CString::new(json).unwrap().into_raw();
+            }
+        };
+
+        // Convert observations to the internal format
+        let batches: Vec<(u32, Vec<NeuronData>, Vec<f32>)> = input
+            .observations
+            .into_iter()
+            .map(|obs| (obs.obs_index, obs.neuron_data, obs.inputs))
+            .collect();
+
+        let output = match streaming::append_records(&input.session_id, batches) {
+            Ok(records_written) => AppendRecordsOutput {
+                success: true,
+                records_written: Some(records_written),
+                error: None,
+            },
+            Err(e) => AppendRecordsOutput {
+                success: false,
+                records_written: None,
+                error: Some(e.to_string()),
+            },
+        };
+
+        let json = serde_json::to_string(&output).unwrap();
+        CString::new(json).unwrap().into_raw()
+    }))
+    .unwrap_or_else(|panic_info| {
+        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+        let error_json = format!(
+            "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
+            msg.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        CString::new(error_json)
+            .unwrap_or_else(|_| {
+                CString::new(r#"{"success":false,"error":"Failed to create panic error string"}"#)
+                    .unwrap()
+            })
+            .into_raw()
+    })
+}
+
+/// Finish a streaming session and finalise the Parquet file.
+///
+/// Input JSON:
+/// ```json
+/// {
+///   "sessionId": "uuid-string"
+/// }
+/// ```
+///
+/// Output JSON:
+/// ```json
+/// {
+///   "success": true,
+///   "tempDir": "/path/to/temp/dir",
+///   "file": "discovery_data.parquet",
+///   "totalRecords": 12345
+/// }
+/// ```
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn finish_discovery_session(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+    use std::panic;
+
+    panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let input_str = unsafe {
+            if input_json.is_null() {
+                let error = r#"{"success":false,"error":"Null input pointer"}"#;
+                return CString::new(error).unwrap().into_raw();
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
+                    return CString::new(error).unwrap().into_raw();
+                }
+            }
+        };
+
+        let input: FinishSessionInput = match serde_json::from_str(input_str) {
+            Ok(input) => input,
+            Err(e) => {
+                let output = FinishSessionOutput {
+                    success: false,
+                    temp_dir: None,
+                    file: None,
+                    total_records: None,
+                    error: Some(format!("Failed to parse input JSON: {e}")),
+                };
+                let json = serde_json::to_string(&output).unwrap();
+                return CString::new(json).unwrap().into_raw();
+            }
+        };
+
+        let output = match streaming::finish_session(&input.session_id) {
+            Ok((temp_dir, file, total_records)) => FinishSessionOutput {
+                success: true,
+                temp_dir: Some(temp_dir),
+                file: Some(file),
+                total_records: Some(total_records),
+                error: None,
+            },
+            Err(e) => FinishSessionOutput {
+                success: false,
+                temp_dir: None,
+                file: None,
+                total_records: None,
+                error: Some(e.to_string()),
+            },
+        };
+
+        let json = serde_json::to_string(&output).unwrap();
+        CString::new(json).unwrap().into_raw()
+    }))
+    .unwrap_or_else(|panic_info| {
+        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+        let error_json = format!(
+            "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
+            msg.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        CString::new(error_json)
+            .unwrap_or_else(|_| {
+                CString::new(r#"{"success":false,"error":"Failed to create panic error string"}"#)
+                    .unwrap()
+            })
+            .into_raw()
+    })
+}
+
+/// Cancel a streaming session without finalising.
+///
+/// Use this to clean up if recording fails or is cancelled.
+///
+/// Input JSON:
+/// ```json
+/// {
+///   "sessionId": "uuid-string"
+/// }
+/// ```
+///
+/// Output JSON:
+/// ```json
+/// {
+///   "success": true
+/// }
+/// ```
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn cancel_discovery_session(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+    use std::panic;
+
+    panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let input_str = unsafe {
+            if input_json.is_null() {
+                let error = r#"{"success":false,"error":"Null input pointer"}"#;
+                return CString::new(error).unwrap().into_raw();
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
+                    return CString::new(error).unwrap().into_raw();
+                }
+            }
+        };
+
+        let input: CancelSessionInput = match serde_json::from_str(input_str) {
+            Ok(input) => input,
+            Err(e) => {
+                let output = CancelSessionOutput {
+                    success: false,
+                    error: Some(format!("Failed to parse input JSON: {e}")),
+                };
+                let json = serde_json::to_string(&output).unwrap();
+                return CString::new(json).unwrap().into_raw();
+            }
+        };
+
+        let output = match streaming::cancel_session(&input.session_id) {
+            Ok(()) => CancelSessionOutput {
+                success: true,
+                error: None,
+            },
+            Err(e) => CancelSessionOutput {
+                success: false,
+                error: Some(e.to_string()),
+            },
+        };
+
+        let json = serde_json::to_string(&output).unwrap();
+        CString::new(json).unwrap().into_raw()
+    }))
+    .unwrap_or_else(|panic_info| {
+        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+        let error_json = format!(
+            "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
+            msg.replace('\\', "\\\\").replace('"', "\\\"")
+        );
         CString::new(error_json)
             .unwrap_or_else(|_| {
                 CString::new(r#"{"success":false,"error":"Failed to create panic error string"}"#)
