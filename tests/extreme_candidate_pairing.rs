@@ -207,7 +207,7 @@ fn gentle_nudge_variants_are_not_deduped_across_different_neuron_pairs() {
             c.comment
                 .as_deref()
                 .unwrap_or_default()
-                .contains("Gentle Nudge")
+                .starts_with("Gentle Nudge variant")
         })
         .map(|c| (c.source_neuron_uuid.as_str(), c.target_neuron_uuid.as_str()))
         .collect();
