@@ -151,6 +151,17 @@ fn make_gentle_nudge_add_neuron_variant(candidate: &CandidateNeuronJson) -> Cand
 }
 
 fn candidates_meaningfully_differ(a: &CandidateNeuronJson, b: &CandidateNeuronJson) -> bool {
+    // Two candidates connecting different neuron pairs (or using different neuron squash)
+    // are fundamentally different operations, even if clamping produces identical weights.
+    if a.source_neuron_uuid != b.source_neuron_uuid
+        || a.target_neuron_uuid != b.target_neuron_uuid
+        || a.source_neuron_index != b.source_neuron_index
+        || a.target_neuron_index != b.target_neuron_index
+        || a.squash != b.squash
+    {
+        return true;
+    }
+
     (a.incoming_weight - b.incoming_weight).abs() > 1e-6
         || (a.bias - b.bias).abs() > 1e-6
         || (a.outgoing_weight - b.outgoing_weight).abs() > 1e-6
