@@ -35,6 +35,18 @@ const CONSERVATIVE_OUTGOING_ABS_MAX: f32 = 0.05;
 const CONSERVATIVE_OUTGOING_SCALE: f32 = 0.2;
 const CONSERVATIVE_EXPECTED_MULTIPLIER: f32 = 0.5;
 
+/// Guard rails for the "Gentle Nudge" safety variant.
+///
+/// The intent is to preserve a meaningful incoming/bias range (so the neuron can still
+/// represent a useful feature), while keeping the outgoing effect small and stable.
+///
+/// This is a third candidate returned alongside the original and the conservative clamp.
+const GENTLE_NUDGE_INCOMING_ABS_MAX: f32 = 50.0;
+const GENTLE_NUDGE_BIAS_ABS_MAX: f32 = 10.0;
+const GENTLE_NUDGE_OUTGOING_ABS_MAX: f32 = 0.02;
+const GENTLE_NUDGE_OUTGOING_SCALE: f32 = 0.1;
+const GENTLE_NUDGE_EXPECTED_MULTIPLIER: f32 = 0.75;
+
 /// Returns true if this add-neuron candidate is "extreme" enough to warrant a conservative pair.
 ///
 /// We intentionally base this on incoming weight and bias (not outgoing), because outgoing
@@ -92,6 +104,69 @@ fn make_conservative_add_neuron_variant(candidate: &CandidateNeuronJson) -> Cand
     conservative
 }
 
+/// Create a "Gentle Nudge" variant of an add-neuron candidate.
+///
+/// This is intentionally more permissive than the conservative clamp:
+/// - incoming is clamped to a moderate range (not forced all the way down to ~2.0)
+/// - bias is clamped to a range that still allows threshold crossing in many squashes
+/// - outgoing weight is kept very small (a gentle correction rather than a shove)
+fn make_gentle_nudge_add_neuron_variant(candidate: &CandidateNeuronJson) -> CandidateNeuronJson {
+    let incoming_sign = if candidate.incoming_weight >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+    let outgoing_sign = if candidate.outgoing_weight >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+
+    let incoming_weight = incoming_sign
+        * candidate
+            .incoming_weight
+            .abs()
+            .min(GENTLE_NUDGE_INCOMING_ABS_MAX);
+    let bias = candidate
+        .bias
+        .clamp(-GENTLE_NUDGE_BIAS_ABS_MAX, GENTLE_NUDGE_BIAS_ABS_MAX);
+
+    let mut outgoing_weight = (candidate.outgoing_weight * GENTLE_NUDGE_OUTGOING_SCALE).clamp(
+        -GENTLE_NUDGE_OUTGOING_ABS_MAX,
+        GENTLE_NUDGE_OUTGOING_ABS_MAX,
+    );
+    // Keep a small non-zero weight so the candidate actually does something.
+    if outgoing_weight.abs() <= 1e-6 {
+        outgoing_weight = outgoing_sign * 0.005;
+    }
+
+    let mut gentle = candidate.clone();
+    gentle.incoming_weight = incoming_weight;
+    gentle.bias = bias;
+    gentle.outgoing_weight = outgoing_weight;
+    gentle.expected_creature_error_reduction *= GENTLE_NUDGE_EXPECTED_MULTIPLIER;
+    gentle.expected_creature_score_gain = gentle.expected_creature_error_reduction;
+    gentle.comment = Some("Gentle Nudge variant (tight outgoing, bias tamed)".to_string());
+    gentle
+}
+
+fn candidates_meaningfully_differ(a: &CandidateNeuronJson, b: &CandidateNeuronJson) -> bool {
+    // Two candidates connecting different neuron pairs (or using different neuron squash)
+    // are fundamentally different operations, even if clamping produces identical weights.
+    if a.source_neuron_uuid != b.source_neuron_uuid
+        || a.target_neuron_uuid != b.target_neuron_uuid
+        || a.source_neuron_index != b.source_neuron_index
+        || a.target_neuron_index != b.target_neuron_index
+        || a.squash != b.squash
+    {
+        return true;
+    }
+
+    (a.incoming_weight - b.incoming_weight).abs() > 1e-6
+        || (a.bias - b.bias).abs() > 1e-6
+        || (a.outgoing_weight - b.outgoing_weight).abs() > 1e-6
+}
+
 /// Pair extreme candidates with a conservative variant, respecting max_candidates.
 ///
 /// Input is expected to be pre-sorted by expected_creature_score_gain (highest first).
@@ -117,26 +192,40 @@ pub fn pair_extreme_candidates_with_conservative_variants(
         output.push(candidate.clone());
 
         let mut added_conservative = false;
+        let mut added_gentle_nudge = false;
         if should_pair && output.len() < limit {
             let conservative = make_conservative_add_neuron_variant(&candidate);
             // Only add if it meaningfully differs (avoid duplicates).
-            if (conservative.incoming_weight - candidate.incoming_weight).abs() > 1e-6
-                || (conservative.bias - candidate.bias).abs() > 1e-6
-                || (conservative.outgoing_weight - candidate.outgoing_weight).abs() > 1e-6
-            {
+            if candidates_meaningfully_differ(&conservative, &candidate) {
                 output.push(conservative);
                 added_conservative = true;
             }
         }
 
-        // Avoid misleading diagnostics: only claim "paired" once we have actually returned
-        // the conservative variant (and we had room under max_candidates).
+        if should_pair && output.len() < limit {
+            let gentle = make_gentle_nudge_add_neuron_variant(&candidate);
+            // Only add if it meaningfully differs (avoid duplicates).
+            if candidates_meaningfully_differ(&gentle, &candidate)
+                && output
+                    .iter()
+                    .all(|existing| candidates_meaningfully_differ(existing, &gentle))
+            {
+                output.push(gentle);
+                added_gentle_nudge = true;
+            }
+        }
+
+        // Avoid misleading diagnostics: only claim pairing once we have actually returned
+        // variants (and we had room under max_candidates).
         if should_pair && output[original_index].comment.is_none() {
             output[original_index].comment = Some(
-                if added_conservative {
-                    "Extreme candidate (paired with conservative variant)"
-                } else {
-                    "Extreme candidate (conservative variant not included)"
+                match (added_conservative, added_gentle_nudge) {
+                    (true, true) => {
+                        "Extreme candidate (paired with Conservative + Gentle Nudge variants)"
+                    }
+                    (true, false) => "Extreme candidate (paired with Conservative variant only)",
+                    (false, true) => "Extreme candidate (paired with Gentle Nudge variant only)",
+                    (false, false) => "Extreme candidate (no safety variants included)",
                 }
                 .to_string(),
             );
