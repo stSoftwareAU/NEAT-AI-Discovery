@@ -237,6 +237,10 @@ mod tests {
     use crate::{NeuronData, NeuronJson};
     use tempfile::TempDir;
 
+    fn session_exists(session_id: &str) -> bool {
+        SESSIONS.lock().contains_key(session_id)
+    }
+
     fn create_test_creature() -> CreatureJson {
         CreatureJson {
             neurons: vec![
@@ -264,14 +268,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let creature = create_test_creature();
 
-        // Capture initial count (tests run in parallel, so other tests may have sessions)
-        let initial_count = active_session_count();
-
         // Start session
         let session_id =
             start_session(creature, temp_dir.path().to_str().unwrap().to_string()).unwrap();
         assert!(!session_id.is_empty());
-        assert!(active_session_count() > initial_count);
+        assert!(
+            session_exists(&session_id),
+            "expected started session to exist"
+        );
 
         // Append records - batch 1
         let batch1 = vec![(
@@ -318,11 +322,17 @@ mod tests {
         assert!(written2 > 0);
 
         // Finish session
-        let count_before_finish = active_session_count();
+        assert!(
+            session_exists(&session_id),
+            "expected session to exist before finish"
+        );
         let (result_dir, file, total_records) = finish_session(&session_id).unwrap();
         assert_eq!(file, "discovery_data.parquet");
         assert_eq!(total_records, written1 + written2);
-        assert!(active_session_count() < count_before_finish);
+        assert!(
+            !session_exists(&session_id),
+            "expected finished session to be removed"
+        );
 
         // Verify file exists
         let parquet_path = Path::new(&result_dir).join(&file);
@@ -334,15 +344,19 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let creature = create_test_creature();
 
-        let count_before = active_session_count();
         let session_id =
             start_session(creature, temp_dir.path().to_str().unwrap().to_string()).unwrap();
-        assert!(active_session_count() > count_before);
+        assert!(
+            session_exists(&session_id),
+            "expected started session to exist"
+        );
 
         // Cancel without writing
-        let count_before_cancel = active_session_count();
         cancel_session(&session_id).unwrap();
-        assert!(active_session_count() < count_before_cancel);
+        assert!(
+            !session_exists(&session_id),
+            "expected cancelled session to be removed"
+        );
     }
 
     #[test]
