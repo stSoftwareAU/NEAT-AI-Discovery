@@ -6,6 +6,7 @@
 
 pub mod analysis;
 pub mod debug;
+pub mod export;
 pub mod focus;
 pub mod parquet_format;
 pub mod record;
@@ -60,15 +61,22 @@ pub struct NeuronJson {
     pub uuid: String,
     #[serde(rename = "type")]
     pub neuron_type: String,
+    /// Activation function. Defaults to "IDENTITY" for constant neurons.
+    #[serde(default = "default_squash")]
     pub squash: String,
+    #[serde(default)]
     pub bias: f32,
+}
+
+fn default_squash() -> String {
+    "IDENTITY".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct SynapseJson {
-    #[serde(default)]
+    #[serde(default, alias = "fromUUID")]
     pub from_uuid: String,
-    #[serde(default)]
+    #[serde(default, alias = "toUUID")]
     pub to_uuid: String,
     #[serde(default)]
     pub weight: f32,
@@ -702,6 +710,64 @@ pub struct MergeParquetOutput {
     pub error: Option<String>,
 }
 
+// ============================================================================
+// Visualisation Snapshot Export API Types
+// ============================================================================
+// These support exporting a debug-friendly JSON snapshot for use with the
+// NEAT-AI-Explore visualiser. This is an optional debug tool.
+
+/// JSON input for export_visualisation_snapshot function
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportVisualisationSnapshotInput {
+    pub parquet_file: String,
+    pub creature: CreatureJson,
+    pub out_file: String,
+    /// Include per-synapse contribution series (default: true)
+    #[serde(default = "default_true")]
+    pub include_per_synapse_series: bool,
+    /// Include reconstruction checks for debugging (default: true)
+    #[serde(default = "default_true")]
+    pub include_reconstruction_checks: bool,
+    /// Maximum number of obsIndex to include (default: all)
+    #[serde(default)]
+    pub max_obs: Option<u32>,
+    /// Top-K worst reconstruction samples to include (default: 20)
+    #[serde(default = "default_top_k")]
+    pub top_k_worst_samples: Option<usize>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_top_k() -> Option<usize> {
+    Some(20)
+}
+
+/// JSON output from export_visualisation_snapshot function
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportVisualisationSnapshotOutput {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub out_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stats: Option<ExportVisualisationStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Statistics from the export operation
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportVisualisationStats {
+    pub obs_count: usize,
+    pub neuron_count: usize,
+    pub synapse_count: usize,
+    pub output_count: usize,
+}
+
 /// Main entry point for recording discovery data
 ///
 /// Takes JSON input and returns JSON output for easy integration with TypeScript/DenoJS
@@ -970,6 +1036,64 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 processed_neurons: None,
                 total_neurons: None,
                 duration_ms: None,
+                error: Some(e.to_string()),
+            };
+            Ok(serde_json::to_string(&output)?)
+        }
+    }
+}
+
+/// Export a visualisation snapshot to JSON for debugging with NEAT-AI-Explore.
+///
+/// This is an optional debug tool that reads a Parquet recording and creature,
+/// then writes a comprehensive JSON snapshot with recorded data, impacts, and
+/// reconstruction checks.
+pub fn export_visualisation_snapshot_internal(input_json: &str) -> Result<String> {
+    let input: ExportVisualisationSnapshotInput = match serde_json::from_str(input_json) {
+        Ok(value) => value,
+        Err(e) => {
+            let output = ExportVisualisationSnapshotOutput {
+                success: false,
+                out_file: None,
+                stats: None,
+                error: Some(format!("Failed to parse input JSON: {e}")),
+            };
+            return Ok(serde_json::to_string(&output)?);
+        }
+    };
+
+    let options = export::ExportOptions {
+        include_per_synapse_series: input.include_per_synapse_series,
+        include_reconstruction_checks: input.include_reconstruction_checks,
+        max_obs: input.max_obs,
+        top_k_worst_samples: input.top_k_worst_samples.unwrap_or(20),
+    };
+
+    match export::export_visualisation_snapshot(
+        &input.parquet_file,
+        &input.creature,
+        &input.out_file,
+        &options,
+    ) {
+        Ok(stats) => {
+            let output = ExportVisualisationSnapshotOutput {
+                success: true,
+                out_file: Some(input.out_file),
+                stats: Some(ExportVisualisationStats {
+                    obs_count: stats.obs_count,
+                    neuron_count: stats.neuron_count,
+                    synapse_count: stats.synapse_count,
+                    output_count: stats.output_count,
+                }),
+                error: None,
+            };
+            Ok(serde_json::to_string(&output)?)
+        }
+        Err(e) => {
+            let output = ExportVisualisationSnapshotOutput {
+                success: false,
+                out_file: None,
+                stats: None,
                 error: Some(e.to_string()),
             };
             Ok(serde_json::to_string(&output)?)
@@ -1974,11 +2098,98 @@ pub extern "C" fn read_discovery_records_ffi(
     })
 }
 
-/// FFI export for freeing memory allocated by read_discovery_records_ffi
+/// Export a visualisation snapshot to JSON for debugging with NEAT-AI-Explore.
 ///
-/// # Safety
-/// This function is unsafe because it frees memory allocated by Rust.
-/// The caller must ensure ptr was returned by read_discovery_records_ffi.
+/// Input JSON:
+/// ```json
+/// {
+///   "parquetFile": "/path/to/records.parquet",
+///   "creature": { ... },
+///   "outFile": "/path/to/snapshot.json",
+///   "includePerSynapseSeries": true,
+///   "includeReconstructionChecks": true,
+///   "maxObs": null,
+///   "topKWorstSamples": 20
+/// }
+/// ```
+///
+/// Output JSON:
+/// ```json
+/// {
+///   "success": true,
+///   "outFile": "/path/to/snapshot.json",
+///   "stats": { "obsCount": 1000, "neuronCount": 50, "synapseCount": 200, "outputCount": 1 }
+/// }
+/// ```
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn export_visualisation_snapshot(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+    use std::panic;
+
+    panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        log_version_once();
+
+        let input_str = unsafe {
+            if input_json.is_null() {
+                let error = r#"{"success":false,"error":"Null input pointer"}"#;
+                return CString::new(error).unwrap().into_raw();
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
+                    return CString::new(error).unwrap().into_raw();
+                }
+            }
+        };
+
+        let json_result = match export_visualisation_snapshot_internal(input_str) {
+            Ok(json) => json,
+            Err(e) => {
+                let output = ExportVisualisationSnapshotOutput {
+                    success: false,
+                    out_file: None,
+                    stats: None,
+                    error: Some(e.to_string()),
+                };
+                serde_json::to_string(&output).unwrap_or_else(|_| {
+                    r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
+                })
+            }
+        };
+
+        match CString::new(json_result) {
+            Ok(c_string) => c_string.into_raw(),
+            Err(_) => {
+                let error = r#"{"success":false,"error":"Failed to create output string"}"#;
+                CString::new(error).unwrap().into_raw()
+            }
+        }
+    }))
+    .unwrap_or_else(|panic_info| {
+        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+        let error_json = format!(
+            "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
+            msg.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        CString::new(error_json)
+            .unwrap_or_else(|_| {
+                CString::new(r#"{"success":false,"error":"Failed to create panic error string"}"#)
+                    .unwrap()
+            })
+            .into_raw()
+    })
+}
+
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn free_discovery_result(ptr: *mut std::ffi::c_char) {

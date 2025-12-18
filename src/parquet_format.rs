@@ -542,6 +542,111 @@ pub fn read_records_from_parquet(
     Ok(records)
 }
 
+/// Read ALL discovery records from a Parquet file (no filtering).
+///
+/// Used by the visualisation snapshot export to get all recorded data.
+pub fn read_all_records_from_parquet(file_path: &str) -> Result<Vec<DiscoverRecord>> {
+    read_records_from_parquet_with_limit(file_path, None)
+}
+
+/// Read discovery records from a Parquet file with optional observation limit.
+///
+/// If `max_obs` is Some, stops reading after collecting records for that many
+/// unique obsIndex values. This allows early exit for large parquet files.
+pub fn read_records_from_parquet_with_limit(
+    file_path: &str,
+    max_obs: Option<u32>,
+) -> Result<Vec<DiscoverRecord>> {
+    use arrow::array::{Array, Float32Array, ListArray, StringArray, UInt32Array};
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use std::collections::HashSet;
+    use std::fs::File;
+
+    let file = File::open(file_path)
+        .with_context(|| format!("Failed to open Parquet file: {file_path}"))?;
+
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        .context("Failed to create Parquet reader builder")?;
+
+    let reader = builder.build().context("Failed to build Parquet reader")?;
+
+    let mut records = Vec::new();
+    let mut seen_obs_indices: HashSet<u32> = HashSet::new();
+
+    'batch_loop: for batch_result in reader {
+        let batch = batch_result.context("Failed to read record batch")?;
+
+        let obs_index_col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .context("Failed to cast obs_index column")?;
+        let neuron_uuid_col = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("Failed to cast neuron_uuid column")?;
+        let value_col = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .context("Failed to cast value column")?;
+        let activation_col = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .context("Failed to cast activation column")?;
+        let errors_col = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .context("Failed to cast errors column")?;
+
+        for i in 0..batch.num_rows() {
+            let obs_index = obs_index_col.value(i);
+
+            // Check if we've hit the observation limit
+            if let Some(max) = max_obs {
+                if !seen_obs_indices.contains(&obs_index) {
+                    if seen_obs_indices.len() >= max as usize {
+                        // We've collected enough observations, stop
+                        break 'batch_loop;
+                    }
+                    seen_obs_indices.insert(obs_index);
+                }
+            }
+
+            let uuid = neuron_uuid_col.value(i);
+            let value = if value_col.is_null(i) {
+                None
+            } else {
+                Some(value_col.value(i))
+            };
+            let activation = activation_col.value(i);
+
+            // Extract errors array
+            let errors_list = errors_col.value(i);
+            let errors_array = errors_list
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .context("Failed to cast errors array")?;
+            let errors: Vec<f32> = (0..errors_array.len())
+                .map(|j| errors_array.value(j))
+                .collect();
+
+            records.push(DiscoverRecord::new(
+                obs_index,
+                uuid.to_string(),
+                value,
+                activation,
+                errors,
+            ));
+        }
+    }
+
+    Ok(records)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -807,16 +807,16 @@ fn compute_impacts_internal_with_stats(
     // Parallel impact computation using thread-local caches
     // Each thread computes impacts for a subset of neurons, then we merge results.
     // This trades some redundant computation for better CPU utilization.
-    let selectable_neurons: Vec<&NeuronJson> = creature
-        .neurons
-        .iter()
-        .filter(|n| is_selectable_type(&n.neuron_type))
-        .collect();
+    //
+    // Note: We include ALL neurons (including inputs) to compute their impacts.
+    // Input neurons have outgoing synapses and their impact measures their
+    // contribution to the final output. This is useful for visualisation/debugging.
+    let all_neurons: Vec<&NeuronJson> = creature.neurons.iter().collect();
 
     // Use a shared cache protected by a mutex for thread-safe updates
     let shared_cache: Mutex<HashMap<String, f32>> = Mutex::new(HashMap::new());
 
-    selectable_neurons.par_iter().for_each(|neuron| {
+    all_neurons.par_iter().for_each(|neuron| {
         // Check if already computed (another thread might have done it)
         {
             let cache = shared_cache.lock().unwrap();
