@@ -346,8 +346,7 @@ fn test_impacts_are_computed() {
         .expect("Should have output-0 impact");
     assert!(
         (*output_impact - 1.0).abs() < 1e-5,
-        "Output neuron should have impact 1.0, got {}",
-        output_impact
+        "Output neuron should have impact 1.0, got {output_impact}"
     );
 
     // Hidden neuron should have impact > 0 (since it feeds into output)
@@ -358,8 +357,7 @@ fn test_impacts_are_computed() {
         .expect("Should have hidden-0 impact");
     assert!(
         *hidden_impact > 0.0,
-        "Hidden neuron should have positive impact, got {}",
-        hidden_impact
+        "Hidden neuron should have positive impact, got {hidden_impact}"
     );
 }
 
