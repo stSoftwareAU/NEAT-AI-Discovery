@@ -17,7 +17,7 @@ use std::fs::File;
 use std::io::BufReader;
 use tempfile::tempdir;
 
-fn create_creature_with_overflow_weight() -> CreatureJson {
+fn create_creature_with_contribution_overflow() -> CreatureJson {
     CreatureJson {
         neurons: vec![
             NeuronJson {
@@ -40,11 +40,11 @@ fn create_creature_with_overflow_weight() -> CreatureJson {
                 weight: 1.0,
                 synapse_type: None,
             },
-            // Deliberately use +Infinity weight so contribution computation can overflow.
+            // Deliberately keep weight finite, but allow contribution overflow via huge activation.
             SynapseJson {
                 from_uuid: "hidden-0".to_string(),
                 to_uuid: "output-0".to_string(),
-                weight: f32::INFINITY,
+                weight: 2.0,
                 synapse_type: None,
             },
         ],
@@ -89,7 +89,7 @@ fn export_visualisation_snapshot_sanitises_non_finite_series() {
     write_records_to_parquet(parquet_path.to_str().unwrap(), &records)
         .expect("Failed to write Parquet");
 
-    let creature = create_creature_with_overflow_weight();
+    let creature = create_creature_with_contribution_overflow();
     let options = ExportOptions::default();
 
     export_visualisation_snapshot(

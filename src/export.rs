@@ -255,39 +255,45 @@ fn compute_stats(values: &[f32]) -> (f32, f32, f32, f32) {
     // We intentionally ignore non-finite values (NaN/±Infinity) so they cannot
     // corrupt summary statistics or JSON serialisation.
     //
+    // Important: Even with finite inputs, naive f32 accumulation can overflow
+    // internally (eg variance for `[0.0, f32::MAX]`). We compute in f64 and then
+    // clamp to JSON-safe f32 outputs.
+    //
     // When there are no finite values, return zeros rather than ±Infinity.
     // This matches the empty-slice behaviour and keeps the output JSON valid.
-    let mut count: u32 = 0;
-    let mut mean: f32 = 0.0;
-    let mut m2: f32 = 0.0;
-    let mut min: f32 = 0.0;
-    let mut max: f32 = 0.0;
+    let mut count: u64 = 0;
+    let mut mean: f64 = 0.0;
+    let mut m2: f64 = 0.0;
+    let mut min: f64 = 0.0;
+    let mut max: f64 = 0.0;
 
     for &x in values {
         if !x.is_finite() {
             continue;
         }
 
+        let xf = x as f64;
+
         if count == 0 {
             count = 1;
-            mean = x;
+            mean = xf;
             m2 = 0.0;
-            min = x;
-            max = x;
+            min = xf;
+            max = xf;
             continue;
         }
 
-        if x < min {
-            min = x;
+        if xf < min {
+            min = xf;
         }
-        if x > max {
-            max = x;
+        if xf > max {
+            max = xf;
         }
 
         count += 1;
-        let delta = x - mean;
-        mean += delta / count as f32;
-        let delta2 = x - mean;
+        let delta = xf - mean;
+        mean += delta / count as f64;
+        let delta2 = xf - mean;
         m2 += delta * delta2;
     }
 
@@ -295,8 +301,14 @@ fn compute_stats(values: &[f32]) -> (f32, f32, f32, f32) {
         return (0.0, 0.0, 0.0, 0.0);
     }
 
-    let variance = m2 / count as f32;
-    (mean, variance, min, max)
+    let variance = m2 / count as f64;
+
+    (
+        json_safe_f32(mean as f32),
+        json_safe_f32(variance as f32),
+        json_safe_f32(min as f32),
+        json_safe_f32(max as f32),
+    )
 }
 
 /// Convert a float to a JSON-safe finite value.
