@@ -551,8 +551,18 @@ pub fn read_all_records_from_parquet(file_path: &str) -> Result<Vec<DiscoverReco
 
 /// Read discovery records from a Parquet file with optional observation limit.
 ///
-/// If `max_obs` is Some, stops reading after collecting records for that many
-/// unique obsIndex values. This allows early exit for large parquet files.
+/// If `max_obs` is Some, returns records for the first `max_obs` distinct
+/// `obs_index` values encountered while scanning the file.
+///
+/// Important: Parquet rows are not guaranteed to be stored in observation-first
+/// order. They may be stored in neuron-first order (all obs for neuron A, then
+/// all obs for neuron B). In that case, **we must not stop reading** as soon as
+/// we see a new `obs_index` beyond the limit, because later rows may still
+/// contain records for already-accepted observation indices.
+///
+/// To guarantee complete data for the accepted observations, this reader:
+/// - Keeps a set of accepted `obs_index` values up to `max_obs`
+/// - Scans the file and **filters** to only accepted observations
 pub fn read_records_from_parquet_with_limit(
     file_path: &str,
     max_obs: Option<u32>,
@@ -561,6 +571,11 @@ pub fn read_records_from_parquet_with_limit(
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use std::collections::HashSet;
     use std::fs::File;
+
+    // Edge case: treat max_obs=0 as "return no rows".
+    if matches!(max_obs, Some(0)) {
+        return Ok(Vec::new());
+    }
 
     let file = File::open(file_path)
         .with_context(|| format!("Failed to open Parquet file: {file_path}"))?;
@@ -571,9 +586,9 @@ pub fn read_records_from_parquet_with_limit(
     let reader = builder.build().context("Failed to build Parquet reader")?;
 
     let mut records = Vec::new();
-    let mut seen_obs_indices: HashSet<u32> = HashSet::new();
+    let mut accepted_obs_indices: HashSet<u32> = HashSet::new();
 
-    'batch_loop: for batch_result in reader {
+    for batch_result in reader {
         let batch = batch_result.context("Failed to read record batch")?;
 
         let obs_index_col = batch
@@ -605,15 +620,26 @@ pub fn read_records_from_parquet_with_limit(
         for i in 0..batch.num_rows() {
             let obs_index = obs_index_col.value(i);
 
-            // Check if we've hit the observation limit
-            if let Some(max) = max_obs {
-                if !seen_obs_indices.contains(&obs_index) {
-                    if seen_obs_indices.len() >= max as usize {
-                        // We've collected enough observations, stop
-                        break 'batch_loop;
+            // Determine whether to include this row under the limit.
+            let include_row = match max_obs {
+                None => true,
+                Some(max) => {
+                    if accepted_obs_indices.contains(&obs_index) {
+                        true
+                    } else if accepted_obs_indices.len() < max as usize {
+                        accepted_obs_indices.insert(obs_index);
+                        true
+                    } else {
+                        // We've accepted enough observations. Skip new obs_index values,
+                        // but keep scanning in case we encounter more rows for accepted
+                        // observations (e.g. neuron-first ordering).
+                        false
                     }
-                    seen_obs_indices.insert(obs_index);
                 }
+            };
+
+            if !include_row {
+                continue;
             }
 
             let uuid = neuron_uuid_col.value(i);

@@ -251,25 +251,51 @@ fn compute_stats(values: &[f32]) -> (f32, f32, f32, f32) {
     if values.is_empty() {
         return (0.0, 0.0, 0.0, 0.0);
     }
-    let n = values.len() as f32;
-    let sum: f32 = values.iter().filter(|v| v.is_finite()).sum();
-    let mean = sum / n;
-    let variance: f32 = values
-        .iter()
-        .filter(|v| v.is_finite())
-        .map(|v| (v - mean).powi(2))
-        .sum::<f32>()
-        / n;
-    let min = values
-        .iter()
-        .filter(|v| v.is_finite())
-        .cloned()
-        .fold(f32::INFINITY, f32::min);
-    let max = values
-        .iter()
-        .filter(|v| v.is_finite())
-        .cloned()
-        .fold(f32::NEG_INFINITY, f32::max);
+
+    // We intentionally ignore non-finite values (NaN/±Infinity) so they cannot
+    // corrupt summary statistics or JSON serialisation.
+    //
+    // When there are no finite values, return zeros rather than ±Infinity.
+    // This matches the empty-slice behaviour and keeps the output JSON valid.
+    let mut count: u32 = 0;
+    let mut mean: f32 = 0.0;
+    let mut m2: f32 = 0.0;
+    let mut min: f32 = 0.0;
+    let mut max: f32 = 0.0;
+
+    for &x in values {
+        if !x.is_finite() {
+            continue;
+        }
+
+        if count == 0 {
+            count = 1;
+            mean = x;
+            m2 = 0.0;
+            min = x;
+            max = x;
+            continue;
+        }
+
+        if x < min {
+            min = x;
+        }
+        if x > max {
+            max = x;
+        }
+
+        count += 1;
+        let delta = x - mean;
+        mean += delta / count as f32;
+        let delta2 = x - mean;
+        m2 += delta * delta2;
+    }
+
+    if count == 0 {
+        return (0.0, 0.0, 0.0, 0.0);
+    }
+
+    let variance = m2 / count as f32;
     (mean, variance, min, max)
 }
 
@@ -713,6 +739,31 @@ mod tests {
         assert!((var - 2.0).abs() < 1e-6); // variance of [1,2,3,4,5] = 2
         assert!((min - 1.0).abs() < 1e-6);
         assert!((max - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_compute_stats_ignores_non_finite_values() {
+        // Mean/variance should be computed over finite values only.
+        // This avoids skewing the result when recordings contain NaN/±Infinity.
+        let values = [1.0_f32, 2.0, f32::NAN, 3.0];
+        let (mean, var, min, max) = compute_stats(&values);
+
+        assert!((mean - 2.0).abs() < 1e-6);
+        assert!((var - (2.0 / 3.0)).abs() < 1e-6);
+        assert!((min - 1.0).abs() < 1e-6);
+        assert!((max - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_compute_stats_all_non_finite_returns_zeros() {
+        // Returning ±Infinity here is semantically wrong and can break JSON output.
+        let values = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+        let (mean, var, min, max) = compute_stats(&values);
+
+        assert_eq!(mean, 0.0);
+        assert_eq!(var, 0.0);
+        assert_eq!(min, 0.0);
+        assert_eq!(max, 0.0);
     }
 
     #[test]
