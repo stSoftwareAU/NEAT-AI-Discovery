@@ -299,6 +299,27 @@ fn compute_stats(values: &[f32]) -> (f32, f32, f32, f32) {
     (mean, variance, min, max)
 }
 
+/// Convert a float to a JSON-safe finite value.
+///
+/// `serde_json` will serialise non-finite floats (NaN/±Infinity) as `null`, which
+/// breaks consumers that expect numeric arrays (and breaks round-tripping into
+/// `Vec<f32>`).
+///
+/// We clamp ±Infinity to ±`f32::MAX` and map NaN to 0.0. This keeps exported
+/// snapshots valid JSON while preserving sign/magnitude semantics as much as
+/// possible for debugging.
+fn json_safe_f32(value: f32) -> f32 {
+    if value.is_finite() {
+        value
+    } else if value.is_nan() {
+        0.0
+    } else if value.is_sign_positive() {
+        f32::MAX
+    } else {
+        -f32::MAX
+    }
+}
+
 /// Export a visualisation snapshot to JSON
 pub fn export_visualisation_snapshot(
     parquet_file: &str,
@@ -348,9 +369,25 @@ pub fn export_visualisation_snapshot(
 
         for record in records {
             if let Some(&pos) = obs_index_pos.get(&record.obs_index) {
-                activation[pos] = record.activation;
-                value[pos] = record.value;
-                errors[pos] = record.errors.clone();
+                // Sanitise non-finite values so the exported JSON remains valid and
+                // downstream consumers don't see unexpected nulls in float arrays.
+                activation[pos] = if record.activation.is_finite() {
+                    record.activation
+                } else {
+                    0.0
+                };
+
+                value[pos] = record.value.filter(|v| v.is_finite());
+
+                // We intentionally drop NaN/±Infinity error values. These represent
+                // corrupt data and will otherwise poison aggregates (MAE/MSE) and/or
+                // serialise as nulls inside float arrays.
+                errors[pos] = record
+                    .errors
+                    .iter()
+                    .copied()
+                    .filter(|e| e.is_finite())
+                    .collect();
             }
         }
 
@@ -441,13 +478,15 @@ pub fn export_visualisation_snapshot(
         for syn in &creature.synapses {
             let key = format!("{}→{}", syn.from_uuid, syn.to_uuid);
 
+            let safe_weight = json_safe_f32(syn.weight);
+
             // Get from_neuron activations
             let contribution: Vec<f32> =
                 if let Some(from_recording) = neurons_recording.get(&syn.from_uuid) {
                     from_recording
                         .activation
                         .iter()
-                        .map(|&a| a * syn.weight)
+                        .map(|&a| json_safe_f32(a * safe_weight))
                         .collect()
                 } else {
                     // From neuron might be an input neuron not in recordings
@@ -462,7 +501,7 @@ pub fn export_visualisation_snapshot(
                 SynapseDerived {
                     from_uuid: syn.from_uuid.clone(),
                     to_uuid: syn.to_uuid.clone(),
-                    weight: syn.weight,
+                    weight: safe_weight,
                     contribution,
                     stats: SynapseStats {
                         mean_contribution: mean_contrib,
@@ -519,22 +558,29 @@ pub fn export_visualisation_snapshot(
 
             for (pos, &obs_index) in obs_indices.iter().enumerate() {
                 // Reconstruct value = bias + sum(from_activation * weight)
-                let mut reconstructed_value = neuron.bias;
+                let mut reconstructed_value = json_safe_f32(neuron.bias);
                 for syn in &inbound {
                     if let Some(from_recording) = neurons_recording.get(&syn.from_uuid) {
-                        reconstructed_value += from_recording.activation[pos] * syn.weight;
+                        reconstructed_value += json_safe_f32(
+                            from_recording.activation[pos] * json_safe_f32(syn.weight),
+                        );
                     }
                 }
 
-                let reconstructed_activation = apply_squash(&neuron.squash, reconstructed_value);
+                reconstructed_value = json_safe_f32(reconstructed_value);
+                let reconstructed_activation =
+                    json_safe_f32(apply_squash(&neuron.squash, reconstructed_value));
 
                 let recorded_value = recording.value[pos];
                 let recorded_activation = recording.activation[pos];
 
-                let value_delta = recorded_value
-                    .map(|rv| (rv - reconstructed_value).abs())
-                    .unwrap_or(0.0);
-                let activation_delta = (recorded_activation - reconstructed_activation).abs();
+                let value_delta = json_safe_f32(
+                    recorded_value
+                        .map(|rv| (rv - reconstructed_value).abs())
+                        .unwrap_or(0.0),
+                );
+                let activation_delta =
+                    json_safe_f32((recorded_activation - reconstructed_activation).abs());
 
                 if value_delta.is_finite() {
                     sum_value_delta += value_delta;
