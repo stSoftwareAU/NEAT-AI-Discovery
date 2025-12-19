@@ -3,9 +3,20 @@
 A high-performance Rust companion library for
 [`stSoftwareAU/NEAT-AI`](https://github.com/stSoftwareAU/NEAT-AI). It records
 neuron activations and errors during discovery runs, then analyses the captured
-samples to recommend structural upgrades (new synapses or neurons) that reduce
-error. Controllers call into the library via Deno FFI to power
-`Creature.discoveryDir()` workflows.
+samples to recommend **mutation candidates** (add/remove/modify) that are likely
+to improve the creature's score.
+
+**Important**: This library does **not** directly “fix” a creature. It returns
+candidates derived from the recorded samples. The NEAT-AI controller performs an
+**ablation test** style validation step by cloning the creature, applying a
+candidate (for example, disabling or removing a neuron), then re-scoring against
+the **full training set**. Only candidates that measurably improve the score are
+admitted back into the population, where normal NEAT evolution takes over. This
+guided approach helps avoid the slow random-mutation search as creatures grow
+larger.
+
+Controllers call into the library via Deno FFI to power `Creature.discoveryDir()`
+workflows.
 
 ## Why use this library?
 
@@ -207,6 +218,18 @@ The discovery process works as follows:
 **Key principle**: Rust finds structural improvements that reduce error. TypeScript
 validates by measuring actual score. Evolution does the rest. No arbitrary thresholds
 or manual filtering - just physics and natural selection.
+
+#### What we mean by “ablation test”
+
+In this project, “ablation test” refers to the controller-side validation step
+where a candidate mutation is applied to a cloned creature (commonly removing or
+disabling a neuron/synapse), then the modified creature is re-scored against the
+**full training set**. If (and only if) the score improves, that modified
+creature is accepted back into the population.
+
+This keeps discovery honest: the Rust analysis uses recorded samples to propose
+candidates, but the only metric that matters is the real, full-dataset score
+measured by NEAT-AI.
 
 ### Detailed workflow
 
@@ -1691,11 +1714,21 @@ here for convenience:
 ## Goal
 
 The goal is to record neuron activations and errors during the discovery
-training phase, then scan this recorded data to identify beneficial new
-synapses/neurons that would reduce error. **The current DenoJS implementation has
-severe performance and memory issues that make discovery unviable for larger
-models.** This Rust library must solve these performance/memory problems while
-maintaining the same functional behavior.
+training phase, then scan this recorded data to identify **high-quality
+mutation candidates** (add / remove / modify) that are likely to improve the
+creature's score.
+
+This is a guided alternative to NEAT's purely random structural mutations. As
+creatures grow large, randomly stumbling into beneficial mutations can take a
+very long time. By using the recorded samples to propose promising candidates,
+we reduce wasted exploration while keeping the core evolutionary loop unchanged:
+NEAT-AI still performs a full re-score on the training set and only keeps
+mutations that actually improve.
+
+**The current DenoJS implementation has severe performance and memory issues
+that make discovery unviable for larger models.** This Rust library must solve
+these performance/memory problems while maintaining the same functional
+behaviour.
 
 ## Problem Statement
 
