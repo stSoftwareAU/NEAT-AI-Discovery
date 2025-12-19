@@ -172,6 +172,12 @@ fn get_records_or_error(
 pub struct RankedNeuron {
     pub neuron_uuid: String,
     pub total_error: f32,
+    /// Unclamped mean absolute error from recorded samples.
+    ///
+    /// We clamp `total_error` for focus ranking so hidden neurons with extreme raw errors do not
+    /// dominate selection purely due to scale differences. However, when proposing exploratory
+    /// ablation candidates we still want access to the true magnitude.
+    pub raw_error: f32,
     /// Structural impact based on weight paths to output
     pub impact: f32,
     /// Mean absolute activation value from recorded samples
@@ -1050,7 +1056,7 @@ pub fn rank_focus_neurons(
         .par_iter()
         .map(|neuron| -> Result<RankedNeuron> {
             let records = get_records_or_error(records_provider.as_ref(), &neuron.uuid)?;
-            let avg_error = average_absolute_error_from_records(&records);
+            let raw_error = average_absolute_error_from_records(&records);
             let structural_impact = *impact_map.get(&neuron.uuid).unwrap_or(&0.0);
             let mean_activation = mean_absolute_activation_from_records(&records);
 
@@ -1063,13 +1069,14 @@ pub fn rank_focus_neurons(
             let activation_weighted_impact = structural_impact * mean_activation;
 
             let total_error = if max_output_error > 0.0 {
-                avg_error.min(max_output_error)
+                raw_error.min(max_output_error)
             } else {
-                avg_error
+                raw_error
             };
             Ok(RankedNeuron {
                 neuron_uuid: neuron.uuid.clone(),
                 total_error,
+                raw_error,
                 impact: structural_impact,
                 mean_activation,
                 activation_weighted_impact,
@@ -1158,11 +1165,91 @@ pub fn rank_focus_neurons(
         })
         .collect();
 
-    // Sort by activation_weighted_impact ascending (lowest impact = best candidates)
+    // Extra candidates: high-error exploratory ablations
+    //
+    // Rationale: A neuron can have very high recorded error yet still be high-impact. Removing
+    // such a neuron is NOT a "safe prune", but it can be a worthwhile ablation test: clone the
+    // creature, remove/disable the neuron, then re-score on the full training set. Keep only
+    // if the score improves.
+    //
+    // We intentionally keep these candidates limited in count and clearly labelled so callers
+    // can treat them as exploratory.
+    const EXPLORATORY_ABLATION_MAX: usize = 5;
+    const EXPLORATORY_ERROR_MULTIPLIER: f32 = 10.0;
+
+    if max_output_error > 0.0 {
+        let neuron_types: HashMap<&str, &str> = creature
+            .neurons
+            .iter()
+            .map(|n: &NeuronJson| (n.uuid.as_str(), n.neuron_type.as_str()))
+            .collect();
+
+        let already_selected: HashSet<&str> = removal_candidates
+            .iter()
+            .map(|c| c.neuron_uuid.as_str())
+            .collect();
+
+        let mut high_error_neurons: Vec<&RankedNeuron> = neurons
+            .iter()
+            .filter(|n| !already_selected.contains(n.neuron_uuid.as_str()))
+            // Only propose exploratory removals for hidden neurons.
+            .filter(|n| neuron_types.get(n.neuron_uuid.as_str()) == Some(&"hidden"))
+            // Only when error is meaningfully larger than output error scale.
+            .filter(|n| n.raw_error >= max_output_error * EXPLORATORY_ERROR_MULTIPLIER)
+            .collect();
+
+        high_error_neurons.sort_by(|a, b| {
+            b.raw_error
+                .partial_cmp(&a.raw_error)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| b.impact.partial_cmp(&a.impact).unwrap_or(Ordering::Equal))
+                .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
+        });
+
+        high_error_neurons.truncate(EXPLORATORY_ABLATION_MAX);
+
+        for n in high_error_neurons {
+            let (incoming, outgoing) = count_synapses_for_neuron(&n.neuron_uuid, creature);
+            let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
+
+            removal_candidates.push(RemovalCandidate {
+                neuron_uuid: n.neuron_uuid.clone(),
+                total_error: n.total_error,
+                impact: n.impact,
+                mean_activation: n.mean_activation,
+                activation_weighted_impact: n.activation_weighted_impact,
+                incoming_synapses: incoming,
+                outgoing_synapses: outgoing,
+                removal_savings: savings,
+                // Exploratory candidates must not claim a predicted improvement. The controller
+                // will run an ablation test on the full training set to validate.
+                expected_error_reduction: 0.0,
+                reason: format!(
+                    "Exploratory ablation candidate (high error): raw_error {:.2e} (clamped {:.2e}), \
+                     activation_weighted_impact {:.2e} >= costOfGrowth ({:.2e}). \
+                     This is NOT a safe prune - validate by full-dataset ablation test.",
+                    n.raw_error,
+                    n.total_error,
+                    n.activation_weighted_impact,
+                    cost_of_growth_threshold
+                ),
+            });
+        }
+    }
+
+    // Sort so "safe prunes" (activation_weighted_impact < costOfGrowth) remain first,
+    // followed by exploratory candidates, then within each group by ascending impact.
     removal_candidates.sort_by(|a, b| {
-        a.activation_weighted_impact
-            .partial_cmp(&b.activation_weighted_impact)
-            .unwrap_or(Ordering::Equal)
+        let a_safe = a.activation_weighted_impact < cost_of_growth_threshold;
+        let b_safe = b.activation_weighted_impact < cost_of_growth_threshold;
+        b_safe
+            .cmp(&a_safe)
+            .then_with(|| {
+                a.activation_weighted_impact
+                    .partial_cmp(&b.activation_weighted_impact)
+                    .unwrap_or(Ordering::Equal)
+            })
+            .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
     if let Some(limit) = max_results {
