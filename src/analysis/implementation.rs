@@ -986,7 +986,7 @@ fn log_analysis_start(
     const MIN_USEFUL_TIMEOUT_SECS: f64 = 60.0; // 1 minute minimum for useful analysis
     if deadline_secs < MIN_USEFUL_TIMEOUT_SECS {
         eprintln!(
-            "⚠️  [NEAT-AI-Discovery] WARNING: Only {deadline_secs:.1}s remaining for {analysis_type} analysis. \
+            "💡  [NEAT-AI-Discovery]: Only {deadline_secs:.1}s remaining for {analysis_type} analysis. \
              Focus selection may have consumed most of the timeout. \
              Consider increasing discoveryAnalysisTimeoutMinutes."
         );
