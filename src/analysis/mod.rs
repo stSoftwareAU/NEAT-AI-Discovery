@@ -43,8 +43,30 @@ use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
 use anyhow::Result;
 use std::sync::Arc;
 
+fn run_optional_analysis<T>(
+    enabled: bool,
+    starting: &'static str,
+    finished: &'static str,
+    skipped: &'static str,
+    f: impl FnOnce() -> Result<T>,
+) -> Result<Option<T>> {
+    if enabled {
+        crate::watchdog::beat(starting);
+        let result = f()?;
+        crate::watchdog::beat(finished);
+        Ok(Some(result))
+    } else {
+        crate::watchdog::beat(skipped);
+        Ok(None)
+    }
+}
+
 /// Combined analysis function that runs both synapse and neuron analysis.
 pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
+    // Optional hang watchdog for unattended workers.
+    // If enabled, this will emit a thread dump then abort the process if analysis stalls.
+    let _watchdog = crate::watchdog::start_from_env("analysis::analyze_all");
+
     let include_synapse = input.include_synapse_analysis.unwrap_or(true);
     let include_neuron = input.include_neuron_analysis.unwrap_or(true);
 
@@ -55,11 +77,14 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         });
     }
 
+    crate::watchdog::beat("analysis::analyze_all → loading parquet cache");
+
     // Pre-load ALL records from parquet in one pass. This is MUCH faster than
     // lazy-loading each neuron separately (1 scan vs ~2000 scans for large creatures).
     let shared_cache = Arc::new(implementation::RecordCache::new_adaptive(
         &input.parquet_file,
     )?);
+    crate::watchdog::beat("analysis::analyze_all → parquet cache loaded");
 
     let synapse_input = if include_synapse {
         Some(AnalyzeSynapsesInput {
@@ -90,23 +115,27 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Run neuron analysis FIRST (priority), then synapse analysis.
     // Neuron discovery is more valuable as it can create new network structure.
     // With pre-loaded cache, both run fast, but neurons get priority if timeout approaches.
-    let neuron_result = if let Some(inner) = neuron_input.clone() {
-        Some(implementation::analyze_neurons_with_cache(
-            &inner,
-            Arc::clone(&shared_cache),
-        )?)
-    } else {
-        None
-    };
+    let neuron_result = run_optional_analysis(
+        neuron_input.is_some(),
+        "analysis::analyze_all → neuron analysis starting",
+        "analysis::analyze_all → neuron analysis finished",
+        "analysis::analyze_all → neuron analysis skipped",
+        || {
+            let inner = neuron_input.expect("checked is_some");
+            implementation::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
+        },
+    )?;
 
-    let synapse_result = if let Some(inner) = synapse_input.clone() {
-        Some(implementation::analyze_synapses_with_cache(
-            &inner,
-            Arc::clone(&shared_cache),
-        )?)
-    } else {
-        None
-    };
+    let synapse_result = run_optional_analysis(
+        synapse_input.is_some(),
+        "analysis::analyze_all → synapse analysis starting",
+        "analysis::analyze_all → synapse analysis finished",
+        "analysis::analyze_all → synapse analysis skipped",
+        || {
+            let inner = synapse_input.expect("checked is_some");
+            implementation::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
+        },
+    )?;
 
     Ok(AnalyzeAllResult {
         synapse: synapse_result,
@@ -119,3 +148,45 @@ pub use gpu::GpuAnalyzer;
 pub use gpu::GpuAvailabilityResult;
 pub use neuron::analyze_neurons;
 pub use synapse::analyze_synapses;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watchdog_beats_do_not_claim_finished_when_analysis_is_skipped() {
+        let _lock = crate::watchdog::lock_for_test_serialisation();
+        // Ensure a watchdog is active so `beat()` is observable in tests.
+        let wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+            stall_timeout: std::time::Duration::from_secs(60),
+            abort_delay: std::time::Duration::from_secs(1),
+        });
+
+        let skipped = "analysis::analyze_all → neuron analysis skipped";
+        let finished = "analysis::analyze_all → neuron analysis finished";
+
+        // When disabled, we should record "skipped" and never execute the closure.
+        let result: Option<()> =
+            run_optional_analysis(false, "starting", finished, skipped, || -> Result<()> {
+                unreachable!("disabled analysis closure must not run")
+            })
+            .expect("should not error");
+        assert!(result.is_none());
+        assert_eq!(
+            crate::watchdog::active_stage_for_test().as_deref(),
+            Some(skipped)
+        );
+
+        // When enabled, we should end on "finished".
+        let result: Option<()> =
+            run_optional_analysis(true, "starting", finished, "skipped", || Ok(()))
+                .expect("should not error");
+        assert!(result.is_some());
+        assert_eq!(
+            crate::watchdog::active_stage_for_test().as_deref(),
+            Some(finished)
+        );
+
+        drop(wd);
+    }
+}
