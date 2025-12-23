@@ -84,6 +84,26 @@ pub(crate) fn start_from_env(initial_stage: &str) -> Option<Watchdog> {
     Some(wd)
 }
 
+/// Test-only global lock to prevent parallel tests from racing on the global ACTIVE state.
+#[cfg(test)]
+static TEST_SERIAL: Lazy<parking_lot::Mutex<()>> = Lazy::new(|| parking_lot::Mutex::new(()));
+
+/// Acquire the test-only serialisation lock (used by tests that touch global watchdog state).
+#[cfg(test)]
+pub(crate) fn lock_for_test_serialisation() -> parking_lot::MutexGuard<'static, ()> {
+    TEST_SERIAL.lock()
+}
+
+/// Test-only helper to read the current watchdog stage (if any).
+///
+/// This is intentionally `pub(crate)` and only compiled for tests so we don't expose
+/// watchdog internals as part of the public API.
+#[cfg(test)]
+pub(crate) fn active_stage_for_test() -> Option<String> {
+    let guard = ACTIVE.lock();
+    guard.as_ref().map(|state| state.stage.lock().clone())
+}
+
 struct BeatState {
     last_beat_ms: AtomicU64,
     stage: Mutex<String>,
@@ -140,14 +160,23 @@ impl Drop for Watchdog {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         // Clear the active global watchdog (best effort; only if it's the same instance).
-        let mut active = ACTIVE.lock();
-        if let Some(current) = active.as_ref() {
-            if Arc::ptr_eq(current, &self.state) {
-                *active = None;
+        //
+        // IMPORTANT: Do not hold the global ACTIVE lock while joining the watchdog thread.
+        // The watchdog thread can sleep for up to `poll_every` (currently up to 5 seconds),
+        // and other threads calling `beat()` should not be blocked for that duration.
+        {
+            let mut active = ACTIVE.lock();
+            if let Some(current) = active.as_ref() {
+                if Arc::ptr_eq(current, &self.state) {
+                    *active = None;
+                }
             }
         }
         if let Some(handle) = self._thread.take() {
-            // Best effort join; if something is wrong, don't block here.
+            // Best effort join.
+            //
+            // Note: This may block until the watchdog thread wakes up and observes `stop`.
+            // However, we intentionally avoid holding any global locks while waiting.
             let _ = handle.join();
         }
     }
@@ -218,6 +247,7 @@ mod tests {
     /// Basic smoke test: config parsing should disable when env var missing.
     #[test]
     fn watchdog_config_disabled_by_default() {
+        let _lock = lock_for_test_serialisation();
         std::env::remove_var("NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS");
         assert!(WatchdogConfig::from_env().is_none());
     }
@@ -228,6 +258,7 @@ mod tests {
     /// We keep this as a unit test to avoid exposing watchdog internals as public API.
     #[test]
     fn watchdog_heartbeat_updates_stage_and_timestamp() {
+        let _lock = lock_for_test_serialisation();
         let cfg = WatchdogConfig {
             stall_timeout: Duration::from_secs(60),
             abort_delay: Duration::from_secs(1),
@@ -248,11 +279,57 @@ mod tests {
     /// Regression guard: `monotonic_ms` should be non-decreasing.
     #[test]
     fn monotonic_ms_is_monotonic() {
+        let _lock = lock_for_test_serialisation();
         let mut last = monotonic_ms();
         for _ in 0..10 {
             let now = monotonic_ms();
             assert!(now >= last);
             last = now;
         }
+    }
+
+    /// Regression test: dropping a watchdog must not hold the global ACTIVE lock while it
+    /// waits for the watchdog thread to exit.
+    ///
+    /// Without this, a concurrent `beat()` from another thread can block for up to the
+    /// watchdog thread's sleep interval (currently up to 5 seconds), which contradicts the
+    /// intent of lightweight instrumentation.
+    #[test]
+    fn drop_does_not_block_beat_on_active_lock() {
+        let _lock = lock_for_test_serialisation();
+
+        let cfg = WatchdogConfig {
+            stall_timeout: Duration::from_secs(60),
+            abort_delay: Duration::from_secs(1),
+        };
+
+        let wd = Watchdog::start(cfg);
+
+        // Give the watchdog thread a chance to start and enter its sleep loop so `join()`
+        // is likely to block for a noticeable period.
+        thread::sleep(Duration::from_millis(100));
+
+        // Drop the watchdog on another thread so we can call `beat()` concurrently.
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        thread::spawn(move || {
+            drop(wd);
+            let _ = tx.send(());
+        });
+
+        // Small delay to increase the chance that the drop thread has reached `join()`.
+        thread::sleep(Duration::from_millis(20));
+
+        let start = std::time::Instant::now();
+        beat("concurrent beat during drop");
+        let elapsed = start.elapsed();
+
+        // If the ACTIVE lock is incorrectly held across `join()`, this can take ~5 seconds.
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "beat() was blocked for {elapsed:?}; drop() may be holding ACTIVE lock while joining"
+        );
+
+        // Ensure the drop thread completed (avoid a detached thread lingering in the test).
+        let _ = rx.recv_timeout(Duration::from_secs(10));
     }
 }
