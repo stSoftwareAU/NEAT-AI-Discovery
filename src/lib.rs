@@ -12,6 +12,7 @@ pub mod parquet_format;
 pub mod record;
 pub mod streaming;
 pub mod types;
+mod watchdog;
 
 use anyhow::Result;
 use once_cell::sync::OnceCell;

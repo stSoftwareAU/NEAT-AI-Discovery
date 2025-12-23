@@ -45,6 +45,10 @@ use std::sync::Arc;
 
 /// Combined analysis function that runs both synapse and neuron analysis.
 pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
+    // Optional hang watchdog for unattended workers.
+    // If enabled, this will emit a thread dump then abort the process if analysis stalls.
+    let _watchdog = crate::watchdog::start_from_env("analysis::analyze_all");
+
     let include_synapse = input.include_synapse_analysis.unwrap_or(true);
     let include_neuron = input.include_neuron_analysis.unwrap_or(true);
 
@@ -55,11 +59,14 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         });
     }
 
+    crate::watchdog::beat("analysis::analyze_all → loading parquet cache");
+
     // Pre-load ALL records from parquet in one pass. This is MUCH faster than
     // lazy-loading each neuron separately (1 scan vs ~2000 scans for large creatures).
     let shared_cache = Arc::new(implementation::RecordCache::new_adaptive(
         &input.parquet_file,
     )?);
+    crate::watchdog::beat("analysis::analyze_all → parquet cache loaded");
 
     let synapse_input = if include_synapse {
         Some(AnalyzeSynapsesInput {
@@ -91,6 +98,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Neuron discovery is more valuable as it can create new network structure.
     // With pre-loaded cache, both run fast, but neurons get priority if timeout approaches.
     let neuron_result = if let Some(inner) = neuron_input.clone() {
+        crate::watchdog::beat("analysis::analyze_all → neuron analysis starting");
         Some(implementation::analyze_neurons_with_cache(
             &inner,
             Arc::clone(&shared_cache),
@@ -98,8 +106,10 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     } else {
         None
     };
+    crate::watchdog::beat("analysis::analyze_all → neuron analysis finished");
 
     let synapse_result = if let Some(inner) = synapse_input.clone() {
+        crate::watchdog::beat("analysis::analyze_all → synapse analysis starting");
         Some(implementation::analyze_synapses_with_cache(
             &inner,
             Arc::clone(&shared_cache),
@@ -107,6 +117,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     } else {
         None
     };
+    crate::watchdog::beat("analysis::analyze_all → synapse analysis finished");
 
     Ok(AnalyzeAllResult {
         synapse: synapse_result,

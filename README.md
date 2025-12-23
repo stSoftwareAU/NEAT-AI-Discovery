@@ -1661,6 +1661,29 @@ Call graph:
 --- End of call graph (37 threads) ---
 ```
 
+**Important (unattended workers)**: `sample` is best-effort and has an internal timeout
+so it cannot hang your process forever while trying to print diagnostics.
+
+### Hang watchdog (unattended machines)
+
+Deadlocks are only one kind of hang. If the process becomes stuck (eg GPU driver wedge,
+wgpu call that never returns, or other kernel-level stall), you want the worker to crash
+so your orchestration can capture logs and restart.
+
+The library includes an optional stall watchdog that:
+- triggers a SIGUSR1 thread dump, then
+- aborts the process (so logs/crash reports are captured).
+
+Enable it with:
+
+```bash
+# Abort if discovery makes no progress for 30 minutes
+export NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS=1800
+
+# Optional: delay between SIGUSR1 dump and abort (default: 2 seconds)
+export NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS=2
+```
+
 **Note**: We use `SIGUSR1` (user-defined signal) which has no default action,
 making it safe for diagnostics. Java uses `SIGQUIT` (kill -3).
 

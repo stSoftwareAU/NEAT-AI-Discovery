@@ -212,28 +212,75 @@ fn dump_all_threads() {
 /// Run macOS `sample` command to capture all thread backtraces.
 #[cfg(target_os = "macos")]
 fn run_sample_command(pid: u32) {
-    use std::process::Command;
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
 
-    // Run sample for 1 millisecond to get a snapshot (not a profile)
-    let output = Command::new("sample")
+    // IMPORTANT: This must NEVER hang. It's used for debugging stuck processes.
+    //
+    // On some macOS installs, `sample` can itself hang (eg if the kernel is under
+    // extreme pressure or a driver is wedged). If we block here, we make the
+    // original hang harder to diagnose on unattended machines.
+    const SAMPLE_TIMEOUT_SECS: u64 = 5;
+
+    // Run sample for 1 second to get a snapshot (not a profile).
+    // Note: We use `-mayDie` to avoid requiring elevated permissions.
+    let mut child = match Command::new("sample")
         .args([&pid.to_string(), "1", "-mayDie"])
-        .output();
-
-    match output {
-        Ok(result) => {
-            if result.status.success() {
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                // Filter to show the most relevant parts
-                print_filtered_sample_output(&stdout);
-            } else {
-                let stderr = String::from_utf8_lossy(&result.stderr);
-                eprintln!("'sample' command failed: {stderr}");
-                eprintln!("Try manually: sample {pid} 1 -file /tmp/sample.txt");
-            }
-        }
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
         Err(e) => {
             eprintln!("Failed to run 'sample': {e}");
             eprintln!("Try manually: sample {pid} 1 -file /tmp/sample.txt");
+            return;
+        }
+    };
+
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+
+                if let Some(mut out) = child.stdout.take() {
+                    let _ = out.read_to_end(&mut stdout);
+                }
+                if let Some(mut err) = child.stderr.take() {
+                    let _ = err.read_to_end(&mut stderr);
+                }
+
+                if status.success() {
+                    let stdout = String::from_utf8_lossy(&stdout);
+                    // Filter to show the most relevant parts.
+                    print_filtered_sample_output(&stdout);
+                } else {
+                    let stderr = String::from_utf8_lossy(&stderr);
+                    eprintln!("'sample' command failed: {stderr}");
+                    eprintln!("Try manually: sample {pid} 1 -file /tmp/sample.txt");
+                }
+                return;
+            }
+            Ok(None) => {
+                if start.elapsed() > Duration::from_secs(SAMPLE_TIMEOUT_SECS) {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][debug] WARNING: 'sample' did not exit within {SAMPLE_TIMEOUT_SECS}s. \
+                         Skipping thread dump capture to avoid hanging the process."
+                    );
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                eprintln!("Failed to run 'sample': {e}");
+                eprintln!("Try manually: sample {pid} 1 -file /tmp/sample.txt");
+                return;
+            }
         }
     }
 }
