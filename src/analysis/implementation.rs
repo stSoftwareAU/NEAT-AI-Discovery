@@ -5805,42 +5805,13 @@ fn hard_tanh(x: f32) -> f32 {
     x.clamp(-1.0, 1.0)
 }
 
-/// ReLU activation for target simulation
-#[inline(always)]
-fn relu(x: f32) -> f32 {
-    x.max(0.0)
-}
-
-/// Get the activation function for a given squash name.
-/// Returns None for activations that are approximately linear and don't need simulation.
+/// Get the target simulation function for a squash name.
 ///
-/// v0.1.121: Added ELU, SELU, GELU, Softplus to improve prediction accuracy
-/// for these commonly-used non-linear activations.
+/// This delegates to `crate::activations::target_simulation_fn`, which is kept in sync
+/// with NEAT-AI's activation registry (and supports aliases + case-insensitive names).
 #[inline]
 fn get_target_activation_fn(squash: &str) -> Option<fn(f32) -> f32> {
-    match squash {
-        // Saturating activations - simulation critical near boundaries
-        "HARD_TANH" => Some(hard_tanh),
-        "TANH" => Some(|x: f32| x.tanh()),
-        "LOGISTIC" => Some(logistic_activation),
-        "CLIPPED" => Some(clipped_activation),
-        "BIPOLAR" => Some(bipolar_activation),
-        // ReLU family - simulation important for threshold behaviour
-        "ReLU" => Some(relu),
-        "LeakyReLU" => Some(leaky_relu_activation),
-        // Smooth non-linear activations - simulation improves accuracy (v0.1.121)
-        "ELU" => Some(elu_activation),
-        "SELU" => Some(selu_activation),
-        "GELU" => Some(gelu_activation),
-        "Softplus" => Some(softplus_activation),
-        // Additional production activations - simulation improves accuracy (Issue #134)
-        "BENT_IDENTITY" => Some(bent_identity_activation),
-        "SOFTSIGN" => Some(softsign_activation),
-        "ArcTan" => Some(arctan_activation),
-        "ReLU6" => Some(relu6_activation),
-        // IDENTITY (and other linear-ish squashes) don't need simulation
-        _ => None,
-    }
+    crate::activations::target_simulation_fn(squash)
 }
 
 /// Check if samples support target activation simulation (all have target data).

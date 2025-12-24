@@ -4,6 +4,7 @@
 //! during the discovery training phase, then scanning recorded data to identify
 //! beneficial new synapses/neurons that would reduce error.
 
+pub mod activations;
 pub mod analysis;
 pub mod debug;
 pub mod export;
