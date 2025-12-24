@@ -155,11 +155,20 @@ pub fn apply_scalar_squash(name: &str, x: f32) -> Option<f32> {
             }
         }
         "LOGSIGMOID" => {
-            // -ln(1 + exp(-x)), with overflow protection.
-            if x <= -LN_F32_MAX {
-                Some(f32::MIN)
+            // LOGSIGMOID(x) = -ln(1 + exp(-x))
+            //
+            // Numerically-stable formulation (important for f32):
+            // - For x >= 0:  -ln(1 + exp(-x))        = -ln1p(exp(-x))  (no overflow; exp(-x) <= 1)
+            // - For x < 0:   -ln(1 + exp(-x))
+            //              = -ln(exp(-x) * (1 + exp(x)))
+            //              = -(-x + ln(1 + exp(x)))
+            //              = x - ln1p(exp(x))        (no overflow; exp(x) <= 1)
+            //
+            // This also preserves the correct asymptote: LOGSIGMOID(x) → x as x → -∞.
+            if x >= 0.0 {
+                Some(-(-x).exp().ln_1p())
             } else {
-                Some(-(1.0 + (-x).exp()).ln())
+                Some(x - x.exp().ln_1p())
             }
         }
         "MISH" => {
@@ -268,10 +277,11 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
             }
         }),
         "LOGSIGMOID" => Some(|x| {
-            if x <= -LN_F32_MAX {
-                f32::MIN
+            // See `apply_scalar_squash` for derivation.
+            if x >= 0.0 {
+                -(-x).exp().ln_1p()
             } else {
-                -(1.0 + (-x).exp()).ln()
+                x - x.exp().ln_1p()
             }
         }),
         "MISH" => Some(|x| {

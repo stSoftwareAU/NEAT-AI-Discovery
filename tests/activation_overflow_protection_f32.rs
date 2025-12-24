@@ -40,34 +40,38 @@ fn exponential_target_simulation_should_saturate_to_f32_max_before_overflow() {
 }
 
 #[test]
-fn logsigmoid_should_saturate_to_f32_min_before_overflow() {
-    let x = -100.0_f32; // exp(-x)=exp(100) overflows for f32
+fn logsigmoid_should_approach_x_for_large_negative_inputs() {
+    // LOGSIGMOID(x) = -ln(1 + exp(-x)) has asymptotic behaviour LOGSIGMOID(x) → x as x → -∞.
+    //
+    // We also want overflow protection: a naive implementation that computes exp(-x) for
+    // x=-100 would attempt exp(100) which overflows for f32. The stable formulation avoids
+    // this and should return a value very close to x.
+    let x = -100.0_f32;
     let y = neat_ai_discovery::activations::apply_scalar_squash("LOGSIGMOID", x)
         .expect("LOGSIGMOID must be a scalar squash");
     assert!(
         y.is_finite(),
-        "Expected LOGSIGMOID({x}) to be finite (saturated), got {y}"
+        "Expected LOGSIGMOID({x}) to be finite, got {y}"
     );
-    assert_eq!(
-        y,
-        f32::MIN,
-        "Expected LOGSIGMOID({x}) to saturate to f32::MIN"
+    assert!(
+        (y - x).abs() < 1e-3,
+        "Expected LOGSIGMOID({x}) ≈ {x} for large negative x, got {y}"
     );
 }
 
 #[test]
-fn logsigmoid_target_simulation_should_saturate_to_f32_min_before_overflow() {
-    let x = -100.0_f32; // exp(-x)=exp(100) overflows for f32
+fn logsigmoid_target_simulation_should_approach_x_for_large_negative_inputs() {
+    // Target simulation must match the scalar squash behaviour for large negative inputs.
+    let x = -100.0_f32;
     let f = neat_ai_discovery::activations::target_simulation_fn("LOGSIGMOID")
         .expect("LOGSIGMOID must have a target simulation function");
     let y = f(x);
     assert!(
         y.is_finite(),
-        "Expected LOGSIGMOID target simulation({x}) to be finite (saturated), got {y}"
+        "Expected LOGSIGMOID target simulation({x}) to be finite, got {y}"
     );
-    assert_eq!(
-        y,
-        f32::MIN,
-        "Expected LOGSIGMOID target simulation({x}) to saturate to f32::MIN"
+    assert!(
+        (y - x).abs() < 1e-3,
+        "Expected LOGSIGMOID target simulation({x}) ≈ {x} for large negative x, got {y}"
     );
 }
