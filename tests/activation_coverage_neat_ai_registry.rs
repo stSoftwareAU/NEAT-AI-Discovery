@@ -26,17 +26,33 @@ fn extract_activation_name(ts_source: &str) -> Option<String> {
         if !line.contains(needle) || !line.contains('=') || !line.contains('"') {
             continue;
         }
-        // Find the first occurrence of NAME = "..."
-        let name_pos = line.find("NAME")?;
-        let after_name = &line[name_pos..];
-        let eq_pos = after_name.find('=')?;
-        let after_eq = after_name[(eq_pos + 1)..].trim();
+        // Find the first occurrence of `NAME = "..."`.
+        //
+        // Important: do NOT use `?` in this loop, because a malformed line should not
+        // cause the entire function to return `None`. We want to keep scanning until
+        // we find a valid `NAME = "..."` declaration. (See regression test below.)
+        let Some(name_pos) = line.find("NAME") else {
+            continue;
+        };
+
+        // Only parse '=' that occurs *after* NAME. (Some comment lines may contain both,
+        // but in a different order, eg `// x = "5" NAME`.)
+        let after_name = &line[(name_pos + "NAME".len())..];
+        let Some(eq_pos) = after_name.find('=') else {
+            continue;
+        };
+
+        let after_eq = after_name[(eq_pos + 1)..].trim_start();
         if !after_eq.starts_with('"') {
             continue;
         }
+
         let after_quote = &after_eq[1..];
-        let end_quote = after_quote.find('"')?;
-        let value = &after_quote[..end_quote];
+        let Some(end_quote) = after_quote.find('"') else {
+            continue;
+        };
+
+        let value = after_quote[..end_quote].trim();
         if !value.is_empty() {
             return Some(value.to_string());
         }
@@ -139,4 +155,21 @@ fn discovery_knows_all_neat_ai_activation_names() {
             "Discovery recognises these squashes but cannot compute a scalar f(x) for them: {not_scalar_but_expected_scalar:?}"
         );
     }
+}
+
+#[test]
+fn extract_activation_name_skips_malformed_lines_and_keeps_scanning() {
+    // Regression test (24-Dec-2025):
+    // A line may contain `NAME`, `=` and quotes but still be malformed for our parser,
+    // for example when '=' appears before 'NAME'. The extractor must not stop early;
+    // it should keep scanning until it finds a valid `NAME = "..."` declaration.
+    let ts_source = r#"
+// x = "5" NAME
+public static readonly NAME = "Softplus";
+"#;
+
+    assert_eq!(
+        extract_activation_name(ts_source),
+        Some("Softplus".to_string())
+    );
 }
