@@ -17,6 +17,12 @@
 
 use std::borrow::Cow;
 
+/// Natural logarithm of the largest finite `f32`.
+///
+/// `ln(f32::MAX) ≈ 88.72`, so using `88.0` as a conservative cutoff prevents `exp(x)`
+/// overflow from producing `inf` for `f32` inputs.
+const LN_F32_MAX: f32 = 88.0;
+
 /// Uppercase, canonical-ish name for an activation.
 ///
 /// We normalise to an uppercase string so matching is case-insensitive and robust to
@@ -114,7 +120,8 @@ pub fn apply_scalar_squash(name: &str, x: f32) -> Option<f32> {
         "ELU" => Some(if x >= 0.0 { x } else { x.exp() - 1.0 }),
         "EXPONENTIAL" => {
             // Match NEAT-AI's safety behaviour: avoid overflow when exp(x) would blow up.
-            if x >= 709.0 {
+            // Note: this is `f32`, so the safe cutoff is `ln(f32::MAX)` (not `ln(f64::MAX)`).
+            if x >= LN_F32_MAX {
                 Some(f32::MAX)
             } else {
                 Some(x.exp())
@@ -149,7 +156,7 @@ pub fn apply_scalar_squash(name: &str, x: f32) -> Option<f32> {
         }
         "LOGSIGMOID" => {
             // -ln(1 + exp(-x)), with overflow protection.
-            if x <= -709.0 {
+            if x <= -LN_F32_MAX {
                 Some(f32::MIN)
             } else {
                 Some(-(1.0 + (-x).exp()).ln())
@@ -238,7 +245,7 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
         "COSINE" => Some(|x| x.cos()),
         "CUBE" => Some(|x| x * x * x),
         "ELU" => Some(|x| if x >= 0.0 { x } else { x.exp() - 1.0 }),
-        "EXPONENTIAL" => Some(|x| if x >= 709.0 { f32::MAX } else { x.exp() }),
+        "EXPONENTIAL" => Some(|x| if x >= LN_F32_MAX { f32::MAX } else { x.exp() }),
         "GAUSSIAN" => Some(|x| {
             let safe_x = x.abs().min(100.0);
             (-safe_x * safe_x).exp()
@@ -261,7 +268,7 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
             }
         }),
         "LOGSIGMOID" => Some(|x| {
-            if x <= -709.0 {
+            if x <= -LN_F32_MAX {
                 f32::MIN
             } else {
                 -(1.0 + (-x).exp()).ln()
