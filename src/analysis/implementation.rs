@@ -2894,16 +2894,6 @@ fn elu_activation(x: f32) -> f32 {
     }
 }
 
-fn selu_activation(x: f32) -> f32 {
-    const SELU_ALPHA: f32 = 1.673_263_2;
-    const SELU_LAMBDA: f32 = 1.050_701;
-    if x >= 0.0 {
-        SELU_LAMBDA * x
-    } else {
-        SELU_LAMBDA * SELU_ALPHA * (x.exp() - 1.0)
-    }
-}
-
 fn softplus_activation(x: f32) -> f32 {
     if x > 20.0 {
         x
@@ -2970,16 +2960,6 @@ fn mish_activation(x: f32) -> f32 {
 
 /// Swish - 1 successful discovery evolved ReLU → Swish
 /// Self-gated activation: x * sigmoid(x)
-fn swish_activation(x: f32) -> f32 {
-    let sigmoid = if x >= 0.0 {
-        1.0 / (1.0 + (-x).exp())
-    } else {
-        let exp_x = x.exp();
-        exp_x / (1.0 + exp_x)
-    };
-    x * sigmoid
-}
-
 /// HARD_TANH - 1 successful discovery evolved CLIPPED → HARD_TANH
 /// Linear in [-1, 1], saturates outside. Same as CLIPPED but named for NEAT-AI.
 fn hard_tanh_activation(x: f32) -> f32 {
@@ -3034,7 +3014,7 @@ fn activation_name_to_gpu_id(name: &str) -> u32 {
     }
 }
 
-pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 17] = [
+pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 15] = [
     // ========================================================================
     // ORIGINAL ACTIVATIONS (v0.1.x)
     // ========================================================================
@@ -3050,13 +3030,6 @@ pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 17] = [
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_WIDE,
         activation: elu_activation,
-        min_improvement: 0.0,
-    },
-    ActivationCandidateSpec {
-        name: "SELU",
-        orientations: &ORIENTATIONS_BIDIRECTIONAL,
-        scales: &SCALES_SMOOTH,
-        activation: selu_activation,
         min_improvement: 0.0,
     },
     ActivationCandidateSpec {
@@ -3116,19 +3089,18 @@ pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 17] = [
     // new neuron type. In practice it behaves very similarly to ReLU (α=0.01),
     // and production runs show many low-quality LeakyReLU candidates. We still
     // fully support LeakyReLU in existing creatures (targets and sources).
+    //
+    // NOTE (Issue #148, 26-Dec-2025): We also do not propose Swish or SELU as new
+    // neuron squashes. In our value-domain discovery workflow they are close enough
+    // to ReLU in practice that scanning them is usually a poor trade in time-bounded
+    // runs. This preserves the budget to scan more (source,target) possibilities
+    // while still allowing existing creatures to use any squash.
     ActivationCandidateSpec {
         name: "Mish",
         orientations: &ORIENTATIONS_BIDIRECTIONAL,
         scales: &SCALES_SMOOTH,
         activation: mish_activation,
         min_improvement: 0.0, // 2 successful discoveries evolved TO Mish
-    },
-    ActivationCandidateSpec {
-        name: "Swish",
-        orientations: &ORIENTATIONS_BIDIRECTIONAL,
-        scales: &SCALES_SMOOTH,
-        activation: swish_activation,
-        min_improvement: 0.0, // 1 successful discovery evolved ReLU → Swish
     },
     ActivationCandidateSpec {
         name: "HARD_TANH",
@@ -8477,6 +8449,10 @@ Pages speculative:                        12345.
         assert!(names.contains(&"CLIPPED"));
         assert!(names.contains(&"ABSOLUTE"));
         assert!(
+            !names.contains(&"SELU"),
+            "SELU should not be suggested as a new neuron activation (Issue #148: time-bounded runs)"
+        );
+        assert!(
             !names.contains(&"INVERSE"),
             "INVERSE (complement) should not be suggested as a new neuron activation. \
              It can be represented via IDENTITY with bias and negative incoming weights."
@@ -8491,8 +8467,8 @@ Pages speculative:                        12345.
             "Mish should be included - 2 successful discoveries!"
         );
         assert!(
-            names.contains(&"Swish"),
-            "Swish should be included - successful discovery!"
+            !names.contains(&"Swish"),
+            "Swish should not be suggested as a new neuron activation (Issue #148: time-bounded runs)"
         );
         assert!(names.contains(&"HARD_TANH"), "HARD_TANH should be included");
         assert!(
@@ -8506,7 +8482,7 @@ Pages speculative:                        12345.
         assert!(names.contains(&"ArcTan"), "ArcTan should be included");
         assert!(names.contains(&"ReLU6"), "ReLU6 should be included");
         // Total count
-        assert_eq!(names.len(), 17, "Should have 17 activation specs");
+        assert_eq!(names.len(), 15, "Should have 15 activation specs");
     }
 
     // ==================== Saturation Detection Tests (Issue #123) ====================
