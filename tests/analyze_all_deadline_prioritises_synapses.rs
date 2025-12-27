@@ -47,22 +47,21 @@ fn create_records_with_value(parquet_file: &str) {
             records.push(DiscoverRecord::new(
                 obs_index,
                 format!("input-{input_idx}"),
-                Some((input_idx as f32 + 1.0) * 0.2),  // value (pre-activation)
-                (input_idx as f32 + 1.0) * 0.2,        // activation
-                vec![0.0],                              // errors
+                Some((input_idx as f32 + 1.0) * 0.2), // value (pre-activation)
+                (input_idx as f32 + 1.0) * 0.2,       // activation
+                vec![0.0],                            // errors
             ));
         }
         // Output neuron records with value data
         records.push(DiscoverRecord::new(
             obs_index,
             "output-0".to_string(),
-            Some(0.3),          // value (pre-activation) - present!
-            0.2,                // activation
+            Some(0.3),                                  // value (pre-activation) - present!
+            0.2,                                        // activation
             vec![0.1 * ((obs_index % 3) as f32 - 1.0)], // varying errors
         ));
     }
-    write_records_to_parquet(parquet_file, &records)
-        .expect("Failed to write test records");
+    write_records_to_parquet(parquet_file, &records).expect("Failed to write test records");
 }
 
 /// Create test records WITHOUT target_value (pre-activation) data.
@@ -74,22 +73,21 @@ fn create_records_without_value(parquet_file: &str) {
             records.push(DiscoverRecord::new(
                 obs_index,
                 format!("input-{input_idx}"),
-                None,               // value - MISSING
-                (input_idx as f32 + 1.0) * 0.2,  // activation
-                vec![0.0],          // errors
+                None,                           // value - MISSING
+                (input_idx as f32 + 1.0) * 0.2, // activation
+                vec![0.0],                      // errors
             ));
         }
         // Output neuron records WITHOUT value data
         records.push(DiscoverRecord::new(
             obs_index,
             "output-0".to_string(),
-            None,               // value - MISSING!
-            0.2,                // activation
+            None,                                       // value - MISSING!
+            0.2,                                        // activation
             vec![0.1 * ((obs_index % 3) as f32 - 1.0)], // varying errors
         ));
     }
-    write_records_to_parquet(parquet_file, &records)
-        .expect("Failed to write test records");
+    write_records_to_parquet(parquet_file, &records).expect("Failed to write test records");
 }
 
 /// Test that synapse analysis runs when a deadline is set.
@@ -299,7 +297,8 @@ fn candidate_counts_tracked_correctly() {
     // Synapse metadata
     if let Some(synapse_result) = &result.synapse {
         let metadata = &synapse_result.metadata;
-        let actual_returned = synapse_result.helpful_synapses.len() + synapse_result.harmful_synapses.len();
+        let actual_returned =
+            synapse_result.helpful_synapses.len() + synapse_result.harmful_synapses.len();
 
         assert_eq!(
             metadata.candidates_returned, actual_returned,
@@ -381,8 +380,7 @@ fn truncation_reflected_in_candidate_counts() {
             vec![0.1 * (obs_index as f32 % 3.0 - 1.0)], // Varying errors
         ));
     }
-    write_records_to_parquet(&parquet_file, &records)
-        .expect("Failed to write test records");
+    write_records_to_parquet(&parquet_file, &records).expect("Failed to write test records");
 
     // Request only 2 candidates but there should be more available
     let input = AnalyzeAllInput {
@@ -419,4 +417,3 @@ fn truncation_reflected_in_candidate_counts() {
         }
     }
 }
-
