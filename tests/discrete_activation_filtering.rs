@@ -1,8 +1,8 @@
-//! Test that synapse analysis now works for STEP/BIPOLAR neurons using threshold-crossing model.
+//! Test that synapse analysis works for STEP/BIPOLAR neurons with proper simulation functions.
 //!
 //! Previously, neurons with discrete activations were filtered out from synapse analysis because
-//! the linear error model fails for them. In v0.2.18, we implemented threshold-crossing model
-//! that counts helpful/harmful flips, allowing synapse candidates for STEP/BIPOLAR targets.
+//! the linear error model fails for them. In v0.2.18, we enabled simulation for STEP/BIPOLAR
+//! that accurately predicts output flips, allowing synapse candidates for these targets.
 
 mod common;
 
@@ -174,7 +174,7 @@ fn step_neuron_receives_synapse_candidates() {
                 // Should NOT be "discrete_activation_filtered" since we now handle STEP
                 assert_ne!(
                     diag["reason"], "discrete_activation_filtered",
-                    "STEP neurons should no longer be filtered - threshold-crossing model is used"
+                    "STEP neurons should no longer be filtered - simulation function is now available"
                 );
             }
         }
@@ -218,7 +218,7 @@ fn bipolar_neuron_receives_synapse_candidates() {
             if diag["targetNeuronUuid"] == "output-bipolar" {
                 assert_ne!(
                     diag["reason"], "discrete_activation_filtered",
-                    "BIPOLAR neurons should no longer be filtered - threshold-crossing model is used"
+                    "BIPOLAR neurons should no longer be filtered - simulation function is available"
                 );
             }
         }

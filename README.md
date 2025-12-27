@@ -1165,21 +1165,16 @@ The analysis output now includes metadata to diagnose prediction issues:
 
 #### Synapse analysis for all squash types (v0.2.18)
 
-**FIX**: Synapse analysis now works for **all** target neuron squash types, including STEP/BIPOLAR.
+**FIX**: STEP neurons now get proper simulation functions, matching BIPOLAR handling.
 
-Previously, STEP/BIPOLAR neurons were incorrectly filtered from synapse analysis. This was
-unnecessary because synapse analysis uses **actual recorded errors and activations**, not
-predictions based on the activation function.
+Previously, `target_simulation_fn` returned `None` for STEP (claiming "handled via threshold-
+crossing model"), but returned `Some` for BIPOLAR. This inconsistency meant:
+- **BIPOLAR**: Got accurate simulation predicting output flips (-1 ↔ 1)
+- **STEP**: Fell back to linear error model (inaccurate for threshold functions)
 
-The improvement calculation is simple and works universally:
-```
-optimal_weight = Σ(error × activation) / Σ(activation²)
-improvement = reduction in error variance
-```
-
-If the source neuron's activation correlates with the target neuron's error, adding a synapse
-will help - regardless of what activation function the target uses. The squash function only
-affects what the output **is**, but we're measuring what the error **is** from recordings.
+The fix adds a proper simulation function for STEP: `|x| if x > 0.0 { 1.0 } else { 0.0 }`.
+Both STEP and BIPOLAR now use simulation that accurately predicts when synapse contributions
+will cross the zero threshold and flip the discrete output.
 
 #### Creature-level metrics (v0.1.169, Issue #128)
 

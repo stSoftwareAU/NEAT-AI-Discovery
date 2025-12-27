@@ -239,9 +239,11 @@ pub fn apply_scalar_squash(name: &str, x: f32) -> Option<f32> {
 /// so hot loops can avoid repeated string matching.
 ///
 /// Notes:
-/// - We intentionally return `None` for aggregate squashes.
-/// - We also return `None` for STEP because Discovery uses a dedicated threshold-crossing model
-///   (see README: "Threshold-crossing model for STEP/BIPOLAR"). Treating STEP as smooth is misleading.
+/// - We intentionally return `None` for aggregate squashes (MINIMUM, MAXIMUM, etc.)
+///   because they cannot be represented as `f(value)`.
+/// - STEP and BIPOLAR both return their threshold functions. While these are discrete,
+///   the simulation correctly predicts output flips when a synapse contribution crosses
+///   the zero threshold (see README: "Threshold-crossing model for STEP/BIPOLAR").
 pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
     let n = normalise_squash_name(name);
     match n.as_ref() {
@@ -323,8 +325,7 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
             };
             1.0 / safe_x
         }),
-        // STEP handled via threshold-crossing model.
-        "STEP" => None,
+        "STEP" => Some(|x| if x > 0.0 { 1.0 } else { 0.0 }),
         "SWISH" => Some(|x| {
             let sigmoid = if x >= 0.0 {
                 1.0 / (1.0 + (-x).exp())
@@ -337,5 +338,66 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
         "TAN" => Some(|x| x.tan()),
         "TANH" => Some(|x| x.tanh()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify STEP and BIPOLAR both return simulation functions for consistent handling.
+    /// This was a bug fix in v0.2.18 where STEP returned None, causing it to fall back
+    /// to the linear error model while BIPOLAR got proper threshold simulation.
+    #[test]
+    fn step_and_bipolar_both_have_simulation_functions() {
+        let step_fn = target_simulation_fn("STEP");
+        let bipolar_fn = target_simulation_fn("BIPOLAR");
+
+        assert!(
+            step_fn.is_some(),
+            "STEP must return a simulation function for consistent handling with BIPOLAR"
+        );
+        assert!(
+            bipolar_fn.is_some(),
+            "BIPOLAR must return a simulation function"
+        );
+
+        // Verify both functions work correctly
+        let step = step_fn.unwrap();
+        let bipolar = bipolar_fn.unwrap();
+
+        // STEP: 0 for x <= 0, 1 for x > 0
+        assert_eq!(step(-1.0), 0.0);
+        assert_eq!(step(0.0), 0.0);
+        assert_eq!(step(0.001), 1.0);
+        assert_eq!(step(1.0), 1.0);
+
+        // BIPOLAR: -1 for x <= 0, 1 for x > 0
+        assert_eq!(bipolar(-1.0), -1.0);
+        assert_eq!(bipolar(0.0), -1.0);
+        assert_eq!(bipolar(0.001), 1.0);
+        assert_eq!(bipolar(1.0), 1.0);
+    }
+
+    /// Case-insensitive matching should work for STEP/BIPOLAR.
+    #[test]
+    fn step_bipolar_case_insensitive() {
+        assert!(target_simulation_fn("step").is_some());
+        assert!(target_simulation_fn("Step").is_some());
+        assert!(target_simulation_fn("STEP").is_some());
+
+        assert!(target_simulation_fn("bipolar").is_some());
+        assert!(target_simulation_fn("Bipolar").is_some());
+        assert!(target_simulation_fn("BIPOLAR").is_some());
+    }
+
+    /// Aggregate squashes should return None (they cannot be simulated as f(x)).
+    #[test]
+    fn aggregate_squashes_return_none() {
+        assert!(target_simulation_fn("MINIMUM").is_none());
+        assert!(target_simulation_fn("MAXIMUM").is_none());
+        assert!(target_simulation_fn("IF").is_none());
+        assert!(target_simulation_fn("MEAN").is_none());
+        assert!(target_simulation_fn("HYPOT").is_none());
     }
 }

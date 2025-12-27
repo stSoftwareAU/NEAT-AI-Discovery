@@ -8678,9 +8678,10 @@ pub(crate) fn analyze_synapses_with_cache(
     let diagnostics = Arc::new(Mutex::new(TargetDiagnostics::new(&unique_focus)));
 
     let deadline = build_deadline(input.analysis_deadline_ms);
-    // Randomize the focus neuron order so that repeated runs with timeouts will
+    // Randomise the focus neuron order so that repeated runs with timeouts will
     // eventually cover all neurons. Convert to owned strings, shuffle, then use.
-    // Note: STEP/BIPOLAR neurons are now included - we use threshold-crossing model for them.
+    // STEP/BIPOLAR neurons are now included - both get proper simulation functions
+    // that accurately predict output flips when synapse contributions cross the threshold.
     let mut focus_order: Vec<String> = unique_focus.iter().map(|s| (*s).clone()).collect();
 
     let mut rng = thread_rng();
