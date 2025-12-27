@@ -7475,6 +7475,10 @@ pub(crate) fn analyze_neurons_with_cache(
             helpful_neurons: Vec::new(),
             gpu_used: true,
             no_candidate_reasons,
+            metadata: super::shared::NeuronAnalysisMetadata {
+                candidates_found: 0,
+                candidates_returned: 0,
+            },
         });
     }
 
@@ -7986,6 +7990,9 @@ pub(crate) fn analyze_neurons_with_cache(
             .unwrap_or(Ordering::Equal)
     });
 
+    // Track candidates_found before truncation/pairing for metadata
+    let candidates_found = helpful_results.len();
+
     // Production experiment: pair "extreme" candidates with a conservative variant.
     // This keeps the output size bounded by max_candidates while increasing
     // evaluation diversity in TypeScript.
@@ -7994,6 +8001,9 @@ pub(crate) fn analyze_neurons_with_cache(
         input.max_candidates,
     );
 
+    // Track candidates_returned after pairing/truncation
+    let candidates_returned = helpful_results.len();
+
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
     diagnostics.emit_logs();
 
@@ -8001,6 +8011,10 @@ pub(crate) fn analyze_neurons_with_cache(
         helpful_neurons: helpful_results,
         gpu_used,
         no_candidate_reasons,
+        metadata: super::shared::NeuronAnalysisMetadata {
+            candidates_found,
+            candidates_returned,
+        },
     })
 }
 
@@ -8725,6 +8739,11 @@ pub(crate) fn analyze_synapses_with_cache(
     let helpful_fallback = Arc::new(Mutex::new(Option::<CandidateSynapseJson>::None));
     let analysis_timed_out = Arc::new(Mutex::new(false));
 
+    // Metadata tracking for observability (v0.2.17+)
+    // These track whether target_value was available and whether saturation-aware simulation was used
+    let metadata_target_value_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let metadata_saturation_aware_used = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
     let existing_synapses_arc = Arc::new(existing_synapses);
@@ -9072,6 +9091,16 @@ pub(crate) fn analyze_synapses_with_cache(
                     .iter()
                     .map(|w| w.samples.clone())
                     .collect();
+
+                // Track metadata: check if any samples have target_value data
+                // This is used to determine if saturation-aware simulation was possible.
+                for samples in &helpful_samples {
+                    if samples.iter().any(|s| s.target_value.is_some()) {
+                        metadata_target_value_seen.store(true, std::sync::atomic::Ordering::Relaxed);
+                        break;
+                    }
+                }
+
                 let helpful_stats_batch = gpu.evaluate_helpful_batch(helpful_samples, &deadline)?;
 
                 // Process results - collect all updates first, then apply in batches (reduces mutex contention)
@@ -9121,6 +9150,14 @@ pub(crate) fn analyze_synapses_with_cache(
                     let target_squash = neuron_squash_map_arc
                         .get(&work.target_uuid)
                         .map(|s| s.as_str());
+
+                    // Track metadata: check if saturation-aware simulation is used for this candidate.
+                    // get_target_simulation_fn returns Some when:
+                    // 1. The target squash is a supported saturating activation, AND
+                    // 2. All samples have target_value/target_activation data
+                    if get_target_simulation_fn(&work.samples, target_squash).is_some() {
+                        metadata_saturation_aware_used.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
 
                     // Compute expected improvement using saturation-aware model when target data is available.
                     // Falls back to linear model when target_value/target_activation are not recorded.
@@ -9423,19 +9460,38 @@ pub(crate) fn analyze_synapses_with_cache(
             .unwrap_or(Ordering::Equal)
     });
 
+    // Track candidates_found before truncation for metadata
+    let candidates_found = helpful_results.len() + harmful_results.len();
+
     if let Some(limit) = input.max_candidates {
         helpful_results.truncate(limit);
         harmful_results.truncate(limit);
     }
 
+    // Track candidates_returned after truncation
+    let candidates_returned = helpful_results.len() + harmful_results.len();
+
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
     diagnostics.emit_logs();
+
+    // Build metadata for observability (v0.2.17+)
+    // Note: target_value_available and saturation_aware_simulation_used are tracked
+    // during the inner analysis loop via atomic flags.
+    let metadata = super::shared::SynapseAnalysisMetadata {
+        target_value_available: metadata_target_value_seen
+            .load(std::sync::atomic::Ordering::Relaxed),
+        saturation_aware_simulation_used: metadata_saturation_aware_used
+            .load(std::sync::atomic::Ordering::Relaxed),
+        candidates_found,
+        candidates_returned,
+    };
 
     Ok(AnalyzeSynapsesResult {
         helpful_synapses: helpful_results,
         harmful_synapses: harmful_results,
         gpu_used,
         no_candidate_reasons,
+        metadata,
     })
 }
 

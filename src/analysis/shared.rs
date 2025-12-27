@@ -2,6 +2,46 @@
 
 use crate::{CandidateNeuronJson, CandidateSynapseJson};
 
+/// Metadata about synapse analysis for diagnostics and observability.
+///
+/// This metadata helps callers understand:
+/// - Whether prediction accuracy is degraded (missing `value` data)
+/// - Whether candidates were truncated by `maxCandidates`
+/// - What fraction of the analysis budget was consumed
+#[derive(Debug, Default, Clone)]
+pub struct SynapseAnalysisMetadata {
+    /// Whether `target_value` (pre-activation) was available in the recorded data.
+    ///
+    /// If `false`, the saturation-aware simulation path cannot be used and predictions
+    /// may be less accurate for saturating activation functions like `HARD_TANH`.
+    pub target_value_available: bool,
+
+    /// Whether saturation-aware simulation was used for at least one candidate.
+    ///
+    /// This is `true` when both:
+    /// 1. `target_value` is available, AND
+    /// 2. The target neuron has a supported saturating activation (e.g., HARD_TANH)
+    ///
+    /// If `false` but the target has a saturating activation, predictions may invert.
+    pub saturation_aware_simulation_used: bool,
+
+    /// Total number of synapse candidates found during analysis (before truncation).
+    pub candidates_found: usize,
+
+    /// Number of synapse candidates returned to caller (after `maxCandidates` truncation).
+    pub candidates_returned: usize,
+}
+
+/// Metadata about neuron analysis for diagnostics and observability.
+#[derive(Debug, Default, Clone)]
+pub struct NeuronAnalysisMetadata {
+    /// Total number of neuron candidates found during analysis (before truncation).
+    pub candidates_found: usize,
+
+    /// Number of neuron candidates returned to caller (after `maxCandidates` truncation).
+    pub candidates_returned: usize,
+}
+
 /// Result of synapse analysis
 #[derive(Debug)]
 pub struct AnalyzeSynapsesResult {
@@ -9,6 +49,8 @@ pub struct AnalyzeSynapsesResult {
     pub harmful_synapses: Vec<CandidateSynapseJson>,
     pub gpu_used: bool,
     pub no_candidate_reasons: Vec<SynapseNoCandidateSummary>,
+    /// Metadata about the analysis run for diagnostics (v0.2.17+).
+    pub metadata: SynapseAnalysisMetadata,
 }
 
 /// Result of neuron analysis
@@ -17,6 +59,8 @@ pub struct AnalyzeNeuronsResult {
     pub helpful_neurons: Vec<CandidateNeuronJson>,
     pub gpu_used: bool,
     pub no_candidate_reasons: Vec<NeuronNoCandidateSummary>,
+    /// Metadata about the analysis run for diagnostics (v0.2.17+).
+    pub metadata: NeuronAnalysisMetadata,
 }
 
 /// Combined result of both synapse and neuron analysis

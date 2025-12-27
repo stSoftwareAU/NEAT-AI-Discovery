@@ -1125,6 +1125,44 @@ messages like:
 [NEAT-AI-Discovery][verbose] Using threshold-crossing model for 2 STEP/BIPOLAR neurons: [...]
 ```
 
+#### Synapse-friendly discovery (v0.2.17)
+
+**FEATURE**: Synapse analysis now runs first when a deadline is set, preventing starvation.
+
+Previously, neuron analysis ran first and could consume the entire `analysisDeadlineMs` budget,
+leaving zero time for synapse analysis. This caused "no add-synapses candidates" even when
+many potential synapses existed.
+
+**Analysis ordering (v0.2.17+)**:
+| Deadline Set | Analysis Order | Rationale |
+|--------------|----------------|-----------|
+| Yes | Synapses → Neurons | Prevents synapse starvation |
+| No | Neurons → Synapses | Original behaviour preserved |
+
+**New metadata fields (v0.2.17+)**:
+
+The analysis output now includes metadata to diagnose prediction issues:
+
+**Synapse analysis metadata** (`synapseMetadata`):
+| Field | Description |
+|-------|-------------|
+| `targetValueAvailable` | Whether pre-activation `value` data was in recordings |
+| `saturationAwareSimulationUsed` | Whether saturation-aware simulation was used |
+| `candidatesFound` | Total candidates found before truncation |
+| `candidatesReturned` | Candidates returned after `maxCandidates` limit |
+
+**Neuron analysis metadata** (`neuronMetadata`):
+| Field | Description |
+|-------|-------------|
+| `candidatesFound` | Total candidates found before pairing/truncation |
+| `candidatesReturned` | Candidates returned after `maxCandidates` limit |
+
+**Why this matters**:
+- If `targetValueAvailable = false`, predictions may be inaccurate for saturating activations
+  (HARD_TANH, TANH, etc.) because the linear fallback model is used
+- If `candidatesFound > candidatesReturned`, increase `maxSynapseCandidates`/`maxNeuronCandidates`
+- If synapse candidates are still zero, check if deadline is too short or focus neurons are filtered
+
 #### Creature-level metrics (v0.1.169, Issue #128)
 
 **CRITICAL CHANGE**: All discovery candidates now return **creature-level** metrics instead
