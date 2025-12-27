@@ -7989,18 +7989,25 @@ pub(crate) fn analyze_neurons_with_cache(
             .unwrap_or(Ordering::Equal)
     });
 
-    // Track candidates_found before truncation/pairing for metadata
-    let candidates_found = helpful_results.len();
-
     // Production experiment: pair "extreme" candidates with a conservative variant.
-    // This keeps the output size bounded by max_candidates while increasing
-    // evaluation diversity in TypeScript.
+    // Pass None for limit here - we'll truncate separately so that candidates_found
+    // correctly includes generated variants.
     helpful_results = crate::analysis::utils::pair_extreme_candidates_with_conservative_variants(
         helpful_results,
-        input.max_candidates,
+        None, // No limit - truncate separately after capturing candidates_found
     );
 
-    // Track candidates_returned after pairing/truncation
+    // Track candidates_found AFTER pairing but BEFORE truncation.
+    // This ensures candidates_found >= candidates_returned always holds, which is
+    // the expected semantic for this metric pair ("found" >= "returned").
+    let candidates_found = helpful_results.len();
+
+    // Apply max_candidates limit (truncation)
+    if let Some(limit) = input.max_candidates {
+        helpful_results.truncate(limit);
+    }
+
+    // Track candidates_returned AFTER truncation
     let candidates_returned = helpful_results.len();
 
     let no_candidate_reasons = diagnostics.no_candidate_summaries();

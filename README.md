@@ -1154,7 +1154,7 @@ The analysis output now includes metadata to diagnose prediction issues:
 **Neuron analysis metadata** (`neuronMetadata`):
 | Field | Description |
 |-------|-------------|
-| `candidatesFound` | Total candidates found before pairing/truncation |
+| `candidatesFound` | Total candidates including paired variants, before truncation |
 | `candidatesReturned` | Candidates returned after `maxCandidates` limit |
 
 **Why this matters**:

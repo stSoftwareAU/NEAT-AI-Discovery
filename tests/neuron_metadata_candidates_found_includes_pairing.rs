@@ -1,22 +1,24 @@
-//! Test demonstrating that neuron analysis `candidates_found` can be less than
-//! `candidates_returned` when extreme candidates trigger pairing with conservative
-//! and gentle nudge variants.
+//! Test that `candidates_found` correctly includes paired variants and maintains
+//! the invariant `candidates_found >= candidates_returned`.
 //!
-//! Issue: The test in analyze_all_deadline_prioritises_synapses.rs:326-333 asserts
-//! `candidates_found >= candidates_returned`, but this invariant doesn't hold for
-//! neuron analysis because `pair_extreme_candidates_with_conservative_variants` can
-//! ADD variants, making `candidates_returned` larger than `candidates_found`.
+//! Background: The `pair_extreme_candidates_with_conservative_variants` function
+//! can ADD conservative and gentle nudge variants for extreme candidates. For the
+//! metric pair to make semantic sense, `candidates_found` must be captured AFTER
+//! pairing (so it includes generated variants) but BEFORE truncation.
 //!
-//! This test verifies the correct behaviour: that pairing CAN increase the count.
+//! This ensures "found" always implies "at least as many as returned."
 
 use neat_ai_discovery::{
     analysis::utils::pair_extreme_candidates_with_conservative_variants, CandidateNeuronJson,
 };
 
-/// Test that demonstrates candidates_returned can exceed candidates_found
-/// when extreme candidates are paired with safety variants.
+/// Test that `candidates_found` includes paired variants.
+///
+/// With extreme candidates, the pairing function adds variants. The `candidates_found`
+/// metric must capture the count AFTER pairing to maintain the invariant
+/// `candidates_found >= candidates_returned`.
 #[test]
-fn candidates_returned_can_exceed_candidates_found_due_to_pairing() {
+fn candidates_found_includes_paired_variants() {
     // Create an extreme candidate (incoming_weight > 2.0 or bias > 1.0)
     let extreme_candidate = CandidateNeuronJson {
         source_neuron_uuid: "source-1".to_string(),
@@ -36,33 +38,47 @@ fn candidates_returned_can_exceed_candidates_found_due_to_pairing() {
         target_neuron_stats: None,
     };
 
-    // Simulate what happens during neuron analysis:
-    // candidates_found is captured BEFORE pairing
-    let candidates_found = 1; // Just one original candidate
+    // Simulate CORRECT neuron analysis behaviour:
+    // 1. Apply pairing (adds variants)
+    // 2. Capture candidates_found AFTER pairing
+    // 3. Apply truncation
+    // 4. Capture candidates_returned AFTER truncation
 
-    // After pairing, we can get up to 3 candidates (original + conservative + gentle nudge)
+    // Step 1: Apply pairing with NO limit (to get all variants)
     let paired = pair_extreme_candidates_with_conservative_variants(
         vec![extreme_candidate],
-        Some(10), // High limit to allow all variants
+        None, // No limit - capture all variants
     );
 
-    let candidates_returned = paired.len();
+    // Step 2: candidates_found = total after pairing
+    let candidates_found = paired.len();
 
-    // THIS IS THE KEY ASSERTION:
-    // candidates_returned (3) > candidates_found (1)
-    // The old test assertion `candidates_found >= candidates_returned` would FAIL here!
+    // Step 3: Truncate (e.g., to max_candidates=2)
+    let mut returned = paired;
+    returned.truncate(2);
+
+    // Step 4: candidates_returned = count after truncation
+    let candidates_returned = returned.len();
+
+    // THE KEY INVARIANT: candidates_found >= candidates_returned
+    assert!(
+        candidates_found >= candidates_returned,
+        "Invariant violated: candidates_found ({candidates_found}) < candidates_returned ({candidates_returned})"
+    );
+
+    // Verify actual values
     assert_eq!(
-        candidates_returned, 3,
-        "Expected 3 candidates (original + conservative + gentle nudge)"
+        candidates_found, 3,
+        "Expected 3 candidates found (original + conservative + gentle nudge)"
     );
-    assert!(
-        candidates_returned > candidates_found,
-        "candidates_returned ({candidates_returned}) should be > candidates_found ({candidates_found}) when pairing adds variants"
+    assert_eq!(
+        candidates_returned, 2,
+        "Expected 2 candidates returned after truncation"
     );
 
-    // Verify the types of candidates returned
+    // Verify the types of candidates returned (first two of three)
     assert!(
-        paired[0]
+        returned[0]
             .comment
             .as_deref()
             .unwrap_or_default()
@@ -70,25 +86,16 @@ fn candidates_returned_can_exceed_candidates_found_due_to_pairing() {
         "Original should be marked as paired"
     );
     assert!(
-        paired[1]
+        returned[1]
             .comment
             .as_deref()
             .unwrap_or_default()
             .contains("Conservative"),
         "Second should be Conservative variant"
     );
-    assert!(
-        paired[2]
-            .comment
-            .as_deref()
-            .unwrap_or_default()
-            .contains("Gentle Nudge"),
-        "Third should be Gentle Nudge variant"
-    );
 }
 
-/// Test that non-extreme candidates don't trigger pairing
-/// (in this case the invariant DOES hold)
+/// Test that non-extreme candidates maintain the invariant (no variants added).
 #[test]
 fn non_extreme_candidates_maintain_count_invariant() {
     // Create a non-extreme candidate (incoming_weight <= 2.0 AND bias <= 1.0)
@@ -110,26 +117,81 @@ fn non_extreme_candidates_maintain_count_invariant() {
         target_neuron_stats: None,
     };
 
-    let candidates_found = 1;
+    // Apply pairing with no limit
     let paired = pair_extreme_candidates_with_conservative_variants(
         vec![normal_candidate],
-        Some(10), // High limit
+        None, // No limit
     );
-    let candidates_returned = paired.len();
+
+    let candidates_found = paired.len();
+    let candidates_returned = paired.len(); // No truncation
 
     // For non-extreme candidates, no pairing occurs
     assert_eq!(
-        candidates_returned, 1,
-        "Expected only 1 candidate (no pairing)"
+        candidates_found, 1,
+        "Expected only 1 candidate found (no pairing for non-extreme)"
     );
-    assert_eq!(
-        candidates_returned, candidates_found,
-        "For non-extreme candidates, counts should match"
+    assert!(
+        candidates_found >= candidates_returned,
+        "Invariant: candidates_found >= candidates_returned"
     );
 
     // The candidate should not have been modified
     assert!(
         paired[0].comment.is_none(),
         "Non-extreme candidate should not be tagged"
+    );
+}
+
+/// Test with multiple extreme candidates and a low max_candidates limit.
+/// This verifies the correct handling when truncation actually occurs.
+#[test]
+fn truncation_respects_invariant_with_multiple_extreme_candidates() {
+    // Create 3 extreme candidates
+    let extreme_candidates: Vec<CandidateNeuronJson> = (0..3)
+        .map(|i| CandidateNeuronJson {
+            source_neuron_uuid: format!("source-{i}"),
+            target_neuron_uuid: "target-1".to_string(),
+            source_neuron_index: None,
+            target_neuron_index: None,
+            incoming_weight: 200.0, // EXTREME
+            outgoing_weight: 0.1,
+            squash: "TANH".to_string(),
+            bias: 50.0, // EXTREME
+            comment: None,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: 0.2 - (i as f32 * 0.01), // Decreasing score
+            expected_creature_score_gain: 0.2 - (i as f32 * 0.01),
+            improved_count: 10,
+            total_count: 20,
+            target_neuron_stats: None,
+        })
+        .collect();
+
+    // CORRECT approach: pair first (no limit), then count, then truncate
+    let paired = pair_extreme_candidates_with_conservative_variants(extreme_candidates, None);
+
+    // candidates_found = total after pairing (3 originals × 3 variants each = 9)
+    let candidates_found = paired.len();
+
+    // Truncate to max_candidates=5
+    let mut returned = paired;
+    returned.truncate(5);
+    let candidates_returned = returned.len();
+
+    // THE KEY INVARIANT
+    assert!(
+        candidates_found >= candidates_returned,
+        "Invariant violated: candidates_found ({candidates_found}) < candidates_returned ({candidates_returned})"
+    );
+
+    // Verify actual values
+    assert_eq!(
+        candidates_found, 9,
+        "Expected 9 candidates found (3 extreme × 3 variants each)"
+    );
+    assert_eq!(
+        candidates_returned, 5,
+        "Expected 5 candidates returned after truncation"
     );
 }
