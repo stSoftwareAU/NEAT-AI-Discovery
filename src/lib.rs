@@ -326,14 +326,48 @@ pub struct AnalyzeParallelOutput {
     pub synapse_diagnostics: Option<Vec<SynapseDiagnosticJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub synapse_gpu_used: Option<bool>,
+    /// Synapse analysis metadata for observability (v0.2.17+).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synapse_metadata: Option<SynapseAnalysisMetadataJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub helpful_neurons: Option<Vec<CandidateNeuronJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neuron_diagnostics: Option<Vec<NeuronDiagnosticJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neuron_gpu_used: Option<bool>,
+    /// Neuron analysis metadata for observability (v0.2.17+).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub neuron_metadata: Option<NeuronAnalysisMetadataJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// JSON representation of synapse analysis metadata.
+///
+/// Surfaces diagnostic information to help callers understand:
+/// - Whether prediction accuracy is degraded (missing `value` data)
+/// - Whether candidates were truncated by `maxCandidates`
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SynapseAnalysisMetadataJson {
+    /// Whether `targetValue` (pre-activation) was available in the recorded data.
+    pub target_value_available: bool,
+    /// Whether saturation-aware simulation was used for at least one candidate.
+    pub saturation_aware_simulation_used: bool,
+    /// Total number of synapse candidates found during analysis (before truncation).
+    pub candidates_found: usize,
+    /// Number of synapse candidates returned to caller (after `maxCandidates` truncation).
+    pub candidates_returned: usize,
+}
+
+/// JSON representation of neuron analysis metadata.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NeuronAnalysisMetadataJson {
+    /// Total number of neuron candidates found during analysis (before truncation).
+    pub candidates_found: usize,
+    /// Number of neuron candidates returned to caller (after `maxCandidates` truncation).
+    pub candidates_returned: usize,
 }
 
 /// Internal input structure for synapse analysis (used by analyze_all)
@@ -869,9 +903,11 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 harmful_synapses: None,
                 synapse_diagnostics: None,
                 synapse_gpu_used: None,
+                synapse_metadata: None,
                 helpful_neurons: None,
                 neuron_diagnostics: None,
                 neuron_gpu_used: None,
+                neuron_metadata: None,
                 error: Some(format!("Failed to parse input JSON: {e}")),
             };
             return Ok(serde_json::to_string(&output)?);
@@ -903,11 +939,21 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     .as_ref()
                     .and_then(|s| synapse_diagnostics_json(s.no_candidate_reasons.as_slice())),
                 synapse_gpu_used: synapse.as_ref().map(|s| s.gpu_used),
+                synapse_metadata: synapse.as_ref().map(|s| SynapseAnalysisMetadataJson {
+                    target_value_available: s.metadata.target_value_available,
+                    saturation_aware_simulation_used: s.metadata.saturation_aware_simulation_used,
+                    candidates_found: s.metadata.candidates_found,
+                    candidates_returned: s.metadata.candidates_returned,
+                }),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 neuron_diagnostics: neuron
                     .as_ref()
                     .and_then(|n| neuron_diagnostics_json(n.no_candidate_reasons.as_slice())),
                 neuron_gpu_used: neuron.as_ref().map(|n| n.gpu_used),
+                neuron_metadata: neuron.as_ref().map(|n| NeuronAnalysisMetadataJson {
+                    candidates_found: n.metadata.candidates_found,
+                    candidates_returned: n.metadata.candidates_returned,
+                }),
                 error: None,
             };
             Ok(serde_json::to_string(&output)?)
@@ -919,9 +965,11 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 harmful_synapses: None,
                 synapse_diagnostics: None,
                 synapse_gpu_used: None,
+                synapse_metadata: None,
                 helpful_neurons: None,
                 neuron_diagnostics: None,
                 neuron_gpu_used: None,
+                neuron_metadata: None,
                 error: Some(e.to_string()),
             };
             Ok(serde_json::to_string(&output)?)
@@ -1765,9 +1813,11 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
                     harmful_synapses: None,
                     synapse_diagnostics: None,
                     synapse_gpu_used: None,
+                    synapse_metadata: None,
                     helpful_neurons: None,
                     neuron_diagnostics: None,
                     neuron_gpu_used: None,
+                    neuron_metadata: None,
                     error: Some(format!("Failed to serialize output: {e}")),
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {

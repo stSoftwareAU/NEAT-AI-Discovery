@@ -25,8 +25,9 @@ mod implementation;
 
 // Re-export shared types
 pub use shared::{
-    AnalyzeAllResult, AnalyzeNeuronsResult, AnalyzeSynapsesResult, NeuronNoCandidateReason,
-    NeuronNoCandidateSummary, SynapseNoCandidateReason, SynapseNoCandidateSummary,
+    AnalyzeAllResult, AnalyzeNeuronsResult, AnalyzeSynapsesResult, NeuronAnalysisMetadata,
+    NeuronNoCandidateReason, NeuronNoCandidateSummary, SynapseAnalysisMetadata,
+    SynapseNoCandidateReason, SynapseNoCandidateSummary,
 };
 
 // Re-export from utils
@@ -62,6 +63,17 @@ fn run_optional_analysis<T>(
 }
 
 /// Combined analysis function that runs both synapse and neuron analysis.
+///
+/// # Analysis ordering
+///
+/// When `analysis_deadline_ms` is set and both analyses are enabled, **synapse analysis
+/// runs first** to prevent starvation. Historically, neuron analysis ran first and could
+/// consume the entire budget, leaving zero time for synapse analysis. This caused "no
+/// add-synapses candidates" even when many potential synapses existed.
+///
+/// When no deadline is set, the original "neuron-first" ordering is preserved for
+/// backwards compatibility (neuron discovery creates new network structure and may be
+/// considered higher value when time is not constrained).
 pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Optional hang watchdog for unattended workers.
     // If enabled, this will emit a thread dump then abort the process if analysis stalls.
@@ -112,30 +124,73 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         None
     };
 
-    // Run neuron analysis FIRST (priority), then synapse analysis.
-    // Neuron discovery is more valuable as it can create new network structure.
-    // With pre-loaded cache, both run fast, but neurons get priority if timeout approaches.
-    let neuron_result = run_optional_analysis(
-        neuron_input.is_some(),
-        "analysis::analyze_all → neuron analysis starting",
-        "analysis::analyze_all → neuron analysis finished",
-        "analysis::analyze_all → neuron analysis skipped",
-        || {
-            let inner = neuron_input.expect("checked is_some");
-            implementation::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
-        },
-    )?;
+    // Determine analysis order based on whether a deadline is set.
+    // When deadline-constrained, synapse analysis runs FIRST to prevent starvation.
+    // Without a deadline, neuron analysis runs first (original behaviour).
+    let has_deadline = input.analysis_deadline_ms.is_some();
 
-    let synapse_result = run_optional_analysis(
-        synapse_input.is_some(),
-        "analysis::analyze_all → synapse analysis starting",
-        "analysis::analyze_all → synapse analysis finished",
-        "analysis::analyze_all → synapse analysis skipped",
-        || {
-            let inner = synapse_input.expect("checked is_some");
-            implementation::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
-        },
-    )?;
+    let (synapse_result, neuron_result) = if has_deadline {
+        // SYNAPSE-FIRST ordering (deadline-constrained):
+        // Synapse analysis is often starved because neuron analysis consumes the budget.
+        // Running synapses first ensures they get a fair share of the deadline.
+        if utils::verbose_enabled() {
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Deadline set ({}ms) - running synapse analysis first to prevent starvation",
+                input.analysis_deadline_ms.unwrap_or(0)
+            );
+        }
+
+        let synapse_result = run_optional_analysis(
+            synapse_input.is_some(),
+            "analysis::analyze_all → synapse analysis starting",
+            "analysis::analyze_all → synapse analysis finished",
+            "analysis::analyze_all → synapse analysis skipped",
+            || {
+                let inner = synapse_input.expect("checked is_some");
+                implementation::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
+            },
+        )?;
+
+        let neuron_result = run_optional_analysis(
+            neuron_input.is_some(),
+            "analysis::analyze_all → neuron analysis starting",
+            "analysis::analyze_all → neuron analysis finished",
+            "analysis::analyze_all → neuron analysis skipped",
+            || {
+                let inner = neuron_input.expect("checked is_some");
+                implementation::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
+            },
+        )?;
+
+        (synapse_result, neuron_result)
+    } else {
+        // NEURON-FIRST ordering (no deadline - original behaviour):
+        // Neuron discovery is more valuable as it can create new network structure.
+        // With pre-loaded cache, both run fast, but neurons get priority.
+        let neuron_result = run_optional_analysis(
+            neuron_input.is_some(),
+            "analysis::analyze_all → neuron analysis starting",
+            "analysis::analyze_all → neuron analysis finished",
+            "analysis::analyze_all → neuron analysis skipped",
+            || {
+                let inner = neuron_input.expect("checked is_some");
+                implementation::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
+            },
+        )?;
+
+        let synapse_result = run_optional_analysis(
+            synapse_input.is_some(),
+            "analysis::analyze_all → synapse analysis starting",
+            "analysis::analyze_all → synapse analysis finished",
+            "analysis::analyze_all → synapse analysis skipped",
+            || {
+                let inner = synapse_input.expect("checked is_some");
+                implementation::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
+            },
+        )?;
+
+        (synapse_result, neuron_result)
+    };
 
     Ok(AnalyzeAllResult {
         synapse: synapse_result,
