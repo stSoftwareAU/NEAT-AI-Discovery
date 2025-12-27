@@ -8680,31 +8680,8 @@ pub(crate) fn analyze_synapses_with_cache(
     let deadline = build_deadline(input.analysis_deadline_ms);
     // Randomize the focus neuron order so that repeated runs with timeouts will
     // eventually cover all neurons. Convert to owned strings, shuffle, then use.
-    // Also filter out neurons with discrete activation functions (STEP, BIPOLAR, etc.)
-    // because the linear error model used by discovery completely fails for them.
-    let mut skipped_discrete: Vec<String> = Vec::new();
-    let mut focus_order: Vec<String> = unique_focus
-        .iter()
-        .filter(|uuid| {
-            if let Some(squash) = neuron_squash_map.get(**uuid) {
-                if is_threshold_activation(squash) {
-                    skipped_discrete.push((**uuid).clone());
-                    return false;
-                }
-            }
-            true
-        })
-        .map(|s| (*s).clone())
-        .collect();
-
-    // Log skipped discrete neurons for visibility
-    if verbose_enabled() && !skipped_discrete.is_empty() {
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Synapse analysis skipped {} focus neurons with discrete activations: {:?}",
-            skipped_discrete.len(),
-            skipped_discrete.iter().take(5).collect::<Vec<_>>()
-        );
-    }
+    // Note: STEP/BIPOLAR neurons are now included - we use threshold-crossing model for them.
+    let mut focus_order: Vec<String> = unique_focus.iter().map(|s| (*s).clone()).collect();
 
     let mut rng = thread_rng();
     focus_order.shuffle(&mut rng);
@@ -9165,10 +9142,10 @@ pub(crate) fn analyze_synapses_with_cache(
                         metadata_saturation_aware_used.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
 
-                    // Compute expected improvement using saturation-aware model when target data is available.
-                    // Falls back to linear model when target_value/target_activation are not recorded.
-                    // Both improved_count and worsened_count now use the same CPU-based saturation-aware
-                    // methodology for consistency (previously worsened_count came from GPU linear model).
+                    // Compute expected improvement using the linear error model.
+                    // This works for ALL squash types because we're measuring actual errors
+                    // from recordings, not predicting theoretical errors. The correlation
+                    // between source activation and target error determines improvement.
                     // Issue #128: This is neuron-level improvement - impact discounting converts to creature-level.
                     let (neuron_error_improvement, improved_count, worsened_count) = {
                         let baseline_error_sq = stats.error_sq_sum;

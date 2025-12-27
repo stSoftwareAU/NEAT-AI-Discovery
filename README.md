@@ -1163,6 +1163,24 @@ The analysis output now includes metadata to diagnose prediction issues:
 - If `candidatesFound > candidatesReturned`, increase `maxSynapseCandidates`/`maxNeuronCandidates`
 - If synapse candidates are still zero, check if deadline is too short or focus neurons are filtered
 
+#### Synapse analysis for all squash types (v0.2.18)
+
+**FIX**: Synapse analysis now works for **all** target neuron squash types, including STEP/BIPOLAR.
+
+Previously, STEP/BIPOLAR neurons were incorrectly filtered from synapse analysis. This was
+unnecessary because synapse analysis uses **actual recorded errors and activations**, not
+predictions based on the activation function.
+
+The improvement calculation is simple and works universally:
+```
+optimal_weight = Σ(error × activation) / Σ(activation²)
+improvement = reduction in error variance
+```
+
+If the source neuron's activation correlates with the target neuron's error, adding a synapse
+will help - regardless of what activation function the target uses. The squash function only
+affects what the output **is**, but we're measuring what the error **is** from recordings.
+
 #### Creature-level metrics (v0.1.169, Issue #128)
 
 **CRITICAL CHANGE**: All discovery candidates now return **creature-level** metrics instead
