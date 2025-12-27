@@ -324,13 +324,13 @@ fn candidate_counts_tracked_correctly() {
             "candidates_returned should match actual returned count"
         );
 
-        // candidates_found should be >= candidates_returned
-        assert!(
-            metadata.candidates_found >= metadata.candidates_returned,
-            "candidates_found ({}) should be >= candidates_returned ({})",
-            metadata.candidates_found,
-            metadata.candidates_returned
-        );
+        // NOTE: Unlike synapse analysis, neuron analysis can have candidates_returned > candidates_found
+        // because pair_extreme_candidates_with_conservative_variants() can ADD conservative and
+        // gentle nudge variants for extreme candidates. See tests/neuron_metadata_candidates_found_includes_pairing.rs
+        // for explicit test cases demonstrating this behaviour.
+        //
+        // candidates_found = original candidates discovered before pairing
+        // candidates_returned = final count after pairing (can be higher!) and truncation
     }
 }
 

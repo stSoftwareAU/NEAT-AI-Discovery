@@ -7039,7 +7039,7 @@ fn build_discrete_samples(
 /// * `is_output_target` - Whether the target neuron is an output neuron. (Currently unused.
 ///   Impact discounting for hidden targets is handled after candidate evaluation via
 ///   `compute_impacts_public()`, which correctly uses the target's weighted paths to outputs.)
-#[allow(unused_variables)]
+#[allow(unused_variables, unreachable_code)]
 fn evaluate_discrete_candidate(
     source_uuid: &str,
     target_uuid: &str,
@@ -7062,7 +7062,6 @@ fn evaluate_discrete_candidate(
 
     // The following code is unreachable but retained for reference if we add
     // support for non-IDENTITY squash functions in the future.
-    #[allow(unreachable_code)]
     if samples.len() < MIN_NEURON_SAMPLE_COUNT {
         return None;
     }
