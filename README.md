@@ -1163,6 +1163,19 @@ The analysis output now includes metadata to diagnose prediction issues:
 - If `candidatesFound > candidatesReturned`, increase `maxSynapseCandidates`/`maxNeuronCandidates`
 - If synapse candidates are still zero, check if deadline is too short or focus neurons are filtered
 
+#### Synapse analysis for all squash types (v0.2.18)
+
+**FIX**: STEP neurons now get proper simulation functions, matching BIPOLAR handling.
+
+Previously, `target_simulation_fn` returned `None` for STEP (claiming "handled via threshold-
+crossing model"), but returned `Some` for BIPOLAR. This inconsistency meant:
+- **BIPOLAR**: Got accurate simulation predicting output flips (-1 ↔ 1)
+- **STEP**: Fell back to linear error model (inaccurate for threshold functions)
+
+The fix adds a proper simulation function for STEP: `|x| if x > 0.0 { 1.0 } else { 0.0 }`.
+Both STEP and BIPOLAR now use simulation that accurately predicts when synapse contributions
+will cross the zero threshold and flip the discrete output.
+
 #### Creature-level metrics (v0.1.169, Issue #128)
 
 **CRITICAL CHANGE**: All discovery candidates now return **creature-level** metrics instead
