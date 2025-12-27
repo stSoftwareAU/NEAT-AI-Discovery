@@ -84,10 +84,18 @@ fn create_parquet_with_output(
         // Compute activation based on squash type
         let target_activation = match output_squash {
             "STEP" => {
-                if target_value > 0.0 { 1.0 } else { 0.0 }
+                if target_value > 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
             }
             "BIPOLAR" => {
-                if target_value > 0.0 { 1.0 } else { -1.0 }
+                if target_value > 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                }
             }
             "TANH" => target_value.tanh(),
             _ => target_value.tanh(), // Default to TANH for other squash types
