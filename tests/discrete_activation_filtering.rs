@@ -73,20 +73,39 @@ fn create_parquet_with_output(
     }
 
     // Output neuron records - structured to create improvement opportunity
-    // For STEP: output = 1 when value > 0, else 0
-    // We set up samples where adding a synapse could flip the output helpfully
+    // Activation calculation depends on squash type:
+    // - STEP: output = 1 when value > 0, else 0
+    // - BIPOLAR: output = 1 when value > 0, else -1
+    // - TANH: output = tanh(value)
     for obs_index in 0..20 {
         // Target value near threshold (0) - these are samples where a synapse could flip the output
         let target_value = (obs_index as f32 - 10.0) / 20.0; // Range: -0.5 to 0.45
-        let target_activation = if target_value > 0.0 { 1.0 } else { 0.0 }; // STEP output
+
+        // Compute activation based on squash type
+        let target_activation = match output_squash {
+            "STEP" => {
+                if target_value > 0.0 { 1.0 } else { 0.0 }
+            }
+            "BIPOLAR" => {
+                if target_value > 0.0 { 1.0 } else { -1.0 }
+            }
+            "TANH" => target_value.tanh(),
+            _ => target_value.tanh(), // Default to TANH for other squash types
+        };
 
         // Error: positive when output should be higher, negative when lower
-        // For samples just below threshold, error should be positive (want to flip to 1)
-        // For samples just above threshold, error should be negative (want to flip to 0)
+        // For STEP: samples just below threshold want to flip from 0 to 1
+        // For BIPOLAR: samples just below threshold want to flip from -1 to 1
         let error = if target_value < 0.0 && target_value > -0.3 {
-            0.5 // Want to flip from 0 to 1
+            match output_squash {
+                "BIPOLAR" => 1.0, // Want to flip from -1 to 1 (delta of 2)
+                _ => 0.5,         // Want to flip from 0 to 1 (delta of 1)
+            }
         } else if target_value > 0.0 && target_value < 0.3 {
-            -0.5 // Want to flip from 1 to 0
+            match output_squash {
+                "BIPOLAR" => -1.0, // Want to flip from 1 to -1 (delta of 2)
+                _ => -0.5,         // Want to flip from 1 to 0 (delta of 1)
+            }
         } else {
             0.0 // No error for samples far from threshold
         };
