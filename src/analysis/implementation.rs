@@ -255,6 +255,41 @@ const GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS: u64 = 5;
 const GPU_BUFFER_MAP_TIMEOUT_SECS: u64 =
     GPU_QUEUE_TIMEOUT_MAX_SECS - GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS;
 
+/// Maximum estimated bytes of GPU-side buffers we allow per *batched* submission.
+///
+/// Why:
+/// - For large recordings (eg 50k+ samples), `batch_size=1024` can produce enormous transient
+///   Metal buffers (samples + contributions + staging) and wedge the driver.
+/// - When the driver wedges, utilisation drops to ~0 and discovery yields no candidates due to timeouts.
+///
+/// We cap based on an estimate of the dominant buffers:
+/// - Sample storage buffer (GpuHelpfulSample)
+/// - Contribution buffer (HelpfulContribution / HarmfulContribution)
+/// - Staging buffer (same size as contribution buffer)
+///
+/// This cap is conservative by design; it trades a bit of peak throughput for stability on
+/// Apple Silicon (and makes time-bounded runs far more reliable).
+const GPU_MAX_BATCH_ALLOC_BYTES: usize = 256 * 1024 * 1024; // 256MB
+
+fn cap_gpu_batch_size_by_bytes(
+    configured_batch_size: usize,
+    max_sample_len: usize,
+    bytes_per_sample: usize,
+    max_batch_bytes: usize,
+) -> usize {
+    if configured_batch_size == 0 || max_sample_len == 0 || bytes_per_sample == 0 {
+        return configured_batch_size.max(1);
+    }
+    let bytes_per_op = max_sample_len.saturating_mul(bytes_per_sample);
+    if bytes_per_op == 0 {
+        return configured_batch_size.max(1);
+    }
+
+    // How many operations (sources) can we safely submit in one batch chunk?
+    let cap = (max_batch_bytes / bytes_per_op).max(1);
+    configured_batch_size.min(cap).max(1)
+}
+
 /// Timeout for GPU thread initialisation (in seconds).
 /// GPU device creation should be fast; if it takes longer, something is wrong.
 const GPU_INIT_TIMEOUT_SECS: u64 = 30;
@@ -4664,7 +4699,35 @@ impl GpuAnalyzer {
         // Apple Silicon optimisation: Use single encoder per batch to reduce Metal driver overhead
         let mut all_results = Vec::with_capacity(samples_batch.len());
 
-        for batch_chunk in samples_batch.chunks(self.batch_size) {
+        let max_sample_len = samples_batch
+            .iter()
+            .map(|(samples, _)| samples.len())
+            .max()
+            .unwrap_or(0);
+        let bytes_per_sample = std::mem::size_of::<GpuHelpfulSample>()
+            + (2 * std::mem::size_of::<HarmfulContribution>());
+        let effective_batch_size = cap_gpu_batch_size_by_bytes(
+            self.batch_size,
+            max_sample_len,
+            bytes_per_sample,
+            GPU_MAX_BATCH_ALLOC_BYTES,
+        );
+
+        if verbose_enabled() && effective_batch_size < self.batch_size {
+            let bytes_per_op = max_sample_len.saturating_mul(bytes_per_sample);
+            let approx_mb = (bytes_per_op as f64 / (1024.0 * 1024.0)).max(0.0);
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Capping GPU harmful batch size from {} to {} due to large sample count. \
+                 max_sample_len={}, approx_buffers_per_op≈{:.1}MB, cap={}MB",
+                self.batch_size,
+                effective_batch_size,
+                max_sample_len,
+                approx_mb,
+                GPU_MAX_BATCH_ALLOC_BYTES / (1024 * 1024)
+            );
+        }
+
+        for batch_chunk in samples_batch.chunks(effective_batch_size) {
             let mut empty_flags = Vec::with_capacity(batch_chunk.len());
             let mut batch_staging_buffers = Vec::new();
             let mut batch_contribution_sizes = Vec::new();
@@ -5381,7 +5444,31 @@ impl GpuAnalyzer {
         // Apple Silicon optimisation: Use single encoder per batch to reduce Metal driver overhead
         let mut all_results = Vec::with_capacity(samples_batch.len());
 
-        for batch_chunk in samples_batch.chunks(self.batch_size) {
+        let max_sample_len = samples_batch.iter().map(|s| s.len()).max().unwrap_or(0);
+        let bytes_per_sample = std::mem::size_of::<GpuHelpfulSample>()
+            + (2 * std::mem::size_of::<HelpfulContribution>());
+        let effective_batch_size = cap_gpu_batch_size_by_bytes(
+            self.batch_size,
+            max_sample_len,
+            bytes_per_sample,
+            GPU_MAX_BATCH_ALLOC_BYTES,
+        );
+
+        if verbose_enabled() && effective_batch_size < self.batch_size {
+            let bytes_per_op = max_sample_len.saturating_mul(bytes_per_sample);
+            let approx_mb = (bytes_per_op as f64 / (1024.0 * 1024.0)).max(0.0);
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Capping GPU helpful batch size from {} to {} due to large sample count. \
+                 max_sample_len={}, approx_buffers_per_op≈{:.1}MB, cap={}MB",
+                self.batch_size,
+                effective_batch_size,
+                max_sample_len,
+                approx_mb,
+                GPU_MAX_BATCH_ALLOC_BYTES / (1024 * 1024)
+            );
+        }
+
+        for batch_chunk in samples_batch.chunks(effective_batch_size) {
             let mut empty_flags = Vec::with_capacity(batch_chunk.len());
             let mut batch_staging_buffers = Vec::new();
             let mut batch_contribution_sizes = Vec::new();
@@ -8276,6 +8363,47 @@ mod tests {
             DEFAULT_GPU_BATCH_SIZE,
             "Unknown tier should use default batch size"
         );
+    }
+
+    #[test]
+    fn gpu_batch_size_caps_for_large_sample_counts() {
+        // Dec 2025: Large recordings (50k+ samples) can wedge Metal when combined with
+        // a high batch size. We cap based on estimated GPU buffer sizes.
+        let configured = 1024;
+        let max_sample_len = 58_149; // representative from production logs
+
+        // Helpful path uses HelpfulContribution (48 bytes) + staging, plus sample buffer.
+        let bytes_per_sample_helpful = std::mem::size_of::<GpuHelpfulSample>()
+            + (2 * std::mem::size_of::<HelpfulContribution>());
+        let capped_helpful = cap_gpu_batch_size_by_bytes(
+            configured,
+            max_sample_len,
+            bytes_per_sample_helpful,
+            GPU_MAX_BATCH_ALLOC_BYTES,
+        );
+        assert!(
+            capped_helpful < configured,
+            "expected helpful batch size to be capped for large sample sets"
+        );
+        assert!(
+            capped_helpful >= 1,
+            "batch size must never be reduced below 1"
+        );
+
+        // Harmful path uses HarmfulContribution (16 bytes) + staging, plus sample buffer.
+        let bytes_per_sample_harmful = std::mem::size_of::<GpuHelpfulSample>()
+            + (2 * std::mem::size_of::<HarmfulContribution>());
+        let capped_harmful = cap_gpu_batch_size_by_bytes(
+            configured,
+            max_sample_len,
+            bytes_per_sample_harmful,
+            GPU_MAX_BATCH_ALLOC_BYTES,
+        );
+        assert!(
+            capped_harmful < configured,
+            "expected harmful batch size to be capped for large sample sets"
+        );
+        assert!(capped_harmful >= 1);
     }
 
     /// Test that verbose_enabled() is cached (doesn't re-read env var each time).
