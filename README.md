@@ -926,6 +926,22 @@ The improvement calculation now includes the proposed bias when evaluating neuro
 candidates. This ensures the predicted improvement matches the actual improvement
 when the neuron is applied with its computed bias value.
 
+#### Sensible parameter ranges (add-neurons)
+
+In practice, we cache failures and do not re-try them. That makes it important to
+avoid proposing candidates with absurd parameters that are very unlikely to survive
+full rescoring.
+
+As a production guard rail (Dec 2025), add-neuron candidates are only returned when
+their parameters are within sensible bounds:
+
+- **incomingWeight**: \(|w| \le 20\)
+- **bias**: \(|b| \le 10\)
+- **outgoingWeight**: \(|w| \le 0.1\) (already clamped by the optimiser)
+
+This filtering is applied after the "Extreme → Conservative/Gentle Nudge" pairing so
+unsafe originals can be dropped while still allowing safe variants to be evaluated.
+
 #### IDENTITY neuron filtering
 
 **IDENTITY neurons with bias ≈ 0 are redundant** because they're mathematically

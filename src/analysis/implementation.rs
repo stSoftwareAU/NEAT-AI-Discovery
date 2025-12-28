@@ -2928,13 +2928,11 @@ const ORIENTATIONS_BIDIRECTIONAL: [f32; 2] = [1.0, -1.0];
 /// efficiently. Evolution will fine-tune the exact values after discovery.
 /// Extended to very large scales (50, 100) for aggressive signal amplification.
 /// Note: Very large scales may cause numerical instability with some activations.
-const SCALES_WIDE: [f32; 12] = [
-    0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0,
-];
+const SCALES_WIDE: [f32; 9] = [0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0];
 /// Log-spaced scales for smooth activation functions (TANH, LOGISTIC, SELU) that
 /// saturate at large inputs. Larger scales included but will saturate the output,
 /// which may still be useful for binary-like thresholding behaviour.
-const SCALES_SMOOTH: [f32; 10] = [0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 4.0, 10.0, 25.0, 50.0];
+const SCALES_SMOOTH: [f32; 8] = [0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 4.0, 10.0];
 
 fn gelu_activation(x: f32) -> f32 {
     let x_cubed = x * x * x;
@@ -3205,18 +3203,11 @@ pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 15] = [
 /// - IDENTITY: Widest range as pure offset (scales with large weights)
 fn get_bias_range(squash: &str) -> (f32, f32, f32) {
     match squash {
-        // ReLU/ELU: extended negative for high-threshold neurons with large weights
-        "ReLU" | "ELU" | "SELU" => (-25.0, 10.0, 0.5),
-        // Symmetric activation functions: extended for large weight configurations
-        "TANH" | "LOGISTIC" => (-10.0, 10.0, 0.5),
-        // IDENTITY: widest range - acts as offset, scales with incoming weights
-        "IDENTITY" => (-50.0, 50.0, 1.0),
-        // Softplus and GELU: extended negative thresholds
-        "Softplus" | "GELU" => (-10.0, 10.0, 0.5),
-        // Other activation functions get expanded range
-        "ABSOLUTE" | "CLIPPED" => (-10.0, 10.0, 0.5),
+        // Sensible default ranges (Dec 2025):
+        // We intentionally avoid very large bias grids (e.g. ±25, ±50) because they
+        // frequently yield brittle candidates that fail full rescoring.
         "BIPOLAR" => (-10.0, 10.0, 1.0),
-        _ => (-10.0, 10.0, 0.5), // Generous default
+        _ => (-10.0, 10.0, 0.5), // Generous default (but still bounded)
     }
 }
 
@@ -3227,29 +3218,14 @@ fn get_bias_range(squash: &str) -> (f32, f32, f32) {
 fn get_bias_values(squash: &str) -> Vec<f32> {
     // Base log-spaced positive values (denser near 0, extended to larger values)
     let base_positive: &[f32] = match squash {
-        // ReLU/ELU: extended for large weight thresholding
-        "ReLU" | "ELU" | "SELU" => &[0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
-        // Symmetric activations: extended range for shifting operating point
-        "TANH" | "LOGISTIC" => &[0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
-        // IDENTITY: widest range (pure offset, scales with large weights)
-        "IDENTITY" => &[0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0],
-        // Softplus/GELU: extended for large weight configurations
-        "Softplus" | "GELU" => &[0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
-        // Others: moderate extended range
-        _ => &[0.0, 0.1, 0.5, 1.0, 2.0, 5.0],
+        // Keep within sensible ranges (Dec 2025): avoid large offsets.
+        "IDENTITY" => &[0.0, 0.5, 1.0, 2.0, 5.0, 10.0],
+        _ => &[0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
     };
 
     let base_negative: &[f32] = match squash {
-        // ReLU/ELU: extended negative for high-threshold neurons
-        "ReLU" | "ELU" | "SELU" => &[-0.1, -0.5, -1.0, -2.0, -5.0, -10.0, -25.0],
-        // Symmetric: mirror of positive for operating point shift
-        "TANH" | "LOGISTIC" => &[-0.1, -0.5, -1.0, -2.0, -5.0, -10.0],
-        // IDENTITY: widest range to match large weights
-        "IDENTITY" => &[-0.5, -1.0, -2.0, -5.0, -10.0, -25.0, -50.0],
-        // Softplus/GELU: extended negative thresholds
-        "Softplus" | "GELU" => &[-0.1, -0.5, -1.0, -2.0, -5.0, -10.0],
-        // Others: moderate extended
-        _ => &[-0.1, -0.5, -1.0, -2.0, -5.0],
+        "IDENTITY" => &[-0.5, -1.0, -2.0, -5.0, -10.0],
+        _ => &[-0.1, -0.5, -1.0, -2.0, -5.0, -10.0],
     };
 
     let mut values: Vec<f32> = base_negative.to_vec();
@@ -3416,6 +3392,12 @@ fn calculate_optimal_identity_outgoing_and_bias(
         return None;
     }
 
+    // Guard rail: absurd IDENTITY biases are almost always brittle in production.
+    let bias_abs_max = crate::analysis::utils::sensible_bias_abs_max_for_squash("IDENTITY");
+    if bias.abs() > bias_abs_max {
+        return None;
+    }
+
     Some((outgoing_weight, bias))
 }
 
@@ -3465,7 +3447,11 @@ fn calculate_optimal_bias(
                 activation_type,
                 bias_range,
             ) {
-                return optimal_bias;
+                // Guard rail: only accept biases within sensible ranges.
+                let bias_abs_max = crate::analysis::utils::sensible_bias_abs_max_for_squash(squash);
+                if optimal_bias.is_finite() && optimal_bias.abs() <= bias_abs_max {
+                    return optimal_bias;
+                }
             }
             // If GPU fails, fall through to CPU
         }
@@ -6597,6 +6583,13 @@ fn evaluate_activation_for_subset<G: GpuEvaluator>(
 
             // Track best candidate
             if net_improvement > best_net_improvement {
+                // Guard rail: do not return candidates with absurd bias values.
+                let bias_abs_max =
+                    crate::analysis::utils::sensible_bias_abs_max_for_squash(spec.name);
+                if !optimal_bias.is_finite() || optimal_bias.abs() > bias_abs_max {
+                    continue;
+                }
+
                 best_net_improvement = net_improvement;
 
                 let target_stats = NeuronStats::from_samples(all_samples).map(|s| s.to_json());
@@ -8125,6 +8118,10 @@ pub(crate) fn analyze_neurons_with_cache(
         helpful_results,
         None, // No limit - truncate separately after capturing candidates_found
     );
+
+    // Production guard rail (Dec 2025): only return candidates within sensible parameter ranges.
+    // This avoids wasting the evaluation budget on absurd bias/weight configurations.
+    helpful_results = crate::analysis::utils::filter_candidates_to_sensible_ranges(helpful_results);
 
     // Track candidates_found AFTER pairing but BEFORE truncation.
     // This ensures candidates_found >= candidates_returned always holds, which is
@@ -12605,9 +12602,9 @@ mod tests_synapses {
     /// Note: get_bias_range is used by GPU, get_bias_values is used by CPU
     #[test]
     fn test_get_bias_range() {
-        // Test ReLU range (extended negative for high-threshold neurons)
+        // Sensible-range policy (Dec 2025): keep GPU bias search ranges bounded.
         let (min, max, step) = get_bias_range("ReLU");
-        assert_eq!(min, -25.0);
+        assert_eq!(min, -10.0);
         assert_eq!(max, 10.0);
         assert_eq!(step, 0.5);
 
@@ -12623,11 +12620,11 @@ mod tests_synapses {
         assert_eq!(max, 10.0);
         assert_eq!(step, 0.5);
 
-        // Test IDENTITY range (widest - acts as pure offset, scales with large weights)
+        // Test IDENTITY range (bounded - avoid absurd offsets that fail ablation tests)
         let (min, max, step) = get_bias_range("IDENTITY");
-        assert_eq!(min, -50.0);
-        assert_eq!(max, 50.0);
-        assert_eq!(step, 1.0);
+        assert_eq!(min, -10.0);
+        assert_eq!(max, 10.0);
+        assert_eq!(step, 0.5);
 
         // Test default range for unknown activation (generous)
         let (min, max, step) = get_bias_range("UNKNOWN");
@@ -12983,7 +12980,7 @@ mod tests_synapses {
     /// Test get_bias_values returns log-spaced values for efficient search
     #[test]
     fn test_get_bias_values() {
-        // ReLU should have extended negative range for high-threshold neurons
+        // ReLU should include meaningful negative bias values for threshold shifting.
         let relu_values = get_bias_values("ReLU");
         assert!(relu_values.contains(&0.0), "Should include 0");
         assert!(
@@ -12995,15 +12992,15 @@ mod tests_synapses {
             "Should be efficient (log-spaced, not linear)"
         );
 
-        // IDENTITY should have widest range (scales with large weights)
+        // IDENTITY should still include moderate offsets, but stay within sensible bounds.
         let identity_values = get_bias_values("IDENTITY");
         assert!(
-            identity_values.iter().any(|&v| v >= 25.0),
-            "IDENTITY should reach 25.0 for large weight configurations"
+            identity_values.iter().any(|&v| v >= 10.0),
+            "IDENTITY should reach 10.0 for moderate offset configurations"
         );
         assert!(
-            identity_values.iter().any(|&v| v <= -25.0),
-            "IDENTITY should reach -25.0"
+            identity_values.iter().any(|&v| v <= -10.0),
+            "IDENTITY should reach -10.0"
         );
 
         // All values should be sorted
@@ -14666,22 +14663,25 @@ mod tests_optimal_outgoing_weight {
             min_improvement: 0.0,
         };
 
-        // 11 positive-error samples with varying activation: affine fit slope should be ~0 here,
-        // so IDENTITY subset evaluation returns None and we fall through to all-samples fallback.
-        let mut samples: Vec<HelpfulSample> = (0..=10)
+        // 11 positive-error samples with varying activation.
+        //
+        // This test is crafted to trigger the all-samples affine fit path while still
+        // producing a *sensible* bias (we reject absurd bias magnitudes as a guard rail).
+        let mut samples: Vec<HelpfulSample> = (1..=11)
             .map(|i| HelpfulSample {
-                activation: 100.0 + (i as f32) * 10.0, // 100..200
+                activation: i as f32, // 1..11
                 avg_error: 1.0,
                 target_value: None,
                 target_activation: None,
             })
             .collect();
 
-        // 9 negative-error samples whose activation sum matches the positive group (1650),
-        // making Σ(activation×error) == 0 for the all-samples no-intercept fit.
-        let negative_activations: [f32; 9] = [
-            200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 150.0, 150.0, 150.0,
-        ];
+        // 9 negative-error samples whose activation sum matches the positive group:
+        // sum(1..11) = 66, so pick 9 values summing to 66.
+        //
+        // This makes Σ(activation×error) == 0 for the all-samples no-intercept fit,
+        // forcing the fallback to rely on the affine (with-intercept) fit.
+        let negative_activations: [f32; 9] = [6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 18.0];
         for activation in negative_activations {
             samples.push(HelpfulSample {
                 activation,

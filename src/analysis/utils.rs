@@ -18,6 +18,60 @@ pub fn verbose_enabled() -> bool {
 
 use crate::CandidateNeuronJson;
 
+// ============================================================================
+// Sensible-range filtering (production guard rails)
+// ============================================================================
+
+/// Maximum absolute incoming weight we consider "sensible" for add-neuron candidates.
+///
+/// Rationale (Dec 2025): very large incoming weights (50, 100, 200) frequently produce
+/// brittle candidates that look positive under the linear prediction but fail when
+/// applied to the full training set.
+const SENSIBLE_INCOMING_ABS_MAX: f32 = 20.0;
+
+/// Maximum absolute bias we consider "sensible" for add-neuron candidates.
+///
+/// Rationale (Dec 2025): large |bias| often turns the new neuron into a near-constant
+/// offset (or forces saturation), which tends to crater performance in ablation tests.
+const SENSIBLE_BIAS_ABS_MAX: f32 = 10.0;
+
+/// Maximum absolute outgoing weight we consider "sensible" for add-neuron candidates.
+///
+/// This matches `MAX_OUTGOING_WEIGHT` in the analysis implementation. Keeping this
+/// aligned avoids surprising "why is this candidate rejected?" behaviour.
+const SENSIBLE_OUTGOING_ABS_MAX: f32 = 0.1;
+
+pub(crate) fn sensible_bias_abs_max_for_squash(_squash: &str) -> f32 {
+    // For now we keep this uniform across squashes. If we find a function that
+    // legitimately needs a wider bias range, we can special-case it here.
+    SENSIBLE_BIAS_ABS_MAX
+}
+
+/// Drop add-neuron candidates that are outside our "sensible" parameter ranges.
+///
+/// We do not mutate candidates here (no clamping). If a candidate is out of range,
+/// it's simply not worth returning because TypeScript will cache the failure and
+/// never re-try it.
+///
+/// Note: This is applied AFTER the "Extreme → Conservative/Gentle Nudge" pairing, so
+/// unsafe originals can be dropped while still keeping safe variants.
+#[doc(hidden)]
+pub fn filter_candidates_to_sensible_ranges(
+    candidates: Vec<CandidateNeuronJson>,
+) -> Vec<CandidateNeuronJson> {
+    candidates
+        .into_iter()
+        .filter(|c| {
+            c.incoming_weight.is_finite()
+                && c.outgoing_weight.is_finite()
+                && c.bias.is_finite()
+                && c.incoming_weight.abs() <= SENSIBLE_INCOMING_ABS_MAX
+                && c.outgoing_weight.abs() <= SENSIBLE_OUTGOING_ABS_MAX
+                && c.bias.abs() <= sensible_bias_abs_max_for_squash(&c.squash)
+        })
+        .collect()
+}
+
 /// Conservative parameter clamps for add-neuron candidates.
 ///
 /// Production evidence (Dec 2025): many failed add-neuron candidates are generated with very
@@ -41,7 +95,7 @@ const CONSERVATIVE_EXPECTED_MULTIPLIER: f32 = 0.5;
 /// represent a useful feature), while keeping the outgoing effect small and stable.
 ///
 /// This is a third candidate returned alongside the original and the conservative clamp.
-const GENTLE_NUDGE_INCOMING_ABS_MAX: f32 = 50.0;
+const GENTLE_NUDGE_INCOMING_ABS_MAX: f32 = 20.0;
 const GENTLE_NUDGE_BIAS_ABS_MAX: f32 = 10.0;
 const GENTLE_NUDGE_OUTGOING_ABS_MAX: f32 = 0.02;
 const GENTLE_NUDGE_OUTGOING_SCALE: f32 = 0.1;
