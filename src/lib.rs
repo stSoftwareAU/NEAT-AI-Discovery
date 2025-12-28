@@ -358,6 +358,14 @@ pub struct SynapseAnalysisMetadataJson {
     pub candidates_found: usize,
     /// Number of synapse candidates returned to caller (after `maxCandidates` truncation).
     pub candidates_returned: usize,
+    /// True when analysis hit its deadline and returned partial results.
+    pub timed_out: bool,
+    /// Minimum input index observed with non-empty records (eg 0).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_index_min_seen_with_records: Option<usize>,
+    /// Maximum input index observed with non-empty records (eg 1555).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_index_max_seen_with_records: Option<usize>,
 }
 
 /// JSON representation of neuron analysis metadata.
@@ -944,6 +952,9 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     saturation_aware_simulation_used: s.metadata.saturation_aware_simulation_used,
                     candidates_found: s.metadata.candidates_found,
                     candidates_returned: s.metadata.candidates_returned,
+                    timed_out: s.metadata.timed_out,
+                    input_index_min_seen_with_records: s.metadata.input_index_min_seen_with_records,
+                    input_index_max_seen_with_records: s.metadata.input_index_max_seen_with_records,
                 }),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 neuron_diagnostics: neuron

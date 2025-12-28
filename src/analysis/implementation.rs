@@ -1002,6 +1002,27 @@ fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
     Some(validated_ms)
 }
 
+fn parse_input_index(uuid: &str) -> Option<usize> {
+    uuid.strip_prefix("input-")?.parse::<usize>().ok()
+}
+
+fn interleave_from_ends<T>(items: Vec<T>) -> Vec<T> {
+    use std::collections::VecDeque;
+    if items.len() <= 2 {
+        return items;
+    }
+    // Items are expected to already be in a meaningful order (eg sorted by index).
+    let mut deque: VecDeque<T> = items.into();
+    let mut out = Vec::with_capacity(deque.len());
+    while let Some(front) = deque.pop_front() {
+        out.push(front);
+        if let Some(back) = deque.pop_back() {
+            out.push(back);
+        }
+    }
+    out
+}
+
 fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
     // Treat deadline_ms as a relative duration (milliseconds from now), not an absolute timestamp.
     // The calling code (TypeScript) calculates this as Date.now() + duration, but we want to treat
@@ -7703,8 +7724,29 @@ pub(crate) fn analyze_neurons_with_cache(
                 .iter()
                 .filter(|neuron| neuron.index < target_index)
                 .collect();
+            // Fair source ordering (Dec 2025):
+            // - We want to avoid starving "late" input neurons (eg input-1486+) when timeouts occur.
+            // - We therefore interleave input sources from both ends (0, last, 1, last-1, ...)
+            //   and only then shuffle the remaining non-input sources.
+            let mut input_sources: Vec<&OrderedNeuron> = eligible_sources
+                .iter()
+                .copied()
+                .filter(|n| parse_input_index(&n.uuid).is_some())
+                .collect();
+            input_sources.sort_by_key(|n| parse_input_index(&n.uuid).unwrap_or(n.index));
+            let input_sources = interleave_from_ends(input_sources);
+
+            let mut non_input_sources: Vec<&OrderedNeuron> = eligible_sources
+                .iter()
+                .copied()
+                .filter(|n| parse_input_index(&n.uuid).is_none())
+                .collect();
             let mut rng = thread_rng();
-            eligible_sources.shuffle(&mut rng);
+            non_input_sources.shuffle(&mut rng);
+
+            eligible_sources.clear();
+            eligible_sources.extend(input_sources);
+            eligible_sources.extend(non_input_sources);
 
             // Track total eligible sources for diagnostics
             let total_eligible = eligible_sources.len() as u32;
@@ -8762,6 +8804,26 @@ Pages speculative:                        12345.
             "Constant input samples should NOT be rejected - predictions are valid"
         );
     }
+
+    #[test]
+    fn parse_input_index_parses_valid_ids() {
+        assert_eq!(parse_input_index("input-0"), Some(0));
+        assert_eq!(parse_input_index("input-1486"), Some(1486));
+        assert_eq!(parse_input_index("input-001"), Some(1));
+        assert_eq!(parse_input_index("hidden-1"), None);
+        assert_eq!(parse_input_index("input-"), None);
+    }
+
+    #[test]
+    fn interleave_from_ends_interleaves_sorted_inputs() {
+        let v = vec![0, 1, 2, 3, 4, 5];
+        let out = interleave_from_ends(v);
+        assert_eq!(out, vec![0, 5, 1, 4, 2, 3]);
+
+        let v = vec![0, 1, 2, 3, 4];
+        let out = interleave_from_ends(v);
+        assert_eq!(out, vec![0, 4, 1, 3, 2]);
+    }
 }
 
 // analyze_all has been moved to src/analysis/mod.rs
@@ -8855,6 +8917,9 @@ pub(crate) fn analyze_synapses_with_cache(
     // These track whether target_value was available and whether saturation-aware simulation was used
     let metadata_target_value_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let metadata_saturation_aware_used = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let metadata_seen_any_input_with_records = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let metadata_input_min_with_records = Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX));
+    let metadata_input_max_with_records = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
@@ -9058,6 +9123,10 @@ pub(crate) fn analyze_synapses_with_cache(
                 Vec::with_capacity(eligible_sources.len());
 
             for source in &eligible_sources {
+                if deadline_passed(&deadline) {
+                    *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+                    break;
+                }
                 let source_uuid = source.uuid.as_str();
 
                 if existing_synapses_arc
@@ -9070,6 +9139,21 @@ pub(crate) fn analyze_synapses_with_cache(
                 match cache.get(source_uuid) {
                     Ok(records) => {
                         if !records.is_empty() {
+                            if let Some(input_index) = parse_input_index(source_uuid) {
+                                metadata_seen_any_input_with_records.store(
+                                    true,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                // Update min/max atomically (best-effort).
+                                let _ = metadata_input_min_with_records.fetch_min(
+                                    input_index,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                let _ = metadata_input_max_with_records.fetch_max(
+                                    input_index,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                            }
                             sources_to_process.push((source, records));
                         } else {
                             // Empty records - track for diagnostics
@@ -9589,6 +9673,10 @@ pub(crate) fn analyze_synapses_with_cache(
     // Build metadata for observability (v0.2.17+)
     // Note: target_value_available and saturation_aware_simulation_used are tracked
     // during the inner analysis loop via atomic flags.
+    let saw_any_input =
+        metadata_seen_any_input_with_records.load(std::sync::atomic::Ordering::Relaxed);
+    let input_min = metadata_input_min_with_records.load(std::sync::atomic::Ordering::Relaxed);
+    let input_max = metadata_input_max_with_records.load(std::sync::atomic::Ordering::Relaxed);
     let metadata = super::shared::SynapseAnalysisMetadata {
         target_value_available: metadata_target_value_seen
             .load(std::sync::atomic::Ordering::Relaxed),
@@ -9596,6 +9684,9 @@ pub(crate) fn analyze_synapses_with_cache(
             .load(std::sync::atomic::Ordering::Relaxed),
         candidates_found,
         candidates_returned,
+        timed_out: analysis_timed_out,
+        input_index_min_seen_with_records: if saw_any_input { Some(input_min) } else { None },
+        input_index_max_seen_with_records: if saw_any_input { Some(input_max) } else { None },
     };
 
     Ok(AnalyzeSynapsesResult {

@@ -30,6 +30,16 @@ pub struct SynapseAnalysisMetadata {
 
     /// Number of synapse candidates returned to caller (after `maxCandidates` truncation).
     pub candidates_returned: usize,
+
+    /// True when analysis hit its deadline and returned partial results.
+    pub timed_out: bool,
+
+    /// Range of input indices that were observed with non-empty record sets during analysis.
+    ///
+    /// This helps diagnose whether new observation inputs (eg `input-1486+`) are present in the
+    /// Parquet and are being considered by discovery.
+    pub input_index_min_seen_with_records: Option<usize>,
+    pub input_index_max_seen_with_records: Option<usize>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.
