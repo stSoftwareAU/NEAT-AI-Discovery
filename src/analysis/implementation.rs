@@ -7646,17 +7646,16 @@ pub(crate) fn analyze_neurons_with_cache(
                 }
             }
 
-            // Phase 4: Process evaluations - GPU work is done here
+            // Phase 4: Process evaluations - GPU work is done here.
             // Filter to only sources with samples, then evaluate.
             //
             // NOTE: We intentionally skip STEP/BIPOLAR targets here; synapse analysis
             // is the supported discovery mechanism for discrete targets.
-            if is_threshold_target {
-                return Ok(());
-            }
-
-            // Standard continuous activation path
-            for result in work_results {
+            //
+            // Important: We still count the target as "completed" for progress reporting.
+            if !is_threshold_target {
+                // Standard continuous activation path
+                for result in work_results {
                     // Check deadline before each evaluation batch
                     if deadline_passed(&deadline) {
                         *analysis_timed_out.lock().expect("Mutex poisoned") = true;
@@ -7766,6 +7765,7 @@ pub(crate) fn analyze_neurons_with_cache(
                             upsert_candidate(&mut map, candidate);
                         }
                     }
+                }
             }
 
             // Track completion of this focus neuron for timeout reporting.

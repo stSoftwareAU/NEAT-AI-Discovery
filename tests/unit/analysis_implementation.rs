@@ -670,3 +670,97 @@ Pages speculative:                        12345.
         // And the shuffle should actually move at least something.
         assert_ne!(a, (0..20).collect::<Vec<i32>>());
     }
+
+    #[test]
+    fn neuron_analysis_counts_threshold_targets_as_completed_for_progress_reporting() -> Result<()> {
+        // 29-Dec-2025: Regression test for progress reporting.
+        //
+        // STEP/BIPOLAR targets are intentionally skipped by add-neuron analysis (synapse analysis
+        // is the supported mechanism for discrete targets), but they still appear in the focus
+        // list and therefore must be counted as "completed" for progress reporting.
+        //
+        // Historically an early `return Ok(())` skipped the completion counter update, leaving the
+        // watchdog stage stuck at "processing target ..." rather than "completed 1/1".
+
+        let _lock = crate::watchdog::lock_for_test_serialisation();
+
+        // Keep this aligned with integration tests: skip rather than fail when no GPU is present.
+        if !crate::analysis::GpuAnalyzer::gpu_is_available() {
+            eprintln!("Skipping test: no GPU available");
+            return Ok(());
+        }
+
+        let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+            stall_timeout: std::time::Duration::from_secs(60),
+            abort_delay: std::time::Duration::from_secs(1),
+        });
+
+        // Use a unique UUID so other parallel tests (which often use "output-0") won't
+        // accidentally overwrite the watchdog stage while our watchdog is active.
+        let target_uuid = "output-progress-0";
+
+        let creature = crate::CreatureJson {
+            input: 1,
+            output: 1,
+            neurons: vec![crate::NeuronJson {
+                uuid: target_uuid.to_string(),
+                neuron_type: "output".to_string(),
+                squash: "STEP".to_string(),
+                bias: 0.0,
+            }],
+            synapses: Vec::new(),
+        };
+
+        // Use an in-memory loader so the test doesn't need to write a parquet file.
+        let cache = std::sync::Arc::new(RecordCache::with_loader(
+            "unused.parquet",
+            std::sync::Arc::new(move |_file, uuid| {
+                let mut records = Vec::new();
+                for obs_index in 0..20u32 {
+                    match uuid {
+                        "input-0" => {
+                            records.push(DiscoverRecord {
+                                obs_index,
+                                neuron_uuid: uuid.to_string(),
+                                value: None,
+                                activation: (obs_index as f32 - 10.0) / 10.0, // -1.0 .. 0.9
+                                errors: Vec::new(),
+                            });
+                        }
+                        _ if uuid == target_uuid => {
+                            // Provide non-empty errors so the target is considered analysable.
+                            let activation = 0.0;
+                            let error = if obs_index < 10 { 0.25 } else { -0.25 };
+                            records.push(DiscoverRecord {
+                                obs_index,
+                                neuron_uuid: uuid.to_string(),
+                                value: Some(activation),
+                                activation,
+                                errors: vec![error],
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(records)
+            }),
+        ));
+
+        let input = crate::AnalyzeNeuronsInput {
+            parquet_file: "unused.parquet".to_string(),
+            creature,
+            focus_neurons: vec![target_uuid.to_string()],
+            max_candidates: Some(1),
+            analysis_deadline_ms: None,
+            random_seed: Some(123),
+        };
+
+        let _result = analyze_neurons_with_cache(&input, cache)?;
+
+        let stage = crate::watchdog::active_stage_for_test().unwrap_or_default();
+        assert!(
+            stage.contains("neuron analysis → completed 1/1"),
+            "expected progress to reach completed 1/1 for a threshold target, got: {stage}"
+        );
+        Ok(())
+    }
