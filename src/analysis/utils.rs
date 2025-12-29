@@ -294,7 +294,7 @@ pub fn pair_extreme_candidates_with_conservative_variants(
 // - get_memory_info (platform-specific)
 // - parse_vm_stat_line, parse_vm_stat_page_size (macOS)
 // - parse_meminfo_line (Linux)
-// - detect_system_resources
+// - detect_memory_tier
 // - build_deadline, deadline_passed, calculate_effective_timeout_ms
 // - log_analysis_start, log_analysis_timeout
 // - wait_for_buffer_map, wait_for_buffer_maps_batch

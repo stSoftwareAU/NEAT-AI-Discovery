@@ -494,18 +494,6 @@ fn detect_gpu_tier(adapter_info: &wgpu::AdapterInfo) -> GpuPerformanceTier {
     GpuPerformanceTier::Unknown
 }
 
-/// System resource information for adaptive configuration.
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)] // Fields kept for diagnostic logging
-struct SystemResources {
-    /// Available memory in bytes (not total - what's actually free)
-    available_memory_bytes: u64,
-    /// Total physical memory in bytes
-    total_memory_bytes: u64,
-    /// Memory pressure level
-    memory_tier: MemoryTier,
-}
-
 /// Memory tier for adaptive configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MemoryTier {
@@ -519,11 +507,11 @@ enum MemoryTier {
 
 /// Detect available system memory and categorise into tiers.
 /// This is cached for the lifetime of the process.
-fn detect_system_resources() -> SystemResources {
+fn detect_memory_tier() -> MemoryTier {
     use std::sync::OnceLock;
-    static RESOURCES: OnceLock<SystemResources> = OnceLock::new();
+    static TIER: OnceLock<MemoryTier> = OnceLock::new();
 
-    *RESOURCES.get_or_init(|| {
+    *TIER.get_or_init(|| {
         let (available, total) = get_memory_info();
         let available_gb = available as f64 / (1024.0 * 1024.0 * 1024.0);
         let total_gb = total as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -546,11 +534,7 @@ fn detect_system_resources() -> SystemResources {
             "[NEAT-AI-Discovery] Memory: {available_gb:.1}GB available / {total_gb:.1}GB total | Tier: {tier_str}"
         );
 
-        SystemResources {
-            available_memory_bytes: available,
-            total_memory_bytes: total,
-            memory_tier,
-        }
+        memory_tier
     })
 }
 
@@ -779,9 +763,7 @@ pub fn check_memory_for_parquet(parquet_file: &str) -> Result<()> {
 /// Get the GPU work queue capacity based on system resources.
 /// Lower capacity = more backpressure = less memory usage.
 fn get_work_queue_capacity() -> usize {
-    let resources = detect_system_resources();
-
-    match resources.memory_tier {
+    match detect_memory_tier() {
         MemoryTier::Low => 4,      // Aggressive backpressure
         MemoryTier::Standard => 8, // Moderate backpressure
         MemoryTier::High => 16,    // Allow more parallelism
@@ -844,7 +826,6 @@ fn get_adjusted_batch_size(gpu_tier: GpuPerformanceTier) -> usize {
         return size;
     }
 
-    let resources = detect_system_resources();
     let base_size = match gpu_tier {
         GpuPerformanceTier::High => HIGH_PERF_GPU_BATCH_SIZE,
         GpuPerformanceTier::Standard | GpuPerformanceTier::Unknown => DEFAULT_GPU_BATCH_SIZE,
@@ -852,7 +833,7 @@ fn get_adjusted_batch_size(gpu_tier: GpuPerformanceTier) -> usize {
 
     // Reduce batch size if memory is constrained
     // Standard memory tier should also reduce batch size to prevent Metal command buffer exhaustion
-    match resources.memory_tier {
+    match detect_memory_tier() {
         MemoryTier::Low => LOW_MEMORY_GPU_BATCH_SIZE.min(base_size),
         MemoryTier::Standard => DEFAULT_GPU_BATCH_SIZE.min(base_size), // Use 512 max, not 1024
         MemoryTier::High => base_size,
@@ -2514,88 +2495,6 @@ struct HelpfulSample {
     target_activation: Option<f32>,
 }
 
-/// Extended sample for threshold-crossing analysis of discrete activations (STEP/BIPOLAR).
-/// Includes the target neuron's pre-activation value to determine threshold crossings.
-#[derive(Clone, Copy)]
-struct DiscreteHelpfulSample {
-    /// Source neuron's activation
-    source_activation: f32,
-    /// Target neuron's input sum before squash function
-    target_value: f32,
-    /// Target neuron's current output after squash (0/1 for STEP, -1/1 for BIPOLAR)
-    target_activation: f32,
-    /// Target neuron's average error
-    avg_error: f32,
-}
-
-/// Type of threshold activation function
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ThresholdType {
-    /// STEP: value > 0 ? 1 : 0
-    Step,
-    /// BIPOLAR: value > 0 ? 1 : -1
-    Bipolar,
-}
-
-impl ThresholdType {
-    fn from_squash(squash: &str) -> Option<Self> {
-        match squash.to_uppercase().as_str() {
-            "STEP" => Some(Self::Step),
-            "BIPOLAR" => Some(Self::Bipolar),
-            _ => None,
-        }
-    }
-
-    /// Calculate the output for a given input value
-    fn apply(&self, value: f32) -> f32 {
-        match self {
-            Self::Step => {
-                if value > 0.0 {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            Self::Bipolar => {
-                if value > 0.0 {
-                    1.0
-                } else {
-                    -1.0
-                }
-            }
-        }
-    }
-
-    /// Check if adding a contribution would flip the output
-    fn would_flip(&self, current_value: f32, contribution: f32) -> bool {
-        let current_positive = current_value > 0.0;
-        let new_positive = (current_value + contribution) > 0.0;
-        current_positive != new_positive
-    }
-
-    /// Check if a flip is "helpful" (moves output in direction of error)
-    /// Returns: 1 for helpful flip, -1 for harmful flip, 0 for no flip
-    fn flip_direction(&self, current_value: f32, contribution: f32, error: f32) -> i32 {
-        if !self.would_flip(current_value, contribution) {
-            return 0;
-        }
-
-        let current_output = self.apply(current_value);
-        let new_output = self.apply(current_value + contribution);
-
-        // Error > 0 means output should be higher
-        // Error < 0 means output should be lower
-        let output_increased = new_output > current_output;
-        let should_increase = error > 0.0;
-
-        if output_increased == should_increase {
-            1 // Helpful flip
-        } else {
-            -1 // Harmful flip
-        }
-    }
-}
-
 /// Statistics computed from neuron error and activation samples
 #[derive(Debug, Clone)]
 struct NeuronStats {
@@ -2875,7 +2774,6 @@ struct BiasUniforms {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-#[allow(dead_code)] // Framework for future GPU activation evaluation
 struct ActivationOutput {
     output: f32,
     output_sq: f32,
@@ -2888,7 +2786,6 @@ struct ActivationOutput {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-#[allow(dead_code)] // Framework for future GPU activation evaluation
 struct ActivationUniforms {
     sample_count: u32,
     orientation: f32,
@@ -3101,17 +2998,6 @@ fn absolute_activation(x: f32) -> f32 {
 // NEW ACTIVATION FUNCTIONS (v0.1.139)
 // Based on analysis of successful discoveries that evolved TO these activations
 // ============================================================================
-
-/// LeakyReLU - 4 successful discoveries evolved ReLU → LeakyReLU!
-/// Allows small negative gradients instead of zeroing negative inputs.
-#[allow(dead_code)] // Still used for target simulation, but not proposed as a candidate squash.
-fn leaky_relu_activation(x: f32) -> f32 {
-    if x >= 0.0 {
-        x
-    } else {
-        0.01 * x // Standard leak coefficient
-    }
-}
 
 /// Mish - 2 successful discoveries evolved TO Mish (from ELU and Softplus)
 /// Self-regularised activation: x * tanh(softplus(x))
@@ -3665,9 +3551,7 @@ pub struct GpuAnalyzer {
     harmful_pipeline: Option<wgpu::ComputePipeline>,
     relu_layout: Option<wgpu::BindGroupLayout>,
     relu_pipeline: Option<wgpu::ComputePipeline>,
-    #[allow(dead_code)] // Framework for future GPU activation evaluation
     activation_layout: Option<wgpu::BindGroupLayout>,
-    #[allow(dead_code)] // Framework for future GPU activation evaluation
     activation_pipeline: Option<wgpu::ComputePipeline>,
     bias_layout: Option<wgpu::BindGroupLayout>,
     bias_pipeline: Option<wgpu::ComputePipeline>,
@@ -6043,28 +5927,6 @@ fn compute_relu_improvement_and_count(
     total_baseline_error_sq: f32,
     target_activation_fn: Option<fn(f32) -> f32>,
 ) -> (f32, u32, u32) {
-    compute_relu_improvement_and_count_traced(
-        samples,
-        incoming_weight,
-        outgoing_weight,
-        bias,
-        total_baseline_error_sq,
-        target_activation_fn,
-        None, // No trace context
-    )
-}
-
-/// Compute ReLU improvement and count.
-/// Returns (improvement_fraction, improved_count, total_count).
-fn compute_relu_improvement_and_count_traced(
-    samples: &[HelpfulSample],
-    incoming_weight: f32,
-    outgoing_weight: f32,
-    bias: f32,
-    total_baseline_error_sq: f32,
-    target_activation_fn: Option<fn(f32) -> f32>,
-    _trace_context: Option<&str>, // Kept for API compatibility, no longer used
-) -> (f32, u32, u32) {
     if total_baseline_error_sq <= EPSILON || samples.is_empty() {
         return (0.0, 0, samples.len() as u32);
     }
@@ -7172,252 +7034,11 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
     Ok(best_candidate.or(fallback_candidate))
 }
 
-/// Build discrete samples for threshold-crossing analysis.
-/// Combines source neuron activations with target neuron values and errors.
-fn build_discrete_samples(
-    source_records: &[DiscoverRecord],
-    target_records: &[DiscoverRecord],
-) -> Vec<DiscreteHelpfulSample> {
-    // Build a map from obs_index to target record
-    let target_map: HashMap<u32, &DiscoverRecord> = target_records
-        .iter()
-        .filter(|r| !r.errors.is_empty())
-        .map(|r| (r.obs_index, r))
-        .collect();
+// Threshold-crossing (STEP/BIPOLAR) sample building was removed as dead code.
+// For discrete targets, add-synapse analysis is the intended mechanism.
 
-    let mut samples = Vec::new();
-
-    for source_record in source_records {
-        if !source_record.activation.is_finite() {
-            continue;
-        }
-
-        if let Some(target_record) = target_map.get(&source_record.obs_index) {
-            // Need target's value (pre-activation input sum) for threshold crossing
-            let target_value = match target_record.value {
-                Some(v) if v.is_finite() => v,
-                _ => continue, // Skip if no value available
-            };
-
-            if !target_record.activation.is_finite() {
-                continue;
-            }
-
-            // Compute average error for target
-            let mut error_sum = 0.0;
-            let mut error_count = 0;
-            for &err in &target_record.errors {
-                if err.is_finite() {
-                    error_sum += err;
-                    error_count += 1;
-                }
-            }
-
-            if error_count > 0 {
-                let avg_error = error_sum / error_count as f32;
-                samples.push(DiscreteHelpfulSample {
-                    source_activation: source_record.activation,
-                    target_value,
-                    target_activation: target_record.activation,
-                    avg_error,
-                });
-            }
-        }
-    }
-
-    samples
-}
-
-/// Evaluate a discrete activation candidate using threshold-crossing model.
-/// Instead of predicting continuous error reduction, counts how many samples
-/// would flip to the correct output if we add a new connection.
-///
-/// For STEP/BIPOLAR, the only meaningful improvement is flipping the output:
-/// - If error > 0 (output should be higher), we want to flip 0→1 or -1→1
-/// - If error < 0 (output should be lower), we want to flip 1→0 or 1→-1
-///
-/// **CURRENTLY DISABLED**: This function always returns `None` because IDENTITY+bias=0
-/// candidates are equivalent to a direct synapse and are filtered out. For STEP/BIPOLAR
-/// targets, use **add-synapse analysis** instead - it can find direct connections that
-/// flip the output without wasting a neuron.
-///
-/// The function is retained for potential future use with non-IDENTITY squash functions
-/// (e.g., evaluating STEP→STEP chains) but currently does nothing useful.
-///
-/// # Arguments
-/// * `is_output_target` - Whether the target neuron is an output neuron. (Currently unused.
-///   Impact discounting for hidden targets is handled after candidate evaluation via
-///   `compute_impacts_public()`, which correctly uses the target's weighted paths to outputs.)
-#[allow(unused_variables, unreachable_code)]
-fn evaluate_discrete_candidate(
-    source_uuid: &str,
-    target_uuid: &str,
-    samples: &[DiscreteHelpfulSample],
-    threshold_type: ThresholdType,
-    threshold: f32,
-    is_output_target: bool,
-) -> Option<CandidateNeuronJson> {
-    // EARLY RETURN: Discrete evaluation only considers IDENTITY squash for new neurons.
-    // IDENTITY+bias=0 is mathematically equivalent to a direct synapse:
-    //   IDENTITY(source × incoming_weight + 0) × outgoing_weight = source × (incoming × outgoing)
-    //
-    // For STEP/BIPOLAR targets, add-synapse analysis handles this case more efficiently
-    // (1 synapse vs 1 neuron + 2 synapses). Returning None immediately avoids wasted
-    // computation from iterating through weight combinations.
-    //
-    // TODO: If discrete evaluation should support non-IDENTITY squash functions in future
-    // (e.g., STEP→STEP chains), remove this early return and add those squash types.
-    return None;
-
-    // The following code is unreachable but retained for reference if we add
-    // support for non-IDENTITY squash functions in the future.
-    if samples.len() < MIN_NEURON_SAMPLE_COUNT {
-        return None;
-    }
-
-    let total_count = samples.len() as u32;
-
-    // Incoming weight scales - larger scales help with threshold crossing by amplifying
-    // source activation differences. Keep wide range since these don't directly affect output.
-    const INCOMING_SCALES: [f32; 8] = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0];
-
-    // Outgoing weight scales - MUST be small! Based on analysis of successful vs failed
-    // discoveries: successful add-neuron candidates have |outgoing_weight| < 0.05.
-    // Large outgoing weights (10, 50) consistently fail in production.
-    // These scales match MAX_OUTGOING_WEIGHT (0.1) as upper bound.
-    const OUTGOING_SCALES: [f32; 5] = [0.01, 0.02, 0.05, 0.075, 0.1];
-
-    const ORIENTATIONS: [f32; 2] = [1.0, -1.0];
-
-    let mut best_candidate: Option<CandidateNeuronJson> = None;
-    let mut best_improvement = threshold;
-
-    // For discrete functions, use IDENTITY squash on the new neuron
-    // This passes the weighted source activation directly
-    let new_neuron_squash = "IDENTITY";
-
-    for &orientation in &ORIENTATIONS {
-        for &scale in &INCOMING_SCALES {
-            let incoming_weight = orientation * scale;
-
-            // For IDENTITY squash, new_neuron_output = incoming_weight * source_activation
-            // Try different outgoing weights (small scales only for reliable predictions)
-            for &out_scale in &OUTGOING_SCALES {
-                for &out_orientation in &ORIENTATIONS {
-                    let outgoing_weight = out_orientation * out_scale;
-
-                    // Count helpful and harmful flips
-                    let mut helpful_flips = 0i32;
-                    let mut harmful_flips = 0i32;
-                    let mut samples_with_error = 0u32;
-
-                    for sample in samples {
-                        if sample.avg_error.abs() < EPSILON {
-                            continue; // No error, nothing to improve
-                        }
-                        samples_with_error += 1;
-
-                        // New neuron output with IDENTITY: just passes through
-                        let new_neuron_output = incoming_weight * sample.source_activation;
-                        let contribution = outgoing_weight * new_neuron_output;
-
-                        let flip_dir = threshold_type.flip_direction(
-                            sample.target_value,
-                            contribution,
-                            sample.avg_error,
-                        );
-
-                        match flip_dir {
-                            1 => helpful_flips += 1,
-                            -1 => harmful_flips += 1,
-                            _ => {}
-                        }
-                    }
-
-                    if samples_with_error < MIN_NEURON_SAMPLE_COUNT as u32 {
-                        continue;
-                    }
-
-                    // Net improvement: proportion of samples that would be corrected
-                    let net_flips = helpful_flips - harmful_flips;
-                    let flip_rate = net_flips as f32 / samples_with_error as f32;
-
-                    // For both OUTPUT and HIDDEN targets, use flip_rate as the raw improvement.
-                    //
-                    // For OUTPUT targets: flip_rate ≈ error_reduction (each flip changes MSE by ~1)
-                    // For HIDDEN targets: flip_rate is the neuron-level improvement. The actual
-                    // creature-level error reduction is computed later via impact discounting
-                    // (see lines ~6511-6550) which uses compute_impacts_public() to determine
-                    // the target's weighted path to outputs.
-                    //
-                    // NOTE: Previously this code incorrectly used `outgoing_weight.abs()` as a
-                    // proxy for hidden target impact. That was WRONG because `outgoing_weight`
-                    // is the NEW→TARGET connection weight, NOT the TARGET's outgoing connections
-                    // to downstream output neurons. When a hidden STEP neuron flips (0→1), its
-                    // impact on outputs depends on its own synapses to outputs, not the incoming
-                    // synapse weight. The proper impact is computed by compute_impacts_public().
-                    let improvement = flip_rate;
-
-                    // IMPORTANT: Require meaningful improvement (at least 1%) for IDENTITY neurons.
-                    // IDENTITY with bias=0 is mathematically equivalent to a direct synapse:
-                    //   IDENTITY(source × incoming_weight + 0) × outgoing_weight = source × incoming × outgoing
-                    // These candidates should use add-synapse, not add-neuron.
-                    // Additionally, very low flip rates (< 1%) indicate the contribution isn't
-                    // reliably pushing the target across the threshold.
-                    const MIN_DISCRETE_IMPROVEMENT: f32 = 0.01; // 1% minimum
-
-                    if improvement > best_improvement.max(MIN_DISCRETE_IMPROVEMENT)
-                        && helpful_flips > harmful_flips
-                    {
-                        // IDENTITY+bias=0 is mathematically equivalent to a direct synapse.
-                        // These should be handled by add-synapse analysis, not add-neuron.
-                        // Skip these candidates entirely - they waste a neuron for no benefit.
-                        if new_neuron_squash == "IDENTITY" {
-                            // bias is always 0 for discrete evaluation, so skip all IDENTITY
-                            continue;
-                        }
-                        best_improvement = improvement;
-
-                        // Create target neuron stats from samples
-                        let target_stats = {
-                            let helper_samples: Vec<HelpfulSample> = samples
-                                .iter()
-                                .map(|s| HelpfulSample {
-                                    activation: s.target_activation,
-                                    avg_error: s.avg_error,
-                                    target_value: Some(s.target_value),
-                                    target_activation: Some(s.target_activation),
-                                })
-                                .collect();
-                            NeuronStats::from_samples(&helper_samples).map(|s| s.to_json())
-                        };
-
-                        // Issue #128: Use creature-level metrics
-                        best_candidate = Some(CandidateNeuronJson {
-                            source_neuron_uuid: source_uuid.to_string(),
-                            target_neuron_uuid: target_uuid.to_string(),
-                            source_neuron_index: None, // Set during impact discounting
-                            target_neuron_index: None, // Set during impact discounting
-                            incoming_weight,
-                            outgoing_weight,
-                            squash: new_neuron_squash.to_string(),
-                            bias: 0.0, // IDENTITY doesn't need bias for threshold crossing
-                            comment: None,
-                            target_neuron_impact: 1.0,
-                            expected_creature_error_reduction: improvement,
-                            expected_creature_score_gain: improvement,
-                            improved_count: helpful_flips as u32,
-                            total_count,
-                            target_neuron_stats: target_stats,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    best_candidate
-}
+// Threshold-crossing (STEP/BIPOLAR) add-neuron evaluation was removed as dead code.
+// For discrete targets, add-synapse analysis is the intended mechanism.
 
 /// Result of filtering focus targets for add-neuron analysis.
 ///
@@ -7862,15 +7483,11 @@ pub(crate) fn analyze_neurons_with_cache(
                 );
             }
 
-            // Check if this is a threshold activation (STEP/BIPOLAR) that needs special handling
-            let threshold_type = neuron_squash_map_arc
+            // STEP/BIPOLAR are discrete targets. Add-neuron discovery for these targets was
+            // removed as dead code; add-synapse is the intended mechanism.
+            let is_threshold_target = neuron_squash_map_arc
                 .get(target_uuid)
-                .and_then(|squash| ThresholdType::from_squash(squash));
-
-            // Check if target is an output neuron (needed for discrete evaluation accuracy)
-            let is_output_target = neuron_type_map
-                .get(target_uuid.as_str())
-                .map(|t| t == "output")
+                .map(|squash| is_threshold_activation(squash))
                 .unwrap_or(false);
 
             let target_index = match order_map_arc.get(target_uuid.as_str()) {
@@ -8030,55 +7647,16 @@ pub(crate) fn analyze_neurons_with_cache(
             }
 
             // Phase 4: Process evaluations - GPU work is done here
-            // Filter to only sources with samples, then evaluate
+            // Filter to only sources with samples, then evaluate.
             //
-            // For threshold activations (STEP/BIPOLAR), we use a specialised
-            // threshold-crossing model instead of the standard linear error model.
-            if let Some(t_type) = threshold_type {
-                // Threshold activation path - use discrete evaluation
-                for (source, from_records_arc) in &sources_to_process {
-                    // Check deadline
-                    if deadline_passed(&deadline) {
-                        *analysis_timed_out.lock().expect("Mutex poisoned") = true;
-                        break;
-                    }
+            // NOTE: We intentionally skip STEP/BIPOLAR targets here; synapse analysis
+            // is the supported discovery mechanism for discrete targets.
+            if is_threshold_target {
+                return Ok(());
+            }
 
-                    let from_records = from_records_arc.as_ref();
-                    let discrete_samples = build_discrete_samples(from_records, target_records);
-
-                    if discrete_samples.len() < MIN_NEURON_SAMPLE_COUNT {
-                        continue;
-                    }
-
-                    if let Some(candidate) = evaluate_discrete_candidate(
-                        &source.uuid,
-                        target_uuid,
-                        &discrete_samples,
-                        t_type,
-                        threshold,
-                        is_output_target,
-                    ) {
-                        if verbose_enabled() {
-                            eprintln!(
-                                "[NEAT-AI-Discovery][verbose] Threshold-crossing candidate for {} -> {}: {} samples, {:.2}% improvement (flips: {})",
-                                source.uuid,
-                                target_uuid,
-                                discrete_samples.len(),
-                                candidate.expected_creature_score_gain * 100.0,
-                                candidate.improved_count
-                            );
-                        }
-                        diagnostics
-                            .lock()
-                            .expect("Mutex poisoned: diagnostics")
-                            .mark_candidate_selected(target_uuid);
-                        let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
-                        upsert_candidate(&mut map, candidate);
-                    }
-                }
-            } else {
-                // Standard continuous activation path
-                for result in work_results {
+            // Standard continuous activation path
+            for result in work_results {
                     // Check deadline before each evaluation batch
                     if deadline_passed(&deadline) {
                         *analysis_timed_out.lock().expect("Mutex poisoned") = true;
@@ -8188,7 +7766,6 @@ pub(crate) fn analyze_neurons_with_cache(
                             upsert_candidate(&mut map, candidate);
                         }
                     }
-                }
             }
 
             // Track completion of this focus neuron for timeout reporting.
@@ -12323,272 +11900,6 @@ mod tests_synapses {
                 .skipped_hidden
                 .contains(&"unknown-bipolar".to_string()),
             "unknown-bipolar should be reported as skipped when output-only mode is enabled"
-        );
-    }
-
-    /// Test ThresholdType correctly applies threshold functions
-    #[test]
-    fn test_threshold_type_apply() {
-        // STEP: value > 0 ? 1 : 0
-        assert_eq!(ThresholdType::Step.apply(0.5), 1.0);
-        assert_eq!(ThresholdType::Step.apply(0.001), 1.0);
-        assert_eq!(ThresholdType::Step.apply(0.0), 0.0);
-        assert_eq!(ThresholdType::Step.apply(-0.001), 0.0);
-        assert_eq!(ThresholdType::Step.apply(-5.0), 0.0);
-
-        // BIPOLAR: value > 0 ? 1 : -1
-        assert_eq!(ThresholdType::Bipolar.apply(0.5), 1.0);
-        assert_eq!(ThresholdType::Bipolar.apply(0.001), 1.0);
-        assert_eq!(ThresholdType::Bipolar.apply(0.0), -1.0);
-        assert_eq!(ThresholdType::Bipolar.apply(-0.001), -1.0);
-        assert_eq!(ThresholdType::Bipolar.apply(-5.0), -1.0);
-    }
-
-    /// Test ThresholdType correctly detects threshold flips
-    #[test]
-    fn test_threshold_type_would_flip() {
-        // STEP: threshold at 0
-        assert!(
-            ThresholdType::Step.would_flip(-0.5, 1.0),
-            "negative -> positive should flip"
-        );
-        assert!(
-            ThresholdType::Step.would_flip(0.5, -1.0),
-            "positive -> negative should flip"
-        );
-        assert!(
-            !ThresholdType::Step.would_flip(0.5, 0.3),
-            "positive -> more positive shouldn't flip"
-        );
-        assert!(
-            !ThresholdType::Step.would_flip(-0.5, -0.3),
-            "negative -> more negative shouldn't flip"
-        );
-
-        // Edge cases
-        assert!(
-            ThresholdType::Step.would_flip(-0.1, 0.2),
-            "just crosses threshold"
-        );
-        assert!(
-            !ThresholdType::Step.would_flip(-0.1, 0.05),
-            "doesn't quite reach threshold"
-        );
-    }
-
-    /// Test ThresholdType correctly identifies helpful vs harmful flips
-    #[test]
-    fn test_threshold_type_flip_direction() {
-        // STEP: Error > 0 means output should be higher (0 -> 1 is helpful)
-        // Current output is 0 (value < 0), error > 0 (should be 1), flip to 1 is helpful
-        assert_eq!(
-            ThresholdType::Step.flip_direction(-0.5, 1.0, 0.5),
-            1,
-            "flip 0->1 when error>0 is helpful"
-        );
-
-        // Current output is 1 (value > 0), error < 0 (should be 0), flip to 0 is helpful
-        assert_eq!(
-            ThresholdType::Step.flip_direction(0.5, -1.0, -0.5),
-            1,
-            "flip 1->0 when error<0 is helpful"
-        );
-
-        // Current output is 0 (value < 0), error < 0 (should be 0), no flip needed
-        assert_eq!(
-            ThresholdType::Step.flip_direction(-0.5, -0.1, -0.5),
-            0,
-            "no flip when error<0 and output=0"
-        );
-
-        // Current output is 1 (value > 0), error > 0 (should be 1), no flip needed
-        assert_eq!(
-            ThresholdType::Step.flip_direction(0.5, 0.1, 0.5),
-            0,
-            "no flip when error>0 and output=1"
-        );
-
-        // Harmful flip: flip 1->0 when error > 0 (output should stay high)
-        assert_eq!(
-            ThresholdType::Step.flip_direction(0.5, -1.0, 0.5),
-            -1,
-            "flip 1->0 when error>0 is harmful"
-        );
-
-        // Harmful flip: flip 0->1 when error < 0 (output should stay low)
-        assert_eq!(
-            ThresholdType::Step.flip_direction(-0.5, 1.0, -0.5),
-            -1,
-            "flip 0->1 when error<0 is harmful"
-        );
-    }
-
-    /// Test evaluate_discrete_candidate correctly filters IDENTITY+bias=0 candidates.
-    ///
-    /// IDENTITY neurons with bias=0 are mathematically equivalent to a direct synapse:
-    ///   IDENTITY(source × incoming_weight + 0) × outgoing_weight = source × (incoming × outgoing)
-    ///
-    /// For STEP/BIPOLAR targets, we should NOT recommend IDENTITY add-neuron candidates
-    /// because add-synapse would achieve the same effect without wasting a neuron.
-    #[test]
-    fn test_evaluate_discrete_candidate_step() {
-        // Create samples where source activation correlates with whether the target
-        // is on the "wrong side" of the threshold
-        let mut samples = Vec::new();
-
-        // Case 1: Target is at 0 (value=-0.5) but should be 1 (error=0.5)
-        // Source has high positive activation - adding positive contribution would help
-        for i in 0..20 {
-            samples.push(DiscreteHelpfulSample {
-                source_activation: 0.5 + (i as f32 * 0.01),
-                target_value: -0.3, // Currently outputs 0
-                target_activation: 0.0,
-                avg_error: 0.5, // Should be 1 (positive error)
-            });
-        }
-
-        let candidate = evaluate_discrete_candidate(
-            "input-0",
-            "target-step",
-            &samples,
-            ThresholdType::Step,
-            0.0,  // threshold
-            true, // is_output_target - test assumes target is output
-        );
-
-        // Should NOT find a candidate because IDENTITY+bias=0 is filtered
-        // (equivalent to synapse - use add-synapse analysis instead)
-        assert!(
-            candidate.is_none(),
-            "Should NOT return IDENTITY candidate for STEP (equivalent to synapse). \
-            Use add-synapse analysis for STEP targets instead."
-        );
-    }
-
-    /// Test that discrete evaluation filters ALL IDENTITY candidates (not just low-improvement).
-    /// IDENTITY neurons with bias=0 are mathematically equivalent to synapses, so they
-    /// should never be recommended for STEP/BIPOLAR targets.
-    ///
-    /// Previously this test checked the MIN_DISCRETE_IMPROVEMENT threshold, but now
-    /// ALL IDENTITY candidates are filtered regardless of improvement rate.
-    #[test]
-    fn test_discrete_evaluation_filters_low_improvement_identity() {
-        // Create a sample set where ALL samples have error (passing the sample count check)
-        // but only a tiny fraction (< 1%) would flip helpfully.
-        //
-        // IMPORTANT: Previously this test was broken - it only gave 5 samples non-zero error,
-        // so samples_with_error=5 was less than MIN_NEURON_SAMPLE_COUNT=10, causing all weight
-        // combinations to be skipped. The test passed for the wrong reason.
-        //
-        // Key insight: To make samples truly un-flippable, source_activation must be ZERO.
-        // Any non-zero source activation with any of the tested weight scales (0.1 to 50.0)
-        // could potentially flip the target. With source_activation=0, contribution=0
-        // regardless of weights, so those samples cannot be affected.
-        let mut samples = Vec::new();
-
-        // 1000 samples - ALL have error to pass samples_with_error check
-        for i in 0..1000 {
-            // Only ~5 samples (0.5%) can flip helpfully:
-            // These have non-zero source activation
-            let can_flip_to_help = i < 5;
-
-            if can_flip_to_help {
-                // Sample that CAN flip to help:
-                // - source_activation = 1.0 (non-zero, can contribute)
-                // - target_value just below threshold (0)
-                // - error positive (wants output to increase from 0 to 1)
-                samples.push(DiscreteHelpfulSample {
-                    source_activation: 1.0,
-                    target_value: -0.05,    // Just below threshold
-                    target_activation: 0.0, // Currently outputs 0 (STEP)
-                    avg_error: 0.5,         // Wants to output 1, has error
-                });
-            } else {
-                // Sample that CANNOT flip:
-                // - source_activation = 0 (CRITICAL: contribution is always 0)
-                // - Has error but cannot be helped since contribution = weight * 0 = 0
-                samples.push(DiscreteHelpfulSample {
-                    source_activation: 0.0, // Zero! contribution = weight * 0 = 0
-                    target_value: -0.5,     // Below threshold (outputs 0)
-                    target_activation: 0.0, // Currently outputs 0
-                    avg_error: 0.3,         // Has error but source can't help
-                });
-            }
-        }
-
-        let candidate = evaluate_discrete_candidate(
-            "input-0",
-            "target-step",
-            &samples,
-            ThresholdType::Step,
-            0.0,  // Zero threshold - MIN_DISCRETE_IMPROVEMENT (1%) should filter
-            true, // is_output_target
-        );
-
-        // Should NOT return a candidate because improvement would be <1%
-        // samples_with_error = 1000 (all have error)
-        // helpful_flips = 5 (only samples with non-zero source activation)
-        // harmful_flips = 0 (zero-activation samples can't flip either way)
-        // improvement = 5 / 1000 = 0.5% < MIN_DISCRETE_IMPROVEMENT (1%)
-        assert!(
-            candidate.is_none(),
-            "Should NOT return IDENTITY candidate with <1% improvement (0.5% in this test). \
-             These are equivalent to direct synapses and don't reliably help. \
-             Got candidate: {candidate:?}"
-        );
-    }
-
-    /// Test that even high-improvement IDENTITY candidates are filtered for STEP targets.
-    ///
-    /// IDENTITY+bias=0 is mathematically equivalent to a synapse:
-    ///   IDENTITY(source × w1 + 0) × w2 = source × (w1 × w2)
-    ///
-    /// If this pattern would help, add-synapse analysis will find it at lower cost
-    /// (1 synapse vs 1 neuron + 2 synapses). So we filter ALL IDENTITY candidates
-    /// from discrete evaluation, regardless of improvement rate.
-    #[test]
-    fn test_discrete_evaluation_filters_identity_even_with_high_improvement() {
-        // Create samples with high improvement potential (2% > 1% threshold)
-        let mut samples = Vec::new();
-
-        for i in 0..1000 {
-            // 20 samples (2%) can flip helpfully - above the 1% threshold
-            let can_flip_to_help = i < 20;
-
-            if can_flip_to_help {
-                samples.push(DiscreteHelpfulSample {
-                    source_activation: 1.0,
-                    target_value: -0.05,
-                    target_activation: 0.0,
-                    avg_error: 0.5,
-                });
-            } else {
-                samples.push(DiscreteHelpfulSample {
-                    source_activation: 0.0, // Cannot contribute
-                    target_value: -0.5,
-                    target_activation: 0.0,
-                    avg_error: 0.3,
-                });
-            }
-        }
-
-        let candidate = evaluate_discrete_candidate(
-            "input-0",
-            "target-step",
-            &samples,
-            ThresholdType::Step,
-            0.0,
-            true, // is_output_target
-        );
-
-        // Should NOT return a candidate even with 2% improvement
-        // because IDENTITY+bias=0 is equivalent to a synapse.
-        // Add-synapse will find this pattern at lower cost (1 synapse vs 1 neuron + 2 synapses).
-        assert!(
-            candidate.is_none(),
-            "Should NOT return IDENTITY candidate for STEP even with high improvement. \
-            IDENTITY(source × w1 + 0) × w2 = source × (w1 × w2), which is equivalent to a synapse. \
-            Add-synapse analysis will find this pattern at lower cost."
         );
     }
 
