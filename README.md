@@ -959,9 +959,8 @@ IDENTITY(input × incoming_weight + 0) × outgoing_weight = input × incoming ×
 This is just a synapse with `weight = incoming_weight × outgoing_weight`. Discovery
 now filters out these candidates:
 
-1. **Minimum improvement threshold**: IDENTITY requires at least 5% improvement
-2. **Bias filtering**: IDENTITY candidates with `|bias| < 0.01` are rejected
-3. **Use synapse analysis**: Direct connections should use `add-synapses`, not `add-neurons`
+1. **Bias filtering**: IDENTITY candidates with `|bias| < 0.01` are rejected
+2. **Use synapse analysis**: Direct connections should use `add-synapses`, not `add-neurons`
 
 #### Add-neuron target neuron filtering
 

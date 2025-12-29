@@ -132,7 +132,6 @@ fn regression_hidden_neurons_must_be_analyzed_not_filtered() {
         parquet_file,
         creature,
         focus_neurons: vec!["hidden-0".to_string(), "output-0".to_string()],
-        improvement_threshold: Some(0.01),
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };
@@ -264,7 +263,6 @@ fn regression_low_improvement_fallback_candidates_must_be_filtered() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.01), // 1% threshold
         max_candidates: Some(50),
         analysis_deadline_ms: None,
     };
@@ -530,7 +528,6 @@ fn regression_discounted_hidden_neurons_must_meet_minimum_threshold() {
         parquet_file,
         creature,
         focus_neurons: vec!["hidden-low-impact".to_string()],
-        improvement_threshold: Some(0.01), // 1% threshold (below MIN_FALLBACK_IMPROVEMENT)
         max_candidates: Some(50),
         analysis_deadline_ms: None,
     };
@@ -710,7 +707,6 @@ fn regression_impact_discounted_neurons_must_appear_in_response() {
         parquet_file,
         creature,
         focus_neurons: vec!["hidden-will-be-discounted".to_string()],
-        improvement_threshold: Some(0.01), // Low threshold so raw candidate is found
         max_candidates: Some(50),
         analysis_deadline_ms: None,
     };

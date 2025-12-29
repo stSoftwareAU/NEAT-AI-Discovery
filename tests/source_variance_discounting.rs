@@ -128,7 +128,6 @@ fn test_constant_source_gives_zero_improvement() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0), // Accept any positive improvement
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };
@@ -228,7 +227,6 @@ fn test_low_variance_source_discounts_prediction() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };
@@ -328,7 +326,6 @@ fn test_high_variance_source_not_discounted() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };
@@ -435,7 +432,6 @@ fn test_constant_vs_varying_source_comparison() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: Some(50),
         analysis_deadline_ms: None,
     };

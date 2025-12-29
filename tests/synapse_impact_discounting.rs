@@ -177,7 +177,6 @@ fn test_synapse_candidate_hidden_neuron_is_impact_discounted() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["hidden-b".to_string()],
-        improvement_threshold: Some(0.01),
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30000),
     };
@@ -291,7 +290,6 @@ fn test_synapse_candidate_output_neuron_no_discount() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.01),
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30000),
     };
@@ -380,7 +378,6 @@ fn test_harmful_synapse_candidate_is_impact_discounted() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.01),
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30000),
     };

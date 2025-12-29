@@ -7311,13 +7311,108 @@ fn evaluate_discrete_candidate(
     best_candidate
 }
 
+/// Result of filtering focus targets for add-neuron analysis.
+///
+/// This is split out to keep the rules testable without needing a GPU (the main analysis path
+/// asserts GPU availability).
+#[derive(Debug, Default)]
+struct FocusTargetFilterResult {
+    focus_order: Vec<String>,
+    skipped_hidden: Vec<String>,
+    skipped_input: Vec<String>,
+    skipped_constant: Vec<String>,
+    threshold_targets: Vec<String>,
+}
+
+/// Filter and classify focus targets for add-neuron analysis.
+///
+/// Notes (Dec 2025):
+/// - By default we allow both output and hidden focus targets (hidden will be impact-discounted later).
+/// - When `output_only_targets` is enabled, hidden (and unknown treated-as-hidden) targets are filtered out.
+/// - STEP/BIPOLAR targets are tracked in `threshold_targets` for visibility (and potential future branching).
+fn filter_focus_targets_for_neuron_analysis(
+    unique_focus: &[&String],
+    neuron_type_map: &HashMap<String, String>,
+    neuron_squash_map: &HashMap<String, String>,
+    output_only_targets: bool,
+) -> FocusTargetFilterResult {
+    let mut result = FocusTargetFilterResult::default();
+
+    // Helper: record STEP/BIPOLAR targets consistently across output/hidden/unknown.
+    let mut record_threshold_target = |uuid: &String| {
+        if let Some(squash) = neuron_squash_map.get(uuid) {
+            if is_threshold_activation(squash) {
+                result.threshold_targets.push(uuid.clone());
+            }
+        }
+    };
+
+    result.focus_order = unique_focus
+        .iter()
+        .filter_map(|uuid| {
+            // By default we analyse both output and hidden focus targets (hidden will be discounted).
+            // If `output_only_targets` is set, hidden targets are filtered.
+            let neuron_type = neuron_type_map.get(*uuid).map(|s| s.as_str());
+            match neuron_type {
+                Some("output") => {
+                    record_threshold_target(uuid);
+                    Some((*uuid).clone())
+                }
+                Some("hidden") => {
+                    if output_only_targets {
+                        result.skipped_hidden.push((*uuid).clone());
+                        None
+                    } else {
+                        record_threshold_target(uuid);
+                        Some((*uuid).clone())
+                    }
+                }
+                Some("input") => {
+                    // Input neurons are observation sources, not computation nodes.
+                    result.skipped_input.push((*uuid).clone());
+                    None
+                }
+                Some("constant") => {
+                    // Constant neurons don't receive inputs - filter them out.
+                    result.skipped_constant.push((*uuid).clone());
+                    None
+                }
+                Some(unknown_type) => {
+                    // Unknown type - treat as hidden.
+                    eprintln!(
+                        "[NEAT-AI-Discovery] Warning: Unknown neuron type '{unknown_type}' for UUID '{uuid}'. \
+                        Treating as hidden neuron."
+                    );
+                    if output_only_targets {
+                        result.skipped_hidden.push((*uuid).clone());
+                        None
+                    } else {
+                        record_threshold_target(uuid);
+                        Some((*uuid).clone())
+                    }
+                }
+                None => {
+                    // Unknown UUID - this is likely a bug, skip it.
+                    eprintln!(
+                        "[NEAT-AI-Discovery] Warning: Unknown neuron UUID '{uuid}' in focus list \
+                        (not found in creature). Skipping."
+                    );
+                    None
+                }
+            }
+        })
+        .collect();
+
+    result
+}
+
 pub(crate) fn analyze_neurons_with_cache(
     input: &AnalyzeNeuronsInput,
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeNeuronsResult> {
-    // v0.1.134: Default threshold is 0 - return ALL positive improvements.
-    // TypeScript will decide which candidates are worth the cost of growth.
-    let threshold = input.improvement_threshold.unwrap_or(0.0);
+    // v0.1.134: Return ALL positive improvements.
+    // NEAT-AI applies the cost-of-growth gate during evaluation.
+    let threshold = 0.0;
     let ordered_neurons = build_ordered_neurons(&input.creature);
 
     // Build a lookup map for neuron squash functions to identify discrete targets
@@ -7431,7 +7526,7 @@ pub(crate) fn analyze_neurons_with_cache(
     let gpu_used = true;
     let analysis_timed_out = Arc::new(Mutex::new(false));
 
-    // Filter focus neurons to ONLY output neurons for add-neuron analysis.
+    // Filter focus neurons to valid add-neuron targets.
     //
     // Rationale: Add-neuron candidates predict error reduction at the target neuron.
     // For OUTPUT neurons, this directly corresponds to creature score improvement.
@@ -7444,18 +7539,6 @@ pub(crate) fn analyze_neurons_with_cache(
     // Non-output neurons are skipped here but still tracked in diagnostics so the
     // caller knows they were received but filtered out (with the correct reason).
     let original_focus_count = unique_focus.len();
-    let mut skipped_hidden: Vec<String> = Vec::new();
-    let mut skipped_input: Vec<String> = Vec::new();
-    let mut skipped_constant: Vec<String> = Vec::new();
-
-    // Randomize the focus neuron order so that repeated runs with timeouts will
-    // eventually cover all neurons. Convert to owned strings, shuffle, then use.
-    //
-    // All neurons are processed - no activation functions are skipped. STEP/BIPOLAR
-    // neurons use a specialised threshold-crossing model; all others use the standard
-    // linear error model (which is an approximation but still finds useful patterns).
-    let mut threshold_targets: Vec<String> = Vec::new();
-
     // Optional production experiment (29-Dec-2025): allow callers to force output-only
     // focus targets for add-neuron analysis.
     //
@@ -7464,64 +7547,18 @@ pub(crate) fn analyze_neurons_with_cache(
     //
     // Enable by setting `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY=1`.
     let output_only_targets = std::env::var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY").is_ok();
-
-    let mut focus_order: Vec<String> = unique_focus
-        .iter()
-        .filter_map(|uuid| {
-            // By default we analyse both output and hidden focus targets (hidden will be discounted).
-            // If `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY` is set, hidden targets are filtered.
-            let neuron_type = neuron_type_map.get(*uuid).map(|s| s.as_str());
-            match neuron_type {
-                Some("output") => {
-                    if let Some(squash) = neuron_squash_map.get(*uuid) {
-                        if is_threshold_activation(squash) {
-                            threshold_targets.push((*uuid).clone());
-                        }
-                    }
-                    Some((*uuid).clone())
-                }
-                Some("hidden") => {
-                    if output_only_targets {
-                        skipped_hidden.push((*uuid).clone());
-                        None
-                    } else {
-                        Some((*uuid).clone())
-                    }
-                }
-                Some("input") => {
-                    // Input neurons are observation sources, not computation nodes
-                    skipped_input.push((*uuid).clone());
-                    None
-                }
-                Some("constant") => {
-                    // Constant neurons don't receive inputs - filtering them out
-                    skipped_constant.push((*uuid).clone());
-                    None
-                }
-                Some(unknown_type) => {
-                    // Unknown type - treat as hidden.
-                    eprintln!(
-                        "[NEAT-AI-Discovery] Warning: Unknown neuron type '{unknown_type}' for UUID '{uuid}'. \
-                        Treating as hidden neuron."
-                    );
-                    if output_only_targets {
-                        skipped_hidden.push((*uuid).clone());
-                        None
-                    } else {
-                        Some((*uuid).clone())
-                    }
-                }
-                None => {
-                    // Unknown UUID - this is likely a bug, skip it
-                    eprintln!(
-                        "[NEAT-AI-Discovery] Warning: Unknown neuron UUID '{uuid}' in focus list \
-                        (not found in creature). Skipping."
-                    );
-                    None
-                }
-            }
-        })
-        .collect();
+    let FocusTargetFilterResult {
+        mut focus_order,
+        skipped_hidden,
+        skipped_input,
+        skipped_constant,
+        threshold_targets,
+    } = filter_focus_targets_for_neuron_analysis(
+        &unique_focus,
+        &neuron_type_map,
+        &neuron_squash_map,
+        output_only_targets,
+    );
 
     // Log when non-output neurons are filtered out
     let total_skipped = skipped_hidden.len() + skipped_input.len() + skipped_constant.len();
@@ -8907,9 +8944,9 @@ pub(crate) fn analyze_synapses_with_cache(
     let total_focus_count = focus_order.len();
     let completed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-    // v0.1.134: Default threshold is 0 - return ALL positive improvements.
-    // TypeScript will decide which candidates are worth the cost of growth.
-    let threshold = input.improvement_threshold.unwrap_or(0.0);
+    // v0.1.134: Return ALL positive improvements.
+    // NEAT-AI applies the cost-of-growth gate during evaluation.
+    let threshold = 0.0;
 
     // Collect all helpful evaluation work first for batching
     struct HelpfulWork {
@@ -10999,7 +11036,6 @@ mod tests_synapses {
             parquet_file: parquet_file.clone(),
             creature,
             focus_neurons: vec!["output-0".to_string(), "output-0".to_string()],
-            improvement_threshold: Some(0.05),
             max_candidates: None,
             analysis_deadline_ms: None,
         };
@@ -11073,7 +11109,6 @@ mod tests_synapses {
             parquet_file,
             creature,
             focus_neurons: vec!["output-0".to_string(), "output-0".to_string()],
-            improvement_threshold: Some(0.05),
             max_candidates: None,
             analysis_deadline_ms: None,
         };
@@ -11183,7 +11218,6 @@ mod tests_synapses {
             parquet_file,
             creature,
             focus_neurons: vec!["hidden-0".to_string(), "output-0".to_string()],
-            improvement_threshold: Some(0.05),
             max_candidates: None,
             analysis_deadline_ms: None,
         };
@@ -11323,7 +11357,6 @@ mod tests_synapses {
             parquet_file,
             creature,
             focus_neurons: vec!["hidden-0".to_string()],
-            improvement_threshold: Some(0.05),
             max_candidates: None,
             analysis_deadline_ms: None,
         };
@@ -11373,7 +11406,6 @@ mod tests_synapses {
             parquet_file: "unused.parquet".to_string(),
             creature,
             focus_neurons: Vec::new(),
-            improvement_threshold: None,
             max_candidates: None,
             analysis_deadline_ms: None,
         };
@@ -11426,7 +11458,6 @@ mod tests_synapses {
             parquet_file: parquet_file.clone(),
             creature,
             focus_neurons: vec!["output-0".to_string()],
-            improvement_threshold: Some(0.05),
             max_candidates: None,
             analysis_deadline_ms: None,
         };
@@ -11525,7 +11556,6 @@ mod tests_synapses {
             parquet_file,
             creature,
             focus_neurons: vec!["output-0".to_string(), "output-1".to_string()],
-            improvement_threshold: Some(0.05),
             max_candidates: None,
             analysis_deadline_ms: None,
         };
@@ -11611,8 +11641,6 @@ mod tests_synapses {
             parquet_file,
             creature,
             focus_neurons: vec!["output-0".to_string()],
-            improvement_threshold: Some(0.05),
-            harmful_threshold: Some(-0.05),
             max_synapse_candidates: Some(5),
             max_neuron_candidates: Some(5),
             analysis_deadline_ms: None,
@@ -11672,7 +11700,6 @@ mod tests_synapses {
             parquet_file,
             creature,
             focus_neurons: vec!["output-0".to_string()],
-            improvement_threshold: Some(0.05),
             max_candidates: None,
             analysis_deadline_ms: None,
         };
@@ -11772,7 +11799,6 @@ mod tests_synapses {
             parquet_file,
             creature,
             focus_neurons: vec!["output-0".to_string(), "output-1".to_string()],
-            improvement_threshold: Some(0.05),
             max_candidates: None,
             // Any non-None deadline value will exercise the override sequence.
             analysis_deadline_ms: Some(1_000_000),
@@ -11904,7 +11930,6 @@ mod tests_synapses {
             parquet_file,
             creature,
             focus_neurons: vec!["output-0".to_string(), "output-1".to_string()],
-            improvement_threshold: Some(0.05),
             max_candidates: None,
             // Any non-None deadline value will exercise the override sequence.
             analysis_deadline_ms: None,
@@ -12262,12 +12287,10 @@ mod tests_synapses {
             synapses: Vec::new(), // No existing synapse from input-0 to output-0
         };
 
-        // Set threshold to 0.1 - we expect a positive but below-threshold improvement to be accepted
         let input = AnalyzeSynapsesInput {
             parquet_file,
             creature,
             focus_neurons: vec!["output-0".to_string()],
-            improvement_threshold: Some(0.1),
             max_candidates: None,
             analysis_deadline_ms: None,
         };
@@ -12365,7 +12388,6 @@ mod tests_synapses {
             parquet_file,
             creature,
             focus_neurons: vec!["output-0".to_string()],
-            improvement_threshold: Some(0.1),
             max_candidates: None,
             analysis_deadline_ms: None,
         };
@@ -12435,12 +12457,10 @@ mod tests_synapses {
             synapses: Vec::new(),
         };
 
-        // Set threshold to 0.1 - we expect improvement above this to be accepted
         let input = AnalyzeSynapsesInput {
             parquet_file,
             creature,
             focus_neurons: vec!["output-0".to_string()],
-            improvement_threshold: Some(0.1),
             max_candidates: None,
             analysis_deadline_ms: None,
         };
@@ -12729,6 +12749,119 @@ mod tests_synapses {
         assert!(
             !is_threshold_activation("UNKNOWN"),
             "Unknown uses standard model"
+        );
+    }
+
+    #[test]
+    fn test_filter_focus_targets_tracks_threshold_targets_for_hidden_and_unknown_when_allowed() {
+        use std::collections::HashMap;
+
+        // Regression coverage (29-Dec-2025): when output/hidden handling was split, the
+        // STEP/BIPOLAR tracking was accidentally only applied to output targets.
+        let focus = [
+            "hidden-step".to_string(),
+            "output-tanh".to_string(),
+            "unknown-bipolar".to_string(),
+        ];
+        let unique_focus: Vec<&String> = focus.iter().collect();
+
+        let mut neuron_type_map: HashMap<String, String> = HashMap::new();
+        neuron_type_map.insert("hidden-step".to_string(), "hidden".to_string());
+        neuron_type_map.insert("output-tanh".to_string(), "output".to_string());
+        neuron_type_map.insert("unknown-bipolar".to_string(), "mystery".to_string());
+
+        let mut neuron_squash_map: HashMap<String, String> = HashMap::new();
+        neuron_squash_map.insert("hidden-step".to_string(), "STEP".to_string());
+        neuron_squash_map.insert("output-tanh".to_string(), "TANH".to_string());
+        neuron_squash_map.insert("unknown-bipolar".to_string(), "BIPOLAR".to_string());
+
+        let result = filter_focus_targets_for_neuron_analysis(
+            &unique_focus,
+            &neuron_type_map,
+            &neuron_squash_map,
+            false,
+        );
+
+        assert!(
+            result.focus_order.contains(&"hidden-step".to_string()),
+            "hidden-step should be included when output-only mode is disabled"
+        );
+        assert!(
+            result.focus_order.contains(&"unknown-bipolar".to_string()),
+            "unknown-bipolar should be included when output-only mode is disabled (treated as hidden)"
+        );
+        assert!(
+            result
+                .threshold_targets
+                .contains(&"hidden-step".to_string()),
+            "hidden-step (STEP) should be tracked as a threshold target"
+        );
+        assert!(
+            result
+                .threshold_targets
+                .contains(&"unknown-bipolar".to_string()),
+            "unknown-bipolar (BIPOLAR) should be tracked as a threshold target"
+        );
+        assert!(
+            !result
+                .threshold_targets
+                .contains(&"output-tanh".to_string()),
+            "output-tanh (TANH) should not be tracked as a threshold target"
+        );
+        assert!(
+            result.skipped_hidden.is_empty(),
+            "No hidden targets should be skipped when output-only mode is disabled"
+        );
+    }
+
+    #[test]
+    fn test_filter_focus_targets_respects_output_only_mode_for_hidden_and_unknown() {
+        use std::collections::HashMap;
+
+        let focus = [
+            "hidden-step".to_string(),
+            "output-step".to_string(),
+            "unknown-bipolar".to_string(),
+        ];
+        let unique_focus: Vec<&String> = focus.iter().collect();
+
+        let mut neuron_type_map: HashMap<String, String> = HashMap::new();
+        neuron_type_map.insert("hidden-step".to_string(), "hidden".to_string());
+        neuron_type_map.insert("output-step".to_string(), "output".to_string());
+        neuron_type_map.insert("unknown-bipolar".to_string(), "mystery".to_string());
+
+        let mut neuron_squash_map: HashMap<String, String> = HashMap::new();
+        neuron_squash_map.insert("hidden-step".to_string(), "STEP".to_string());
+        neuron_squash_map.insert("output-step".to_string(), "STEP".to_string());
+        neuron_squash_map.insert("unknown-bipolar".to_string(), "BIPOLAR".to_string());
+
+        let result = filter_focus_targets_for_neuron_analysis(
+            &unique_focus,
+            &neuron_type_map,
+            &neuron_squash_map,
+            true,
+        );
+
+        assert_eq!(
+            result.focus_order,
+            vec!["output-step".to_string()],
+            "Only output targets should remain when output-only mode is enabled"
+        );
+        assert_eq!(
+            result.threshold_targets,
+            vec!["output-step".to_string()],
+            "Threshold targets should only include remaining focus targets"
+        );
+
+        assert!(
+            result.skipped_hidden.contains(&"hidden-step".to_string()),
+            "hidden-step should be reported as skipped when output-only mode is enabled"
+        );
+        assert!(
+            result
+                .skipped_hidden
+                .contains(&"unknown-bipolar".to_string()),
+            "unknown-bipolar should be reported as skipped when output-only mode is enabled"
         );
     }
 

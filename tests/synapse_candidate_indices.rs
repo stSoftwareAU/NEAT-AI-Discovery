@@ -96,7 +96,6 @@ fn synapse_candidates_populate_from_and_to_indices() {
         parquet_file: file_path,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30000),
     };

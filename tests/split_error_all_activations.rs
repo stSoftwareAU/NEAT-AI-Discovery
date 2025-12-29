@@ -147,7 +147,6 @@ fn test_non_relu_activations_use_split_error_evaluation() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0001), // Very low threshold to catch weak predictions
         max_candidates: Some(100),
         analysis_deadline_ms: None,
     };
@@ -278,7 +277,6 @@ fn test_skewed_errors_return_candidates() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.01),
         max_candidates: Some(50),
         analysis_deadline_ms: None,
     };

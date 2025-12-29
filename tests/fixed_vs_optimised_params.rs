@@ -147,7 +147,6 @@ fn test_optimised_params_vary_by_sample() {
             parquet_file: file_path.to_string(),
             creature: creature.clone(),
             focus_neurons: vec!["output-0".to_string()],
-            improvement_threshold: Some(0.0), // Accept any improvement
             max_candidates: Some(100),
             analysis_deadline_ms: None,
         };
@@ -224,7 +223,6 @@ fn test_conservative_params_more_stable_across_samples() {
         parquet_file: subset_temp.path().to_str().unwrap().to_string(),
         creature: creature.clone(),
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: Some(100),
         analysis_deadline_ms: None,
     };
@@ -356,7 +354,6 @@ fn test_relu_fixed_params_consistent_across_samples() {
             parquet_file: temp_file.path().to_str().unwrap().to_string(),
             creature: creature.clone(),
             focus_neurons: vec!["output-0".to_string()],
-            improvement_threshold: Some(0.0),
             max_candidates: Some(100),
             analysis_deadline_ms: None,
         };
@@ -453,7 +450,6 @@ fn test_synapse_candidates_no_bias_optimisation() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["hidden-0".to_string()], // Focus on hidden neuron for synapse additions
-        improvement_threshold: Some(0.0),
         max_candidates: Some(50),
         analysis_deadline_ms: None,
     };
@@ -513,7 +509,6 @@ fn test_synapse_weight_distribution() {
             parquet_file: temp_file.path().to_str().unwrap().to_string(),
             creature: creature.clone(),
             focus_neurons: vec!["output-0".to_string()],
-            improvement_threshold: Some(0.0),
             max_candidates: Some(50),
             analysis_deadline_ms: None,
         };

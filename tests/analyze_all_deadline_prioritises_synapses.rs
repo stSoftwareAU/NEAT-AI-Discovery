@@ -113,8 +113,6 @@ fn synapse_analysis_runs_under_deadline() {
         parquet_file,
         creature: create_simple_creature(),
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
-        harmful_threshold: None,
         max_synapse_candidates: Some(10),
         max_neuron_candidates: Some(10),
         analysis_deadline_ms: Some(30_000), // 30 second deadline - should be plenty
@@ -157,8 +155,6 @@ fn metadata_indicates_target_value_available() {
         parquet_file,
         creature: create_simple_creature(),
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
-        harmful_threshold: None,
         max_synapse_candidates: Some(10),
         max_neuron_candidates: Some(10),
         analysis_deadline_ms: Some(30_000),
@@ -196,8 +192,6 @@ fn metadata_indicates_target_value_not_available() {
         parquet_file,
         creature: create_simple_creature(),
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
-        harmful_threshold: None,
         max_synapse_candidates: Some(10),
         max_neuron_candidates: Some(10),
         analysis_deadline_ms: Some(30_000),
@@ -241,8 +235,6 @@ fn metadata_indicates_saturation_aware_simulation_used() {
         parquet_file,
         creature: create_simple_creature(), // Uses HARD_TANH for output-0
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
-        harmful_threshold: None,
         max_synapse_candidates: Some(10),
         max_neuron_candidates: Some(10),
         analysis_deadline_ms: Some(30_000),
@@ -283,8 +275,6 @@ fn candidate_counts_tracked_correctly() {
         parquet_file,
         creature: create_simple_creature(),
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
-        harmful_threshold: None,
         max_synapse_candidates: Some(100), // High limit
         max_neuron_candidates: Some(100),  // High limit
         analysis_deadline_ms: Some(30_000),
@@ -387,8 +377,6 @@ fn truncation_reflected_in_candidate_counts() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
-        harmful_threshold: None,
         max_synapse_candidates: Some(2), // Low limit to force truncation
         max_neuron_candidates: Some(2),
         analysis_deadline_ms: Some(30_000),

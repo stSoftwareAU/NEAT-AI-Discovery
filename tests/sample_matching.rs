@@ -72,7 +72,6 @@ fn analysis_handles_non_finite_values_gracefully() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };
@@ -134,7 +133,6 @@ fn analysis_pairs_samples_by_obs_index() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };
@@ -198,7 +196,6 @@ fn analysis_skips_neurons_without_errors() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };

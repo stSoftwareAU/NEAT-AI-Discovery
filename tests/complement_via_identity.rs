@@ -94,7 +94,6 @@ fn test_complement_is_discovered_as_identity_not_inverse() {
             .to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.001),
         max_candidates: Some(50),
         analysis_deadline_ms: None,
     };

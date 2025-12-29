@@ -115,7 +115,6 @@ fn issue_156_hidden_focus_neurons_are_filtered_when_output_only_mode_is_enabled(
         parquet_file: file_path,
         creature,
         focus_neurons: vec!["hidden-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: Some(50),
         analysis_deadline_ms: None,
     };
