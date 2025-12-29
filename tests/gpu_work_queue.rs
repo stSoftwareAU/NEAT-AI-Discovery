@@ -83,7 +83,6 @@ fn synapse_analysis_works_with_gpu_work_queue() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };
@@ -149,7 +148,6 @@ fn neuron_analysis_works_with_gpu_work_queue() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };
@@ -258,7 +256,6 @@ fn multiple_focus_neurons_work_with_shared_queue() {
             "hidden-1".to_string(),
             "output-0".to_string(),
         ],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };
@@ -341,7 +338,6 @@ fn harmful_synapse_detection_works_with_queue() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };

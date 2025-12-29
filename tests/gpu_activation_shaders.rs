@@ -128,7 +128,6 @@ fn test_mish_gpu_shader_produces_correct_results() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: Some(100),
         analysis_deadline_ms: None,
     };
@@ -236,7 +235,6 @@ fn test_all_new_activations_produce_candidates() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: Some(500),
         analysis_deadline_ms: None,
     };

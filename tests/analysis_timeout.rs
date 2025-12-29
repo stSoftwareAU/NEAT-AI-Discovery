@@ -105,7 +105,6 @@ fn synapse_analysis_respects_deadline() {
             "output-1".to_string(),
             "output-2".to_string(),
         ],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: Some(deadline_ms),
     };
@@ -193,7 +192,6 @@ fn neuron_analysis_respects_deadline() {
             "output-1".to_string(),
             "output-2".to_string(),
         ],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: Some(deadline_ms),
     };
@@ -276,7 +274,6 @@ fn focus_neurons_are_randomised_across_runs() {
             parquet_file: parquet_file.clone(),
             creature: creature.clone(),
             focus_neurons: focus_neurons.clone(),
-            improvement_threshold: Some(0.0),
             max_candidates: None,
             analysis_deadline_ms: Some(60_000), // 1 minute - enough to complete
         };

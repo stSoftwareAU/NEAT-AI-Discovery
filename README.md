@@ -280,6 +280,11 @@ measured by NEAT-AI.
   candidate. These entries summarise the reason (no samples, below threshold,
   etc.) plus supporting counts so controllers can relay the explanation even
   when verbose logging is disabled.
+- Optional production experiment (29-Dec-2025): If you are seeing a large volume of failed
+  add-neuron candidates targeting hidden neurons, you can force **output-only** focus targets
+  for add-neuron analysis by setting `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY=1`.
+  This is intentionally opt-in for backwards compatibility; when enabled, hidden focus targets
+  will be reported as `HiddenNeuronFiltered` in diagnostics.
 - When an analysis deadline is supplied, discovery honours it **vertically**:
   focus neurons are processed in priority order and each neuron is analysed
   completely (including upstream candidates) where possible before moving to
@@ -954,9 +959,8 @@ IDENTITY(input × incoming_weight + 0) × outgoing_weight = input × incoming ×
 This is just a synapse with `weight = incoming_weight × outgoing_weight`. Discovery
 now filters out these candidates:
 
-1. **Minimum improvement threshold**: IDENTITY requires at least 5% improvement
-2. **Bias filtering**: IDENTITY candidates with `|bias| < 0.01` are rejected
-3. **Use synapse analysis**: Direct connections should use `add-synapses`, not `add-neurons`
+1. **Bias filtering**: IDENTITY candidates with `|bias| < 0.01` are rejected
+2. **Use synapse analysis**: Direct connections should use `add-synapses`, not `add-neurons`
 
 #### Add-neuron target neuron filtering
 

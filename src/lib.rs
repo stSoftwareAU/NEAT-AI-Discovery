@@ -303,10 +303,6 @@ pub struct AnalyzeParallelInput {
     pub creature: CreatureJson,
     pub focus_neurons: Vec<String>,
     #[serde(default)]
-    pub improvement_threshold: Option<f32>,
-    #[serde(default)]
-    pub harmful_threshold: Option<f32>,
-    #[serde(default)]
     pub max_synapse_candidates: Option<usize>,
     #[serde(default)]
     pub max_neuron_candidates: Option<usize>,
@@ -386,8 +382,6 @@ pub struct AnalyzeSynapsesInput {
     pub creature: CreatureJson,
     pub focus_neurons: Vec<String>,
     #[serde(default)]
-    pub improvement_threshold: Option<f32>,
-    #[serde(default)]
     pub max_candidates: Option<usize>,
     #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
@@ -401,8 +395,6 @@ pub struct AnalyzeNeuronsInput {
     pub creature: CreatureJson,
     pub focus_neurons: Vec<String>,
     #[serde(default)]
-    pub improvement_threshold: Option<f32>,
-    #[serde(default)]
     pub max_candidates: Option<usize>,
     #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
@@ -415,10 +407,6 @@ pub struct AnalyzeAllInput {
     pub parquet_file: String,
     pub creature: CreatureJson,
     pub focus_neurons: Vec<String>,
-    #[serde(default)]
-    pub improvement_threshold: Option<f32>,
-    #[serde(default)]
-    pub harmful_threshold: Option<f32>,
     #[serde(default)]
     pub max_synapse_candidates: Option<usize>,
     #[serde(default)]
@@ -926,8 +914,6 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
         parquet_file: input.parquet_file,
         creature: input.creature,
         focus_neurons: input.focus_neurons,
-        improvement_threshold: input.improvement_threshold,
-        harmful_threshold: input.harmful_threshold,
         max_synapse_candidates: input.max_synapse_candidates,
         max_neuron_candidates: input.max_neuron_candidates,
         analysis_deadline_ms: input.analysis_deadline_ms,
@@ -2521,8 +2507,6 @@ mod tests {
                 "output": 1
             },
             "focusNeurons": ["output-0"],
-            "improvementThreshold": 0.01,
-            "harmfulThreshold": -0.05,
             "maxSynapseCandidates": 5,
             "maxNeuronCandidates": 5,
             "requireGpu": false

@@ -68,7 +68,6 @@ fn add_neuron_candidates_do_not_include_leaky_relu() {
         parquet_file: parquet_file.to_str().unwrap().to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: Some(64),
         analysis_deadline_ms: None,
     };

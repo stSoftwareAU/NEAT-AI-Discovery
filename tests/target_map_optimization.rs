@@ -81,7 +81,6 @@ fn synapse_analysis_with_target_map_optimization_succeeds() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };
@@ -159,7 +158,6 @@ fn multiple_focus_neurons_share_target_map_optimization() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string(), "output-1".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };
@@ -258,7 +256,6 @@ fn target_map_filters_non_finite_values() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };
@@ -326,7 +323,6 @@ fn empty_target_records_skips_source_processing() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };

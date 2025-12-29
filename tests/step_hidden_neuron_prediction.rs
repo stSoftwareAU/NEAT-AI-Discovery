@@ -169,7 +169,6 @@ fn test_step_hidden_neuron_prediction_vs_reality() {
         parquet_file: parquet_path.to_string(),
         creature: creature.clone(),
         focus_neurons: vec!["hidden-step".to_string()],
-        improvement_threshold: Some(0.0), // Accept all candidates
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };
@@ -259,7 +258,6 @@ fn test_identity_zero_bias_should_not_be_recommended() {
         parquet_file: parquet_path.to_string(),
         creature,
         focus_neurons: vec!["hidden-step".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };
@@ -363,7 +361,6 @@ fn test_step_output_neuron_no_identity_candidates() {
         parquet_file: parquet_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };

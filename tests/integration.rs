@@ -504,7 +504,6 @@ fn test_analyze_neurons_returns_non_zero_bias() {
         parquet_file: parquet_file.to_str().unwrap().to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.01), // Lower threshold to increase chances of finding candidates
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };
@@ -599,7 +598,6 @@ fn test_bias_values_are_activation_specific() {
         parquet_file: parquet_file.to_str().unwrap().to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.01),
         max_candidates: Some(50), // Request many candidates to get variety
         analysis_deadline_ms: None,
     };
@@ -868,7 +866,6 @@ fn test_add_neuron_finds_candidates_with_correlated_errors() {
         parquet_file: parquet_file.to_str().unwrap().to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.01), // 1% threshold - low to ensure candidates are found
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };
@@ -976,7 +973,6 @@ fn test_add_neuron_with_hard_tanh_target_uses_bias_aware_weight() {
         parquet_file: parquet_file.to_str().unwrap().to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.01),
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };
@@ -1074,7 +1070,6 @@ fn test_bias_improves_neuron_performance() {
         parquet_file: parquet_file.to_str().unwrap().to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.01),
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };
@@ -1203,7 +1198,6 @@ fn test_hidden_neurons_are_analysed_not_filtered() {
         parquet_file: parquet_file.to_str().unwrap().to_string(),
         creature,
         focus_neurons: vec!["hidden-0".to_string()], // Request hidden neuron analysis
-        improvement_threshold: Some(0.01),
         max_candidates: Some(10),
         analysis_deadline_ms: None,
     };
@@ -1365,7 +1359,6 @@ fn test_hidden_neuron_candidates_have_impact_discounted_predictions() {
         parquet_file: parquet_file.to_str().unwrap().to_string(),
         creature,
         focus_neurons: vec!["hidden-0".to_string()],
-        improvement_threshold: Some(0.001), // Very low threshold to get candidates
         max_candidates: Some(20),
         analysis_deadline_ms: None,
     };

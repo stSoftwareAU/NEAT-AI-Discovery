@@ -77,7 +77,6 @@ fn issue_134_bent_identity_target_simulation_rejects_linear_false_positive() {
         parquet_file: parquet_file.clone(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };
@@ -134,7 +133,6 @@ fn issue_134_identity_target_accepts_linear_candidate_sanity_check() {
         parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.0),
         max_candidates: None,
         analysis_deadline_ms: None,
     };

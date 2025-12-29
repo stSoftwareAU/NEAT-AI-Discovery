@@ -148,13 +148,10 @@ fn regression_split_error_must_return_fallback_candidates() {
 
     write_records_to_parquet(file_path, &records).unwrap();
 
-    // VERY HIGH threshold (50%) - no candidates will meet this threshold
-    // But candidates with small positive improvement should still be returned as fallbacks
     let input = AnalyzeNeuronsInput {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.50), // 50% threshold - intentionally unreachable
         max_candidates: Some(50),
         analysis_deadline_ms: None,
     };
@@ -163,7 +160,7 @@ fn regression_split_error_must_return_fallback_candidates() {
 
     // Log all candidates for debugging
     eprintln!("=== REGRESSION TEST: Split-error fallback candidates ===");
-    eprintln!("Threshold: 50%");
+    eprintln!("Threshold: disabled (always return positive improvements)");
     eprintln!(
         "Total candidates returned: {}",
         result.helpful_neurons.len()
@@ -329,7 +326,6 @@ fn test_fallback_candidates_below_threshold_are_returned() {
         parquet_file: file_path.to_string(),
         creature,
         focus_neurons: vec!["output-0".to_string()],
-        improvement_threshold: Some(0.50), // 50% threshold - intentionally high
         max_candidates: Some(50),
         analysis_deadline_ms: None,
     };
