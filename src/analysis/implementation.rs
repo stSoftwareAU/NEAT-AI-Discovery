@@ -7444,7 +7444,7 @@ pub(crate) fn analyze_neurons_with_cache(
     // Non-output neurons are skipped here but still tracked in diagnostics so the
     // caller knows they were received but filtered out (with the correct reason).
     let original_focus_count = unique_focus.len();
-    let skipped_hidden: Vec<String> = Vec::new();
+    let mut skipped_hidden: Vec<String> = Vec::new();
     let mut skipped_input: Vec<String> = Vec::new();
     let mut skipped_constant: Vec<String> = Vec::new();
 
@@ -7455,22 +7455,38 @@ pub(crate) fn analyze_neurons_with_cache(
     // neurons use a specialised threshold-crossing model; all others use the standard
     // linear error model (which is an approximation but still finds useful patterns).
     let mut threshold_targets: Vec<String> = Vec::new();
+
+    // Optional production experiment (29-Dec-2025): allow callers to force output-only
+    // focus targets for add-neuron analysis.
+    //
+    // This is disabled by default for backwards compatibility (existing regression tests
+    // and older pipelines expect hidden targets to be analysed with impact discounting).
+    //
+    // Enable by setting `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY=1`.
+    let output_only_targets = std::env::var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY").is_ok();
+
     let mut focus_order: Vec<String> = unique_focus
         .iter()
         .filter_map(|uuid| {
-            // Check neuron type - allow output and hidden neurons for add-neuron analysis
-            // Hidden neurons are analysed with impact-based discounting (v0.1.123)
+            // By default we analyse both output and hidden focus targets (hidden will be discounted).
+            // If `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY` is set, hidden targets are filtered.
             let neuron_type = neuron_type_map.get(*uuid).map(|s| s.as_str());
             match neuron_type {
-                Some("output") | Some("hidden") => {
-                    // Output and hidden neurons are valid targets
-                    // Hidden neuron predictions will be discounted by impact later
+                Some("output") => {
                     if let Some(squash) = neuron_squash_map.get(*uuid) {
                         if is_threshold_activation(squash) {
                             threshold_targets.push((*uuid).clone());
                         }
                     }
                     Some((*uuid).clone())
+                }
+                Some("hidden") => {
+                    if output_only_targets {
+                        skipped_hidden.push((*uuid).clone());
+                        None
+                    } else {
+                        Some((*uuid).clone())
+                    }
                 }
                 Some("input") => {
                     // Input neurons are observation sources, not computation nodes
@@ -7483,12 +7499,17 @@ pub(crate) fn analyze_neurons_with_cache(
                     None
                 }
                 Some(unknown_type) => {
-                    // Unknown type - treat as hidden (analysable with discount)
+                    // Unknown type - treat as hidden.
                     eprintln!(
                         "[NEAT-AI-Discovery] Warning: Unknown neuron type '{unknown_type}' for UUID '{uuid}'. \
-                        Treating as hidden neuron (will apply impact discount)."
+                        Treating as hidden neuron."
                     );
-                    Some((*uuid).clone())
+                    if output_only_targets {
+                        skipped_hidden.push((*uuid).clone());
+                        None
+                    } else {
+                        Some((*uuid).clone())
+                    }
                 }
                 None => {
                     // Unknown UUID - this is likely a bug, skip it
