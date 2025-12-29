@@ -130,6 +130,7 @@ fn test_constant_source_gives_zero_improvement() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -229,6 +230,7 @@ fn test_low_variance_source_discounts_prediction() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -328,6 +330,7 @@ fn test_high_variance_source_not_discounted() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -434,6 +437,7 @@ fn test_constant_vs_varying_source_comparison() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(50),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

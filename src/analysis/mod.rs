@@ -105,6 +105,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             focus_neurons: input.focus_neurons.clone(),
             max_candidates: input.max_synapse_candidates,
             analysis_deadline_ms: input.analysis_deadline_ms,
+            random_seed: input.random_seed,
         })
     } else {
         None
@@ -117,6 +118,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             focus_neurons: input.focus_neurons.clone(),
             max_candidates: input.max_neuron_candidates,
             analysis_deadline_ms: input.analysis_deadline_ms,
+            random_seed: input.random_seed,
         })
     } else {
         None

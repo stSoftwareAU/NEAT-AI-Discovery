@@ -149,6 +149,7 @@ fn test_optimised_params_vary_by_sample() {
             focus_neurons: vec!["output-0".to_string()],
             max_candidates: Some(100),
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let result = analyze_neurons(&input).unwrap();
@@ -225,6 +226,7 @@ fn test_conservative_params_more_stable_across_samples() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(100),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let subset_result = analyze_neurons(&subset_input).unwrap();
@@ -356,6 +358,7 @@ fn test_relu_fixed_params_consistent_across_samples() {
             focus_neurons: vec!["output-0".to_string()],
             max_candidates: Some(100),
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let result = analyze_neurons(&input).unwrap();
@@ -452,6 +455,7 @@ fn test_synapse_candidates_no_bias_optimisation() {
         focus_neurons: vec!["hidden-0".to_string()], // Focus on hidden neuron for synapse additions
         max_candidates: Some(50),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_synapses(&input).unwrap();
@@ -511,6 +515,7 @@ fn test_synapse_weight_distribution() {
             focus_neurons: vec!["output-0".to_string()],
             max_candidates: Some(50),
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let result = analyze_synapses(&input).unwrap();

@@ -171,6 +171,7 @@ fn test_step_hidden_neuron_prediction_vs_reality() {
         focus_neurons: vec!["hidden-step".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -260,6 +261,7 @@ fn test_identity_zero_bias_should_not_be_recommended() {
         focus_neurons: vec!["hidden-step".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -363,6 +365,7 @@ fn test_step_output_neuron_no_identity_candidates() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

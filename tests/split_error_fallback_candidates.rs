@@ -154,6 +154,7 @@ fn regression_split_error_must_return_fallback_candidates() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(50),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -328,6 +329,7 @@ fn test_fallback_candidates_below_threshold_are_returned() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(50),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

@@ -74,6 +74,7 @@ fn analysis_handles_non_finite_values_gracefully() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: None,
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     // Should complete without error
@@ -135,6 +136,7 @@ fn analysis_pairs_samples_by_obs_index() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: None,
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     // Should complete successfully with 5 matching sample pairs
@@ -198,6 +200,7 @@ fn analysis_skips_neurons_without_errors() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: None,
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     // Should complete and find candidates using input-0 as source

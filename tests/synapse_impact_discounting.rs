@@ -179,6 +179,7 @@ fn test_synapse_candidate_hidden_neuron_is_impact_discounted() {
         focus_neurons: vec!["hidden-b".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30000),
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input);
@@ -292,6 +293,7 @@ fn test_synapse_candidate_output_neuron_no_discount() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30000),
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input);
@@ -380,6 +382,7 @@ fn test_harmful_synapse_candidate_is_impact_discounted() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30000),
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input);

@@ -1507,6 +1507,20 @@ whether discovery should be enabled:
   ```
   [NEAT-AI-Discovery][verbose] Randomised focus order: ["output-3", "output-1", "output-4"]... (+2 more)
   ```
+
+  **Source neuron randomisation (forward-only)**: Eligible source neurons are evaluated in a
+  randomised order (inputs, hidden, constants), while still enforcing **forward-only**
+  candidates (a source must be upstream of the target in the creature ordering).
+  This matters when you use timeouts: repeated runs will scan different sources over time.
+
+  **Optional bias to newer inputs (29-Dec-2025)**: If your input list grows over time and
+  you want discovery to prefer newer inputs (higher `input-N` indices) earlier in the run,
+  set `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` to a finite number > 0:
+
+  - `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS=1`: mild bias
+  - `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS=3`: stronger bias toward the end
+
+  Hidden/constant sources keep weight 1.0; only `input-N` sources are biased.
 - **Low GPU utilisation**: If you're seeing low GPU utilisation (e.g., 20%) during
   analysis, see the [GPU Performance Tuning](#gpu-performance-tuning) section below.
 - **Deadlock or stuck process**: If the process appears stuck (0% CPU/GPU), see the
@@ -1881,7 +1895,13 @@ the same functional behavior.
    - **Target**: Individual source files should be under ~1,500 lines where practical
    - **Split large files**: When a file exceeds ~2,000 lines, consider splitting into modules
    - **Separate concerns**: GPU infrastructure, business logic, and types should be in separate files
-   - **Test files**: Extract tests to `tests/` directory when they grow beyond ~500 lines
+   - **Tests live in `tests/` when possible**: Prefer putting new tests in the `tests/` directory
+     (integration tests) whenever the behaviour can be exercised through the public API.
+   - **Unit tests stay private**: Only keep tests under `src/` (`#[cfg(test)]`) when you genuinely
+     need access to private helpers and it would be unreasonable to expose that surface area.
+   - **Keep source files readable**: If a source file’s unit tests start to dominate the file,
+     extract them into a separate unit test module file (still under `src/`, e.g.
+     `src/<module>/tests.rs`) rather than leaving a large inline block in the implementation.
    - **Rationale**: Large files (10,000+ lines) are difficult to navigate, review, and maintain
 
 4. **Dependency License Requirements**: All dependencies must be Apache-2.0 compatible
@@ -2017,7 +2037,9 @@ Small, focused test files make it **obvious when tests change**:
 
 **Rule of thumb**: Put new tests under `tests/` whenever practical. Only place tests under
 `src/` (`#[cfg(test)]`) when the behaviour cannot be exercised cleanly via the public API
-without making implementation details public.
+without making implementation details public. If unit tests under `src/` grow large, extract
+them into a dedicated `tests.rs` module file instead of keeping a huge inline `mod tests { ... }`
+in the implementation file.
 
 #### 3. Don't make APIs public just for testing
 
