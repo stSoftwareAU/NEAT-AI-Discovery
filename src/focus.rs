@@ -281,14 +281,6 @@ fn count_synapses_for_neuron(neuron_uuid: &str, creature: &CreatureJson) -> (usi
     (incoming, outgoing)
 }
 
-#[allow(dead_code)]
-fn average_absolute_error(parquet_file: &str, neuron_uuid: &str) -> Result<f32> {
-    let records: Vec<DiscoverRecord> = read_records_from_parquet(parquet_file, neuron_uuid)
-        .with_context(|| format!("Failed to read discovery records for neuron {neuron_uuid}"))?;
-
-    Ok(average_absolute_error_from_records(&records))
-}
-
 fn average_absolute_error_from_records(records: &[DiscoverRecord]) -> f32 {
     let mut sum = 0.0f32;
     let mut count: u32 = 0;

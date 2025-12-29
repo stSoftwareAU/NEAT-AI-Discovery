@@ -74,6 +74,7 @@ fn add_neuron_candidates_do_not_include_relu_adjacent_squashes() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(512),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)

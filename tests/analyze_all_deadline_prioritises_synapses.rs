@@ -118,6 +118,7 @@ fn synapse_analysis_runs_under_deadline() {
         analysis_deadline_ms: Some(30_000), // 30 second deadline - should be plenty
         include_synapse_analysis: Some(true),
         include_neuron_analysis: Some(true),
+        random_seed: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -160,6 +161,7 @@ fn metadata_indicates_target_value_available() {
         analysis_deadline_ms: Some(30_000),
         include_synapse_analysis: Some(true),
         include_neuron_analysis: Some(true),
+        random_seed: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -197,6 +199,7 @@ fn metadata_indicates_target_value_not_available() {
         analysis_deadline_ms: Some(30_000),
         include_synapse_analysis: Some(true),
         include_neuron_analysis: Some(true),
+        random_seed: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -240,6 +243,7 @@ fn metadata_indicates_saturation_aware_simulation_used() {
         analysis_deadline_ms: Some(30_000),
         include_synapse_analysis: Some(true),
         include_neuron_analysis: Some(true),
+        random_seed: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -280,6 +284,7 @@ fn candidate_counts_tracked_correctly() {
         analysis_deadline_ms: Some(30_000),
         include_synapse_analysis: Some(true),
         include_neuron_analysis: Some(true),
+        random_seed: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -382,6 +387,7 @@ fn truncation_reflected_in_candidate_counts() {
         analysis_deadline_ms: Some(30_000),
         include_synapse_analysis: Some(true),
         include_neuron_analysis: Some(true),
+        random_seed: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");

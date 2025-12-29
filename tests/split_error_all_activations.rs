@@ -149,6 +149,7 @@ fn test_non_relu_activations_use_split_error_evaluation() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(100),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -279,6 +280,7 @@ fn test_skewed_errors_return_candidates() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(50),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

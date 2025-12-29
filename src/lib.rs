@@ -385,6 +385,13 @@ pub struct AnalyzeSynapsesInput {
     pub max_candidates: Option<usize>,
     #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
+    /// Optional RNG seed to make analysis ordering reproducible.
+    ///
+    /// If not provided, the library uses non-deterministic randomness. This is
+    /// typically desirable for production runs with timeouts, as repeated runs
+    /// will explore different candidates over time.
+    #[serde(default)]
+    pub random_seed: Option<u64>,
 }
 
 /// Internal input structure for neuron analysis (used by analyze_all)
@@ -398,6 +405,13 @@ pub struct AnalyzeNeuronsInput {
     pub max_candidates: Option<usize>,
     #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
+    /// Optional RNG seed to make analysis ordering reproducible.
+    ///
+    /// If not provided, the library uses non-deterministic randomness. This is
+    /// typically desirable for production runs with timeouts, as repeated runs
+    /// will explore different candidates over time.
+    #[serde(default)]
+    pub random_seed: Option<u64>,
 }
 
 /// Internal input structure for combined analysis (used by analyze_parallel)
@@ -417,6 +431,11 @@ pub struct AnalyzeAllInput {
     pub include_synapse_analysis: Option<bool>,
     #[serde(default)]
     pub include_neuron_analysis: Option<bool>,
+    /// Optional RNG seed to make analysis ordering reproducible.
+    ///
+    /// If not provided, the library uses non-deterministic randomness.
+    #[serde(default)]
+    pub random_seed: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -919,6 +938,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
         analysis_deadline_ms: input.analysis_deadline_ms,
         include_synapse_analysis: Some(true),
         include_neuron_analysis: Some(true),
+        random_seed: None,
     };
 
     match analysis::analyze_all(&combined_input) {

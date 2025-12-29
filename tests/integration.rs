@@ -506,6 +506,7 @@ fn test_analyze_neurons_returns_non_zero_bias() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -600,6 +601,7 @@ fn test_bias_values_are_activation_specific() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(50), // Request many candidates to get variety
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -868,6 +870,7 @@ fn test_add_neuron_finds_candidates_with_correlated_errors() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -975,6 +978,7 @@ fn test_add_neuron_with_hard_tanh_target_uses_bias_aware_weight() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -1072,6 +1076,7 @@ fn test_bias_improves_neuron_performance() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -1200,6 +1205,7 @@ fn test_hidden_neurons_are_analysed_not_filtered() {
         focus_neurons: vec!["hidden-0".to_string()], // Request hidden neuron analysis
         max_candidates: Some(10),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -1361,6 +1367,7 @@ fn test_hidden_neuron_candidates_have_impact_discounted_predictions() {
         focus_neurons: vec!["hidden-0".to_string()],
         max_candidates: Some(20),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)

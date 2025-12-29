@@ -16,7 +16,7 @@ use bytemuck::{Pod, Zeroable};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use once_cell::sync::OnceCell;
 use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -494,18 +494,6 @@ fn detect_gpu_tier(adapter_info: &wgpu::AdapterInfo) -> GpuPerformanceTier {
     GpuPerformanceTier::Unknown
 }
 
-/// System resource information for adaptive configuration.
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)] // Fields kept for diagnostic logging
-struct SystemResources {
-    /// Available memory in bytes (not total - what's actually free)
-    available_memory_bytes: u64,
-    /// Total physical memory in bytes
-    total_memory_bytes: u64,
-    /// Memory pressure level
-    memory_tier: MemoryTier,
-}
-
 /// Memory tier for adaptive configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MemoryTier {
@@ -519,11 +507,11 @@ enum MemoryTier {
 
 /// Detect available system memory and categorise into tiers.
 /// This is cached for the lifetime of the process.
-fn detect_system_resources() -> SystemResources {
+fn detect_memory_tier() -> MemoryTier {
     use std::sync::OnceLock;
-    static RESOURCES: OnceLock<SystemResources> = OnceLock::new();
+    static TIER: OnceLock<MemoryTier> = OnceLock::new();
 
-    *RESOURCES.get_or_init(|| {
+    *TIER.get_or_init(|| {
         let (available, total) = get_memory_info();
         let available_gb = available as f64 / (1024.0 * 1024.0 * 1024.0);
         let total_gb = total as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -546,11 +534,7 @@ fn detect_system_resources() -> SystemResources {
             "[NEAT-AI-Discovery] Memory: {available_gb:.1}GB available / {total_gb:.1}GB total | Tier: {tier_str}"
         );
 
-        SystemResources {
-            available_memory_bytes: available,
-            total_memory_bytes: total,
-            memory_tier,
-        }
+        memory_tier
     })
 }
 
@@ -779,9 +763,7 @@ pub fn check_memory_for_parquet(parquet_file: &str) -> Result<()> {
 /// Get the GPU work queue capacity based on system resources.
 /// Lower capacity = more backpressure = less memory usage.
 fn get_work_queue_capacity() -> usize {
-    let resources = detect_system_resources();
-
-    match resources.memory_tier {
+    match detect_memory_tier() {
         MemoryTier::Low => 4,      // Aggressive backpressure
         MemoryTier::Standard => 8, // Moderate backpressure
         MemoryTier::High => 16,    // Allow more parallelism
@@ -844,7 +826,6 @@ fn get_adjusted_batch_size(gpu_tier: GpuPerformanceTier) -> usize {
         return size;
     }
 
-    let resources = detect_system_resources();
     let base_size = match gpu_tier {
         GpuPerformanceTier::High => HIGH_PERF_GPU_BATCH_SIZE,
         GpuPerformanceTier::Standard | GpuPerformanceTier::Unknown => DEFAULT_GPU_BATCH_SIZE,
@@ -852,7 +833,7 @@ fn get_adjusted_batch_size(gpu_tier: GpuPerformanceTier) -> usize {
 
     // Reduce batch size if memory is constrained
     // Standard memory tier should also reduce batch size to prevent Metal command buffer exhaustion
-    match resources.memory_tier {
+    match detect_memory_tier() {
         MemoryTier::Low => LOW_MEMORY_GPU_BATCH_SIZE.min(base_size),
         MemoryTier::Standard => DEFAULT_GPU_BATCH_SIZE.min(base_size), // Use 512 max, not 1024
         MemoryTier::High => base_size,
@@ -1006,21 +987,129 @@ fn parse_input_index(uuid: &str) -> Option<usize> {
     uuid.strip_prefix("input-")?.parse::<usize>().ok()
 }
 
-fn interleave_from_ends<T>(items: Vec<T>) -> Vec<T> {
-    use std::collections::VecDeque;
-    if items.len() <= 2 {
-        return items;
+/// Derive a stable per-context seed from a base seed.
+///
+/// We deliberately avoid `Hash` here because Rust's hasher is intentionally
+/// randomised between processes.
+fn derive_seed(base_seed: u64, context: &str, salt: u64) -> u64 {
+    // FNV-1a 64-bit
+    let mut hash: u64 = 0xcbf29ce484222325 ^ base_seed ^ salt;
+    for b in context.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
     }
-    // Items are expected to already be in a meaningful order (eg sorted by index).
-    let mut deque: VecDeque<T> = items.into();
-    let mut out = Vec::with_capacity(deque.len());
-    while let Some(front) = deque.pop_front() {
-        out.push(front);
-        if let Some(back) = deque.pop_back() {
-            out.push(back);
+    hash
+}
+
+/// Shuffle a slice, optionally deterministically.
+///
+/// When `seed` is `None`, uses non-deterministic randomness (best for production
+/// timeout runs where we want coverage to drift over time).
+fn shuffle_slice<T>(items: &mut [T], seed: Option<u64>, context: &str) {
+    if items.len() <= 1 {
+        return;
+    }
+
+    match seed {
+        Some(base) => {
+            let derived = derive_seed(base, context, 0x9e3779b97f4a7c15);
+            let mut rng = StdRng::seed_from_u64(derived);
+            items.shuffle(&mut rng);
+        }
+        None => {
+            let mut rng = rand::thread_rng();
+            items.shuffle(&mut rng);
         }
     }
-    out
+}
+
+/// Optional input-index bias for source ordering.
+///
+/// This is primarily a production knob for timeout-constrained runs. If you are
+/// frequently appending new inputs (e.g., feature engineering), you may want to
+/// bias discovery toward higher input indices so newer inputs are evaluated
+/// earlier, while still allowing older inputs to be discovered over time.
+///
+/// Controlled via `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS`:
+/// - unset / empty: disabled (pure shuffle)
+/// - `> 0`: enabled (weighted random permutation; higher = stronger bias to the end)
+fn source_input_index_bias_from_env() -> Option<f64> {
+    let raw = std::env::var("NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS").ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<f64>() {
+        Ok(v) if v.is_finite() && v > 0.0 => Some(v),
+        _ => {
+            if verbose_enabled() {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Ignoring invalid NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS={trimmed:?} (expected a finite number > 0)"
+                );
+            }
+            None
+        }
+    }
+}
+
+/// Order eligible sources for evaluation.
+///
+/// - Always respects forward-only candidate constraints (caller must filter by index).
+/// - Default behaviour is a pure random shuffle (no special casing for input indices).
+/// - If `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` is set, input sources are ordered
+///   by a weighted random permutation favouring higher input indices.
+fn order_eligible_sources(
+    eligible_sources: &mut Vec<&OrderedNeuron>,
+    seed: Option<u64>,
+    context: &str,
+    creature_input_count: usize,
+) {
+    if eligible_sources.len() <= 1 {
+        return;
+    }
+
+    let Some(bias) = source_input_index_bias_from_env() else {
+        shuffle_slice(eligible_sources, seed, context);
+        return;
+    };
+
+    // Weighted permutation via exponential race:
+    // t = -ln(U) / w, smaller t comes first.
+    let max_input_index = creature_input_count.saturating_sub(1) as f64;
+    let denom = (max_input_index + 1.0).max(1.0);
+
+    let mut rng = match seed {
+        Some(base) => {
+            let derived = derive_seed(base, context, 0x243f6a8885a308d3);
+            StdRng::seed_from_u64(derived)
+        }
+        None => {
+            // Use a random seed then a deterministic RNG instance so we can reuse the same
+            // code path without fighting trait object ergonomics.
+            let seed: u64 = rand::thread_rng().gen();
+            StdRng::seed_from_u64(seed)
+        }
+    };
+
+    let mut keyed: Vec<(f64, &OrderedNeuron)> = Vec::with_capacity(eligible_sources.len());
+    for &n in eligible_sources.iter() {
+        let weight = if let Some(i) = parse_input_index(&n.uuid) {
+            // Normalise to (0, 1] based on input index, then apply power bias.
+            // Epsilon keeps weight > 0 even for i=0 with high bias.
+            let x = ((i as f64) + 1.0) / denom;
+            (1e-6 + x).powf(bias)
+        } else {
+            1.0
+        };
+
+        let u: f64 = rng.gen::<f64>().max(f64::MIN_POSITIVE);
+        let t = -u.ln() / weight.max(1e-12);
+        keyed.push((t, n));
+    }
+
+    keyed.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+    eligible_sources.clear();
+    eligible_sources.extend(keyed.into_iter().map(|(_, n)| n));
 }
 
 fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
@@ -2406,88 +2495,6 @@ struct HelpfulSample {
     target_activation: Option<f32>,
 }
 
-/// Extended sample for threshold-crossing analysis of discrete activations (STEP/BIPOLAR).
-/// Includes the target neuron's pre-activation value to determine threshold crossings.
-#[derive(Clone, Copy)]
-struct DiscreteHelpfulSample {
-    /// Source neuron's activation
-    source_activation: f32,
-    /// Target neuron's input sum before squash function
-    target_value: f32,
-    /// Target neuron's current output after squash (0/1 for STEP, -1/1 for BIPOLAR)
-    target_activation: f32,
-    /// Target neuron's average error
-    avg_error: f32,
-}
-
-/// Type of threshold activation function
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ThresholdType {
-    /// STEP: value > 0 ? 1 : 0
-    Step,
-    /// BIPOLAR: value > 0 ? 1 : -1
-    Bipolar,
-}
-
-impl ThresholdType {
-    fn from_squash(squash: &str) -> Option<Self> {
-        match squash.to_uppercase().as_str() {
-            "STEP" => Some(Self::Step),
-            "BIPOLAR" => Some(Self::Bipolar),
-            _ => None,
-        }
-    }
-
-    /// Calculate the output for a given input value
-    fn apply(&self, value: f32) -> f32 {
-        match self {
-            Self::Step => {
-                if value > 0.0 {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            Self::Bipolar => {
-                if value > 0.0 {
-                    1.0
-                } else {
-                    -1.0
-                }
-            }
-        }
-    }
-
-    /// Check if adding a contribution would flip the output
-    fn would_flip(&self, current_value: f32, contribution: f32) -> bool {
-        let current_positive = current_value > 0.0;
-        let new_positive = (current_value + contribution) > 0.0;
-        current_positive != new_positive
-    }
-
-    /// Check if a flip is "helpful" (moves output in direction of error)
-    /// Returns: 1 for helpful flip, -1 for harmful flip, 0 for no flip
-    fn flip_direction(&self, current_value: f32, contribution: f32, error: f32) -> i32 {
-        if !self.would_flip(current_value, contribution) {
-            return 0;
-        }
-
-        let current_output = self.apply(current_value);
-        let new_output = self.apply(current_value + contribution);
-
-        // Error > 0 means output should be higher
-        // Error < 0 means output should be lower
-        let output_increased = new_output > current_output;
-        let should_increase = error > 0.0;
-
-        if output_increased == should_increase {
-            1 // Helpful flip
-        } else {
-            -1 // Harmful flip
-        }
-    }
-}
-
 /// Statistics computed from neuron error and activation samples
 #[derive(Debug, Clone)]
 struct NeuronStats {
@@ -2767,7 +2774,6 @@ struct BiasUniforms {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-#[allow(dead_code)] // Framework for future GPU activation evaluation
 struct ActivationOutput {
     output: f32,
     output_sq: f32,
@@ -2780,7 +2786,6 @@ struct ActivationOutput {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-#[allow(dead_code)] // Framework for future GPU activation evaluation
 struct ActivationUniforms {
     sample_count: u32,
     orientation: f32,
@@ -2993,17 +2998,6 @@ fn absolute_activation(x: f32) -> f32 {
 // NEW ACTIVATION FUNCTIONS (v0.1.139)
 // Based on analysis of successful discoveries that evolved TO these activations
 // ============================================================================
-
-/// LeakyReLU - 4 successful discoveries evolved ReLU → LeakyReLU!
-/// Allows small negative gradients instead of zeroing negative inputs.
-#[allow(dead_code)] // Still used for target simulation, but not proposed as a candidate squash.
-fn leaky_relu_activation(x: f32) -> f32 {
-    if x >= 0.0 {
-        x
-    } else {
-        0.01 * x // Standard leak coefficient
-    }
-}
 
 /// Mish - 2 successful discoveries evolved TO Mish (from ELU and Softplus)
 /// Self-regularised activation: x * tanh(softplus(x))
@@ -3557,9 +3551,7 @@ pub struct GpuAnalyzer {
     harmful_pipeline: Option<wgpu::ComputePipeline>,
     relu_layout: Option<wgpu::BindGroupLayout>,
     relu_pipeline: Option<wgpu::ComputePipeline>,
-    #[allow(dead_code)] // Framework for future GPU activation evaluation
     activation_layout: Option<wgpu::BindGroupLayout>,
-    #[allow(dead_code)] // Framework for future GPU activation evaluation
     activation_pipeline: Option<wgpu::ComputePipeline>,
     bias_layout: Option<wgpu::BindGroupLayout>,
     bias_pipeline: Option<wgpu::ComputePipeline>,
@@ -5935,28 +5927,6 @@ fn compute_relu_improvement_and_count(
     total_baseline_error_sq: f32,
     target_activation_fn: Option<fn(f32) -> f32>,
 ) -> (f32, u32, u32) {
-    compute_relu_improvement_and_count_traced(
-        samples,
-        incoming_weight,
-        outgoing_weight,
-        bias,
-        total_baseline_error_sq,
-        target_activation_fn,
-        None, // No trace context
-    )
-}
-
-/// Compute ReLU improvement and count.
-/// Returns (improvement_fraction, improved_count, total_count).
-fn compute_relu_improvement_and_count_traced(
-    samples: &[HelpfulSample],
-    incoming_weight: f32,
-    outgoing_weight: f32,
-    bias: f32,
-    total_baseline_error_sq: f32,
-    target_activation_fn: Option<fn(f32) -> f32>,
-    _trace_context: Option<&str>, // Kept for API compatibility, no longer used
-) -> (f32, u32, u32) {
     if total_baseline_error_sq <= EPSILON || samples.is_empty() {
         return (0.0, 0, samples.len() as u32);
     }
@@ -7064,252 +7034,11 @@ fn evaluate_activation_candidate<G: GpuEvaluator>(
     Ok(best_candidate.or(fallback_candidate))
 }
 
-/// Build discrete samples for threshold-crossing analysis.
-/// Combines source neuron activations with target neuron values and errors.
-fn build_discrete_samples(
-    source_records: &[DiscoverRecord],
-    target_records: &[DiscoverRecord],
-) -> Vec<DiscreteHelpfulSample> {
-    // Build a map from obs_index to target record
-    let target_map: HashMap<u32, &DiscoverRecord> = target_records
-        .iter()
-        .filter(|r| !r.errors.is_empty())
-        .map(|r| (r.obs_index, r))
-        .collect();
+// Threshold-crossing (STEP/BIPOLAR) sample building was removed as dead code.
+// For discrete targets, add-synapse analysis is the intended mechanism.
 
-    let mut samples = Vec::new();
-
-    for source_record in source_records {
-        if !source_record.activation.is_finite() {
-            continue;
-        }
-
-        if let Some(target_record) = target_map.get(&source_record.obs_index) {
-            // Need target's value (pre-activation input sum) for threshold crossing
-            let target_value = match target_record.value {
-                Some(v) if v.is_finite() => v,
-                _ => continue, // Skip if no value available
-            };
-
-            if !target_record.activation.is_finite() {
-                continue;
-            }
-
-            // Compute average error for target
-            let mut error_sum = 0.0;
-            let mut error_count = 0;
-            for &err in &target_record.errors {
-                if err.is_finite() {
-                    error_sum += err;
-                    error_count += 1;
-                }
-            }
-
-            if error_count > 0 {
-                let avg_error = error_sum / error_count as f32;
-                samples.push(DiscreteHelpfulSample {
-                    source_activation: source_record.activation,
-                    target_value,
-                    target_activation: target_record.activation,
-                    avg_error,
-                });
-            }
-        }
-    }
-
-    samples
-}
-
-/// Evaluate a discrete activation candidate using threshold-crossing model.
-/// Instead of predicting continuous error reduction, counts how many samples
-/// would flip to the correct output if we add a new connection.
-///
-/// For STEP/BIPOLAR, the only meaningful improvement is flipping the output:
-/// - If error > 0 (output should be higher), we want to flip 0→1 or -1→1
-/// - If error < 0 (output should be lower), we want to flip 1→0 or 1→-1
-///
-/// **CURRENTLY DISABLED**: This function always returns `None` because IDENTITY+bias=0
-/// candidates are equivalent to a direct synapse and are filtered out. For STEP/BIPOLAR
-/// targets, use **add-synapse analysis** instead - it can find direct connections that
-/// flip the output without wasting a neuron.
-///
-/// The function is retained for potential future use with non-IDENTITY squash functions
-/// (e.g., evaluating STEP→STEP chains) but currently does nothing useful.
-///
-/// # Arguments
-/// * `is_output_target` - Whether the target neuron is an output neuron. (Currently unused.
-///   Impact discounting for hidden targets is handled after candidate evaluation via
-///   `compute_impacts_public()`, which correctly uses the target's weighted paths to outputs.)
-#[allow(unused_variables, unreachable_code)]
-fn evaluate_discrete_candidate(
-    source_uuid: &str,
-    target_uuid: &str,
-    samples: &[DiscreteHelpfulSample],
-    threshold_type: ThresholdType,
-    threshold: f32,
-    is_output_target: bool,
-) -> Option<CandidateNeuronJson> {
-    // EARLY RETURN: Discrete evaluation only considers IDENTITY squash for new neurons.
-    // IDENTITY+bias=0 is mathematically equivalent to a direct synapse:
-    //   IDENTITY(source × incoming_weight + 0) × outgoing_weight = source × (incoming × outgoing)
-    //
-    // For STEP/BIPOLAR targets, add-synapse analysis handles this case more efficiently
-    // (1 synapse vs 1 neuron + 2 synapses). Returning None immediately avoids wasted
-    // computation from iterating through weight combinations.
-    //
-    // TODO: If discrete evaluation should support non-IDENTITY squash functions in future
-    // (e.g., STEP→STEP chains), remove this early return and add those squash types.
-    return None;
-
-    // The following code is unreachable but retained for reference if we add
-    // support for non-IDENTITY squash functions in the future.
-    if samples.len() < MIN_NEURON_SAMPLE_COUNT {
-        return None;
-    }
-
-    let total_count = samples.len() as u32;
-
-    // Incoming weight scales - larger scales help with threshold crossing by amplifying
-    // source activation differences. Keep wide range since these don't directly affect output.
-    const INCOMING_SCALES: [f32; 8] = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0];
-
-    // Outgoing weight scales - MUST be small! Based on analysis of successful vs failed
-    // discoveries: successful add-neuron candidates have |outgoing_weight| < 0.05.
-    // Large outgoing weights (10, 50) consistently fail in production.
-    // These scales match MAX_OUTGOING_WEIGHT (0.1) as upper bound.
-    const OUTGOING_SCALES: [f32; 5] = [0.01, 0.02, 0.05, 0.075, 0.1];
-
-    const ORIENTATIONS: [f32; 2] = [1.0, -1.0];
-
-    let mut best_candidate: Option<CandidateNeuronJson> = None;
-    let mut best_improvement = threshold;
-
-    // For discrete functions, use IDENTITY squash on the new neuron
-    // This passes the weighted source activation directly
-    let new_neuron_squash = "IDENTITY";
-
-    for &orientation in &ORIENTATIONS {
-        for &scale in &INCOMING_SCALES {
-            let incoming_weight = orientation * scale;
-
-            // For IDENTITY squash, new_neuron_output = incoming_weight * source_activation
-            // Try different outgoing weights (small scales only for reliable predictions)
-            for &out_scale in &OUTGOING_SCALES {
-                for &out_orientation in &ORIENTATIONS {
-                    let outgoing_weight = out_orientation * out_scale;
-
-                    // Count helpful and harmful flips
-                    let mut helpful_flips = 0i32;
-                    let mut harmful_flips = 0i32;
-                    let mut samples_with_error = 0u32;
-
-                    for sample in samples {
-                        if sample.avg_error.abs() < EPSILON {
-                            continue; // No error, nothing to improve
-                        }
-                        samples_with_error += 1;
-
-                        // New neuron output with IDENTITY: just passes through
-                        let new_neuron_output = incoming_weight * sample.source_activation;
-                        let contribution = outgoing_weight * new_neuron_output;
-
-                        let flip_dir = threshold_type.flip_direction(
-                            sample.target_value,
-                            contribution,
-                            sample.avg_error,
-                        );
-
-                        match flip_dir {
-                            1 => helpful_flips += 1,
-                            -1 => harmful_flips += 1,
-                            _ => {}
-                        }
-                    }
-
-                    if samples_with_error < MIN_NEURON_SAMPLE_COUNT as u32 {
-                        continue;
-                    }
-
-                    // Net improvement: proportion of samples that would be corrected
-                    let net_flips = helpful_flips - harmful_flips;
-                    let flip_rate = net_flips as f32 / samples_with_error as f32;
-
-                    // For both OUTPUT and HIDDEN targets, use flip_rate as the raw improvement.
-                    //
-                    // For OUTPUT targets: flip_rate ≈ error_reduction (each flip changes MSE by ~1)
-                    // For HIDDEN targets: flip_rate is the neuron-level improvement. The actual
-                    // creature-level error reduction is computed later via impact discounting
-                    // (see lines ~6511-6550) which uses compute_impacts_public() to determine
-                    // the target's weighted path to outputs.
-                    //
-                    // NOTE: Previously this code incorrectly used `outgoing_weight.abs()` as a
-                    // proxy for hidden target impact. That was WRONG because `outgoing_weight`
-                    // is the NEW→TARGET connection weight, NOT the TARGET's outgoing connections
-                    // to downstream output neurons. When a hidden STEP neuron flips (0→1), its
-                    // impact on outputs depends on its own synapses to outputs, not the incoming
-                    // synapse weight. The proper impact is computed by compute_impacts_public().
-                    let improvement = flip_rate;
-
-                    // IMPORTANT: Require meaningful improvement (at least 1%) for IDENTITY neurons.
-                    // IDENTITY with bias=0 is mathematically equivalent to a direct synapse:
-                    //   IDENTITY(source × incoming_weight + 0) × outgoing_weight = source × incoming × outgoing
-                    // These candidates should use add-synapse, not add-neuron.
-                    // Additionally, very low flip rates (< 1%) indicate the contribution isn't
-                    // reliably pushing the target across the threshold.
-                    const MIN_DISCRETE_IMPROVEMENT: f32 = 0.01; // 1% minimum
-
-                    if improvement > best_improvement.max(MIN_DISCRETE_IMPROVEMENT)
-                        && helpful_flips > harmful_flips
-                    {
-                        // IDENTITY+bias=0 is mathematically equivalent to a direct synapse.
-                        // These should be handled by add-synapse analysis, not add-neuron.
-                        // Skip these candidates entirely - they waste a neuron for no benefit.
-                        if new_neuron_squash == "IDENTITY" {
-                            // bias is always 0 for discrete evaluation, so skip all IDENTITY
-                            continue;
-                        }
-                        best_improvement = improvement;
-
-                        // Create target neuron stats from samples
-                        let target_stats = {
-                            let helper_samples: Vec<HelpfulSample> = samples
-                                .iter()
-                                .map(|s| HelpfulSample {
-                                    activation: s.target_activation,
-                                    avg_error: s.avg_error,
-                                    target_value: Some(s.target_value),
-                                    target_activation: Some(s.target_activation),
-                                })
-                                .collect();
-                            NeuronStats::from_samples(&helper_samples).map(|s| s.to_json())
-                        };
-
-                        // Issue #128: Use creature-level metrics
-                        best_candidate = Some(CandidateNeuronJson {
-                            source_neuron_uuid: source_uuid.to_string(),
-                            target_neuron_uuid: target_uuid.to_string(),
-                            source_neuron_index: None, // Set during impact discounting
-                            target_neuron_index: None, // Set during impact discounting
-                            incoming_weight,
-                            outgoing_weight,
-                            squash: new_neuron_squash.to_string(),
-                            bias: 0.0, // IDENTITY doesn't need bias for threshold crossing
-                            comment: None,
-                            target_neuron_impact: 1.0,
-                            expected_creature_error_reduction: improvement,
-                            expected_creature_score_gain: improvement,
-                            improved_count: helpful_flips as u32,
-                            total_count,
-                            target_neuron_stats: target_stats,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    best_candidate
-}
+// Threshold-crossing (STEP/BIPOLAR) add-neuron evaluation was removed as dead code.
+// For discrete targets, add-synapse analysis is the intended mechanism.
 
 /// Result of filtering focus targets for add-neuron analysis.
 ///
@@ -7671,8 +7400,7 @@ pub(crate) fn analyze_neurons_with_cache(
         );
     }
 
-    let mut rng = thread_rng();
-    focus_order.shuffle(&mut rng);
+    shuffle_slice(&mut focus_order, input.random_seed, "neuron:focus_order");
 
     // Log analysis start with timeout duration and randomised order
     log_analysis_start(
@@ -7755,15 +7483,11 @@ pub(crate) fn analyze_neurons_with_cache(
                 );
             }
 
-            // Check if this is a threshold activation (STEP/BIPOLAR) that needs special handling
-            let threshold_type = neuron_squash_map_arc
+            // STEP/BIPOLAR are discrete targets. Add-neuron discovery for these targets was
+            // removed as dead code; add-synapse is the intended mechanism.
+            let is_threshold_target = neuron_squash_map_arc
                 .get(target_uuid)
-                .and_then(|squash| ThresholdType::from_squash(squash));
-
-            // Check if target is an output neuron (needed for discrete evaluation accuracy)
-            let is_output_target = neuron_type_map
-                .get(target_uuid.as_str())
-                .map(|t| t == "output")
+                .map(|squash| is_threshold_activation(squash))
                 .unwrap_or(false);
 
             let target_index = match order_map_arc.get(target_uuid.as_str()) {
@@ -7775,29 +7499,20 @@ pub(crate) fn analyze_neurons_with_cache(
                 .iter()
                 .filter(|neuron| neuron.index < target_index)
                 .collect();
-            // Fair source ordering (Dec 2025):
-            // - We want to avoid starving "late" input neurons (eg input-1486+) when timeouts occur.
-            // - We therefore interleave input sources from both ends (0, last, 1, last-1, ...)
-            //   and only then shuffle the remaining non-input sources.
-            let mut input_sources: Vec<&OrderedNeuron> = eligible_sources
-                .iter()
-                .copied()
-                .filter(|n| parse_input_index(&n.uuid).is_some())
-                .collect();
-            input_sources.sort_by_key(|n| parse_input_index(&n.uuid).unwrap_or(n.index));
-            let input_sources = interleave_from_ends(input_sources);
-
-            let mut non_input_sources: Vec<&OrderedNeuron> = eligible_sources
-                .iter()
-                .copied()
-                .filter(|n| parse_input_index(&n.uuid).is_none())
-                .collect();
-            let mut rng = thread_rng();
-            non_input_sources.shuffle(&mut rng);
-
-            eligible_sources.clear();
-            eligible_sources.extend(input_sources);
-            eligible_sources.extend(non_input_sources);
+            // Source ordering:
+            // - Candidates must remain forward-only (index < target_index).
+            // - Under timeouts we want coverage over time, so we fully shuffle ALL
+            //   eligible sources (inputs + hidden + constants).
+            //
+            // If `random_seed` is provided, the shuffle is deterministic for a given
+            // target UUID; otherwise it's non-deterministic.
+            let context = format!("neuron:eligible_sources:{target_uuid}");
+            order_eligible_sources(
+                &mut eligible_sources,
+                input.random_seed,
+                &context,
+                input.creature.input,
+            );
 
             // Track total eligible sources for diagnostics
             let total_eligible = eligible_sources.len() as u32;
@@ -7932,55 +7647,16 @@ pub(crate) fn analyze_neurons_with_cache(
             }
 
             // Phase 4: Process evaluations - GPU work is done here
-            // Filter to only sources with samples, then evaluate
+            // Filter to only sources with samples, then evaluate.
             //
-            // For threshold activations (STEP/BIPOLAR), we use a specialised
-            // threshold-crossing model instead of the standard linear error model.
-            if let Some(t_type) = threshold_type {
-                // Threshold activation path - use discrete evaluation
-                for (source, from_records_arc) in &sources_to_process {
-                    // Check deadline
-                    if deadline_passed(&deadline) {
-                        *analysis_timed_out.lock().expect("Mutex poisoned") = true;
-                        break;
-                    }
+            // NOTE: We intentionally skip STEP/BIPOLAR targets here; synapse analysis
+            // is the supported discovery mechanism for discrete targets.
+            if is_threshold_target {
+                return Ok(());
+            }
 
-                    let from_records = from_records_arc.as_ref();
-                    let discrete_samples = build_discrete_samples(from_records, target_records);
-
-                    if discrete_samples.len() < MIN_NEURON_SAMPLE_COUNT {
-                        continue;
-                    }
-
-                    if let Some(candidate) = evaluate_discrete_candidate(
-                        &source.uuid,
-                        target_uuid,
-                        &discrete_samples,
-                        t_type,
-                        threshold,
-                        is_output_target,
-                    ) {
-                        if verbose_enabled() {
-                            eprintln!(
-                                "[NEAT-AI-Discovery][verbose] Threshold-crossing candidate for {} -> {}: {} samples, {:.2}% improvement (flips: {})",
-                                source.uuid,
-                                target_uuid,
-                                discrete_samples.len(),
-                                candidate.expected_creature_score_gain * 100.0,
-                                candidate.improved_count
-                            );
-                        }
-                        diagnostics
-                            .lock()
-                            .expect("Mutex poisoned: diagnostics")
-                            .mark_candidate_selected(target_uuid);
-                        let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
-                        upsert_candidate(&mut map, candidate);
-                    }
-                }
-            } else {
-                // Standard continuous activation path
-                for result in work_results {
+            // Standard continuous activation path
+            for result in work_results {
                     // Check deadline before each evaluation batch
                     if deadline_passed(&deadline) {
                         *analysis_timed_out.lock().expect("Mutex poisoned") = true;
@@ -8090,7 +7766,6 @@ pub(crate) fn analyze_neurons_with_cache(
                             upsert_candidate(&mut map, candidate);
                         }
                     }
-                }
             }
 
             // Track completion of this focus neuron for timeout reporting.
@@ -8219,668 +7894,13 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::analysis::ACTIVATION_SPECS;
-
-    // ==================== GPU Tier Detection Tests ====================
-
-    #[test]
-    fn impact_discounting_uses_activation_based_selection_stats_for_minimum() -> Result<()> {
-        // This is a targeted regression test for impact discounting consistency:
-        // - MINIMUM/MAXIMUM/IF impacts should use activation-based win probabilities when
-        //   recorded activations are available (via RecordCache).
-        //
-        // Without activation stats, MINIMUM uses a conservative 1/N model, which can
-        // under-estimate impact and cause downstream discounting to be too aggressive.
-
-        let creature = crate::CreatureJson {
-            neurons: vec![
-                crate::NeuronJson {
-                    uuid: "hidden-a".to_string(),
-                    neuron_type: "hidden".to_string(),
-                    squash: "IDENTITY".to_string(),
-                    bias: 0.0,
-                },
-                crate::NeuronJson {
-                    uuid: "hidden-b".to_string(),
-                    neuron_type: "hidden".to_string(),
-                    squash: "IDENTITY".to_string(),
-                    bias: 0.0,
-                },
-                crate::NeuronJson {
-                    uuid: "min-0".to_string(),
-                    neuron_type: "hidden".to_string(),
-                    squash: "MINIMUM".to_string(),
-                    bias: 0.0,
-                },
-                crate::NeuronJson {
-                    uuid: "output-0".to_string(),
-                    neuron_type: "output".to_string(),
-                    squash: "IDENTITY".to_string(),
-                    bias: 0.0,
-                },
-            ],
-            synapses: vec![
-                crate::SynapseJson {
-                    from_uuid: "hidden-a".to_string(),
-                    to_uuid: "min-0".to_string(),
-                    weight: 1.0,
-                    synapse_type: None,
-                },
-                crate::SynapseJson {
-                    from_uuid: "hidden-b".to_string(),
-                    to_uuid: "min-0".to_string(),
-                    weight: 1.0,
-                    synapse_type: None,
-                },
-                crate::SynapseJson {
-                    from_uuid: "min-0".to_string(),
-                    to_uuid: "output-0".to_string(),
-                    weight: 1.0,
-                    synapse_type: None,
-                },
-            ],
-            input: 0,
-            output: 1,
-        };
-
-        // Build a cache that returns activations where hidden-a ALWAYS wins MINIMUM.
-        let cache = Arc::new(RecordCache::with_loader(
-            "unused.parquet",
-            Arc::new(|_file, uuid| {
-                let mut records = Vec::new();
-                for obs_index in 0..10u32 {
-                    let activation = match uuid {
-                        "hidden-a" => 0.0,
-                        "hidden-b" => 1.0,
-                        _ => 0.0,
-                    };
-                    records.push(DiscoverRecord {
-                        obs_index,
-                        neuron_uuid: uuid.to_string(),
-                        value: None,
-                        activation,
-                        errors: vec![0.0],
-                    });
-                }
-                Ok(records)
-            }),
-        ));
-
-        let impacts = compute_impact_scores_for_discounting(&creature, cache.as_ref());
-        let a = impacts.get("hidden-a").copied().unwrap_or(0.0);
-        let b = impacts.get("hidden-b").copied().unwrap_or(0.0);
-
-        assert!(
-            a > 0.9,
-            "hidden-a should have near-full impact via MINIMUM win probability, got {a}"
-        );
-        assert!(
-            b < 0.1,
-            "hidden-b should have near-zero impact via MINIMUM win probability, got {b}"
-        );
-        Ok(())
-    }
-
-    /// Test that M4 is detected as high-performance tier.
-    #[test]
-    fn gpu_tier_detects_m4_as_high_performance() {
-        let info = wgpu::AdapterInfo {
-            name: "Apple M4".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Metal,
-        };
-        assert_eq!(
-            detect_gpu_tier(&info),
-            GpuPerformanceTier::High,
-            "M4 should be detected as high-performance"
-        );
-    }
-
-    /// Test that M4 Pro/Max are detected as high-performance tier.
-    #[test]
-    fn gpu_tier_detects_m4_pro_max_as_high_performance() {
-        for name in ["Apple M4 Pro", "Apple M4 Max", "Apple M4 Ultra"] {
-            let info = wgpu::AdapterInfo {
-                name: name.to_string(),
-                vendor: 0,
-                device: 0,
-                device_type: wgpu::DeviceType::IntegratedGpu,
-                driver: String::new(),
-                driver_info: String::new(),
-                backend: wgpu::Backend::Metal,
-            };
-            assert_eq!(
-                detect_gpu_tier(&info),
-                GpuPerformanceTier::High,
-                "{name} should be detected as high-performance"
-            );
-        }
-    }
-
-    /// Test that M3 Pro/Max are detected as high-performance tier.
-    #[test]
-    fn gpu_tier_detects_m3_pro_max_as_high_performance() {
-        for name in ["Apple M3 Pro", "Apple M3 Max"] {
-            let info = wgpu::AdapterInfo {
-                name: name.to_string(),
-                vendor: 0,
-                device: 0,
-                device_type: wgpu::DeviceType::IntegratedGpu,
-                driver: String::new(),
-                driver_info: String::new(),
-                backend: wgpu::Backend::Metal,
-            };
-            assert_eq!(
-                detect_gpu_tier(&info),
-                GpuPerformanceTier::High,
-                "{name} should be detected as high-performance"
-            );
-        }
-    }
-
-    /// Test that base M1/M2/M3 are detected as standard tier.
-    #[test]
-    fn gpu_tier_detects_base_m_series_as_standard() {
-        for name in ["Apple M1", "Apple M2", "Apple M3"] {
-            let info = wgpu::AdapterInfo {
-                name: name.to_string(),
-                vendor: 0,
-                device: 0,
-                device_type: wgpu::DeviceType::IntegratedGpu,
-                driver: String::new(),
-                driver_info: String::new(),
-                backend: wgpu::Backend::Metal,
-            };
-            assert_eq!(
-                detect_gpu_tier(&info),
-                GpuPerformanceTier::Standard,
-                "{name} should be detected as standard"
-            );
-        }
-    }
-
-    /// Test that discrete GPUs are detected as high-performance.
-    #[test]
-    fn gpu_tier_detects_discrete_gpu_as_high_performance() {
-        let info = wgpu::AdapterInfo {
-            name: "NVIDIA GeForce RTX 4090".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::DiscreteGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Vulkan,
-        };
-        assert_eq!(
-            detect_gpu_tier(&info),
-            GpuPerformanceTier::High,
-            "Discrete GPUs should be detected as high-performance"
-        );
-    }
-
-    /// Test that unknown integrated GPUs are detected as standard.
-    #[test]
-    fn gpu_tier_detects_unknown_integrated_as_standard() {
-        let info = wgpu::AdapterInfo {
-            name: "Intel UHD Graphics 630".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Vulkan,
-        };
-        assert_eq!(
-            detect_gpu_tier(&info),
-            GpuPerformanceTier::Standard,
-            "Unknown integrated GPUs should be detected as standard"
-        );
-    }
-
-    /// Test that batch size is correct for each tier.
-    #[test]
-    fn batch_size_correct_for_each_tier() {
-        assert_eq!(
-            get_batch_size_for_tier(GpuPerformanceTier::High),
-            HIGH_PERF_GPU_BATCH_SIZE,
-            "High-performance tier should use larger batch size"
-        );
-        assert_eq!(
-            get_batch_size_for_tier(GpuPerformanceTier::Standard),
-            DEFAULT_GPU_BATCH_SIZE,
-            "Standard tier should use default batch size"
-        );
-        assert_eq!(
-            get_batch_size_for_tier(GpuPerformanceTier::Unknown),
-            DEFAULT_GPU_BATCH_SIZE,
-            "Unknown tier should use default batch size"
-        );
-    }
-
-    #[test]
-    fn gpu_batch_size_caps_for_large_sample_counts() {
-        // Dec 2025: Large recordings (50k+ samples) can wedge Metal when combined with
-        // a high batch size. We cap based on estimated GPU buffer sizes.
-        let configured = 1024;
-        let max_sample_len = 58_149; // representative from production logs
-
-        // Helpful path uses HelpfulContribution (48 bytes) + staging, plus sample buffer.
-        let bytes_per_sample_helpful = std::mem::size_of::<GpuHelpfulSample>()
-            + (2 * std::mem::size_of::<HelpfulContribution>());
-        let capped_helpful = cap_gpu_batch_size_by_bytes(
-            configured,
-            max_sample_len,
-            bytes_per_sample_helpful,
-            GPU_MAX_BATCH_ALLOC_BYTES,
-        );
-        assert!(
-            capped_helpful < configured,
-            "expected helpful batch size to be capped for large sample sets"
-        );
-        assert!(
-            capped_helpful >= 1,
-            "batch size must never be reduced below 1"
-        );
-
-        // Harmful path uses HarmfulContribution (16 bytes) + staging, plus sample buffer.
-        let bytes_per_sample_harmful = std::mem::size_of::<GpuHelpfulSample>()
-            + (2 * std::mem::size_of::<HarmfulContribution>());
-        let capped_harmful = cap_gpu_batch_size_by_bytes(
-            configured,
-            max_sample_len,
-            bytes_per_sample_harmful,
-            GPU_MAX_BATCH_ALLOC_BYTES,
-        );
-        assert!(
-            capped_harmful < configured,
-            "expected harmful batch size to be capped for large sample sets"
-        );
-        assert!(capped_harmful >= 1);
-    }
-
-    /// Test that verbose_enabled() is cached (doesn't re-read env var each time).
-    #[test]
-    fn verbose_enabled_is_cached() {
-        // Call twice - should return same value without re-reading env
-        let first = verbose_enabled();
-        let second = verbose_enabled();
-        assert_eq!(first, second, "verbose_enabled() should be deterministic");
-    }
-
-    // ==================== Memory Info / Page Size Tests ====================
-
-    /// Test parsing page size from vm_stat output - Apple Silicon (16KB pages).
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn parse_vm_stat_page_size_apple_silicon() {
-        let vm_stat_output = r#"Mach Virtual Memory Statistics: (page size of 16384 bytes)
-Pages free:                               15417.
-Pages active:                            624277.
-Pages inactive:                          601916.
-Pages speculative:                        23646.
-"#;
-        assert_eq!(
-            parse_vm_stat_page_size(vm_stat_output),
-            16384,
-            "Should parse 16384 byte page size for Apple Silicon"
-        );
-    }
-
-    /// Test parsing page size from vm_stat output - Intel Mac (4KB pages).
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn parse_vm_stat_page_size_intel_mac() {
-        let vm_stat_output = r#"Mach Virtual Memory Statistics: (page size of 4096 bytes)
-Pages free:                               45123.
-Pages active:                           1234567.
-Pages inactive:                          876543.
-Pages speculative:                        12345.
-"#;
-        assert_eq!(
-            parse_vm_stat_page_size(vm_stat_output),
-            4096,
-            "Should parse 4096 byte page size for Intel Mac"
-        );
-    }
-
-    /// Test parsing page size handles malformed output gracefully.
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn parse_vm_stat_page_size_malformed_output() {
-        // Empty string should return architecture-appropriate default
-        let result = parse_vm_stat_page_size("");
-        #[cfg(target_arch = "aarch64")]
-        assert_eq!(
-            result, 16384,
-            "Empty output should default to 16KB on ARM64"
-        );
-        #[cfg(not(target_arch = "aarch64"))]
-        assert_eq!(result, 4096, "Empty output should default to 4KB on Intel");
-
-        // Missing "page size of" should return default
-        let malformed = "Some random output without page size info";
-        let result = parse_vm_stat_page_size(malformed);
-        #[cfg(target_arch = "aarch64")]
-        assert_eq!(
-            result, 16384,
-            "Malformed output should default to 16KB on ARM64"
-        );
-        #[cfg(not(target_arch = "aarch64"))]
-        assert_eq!(
-            result, 4096,
-            "Malformed output should default to 4KB on Intel"
-        );
-    }
-
-    /// Test that the parser handles various page size values.
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn parse_vm_stat_page_size_various_sizes() {
-        // Test 4KB pages (Intel)
-        let output_4k =
-            "Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages free: 100.";
-        assert_eq!(parse_vm_stat_page_size(output_4k), 4096);
-
-        // Test 16KB pages (Apple Silicon)
-        let output_16k =
-            "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 100.";
-        assert_eq!(parse_vm_stat_page_size(output_16k), 16384);
-
-        // Test hypothetical larger page size (future-proofing)
-        let output_64k =
-            "Mach Virtual Memory Statistics: (page size of 65536 bytes)\nPages free: 100.";
-        assert_eq!(parse_vm_stat_page_size(output_64k), 65536);
-    }
-
-    /// Test Linux meminfo parsing with valid input.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn parse_meminfo_line_valid_input() {
-        // Standard format from /proc/meminfo
-        assert_eq!(
-            parse_meminfo_line("MemTotal:       16384000 kB"),
-            Some(16384000)
-        );
-        assert_eq!(
-            parse_meminfo_line("MemAvailable:    8192000 kB"),
-            Some(8192000)
-        );
-        // Single digit
-        assert_eq!(parse_meminfo_line("MemFree:        1 kB"), Some(1));
-    }
-
-    /// Test Linux meminfo parsing with malformed input returns None (not 0).
-    /// This is critical: returning None allows defaults to be preserved.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn parse_meminfo_line_malformed_returns_none() {
-        // Missing value
-        assert_eq!(parse_meminfo_line("MemTotal:"), None);
-        // Non-numeric value
-        assert_eq!(parse_meminfo_line("MemTotal:       abc kB"), None);
-        // Empty string
-        assert_eq!(parse_meminfo_line(""), None);
-        // Just whitespace after colon
-        assert_eq!(parse_meminfo_line("MemTotal:       "), None);
-    }
-
-    /// Test that Linux get_memory_info preserves defaults when parsing fails.
-    /// This prevents misleading "0.0GB" error messages.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn linux_memory_info_preserves_defaults_on_malformed_input() {
-        // This test verifies the fix by checking that parse_meminfo_line
-        // returns None for malformed input, which allows get_memory_info
-        // to preserve its default values instead of overwriting with 0.
-        //
-        // The actual get_memory_info function reads /proc/meminfo, so we
-        // can't easily test it with mock data. Instead, we verify the
-        // building blocks work correctly:
-
-        // 1. Valid input should return Some(value)
-        assert!(parse_meminfo_line("MemTotal:       16384000 kB").is_some());
-
-        // 2. Malformed input should return None (not Some(0))
-        assert!(parse_meminfo_line("MemTotal:").is_none());
-        assert!(parse_meminfo_line("MemTotal:       abc").is_none());
-
-        // 3. This ensures the if-let pattern in get_memory_info preserves defaults
-    }
-
-    // ==================== Activation Function Tests ====================
-
-    #[test]
-    fn test_identity_activation() {
-        assert_eq!(identity_activation(1.0), 1.0);
-        assert_eq!(identity_activation(-1.0), -1.0);
-        assert_eq!(identity_activation(0.0), 0.0);
-    }
-
-    #[test]
-    fn test_bipolar_activation() {
-        assert_eq!(bipolar_activation(1.0), 1.0);
-        assert_eq!(bipolar_activation(0.0001), 1.0);
-        assert_eq!(bipolar_activation(0.0), -1.0);
-        assert_eq!(bipolar_activation(-1.0), -1.0);
-        assert_eq!(bipolar_activation(-0.0001), -1.0);
-    }
-
-    #[test]
-    fn test_clipped_activation() {
-        assert_eq!(clipped_activation(1.5), 1.0);
-        assert_eq!(clipped_activation(0.5), 0.5);
-        assert_eq!(clipped_activation(-0.5), -0.5);
-        assert_eq!(clipped_activation(-1.5), -1.0);
-    }
-
-    #[test]
-    fn test_absolute_activation() {
-        assert_eq!(absolute_activation(1.0), 1.0);
-        assert_eq!(absolute_activation(-1.0), 1.0);
-        assert_eq!(absolute_activation(0.0), 0.0);
-    }
-
-    #[test]
-    fn test_specs_include_new_activations() {
-        let names: Vec<&str> = ACTIVATION_SPECS.iter().map(|s| s.name).collect();
-        // Original activations
-        assert!(names.contains(&"IDENTITY"));
-        assert!(names.contains(&"BIPOLAR"));
-        assert!(names.contains(&"CLIPPED"));
-        assert!(names.contains(&"ABSOLUTE"));
-        assert!(
-            !names.contains(&"SELU"),
-            "SELU should not be suggested as a new neuron activation (Issue #148: time-bounded runs)"
-        );
-        assert!(
-            !names.contains(&"INVERSE"),
-            "INVERSE (complement) should not be suggested as a new neuron activation. \
-             It can be represented via IDENTITY with bias and negative incoming weights."
-        );
-        // New activations (v0.1.139)
-        assert!(
-            !names.contains(&"LeakyReLU"),
-            "LeakyReLU should not be suggested as a new neuron activation"
-        );
-        assert!(
-            names.contains(&"Mish"),
-            "Mish should be included - 2 successful discoveries!"
-        );
-        assert!(
-            !names.contains(&"Swish"),
-            "Swish should not be suggested as a new neuron activation (Issue #148: time-bounded runs)"
-        );
-        assert!(names.contains(&"HARD_TANH"), "HARD_TANH should be included");
-        assert!(
-            names.contains(&"SOFTSIGN"),
-            "SOFTSIGN should be included - successful discovery!"
-        );
-        assert!(
-            names.contains(&"BENT_IDENTITY"),
-            "BENT_IDENTITY should be included - successful discovery!"
-        );
-        assert!(names.contains(&"ArcTan"), "ArcTan should be included");
-        assert!(names.contains(&"ReLU6"), "ReLU6 should be included");
-        // Total count
-        assert_eq!(names.len(), 15, "Should have 15 activation specs");
-    }
-
-    // ==================== Saturation Detection Tests (Issue #123) ====================
-
-    /// Test that has_sufficient_output_variance detects saturated neurons.
-    /// Issue #123: Large bias values cause neurons to output nearly-constant values,
-    /// leading to massive prediction failures (e.g., predicting 4.67% when actual is ~0%).
-    #[test]
-    fn test_saturation_detection_rejects_constant_output() {
-        // Create samples with typical activation range [-1, 1]
-        let samples: Vec<HelpfulSample> = (-10..=10)
-            .map(|i| HelpfulSample {
-                activation: i as f32 / 10.0,
-                avg_error: 0.1,
-                target_value: None,
-                target_activation: None,
-            })
-            .collect();
-
-        // SOFTSIGN with bias=5 and incoming=0.35 (from issue #123)
-        // Output ≈ (5 + 0.35×x) / (1 + |5 + 0.35×x|) ≈ 0.83 for all x
-        let saturated = !has_sufficient_output_variance(
-            &samples,
-            0.35, // incoming_weight
-            5.0,  // bias (too large!)
-            softsign_activation,
-        );
-        assert!(
-            saturated,
-            "SOFTSIGN with bias=5 should be detected as saturated (constant output)"
-        );
-
-        // SOFTSIGN with bias=0 should NOT be saturated
-        let not_saturated = has_sufficient_output_variance(
-            &samples,
-            1.0, // incoming_weight
-            0.0, // bias
-            softsign_activation,
-        );
-        assert!(
-            not_saturated,
-            "SOFTSIGN with bias=0 should NOT be saturated"
-        );
-    }
-
-    /// Test that TANH with large bias is detected as saturated.
-    #[test]
-    fn test_saturation_detection_tanh_large_bias() {
-        let samples: Vec<HelpfulSample> = (-10..=10)
-            .map(|i| HelpfulSample {
-                activation: i as f32 / 10.0,
-                avg_error: 0.1,
-                target_value: None,
-                target_activation: None,
-            })
-            .collect();
-
-        // TANH with bias=10 is heavily saturated (output ≈ 1.0 for all inputs)
-        let saturated = !has_sufficient_output_variance(
-            &samples,
-            1.0,  // incoming_weight
-            10.0, // bias (way too large!)
-            |x| x.tanh(),
-        );
-        assert!(
-            saturated,
-            "TANH with bias=10 should be detected as saturated"
-        );
-
-        // TANH with moderate bias=1 should still have variance
-        let not_saturated = has_sufficient_output_variance(
-            &samples,
-            1.0, // incoming_weight
-            1.0, // bias (reasonable)
-            |x| x.tanh(),
-        );
-        assert!(
-            not_saturated,
-            "TANH with bias=1 should NOT be saturated - still has output variance"
-        );
-    }
-
-    /// Test that ReLU is not incorrectly flagged as saturated.
-    /// ReLU naturally has "half" of samples at 0, but the other half varies.
-    #[test]
-    fn test_saturation_detection_relu_not_false_positive() {
-        let samples: Vec<HelpfulSample> = (-10..=10)
-            .map(|i| HelpfulSample {
-                activation: i as f32 / 10.0,
-                avg_error: 0.1,
-                target_value: None,
-                target_activation: None,
-            })
-            .collect();
-
-        // ReLU with bias=0 should NOT be flagged as saturated
-        // Half the outputs are 0, but the other half varies from 0 to 1
-        let not_saturated = has_sufficient_output_variance(&samples, 1.0, 0.0, |x| x.max(0.0));
-        assert!(
-            not_saturated,
-            "ReLU with bias=0 should NOT be flagged as saturated"
-        );
-    }
-
-    /// Test that constant input samples are NOT incorrectly rejected.
-    /// If input is constant, output will be constant too, but predictions are still valid.
-    #[test]
-    fn test_saturation_detection_allows_constant_input() {
-        // All samples have the same input activation (constant input)
-        let samples: Vec<HelpfulSample> = (0..20)
-            .map(|_| HelpfulSample {
-                activation: -1.0, // Constant input
-                avg_error: 0.3,
-                target_value: None,
-                target_activation: None,
-            })
-            .collect();
-
-        // Even with large bias, constant input should be allowed
-        // because predictions are still valid when input doesn't vary
-        let should_allow = has_sufficient_output_variance(
-            &samples,
-            1.0,
-            5.0, // Large bias, but input is constant so it's OK
-            |x| x.tanh(),
-        );
-        assert!(
-            should_allow,
-            "Constant input samples should NOT be rejected - predictions are valid"
-        );
-    }
-
-    #[test]
-    fn parse_input_index_parses_valid_ids() {
-        assert_eq!(parse_input_index("input-0"), Some(0));
-        assert_eq!(parse_input_index("input-1486"), Some(1486));
-        assert_eq!(parse_input_index("input-001"), Some(1));
-        assert_eq!(parse_input_index("hidden-1"), None);
-        assert_eq!(parse_input_index("input-"), None);
-    }
-
-    #[test]
-    fn interleave_from_ends_interleaves_sorted_inputs() {
-        let v = vec![0, 1, 2, 3, 4, 5];
-        let out = interleave_from_ends(v);
-        assert_eq!(out, vec![0, 5, 1, 4, 2, 3]);
-
-        let v = vec![0, 1, 2, 3, 4];
-        let out = interleave_from_ends(v);
-        assert_eq!(out, vec![0, 4, 1, 3, 2]);
-    }
+    // Unit tests live under `tests/` where possible, but remain unit tests so they can
+    // access private helpers without changing visibility.
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/unit/analysis_implementation.rs"
+    ));
 }
-
 // analyze_all has been moved to src/analysis/mod.rs
 
 pub(crate) fn analyze_synapses_with_cache(
@@ -8929,8 +7949,7 @@ pub(crate) fn analyze_synapses_with_cache(
     // that accurately predict output flips when synapse contributions cross the threshold.
     let mut focus_order: Vec<String> = unique_focus.iter().map(|s| (*s).clone()).collect();
 
-    let mut rng = thread_rng();
-    focus_order.shuffle(&mut rng);
+    shuffle_slice(&mut focus_order, input.random_seed, "synapse:focus_order");
 
     // Log analysis start with timeout duration and randomised order
     log_analysis_start(
@@ -9156,8 +8175,13 @@ pub(crate) fn analyze_synapses_with_cache(
                 .expect("Mutex poisoned: diagnostics")
                 .set_input_neuron_count(target_uuid, input_neuron_count);
 
-            let mut rng = thread_rng();
-            eligible_sources.shuffle(&mut rng);
+            let context = format!("synapse:eligible_sources:{target_uuid}");
+            order_eligible_sources(
+                &mut eligible_sources,
+                input.random_seed,
+                &context,
+                input.creature.input,
+            );
 
             // Improved GPU utilisation: Build samples on CPU in parallel, then batch GPU evaluation
             // This avoids the GPU sync overhead of calling build_samples_gpu for each source.
@@ -11038,6 +10062,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string(), "output-0".to_string()],
             max_candidates: None,
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let err = analyze_neurons(&input)
@@ -11111,6 +10136,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string(), "output-0".to_string()],
             max_candidates: None,
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let err = analyze_synapses(&input)
@@ -11220,6 +10246,7 @@ mod tests_synapses {
             focus_neurons: vec!["hidden-0".to_string(), "output-0".to_string()],
             max_candidates: None,
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
@@ -11359,6 +10386,7 @@ mod tests_synapses {
             focus_neurons: vec!["hidden-0".to_string()],
             max_candidates: None,
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
@@ -11408,6 +10436,7 @@ mod tests_synapses {
             focus_neurons: Vec::new(),
             max_candidates: None,
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let err =
@@ -11460,6 +10489,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             max_candidates: None,
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let result = analyze_synapses(&input)
@@ -11558,6 +10588,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string(), "output-1".to_string()],
             max_candidates: None,
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let result = analyze_synapses(&input)
@@ -11646,6 +10677,7 @@ mod tests_synapses {
             analysis_deadline_ms: None,
             include_synapse_analysis: Some(true),
             include_neuron_analysis: Some(true),
+            random_seed: None,
         };
 
         let result = analyze_all(&input).expect("Combined analysis should succeed");
@@ -11702,6 +10734,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             max_candidates: None,
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let result = analyze_neurons(&input)
@@ -11802,6 +10835,7 @@ mod tests_synapses {
             max_candidates: None,
             // Any non-None deadline value will exercise the override sequence.
             analysis_deadline_ms: Some(1_000_000),
+            random_seed: None,
         };
 
         // Use a single-threaded Rayon pool so the deadline override sequence remains
@@ -11933,6 +10967,7 @@ mod tests_synapses {
             max_candidates: None,
             // Any non-None deadline value will exercise the override sequence.
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         // Use a single-threaded Rayon pool so the deadline override sequence remains
@@ -12293,6 +11328,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             max_candidates: None,
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
@@ -12390,6 +11426,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             max_candidates: None,
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
@@ -12463,6 +11500,7 @@ mod tests_synapses {
             focus_neurons: vec!["output-0".to_string()],
             max_candidates: None,
             analysis_deadline_ms: None,
+            random_seed: None,
         };
 
         let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
@@ -12862,272 +11900,6 @@ mod tests_synapses {
                 .skipped_hidden
                 .contains(&"unknown-bipolar".to_string()),
             "unknown-bipolar should be reported as skipped when output-only mode is enabled"
-        );
-    }
-
-    /// Test ThresholdType correctly applies threshold functions
-    #[test]
-    fn test_threshold_type_apply() {
-        // STEP: value > 0 ? 1 : 0
-        assert_eq!(ThresholdType::Step.apply(0.5), 1.0);
-        assert_eq!(ThresholdType::Step.apply(0.001), 1.0);
-        assert_eq!(ThresholdType::Step.apply(0.0), 0.0);
-        assert_eq!(ThresholdType::Step.apply(-0.001), 0.0);
-        assert_eq!(ThresholdType::Step.apply(-5.0), 0.0);
-
-        // BIPOLAR: value > 0 ? 1 : -1
-        assert_eq!(ThresholdType::Bipolar.apply(0.5), 1.0);
-        assert_eq!(ThresholdType::Bipolar.apply(0.001), 1.0);
-        assert_eq!(ThresholdType::Bipolar.apply(0.0), -1.0);
-        assert_eq!(ThresholdType::Bipolar.apply(-0.001), -1.0);
-        assert_eq!(ThresholdType::Bipolar.apply(-5.0), -1.0);
-    }
-
-    /// Test ThresholdType correctly detects threshold flips
-    #[test]
-    fn test_threshold_type_would_flip() {
-        // STEP: threshold at 0
-        assert!(
-            ThresholdType::Step.would_flip(-0.5, 1.0),
-            "negative -> positive should flip"
-        );
-        assert!(
-            ThresholdType::Step.would_flip(0.5, -1.0),
-            "positive -> negative should flip"
-        );
-        assert!(
-            !ThresholdType::Step.would_flip(0.5, 0.3),
-            "positive -> more positive shouldn't flip"
-        );
-        assert!(
-            !ThresholdType::Step.would_flip(-0.5, -0.3),
-            "negative -> more negative shouldn't flip"
-        );
-
-        // Edge cases
-        assert!(
-            ThresholdType::Step.would_flip(-0.1, 0.2),
-            "just crosses threshold"
-        );
-        assert!(
-            !ThresholdType::Step.would_flip(-0.1, 0.05),
-            "doesn't quite reach threshold"
-        );
-    }
-
-    /// Test ThresholdType correctly identifies helpful vs harmful flips
-    #[test]
-    fn test_threshold_type_flip_direction() {
-        // STEP: Error > 0 means output should be higher (0 -> 1 is helpful)
-        // Current output is 0 (value < 0), error > 0 (should be 1), flip to 1 is helpful
-        assert_eq!(
-            ThresholdType::Step.flip_direction(-0.5, 1.0, 0.5),
-            1,
-            "flip 0->1 when error>0 is helpful"
-        );
-
-        // Current output is 1 (value > 0), error < 0 (should be 0), flip to 0 is helpful
-        assert_eq!(
-            ThresholdType::Step.flip_direction(0.5, -1.0, -0.5),
-            1,
-            "flip 1->0 when error<0 is helpful"
-        );
-
-        // Current output is 0 (value < 0), error < 0 (should be 0), no flip needed
-        assert_eq!(
-            ThresholdType::Step.flip_direction(-0.5, -0.1, -0.5),
-            0,
-            "no flip when error<0 and output=0"
-        );
-
-        // Current output is 1 (value > 0), error > 0 (should be 1), no flip needed
-        assert_eq!(
-            ThresholdType::Step.flip_direction(0.5, 0.1, 0.5),
-            0,
-            "no flip when error>0 and output=1"
-        );
-
-        // Harmful flip: flip 1->0 when error > 0 (output should stay high)
-        assert_eq!(
-            ThresholdType::Step.flip_direction(0.5, -1.0, 0.5),
-            -1,
-            "flip 1->0 when error>0 is harmful"
-        );
-
-        // Harmful flip: flip 0->1 when error < 0 (output should stay low)
-        assert_eq!(
-            ThresholdType::Step.flip_direction(-0.5, 1.0, -0.5),
-            -1,
-            "flip 0->1 when error<0 is harmful"
-        );
-    }
-
-    /// Test evaluate_discrete_candidate correctly filters IDENTITY+bias=0 candidates.
-    ///
-    /// IDENTITY neurons with bias=0 are mathematically equivalent to a direct synapse:
-    ///   IDENTITY(source × incoming_weight + 0) × outgoing_weight = source × (incoming × outgoing)
-    ///
-    /// For STEP/BIPOLAR targets, we should NOT recommend IDENTITY add-neuron candidates
-    /// because add-synapse would achieve the same effect without wasting a neuron.
-    #[test]
-    fn test_evaluate_discrete_candidate_step() {
-        // Create samples where source activation correlates with whether the target
-        // is on the "wrong side" of the threshold
-        let mut samples = Vec::new();
-
-        // Case 1: Target is at 0 (value=-0.5) but should be 1 (error=0.5)
-        // Source has high positive activation - adding positive contribution would help
-        for i in 0..20 {
-            samples.push(DiscreteHelpfulSample {
-                source_activation: 0.5 + (i as f32 * 0.01),
-                target_value: -0.3, // Currently outputs 0
-                target_activation: 0.0,
-                avg_error: 0.5, // Should be 1 (positive error)
-            });
-        }
-
-        let candidate = evaluate_discrete_candidate(
-            "input-0",
-            "target-step",
-            &samples,
-            ThresholdType::Step,
-            0.0,  // threshold
-            true, // is_output_target - test assumes target is output
-        );
-
-        // Should NOT find a candidate because IDENTITY+bias=0 is filtered
-        // (equivalent to synapse - use add-synapse analysis instead)
-        assert!(
-            candidate.is_none(),
-            "Should NOT return IDENTITY candidate for STEP (equivalent to synapse). \
-            Use add-synapse analysis for STEP targets instead."
-        );
-    }
-
-    /// Test that discrete evaluation filters ALL IDENTITY candidates (not just low-improvement).
-    /// IDENTITY neurons with bias=0 are mathematically equivalent to synapses, so they
-    /// should never be recommended for STEP/BIPOLAR targets.
-    ///
-    /// Previously this test checked the MIN_DISCRETE_IMPROVEMENT threshold, but now
-    /// ALL IDENTITY candidates are filtered regardless of improvement rate.
-    #[test]
-    fn test_discrete_evaluation_filters_low_improvement_identity() {
-        // Create a sample set where ALL samples have error (passing the sample count check)
-        // but only a tiny fraction (< 1%) would flip helpfully.
-        //
-        // IMPORTANT: Previously this test was broken - it only gave 5 samples non-zero error,
-        // so samples_with_error=5 was less than MIN_NEURON_SAMPLE_COUNT=10, causing all weight
-        // combinations to be skipped. The test passed for the wrong reason.
-        //
-        // Key insight: To make samples truly un-flippable, source_activation must be ZERO.
-        // Any non-zero source activation with any of the tested weight scales (0.1 to 50.0)
-        // could potentially flip the target. With source_activation=0, contribution=0
-        // regardless of weights, so those samples cannot be affected.
-        let mut samples = Vec::new();
-
-        // 1000 samples - ALL have error to pass samples_with_error check
-        for i in 0..1000 {
-            // Only ~5 samples (0.5%) can flip helpfully:
-            // These have non-zero source activation
-            let can_flip_to_help = i < 5;
-
-            if can_flip_to_help {
-                // Sample that CAN flip to help:
-                // - source_activation = 1.0 (non-zero, can contribute)
-                // - target_value just below threshold (0)
-                // - error positive (wants output to increase from 0 to 1)
-                samples.push(DiscreteHelpfulSample {
-                    source_activation: 1.0,
-                    target_value: -0.05,    // Just below threshold
-                    target_activation: 0.0, // Currently outputs 0 (STEP)
-                    avg_error: 0.5,         // Wants to output 1, has error
-                });
-            } else {
-                // Sample that CANNOT flip:
-                // - source_activation = 0 (CRITICAL: contribution is always 0)
-                // - Has error but cannot be helped since contribution = weight * 0 = 0
-                samples.push(DiscreteHelpfulSample {
-                    source_activation: 0.0, // Zero! contribution = weight * 0 = 0
-                    target_value: -0.5,     // Below threshold (outputs 0)
-                    target_activation: 0.0, // Currently outputs 0
-                    avg_error: 0.3,         // Has error but source can't help
-                });
-            }
-        }
-
-        let candidate = evaluate_discrete_candidate(
-            "input-0",
-            "target-step",
-            &samples,
-            ThresholdType::Step,
-            0.0,  // Zero threshold - MIN_DISCRETE_IMPROVEMENT (1%) should filter
-            true, // is_output_target
-        );
-
-        // Should NOT return a candidate because improvement would be <1%
-        // samples_with_error = 1000 (all have error)
-        // helpful_flips = 5 (only samples with non-zero source activation)
-        // harmful_flips = 0 (zero-activation samples can't flip either way)
-        // improvement = 5 / 1000 = 0.5% < MIN_DISCRETE_IMPROVEMENT (1%)
-        assert!(
-            candidate.is_none(),
-            "Should NOT return IDENTITY candidate with <1% improvement (0.5% in this test). \
-             These are equivalent to direct synapses and don't reliably help. \
-             Got candidate: {candidate:?}"
-        );
-    }
-
-    /// Test that even high-improvement IDENTITY candidates are filtered for STEP targets.
-    ///
-    /// IDENTITY+bias=0 is mathematically equivalent to a synapse:
-    ///   IDENTITY(source × w1 + 0) × w2 = source × (w1 × w2)
-    ///
-    /// If this pattern would help, add-synapse analysis will find it at lower cost
-    /// (1 synapse vs 1 neuron + 2 synapses). So we filter ALL IDENTITY candidates
-    /// from discrete evaluation, regardless of improvement rate.
-    #[test]
-    fn test_discrete_evaluation_filters_identity_even_with_high_improvement() {
-        // Create samples with high improvement potential (2% > 1% threshold)
-        let mut samples = Vec::new();
-
-        for i in 0..1000 {
-            // 20 samples (2%) can flip helpfully - above the 1% threshold
-            let can_flip_to_help = i < 20;
-
-            if can_flip_to_help {
-                samples.push(DiscreteHelpfulSample {
-                    source_activation: 1.0,
-                    target_value: -0.05,
-                    target_activation: 0.0,
-                    avg_error: 0.5,
-                });
-            } else {
-                samples.push(DiscreteHelpfulSample {
-                    source_activation: 0.0, // Cannot contribute
-                    target_value: -0.5,
-                    target_activation: 0.0,
-                    avg_error: 0.3,
-                });
-            }
-        }
-
-        let candidate = evaluate_discrete_candidate(
-            "input-0",
-            "target-step",
-            &samples,
-            ThresholdType::Step,
-            0.0,
-            true, // is_output_target
-        );
-
-        // Should NOT return a candidate even with 2% improvement
-        // because IDENTITY+bias=0 is equivalent to a synapse.
-        // Add-synapse will find this pattern at lower cost (1 synapse vs 1 neuron + 2 synapses).
-        assert!(
-            candidate.is_none(),
-            "Should NOT return IDENTITY candidate for STEP even with high improvement. \
-            IDENTITY(source × w1 + 0) × w2 = source × (w1 × w2), which is equivalent to a synapse. \
-            Add-synapse analysis will find this pattern at lower cost."
         );
     }
 

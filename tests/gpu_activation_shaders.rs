@@ -130,6 +130,7 @@ fn test_mish_gpu_shader_produces_correct_results() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(100),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -237,6 +238,7 @@ fn test_all_new_activations_produce_candidates() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(500),
         analysis_deadline_ms: None,
+        random_seed: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

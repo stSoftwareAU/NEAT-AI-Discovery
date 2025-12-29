@@ -98,6 +98,7 @@ fn synapse_candidates_populate_from_and_to_indices() {
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30000),
+        random_seed: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input)
