@@ -308,6 +308,13 @@ pub struct AnalyzeParallelInput {
     pub max_neuron_candidates: Option<usize>,
     #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
+    /// Optional RNG seed to make analysis ordering reproducible.
+    ///
+    /// When `None`, the library uses non-deterministic randomness. This is
+    /// typically desirable for production runs with timeouts, as repeated runs
+    /// will explore different candidates over time.
+    #[serde(default)]
+    pub random_seed: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -929,17 +936,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
         }
     };
 
-    let combined_input = AnalyzeAllInput {
-        parquet_file: input.parquet_file,
-        creature: input.creature,
-        focus_neurons: input.focus_neurons,
-        max_synapse_candidates: input.max_synapse_candidates,
-        max_neuron_candidates: input.max_neuron_candidates,
-        analysis_deadline_ms: input.analysis_deadline_ms,
-        include_synapse_analysis: Some(true),
-        include_neuron_analysis: Some(true),
-        random_seed: None,
-    };
+    let combined_input = build_analyze_all_input_from_parallel(input);
 
     match analysis::analyze_all(&combined_input) {
         Ok(result) => {
@@ -991,6 +988,20 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
             };
             Ok(serde_json::to_string(&output)?)
         }
+    }
+}
+
+fn build_analyze_all_input_from_parallel(input: AnalyzeParallelInput) -> AnalyzeAllInput {
+    AnalyzeAllInput {
+        parquet_file: input.parquet_file,
+        creature: input.creature,
+        focus_neurons: input.focus_neurons,
+        max_synapse_candidates: input.max_synapse_candidates,
+        max_neuron_candidates: input.max_neuron_candidates,
+        analysis_deadline_ms: input.analysis_deadline_ms,
+        include_synapse_analysis: Some(true),
+        include_neuron_analysis: Some(true),
+        random_seed: input.random_seed,
     }
 }
 
@@ -2555,5 +2566,31 @@ mod tests {
             output["neuronGpuUsed"].is_boolean(),
             "parallel analysis should report GPU usage for neurons"
         );
+    }
+
+    #[test]
+    fn analyze_parallel_threads_random_seed_into_combined_input() {
+        let input_json = serde_json::json!({
+            "parquetFile": "example.parquet",
+            "creature": {
+                "neurons": [],
+                "synapses": [],
+                "input": 1,
+                "output": 1
+            },
+            "focusNeurons": ["output-0"],
+            "maxSynapseCandidates": 5,
+            "maxNeuronCandidates": 5,
+            "analysisDeadlineMs": 1234,
+            "randomSeed": 42
+        })
+        .to_string();
+
+        let parsed: AnalyzeParallelInput =
+            serde_json::from_str(&input_json).expect("input JSON should deserialize");
+        let combined = build_analyze_all_input_from_parallel(parsed);
+
+        assert_eq!(combined.random_seed, Some(42));
+        assert_eq!(combined.analysis_deadline_ms, Some(1234));
     }
 }
