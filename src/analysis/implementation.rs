@@ -7991,7 +7991,12 @@ pub(crate) fn analyze_neurons_with_cache(
             candidates_returned,
             timed_out: analysis_timed_out,
             completed_focus_neurons: completed_count.load(std::sync::atomic::Ordering::Relaxed),
-            total_focus_neurons: total_focus_count,
+            // Total focus neurons requested for this invocation (pre-filter).
+            //
+            // Note: `total_focus_count` is the post-filter eligible output-neuron count, which can
+            // differ from the requested focus list. We keep the "requested" semantics so callers
+            // can track long-run coverage consistently across early/normal return paths.
+            total_focus_neurons: original_focus_count,
         },
     })
 }
