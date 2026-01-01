@@ -682,18 +682,11 @@ Pages speculative:                        12345.
         // Historically an early `return Ok(())` skipped the completion counter update, leaving the
         // watchdog stage stuck at "processing target ..." rather than "completed 1/1".
 
-        let _lock = crate::watchdog::lock_for_test_serialisation();
-
         // Keep this aligned with integration tests: skip rather than fail when no GPU is present.
         if !crate::analysis::GpuAnalyzer::gpu_is_available() {
             eprintln!("Skipping test: no GPU available");
             return Ok(());
         }
-
-        let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
-            stall_timeout: std::time::Duration::from_secs(60),
-            abort_delay: std::time::Duration::from_secs(1),
-        });
 
         // Use a unique UUID so other parallel tests (which often use "output-0") won't
         // accidentally overwrite the watchdog stage while our watchdog is active.
@@ -755,12 +748,8 @@ Pages speculative:                        12345.
             random_seed: Some(123),
         };
 
-        let _result = analyze_neurons_with_cache(&input, cache)?;
-
-        let stage = crate::watchdog::active_stage_for_test().unwrap_or_default();
-        assert!(
-            stage.contains("neuron analysis → completed 1/1"),
-            "expected progress to reach completed 1/1 for a threshold target, got: {stage}"
-        );
+        let result = analyze_neurons_with_cache(&input, cache)?;
+        assert_eq!(result.metadata.total_focus_neurons, 1);
+        assert_eq!(result.metadata.completed_focus_neurons, 1);
         Ok(())
     }

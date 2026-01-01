@@ -363,6 +363,10 @@ pub struct SynapseAnalysisMetadataJson {
     pub candidates_returned: usize,
     /// True when analysis hit its deadline and returned partial results.
     pub timed_out: bool,
+    /// Number of focus neurons completed before returning.
+    pub completed_focus_neurons: usize,
+    /// Total focus neurons requested for this analysis invocation.
+    pub total_focus_neurons: usize,
     /// Minimum input index observed with non-empty records (eg 0).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_index_min_seen_with_records: Option<usize>,
@@ -379,6 +383,12 @@ pub struct NeuronAnalysisMetadataJson {
     pub candidates_found: usize,
     /// Number of neuron candidates returned to caller (after `maxCandidates` truncation).
     pub candidates_returned: usize,
+    /// True when analysis hit its deadline and returned partial results.
+    pub timed_out: bool,
+    /// Number of focus neurons completed before returning.
+    pub completed_focus_neurons: usize,
+    /// Total focus neurons requested for this analysis invocation.
+    pub total_focus_neurons: usize,
 }
 
 /// Internal input structure for synapse analysis (used by analyze_all)
@@ -956,6 +966,8 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     candidates_found: s.metadata.candidates_found,
                     candidates_returned: s.metadata.candidates_returned,
                     timed_out: s.metadata.timed_out,
+                    completed_focus_neurons: s.metadata.completed_focus_neurons,
+                    total_focus_neurons: s.metadata.total_focus_neurons,
                     input_index_min_seen_with_records: s.metadata.input_index_min_seen_with_records,
                     input_index_max_seen_with_records: s.metadata.input_index_max_seen_with_records,
                 }),
@@ -967,6 +979,9 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 neuron_metadata: neuron.as_ref().map(|n| NeuronAnalysisMetadataJson {
                     candidates_found: n.metadata.candidates_found,
                     candidates_returned: n.metadata.candidates_returned,
+                    timed_out: n.metadata.timed_out,
+                    completed_focus_neurons: n.metadata.completed_focus_neurons,
+                    total_focus_neurons: n.metadata.total_focus_neurons,
                 }),
                 error: None,
             };

@@ -1490,6 +1490,25 @@ whether discovery should be enabled:
   but is less than 3 seconds or greater than 1 hour, it will be clamped to the
   10-minute default with a warning message.
   
+  **Design goal (coverage over time)**: Production runs are expected to be
+  **deadline-constrained** and repeated (for example, a worker loop that calls
+  discovery many times per day). The system is designed so that **all discovery
+  work is covered over time**, even when a single run times out:
+  - **All focus neurons** will be covered over time because focus ordering is
+    randomised when a deadline is configured.
+  - **All eligible source neurons** (inputs + hidden + constants, respecting
+    forward-only constraints) will be covered over time because source ordering
+    is also randomised under deadlines.
+  - **All discovery candidate types that Rust emits** (e.g., add-synapse and
+    add-neuron) are intended to get a fair share of work over time under repeated
+    runs. This library now avoids returning the exact same top candidates every
+    run under deadlines (to reduce starvation when controllers cache failures).
+  
+  **Important**: With a hard timeout, a single invocation will often return
+  **partial results** by design. Coverage is achieved via repeated invocations,
+  not by making one run arbitrarily long (which would delay returning improved
+  creatures back into the population).
+  
   **Timeout logging** (v0.1.163): The library now logs when analysis starts and
   when a timeout is reached:
   
