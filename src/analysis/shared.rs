@@ -34,6 +34,14 @@ pub struct SynapseAnalysisMetadata {
     /// True when analysis hit its deadline and returned partial results.
     pub timed_out: bool,
 
+    /// Number of focus neurons completed before returning.
+    ///
+    /// This allows callers to validate long-run coverage under repeated deadline-constrained runs.
+    pub completed_focus_neurons: usize,
+
+    /// Total focus neurons requested for this analysis invocation.
+    pub total_focus_neurons: usize,
+
     /// Range of input indices that were observed with non-empty record sets during analysis.
     ///
     /// This helps diagnose whether new observation inputs (eg `input-1486+`) are present in the
@@ -50,6 +58,15 @@ pub struct NeuronAnalysisMetadata {
 
     /// Number of neuron candidates returned to caller (after `maxCandidates` truncation).
     pub candidates_returned: usize,
+
+    /// True when analysis hit its deadline and returned partial results.
+    pub timed_out: bool,
+
+    /// Number of focus neurons completed before returning.
+    pub completed_focus_neurons: usize,
+
+    /// Total focus neurons requested for this analysis invocation.
+    pub total_focus_neurons: usize,
 }
 
 /// Result of synapse analysis

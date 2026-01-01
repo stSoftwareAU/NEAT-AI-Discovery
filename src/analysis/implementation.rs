@@ -1023,6 +1023,65 @@ fn shuffle_slice<T>(items: &mut [T], seed: Option<u64>, context: &str) {
     }
 }
 
+/// Diversify a best-first candidate list by shuffling within the top-K prefix.
+///
+/// Rationale (Jan 2026):
+/// - In production, discovery runs are deadline-constrained and repeated over time.
+/// - The controller (TypeScript) caches failed candidates and will not re-attempt them
+///   until the training data changes.
+/// - If Rust always returns the same top few candidates, categories can starve because
+///   those candidates become permanently skipped for the day.
+///
+/// Shuffling within the top-K keeps us focused on high-quality candidates while still
+/// drifting over time, improving long-run coverage without returning low-quality tails.
+fn shuffle_within_top_k<T>(items: &mut [T], seed: Option<u64>, context: &str, top_k: usize) {
+    if items.len() <= 1 || top_k <= 1 {
+        return;
+    }
+    let k = top_k.min(items.len());
+    shuffle_slice(&mut items[..k], seed, context);
+}
+
+#[cfg(test)]
+mod tests_shuffle_within_top_k {
+    use super::shuffle_within_top_k;
+
+    #[test]
+    fn deterministic_with_seed() {
+        let mut a = [1u32, 2, 3, 4, 5, 6, 7, 8].to_vec();
+        let mut b = a.clone();
+        shuffle_within_top_k(&mut a[..], Some(123), "ctx", 5);
+        shuffle_within_top_k(&mut b[..], Some(123), "ctx", 5);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn only_shuffles_prefix() {
+        let mut items = [1u32, 2, 3, 4, 5, 6, 7, 8].to_vec();
+        shuffle_within_top_k(&mut items[..], Some(123), "ctx", 3);
+        // Suffix must remain untouched.
+        assert_eq!(items[3..], [4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn preserves_multiset() {
+        let mut items = [1u32, 2, 3, 4, 5, 6, 7, 8].to_vec();
+        let mut before = items.clone();
+        before.sort_unstable();
+        shuffle_within_top_k(&mut items[..], Some(999), "ctx", 6);
+        items.sort_unstable();
+        assert_eq!(items, before);
+    }
+
+    #[test]
+    fn no_op_when_top_k_is_zero() {
+        let mut items = [1u32, 2, 3, 4].to_vec();
+        let before = items.clone();
+        shuffle_within_top_k(&mut items[..], Some(1), "ctx", 0);
+        assert_eq!(items, before);
+    }
+}
+
 /// Optional input-index bias for source ordering.
 ///
 /// This is primarily a production knob for timeout-constrained runs. If you are
@@ -1217,58 +1276,94 @@ fn log_analysis_timeout(analysis_type: &str, completed_count: usize, total_count
 
 #[cfg(test)]
 mod deadline_override {
+    use std::cell::RefCell;
     use std::collections::VecDeque;
-    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::{Arc, Mutex};
 
-    static OVERRIDE_LOCK: Mutex<()> = Mutex::new(());
-    static OVERRIDE_SEQUENCE: Mutex<VecDeque<bool>> = Mutex::new(VecDeque::new());
-    static OVERRIDE_ACTIVE: AtomicBool = AtomicBool::new(false);
+    /// Deadline override state shared across a thread pool.
+    ///
+    /// We store this behind an `Arc` so a single override sequence can be consumed
+    /// by multiple worker threads within a *private* Rayon pool.
+    #[derive(Clone)]
+    struct OverrideState {
+        queue: Arc<Mutex<VecDeque<bool>>>,
+    }
+
+    thread_local! {
+        /// Thread-local handle to the active override state.
+        ///
+        /// IMPORTANT (2 Jan 2026):
+        /// Tests run in parallel and analysis uses Rayon. A global override is unsafe because
+        /// *other tests* running concurrently can observe and consume override values.
+        ///
+        /// By using thread-local state, and explicitly broadcasting it into a test's private
+        /// Rayon pool, we:
+        /// - Avoid deadlocks (no cross-thread lock held for the duration of a test)
+        /// - Avoid cross-test interference under default parallel test execution
+        static OVERRIDE_STATE: RefCell<Option<OverrideState>> = const { RefCell::new(None) };
+    }
+
+    fn set_override_state(state: Option<OverrideState>) {
+        OVERRIDE_STATE.with(|cell| {
+            *cell.borrow_mut() = state;
+        });
+    }
 
     pub(super) struct DeadlineOverrideGuard {
-        _lock: MutexGuard<'static, ()>,
+        /// When provided, we clear the override from all worker threads on drop.
+        pool: Option<Arc<rayon::ThreadPool>>,
     }
 
     impl DeadlineOverrideGuard {
+        /// Install an override sequence for the current thread only.
         pub(super) fn with_sequence(sequence: Vec<bool>) -> Self {
-            let lock = OVERRIDE_LOCK
-                .lock()
-                .expect("Deadline override lock should not be poisoned");
-            {
-                let mut queue = OVERRIDE_SEQUENCE
-                    .lock()
-                    .expect("Deadline override queue should not be poisoned");
-                queue.clear();
-                for value in sequence.into_iter() {
-                    queue.push_back(value);
-                }
+            Self::with_sequence_for_pool(sequence, None)
+        }
+
+        /// Install an override sequence for a specific Rayon pool.
+        ///
+        /// This is the safe way to use deadline overrides in multi-threaded tests: create a private
+        /// pool, broadcast the override into that pool, and run analysis inside `pool.install(...)`.
+        pub(super) fn with_sequence_for_pool(
+            sequence: Vec<bool>,
+            pool: Option<Arc<rayon::ThreadPool>>,
+        ) -> Self {
+            let state = OverrideState {
+                queue: Arc::new(Mutex::new(sequence.into_iter().collect::<VecDeque<_>>())),
+            };
+
+            // Always install for the current thread (covers non-parallel code paths).
+            set_override_state(Some(state.clone()));
+
+            // If a pool is provided, broadcast into each worker thread.
+            if let Some(ref p) = pool {
+                p.broadcast(|_| set_override_state(Some(state.clone())));
             }
-            OVERRIDE_ACTIVE.store(true, AtomicOrdering::SeqCst);
-            Self { _lock: lock }
+
+            Self { pool }
         }
     }
 
     impl Drop for DeadlineOverrideGuard {
         fn drop(&mut self) {
-            OVERRIDE_ACTIVE.store(false, AtomicOrdering::SeqCst);
-            let mut queue = OVERRIDE_SEQUENCE
-                .lock()
-                .expect("Deadline override queue should not be poisoned");
-            queue.clear();
+            // Clear on current thread.
+            set_override_state(None);
+            // Clear on pool worker threads (if any).
+            if let Some(ref p) = self.pool {
+                p.broadcast(|_| set_override_state(None));
+            }
         }
     }
 
     pub(super) fn next_override_value() -> Option<bool> {
-        if !OVERRIDE_ACTIVE.load(AtomicOrdering::SeqCst) {
-            return None;
-        }
-        // Allow any thread to consume the override sequence for parallel processing compatibility
-        // With parallel processing via par_iter(), worker threads have different thread IDs,
-        // so we allow all threads to see and consume the override sequence.
-        let mut queue = OVERRIDE_SEQUENCE
-            .lock()
-            .expect("Deadline override queue should not be poisoned");
-        queue.pop_front()
+        OVERRIDE_STATE.with(|cell| {
+            let state = cell.borrow().clone()?;
+            let mut queue = state
+                .queue
+                .lock()
+                .expect("Deadline override queue should not be poisoned");
+            queue.pop_front()
+        })
     }
 }
 
@@ -7365,6 +7460,9 @@ pub(crate) fn analyze_neurons_with_cache(
             metadata: super::shared::NeuronAnalysisMetadata {
                 candidates_found: 0,
                 candidates_returned: 0,
+                timed_out: false,
+                completed_focus_neurons: 0,
+                total_focus_neurons: original_focus_count,
             },
         });
     }
@@ -7856,6 +7954,18 @@ pub(crate) fn analyze_neurons_with_cache(
     // This avoids wasting the evaluation budget on absurd bias/weight configurations.
     helpful_results = crate::analysis::utils::filter_candidates_to_sensible_ranges(helpful_results);
 
+    // Deadline coverage (Jan 2026): when deadline-constrained, diversify within the top-K so
+    // repeated runs explore different high-quality candidates over time (helps with failure caches).
+    if input.analysis_deadline_ms.is_some() {
+        const DIVERSIFY_TOP_K: usize = 64;
+        shuffle_within_top_k(
+            helpful_results.as_mut_slice(),
+            input.random_seed,
+            "neuron:candidates:top_k",
+            DIVERSIFY_TOP_K,
+        );
+    }
+
     // Track candidates_found AFTER pairing but BEFORE truncation.
     // This ensures candidates_found >= candidates_returned always holds, which is
     // the expected semantic for this metric pair ("found" >= "returned").
@@ -7879,6 +7989,14 @@ pub(crate) fn analyze_neurons_with_cache(
         metadata: super::shared::NeuronAnalysisMetadata {
             candidates_found,
             candidates_returned,
+            timed_out: analysis_timed_out,
+            completed_focus_neurons: completed_count.load(std::sync::atomic::Ordering::Relaxed),
+            // Total focus neurons requested for this invocation (pre-filter).
+            //
+            // Note: `total_focus_count` is the post-filter eligible output-neuron count, which can
+            // differ from the requested focus list. We keep the "requested" semantics so callers
+            // can track long-run coverage consistently across early/normal return paths.
+            total_focus_neurons: original_focus_count,
         },
     })
 }
@@ -8735,6 +8853,24 @@ pub(crate) fn analyze_synapses_with_cache(
             .unwrap_or(Ordering::Equal)
     });
 
+    // Deadline coverage (Jan 2026): diversify within the top-K so repeated runs explore different
+    // high-quality candidates over time (helps with failure caches and avoids category starvation).
+    if input.analysis_deadline_ms.is_some() {
+        const DIVERSIFY_TOP_K: usize = 64;
+        shuffle_within_top_k(
+            helpful_results.as_mut_slice(),
+            input.random_seed,
+            "synapse:helpful_candidates:top_k",
+            DIVERSIFY_TOP_K,
+        );
+        shuffle_within_top_k(
+            harmful_results.as_mut_slice(),
+            input.random_seed,
+            "synapse:harmful_candidates:top_k",
+            DIVERSIFY_TOP_K,
+        );
+    }
+
     // Track candidates_found before truncation for metadata
     let candidates_found = helpful_results.len() + harmful_results.len();
 
@@ -8764,6 +8900,8 @@ pub(crate) fn analyze_synapses_with_cache(
         candidates_found,
         candidates_returned,
         timed_out: analysis_timed_out,
+        completed_focus_neurons: completed_count.load(std::sync::atomic::Ordering::Relaxed),
+        total_focus_neurons: total_focus_count,
         input_index_min_seen_with_records: if saw_any_input { Some(input_min) } else { None },
         input_index_max_seen_with_records: if saw_any_input { Some(input_max) } else { None },
     };
@@ -10511,9 +10649,21 @@ mod tests_synapses {
     #[test]
     fn analyze_synapses_stops_harmful_processing_after_deadline() {
         skip_if_no_gpu!();
-        let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence(vec![
-            false, false, false, false, false, false, true, false, false, false,
-        ]);
+        use rayon::ThreadPoolBuilder;
+        use std::sync::Arc;
+        // Use a private Rayon pool so the deadline override is isolated from other parallel tests.
+        let pool = Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(4)
+                .build()
+                .expect("Failed to build Rayon pool"),
+        );
+        let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence_for_pool(
+            vec![
+                false, false, false, false, false, false, true, false, false, false,
+            ],
+            Some(Arc::clone(&pool)),
+        );
 
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
@@ -10591,7 +10741,8 @@ mod tests_synapses {
             random_seed: None,
         };
 
-        let result = analyze_synapses(&input)
+        let result = pool
+            .install(|| analyze_synapses(&input))
             .expect("Synapse analysis should complete even when the deadline triggers");
 
         // With parallel processing, deadline detection order is non-deterministic because
@@ -10757,6 +10908,7 @@ mod tests_synapses {
     fn analyze_neurons_uses_vertical_timeout_with_randomized_order() {
         skip_if_no_gpu!();
         use rayon::ThreadPoolBuilder;
+        use std::sync::Arc;
 
         // Simulate a deadline that allows at least one focus neuron to start, but
         // triggers before all are processed. The override sequence is consumed
@@ -10768,8 +10920,17 @@ mod tests_synapses {
         // to begin evaluating sources before we trigger the timeout.
         let mut deadline_sequence = vec![false; 64];
         deadline_sequence.push(true);
-        let _deadline_guard =
-            deadline_override::DeadlineOverrideGuard::with_sequence(deadline_sequence);
+        // Use a private pool so the override cannot be consumed by other tests.
+        let pool = Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(1)
+                .build()
+                .expect("Failed to build single-threaded Rayon pool"),
+        );
+        let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence_for_pool(
+            deadline_sequence,
+            Some(Arc::clone(&pool)),
+        );
 
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
@@ -10838,14 +10999,6 @@ mod tests_synapses {
             random_seed: None,
         };
 
-        // Use a single-threaded Rayon pool so the deadline override sequence remains
-        // deterministic for this test. Note: focus neurons are randomized, so we can't
-        // assume a specific order.
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .expect("Failed to build single-threaded Rayon pool");
-
         let result = pool
             .install(|| analyze_neurons(&input))
             .expect("Neuron analysis should succeed even when the deadline triggers");
@@ -10881,6 +11034,7 @@ mod tests_synapses {
     fn analyze_synapses_uses_vertical_timeout_with_randomized_order() {
         skip_if_no_gpu!();
         use rayon::ThreadPoolBuilder;
+        use std::sync::Arc;
 
         // Simulate a deadline that allows at least one focus neuron to start, but
         // triggers before all are processed. The override sequence is consumed
@@ -10896,8 +11050,17 @@ mod tests_synapses {
         // the timeout too early, the vertical-timeout behaviour isn't exercised.
         let mut deadline_sequence = vec![false; 64];
         deadline_sequence.push(true);
-        let _deadline_guard =
-            deadline_override::DeadlineOverrideGuard::with_sequence(deadline_sequence);
+        // Use a private pool so the override cannot be consumed by other tests.
+        let pool = Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(1)
+                .build()
+                .expect("Failed to build single-threaded Rayon pool"),
+        );
+        let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence_for_pool(
+            deadline_sequence,
+            Some(Arc::clone(&pool)),
+        );
 
         let temp_dir = tempdir().expect("Failed to create temporary directory");
         let parquet_path = temp_dir.path().join("records.parquet");
@@ -10969,14 +11132,6 @@ mod tests_synapses {
             analysis_deadline_ms: None,
             random_seed: None,
         };
-
-        // Use a single-threaded Rayon pool so the deadline override sequence remains
-        // deterministic for this test. Note: focus neurons are randomized, so we can't
-        // assume a specific order.
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .expect("Failed to build single-threaded Rayon pool");
 
         let result = pool
             .install(|| analyze_synapses(&input))

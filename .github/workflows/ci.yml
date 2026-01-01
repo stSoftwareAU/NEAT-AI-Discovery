@@ -171,16 +171,26 @@ jobs:
       with:
         components: rustfmt, clippy
         
+    - name: Disk usage (before cache)
+      run: |
+        # CI diagnostic (2 Jan 2026): Rust builds can consume significant disk (especially `target/`).
+        # If a job fails with ENOSPC, this makes the cause obvious in logs.
+        df -h
+
     - name: Cache dependencies
       uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/registry
           ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        # Important (2 Jan 2026): do NOT cache `target/` in CI.
+        # It can exceed GitHub runner disk limits after restore + build, causing ENOSPC failures.
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
         restore-keys: |
           ${{ runner.os }}-cargo-
+
+    - name: Disk usage (after cache restore)
+      run: df -h
       
     - name: Check formatting
       run: cargo fmt --all -- --check

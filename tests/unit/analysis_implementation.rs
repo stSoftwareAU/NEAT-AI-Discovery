@@ -682,18 +682,11 @@ Pages speculative:                        12345.
         // Historically an early `return Ok(())` skipped the completion counter update, leaving the
         // watchdog stage stuck at "processing target ..." rather than "completed 1/1".
 
-        let _lock = crate::watchdog::lock_for_test_serialisation();
-
         // Keep this aligned with integration tests: skip rather than fail when no GPU is present.
         if !crate::analysis::GpuAnalyzer::gpu_is_available() {
             eprintln!("Skipping test: no GPU available");
             return Ok(());
         }
-
-        let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
-            stall_timeout: std::time::Duration::from_secs(60),
-            abort_delay: std::time::Duration::from_secs(1),
-        });
 
         // Use a unique UUID so other parallel tests (which often use "output-0") won't
         // accidentally overwrite the watchdog stage while our watchdog is active.
@@ -755,12 +748,101 @@ Pages speculative:                        12345.
             random_seed: Some(123),
         };
 
-        let _result = analyze_neurons_with_cache(&input, cache)?;
+        let result = analyze_neurons_with_cache(&input, cache)?;
+        assert_eq!(result.metadata.total_focus_neurons, 1);
+        assert_eq!(result.metadata.completed_focus_neurons, 1);
+        Ok(())
+    }
 
-        let stage = crate::watchdog::active_stage_for_test().unwrap_or_default();
-        assert!(
-            stage.contains("neuron analysis → completed 1/1"),
-            "expected progress to reach completed 1/1 for a threshold target, got: {stage}"
-        );
+    #[test]
+    fn neuron_analysis_total_focus_neurons_reports_requested_count_even_when_some_targets_are_filtered()
+    -> Result<()> {
+        // 2-Jan-2026: Regression test for metadata consistency.
+        //
+        // `total_focus_neurons` is documented as "Total focus neurons requested for this analysis
+        // invocation". Some requested focus UUIDs can be filtered out (eg hidden/input/constant),
+        // but the metadata should still report the *requested* count, not the post-filter eligible
+        // output-neuron count.
+
+        // Keep this aligned with integration tests: skip rather than fail when no GPU is present.
+        if !crate::analysis::GpuAnalyzer::gpu_is_available() {
+            eprintln!("Skipping test: no GPU available");
+            return Ok(());
+        }
+
+        // Use unique UUIDs so other parallel tests won't collide on shared names.
+        let output_uuid = "output-total-focus-0";
+        let hidden_uuid = "hidden-total-focus-0";
+
+        let creature = crate::CreatureJson {
+            input: 1,
+            output: 1,
+            neurons: vec![
+                crate::NeuronJson {
+                    uuid: hidden_uuid.to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                crate::NeuronJson {
+                    uuid: output_uuid.to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "STEP".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: Vec::new(),
+        };
+
+        // Use an in-memory loader so the test doesn't need to write a parquet file.
+        let cache = std::sync::Arc::new(RecordCache::with_loader(
+            "unused.parquet",
+            std::sync::Arc::new(move |_file, uuid| {
+                let mut records = Vec::new();
+                for obs_index in 0..20u32 {
+                    match uuid {
+                        "input-0" => {
+                            records.push(DiscoverRecord {
+                                obs_index,
+                                neuron_uuid: uuid.to_string(),
+                                value: None,
+                                activation: (obs_index as f32 - 10.0) / 10.0,
+                                errors: Vec::new(),
+                            });
+                        }
+                        _ if uuid == output_uuid => {
+                            // Provide non-empty errors so the target is considered analysable.
+                            let activation = 0.0;
+                            let error = if obs_index < 10 { 0.25 } else { -0.25 };
+                            records.push(DiscoverRecord {
+                                obs_index,
+                                neuron_uuid: uuid.to_string(),
+                                value: Some(activation),
+                                activation,
+                                errors: vec![error],
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(records)
+            }),
+        ));
+
+        let input = crate::AnalyzeNeuronsInput {
+            parquet_file: "unused.parquet".to_string(),
+            creature,
+            // Request both an output and a hidden target; hidden will be filtered out by add-neuron
+            // analysis, but should still count towards the "requested" total.
+            focus_neurons: vec![output_uuid.to_string(), hidden_uuid.to_string()],
+            max_candidates: Some(1),
+            analysis_deadline_ms: None,
+            random_seed: Some(123),
+        };
+
+        let result = analyze_neurons_with_cache(&input, cache)?;
+        assert_eq!(result.metadata.total_focus_neurons, 2);
+        // Only the eligible output target should be processed/completed.
+        assert_eq!(result.metadata.completed_focus_neurons, 1);
         Ok(())
     }

@@ -43,6 +43,24 @@ pub use implementation::{check_memory_for_parquet, ACTIVATION_SPECS};
 use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
 use anyhow::Result;
 use std::sync::Arc;
+use std::time::SystemTime;
+
+/// Choose analysis ordering when deadline-constrained.
+///
+/// Rationale (2 Jan 2026):
+/// - Production discovery runs are deadline-constrained and repeated over time.
+/// - We randomise (time-vary) the order so that, across repeated runs, both analyses get a turn
+///   running first under the same global deadline.
+///
+/// Notes:
+/// - `random_seed` is included to allow reproducibility in tests and debugging.
+/// - We deliberately mix in the current time so repeated calls with the same seed can still vary.
+fn choose_deadline_order_synapse_first(random_seed: Option<u64>, now_ms: u64) -> bool {
+    // A tiny, deterministic "coin flip": parity of (seed XOR time).
+    //
+    // This is good enough for long-run fairness (50/50 over time) and is easy to test.
+    ((random_seed.unwrap_or(0) ^ now_ms) & 1) == 0
+}
 
 fn run_optional_analysis<T>(
     enabled: bool,
@@ -66,10 +84,9 @@ fn run_optional_analysis<T>(
 ///
 /// # Analysis ordering
 ///
-/// When `analysis_deadline_ms` is set and both analyses are enabled, **synapse analysis
-/// runs first** to prevent starvation. Historically, neuron analysis ran first and could
-/// consume the entire budget, leaving zero time for synapse analysis. This caused "no
-/// add-synapses candidates" even when many potential synapses existed.
+/// When `analysis_deadline_ms` is set and both analyses are enabled, the library **randomises
+/// the run order** on each invocation. This means one run may return only synapse candidates
+/// (neuron starved) and the next may return only neuron candidates (synapse starved).
 ///
 /// When no deadline is set, the original "neuron-first" ordering is preserved for
 /// backwards compatibility (neuron discovery creates new network structure and may be
@@ -125,44 +142,79 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     };
 
     // Determine analysis order based on whether a deadline is set.
-    // When deadline-constrained, synapse analysis runs FIRST to prevent starvation.
+    // When deadline-constrained, we randomise ordering so that repeated runs provide
+    // long-run coverage even though an individual run can return partial results.
     // Without a deadline, neuron analysis runs first (original behaviour).
     let has_deadline = input.analysis_deadline_ms.is_some();
 
     let (synapse_result, neuron_result) = if has_deadline {
-        // SYNAPSE-FIRST ordering (deadline-constrained):
-        // Synapse analysis is often starved because neuron analysis consumes the budget.
-        // Running synapses first ensures they get a fair share of the deadline.
+        // Deadline-constrained: randomised ordering.
+        let now_ms = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let synapse_first = include_synapse
+            && include_neuron
+            && choose_deadline_order_synapse_first(input.random_seed, now_ms);
+
         if utils::verbose_enabled() {
             eprintln!(
-                "[NEAT-AI-Discovery][verbose] Deadline set ({}ms) - running synapse analysis first to prevent starvation",
-                input.analysis_deadline_ms.unwrap_or(0)
+                "[NEAT-AI-Discovery][verbose] Deadline set ({}ms) - randomised ordering: {} first",
+                input.analysis_deadline_ms.unwrap_or(0),
+                if synapse_first { "synapse" } else { "neuron" }
             );
         }
 
-        let synapse_result = run_optional_analysis(
-            synapse_input.is_some(),
-            "analysis::analyze_all → synapse analysis starting",
-            "analysis::analyze_all → synapse analysis finished",
-            "analysis::analyze_all → synapse analysis skipped",
-            || {
-                let inner = synapse_input.expect("checked is_some");
-                implementation::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
-            },
-        )?;
+        if synapse_first {
+            let synapse_result = run_optional_analysis(
+                synapse_input.is_some(),
+                "analysis::analyze_all → synapse analysis starting",
+                "analysis::analyze_all → synapse analysis finished",
+                "analysis::analyze_all → synapse analysis skipped",
+                || {
+                    let inner = synapse_input.expect("checked is_some");
+                    implementation::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
+                },
+            )?;
 
-        let neuron_result = run_optional_analysis(
-            neuron_input.is_some(),
-            "analysis::analyze_all → neuron analysis starting",
-            "analysis::analyze_all → neuron analysis finished",
-            "analysis::analyze_all → neuron analysis skipped",
-            || {
-                let inner = neuron_input.expect("checked is_some");
-                implementation::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
-            },
-        )?;
+            let neuron_result = run_optional_analysis(
+                neuron_input.is_some(),
+                "analysis::analyze_all → neuron analysis starting",
+                "analysis::analyze_all → neuron analysis finished",
+                "analysis::analyze_all → neuron analysis skipped",
+                || {
+                    let inner = neuron_input.expect("checked is_some");
+                    implementation::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
+                },
+            )?;
 
-        (synapse_result, neuron_result)
+            (synapse_result, neuron_result)
+        } else {
+            let neuron_result = run_optional_analysis(
+                neuron_input.is_some(),
+                "analysis::analyze_all → neuron analysis starting",
+                "analysis::analyze_all → neuron analysis finished",
+                "analysis::analyze_all → neuron analysis skipped",
+                || {
+                    let inner = neuron_input.expect("checked is_some");
+                    implementation::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
+                },
+            )?;
+
+            let synapse_result = run_optional_analysis(
+                synapse_input.is_some(),
+                "analysis::analyze_all → synapse analysis starting",
+                "analysis::analyze_all → synapse analysis finished",
+                "analysis::analyze_all → synapse analysis skipped",
+                || {
+                    let inner = synapse_input.expect("checked is_some");
+                    implementation::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
+                },
+            )?;
+
+            (synapse_result, neuron_result)
+        }
     } else {
         // NEURON-FIRST ordering (no deadline - original behaviour):
         // Neuron discovery is more valuable as it can create new network structure.
@@ -205,43 +257,4 @@ pub use neuron::analyze_neurons;
 pub use synapse::analyze_synapses;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn watchdog_beats_do_not_claim_finished_when_analysis_is_skipped() {
-        let _lock = crate::watchdog::lock_for_test_serialisation();
-        // Ensure a watchdog is active so `beat()` is observable in tests.
-        let wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
-            stall_timeout: std::time::Duration::from_secs(60),
-            abort_delay: std::time::Duration::from_secs(1),
-        });
-
-        let skipped = "analysis::analyze_all → neuron analysis skipped";
-        let finished = "analysis::analyze_all → neuron analysis finished";
-
-        // When disabled, we should record "skipped" and never execute the closure.
-        let result: Option<()> =
-            run_optional_analysis(false, "starting", finished, skipped, || -> Result<()> {
-                unreachable!("disabled analysis closure must not run")
-            })
-            .expect("should not error");
-        assert!(result.is_none());
-        assert_eq!(
-            crate::watchdog::active_stage_for_test().as_deref(),
-            Some(skipped)
-        );
-
-        // When enabled, we should end on "finished".
-        let result: Option<()> =
-            run_optional_analysis(true, "starting", finished, "skipped", || Ok(()))
-                .expect("should not error");
-        assert!(result.is_some());
-        assert_eq!(
-            crate::watchdog::active_stage_for_test().as_deref(),
-            Some(finished)
-        );
-
-        drop(wd);
-    }
-}
+mod mod_tests;
