@@ -38,46 +38,30 @@ fn watchdog_beats_do_not_claim_finished_when_analysis_is_skipped() {
 }
 
 #[test]
-fn split_global_deadline_ms_splits_relative_budget_into_two_absolute_deadlines() {
+fn choose_deadline_order_is_deterministic_for_fixed_inputs() {
     let now_ms = 1_700_000_000_000u64;
-    let raw_relative = 10_000u64;
-    let (syn_end, total_end) = split_global_deadline_ms(raw_relative, now_ms, 0.7).expect("split");
-    assert_eq!(total_end, now_ms + 10_000);
-    assert_eq!(syn_end, now_ms + 7_000);
-    assert!(syn_end < total_end);
+    assert_eq!(
+        choose_deadline_order_synapse_first(Some(123), now_ms),
+        choose_deadline_order_synapse_first(Some(123), now_ms)
+    );
 }
 
 #[test]
-fn split_global_deadline_ms_splits_absolute_deadline() {
+fn choose_deadline_order_varies_over_time() {
+    // The chooser mixes in epoch-ms, so adjacent milliseconds should flip the result.
     let now_ms = 1_700_000_000_000u64;
-    let absolute_end = now_ms + 10_000;
-    let (syn_end, total_end) = split_global_deadline_ms(absolute_end, now_ms, 0.5).expect("split");
-    assert_eq!(total_end, absolute_end);
-    assert_eq!(syn_end, now_ms + 5_000);
+    assert_ne!(
+        choose_deadline_order_synapse_first(Some(0), now_ms),
+        choose_deadline_order_synapse_first(Some(0), now_ms + 1)
+    );
 }
 
 #[test]
-fn split_global_deadline_ms_does_not_split_too_small_budgets() {
-    // Budgets < 6s cannot be safely split into two 3s windows.
+fn choose_deadline_order_can_be_controlled_by_seed() {
+    // With a fixed time, different seeds should be able to flip ordering.
     let now_ms = 1_700_000_000_000u64;
-    let raw_relative = 5_000u64;
-    let (syn_end, total_end) = split_global_deadline_ms(raw_relative, now_ms, 0.7).expect("ok");
-    assert_eq!(syn_end, now_ms + 5_000);
-    assert_eq!(total_end, now_ms + 5_000);
-}
-
-#[test]
-fn split_global_deadline_ms_does_not_intercept_invalid_short_durations() {
-    // Invalid (<3s) should be passed through to downstream validation so warnings are emitted.
-    let now_ms = 1_700_000_000_000u64;
-    let raw_relative = 2_000u64;
-    assert!(split_global_deadline_ms(raw_relative, now_ms, 0.7).is_none());
-}
-
-#[test]
-fn split_global_deadline_ms_does_not_intercept_invalid_long_durations() {
-    // Invalid (>1h) should be passed through to downstream validation so warnings are emitted.
-    let now_ms = 1_700_000_000_000u64;
-    let raw_relative = 3_600_001u64;
-    assert!(split_global_deadline_ms(raw_relative, now_ms, 0.7).is_none());
+    assert_ne!(
+        choose_deadline_order_synapse_first(Some(0), now_ms),
+        choose_deadline_order_synapse_first(Some(1), now_ms)
+    );
 }

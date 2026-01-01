@@ -1499,6 +1499,10 @@ whether discovery should be enabled:
   - **All eligible source neurons** (inputs + hidden + constants, respecting
     forward-only constraints) will be covered over time because source ordering
     is also randomised under deadlines.
+  - **Synapse vs neuron analysis**: When a deadline is configured and both analyses
+    are enabled, the library **randomises which analysis runs first** each invocation.
+    This means one run may return only synapse candidates and the next may return
+    only neuron candidates. Over repeated runs, both get opportunities to run first.
   - **All discovery candidate types that Rust emits** (e.g., add-synapse and
     add-neuron) are intended to get a fair share of work over time under repeated
     runs. This library now avoids returning the exact same top candidates every
