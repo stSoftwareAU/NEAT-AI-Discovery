@@ -1358,7 +1358,10 @@ mod deadline_override {
     pub(super) fn next_override_value() -> Option<bool> {
         OVERRIDE_STATE.with(|cell| {
             let state = cell.borrow().clone()?;
-            let mut queue = state.queue.lock().expect("Deadline override queue should not be poisoned");
+            let mut queue = state
+                .queue
+                .lock()
+                .expect("Deadline override queue should not be poisoned");
             queue.pop_front()
         })
     }
@@ -10646,12 +10649,14 @@ mod tests_synapses {
         // Use a private Rayon pool so the deadline override is isolated from other parallel tests.
         let pool = Arc::new(
             ThreadPoolBuilder::new()
-            .num_threads(4)
-            .build()
-            .expect("Failed to build Rayon pool"),
+                .num_threads(4)
+                .build()
+                .expect("Failed to build Rayon pool"),
         );
         let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence_for_pool(
-            vec![false, false, false, false, false, false, true, false, false, false],
+            vec![
+                false, false, false, false, false, false, true, false, false, false,
+            ],
             Some(Arc::clone(&pool)),
         );
 
@@ -10913,9 +10918,9 @@ mod tests_synapses {
         // Use a private pool so the override cannot be consumed by other tests.
         let pool = Arc::new(
             ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .expect("Failed to build single-threaded Rayon pool"),
+                .num_threads(1)
+                .build()
+                .expect("Failed to build single-threaded Rayon pool"),
         );
         let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence_for_pool(
             deadline_sequence,
@@ -11043,9 +11048,9 @@ mod tests_synapses {
         // Use a private pool so the override cannot be consumed by other tests.
         let pool = Arc::new(
             ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .expect("Failed to build single-threaded Rayon pool"),
+                .num_threads(1)
+                .build()
+                .expect("Failed to build single-threaded Rayon pool"),
         );
         let _deadline_guard = deadline_override::DeadlineOverrideGuard::with_sequence_for_pool(
             deadline_sequence,
