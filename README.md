@@ -1819,6 +1819,8 @@ gdb -p <pid> -ex 'thread apply all bt' -ex 'quit'
 
 - [CodeWiki](https://codewiki.google/github.com/stsoftwareau/neat-ai-discovery) -
   AI-powered documentation and code exploration for this repository.
+- [Discovery Types](docs/DISCOVERY_TYPES.md) - Itemised list of all discovery types
+  with success/failure counts, descriptions, and recommendations for improvement.
 - [Impact Calculation](docs/IMPACT_CALCULATION.md) - Detailed explanation of how
   neuron impact is calculated, including special handling for threshold (STEP/BIPOLAR)
   and selection (MINIMUM/MAXIMUM) squash functions.
