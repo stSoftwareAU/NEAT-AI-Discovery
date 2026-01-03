@@ -8080,6 +8080,7 @@ fn truncate_combined_synapse_candidate_sets(
     harmful: Vec<CandidateSynapseJson>,
     coordinated: Vec<crate::CoordinatedStructuralCandidateJson>,
     limit: usize,
+    diversify: bool,
 ) -> (
     Vec<CandidateSynapseJson>,
     Vec<CandidateSynapseJson>,
@@ -8087,6 +8088,70 @@ fn truncate_combined_synapse_candidate_sets(
 ) {
     if limit == 0 {
         return (Vec::new(), Vec::new(), Vec::new());
+    }
+
+    // If we're already under the global cap, keep the caller's ordering exactly.
+    // This matters when upstream has intentionally shuffled within the top-K to diversify
+    // repeated deadline-limited runs (Jan 2026).
+    let total = helpful.len() + harmful.len() + coordinated.len();
+    if total <= limit {
+        return (helpful, harmful, coordinated);
+    }
+
+    // In diversified mode we intentionally preserve the per-bucket ordering (which may have been
+    // shuffled within the top-K) and select candidates in a round-robin fashion across buckets.
+    //
+    // This avoids "category starvation" when `max_candidates` is small: without this, one bucket
+    // with slightly higher expected gains can dominate the global sort and the other buckets may
+    // contribute zero candidates.
+    if diversify {
+        use std::collections::VecDeque;
+
+        let mut helpful_q: VecDeque<CandidateSynapseJson> = VecDeque::from(helpful);
+        let mut harmful_q: VecDeque<CandidateSynapseJson> = VecDeque::from(harmful);
+        let mut coordinated_q: VecDeque<crate::CoordinatedStructuralCandidateJson> =
+            VecDeque::from(coordinated);
+
+        let mut helpful_out = Vec::new();
+        let mut harmful_out = Vec::new();
+        let mut coordinated_out = Vec::new();
+
+        let mut returned = 0usize;
+        while returned < limit {
+            let mut progressed = false;
+
+            if let Some(c) = helpful_q.pop_front() {
+                helpful_out.push(c);
+                returned += 1;
+                progressed = true;
+                if returned >= limit {
+                    break;
+                }
+            }
+            if let Some(c) = harmful_q.pop_front() {
+                harmful_out.push(c);
+                returned += 1;
+                progressed = true;
+                if returned >= limit {
+                    break;
+                }
+            }
+            if let Some(c) = coordinated_q.pop_front() {
+                coordinated_out.push(c);
+                returned += 1;
+                progressed = true;
+                if returned >= limit {
+                    break;
+                }
+            }
+
+            if !progressed {
+                // All buckets are empty.
+                break;
+            }
+        }
+
+        return (helpful_out, harmful_out, coordinated_out);
     }
 
     enum Any {
@@ -8103,7 +8168,6 @@ fn truncate_combined_synapse_candidate_sets(
         }
     }
 
-    let total = helpful.len() + harmful.len() + coordinated.len();
     let mut combined: Vec<Any> = Vec::with_capacity(total);
     combined.extend(helpful.into_iter().map(Any::Helpful));
     combined.extend(harmful.into_iter().map(Any::Harmful));
@@ -9383,6 +9447,7 @@ pub(crate) fn analyze_synapses_with_cache(
             std::mem::take(&mut harmful_results),
             std::mem::take(&mut coordinated_structural_results),
             limit,
+            input.analysis_deadline_ms.is_some(),
         );
         helpful_results = h1;
         harmful_results = h2;

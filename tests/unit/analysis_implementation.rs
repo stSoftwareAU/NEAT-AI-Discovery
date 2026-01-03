@@ -927,7 +927,7 @@ Pages speculative:                        12345.
 
         // Call the helper directly (CPU-only).
         let (helpful_out, harmful_out, coordinated_out) =
-            truncate_combined_synapse_candidate_sets(helpful, harmful, coordinated, 3);
+            truncate_combined_synapse_candidate_sets(helpful, harmful, coordinated, 3, false);
 
         let total = helpful_out.len() + harmful_out.len() + coordinated_out.len();
         assert_eq!(total, 3, "should return exactly the global max_candidates total");
@@ -945,6 +945,84 @@ Pages speculative:                        12345.
                 }
             })
         }));
+    }
+
+    #[test]
+    fn synapse_max_candidates_diversified_mode_preserves_bucket_order_and_avoids_starvation() {
+        // Regression test (3-Jan-2026):
+        // When upstream diversifies by shuffling within the top-K (deadline-limited runs),
+        // we must not re-sort globally during truncation, otherwise the shuffle is undone and
+        // categories can be starved.
+
+        // Simulate "already shuffled" per-bucket ordering (not score-sorted).
+        let helpful = vec![
+            crate::CandidateSynapseJson {
+                from_neuron_uuid: "h2".to_string(),
+                to_neuron_uuid: "t".to_string(),
+                from_neuron_index: None,
+                to_neuron_index: None,
+                weight: 0.1,
+                target_neuron_impact: 1.0,
+                expected_creature_error_reduction: 0.1,
+                expected_creature_score_gain: 0.10,
+                improved_count: 1,
+                total_count: 1,
+                target_neuron_stats: None,
+            },
+            crate::CandidateSynapseJson {
+                from_neuron_uuid: "h1".to_string(),
+                to_neuron_uuid: "t".to_string(),
+                from_neuron_index: None,
+                to_neuron_index: None,
+                weight: 0.1,
+                target_neuron_impact: 1.0,
+                expected_creature_error_reduction: 0.9,
+                expected_creature_score_gain: 0.90,
+                improved_count: 1,
+                total_count: 1,
+                target_neuron_stats: None,
+            },
+        ];
+
+        let harmful = vec![crate::CandidateSynapseJson {
+            from_neuron_uuid: "x1".to_string(),
+            to_neuron_uuid: "t".to_string(),
+            from_neuron_index: None,
+            to_neuron_index: None,
+            weight: 0.1,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: 0.8,
+            expected_creature_score_gain: 0.80,
+            improved_count: 1,
+            total_count: 1,
+            target_neuron_stats: None,
+        }];
+
+        let coordinated = vec![crate::CoordinatedStructuralCandidateJson {
+            operations: vec![crate::CoordinatedStructuralOpJson::RemoveSynapse {
+                from_neuron_uuid: "c1".to_string(),
+                to_neuron_uuid: "t".to_string(),
+            }],
+            expected_creature_score_gain: 0.70,
+            comment: None,
+        }];
+
+        // With diversify=true and limit=3, we should take one from each bucket (round-robin),
+        // and preserve the per-bucket ordering (helpful[0] is "h2", not the score-best "h1").
+        let (helpful_out, harmful_out, coordinated_out) =
+            truncate_combined_synapse_candidate_sets(helpful, harmful, coordinated, 3, true);
+
+        assert_eq!(helpful_out.len(), 1);
+        assert_eq!(harmful_out.len(), 1);
+        assert_eq!(coordinated_out.len(), 1);
+
+        assert_eq!(helpful_out[0].from_neuron_uuid, "h2");
+        assert_eq!(harmful_out[0].from_neuron_uuid, "x1");
+        assert!(coordinated_out[0].operations.iter().any(|op| matches!(
+            op,
+            crate::CoordinatedStructuralOpJson::RemoveSynapse { from_neuron_uuid, .. }
+                if from_neuron_uuid == "c1"
+        )));
     }
 
     #[test]
