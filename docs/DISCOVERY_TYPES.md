@@ -12,7 +12,7 @@ success/failure rates in production.
 - [Detailed Descriptions](#detailed-descriptions)
   - [add-neurons](#add-neurons)
   - [add-synapses](#add-synapses)
-  - [split-synapse-insert-neuron](#split-synapse-insert-neuron)
+  - [coordinated-structural](#coordinated-structural)
   - [change-squash](#change-squash)
   - [remove-low-impact](#remove-low-impact)
   - [remove-harmful-synapse](#remove-harmful-synapse)
@@ -47,7 +47,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 |----------------|-------------|------------|------------|--------------|--------|
 | **add-neurons** | Add a new hidden neuron between existing neurons | 556 | 8,944 | 5.9% | 🟢 Active |
 | **add-synapses** | Add a new synapse connection | 1 | 9 | 10.0% | ⚠️ Low volume |
-| **split-synapse-insert-neuron** | Split existing synapse by inserting a neuron | — | — | — | 🔵 Not implemented |
+| **coordinated-structural** | Apply a *group* of dependent edits as a single candidate | — | — | — | 🟠 Not tested |
 | **change-squash** | Change a neuron's activation function | 2 | 9 | 18.2% | ⚠️ Low volume |
 | **remove-low-impact** | Remove neurons with activation_weighted_impact < costOfGrowth | 65 | 304 | 17.6% | 🟢 Active |
 | **remove-harmful-synapse** | Remove synapses that increase error | — | — | — | 🟠 Not tested |
@@ -129,42 +129,45 @@ it can work, but predictions are inverting (predicting improvement but making it
 
 ---
 
-### split-synapse-insert-neuron
+### coordinated-structural
 
-✂️ **Purpose**: Split an existing synapse by inserting a new hidden neuron between the connected neurons.
+🧩 **Purpose**: Apply a *group* of dependent edits as a single candidate.
 
-**How it works**:
-1. Identifies existing synapses where inserting a neuron would add beneficial computation
-2. Removes the original synapse (from → to)
-3. Inserts a new hidden neuron with:
-   - Incoming synapse from the original source (from → new)
-   - Outgoing synapse to the original target (new → to)
-   - Squash function and bias for the new neuron
-4. The new neuron is placed immediately before the target in evaluation order
+Some beneficial structural changes are **epistatic**: no single add/remove/adjust operation improves fitness in isolation. Improvement occurs only when a set of structural edits are applied together (for example, removing a noisy input while increasing the trusted input weight).
 
-**TypeScript interface** (from `SplitSynapseInsertNeuronCandidate.ts`):
-```typescript
-interface SplitSynapseInsertNeuronCandidate {
-  type: "split_synapse_insert_neuron";
-  fromNeuronUuid: string;
-  toNeuronUuid: string;
-  oldWeight: number;  // Weight of original synapse to be removed
-  newNeuron: { uuid: string; type: "hidden"; squash: string; bias: number };
-  newSynapses: [
-    { from_uuid: string; to_uuid: string; weight: number },  // from → new
-    { from_uuid: string; to_uuid: string; weight: number }   // new → to
-  ];
-  expectedCreatureScoreGain: number;
+This discovery type exists to escape neutral plateaus and handle interference cases where:
+- A removal unlocks the benefit of an addition/adjustment
+- A weight adjustment only helps once a competing path is removed
+- Redundant paths mask each other’s error signal
+
+**How it works (high level)**:
+1. Rust proposes *atomic* edits (for example: remove harmful synapse, add helpful synapse, adjust existing synapse weight)
+2. Rust *groups* compatible edits into a single candidate (a “grouped candidate”)
+3. NEAT-AI evaluates the entire group in one ablation test (apply all ops to a clone, then rescore on the full training set)
+
+**Example scenario (thermometer)**:
+- Remove synapse from noisy mercury input
+- Increase (or adjust) weight for digital thermometer input
+
+**Candidate shape** (Rust JSON output from `analyze_parallel`):
+
+```json
+{
+  "coordinatedStructuralCandidates": [
+    {
+      "expectedCreatureScoreGain": 0.0000123,
+      "comment": "Coordinated: remove harmful synapse, adjust competing synapse weight",
+      "operations": [
+        { "type": "removeSynapse", "fromNeuronUuid": "input-10", "toNeuronUuid": "output-0" },
+        { "type": "removeSynapse", "fromNeuronUuid": "input-11", "toNeuronUuid": "output-0" },
+        { "type": "addSynapse", "fromNeuronUuid": "input-11", "toNeuronUuid": "output-0", "weight": 0.08 }
+      ]
+    }
+  ]
 }
 ```
 
-**Current status**: 🔵 **Not implemented in Rust** – TypeScript expects this discovery type
-via `DiscoverResult.splitSynapseInsertNeuronCandidates` but Rust does not produce it yet.
-This is a key missing feature that should be prioritised.
-
-**Difference from add-neurons**: 
-- `add-neurons` adds a new neuron in parallel to existing structure
-- `split-synapse-insert-neuron` replaces an existing synapse with a neuron + two synapses
+**Current status**: 🟠 **Implemented in Rust, not tested in production** – TypeScript must apply and score grouped candidates as a single unit.
 
 ---
 
@@ -361,10 +364,10 @@ review.
 
 ### Not Implemented / Not Tested
 
-1. **split-synapse-insert-neuron** 🔵 – Not implemented in Rust
-   - TypeScript expects `splitSynapseInsertNeuronCandidates` in `DiscoverResult`
-   - Could be a valuable addition: splits existing synapses rather than adding parallel paths
-   - **Priority**: High – implements a key NEAT mutation strategy
+1. **coordinated-structural** 🟠 – Produced by Rust, needs TypeScript validation support
+   - Rust returns `coordinatedStructuralCandidates[]`
+   - TypeScript must apply a group of operations to a clone then rescore (single ablation run)
+   - Enables epistatic changes (dependent edits) to be validated as one unit
 
 2. **remove-harmful-synapse** 🟠 – Rust produces, no samples recorded
    - Rust returns `harmful_synapses[]` array
@@ -376,7 +379,7 @@ review.
 
 | Priority | Action | Rationale |
 |----------|--------|-----------|
-| 🔴 High | Implement split-synapse-insert-neuron in Rust | Missing key discovery type expected by TypeScript |
+| 🔴 High | Implement coordinated-structural (grouped candidates) | Needed for epistatic changes where only a set of edits improves fitness |
 | 🔴 High | Investigate why harmful_synapses aren't recorded | Mapping exists but no samples in discovery folder |
 | 🔴 High | Investigate add-synapses prediction inversion | 10 samples show consistent wrong-direction predictions |
 | 🔴 High | Disable or fix remove-neuron | 0% success rate, wasting validation cycles |

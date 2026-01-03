@@ -846,3 +846,287 @@ Pages speculative:                        12345.
         assert_eq!(result.metadata.completed_focus_neurons, 1);
         Ok(())
     }
+
+    #[test]
+    fn synapse_max_candidates_is_applied_to_total_across_all_candidate_buckets() {
+        // Regression test: max_candidates must cap the TOTAL returned candidates,
+        // not each bucket independently. With multiple buckets, per-bucket truncation
+        // can return N×max_candidates, which is not what callers expect.
+
+        // Build small synthetic candidate sets with distinct scores.
+        let helpful = vec![
+            crate::CandidateSynapseJson {
+                from_neuron_uuid: "a".to_string(),
+                to_neuron_uuid: "t".to_string(),
+                from_neuron_index: None,
+                to_neuron_index: None,
+                weight: 0.1,
+                target_neuron_impact: 1.0,
+                expected_creature_error_reduction: 0.9,
+                expected_creature_score_gain: 0.9,
+                improved_count: 1,
+                total_count: 1,
+                target_neuron_stats: None,
+            },
+            crate::CandidateSynapseJson {
+                from_neuron_uuid: "b".to_string(),
+                to_neuron_uuid: "t".to_string(),
+                from_neuron_index: None,
+                to_neuron_index: None,
+                weight: 0.1,
+                target_neuron_impact: 1.0,
+                expected_creature_error_reduction: 0.1,
+                expected_creature_score_gain: 0.1,
+                improved_count: 1,
+                total_count: 1,
+                target_neuron_stats: None,
+            },
+        ];
+
+        let harmful = vec![crate::CandidateSynapseJson {
+            from_neuron_uuid: "c".to_string(),
+            to_neuron_uuid: "t".to_string(),
+            from_neuron_index: None,
+            to_neuron_index: None,
+            weight: 0.1,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: 0.8,
+            expected_creature_score_gain: 0.8,
+            improved_count: 1,
+            total_count: 1,
+            target_neuron_stats: None,
+        }];
+
+        // Weight updates are modelled as coordinated remove+add (KISS), so include a coordinated
+        // candidate with a distinct score to ensure truncation is global across buckets.
+        let coordinated = vec![
+            crate::CoordinatedStructuralCandidateJson {
+                operations: vec![
+                    crate::CoordinatedStructuralOpJson::RemoveSynapse {
+                        from_neuron_uuid: "d".to_string(),
+                        to_neuron_uuid: "t".to_string(),
+                    },
+                    crate::CoordinatedStructuralOpJson::AddSynapse {
+                        from_neuron_uuid: "d".to_string(),
+                        to_neuron_uuid: "t".to_string(),
+                        weight: 0.02,
+                    },
+                ],
+                expected_creature_score_gain: 0.7,
+                comment: None,
+            },
+            crate::CoordinatedStructuralCandidateJson {
+                operations: vec![crate::CoordinatedStructuralOpJson::RemoveSynapse {
+                    from_neuron_uuid: "e".to_string(),
+                    to_neuron_uuid: "t".to_string(),
+                }],
+                expected_creature_score_gain: 0.6,
+                comment: None,
+            },
+        ];
+
+        // Call the helper directly (CPU-only).
+        let (helpful_out, harmful_out, coordinated_out) =
+            truncate_combined_synapse_candidate_sets(helpful, harmful, coordinated, 3, false);
+
+        let total = helpful_out.len() + harmful_out.len() + coordinated_out.len();
+        assert_eq!(total, 3, "should return exactly the global max_candidates total");
+
+        // Top 3 scores are: 0.9 (helpful a), 0.8 (harmful c), 0.7 (coordinated d)
+        assert!(helpful_out.iter().any(|c| c.from_neuron_uuid == "a"));
+        assert!(harmful_out.iter().any(|c| c.from_neuron_uuid == "c"));
+        assert!(coordinated_out.iter().any(|c| {
+            c.operations.iter().any(|op| match op {
+                crate::CoordinatedStructuralOpJson::RemoveSynapse { from_neuron_uuid, .. } => {
+                    from_neuron_uuid == "d"
+                }
+                crate::CoordinatedStructuralOpJson::AddSynapse { from_neuron_uuid, .. } => {
+                    from_neuron_uuid == "d"
+                }
+            })
+        }));
+    }
+
+    #[test]
+    fn synapse_max_candidates_diversified_mode_preserves_bucket_order_and_avoids_starvation() {
+        // Regression test (3-Jan-2026):
+        // When upstream diversifies by shuffling within the top-K (deadline-limited runs),
+        // we must not re-sort globally during truncation, otherwise the shuffle is undone and
+        // categories can be starved.
+
+        // Simulate "already shuffled" per-bucket ordering (not score-sorted).
+        let helpful = vec![
+            crate::CandidateSynapseJson {
+                from_neuron_uuid: "h2".to_string(),
+                to_neuron_uuid: "t".to_string(),
+                from_neuron_index: None,
+                to_neuron_index: None,
+                weight: 0.1,
+                target_neuron_impact: 1.0,
+                expected_creature_error_reduction: 0.1,
+                expected_creature_score_gain: 0.10,
+                improved_count: 1,
+                total_count: 1,
+                target_neuron_stats: None,
+            },
+            crate::CandidateSynapseJson {
+                from_neuron_uuid: "h1".to_string(),
+                to_neuron_uuid: "t".to_string(),
+                from_neuron_index: None,
+                to_neuron_index: None,
+                weight: 0.1,
+                target_neuron_impact: 1.0,
+                expected_creature_error_reduction: 0.9,
+                expected_creature_score_gain: 0.90,
+                improved_count: 1,
+                total_count: 1,
+                target_neuron_stats: None,
+            },
+        ];
+
+        let harmful = vec![crate::CandidateSynapseJson {
+            from_neuron_uuid: "x1".to_string(),
+            to_neuron_uuid: "t".to_string(),
+            from_neuron_index: None,
+            to_neuron_index: None,
+            weight: 0.1,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: 0.8,
+            expected_creature_score_gain: 0.80,
+            improved_count: 1,
+            total_count: 1,
+            target_neuron_stats: None,
+        }];
+
+        let coordinated = vec![crate::CoordinatedStructuralCandidateJson {
+            operations: vec![crate::CoordinatedStructuralOpJson::RemoveSynapse {
+                from_neuron_uuid: "c1".to_string(),
+                to_neuron_uuid: "t".to_string(),
+            }],
+            expected_creature_score_gain: 0.70,
+            comment: None,
+        }];
+
+        // With diversify=true and limit=3, we should take one from each bucket (round-robin),
+        // and preserve the per-bucket ordering (helpful[0] is "h2", not the score-best "h1").
+        let (helpful_out, harmful_out, coordinated_out) =
+            truncate_combined_synapse_candidate_sets(helpful, harmful, coordinated, 3, true);
+
+        assert_eq!(helpful_out.len(), 1);
+        assert_eq!(harmful_out.len(), 1);
+        assert_eq!(coordinated_out.len(), 1);
+
+        assert_eq!(helpful_out[0].from_neuron_uuid, "h2");
+        assert_eq!(harmful_out[0].from_neuron_uuid, "x1");
+        assert!(coordinated_out[0].operations.iter().any(|op| matches!(
+            op,
+            crate::CoordinatedStructuralOpJson::RemoveSynapse { from_neuron_uuid, .. }
+                if from_neuron_uuid == "c1"
+        )));
+    }
+
+    #[test]
+    fn coordinated_structural_expected_gain_uses_clamped_delta_when_weights_exceed_max() {
+        // Regression test (3-Jan-2026): coordinated structural candidates must compute expected gain
+        // using the *actual* clamped delta on the trusted synapse, otherwise expected gains are
+        // overstated and candidates are mis-prioritised.
+
+        // Both inputs start at 0.06, but MAX_OUTGOING_WEIGHT is 0.1, so the trusted "transfer"
+        // delta cannot be the full 0.06 (it becomes 0.04).
+        let noisy_weight = 0.06f32;
+        let trusted_weight = 0.06f32;
+        assert!(trusted_weight + noisy_weight > MAX_OUTGOING_WEIGHT);
+
+        // Construct a tiny synthetic case:
+        // - trusted is constant 1.0
+        // - noisy alternates between 0.0 and 2.0
+        // - avg_error is aligned with the *unclamped* assumed delta: 0.06*(trusted - noisy)
+        //
+        // Under the old (buggy) modelling, contribution == avg_error and improvement would be 1.0.
+        // Under the correct clamped modelling, a residual error remains because trusted delta is 0.04.
+        let mut samples: Vec<HelpfulSample> = Vec::new();
+        for (trusted_act, noisy_act) in [(1.0f32, 0.0f32), (1.0f32, 2.0f32)] {
+            let avg_error = noisy_weight * (trusted_act - noisy_act);
+            let activation = coordinated_structural_activation_delta(
+                trusted_act,
+                noisy_act,
+                noisy_weight,
+                trusted_weight,
+            )
+            .expect("activation delta should be computable");
+            samples.push(HelpfulSample {
+                activation,
+                avg_error,
+                target_value: None,
+                target_activation: None,
+            });
+        }
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        let (improvement, _improved, _worsened, _total) =
+            compute_synapse_improvement_and_count(&samples, noisy_weight, baseline_sq, None);
+
+        // Expected residual error is 0.02 per sample (because 0.06 - 0.04), so:
+        // baseline per sample = 0.06^2 = 0.0036
+        // new per sample      = 0.02^2 = 0.0004
+        // improvement         = (0.0036 - 0.0004) / 0.0036 = 8/9
+        let expected = 8.0f32 / 9.0f32;
+        assert!(
+            (improvement - expected).abs() < 1e-4,
+            "expected improvement {expected}, got {improvement}"
+        );
+    }
+
+    #[test]
+    fn synapse_weight_update_expected_gain_uses_clamped_delta_weight() {
+        // Regression test (3-Jan-2026): synapse weight updates must compute expected improvement
+        // using the effective (clamped) delta_weight, not the proposed delta.
+
+        let old_weight = 0.06f32;
+        let proposed_delta = 0.06f32; // would produce 0.12 without clamping
+
+        let (new_weight, delta_weight) =
+            clamp_weight_update_delta(old_weight, proposed_delta).expect("delta should be non-zero");
+        assert!(
+            (new_weight - MAX_OUTGOING_WEIGHT).abs() < 1e-6,
+            "new_weight should be clamped to MAX_OUTGOING_WEIGHT"
+        );
+        assert!(
+            (delta_weight - 0.04).abs() < 1e-6,
+            "effective delta should be 0.04 after clamping, got {delta_weight}"
+        );
+
+        // Simple linear case: two identical samples.
+        let samples = vec![
+            HelpfulSample {
+                activation: 1.0,
+                avg_error: 1.0,
+                target_value: None,
+                target_activation: None,
+            },
+            HelpfulSample {
+                activation: 1.0,
+                avg_error: 1.0,
+                target_value: None,
+                target_activation: None,
+            },
+        ];
+        let baseline_sq = 2.0f32;
+
+        let (improvement_applied, _, _, _) =
+            compute_synapse_improvement_and_count(&samples, delta_weight, baseline_sq, None);
+        let (improvement_proposed, _, _, _) =
+            compute_synapse_improvement_and_count(&samples, proposed_delta, baseline_sq, None);
+
+        assert!(
+            improvement_applied < improvement_proposed,
+            "clamped delta should yield smaller improvement than the proposed delta"
+        );
+
+        // For this setup, improvement = 2w - w^2 (derived from 1 - (1 - w)^2).
+        let expected = 2.0 * delta_weight - delta_weight * delta_weight;
+        assert!(
+            (improvement_applied - expected).abs() < 1e-6,
+            "expected improvement {expected}, got {improvement_applied}"
+        );
+    }

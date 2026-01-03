@@ -191,7 +191,10 @@ The discovery process works as follows:
 │  1. Find ALL candidates with positive expected improvement                  │
 │  2. Apply impact discounting (creature-level predictions)                   │
 │  3. Sort by expected improvement (best first)                               │
-│  4. Return candidates (optionally limited by max_candidates)                │
+│  4. If `analysisDeadlineMs` is set, randomise within the top-K and preserve  │
+│     that diversified ordering through truncation to avoid category starvation│
+│     across repeated runs                                                    │
+│  5. Return candidates (optionally limited by max_candidates)                │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -780,7 +783,9 @@ is the **only** measure that matters.
 1. Find ALL candidates with positive expected error reduction
 2. Apply impact discounting (convert to creature-level predictions)
 3. Sort by expected improvement (best first)
-4. Return candidates to TypeScript
+4. If `analysisDeadlineMs` is set, randomise within the top-K and preserve that diversified
+   ordering through truncation to avoid category starvation across repeated runs
+5. Return candidates to TypeScript
 
 **TypeScript's job**:
 1. Select top N candidates based on available CPUs
