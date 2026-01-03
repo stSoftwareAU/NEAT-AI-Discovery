@@ -1,6 +1,9 @@
 //! Shared types and structures used across analysis modules
 
-use crate::{CandidateNeuronJson, CandidateSynapseJson};
+use crate::{
+    CandidateNeuronJson, CandidateSynapseJson, CoordinatedStructuralCandidateJson,
+    SynapseWeightUpdateCandidateJson,
+};
 
 /// Metadata about synapse analysis for diagnostics and observability.
 ///
@@ -74,6 +77,9 @@ pub struct NeuronAnalysisMetadata {
 pub struct AnalyzeSynapsesResult {
     pub helpful_synapses: Vec<CandidateSynapseJson>,
     pub harmful_synapses: Vec<CandidateSynapseJson>,
+    pub synapse_weight_updates: Vec<SynapseWeightUpdateCandidateJson>,
+    /// Coordinated (grouped) candidates produced from synapse analysis (Issue #165).
+    pub coordinated_structural_candidates: Vec<CoordinatedStructuralCandidateJson>,
     pub gpu_used: bool,
     pub no_candidate_reasons: Vec<SynapseNoCandidateSummary>,
     /// Metadata about the analysis run for diagnostics (v0.2.17+).

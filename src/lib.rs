@@ -243,6 +243,69 @@ pub struct CandidateSynapseJson {
     pub target_neuron_stats: Option<NeuronStatsJson>,
 }
 
+/// Candidate to update the weight of an existing synapse (delta-based).
+///
+/// This represents a *weight adjustment* (not a new connection). The prediction logic treats
+/// `delta_weight` as an additive correction to the existing synapse weight.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SynapseWeightUpdateCandidateJson {
+    pub from_neuron_uuid: String,
+    pub to_neuron_uuid: String,
+    /// Index of `from_neuron_uuid` in the creature's forward-only evaluation order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_neuron_index: Option<usize>,
+    /// Index of `to_neuron_uuid` in the creature's forward-only evaluation order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_neuron_index: Option<usize>,
+    pub old_weight: f32,
+    pub new_weight: f32,
+    /// The proposed additive change: `new_weight - old_weight`.
+    pub delta_weight: f32,
+    /// Impact of the target neuron on the creature's output (0.0 to 1.0).
+    pub target_neuron_impact: f32,
+    /// Expected reduction in creature error from applying `delta_weight`.
+    pub expected_creature_error_reduction: f32,
+    /// Expected improvement in creature score from applying `delta_weight`.
+    pub expected_creature_score_gain: f32,
+    pub improved_count: u32,
+    pub total_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_neuron_stats: Option<NeuronStatsJson>,
+}
+
+/// A single atomic operation inside a coordinated (grouped) candidate.
+#[derive(Debug, Serialize, Clone)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum CoordinatedStructuralOpJson {
+    RemoveSynapse {
+        #[serde(rename = "fromNeuronUuid")]
+        from_neuron_uuid: String,
+        #[serde(rename = "toNeuronUuid")]
+        to_neuron_uuid: String,
+    },
+    AddSynapse {
+        #[serde(rename = "fromNeuronUuid")]
+        from_neuron_uuid: String,
+        #[serde(rename = "toNeuronUuid")]
+        to_neuron_uuid: String,
+        weight: f32,
+    },
+}
+
+/// A grouped candidate that must be applied as a single unit.
+///
+/// This supports "Coordinated Structural Discovery" (Issue #165): beneficial changes that are
+/// epistatic (no single edit improves fitness in isolation).
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CoordinatedStructuralCandidateJson {
+    pub operations: Vec<CoordinatedStructuralOpJson>,
+    pub expected_creature_score_gain: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct NeuronStatsJson {
@@ -334,6 +397,12 @@ pub struct AnalyzeParallelOutput {
     pub synapse_metadata: Option<SynapseAnalysisMetadataJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub helpful_neurons: Option<Vec<CandidateNeuronJson>>,
+    /// Candidates to update weights on existing synapses (v0.2.18+).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synapse_weight_updates: Option<Vec<SynapseWeightUpdateCandidateJson>>,
+    /// Coordinated (grouped) structural candidates (v0.2.18+).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordinated_structural_candidates: Option<Vec<CoordinatedStructuralCandidateJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neuron_diagnostics: Option<Vec<NeuronDiagnosticJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -344,6 +413,9 @@ pub struct AnalyzeParallelOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+
+// Coordinated structural candidates are now produced inside synapse analysis and surfaced via
+// `AnalyzeSynapsesResult.coordinated_structural_candidates` (Issue #165).
 
 /// JSON representation of synapse analysis metadata.
 ///
@@ -937,6 +1009,8 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 synapse_gpu_used: None,
                 synapse_metadata: None,
                 helpful_neurons: None,
+                synapse_weight_updates: None,
+                coordinated_structural_candidates: None,
                 neuron_diagnostics: None,
                 neuron_gpu_used: None,
                 neuron_metadata: None,
@@ -952,6 +1026,22 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
         Ok(result) => {
             let synapse = result.synapse;
             let neuron = result.neuron;
+            let synapse_weight_updates = synapse.as_ref().and_then(|s| {
+                if s.synapse_weight_updates.is_empty() {
+                    None
+                } else {
+                    Some(s.synapse_weight_updates.clone())
+                }
+            });
+
+            let coordinated_structural_candidates = synapse.as_ref().and_then(|s| {
+                if s.coordinated_structural_candidates.is_empty() {
+                    None
+                } else {
+                    Some(s.coordinated_structural_candidates.clone())
+                }
+            });
+
             let output = AnalyzeParallelOutput {
                 success: true,
                 helpful_synapses: synapse.as_ref().map(|s| s.helpful_synapses.clone()),
@@ -972,6 +1062,8 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     input_index_max_seen_with_records: s.metadata.input_index_max_seen_with_records,
                 }),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
+                synapse_weight_updates,
+                coordinated_structural_candidates,
                 neuron_diagnostics: neuron
                     .as_ref()
                     .and_then(|n| neuron_diagnostics_json(n.no_candidate_reasons.as_slice())),
@@ -996,6 +1088,8 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 synapse_gpu_used: None,
                 synapse_metadata: None,
                 helpful_neurons: None,
+                synapse_weight_updates: None,
+                coordinated_structural_candidates: None,
                 neuron_diagnostics: None,
                 neuron_gpu_used: None,
                 neuron_metadata: None,
@@ -1858,6 +1952,8 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
                     synapse_gpu_used: None,
                     synapse_metadata: None,
                     helpful_neurons: None,
+                    synapse_weight_updates: None,
+                    coordinated_structural_candidates: None,
                     neuron_diagnostics: None,
                     neuron_gpu_used: None,
                     neuron_metadata: None,
@@ -2607,5 +2703,36 @@ mod tests {
 
         assert_eq!(combined.random_seed, Some(42));
         assert_eq!(combined.analysis_deadline_ms, Some(1234));
+    }
+
+    #[test]
+    fn coordinated_structural_candidates_are_exposed_via_analyze_parallel_output_shape() {
+        // This test is intentionally light-weight and CPU-only.
+        //
+        // The end-to-end behaviour is covered by the integration test:
+        // `tests/coordinated_structural_mercury_digital.rs`.
+        let candidate = CoordinatedStructuralCandidateJson {
+            operations: vec![
+                CoordinatedStructuralOpJson::RemoveSynapse {
+                    from_neuron_uuid: "input-0".to_string(),
+                    to_neuron_uuid: "output-0".to_string(),
+                },
+                CoordinatedStructuralOpJson::RemoveSynapse {
+                    from_neuron_uuid: "input-1".to_string(),
+                    to_neuron_uuid: "output-0".to_string(),
+                },
+                CoordinatedStructuralOpJson::AddSynapse {
+                    from_neuron_uuid: "input-1".to_string(),
+                    to_neuron_uuid: "output-0".to_string(),
+                    weight: 0.1,
+                },
+            ],
+            expected_creature_score_gain: 0.01,
+            comment: Some("Example".to_string()),
+        };
+
+        let value = serde_json::to_value(&candidate).expect("candidate should serialise");
+        assert!(value["operations"].is_array());
+        assert!(value["expectedCreatureScoreGain"].is_number());
     }
 }
