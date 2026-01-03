@@ -3332,6 +3332,60 @@ fn get_bias_values(squash: &str) -> Vec<f32> {
 /// Using 50x provides some margin for edge cases.
 const MIN_WEIGHT_RATIO: f32 = 50.0;
 
+/// Compute the effective activation delta for a coordinated (grouped) candidate pair.
+///
+/// Coordinated structural candidates emit these ops:
+/// - remove the noisy synapse (full removal), and
+/// - increase the trusted synapse weight, subject to `MAX_OUTGOING_WEIGHT` clamping.
+///
+/// We model the *actual* net delta in target input as:
+/// \[
+/// \Delta = \Delta w_{trusted}\cdot a_{trusted} - w_{noisy}\cdot a_{noisy}
+/// \]
+///
+/// `compute_synapse_improvement_and_count` expects `contribution = weight × activation`, so we
+/// represent the above exactly by setting:
+/// - `weight = w_noisy`
+/// - `activation = (Δw_trusted / w_noisy)·a_trusted - a_noisy`
+///
+/// This fixes an overstatement bug (3-Jan-2026): previously we used `activation = a_trusted - a_noisy`
+/// with `weight = w_noisy` *before* clamping the final trusted weight, which assumes
+/// `Δw_trusted == w_noisy` even when clamped.
+fn coordinated_structural_activation_delta(
+    trusted_activation: f32,
+    noisy_activation: f32,
+    noisy_weight: f32,
+    trusted_weight: f32,
+) -> Option<f32> {
+    if noisy_weight.abs() <= EPSILON {
+        return None;
+    }
+
+    let new_trusted_weight =
+        (trusted_weight + noisy_weight).clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+    let delta_trusted_weight = new_trusted_weight - trusted_weight;
+
+    let scale = delta_trusted_weight / noisy_weight;
+    Some(scale * trusted_activation - noisy_activation)
+}
+
+/// Clamp a proposed synapse weight delta against `MAX_OUTGOING_WEIGHT`.
+///
+/// Weight update candidates are represented as a *delta* applied to an existing synapse. If the
+/// resulting `new_weight` is clamped, the *effective* delta differs from the proposed delta.
+///
+/// This returns `(new_weight, delta_weight)` when the effective delta is meaningful.
+fn clamp_weight_update_delta(old_weight: f32, proposed_delta_weight: f32) -> Option<(f32, f32)> {
+    let new_weight =
+        (old_weight + proposed_delta_weight).clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+    let delta_weight = new_weight - old_weight;
+    if delta_weight.abs() <= EPSILON {
+        None
+    } else {
+        Some((new_weight, delta_weight))
+    }
+}
+
 /// Calculate optimal outgoing weight for add-synapse or add-neuron candidates.
 ///
 /// This is the shared weight calculation function used by both synapse and neuron
@@ -8021,6 +8075,61 @@ mod tests {
 }
 // analyze_all has been moved to src/analysis/mod.rs
 
+fn truncate_combined_synapse_candidate_sets(
+    helpful: Vec<CandidateSynapseJson>,
+    harmful: Vec<CandidateSynapseJson>,
+    coordinated: Vec<crate::CoordinatedStructuralCandidateJson>,
+    limit: usize,
+) -> (
+    Vec<CandidateSynapseJson>,
+    Vec<CandidateSynapseJson>,
+    Vec<crate::CoordinatedStructuralCandidateJson>,
+) {
+    if limit == 0 {
+        return (Vec::new(), Vec::new(), Vec::new());
+    }
+
+    enum Any {
+        Helpful(CandidateSynapseJson),
+        Harmful(CandidateSynapseJson),
+        Coordinated(crate::CoordinatedStructuralCandidateJson),
+    }
+
+    fn score(item: &Any) -> f32 {
+        match item {
+            Any::Helpful(c) => c.expected_creature_score_gain,
+            Any::Harmful(c) => c.expected_creature_score_gain,
+            Any::Coordinated(c) => c.expected_creature_score_gain,
+        }
+    }
+
+    let total = helpful.len() + harmful.len() + coordinated.len();
+    let mut combined: Vec<Any> = Vec::with_capacity(total);
+    combined.extend(helpful.into_iter().map(Any::Helpful));
+    combined.extend(harmful.into_iter().map(Any::Harmful));
+    combined.extend(coordinated.into_iter().map(Any::Coordinated));
+
+    combined.sort_by(|a, b| {
+        score(b)
+            .partial_cmp(&score(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    combined.truncate(limit);
+
+    let mut helpful_out = Vec::new();
+    let mut harmful_out = Vec::new();
+    let mut coordinated_out = Vec::new();
+    for item in combined {
+        match item {
+            Any::Helpful(c) => helpful_out.push(c),
+            Any::Harmful(c) => harmful_out.push(c),
+            Any::Coordinated(c) => coordinated_out.push(c),
+        }
+    }
+
+    (helpful_out, harmful_out, coordinated_out)
+}
+
 pub(crate) fn analyze_synapses_with_cache(
     input: &AnalyzeSynapsesInput,
     cache: Arc<RecordCache>,
@@ -8118,9 +8227,6 @@ pub(crate) fn analyze_synapses_with_cache(
 
     let helpful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
     let harmful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
-    let weight_update_results = Arc::new(Mutex::new(
-        Vec::<crate::SynapseWeightUpdateCandidateJson>::new(),
-    ));
     let coordinated_structural_results = Arc::new(Mutex::new(Vec::<
         crate::CoordinatedStructuralCandidateJson,
     >::new()));
@@ -8597,7 +8703,14 @@ pub(crate) fn analyze_synapses_with_cache(
                                 let Some(trusted_act) = trusted_map.get(obs_index) else {
                                     continue;
                                 };
-                                let activation = trusted_act - noisy_act;
+                                let Some(activation) = coordinated_structural_activation_delta(
+                                    *trusted_act,
+                                    *noisy_act,
+                                    noisy.weight,
+                                    trusted.weight,
+                                ) else {
+                                    continue;
+                                };
                                 if !activation.is_finite() || !target.avg_error.is_finite() {
                                     continue;
                                 }
@@ -8783,7 +8896,7 @@ pub(crate) fn analyze_synapses_with_cache(
 
                 // Process results - collect all updates first, then apply in batches (reduces mutex contention)
                 let mut candidates_to_add = Vec::new();
-                let mut weight_updates_to_add = Vec::new();
+                let mut coordinated_to_add = Vec::new();
                 let mut diagnostics_zero_improvements = Vec::new();
                 let mut diagnostics_below_threshold = Vec::new();
                 let mut diagnostics_selected = Vec::new();
@@ -8843,17 +8956,37 @@ pub(crate) fn analyze_synapses_with_cache(
                     // from recordings, not predicting theoretical errors. The correlation
                     // between source activation and target error determines improvement.
                     // Issue #128: This is neuron-level improvement - impact discounting converts to creature-level.
-                    let (neuron_error_improvement, improved_count, worsened_count) = {
-                        let baseline_error_sq = stats.error_sq_sum;
-                        let (improvement, improved, worsened, _) =
-                            compute_synapse_improvement_and_count(
-                                &work.samples,
-                                weight,
-                                baseline_error_sq,
-                                target_squash,
-                            );
-                        (improvement, improved, worsened)
-                    };
+                    let baseline_error_sq = stats.error_sq_sum;
+
+                    // IMPORTANT (3-Jan-2026):
+                    // For weight updates, we must compute expected improvement using the *effective*
+                    // (clamped) delta weight, not the proposed delta weight. Otherwise, expected gains
+                    // are overstated and candidates are mis-prioritised.
+                    let (applied_weight, neuron_error_improvement, improved_count, worsened_count) =
+                        if let Some(old_weight) = work.existing_weight {
+                            let Some((_new_weight, delta_weight)) =
+                                clamp_weight_update_delta(old_weight, weight)
+                            else {
+                                continue;
+                            };
+                            let (improvement, improved, worsened, _) =
+                                compute_synapse_improvement_and_count(
+                                    &work.samples,
+                                    delta_weight,
+                                    baseline_error_sq,
+                                    target_squash,
+                                );
+                            (delta_weight, improvement, improved, worsened)
+                        } else {
+                            let (improvement, improved, worsened, _) =
+                                compute_synapse_improvement_and_count(
+                                    &work.samples,
+                                    weight,
+                                    baseline_error_sq,
+                                    target_squash,
+                                );
+                            (weight, improvement, improved, worsened)
+                        };
 
                     // Accept all positive improvements as candidates (not just those above threshold)
                     // Only reject if improvement is non-positive (<= 0.0)
@@ -8873,7 +9006,7 @@ pub(crate) fn analyze_synapses_with_cache(
                                 threshold,
                                 improved_count,
                                 worsened_count,
-                                weight,
+                                weight: applied_weight,
                             },
                         ));
                     }
@@ -8884,28 +9017,32 @@ pub(crate) fn analyze_synapses_with_cache(
                         .and_then(|records| NeuronStats::from_records(records.as_ref()))
                         .map(|s| s.to_json());
                     if let Some(old_weight) = work.existing_weight {
-                        // Weight update: apply a delta to the existing synapse weight.
-                        let new_weight = (old_weight + weight)
-                            .clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
-                        let delta_weight = new_weight - old_weight;
-                        if delta_weight.abs() <= EPSILON {
+                        // Weight update: represent as remove+add so NEAT-AI can apply using existing
+                        // structural ops (KISS). This avoids introducing a new "setSynapseWeight"
+                        // instruction type in the TypeScript layer.
+                        let Some((new_weight, delta_weight)) =
+                            clamp_weight_update_delta(old_weight, weight)
+                        else {
                             continue;
-                        }
-
-                        weight_updates_to_add.push(crate::SynapseWeightUpdateCandidateJson {
-                            from_neuron_uuid: work.source_uuid.clone(),
-                            to_neuron_uuid: work.target_uuid.clone(),
-                            from_neuron_index: None,
-                            to_neuron_index: None,
-                            old_weight,
-                            new_weight,
-                            delta_weight,
-                            target_neuron_impact: 1.0,
-                            expected_creature_error_reduction: neuron_error_improvement,
+                        };
+                        // NOTE: We keep the computed improvement based on the effective (clamped)
+                        // delta (`delta_weight`) but apply the absolute `new_weight` in the op.
+                        coordinated_to_add.push(crate::CoordinatedStructuralCandidateJson {
+                            operations: vec![
+                                crate::CoordinatedStructuralOpJson::RemoveSynapse {
+                                    from_neuron_uuid: work.source_uuid.clone(),
+                                    to_neuron_uuid: work.target_uuid.clone(),
+                                },
+                                crate::CoordinatedStructuralOpJson::AddSynapse {
+                                    from_neuron_uuid: work.source_uuid.clone(),
+                                    to_neuron_uuid: work.target_uuid.clone(),
+                                    weight: new_weight,
+                                },
+                            ],
                             expected_creature_score_gain: neuron_error_improvement,
-                            improved_count,
-                            total_count,
-                            target_neuron_stats: target_stats,
+                            comment: Some(format!(
+                                "Adjust synapse weight (remove+add): old={old_weight:.6}, new={new_weight:.6}, delta={delta_weight:.6}"
+                            )),
                         });
                     } else {
                         diagnostics_selected.push(work.target_uuid.clone());
@@ -8951,11 +9088,11 @@ pub(crate) fn analyze_synapses_with_cache(
                         .expect("Mutex poisoned: helpful_results");
                     results.extend(candidates_to_add);
                 }
-                if !weight_updates_to_add.is_empty() {
-                    let mut results = weight_update_results
+                if !coordinated_to_add.is_empty() {
+                    let mut results = coordinated_structural_results
                         .lock()
-                        .expect("Mutex poisoned: weight_update_results");
-                    results.extend(weight_updates_to_add);
+                        .expect("Mutex poisoned: coordinated_structural_results");
+                    results.extend(coordinated_to_add);
                 }
             }
 
@@ -9060,10 +9197,6 @@ pub(crate) fn analyze_synapses_with_cache(
     let analysis_timed_out = *analysis_timed_out.lock().expect("Mutex poisoned");
     let mut helpful_results = helpful_results.lock().expect("Mutex poisoned").clone();
     let mut harmful_results = harmful_results.lock().expect("Mutex poisoned").clone();
-    let mut weight_update_results = weight_update_results
-        .lock()
-        .expect("Mutex poisoned")
-        .clone();
     let mut coordinated_structural_results = coordinated_structural_results
         .lock()
         .expect("Mutex poisoned")
@@ -9162,31 +9295,6 @@ pub(crate) fn analyze_synapses_with_cache(
         candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
     }
 
-    // Apply impact discounting to synapse weight update candidates (same logic).
-    for candidate in &mut weight_update_results {
-        candidate.from_neuron_index = order_map_arc.get(&candidate.from_neuron_uuid).copied();
-        candidate.to_neuron_index = order_map_arc.get(&candidate.to_neuron_uuid).copied();
-
-        let is_hidden = neuron_type_map
-            .get(&candidate.to_neuron_uuid)
-            .map(|t| t != "output")
-            .unwrap_or(true);
-
-        let impact = if is_hidden {
-            if let Some(&impact) = impact_scores.get(&candidate.to_neuron_uuid) {
-                impact.clamp(0.0, 1.0)
-            } else {
-                0.1
-            }
-        } else {
-            1.0
-        };
-
-        candidate.target_neuron_impact = impact;
-        candidate.expected_creature_error_reduction *= impact;
-        candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
-    }
-
     // Apply impact discounting to coordinated candidates (based on target neuron UUID).
     for candidate in &mut coordinated_structural_results {
         let target_uuid = candidate
@@ -9235,11 +9343,6 @@ pub(crate) fn analyze_synapses_with_cache(
             .partial_cmp(&a.expected_creature_score_gain)
             .unwrap_or(Ordering::Equal)
     });
-    weight_update_results.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(Ordering::Equal)
-    });
     coordinated_structural_results.sort_by(|a, b| {
         b.expected_creature_score_gain
             .partial_cmp(&a.expected_creature_score_gain)
@@ -9263,12 +9366,6 @@ pub(crate) fn analyze_synapses_with_cache(
             DIVERSIFY_TOP_K,
         );
         shuffle_within_top_k(
-            weight_update_results.as_mut_slice(),
-            input.random_seed,
-            "synapse:weight_update_candidates:top_k",
-            DIVERSIFY_TOP_K,
-        );
-        shuffle_within_top_k(
             coordinated_structural_results.as_mut_slice(),
             input.random_seed,
             "synapse:coordinated_structural_candidates:top_k",
@@ -9277,23 +9374,24 @@ pub(crate) fn analyze_synapses_with_cache(
     }
 
     // Track candidates_found before truncation for metadata
-    let candidates_found = helpful_results.len()
-        + harmful_results.len()
-        + weight_update_results.len()
-        + coordinated_structural_results.len();
+    let candidates_found =
+        helpful_results.len() + harmful_results.len() + coordinated_structural_results.len();
 
     if let Some(limit) = input.max_candidates {
-        helpful_results.truncate(limit);
-        harmful_results.truncate(limit);
-        weight_update_results.truncate(limit);
-        coordinated_structural_results.truncate(limit);
+        let (h1, h2, c) = truncate_combined_synapse_candidate_sets(
+            std::mem::take(&mut helpful_results),
+            std::mem::take(&mut harmful_results),
+            std::mem::take(&mut coordinated_structural_results),
+            limit,
+        );
+        helpful_results = h1;
+        harmful_results = h2;
+        coordinated_structural_results = c;
     }
 
     // Track candidates_returned after truncation
-    let candidates_returned = helpful_results.len()
-        + harmful_results.len()
-        + weight_update_results.len()
-        + coordinated_structural_results.len();
+    let candidates_returned =
+        helpful_results.len() + harmful_results.len() + coordinated_structural_results.len();
 
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
     diagnostics.emit_logs();
@@ -9322,7 +9420,9 @@ pub(crate) fn analyze_synapses_with_cache(
     Ok(AnalyzeSynapsesResult {
         helpful_synapses: helpful_results,
         harmful_synapses: harmful_results,
-        synapse_weight_updates: weight_update_results,
+        // Weight updates are represented as remove+add coordinated candidates for KISS.
+        // This keeps NEAT-AI's apply/ablate pipeline limited to existing structural ops.
+        synapse_weight_updates: Vec::new(),
         coordinated_structural_candidates: coordinated_structural_results,
         gpu_used,
         no_candidate_reasons,
