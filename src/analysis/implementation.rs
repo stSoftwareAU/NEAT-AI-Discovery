@@ -3623,10 +3623,9 @@ fn calculate_optimal_bias(
     let use_hard_tanh = matches!(
         target_squash,
         Some(s) if s.eq_ignore_ascii_case("HARD_TANH") || s.eq_ignore_ascii_case("CLIPPED")
-    )
-        && samples
-            .iter()
-            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
+    ) && samples
+        .iter()
+        .all(|s| s.target_value.is_some() && s.target_activation.is_some());
 
     // Search over log-spaced bias values
     for &bias in &bias_values {
@@ -6110,10 +6109,9 @@ fn can_use_hard_tanh(samples: &[HelpfulSample], target_squash: Option<&str>) -> 
     matches!(
         target_squash,
         Some(s) if s.eq_ignore_ascii_case("HARD_TANH") || s.eq_ignore_ascii_case("CLIPPED")
-    )
-        && samples
-            .iter()
-            .all(|s| s.target_value.is_some() && s.target_activation.is_some())
+    ) && samples
+        .iter()
+        .all(|s| s.target_value.is_some() && s.target_activation.is_some())
 }
 
 /// Combined computation of improvement and count for ReLU candidates.
