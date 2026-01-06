@@ -6042,6 +6042,62 @@ fn get_target_simulation_fn(
     }
 }
 
+/// Target simulation mode for saturation-aware candidate scoring.
+///
+/// Most accurate mode requires both `target_value` (pre-activation) and `target_activation`
+/// for every sample. In production, `target_value` is not always recorded, but
+/// `target_activation` typically is.
+///
+/// For a small set of squash functions where a reasonable approximation is possible, we can
+/// still simulate in activation domain by approximating `target_value` from the observed
+/// activation. This is particularly important for `HARD_TANH`, where the linear model can
+/// massively overstate improvement near saturation.
+#[derive(Copy, Clone)]
+enum TargetSimulationMode {
+    /// No saturation-aware simulation is available; fall back to the linear (value-domain) model.
+    None,
+    /// Full saturation-aware simulation using recorded `target_value` + `target_activation`.
+    Full(fn(f32) -> f32),
+    /// Saturation-aware simulation using recorded `target_activation` and an approximation for
+    /// `target_value`.
+    ApproximateValueFromActivation(fn(f32) -> f32),
+}
+
+/// Select the best available target simulation mode for the given samples.
+#[inline]
+fn get_target_simulation_mode(
+    samples: &[HelpfulSample],
+    target_squash: Option<&str>,
+) -> TargetSimulationMode {
+    let Some(squash) = target_squash else {
+        return TargetSimulationMode::None;
+    };
+    let Some(activation_fn) = get_target_activation_fn(squash) else {
+        return TargetSimulationMode::None;
+    };
+
+    let all_have_activation = samples.iter().all(|s| s.target_activation.is_some());
+    if !all_have_activation {
+        return TargetSimulationMode::None;
+    }
+
+    let all_have_value = samples.iter().all(|s| s.target_value.is_some());
+    if all_have_value {
+        return TargetSimulationMode::Full(activation_fn);
+    }
+
+    // Approximation path: keep deliberately narrow (Jan 2026).
+    //
+    // `HARD_TANH` is piecewise linear and, when not saturated, `target_activation == target_value`.
+    // When saturated, the exact pre-activation is unknown, but approximating it as ±1 still avoids
+    // the linear-model failure mode where we assume the activation can move beyond the clamp.
+    if squash.eq_ignore_ascii_case("HARD_TANH") {
+        return TargetSimulationMode::ApproximateValueFromActivation(activation_fn);
+    }
+
+    TargetSimulationMode::None
+}
+
 /// Legacy function for backwards compatibility - returns true only for HARD_TANH
 /// Deprecated: Use get_target_simulation_fn instead for more accurate simulation
 #[inline]
@@ -6280,28 +6336,46 @@ fn compute_synapse_improvement_with_target_squash(
         return 0.0;
     }
 
-    // Check if we can use saturation-aware model
-    let target_activation_fn = get_target_simulation_fn(samples, target_squash);
+    let target_sim = get_target_simulation_mode(samples, target_squash);
 
+    let mut baseline_error_sq_sum = 0.0f32; // ACTIVATION domain when simulating
     let mut new_error_sq_sum = 0.0f32;
 
     for sample in samples {
         // Direct synapse contribution: weight × source_activation
         let contribution = weight * sample.activation;
 
-        let new_error = if let Some(target_fn) = target_activation_fn {
-            // Saturation-aware model: apply target's activation function
-            // CRITICAL: avg_error is in VALUE domain (targetValue - currentValue from TypeScript)
-            // So we compute desired_value = target_value + avg_error, then squash to get expected activation
-            // Safety: target_activation_fn is only Some when all samples have target data
-            let target_value = unsafe { sample.target_value.unwrap_unchecked() };
-            let desired_value = target_value + sample.avg_error;
-            let expected = target_fn(desired_value);
-            let new_input = target_value + contribution;
-            expected - target_fn(new_input)
-        } else {
-            // Linear approximation - assumes contribution directly reduces error
-            sample.avg_error - contribution
+        let new_error = match target_sim {
+            TargetSimulationMode::None => {
+                // Linear approximation - assumes contribution directly reduces error (VALUE domain).
+                sample.avg_error - contribution
+            }
+            TargetSimulationMode::Full(target_fn) => {
+                // Saturation-aware model (ACTIVATION domain).
+                let target_value = sample.target_value.unwrap();
+                let target_activation = sample.target_activation.unwrap();
+                let desired_value = target_value + sample.avg_error;
+                let expected = target_fn(desired_value);
+
+                let baseline_err = expected - target_activation;
+                baseline_error_sq_sum += baseline_err * baseline_err;
+
+                let new_input = target_value + contribution;
+                expected - target_fn(new_input)
+            }
+            TargetSimulationMode::ApproximateValueFromActivation(target_fn) => {
+                // Saturation-aware model (ACTIVATION domain), approximating missing target_value.
+                let target_activation = sample.target_activation.unwrap();
+                let target_value = sample.target_value.unwrap_or(target_activation);
+                let desired_value = target_value + sample.avg_error;
+                let expected = target_fn(desired_value);
+
+                let baseline_err = expected - target_activation;
+                baseline_error_sq_sum += baseline_err * baseline_err;
+
+                let new_input = target_value + contribution;
+                expected - target_fn(new_input)
+            }
         };
 
         if new_error.is_finite() {
@@ -6309,7 +6383,15 @@ fn compute_synapse_improvement_with_target_squash(
         }
     }
 
-    let improvement = (total_baseline_error_sq - new_error_sq_sum) / total_baseline_error_sq;
+    let effective_baseline = match target_sim {
+        TargetSimulationMode::None => total_baseline_error_sq,
+        _ => baseline_error_sq_sum,
+    };
+    if effective_baseline <= EPSILON {
+        return 0.0;
+    }
+
+    let improvement = (effective_baseline - new_error_sq_sum) / effective_baseline;
     if improvement.is_finite() {
         improvement
     } else {
@@ -6336,7 +6418,7 @@ fn compute_synapse_improvement_and_count(
         return (0.0, 0, 0, samples.len() as u32);
     }
 
-    let target_activation_fn = get_target_simulation_fn(samples, target_squash);
+    let target_sim = get_target_simulation_mode(samples, target_squash);
 
     let mut baseline_error_sq_sum = 0.0f32; // ACTIVATION domain when simulating
     let mut new_error_sq_sum = 0.0f32;
@@ -6347,25 +6429,38 @@ fn compute_synapse_improvement_and_count(
     for sample in samples {
         let contribution = weight * sample.activation;
 
-        let (baseline_error, new_error) = if let Some(target_fn) = target_activation_fn {
-            // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
-            // avg_error is in VALUE domain, but MSE is measured in ACTIVATION domain.
-            let target_value = unsafe { sample.target_value.unwrap_unchecked() };
-            let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
-            let desired_value = target_value + sample.avg_error;
-            let expected = target_fn(desired_value);
+        let (baseline_error, new_error) = match target_sim {
+            TargetSimulationMode::None => {
+                // Linear approximation: both errors in VALUE domain.
+                (sample.avg_error, sample.avg_error - contribution)
+            }
+            TargetSimulationMode::Full(target_fn) => {
+                // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
+                // avg_error is in VALUE domain, but MSE is measured in ACTIVATION domain.
+                let target_value = sample.target_value.unwrap();
+                let target_activation = sample.target_activation.unwrap();
+                let desired_value = target_value + sample.avg_error;
+                let expected = target_fn(desired_value);
 
-            // Baseline error in ACTIVATION domain: expected output - current output
-            let baseline_err = expected - target_activation;
+                let baseline_err = expected - target_activation;
+                let new_input = target_value + contribution;
+                let new_err = expected - target_fn(new_input);
 
-            // New error in ACTIVATION domain: expected output - new output
-            let new_input = target_value + contribution;
-            let new_err = expected - target_fn(new_input);
+                (baseline_err, new_err)
+            }
+            TargetSimulationMode::ApproximateValueFromActivation(target_fn) => {
+                // As above, but approximate missing target_value from the observed activation.
+                let target_activation = sample.target_activation.unwrap();
+                let target_value = sample.target_value.unwrap_or(target_activation);
+                let desired_value = target_value + sample.avg_error;
+                let expected = target_fn(desired_value);
 
-            (baseline_err, new_err)
-        } else {
-            // Linear approximation: both errors in VALUE domain
-            (sample.avg_error, sample.avg_error - contribution)
+                let baseline_err = expected - target_activation;
+                let new_input = target_value + contribution;
+                let new_err = expected - target_fn(new_input);
+
+                (baseline_err, new_err)
+            }
         };
 
         if baseline_error.is_finite() {
@@ -6383,11 +6478,10 @@ fn compute_synapse_improvement_and_count(
         }
     }
 
-    // Use computed ACTIVATION domain baseline when simulating, else use passed VALUE domain
-    let effective_baseline = if target_activation_fn.is_some() {
-        baseline_error_sq_sum
-    } else {
-        total_baseline_error_sq
+    // Use computed ACTIVATION domain baseline when simulating, else use passed VALUE domain.
+    let effective_baseline = match target_sim {
+        TargetSimulationMode::None => total_baseline_error_sq,
+        _ => baseline_error_sq_sum,
     };
 
     let improvement = if effective_baseline > EPSILON {
