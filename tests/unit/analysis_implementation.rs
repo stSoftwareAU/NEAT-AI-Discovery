@@ -484,6 +484,62 @@ Pages speculative:                        12345.
         }
     }
 
+    /// Regression test (Jan 2026): CLIPPED must behave like HARD_TANH for bias optimisation.
+    ///
+    /// `calculate_optimal_bias` has a saturation-aware path for HARD_TANH targets, which prevents
+    /// the bias search from "chasing" impossible improvements beyond the ±1 clamp.
+    ///
+    /// CLIPPED is a documented alias for HARD_TANH, so it must trigger the same model.
+    #[test]
+    fn calculate_optimal_bias_applies_hard_tanh_model_for_clipped_targets() {
+        // Construct a saturated target: value > 1.0 so activation is clamped to +1.
+        //
+        // With a positive value-domain error, the linear model will try to add a positive
+        // correction (bias ~= +0.5 here). The HARD_TANH model recognises that the output is
+        // already saturated and should prefer near-zero correction (bias ~= 0.0).
+        let samples: Vec<HelpfulSample> = (0..50)
+            .map(|_| HelpfulSample {
+                activation: 1.0,
+                avg_error: 0.5,
+                target_value: Some(1.2),
+                target_activation: Some(1.0),
+            })
+            .collect();
+
+        let incoming_weight = 0.0;
+        let outgoing_weight = 1.0;
+
+        // Reference: HARD_TANH enables saturation-aware bias optimisation.
+        let bias_hard_tanh = calculate_optimal_bias(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            identity_activation,
+            "IDENTITY",
+            None,
+            Some("HARD_TANH"),
+        );
+        assert!(
+            bias_hard_tanh.abs() <= EPSILON,
+            "Expected HARD_TANH bias optimisation to prefer ~0.0 bias for saturated targets, got {bias_hard_tanh}"
+        );
+
+        // Alias: CLIPPED must behave the same as HARD_TANH (case-insensitive).
+        let bias_clipped = calculate_optimal_bias(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            identity_activation,
+            "IDENTITY",
+            None,
+            Some("cLiPpEd"),
+        );
+        assert!(
+            (bias_clipped - bias_hard_tanh).abs() <= EPSILON,
+            "CLIPPED must match HARD_TANH bias optimisation; hard_tanh_bias={bias_hard_tanh}, clipped_bias={bias_clipped}"
+        );
+    }
+
     #[test]
     fn test_absolute_activation() {
         assert_eq!(absolute_activation(1.0), 1.0);
