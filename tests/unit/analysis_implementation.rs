@@ -462,6 +462,28 @@ Pages speculative:                        12345.
         assert_eq!(clipped_activation(-1.5), -1.0);
     }
 
+    /// Regression test (Jan 2026): CLIPPED is a documented alias for HARD_TANH.
+    ///
+    /// When `target_value` is missing but `target_activation` is present, we should still use
+    /// the saturation-aware approximation path for HARD_TANH (and its alias CLIPPED). Without
+    /// this, improvement predictions near saturation can be materially wrong.
+    #[test]
+    fn target_simulation_mode_treats_clipped_as_hard_tanh_for_approximation() {
+        let samples = vec![HelpfulSample {
+            activation: 0.0,
+            avg_error: 0.1,
+            target_value: None,
+            target_activation: Some(1.0),
+        }];
+
+        // Use mixed case to confirm case-insensitive alias handling.
+        let mode = get_target_simulation_mode(&samples, Some("cLiPpEd"));
+        match mode {
+            TargetSimulationMode::ApproximateValueFromActivation(_) => {}
+            _ => panic!("CLIPPED should enable saturation-aware target simulation approximation"),
+        }
+    }
+
     #[test]
     fn test_absolute_activation() {
         assert_eq!(absolute_activation(1.0), 1.0);
