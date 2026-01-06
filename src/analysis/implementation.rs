@@ -3619,11 +3619,13 @@ fn calculate_optimal_bias(
     let mut best_bias = 0.0;
     let mut best_error_reduction = f32::NEG_INFINITY;
 
-    // Check if we can use HARD_TANH model (need target_value for all samples)
-    let use_hard_tanh = target_squash == Some("HARD_TANH")
-        && samples
-            .iter()
-            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
+    // Check if we can use HARD_TANH model (aka CLIPPED; need target_value for all samples).
+    let use_hard_tanh = matches!(
+        target_squash,
+        Some(s) if s.eq_ignore_ascii_case("HARD_TANH") || s.eq_ignore_ascii_case("CLIPPED")
+    ) && samples
+        .iter()
+        .all(|s| s.target_value.is_some() && s.target_activation.is_some());
 
     // Search over log-spaced bias values
     for &bias in &bias_values {
@@ -6099,15 +6101,17 @@ fn get_target_simulation_mode(
     TargetSimulationMode::None
 }
 
-/// Legacy function for backwards compatibility - returns true only for HARD_TANH
+/// Legacy function for backwards compatibility - returns true only for HARD_TANH (or its alias CLIPPED).
 /// Deprecated: Use get_target_simulation_fn instead for more accurate simulation
 #[inline]
 #[cfg(test)] // Only used in tests now
 fn can_use_hard_tanh(samples: &[HelpfulSample], target_squash: Option<&str>) -> bool {
-    target_squash == Some("HARD_TANH")
-        && samples
-            .iter()
-            .all(|s| s.target_value.is_some() && s.target_activation.is_some())
+    matches!(
+        target_squash,
+        Some(s) if s.eq_ignore_ascii_case("HARD_TANH") || s.eq_ignore_ascii_case("CLIPPED")
+    ) && samples
+        .iter()
+        .all(|s| s.target_value.is_some() && s.target_activation.is_some())
 }
 
 /// Combined computation of improvement and count for ReLU candidates.

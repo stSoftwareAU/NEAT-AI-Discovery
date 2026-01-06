@@ -18,6 +18,30 @@ larger.
 Controllers call into the library via Deno FFI to power `Creature.discoveryDir()`
 workflows.
 
+## TL;DR
+
+- **This library finds candidates, it does not “auto-fix” creatures**: NEAT-AI validates candidates by rescoring on the full training set.
+- **GPU required**: discovery is skipped when no compatible GPU is available (see `check_gpu_available()`).
+- **Build/install**: `./scripts/runlib.sh` (installs to `~/.cargo/lib/` with version tracking).
+- **Preferred recording API**: streaming (`start_discovery_session` → `append_discovery_records` → `finish_discovery_session`) to avoid JS/V8 string limits.
+- **Free FFI results**: every FFI call returning a `char*` must be freed with `free_discovery_result()`.
+
+## Current FFI API (Deno FFI entry points)
+
+The library exposes a Deno FFI-friendly symbol set. The authoritative list of exported
+symbols lives in `src/lib.rs` as `#[no_mangle] pub extern "C"` functions.
+
+The most commonly used entry points are:
+
+- **GPU probe**: `check_gpu_available()` (returns JSON)
+- **Version probe**: `get_library_version()` (returns JSON)
+- **Recording**:
+  - Streaming: `start_discovery_session`, `append_discovery_records`, `finish_discovery_session`, `cancel_discovery_session`
+  - Single-call: `record_discovery` (avoid for large runs; prefer streaming to prevent JS/V8 string limits)
+- **Analysis**: `rank_focus_neurons`, `analyze_parallel`
+- **Utilities**: `merge_discovery_parquet`, `read_discovery_records_ffi`, `export_visualisation_snapshot`
+- **Memory management**: `free_discovery_result`
+
 ## Why use this library?
 
 - **Production-ready discovery** – Handles millions of observations without the
@@ -62,7 +86,7 @@ the discovery optimisation is skipped.
 **Very old machines** (pre-2015 Macs, old Linux servers without GPU) will have
 discovery disabled gracefully. This prevents hangs while allowing evolution to run.
 
-### Parquet File Memory Check (v0.1.165+)
+### Parquet file memory check
 
 Before loading a parquet file, the library checks if there's enough available memory.
 Parquet files are compressed, so they typically expand to 2-4× their file size when
@@ -100,7 +124,7 @@ To reduce parquet file size:
 - Reduce `discoveryRecordTimeOutMinutes`
 - Use fewer training data files
 
-### Parallel Focus Selection (v0.1.165)
+### Parallel focus selection
 
 Focus neuron selection is now parallelised using rayon for better CPU utilisation:
 - Neuron ranking (computing errors/impacts for each neuron)
@@ -153,11 +177,12 @@ Before committing code changes, ensure you complete the following steps:
    ./quality.sh
    ```
 
-2. **Increment version numbers:**
-   - **NEAT-AI-Discovery**: Update `Cargo.toml` version field (e.g., `0.1.41` → `0.1.42`)
-   - **NEAT-AI**: Update `deno.json` version field (e.g., `0.204.1` → `0.204.2`)
+2. **Verify all tests pass** in both repositories before committing.
 
-3. **Verify all tests pass** in both repositories before committing.
+**Note on versions**: Do not manually bump versions. This repo uses CI to increment
+`Cargo.toml` patch versions when `src/` changes are detected (see
+[Distributed Build & Versioning](#distributed-build--versioning)). If you need to
+confirm what a worker has loaded, call `get_library_version()`.
 
 These steps ensure code quality, proper versioning, and that all tests pass before deployment.
 
@@ -234,11 +259,14 @@ This keeps discovery honest: the Rust analysis uses recorded samples to propose
 candidates, but the only metric that matters is the real, full-dataset score
 measured by NEAT-AI.
 
+<details>
+<summary>Deep dive: analysis workflow details and historical notes</summary>
+
 ### Detailed workflow
 
-- Call `analyze_synapses` once per focused neuron where practical. Passing a
-  single `focus_neurons` entry keeps diagnostics easy to map back to the Deno
-  request and mirrors how NEAT-AI orchestrates discovery.
+- Call `analyze_parallel` with your chosen focus targets. Passing a single focus
+  neuron where practical keeps diagnostics easy to map back to the Deno request
+  and mirrors how NEAT-AI orchestrates discovery.
 - The Rust side now refuses to run if `focus_neurons` is empty or contains
   duplicates. Controllers **must** validate and de-duplicate targets before
   calling into FFI so any upstream issues are surfaced promptly.
@@ -278,11 +306,11 @@ measured by NEAT-AI.
   your Deno worker. The library will emit a single line per focus neuron that
   summarises why the top candidate was rejected and how many potential synapses
   were evaluated.
-- The `analyze_synapses` and `analyze_neurons` JSON responses also expose a
-  `diagnostics` array describing each focus neuron that finished without a
-  candidate. These entries summarise the reason (no samples, below threshold,
-  etc.) plus supporting counts so controllers can relay the explanation even
-  when verbose logging is disabled.
+- The `analyze_parallel` JSON response also exposes a `diagnostics` array
+  describing each focus neuron that finished without a candidate. These entries
+  summarise the reason (no samples, below threshold, etc.) plus supporting
+  counts so controllers can relay the explanation even when verbose logging is
+  disabled.
 - Optional production experiment (29-Dec-2025): If you are seeing a large volume of failed
   add-neuron candidates targeting hidden neurons, you can force **output-only** focus targets
   for add-neuron analysis by setting `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY=1`.
@@ -1344,6 +1372,8 @@ console.log(`Target neuron contributes ${targetImpactPercent.toFixed(1)}% to cre
 **Recommendation**: Use `expectedCreatureScoreGain` for ranking and displaying candidates.
 All fields are already creature-level, so no additional calculations are needed.
 
+</details>
+
 ## Verifying the installation
 
 Use the NEAT-AI helper script after copying the library:
@@ -1832,6 +1862,9 @@ gdb -p <pid> -ex 'thread apply all bt' -ex 'quit'
 
 ## Existing reference material
 
+<details>
+<summary>Open the original project brief, scale targets, and background rationale (kept for contributors)</summary>
+
 The sections below capture the original project brief, scale targets, and
 engineering standards. They remain authoritative for contributors and are linked
 here for convenience:
@@ -1899,6 +1932,8 @@ the same functional behavior.
 - Columnar format excellent for filtering by neuron during analysis
 - Viewable with standard tools for debugging
 - Cross-platform support (macOS, Ubuntu, AWS Linux)
+
+</details>
 
 ## Development
 
