@@ -1175,3 +1175,48 @@ Pages speculative:                        12345.
             "expected ~0.0 improvement under saturation, got {improvement}"
         );
     }
+
+    #[test]
+    fn synapse_improvement_with_target_squash_ignores_non_finite_baseline_error_terms() {
+        // Regression test (6-Jan-2026):
+        //
+        // `compute_synapse_improvement_with_target_squash` must not let a single non-finite
+        // baseline error (eg from NaN target_value) poison the baseline accumulation.
+        //
+        // This matches `compute_synapse_improvement_and_count`, which only accumulates finite
+        // baseline errors.
+
+        // Two samples:
+        // - Sample A has NaN target_value, so expected/baseline_err becomes NaN.
+        // - Sample B is valid and should show a strong improvement when weight=0.5.
+        let samples = vec![
+            HelpfulSample {
+                activation: 1.0,
+                avg_error: 0.5,
+                target_value: Some(f32::NAN),
+                target_activation: Some(0.0),
+            },
+            HelpfulSample {
+                activation: 1.0,
+                avg_error: 0.5,
+                target_value: Some(0.0),
+                target_activation: Some(0.0),
+            },
+        ];
+
+        // The value-domain baseline is irrelevant when using squash simulation, but must be > 0.
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        assert!(baseline_sq > 0.0);
+
+        let improvement = compute_synapse_improvement_with_target_squash(
+            &samples,
+            0.5, // contribution = 0.5 * activation -> fixes Sample B exactly under HARD_TANH
+            baseline_sq,
+            Some("HARD_TANH"),
+        );
+
+        assert!(
+            improvement > 0.9,
+            "expected strong improvement once NaN baseline terms are ignored, got {improvement}"
+        );
+    }

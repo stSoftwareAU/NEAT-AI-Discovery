@@ -6358,7 +6358,9 @@ fn compute_synapse_improvement_with_target_squash(
                 let expected = target_fn(desired_value);
 
                 let baseline_err = expected - target_activation;
-                baseline_error_sq_sum += baseline_err * baseline_err;
+                if baseline_err.is_finite() {
+                    baseline_error_sq_sum += baseline_err * baseline_err;
+                }
 
                 let new_input = target_value + contribution;
                 expected - target_fn(new_input)
@@ -6371,7 +6373,9 @@ fn compute_synapse_improvement_with_target_squash(
                 let expected = target_fn(desired_value);
 
                 let baseline_err = expected - target_activation;
-                baseline_error_sq_sum += baseline_err * baseline_err;
+                if baseline_err.is_finite() {
+                    baseline_error_sq_sum += baseline_err * baseline_err;
+                }
 
                 let new_input = target_value + contribution;
                 expected - target_fn(new_input)
