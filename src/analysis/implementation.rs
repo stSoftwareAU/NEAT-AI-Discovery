@@ -6088,10 +6088,11 @@ fn get_target_simulation_mode(
 
     // Approximation path: keep deliberately narrow (Jan 2026).
     //
-    // `HARD_TANH` is piecewise linear and, when not saturated, `target_activation == target_value`.
+    // `HARD_TANH` (aka `CLIPPED`) is piecewise linear and, when not saturated,
+    // `target_activation == target_value`.
     // When saturated, the exact pre-activation is unknown, but approximating it as ±1 still avoids
     // the linear-model failure mode where we assume the activation can move beyond the clamp.
-    if squash.eq_ignore_ascii_case("HARD_TANH") {
+    if squash.eq_ignore_ascii_case("HARD_TANH") || squash.eq_ignore_ascii_case("CLIPPED") {
         return TargetSimulationMode::ApproximateValueFromActivation(activation_fn);
     }
 
