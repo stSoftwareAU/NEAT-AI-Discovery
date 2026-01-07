@@ -269,7 +269,9 @@ fn target_map_filters_non_finite_values() {
 
     // Should still find candidates from the valid records
     assert!(
-        !result.helpful_synapses.is_empty() || !result.no_candidate_reasons.is_empty(),
+        !result.helpful_synapses.is_empty()
+            || !result.coordinated_structural_candidates.is_empty()
+            || !result.no_candidate_reasons.is_empty(),
         "Should process valid records despite non-finite values in other records"
     );
 }
