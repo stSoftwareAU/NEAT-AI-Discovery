@@ -48,6 +48,18 @@ const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 /// meaning the neuron produces nearly identical output across all samples.
 const MIN_NEURON_OUTPUT_STD_DEV: f32 = 0.01;
 
+/// Default threshold for treating an add-synapse candidate as an effective bias change.
+///
+/// Issue #178 (7-Jan-2026): When the source activation range is ~0, adding a synapse
+/// only contributes a near-constant offset to the target. This is better represented as
+/// a `setBias` coordinated-structural operation than paying complexity cost for a new edge.
+///
+/// The heuristic is based on the *range* of the contribution:
+///   effect_range ≈ |weight| × (max_activation - min_activation)
+///
+/// If `effect_range <= threshold`, we fold the synapse into `setBias`.
+const DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD: f32 = 1e-7;
+
 /// Maximum absolute value for outgoing weights in add-neuron candidates.
 ///
 /// Based on analysis of successful discoveries vs failures:
@@ -200,6 +212,35 @@ fn compute_source_variance_discount(samples: &[HelpfulSample]) -> f32 {
     // Linear discount: full credit at MIN_SOURCE_STD_DEV, zero at 0
     // Values above MIN_SOURCE_STD_DEV get full credit (capped at 1.0)
     (std_dev / MIN_SOURCE_STD_DEV).clamp(0.0, 1.0)
+}
+
+/// Optional threshold for folding constant/near-constant sources into `setBias`.
+///
+/// Controlled via `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD`:
+/// - unset / empty: enabled with default (`DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD`)
+/// - `0`: disabled (never fold)
+/// - `> 0`: enabled with the configured threshold
+fn constant_source_effect_threshold_from_env() -> Option<f32> {
+    let raw = std::env::var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD").ok();
+    let Some(raw) = raw else {
+        return Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
+    }
+    match trimmed.parse::<f32>() {
+        Ok(v) if v.is_finite() && v == 0.0 => None,
+        Ok(v) if v.is_finite() && v > 0.0 => Some(v),
+        _ => {
+            if verbose_enabled() {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Ignoring invalid NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD={trimmed:?} (expected 0 or a finite number > 0)"
+                );
+            }
+            Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD)
+        }
+    }
 }
 
 /// Default GPU batch size for GPU operations.
@@ -3336,7 +3377,7 @@ const MIN_WEIGHT_RATIO: f32 = 50.0;
 ///
 /// Coordinated structural candidates emit these ops:
 /// - remove the noisy synapse (full removal), and
-/// - increase the trusted synapse weight, subject to `MAX_OUTGOING_WEIGHT` clamping.
+/// - increase the trusted synapse weight by moving the noisy weight onto it.
 ///
 /// We model the *actual* net delta in target input as:
 /// \[
@@ -3348,9 +3389,11 @@ const MIN_WEIGHT_RATIO: f32 = 50.0;
 /// - `weight = w_noisy`
 /// - `activation = (Δw_trusted / w_noisy)·a_trusted - a_noisy`
 ///
-/// This fixes an overstatement bug (3-Jan-2026): previously we used `activation = a_trusted - a_noisy`
-/// with `weight = w_noisy` *before* clamping the final trusted weight, which assumes
-/// `Δw_trusted == w_noisy` even when clamped.
+/// Notes (7-Jan-2026):
+/// - We intentionally do **not** clamp the trusted weight here. The coordinated candidate is
+///   derived from existing synapse weights, and NEAT-AI will validate the full ablation on the
+///   complete training set. Clamping here changes the candidate semantics and can suppress
+///   valid coordinated candidates.
 fn coordinated_structural_activation_delta(
     trusted_activation: f32,
     noisy_activation: f32,
@@ -3361,8 +3404,7 @@ fn coordinated_structural_activation_delta(
         return None;
     }
 
-    let new_trusted_weight =
-        (trusted_weight + noisy_weight).clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+    let new_trusted_weight = trusted_weight + noisy_weight;
     let delta_trusted_weight = new_trusted_weight - trusted_weight;
 
     let scale = delta_trusted_weight / noisy_weight;
@@ -8546,6 +8588,19 @@ pub(crate) fn analyze_synapses_with_cache(
     let order_map_arc = Arc::new(order_map);
     let neuron_squash_map_arc = Arc::new(neuron_squash_map);
 
+    // Map of neuron UUID -> bias, used when folding constant-source synapses into `setBias`.
+    // Inputs are not present here (they have no bias).
+    let neuron_bias_map: HashMap<String, f32> = input
+        .creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.clone(), n.bias))
+        .collect();
+    let neuron_bias_map_arc = Arc::new(neuron_bias_map);
+
+    // Issue #178: threshold for folding constant-ish sources into bias adjustments.
+    let constant_source_effect_threshold = constant_source_effect_threshold_from_env();
+
     // Build a comprehensive map of ALL neuron UUIDs to their types
     // This includes: input neurons, and all neurons from creature.neurons (hidden, output, constant)
     // If a UUID is not in this map, it's an invalid UUID (bug)
@@ -9050,8 +9105,7 @@ pub(crate) fn analyze_synapses_with_cache(
                     }
 
                     best.map(|(noisy, trusted, gain)| {
-                        let new_weight = (trusted.weight + noisy.weight)
-                            .clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+                        let new_weight = trusted.weight + noisy.weight;
                         crate::CoordinatedStructuralCandidateJson {
                             operations: vec![
                                 crate::CoordinatedStructuralOpJson::RemoveSynapse {
@@ -9343,6 +9397,55 @@ pub(crate) fn analyze_synapses_with_cache(
                         });
                     } else {
                         diagnostics_selected.push(work.target_uuid.clone());
+                        // Issue #178 (7-Jan-2026): If the source activation is constant/near-constant,
+                        // an add-synapse behaves like a bias shift on the target. Prefer `setBias`
+                        // to avoid paying complexity cost for what is effectively a constant offset.
+                        if let Some(threshold) = constant_source_effect_threshold {
+                            let mut act_min = f32::INFINITY;
+                            let mut act_max = f32::NEG_INFINITY;
+                            let mut act_sum = 0.0f64;
+                            let mut act_count: u32 = 0;
+                            for s in &work.samples {
+                                if s.activation.is_finite() {
+                                    act_min = act_min.min(s.activation);
+                                    act_max = act_max.max(s.activation);
+                                    act_sum += s.activation as f64;
+                                    act_count += 1;
+                                }
+                            }
+
+                            if act_count > 0 {
+                                let mean_activation = (act_sum / act_count as f64) as f32;
+                                let activation_range = (act_max - act_min).abs();
+                                let effect_range = weight.abs() * activation_range;
+
+                                if mean_activation.is_finite()
+                                    && activation_range.is_finite()
+                                    && effect_range.is_finite()
+                                    && effect_range <= threshold
+                                {
+                                    let old_bias = neuron_bias_map_arc
+                                        .get(&work.target_uuid)
+                                        .copied()
+                                        .unwrap_or(0.0);
+                                    let new_bias = old_bias + (weight * mean_activation);
+                                    if new_bias.is_finite() {
+                                        coordinated_to_add.push(crate::CoordinatedStructuralCandidateJson {
+                                            operations: vec![crate::CoordinatedStructuralOpJson::SetBias {
+                                                neuron_uuid: work.target_uuid.clone(),
+                                                bias: new_bias,
+                                            }],
+                                            expected_creature_score_gain: neuron_error_improvement,
+                                            comment: Some(format!(
+                                                "Fold constant source into setBias: old_bias={old_bias:.6}, new_bias={new_bias:.6}, weight={weight:.6}, mean_act={mean_activation:.6}, act_range={activation_range:.6e}, effect_range={effect_range:.6e}"
+                                            )),
+                                        });
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+
                         // Issue #128: Use creature-level metrics (impact discounting applied later)
                         candidates_to_add.push(CandidateSynapseJson {
                             from_neuron_uuid: work.source_uuid.clone(),

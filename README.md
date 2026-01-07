@@ -1604,6 +1604,23 @@ whether discovery should be enabled:
   - `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS=3`: stronger bias toward the end
 
   Hidden/constant sources keep weight 1.0; only `input-N` sources are biased.
+
+  **Optional folding of constant sources into bias (7-Jan-2026)**: When a source neuron’s
+  activation range is ~0, an add-synapse from that source behaves like a constant offset
+  on the downstream neuron (equivalent to a bias change). To avoid paying complexity cost
+  for a new edge, the library may emit a coordinated-structural candidate containing a
+  single `setBias` operation instead of an `addSynapse`.
+
+  Control this behaviour with `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD`:
+
+  - unset / empty: enabled with default `1e-7` (matches NEAT-AI’s default cost-of-growth scale)
+  - `0`: disable folding (always emit `addSynapse` when otherwise valid)
+  - `> 0`: enable folding with a custom threshold
+
+  The heuristic compares the predicted contribution range:
+
+  - `effectRange ≈ |weight| × (maxActivation - minActivation)`
+  - fold when `effectRange <= threshold`
 - **Low GPU utilisation**: If you're seeing low GPU utilisation (e.g., 20%) during
   analysis, see the [GPU Performance Tuning](#gpu-performance-tuning) section below.
 - **Deadlock or stuck process**: If the process appears stuck (0% CPU/GPU), see the

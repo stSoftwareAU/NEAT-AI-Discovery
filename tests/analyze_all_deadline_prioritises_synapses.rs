@@ -292,8 +292,9 @@ fn candidate_counts_tracked_correctly() {
     // Synapse metadata
     if let Some(synapse_result) = &result.synapse {
         let metadata = &synapse_result.metadata;
-        let actual_returned =
-            synapse_result.helpful_synapses.len() + synapse_result.harmful_synapses.len();
+        let actual_returned = synapse_result.helpful_synapses.len()
+            + synapse_result.harmful_synapses.len()
+            + synapse_result.coordinated_structural_candidates.len();
 
         assert_eq!(
             metadata.candidates_returned, actual_returned,
