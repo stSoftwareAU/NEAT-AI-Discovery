@@ -323,6 +323,31 @@ measured by NEAT-AI.
   results for earlier focus neurons, and later targets may be skipped or only
   partially analysed.
 
+### Coordinated Structural Discovery (Issue #165)
+
+Some beneficial structural changes are **epistatic**: no single add/remove operation improves score in isolation, but a *group* of edits does. This often shows up on **neutral plateaus** where different parameterisations produce near-identical outputs, and the signal is in second-order effects (error variance, correlation, redundancy) rather than direct score gradients.
+
+To support this, the Rust analysis can return **grouped candidates** via `coordinatedStructuralCandidates` (see [Issue #165](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/165)). Each entry is a single candidate that must be applied atomically (as a unit) during the controller-side ablation test.
+
+- **Operations**: A group contains an `operations` array of atomic edits:
+  - `removeSynapse` / `addSynapse` (with a `weight`)
+  - `addNeuron` (with deterministic `neuronUuid` so candidates are replayable)
+  - `removeNeuron`
+  - `changeSquash`
+  - `setBias`
+- **Weight changes (KISS)**: Existing synapse weight adjustments are represented as **remove+add** operations inside a coordinated group, rather than introducing a separate “set weight” instruction type in TypeScript.
+- **Candidate budgets**: `maxSynapseCandidates` is a **global cap** across `helpfulSynapses + harmfulSynapses + coordinatedStructuralCandidates`. If you set `maxSynapseCandidates: 0`, coordinated structural candidates will also be truncated to zero.
+
+#### Example: “noisy vs trusted” inputs (thermometer pattern)
+
+If two inputs feed the same target with the same starting weight, but one input is much noisier (higher activation variance), a coordinated candidate may:
+
+- remove the noisy synapse
+- remove the trusted synapse
+- add the trusted synapse back with a higher weight
+
+This preserves (or improves) behaviour while reducing variance and redundancy, and avoids the “single edit looks bad” trap during ablation.
+
 ### Discrete activation function handling
 
 The standard discovery algorithm uses a **linear error model** to predict improvement:
