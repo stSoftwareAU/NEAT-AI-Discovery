@@ -1014,13 +1014,16 @@ Pages speculative:                        12345.
         assert!(helpful_out.iter().any(|c| c.from_neuron_uuid == "a"));
         assert!(harmful_out.iter().any(|c| c.from_neuron_uuid == "c"));
         assert!(coordinated_out.iter().any(|c| {
-            c.operations.iter().any(|op| match op {
-                crate::CoordinatedStructuralOpJson::RemoveSynapse { from_neuron_uuid, .. } => {
-                    from_neuron_uuid == "d"
-                }
-                crate::CoordinatedStructuralOpJson::AddSynapse { from_neuron_uuid, .. } => {
-                    from_neuron_uuid == "d"
-                }
+            c.operations.iter().any(|op| {
+                matches!(
+                    op,
+                    crate::CoordinatedStructuralOpJson::RemoveSynapse { from_neuron_uuid, .. }
+                        if from_neuron_uuid == "d"
+                ) || matches!(
+                    op,
+                    crate::CoordinatedStructuralOpJson::AddSynapse { from_neuron_uuid, .. }
+                        if from_neuron_uuid == "d"
+                )
             })
         }));
     }

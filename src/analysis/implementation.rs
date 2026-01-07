@@ -5930,6 +5930,130 @@ impl TargetMap {
     }
 }
 
+/// Compute expected gain for a coordinated "replace synapse with neuron" group.
+///
+/// This models the coordinated operation sequence:
+/// 1) remove direct synapse (source -> target)
+/// 2) add hidden neuron with (source -> newNeuron) and (newNeuron -> target)
+///
+/// We approximate the effect of synapse removal in the VALUE domain by adjusting
+/// the target error per-sample:
+///   error' = error + old_weight * source_activation
+///
+/// This is fast and deterministic, and is sufficient for IDENTITY targets (the
+/// common case for our coordinated-structural regression tests).
+///
+/// Notes (7-Jan-2026):
+/// - This intentionally uses the linear model (no saturation-aware simulation),
+///   because we do not have a reliable way to reconstruct `target_value` and
+///   `target_activation` after removing the existing synapse.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn expected_gain_replace_synapse_with_hidden_neuron(
+    cache: &RecordCache,
+    source_uuid: &str,
+    target_uuid: &str,
+    old_weight: f32,
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    bias: f32,
+    squash: &str,
+) -> Option<f32> {
+    let from_records_arc = cache.get(source_uuid).ok()?;
+    let target_records_arc = cache.get(target_uuid).ok()?;
+    if from_records_arc.is_empty() || target_records_arc.is_empty() {
+        return None;
+    }
+
+    let target_map = TargetMap::from_records(target_records_arc.as_ref());
+    if target_map.map.is_empty() {
+        return None;
+    }
+
+    let mut samples = target_map.build_samples_from(from_records_arc.as_ref());
+    if samples.is_empty() {
+        return None;
+    }
+
+    // Adjust baseline errors for the removal of the existing direct synapse.
+    for s in &mut samples {
+        s.avg_error += old_weight * s.activation;
+    }
+
+    let total_baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+    if total_baseline_error_sq <= EPSILON {
+        return None;
+    }
+
+    if squash.eq_ignore_ascii_case("ReLU") {
+        let (improvement, _improved, _total) = compute_relu_improvement_and_count(
+            samples.as_slice(),
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            total_baseline_error_sq,
+            None, // linear domain (see docstring)
+        );
+        return Some(improvement);
+    }
+
+    // Map squash names to activation functions used by add-neurons discovery.
+    let activation_fn: fn(f32) -> f32 = match squash {
+        "GELU" => gelu_activation,
+        "ELU" => elu_activation,
+        "Softplus" => softplus_activation,
+        "LOGISTIC" => logistic_activation,
+        "TANH" => tanh_activation,
+        "IDENTITY" => identity_activation,
+        "BIPOLAR" => bipolar_activation,
+        "CLIPPED" => clipped_activation,
+        "ABSOLUTE" => absolute_activation,
+        "Mish" => mish_activation,
+        "HARD_TANH" => hard_tanh_activation,
+        "Softsign" => softsign_activation,
+        "BentIdentity" => bent_identity_activation,
+        "Arctan" => arctan_activation,
+        "ReLU6" => relu6_activation,
+        _ => return None,
+    };
+
+    let (improvement, _improved, _total) = compute_activation_improvement_and_count(
+        samples.as_slice(),
+        incoming_weight,
+        outgoing_weight,
+        bias,
+        activation_fn,
+        total_baseline_error_sq,
+        None, // linear domain (see docstring)
+    );
+    Some(improvement)
+}
+
+/// Deterministic UUID generator for coordinated structural `addNeuron` operations.
+///
+/// This deliberately avoids Rust's `Hash` because the default hasher is not stable
+/// across processes. We use a simple FNV-1a 64-bit hash and return a short hex
+/// suffix so candidates are replayable and readable.
+pub(crate) fn deterministic_coordinated_neuron_uuid(
+    source_uuid: &str,
+    target_uuid: &str,
+    squash: &str,
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    bias: f32,
+) -> String {
+    // 7-Jan-2026: keep stable across runs, but include weights/bias so distinct ops don't collide.
+    let key = format!(
+        "replace-synapse-with-neuron|{source_uuid}|{target_uuid}|{squash}|{incoming_weight:.6}|{outgoing_weight:.6}|{bias:.6}"
+    );
+    // FNV-1a 64-bit
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in key.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("coordinated-hidden-{hash:016x}")
+}
+
 /// Build samples for testing. In production, use TargetMap::from_records() and
 /// TargetMap::build_samples_from() for better performance when processing
 /// multiple sources against the same target.
@@ -9384,6 +9508,186 @@ pub(crate) fn analyze_synapses_with_cache(
         }
     }
 
+    // Coordinated structural discovery (7-Jan-2026): collapse a simple hidden neuron into a single synapse.
+    //
+    // This is the "reverse" of synapse→neuron insertion: when a hidden neuron forms a simple 1-in/1-out
+    // chain (a → h → b), we can propose removing that neuron and replacing the chain with a direct
+    // synapse (a → b). This must be applied atomically, so it is emitted as a coordinated-structural
+    // candidate group.
+    //
+    // Initial scope: only hidden neurons with exactly one incoming and one outgoing synapse.
+    // This keeps the candidate safe and deterministic; broader graph rewrites can be added later.
+    {
+        // Build incoming/outgoing synapse lists per neuron.
+        let mut incoming: HashMap<String, Vec<SynapseJson>> = HashMap::new();
+        let mut outgoing: HashMap<String, Vec<SynapseJson>> = HashMap::new();
+        for s in &input.creature.synapses {
+            incoming
+                .entry(s.to_uuid.clone())
+                .or_default()
+                .push(s.clone());
+            outgoing
+                .entry(s.from_uuid.clone())
+                .or_default()
+                .push(s.clone());
+        }
+
+        // Quick neuron-type lookup (only creature.neurons; inputs are not here).
+        let neuron_type_map_local: HashMap<String, String> = input
+            .creature
+            .neurons
+            .iter()
+            .map(|n| (n.uuid.clone(), n.neuron_type.clone()))
+            .collect();
+
+        // Precompute existing direct synapses so we don't propose duplicates.
+        let mut existing_edges: HashSet<(String, String)> = HashSet::new();
+        for s in &input.creature.synapses {
+            existing_edges.insert((s.from_uuid.clone(), s.to_uuid.clone()));
+        }
+
+        for neuron in &input.creature.neurons {
+            if neuron.neuron_type != "hidden" {
+                continue;
+            }
+            let h = neuron.uuid.as_str();
+            let Some(ins) = incoming.get(h) else { continue };
+            let Some(outs) = outgoing.get(h) else {
+                continue;
+            };
+            if ins.len() != 1 || outs.len() != 1 {
+                continue;
+            }
+
+            let a_syn = &ins[0];
+            let b_syn = &outs[0];
+            let a = a_syn.from_uuid.as_str();
+            let b = b_syn.to_uuid.as_str();
+
+            // Skip degenerate / non-actionable cases.
+            if a == b || a == h || b == h {
+                continue;
+            }
+            if existing_edges.contains(&(a.to_string(), b.to_string())) {
+                // A direct synapse already exists; collapsing would need additional ops (future work).
+                continue;
+            }
+
+            // Ensure the target exists (either input-* or a neuron) so the op is not stale.
+            let target_is_known = b.starts_with("input-") || neuron_type_map_local.contains_key(b);
+            if !target_is_known {
+                continue;
+            }
+
+            // Build samples: correlate a's activation to b's adjusted error after removing h→b.
+            let Ok(a_records) = cache.get(a) else {
+                continue;
+            };
+            let Ok(h_records) = cache.get(h) else {
+                continue;
+            };
+            let Ok(b_records) = cache.get(b) else {
+                continue;
+            };
+            if a_records.is_empty() || h_records.is_empty() || b_records.is_empty() {
+                continue;
+            }
+
+            let target_map_b = TargetMap::from_records(b_records.as_ref());
+            if target_map_b.map.is_empty() {
+                continue;
+            }
+            let build_act_map = |records: &[DiscoverRecord]| -> HashMap<u32, f32> {
+                let mut map: HashMap<u32, f32> = HashMap::with_capacity(records.len());
+                for r in records {
+                    if r.activation.is_finite() {
+                        map.insert(r.obs_index, r.activation);
+                    }
+                }
+                map
+            };
+            let a_map = build_act_map(a_records.as_ref());
+            let h_map = build_act_map(h_records.as_ref());
+
+            let mut samples: Vec<HelpfulSample> = Vec::with_capacity(target_map_b.map.len());
+            for (obs_index, target) in target_map_b.map.iter() {
+                let Some(a_act) = a_map.get(obs_index) else {
+                    continue;
+                };
+                let Some(h_act) = h_map.get(obs_index) else {
+                    continue;
+                };
+                if !a_act.is_finite() || !h_act.is_finite() || !target.avg_error.is_finite() {
+                    continue;
+                }
+                let adjusted_error = target.avg_error + b_syn.weight * (*h_act);
+                if !adjusted_error.is_finite() {
+                    continue;
+                }
+                samples.push(HelpfulSample {
+                    activation: *a_act,
+                    avg_error: adjusted_error,
+                    target_value: None,
+                    target_activation: None,
+                });
+            }
+
+            if samples.len() < MIN_NEURON_SAMPLE_COUNT {
+                continue;
+            }
+
+            let mut sum_act_sq = 0.0f32;
+            let mut sum_err_act = 0.0f32;
+            let mut baseline_sq = 0.0f32;
+            for s in &samples {
+                sum_act_sq += s.activation * s.activation;
+                sum_err_act += s.activation * s.avg_error;
+                baseline_sq += s.avg_error * s.avg_error;
+            }
+            if baseline_sq <= EPSILON {
+                continue;
+            }
+
+            let Some(weight) = calculate_optimal_outgoing_weight(sum_err_act, sum_act_sq, 1.0)
+            else {
+                continue;
+            };
+
+            let (improvement, improved, worsened, total) =
+                compute_synapse_improvement_and_count(&samples, weight, baseline_sq, None);
+            let _ = (improved, worsened, total);
+            if improvement <= 0.0 {
+                continue;
+            }
+
+            coordinated_structural_results.push(crate::CoordinatedStructuralCandidateJson {
+                operations: vec![
+                    crate::CoordinatedStructuralOpJson::RemoveSynapse {
+                        from_neuron_uuid: a.to_string(),
+                        to_neuron_uuid: h.to_string(),
+                    },
+                    crate::CoordinatedStructuralOpJson::RemoveSynapse {
+                        from_neuron_uuid: h.to_string(),
+                        to_neuron_uuid: b.to_string(),
+                    },
+                    crate::CoordinatedStructuralOpJson::RemoveNeuron {
+                        neuron_uuid: h.to_string(),
+                    },
+                    crate::CoordinatedStructuralOpJson::AddSynapse {
+                        from_neuron_uuid: a.to_string(),
+                        to_neuron_uuid: b.to_string(),
+                        weight,
+                    },
+                ],
+                expected_creature_score_gain: improvement,
+                comment: Some(
+                    "Coordinated collapse: remove 1-in/1-out hidden neuron and add bypass synapse"
+                        .to_string(),
+                ),
+            });
+        }
+    }
+
     // Issue #128: Apply impact-based discounting and set creature-level metrics.
     // Output neurons have impact = 1.0 (no discount).
     // Hidden neurons have impact in [0, 1] based on their weighted paths to outputs.
@@ -9464,17 +9768,34 @@ pub(crate) fn analyze_synapses_with_cache(
 
     // Apply impact discounting to coordinated candidates (based on target neuron UUID).
     for candidate in &mut coordinated_structural_results {
+        // Heuristic: use the last op that targets a concrete neuron, so multi-op groups
+        // (remove+add synapses, add/remove neuron, etc.) get discounted by the final target.
+        // This aligns with coordinated groups that ultimately adjust the inputs of a target neuron.
         let target_uuid = candidate
             .operations
-            .first()
+            .iter()
+            .rev()
             .map(|op| match op {
-                crate::CoordinatedStructuralOpJson::RemoveSynapse { to_neuron_uuid, .. } => {
-                    to_neuron_uuid.as_str()
-                }
                 crate::CoordinatedStructuralOpJson::AddSynapse { to_neuron_uuid, .. } => {
                     to_neuron_uuid.as_str()
                 }
+                crate::CoordinatedStructuralOpJson::RemoveSynapse { to_neuron_uuid, .. } => {
+                    to_neuron_uuid.as_str()
+                }
+                crate::CoordinatedStructuralOpJson::ChangeSquash { neuron_uuid, .. } => {
+                    neuron_uuid.as_str()
+                }
+                crate::CoordinatedStructuralOpJson::SetBias { neuron_uuid, .. } => {
+                    neuron_uuid.as_str()
+                }
+                crate::CoordinatedStructuralOpJson::AddNeuron { neuron_uuid, .. } => {
+                    neuron_uuid.as_str()
+                }
+                crate::CoordinatedStructuralOpJson::RemoveNeuron { neuron_uuid } => {
+                    neuron_uuid.as_str()
+                }
             })
+            .next()
             .unwrap_or("");
 
         let is_hidden = neuron_type_map
