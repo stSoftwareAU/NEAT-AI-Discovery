@@ -118,4 +118,3 @@ fn issue_178_constant_source_becomes_setbias_candidate() {
         other => panic!("expected setBias op, got {other:?}"),
     }
 }
-
