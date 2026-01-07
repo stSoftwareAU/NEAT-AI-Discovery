@@ -112,7 +112,9 @@ fn issue_134_identity_target_accepts_linear_candidate_sanity_check() {
     let records = vec![
         DiscoverRecord::new(0, "input-0".to_string(), None, arctan_1, Vec::new()),
         DiscoverRecord::new(0, "output-0".to_string(), Some(-10.0), -10.0, vec![2.0]),
-        DiscoverRecord::new(1, "input-0".to_string(), None, arctan_1, Vec::new()),
+        // Vary the input activation slightly so synapse analysis emits an add-synapse candidate
+        // rather than folding the constant source into a `setBias` coordinated candidate (Issue #178).
+        DiscoverRecord::new(1, "input-0".to_string(), None, arctan_1 * 0.9, Vec::new()),
         DiscoverRecord::new(1, "output-0".to_string(), Some(10.0), 10.0, vec![-1.0]),
     ];
 

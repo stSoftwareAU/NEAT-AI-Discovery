@@ -68,6 +68,34 @@ fn output(uuid: &str, squash: &str) -> NeuronJson {
     }
 }
 
+/// Build a minimal set of records that produces synapse candidates without triggering
+/// Issue #178 constant-source folding (7-Jan-2026).
+///
+/// We intentionally make the input activation vary slightly so synapse analysis returns an
+/// `addSynapse` candidate (with creature-level fields) rather than converting it into a
+/// coordinated `setBias` operation.
+fn records_single_output_with_varying_input(error: f32) -> Vec<DiscoverRecord> {
+    let mut records = Vec::new();
+    for obs_index in 0..10u32 {
+        let input_activation = if (obs_index % 2) == 0 { 0.4 } else { 0.6 };
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "input-0".to_string(),
+            Some(input_activation),
+            input_activation,
+            vec![],
+        ));
+        records.push(DiscoverRecord::new(
+            obs_index,
+            "output-0".to_string(),
+            Some(0.0),
+            0.0,
+            vec![error],
+        ));
+    }
+    records
+}
+
 // =============================================================================
 // Test: expectedImprovementPercentage field should NOT exist (Issue #128)
 // =============================================================================
@@ -90,29 +118,7 @@ fn test_expected_improvement_percentage_field_removed() {
     let file_path = temp_file.path().to_str().unwrap();
 
     // Create records with error so we get candidates
-    let records = vec![
-        DiscoverRecord::new(0, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(1, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(2, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(3, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(4, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(5, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(6, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(7, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(8, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(9, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        // Output with error
-        DiscoverRecord::new(0, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(1, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(2, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(3, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(4, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(5, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(6, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(7, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(8, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(9, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-    ];
+    let records = records_single_output_with_varying_input(0.5);
     write_records_to_parquet(file_path, &records).unwrap();
 
     let input_json = serde_json::json!({
@@ -153,28 +159,7 @@ fn test_target_neuron_impact_field_exists() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    let records = vec![
-        DiscoverRecord::new(0, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(1, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(2, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(3, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(4, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(5, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(6, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(7, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(8, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(9, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(0, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(1, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(2, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(3, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(4, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(5, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(6, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(7, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(8, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(9, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-    ];
+    let records = records_single_output_with_varying_input(0.5);
     write_records_to_parquet(file_path, &records).unwrap();
 
     let input_json = serde_json::json!({
@@ -211,28 +196,7 @@ fn test_expected_creature_error_reduction_field_exists() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    let records = vec![
-        DiscoverRecord::new(0, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(1, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(2, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(3, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(4, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(5, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(6, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(7, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(8, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(9, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(0, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(1, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(2, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(3, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(4, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(5, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(6, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(7, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(8, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(9, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-    ];
+    let records = records_single_output_with_varying_input(0.5);
     write_records_to_parquet(file_path, &records).unwrap();
 
     let input_json = serde_json::json!({
@@ -268,28 +232,7 @@ fn test_expected_creature_score_gain_field_exists() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    let records = vec![
-        DiscoverRecord::new(0, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(1, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(2, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(3, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(4, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(5, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(6, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(7, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(8, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(9, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(0, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(1, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(2, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(3, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(4, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(5, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(6, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(7, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(8, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(9, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-    ];
+    let records = records_single_output_with_varying_input(0.5);
     write_records_to_parquet(file_path, &records).unwrap();
 
     let input_json = serde_json::json!({
@@ -328,28 +271,7 @@ fn test_output_neuron_has_impact_one() {
     let temp_file = NamedTempFile::new().unwrap();
     let file_path = temp_file.path().to_str().unwrap();
 
-    let records = vec![
-        DiscoverRecord::new(0, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(1, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(2, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(3, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(4, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(5, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(6, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(7, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(8, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(9, "input-0".to_string(), Some(0.5), 0.5, vec![]),
-        DiscoverRecord::new(0, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(1, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(2, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(3, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(4, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(5, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(6, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(7, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(8, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-        DiscoverRecord::new(9, "output-0".to_string(), Some(0.0), 0.0, vec![0.5]),
-    ];
+    let records = records_single_output_with_varying_input(0.5);
     write_records_to_parquet(file_path, &records).unwrap();
 
     let input_json = serde_json::json!({
