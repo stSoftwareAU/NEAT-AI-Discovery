@@ -80,7 +80,8 @@ fn coordinated_structural_can_replace_synapse_with_hidden_relu_neuron() {
         "parquetFile": parquet_file,
         "creature": creature,
         "focusNeurons": ["output-0"],
-        "maxSynapseCandidates": 0,
+        // Coordinated structural candidates are part of the synapse candidate budget.
+        "maxSynapseCandidates": 32,
         "maxNeuronCandidates": 32,
         "randomSeed": 1
     })
