@@ -1107,13 +1107,16 @@ Pages speculative:                        12345.
     }
 
     #[test]
-    fn coordinated_structural_expected_gain_uses_clamped_delta_when_weights_exceed_max() {
-        // Regression test (3-Jan-2026): coordinated structural candidates must compute expected gain
-        // using the *actual* clamped delta on the trusted synapse, otherwise expected gains are
-        // overstated and candidates are mis-prioritised.
+    fn coordinated_structural_expected_gain_matches_unclamped_weight_transfer() {
+        // Regression test (7-Jan-2026): coordinated structural candidates should model the
+        // *actual* “move noisy weight onto trusted” semantics without clamping.
+        //
+        // Rationale: The coordinated candidate is derived from existing synapse weights, and
+        // NEAT-AI validates the ablation on the full training set. Applying a library-local
+        // clamp here changes semantics and can suppress valid coordinated candidates.
 
-        // Both inputs start at 0.06, but MAX_OUTGOING_WEIGHT is 0.1, so the trusted "transfer"
-        // delta cannot be the full 0.06 (it becomes 0.04).
+        // Both inputs start at 0.06. In this synthetic case we deliberately exceed
+        // `MAX_OUTGOING_WEIGHT` to ensure no hidden clamping occurs in the modelling.
         let noisy_weight = 0.06f32;
         let trusted_weight = 0.06f32;
         assert!(trusted_weight + noisy_weight > MAX_OUTGOING_WEIGHT);
@@ -1147,11 +1150,9 @@ Pages speculative:                        12345.
         let (improvement, _improved, _worsened, _total) =
             compute_synapse_improvement_and_count(&samples, noisy_weight, baseline_sq, None);
 
-        // Expected residual error is 0.02 per sample (because 0.06 - 0.04), so:
-        // baseline per sample = 0.06^2 = 0.0036
-        // new per sample      = 0.02^2 = 0.0004
-        // improvement         = (0.0036 - 0.0004) / 0.0036 = 8/9
-        let expected = 8.0f32 / 9.0f32;
+        // With an unclamped weight transfer, the modelled contribution matches `avg_error`,
+        // so the improvement should be 1.0 (perfect cancellation in this synthetic setup).
+        let expected = 1.0f32;
         assert!(
             (improvement - expected).abs() < 1e-4,
             "expected improvement {expected}, got {improvement}"
