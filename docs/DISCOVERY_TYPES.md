@@ -167,7 +167,55 @@ This discovery type exists to escape neutral plateaus and handle interference ca
 }
 ```
 
-**Current status**: 🟠 **Implemented in Rust, not tested in production** – TypeScript must apply and score grouped candidates as a single unit.
+**Operation vocabulary** (7-Jan-2026):
+- `removeSynapse(fromNeuronUuid,toNeuronUuid)`
+- `addSynapse(fromNeuronUuid,toNeuronUuid,weight)`
+- `addNeuron(neuronUuid,neuronType,squash,bias,insertBeforeNeuronUuid?)`
+- `removeNeuron(neuronUuid)`
+- `changeSquash(neuronUuid,squash)`
+- `setBias(neuronUuid,bias)`
+
+**Forward-only note**: for forward-only creatures, `addNeuron.insertBeforeNeuronUuid` is used to place the neuron in the `neurons[]` array before the target neuron so subsequent `addSynapse(newNeuron -> target)` respects the forward-only ordering constraint.
+
+**Example scenario (replace synapse with hidden neuron)**:
+
+```json
+{
+  "coordinatedStructuralCandidates": [
+    {
+      "expectedCreatureScoreGain": 0.00042,
+      "comment": "Coordinated replacement: remove synapse and insert ReLU hidden neuron",
+      "operations": [
+        { "type": "removeSynapse", "fromNeuronUuid": "input-0", "toNeuronUuid": "output-0" },
+        { "type": "addNeuron", "neuronUuid": "coordinated-hidden-deadbeef", "neuronType": "hidden", "squash": "ReLU", "bias": 0, "insertBeforeNeuronUuid": "output-0" },
+        { "type": "addSynapse", "fromNeuronUuid": "input-0", "toNeuronUuid": "coordinated-hidden-deadbeef", "weight": 1.0 },
+        { "type": "addSynapse", "fromNeuronUuid": "coordinated-hidden-deadbeef", "toNeuronUuid": "output-0", "weight": 0.9 }
+      ]
+    }
+  ]
+}
+```
+
+**Example scenario (collapse a 1-in/1-out hidden neuron)**:
+
+```json
+{
+  "coordinatedStructuralCandidates": [
+    {
+      "expectedCreatureScoreGain": 0.00031,
+      "comment": "Coordinated collapse: remove 1-in/1-out hidden neuron and add bypass synapse",
+      "operations": [
+        { "type": "removeSynapse", "fromNeuronUuid": "input-0", "toNeuronUuid": "hidden-0" },
+        { "type": "removeSynapse", "fromNeuronUuid": "hidden-0", "toNeuronUuid": "output-0" },
+        { "type": "removeNeuron", "neuronUuid": "hidden-0" },
+        { "type": "addSynapse", "fromNeuronUuid": "input-0", "toNeuronUuid": "output-0", "weight": 1.0 }
+      ]
+    }
+  ]
+}
+```
+
+**Current status**: 🟢 **Active and tested** – Rust emits ordered groups; NEAT-AI applies the full ordered operation list atomically and re-scores on the full training set.
 
 ---
 

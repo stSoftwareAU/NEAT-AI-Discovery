@@ -291,6 +291,42 @@ pub enum CoordinatedStructuralOpJson {
         to_neuron_uuid: String,
         weight: f32,
     },
+    /// Add a neuron as part of a coordinated structural candidate.
+    ///
+    /// Notes (7-Jan-2026):
+    /// - `neuronUuid` is emitted by Rust and must be deterministic so coordinated candidates are replayable.
+    /// - For forward-only creatures, `insertBeforeNeuronUuid` provides a placement hint so subsequent
+    ///   `addSynapse(newNeuron -> target)` can satisfy the forward-only ordering constraints.
+    AddNeuron {
+        #[serde(rename = "neuronUuid")]
+        neuron_uuid: String,
+        #[serde(rename = "neuronType")]
+        neuron_type: String,
+        squash: String,
+        bias: f32,
+        #[serde(
+            rename = "insertBeforeNeuronUuid",
+            skip_serializing_if = "Option::is_none"
+        )]
+        insert_before_neuron_uuid: Option<String>,
+    },
+    /// Remove a neuron and any attached synapses.
+    RemoveNeuron {
+        #[serde(rename = "neuronUuid")]
+        neuron_uuid: String,
+    },
+    /// Change a neuron's squash/activation function.
+    ChangeSquash {
+        #[serde(rename = "neuronUuid")]
+        neuron_uuid: String,
+        squash: String,
+    },
+    /// Set a neuron's bias.
+    SetBias {
+        #[serde(rename = "neuronUuid")]
+        neuron_uuid: String,
+        bias: f32,
+    },
 }
 
 /// A grouped candidate that must be applied as a single unit.

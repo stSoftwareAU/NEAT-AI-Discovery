@@ -40,8 +40,12 @@ pub use shared::{NeuronNoCandidateDetail, SynapseNoCandidateDetail};
 pub use implementation::{check_memory_for_parquet, ACTIVATION_SPECS};
 
 // Implement analyze_all using the module functions
-use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
+use crate::{
+    AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson,
+    CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson,
+};
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -243,6 +247,119 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
         (synapse_result, neuron_result)
     };
+
+    // Post-process: convert certain add-neuron candidates into coordinated-structural replacements.
+    //
+    // Issue #173 (7-Jan-2026): When a direct synapse already exists between (source -> target),
+    // applying an add-neuron candidate without removing the synapse is often not the intended edit.
+    // We instead emit a coordinated group that removes the synapse and inserts the hidden neuron
+    // path atomically.
+    //
+    // Important: This keeps normal add-neurons discovery working as-is for cases where no direct
+    // synapse exists.
+    let mut synapse_result = synapse_result;
+    let mut neuron_result = neuron_result;
+
+    if let (Some(syn), Some(neuron)) = (synapse_result.as_mut(), neuron_result.as_mut()) {
+        // Build a quick lookup from (from_uuid,to_uuid) to existing weight.
+        let mut direct_synapse_weight: HashMap<(String, String), f32> = HashMap::new();
+        for s in &input.creature.synapses {
+            direct_synapse_weight.insert((s.from_uuid.clone(), s.to_uuid.clone()), s.weight);
+        }
+
+        let mut kept_neurons: Vec<CandidateNeuronJson> =
+            Vec::with_capacity(neuron.helpful_neurons.len());
+        let mut replacements: Vec<CoordinatedStructuralCandidateJson> = Vec::new();
+
+        for candidate in &neuron.helpful_neurons {
+            let key = (
+                candidate.source_neuron_uuid.clone(),
+                candidate.target_neuron_uuid.clone(),
+            );
+            let Some(&old_weight) = direct_synapse_weight.get(&key) else {
+                kept_neurons.push(candidate.clone());
+                continue;
+            };
+
+            let new_neuron_uuid = implementation::deterministic_coordinated_neuron_uuid(
+                &candidate.source_neuron_uuid,
+                &candidate.target_neuron_uuid,
+                &candidate.squash,
+                candidate.incoming_weight,
+                candidate.outgoing_weight,
+                candidate.bias,
+            );
+
+            let mut expected_gain =
+                implementation::expected_gain_replace_synapse_with_hidden_neuron(
+                    shared_cache.as_ref(),
+                    &candidate.source_neuron_uuid,
+                    &candidate.target_neuron_uuid,
+                    old_weight,
+                    candidate.incoming_weight,
+                    candidate.outgoing_weight,
+                    candidate.bias,
+                    &candidate.squash,
+                )
+                .unwrap_or(candidate.expected_creature_score_gain);
+
+            // Apply a conservative impact discount when the target is hidden.
+            // This mirrors the synapse/neurons discounting semantics without requiring deep graph analysis.
+            let is_target_output = input
+                .creature
+                .neurons
+                .iter()
+                .find(|n| n.uuid == candidate.target_neuron_uuid)
+                .map(|n| n.neuron_type == "output")
+                .unwrap_or(false);
+            if !is_target_output {
+                expected_gain *= 0.1;
+            }
+
+            replacements.push(CoordinatedStructuralCandidateJson {
+                operations: vec![
+                    CoordinatedStructuralOpJson::RemoveSynapse {
+                        from_neuron_uuid: candidate.source_neuron_uuid.clone(),
+                        to_neuron_uuid: candidate.target_neuron_uuid.clone(),
+                    },
+                    CoordinatedStructuralOpJson::AddNeuron {
+                        neuron_uuid: new_neuron_uuid.clone(),
+                        neuron_type: "hidden".to_string(),
+                        squash: candidate.squash.clone(),
+                        bias: candidate.bias,
+                        insert_before_neuron_uuid: Some(candidate.target_neuron_uuid.clone()),
+                    },
+                    CoordinatedStructuralOpJson::AddSynapse {
+                        from_neuron_uuid: candidate.source_neuron_uuid.clone(),
+                        to_neuron_uuid: new_neuron_uuid.clone(),
+                        weight: candidate.incoming_weight,
+                    },
+                    CoordinatedStructuralOpJson::AddSynapse {
+                        from_neuron_uuid: new_neuron_uuid,
+                        to_neuron_uuid: candidate.target_neuron_uuid.clone(),
+                        weight: candidate.outgoing_weight,
+                    },
+                ],
+                expected_creature_score_gain: expected_gain,
+                comment: Some(format!(
+                    "Coordinated replacement: remove synapse and insert {} hidden neuron",
+                    candidate.squash
+                )),
+            });
+        }
+
+        // Keep non-replacement add-neurons unchanged.
+        neuron.helpful_neurons = kept_neurons;
+
+        if !replacements.is_empty() {
+            syn.coordinated_structural_candidates.extend(replacements);
+            syn.coordinated_structural_candidates.sort_by(|a, b| {
+                b.expected_creature_score_gain
+                    .partial_cmp(&a.expected_creature_score_gain)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
 
     Ok(AnalyzeAllResult {
         synapse: synapse_result,
