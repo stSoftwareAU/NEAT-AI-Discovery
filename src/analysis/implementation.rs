@@ -8302,7 +8302,13 @@ mod tests {
 }
 // analyze_all has been moved to src/analysis/mod.rs
 
-fn truncate_combined_synapse_candidate_sets(
+/// Truncate synapse candidate buckets to a global cap, preserving ordering semantics.
+///
+/// Notes (7-Jan-2026):
+/// - Synapse analysis applies this during candidate assembly.
+/// - `analysis::analyze_all` may add coordinated candidates during post-processing (Issue #173),
+///   so it also reuses this helper to re-apply `maxSynapseCandidates` and keep output sizes stable.
+pub(crate) fn truncate_combined_synapse_candidate_sets(
     helpful: Vec<CandidateSynapseJson>,
     harmful: Vec<CandidateSynapseJson>,
     coordinated: Vec<crate::CoordinatedStructuralCandidateJson>,

@@ -46,6 +46,7 @@ use crate::{
 };
 use anyhow::Result;
 use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -82,6 +83,64 @@ fn run_optional_analysis<T>(
         crate::watchdog::beat(skipped);
         Ok(None)
     }
+}
+
+fn merge_coordinated_structural_replacements(
+    synapse: &mut shared::AnalyzeSynapsesResult,
+    mut replacements: Vec<CoordinatedStructuralCandidateJson>,
+    max_synapse_candidates: Option<usize>,
+    diversify: bool,
+) {
+    if replacements.is_empty() {
+        return;
+    }
+
+    synapse
+        .coordinated_structural_candidates
+        .append(&mut replacements);
+
+    // Keep deterministic ordering for non-deadline runs.
+    //
+    // Deadline-diversified runs rely on upstream per-bucket ordering and round-robin selection,
+    // so we avoid resorting here when `diversify` is enabled.
+    if !diversify {
+        synapse.coordinated_structural_candidates.sort_by(|a, b| {
+            b.expected_creature_score_gain
+                .partial_cmp(&a.expected_creature_score_gain)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
+    if let Some(limit) = max_synapse_candidates {
+        let (helpful, harmful, coordinated) =
+            implementation::truncate_combined_synapse_candidate_sets(
+                mem::take(&mut synapse.helpful_synapses),
+                mem::take(&mut synapse.harmful_synapses),
+                mem::take(&mut synapse.coordinated_structural_candidates),
+                limit,
+                diversify,
+            );
+        synapse.helpful_synapses = helpful;
+        synapse.harmful_synapses = harmful;
+        synapse.coordinated_structural_candidates = coordinated;
+    }
+
+    // Ensure metadata reflects what we actually return to callers.
+    synapse.metadata.candidates_returned = synapse.helpful_synapses.len()
+        + synapse.harmful_synapses.len()
+        + synapse.coordinated_structural_candidates.len();
+}
+
+fn apply_kept_neuron_candidates(
+    neuron: &mut shared::AnalyzeNeuronsResult,
+    kept_neurons: Vec<CandidateNeuronJson>,
+) {
+    // Regression fix (7-Jan-2026):
+    // Post-processing may convert some add-neuron candidates into coordinated structural
+    // replacements. When we filter those out of `helpful_neurons`, we must also update the
+    // metadata so JSON output remains consistent with the returned arrays.
+    neuron.helpful_neurons = kept_neurons;
+    neuron.metadata.candidates_returned = neuron.helpful_neurons.len();
 }
 
 /// Combined analysis function that runs both synapse and neuron analysis.
@@ -349,16 +408,14 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
 
         // Keep non-replacement add-neurons unchanged.
-        neuron.helpful_neurons = kept_neurons;
+        apply_kept_neuron_candidates(neuron, kept_neurons);
 
-        if !replacements.is_empty() {
-            syn.coordinated_structural_candidates.extend(replacements);
-            syn.coordinated_structural_candidates.sort_by(|a, b| {
-                b.expected_creature_score_gain
-                    .partial_cmp(&a.expected_creature_score_gain)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
+        merge_coordinated_structural_replacements(
+            syn,
+            replacements,
+            input.max_synapse_candidates,
+            input.analysis_deadline_ms.is_some(),
+        );
     }
 
     Ok(AnalyzeAllResult {
