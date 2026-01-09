@@ -975,21 +975,15 @@ Pages speculative:                        12345.
             target_neuron_stats: None,
         }];
 
-        // Weight updates are modelled as coordinated remove+add (KISS), so include a coordinated
-        // candidate with a distinct score to ensure truncation is global across buckets.
+        // Weight updates are modelled as coordinated setWeight (Issue #180), so include a
+        // coordinated candidate with a distinct score to ensure truncation is global across buckets.
         let coordinated = vec![
             crate::CoordinatedStructuralCandidateJson {
-                operations: vec![
-                    crate::CoordinatedStructuralOpJson::RemoveSynapse {
-                        from_neuron_uuid: "d".to_string(),
-                        to_neuron_uuid: "t".to_string(),
-                    },
-                    crate::CoordinatedStructuralOpJson::AddSynapse {
-                        from_neuron_uuid: "d".to_string(),
-                        to_neuron_uuid: "t".to_string(),
-                        weight: 0.02,
-                    },
-                ],
+                operations: vec![crate::CoordinatedStructuralOpJson::SetWeight {
+                    from_neuron_uuid: "d".to_string(),
+                    to_neuron_uuid: "t".to_string(),
+                    weight: 0.02,
+                }],
                 expected_creature_score_gain: 0.7,
                 comment: None,
             },
@@ -1017,11 +1011,7 @@ Pages speculative:                        12345.
             c.operations.iter().any(|op| {
                 matches!(
                     op,
-                    crate::CoordinatedStructuralOpJson::RemoveSynapse { from_neuron_uuid, .. }
-                        if from_neuron_uuid == "d"
-                ) || matches!(
-                    op,
-                    crate::CoordinatedStructuralOpJson::AddSynapse { from_neuron_uuid, .. }
+                    crate::CoordinatedStructuralOpJson::SetWeight { from_neuron_uuid, .. }
                         if from_neuron_uuid == "d"
                 )
             })

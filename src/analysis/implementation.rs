@@ -9368,9 +9368,9 @@ pub(crate) fn analyze_synapses_with_cache(
                         .and_then(|records| NeuronStats::from_records(records.as_ref()))
                         .map(|s| s.to_json());
                     if let Some(old_weight) = work.existing_weight {
-                        // Weight update: represent as remove+add so NEAT-AI can apply using existing
-                        // structural ops (KISS). This avoids introducing a new "setSynapseWeight"
-                        // instruction type in the TypeScript layer.
+                        // Issue #180 (9-Jan-2026): Weight update using setWeight operation.
+                        // Previously used remove+add pattern; now use a single setWeight op
+                        // for simplicity and directness.
                         let Some((new_weight, delta_weight)) =
                             clamp_weight_update_delta(old_weight, weight)
                         else {
@@ -9379,20 +9379,14 @@ pub(crate) fn analyze_synapses_with_cache(
                         // NOTE: We keep the computed improvement based on the effective (clamped)
                         // delta (`delta_weight`) but apply the absolute `new_weight` in the op.
                         coordinated_to_add.push(crate::CoordinatedStructuralCandidateJson {
-                            operations: vec![
-                                crate::CoordinatedStructuralOpJson::RemoveSynapse {
-                                    from_neuron_uuid: work.source_uuid.clone(),
-                                    to_neuron_uuid: work.target_uuid.clone(),
-                                },
-                                crate::CoordinatedStructuralOpJson::AddSynapse {
-                                    from_neuron_uuid: work.source_uuid.clone(),
-                                    to_neuron_uuid: work.target_uuid.clone(),
-                                    weight: new_weight,
-                                },
-                            ],
+                            operations: vec![crate::CoordinatedStructuralOpJson::SetWeight {
+                                from_neuron_uuid: work.source_uuid.clone(),
+                                to_neuron_uuid: work.target_uuid.clone(),
+                                weight: new_weight,
+                            }],
                             expected_creature_score_gain: neuron_error_improvement,
                             comment: Some(format!(
-                                "Adjust synapse weight (remove+add): old={old_weight:.6}, new={new_weight:.6}, delta={delta_weight:.6}"
+                                "Adjust synapse weight: old={old_weight:.6}, new={new_weight:.6}, delta={delta_weight:.6}"
                             )),
                         });
                     } else {
@@ -9889,6 +9883,9 @@ pub(crate) fn analyze_synapses_with_cache(
                     to_neuron_uuid.as_str()
                 }
                 crate::CoordinatedStructuralOpJson::RemoveSynapse { to_neuron_uuid, .. } => {
+                    to_neuron_uuid.as_str()
+                }
+                crate::CoordinatedStructuralOpJson::SetWeight { to_neuron_uuid, .. } => {
                     to_neuron_uuid.as_str()
                 }
                 crate::CoordinatedStructuralOpJson::ChangeSquash { neuron_uuid, .. } => {

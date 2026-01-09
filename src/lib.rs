@@ -327,6 +327,17 @@ pub enum CoordinatedStructuralOpJson {
         neuron_uuid: String,
         bias: f32,
     },
+    /// Set an existing synapse's weight (Issue #180).
+    ///
+    /// This replaces the previous `removeSynapse` + `addSynapse` pattern for weight adjustments,
+    /// providing a simpler and more direct representation of the intended change.
+    SetWeight {
+        #[serde(rename = "fromNeuronUuid")]
+        from_neuron_uuid: String,
+        #[serde(rename = "toNeuronUuid")]
+        to_neuron_uuid: String,
+        weight: f32,
+    },
 }
 
 /// A grouped candidate that must be applied as a single unit.
