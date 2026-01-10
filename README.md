@@ -331,11 +331,12 @@ To support this, the Rust analysis can return **grouped candidates** via `coordi
 
 - **Operations**: A group contains an `operations` array of atomic edits:
   - `removeSynapse` / `addSynapse` (with a `weight`)
+  - `setWeight` (adjust an existing synapse's weight - Issue #180)
   - `addNeuron` (with deterministic `neuronUuid` so candidates are replayable)
   - `removeNeuron`
   - `changeSquash`
   - `setBias`
-- **Weight changes (KISS)**: Existing synapse weight adjustments are represented as **remove+add** operations inside a coordinated group, rather than introducing a separate “set weight” instruction type in TypeScript.
+- **Weight changes**: Existing synapse weight adjustments are represented as a single `setWeight` operation (Issue #180), directly expressing the intent to modify the weight.
 - **Candidate budgets**: `maxSynapseCandidates` is a **global cap** across `helpfulSynapses + harmfulSynapses + coordinatedStructuralCandidates`. If you set `maxSynapseCandidates: 0`, coordinated structural candidates will also be truncated to zero.
 
 #### Example: “noisy vs trusted” inputs (thermometer pattern)
@@ -2043,18 +2044,6 @@ the same functional behavior.
 - **macOS**: Xcode Command Line Tools (typically already installed, or can be installed via `xcode-select --install` without sudo)
 
 ### Building
-
-```bash
-cargo build
-```
-
-Build library for release:
-
-```bash
-cargo build --release --lib
-```
-
-### Building with runlib.sh
 
 The library can be built and installed using the `scripts/runlib.sh` script:
 

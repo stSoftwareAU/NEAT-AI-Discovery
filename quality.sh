@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+# Source cargo environment if available (needed for non-login shells)
+if [ -f "$HOME/.cargo/env" ]; then
+    source "$HOME/.cargo/env"
+fi
+
 export RUSTFLAGS="-D warnings"
 echo "🔍 Pre-deployment Quality Check"
 echo "================================"
