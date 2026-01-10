@@ -13,10 +13,10 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::{analyze_synapses, GpuAnalyzer};
+use neat_ai_discovery::analysis::{analyze_neurons, analyze_synapses, GpuAnalyzer};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
-use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use neat_ai_discovery::{AnalyzeNeuronsInput, AnalyzeSynapsesInput, CreatureJson, NeuronJson};
 use std::env;
 use tempfile::tempdir;
 
@@ -288,5 +288,57 @@ fn timing_collector_overhead_minimal() {
     assert!(
         enabled_duration.as_millis() < 100,
         "Enabled collector should complete 10000 iterations in under 100ms"
+    );
+}
+
+/// Test that timing is collected for neuron analysis as well.
+///
+/// This tests the neuron analysis code path to ensure timing is properly
+/// integrated there (not just synapse analysis).
+#[test]
+fn neuron_analysis_timing_collected() {
+    skip_without_gpu!();
+
+    env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1");
+
+    let (parquet_file, creature) = create_test_data();
+
+    let input = AnalyzeNeuronsInput {
+        parquet_file,
+        creature,
+        focus_neurons: vec!["output-0".to_string()],
+        max_candidates: None,
+        analysis_deadline_ms: None,
+        random_seed: Some(42),
+    };
+
+    let result = analyze_neurons(&input).expect("Analysis should succeed");
+
+    env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING");
+
+    // When timing is enabled, metadata should contain timing data
+    let timing = result
+        .metadata
+        .timing
+        .expect("Timing should be present in neuron analysis when NEAT_AI_DISCOVERY_GPU_TIMING=1");
+
+    // Verify timing structure has expected fields
+    assert!(
+        timing.total_analysis_ms > 0.0,
+        "Total analysis time should be positive"
+    );
+
+    // GPU timing should have shader execution times
+    let gpu = &timing.gpu;
+    assert!(
+        gpu.shader_execution_ms >= 0.0,
+        "GPU shader execution time should be non-negative"
+    );
+
+    // CPU timing should have sample building time
+    let cpu = &timing.cpu;
+    assert!(
+        cpu.sample_building_ms >= 0.0,
+        "CPU sample building time should be non-negative"
     );
 }
