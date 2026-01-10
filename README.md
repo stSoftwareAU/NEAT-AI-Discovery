@@ -2045,18 +2045,6 @@ the same functional behavior.
 
 ### Building
 
-```bash
-cargo build
-```
-
-Build library for release:
-
-```bash
-cargo build --release --lib
-```
-
-### Building with runlib.sh
-
 The library can be built and installed using the `scripts/runlib.sh` script:
 
 ```bash
