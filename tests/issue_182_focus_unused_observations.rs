@@ -16,6 +16,7 @@ use neat_ai_discovery::analysis::{
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 use tempfile::NamedTempFile;
 
 /// Skip test if no GPU available.
@@ -143,6 +144,7 @@ fn create_test_records() -> Vec<DiscoverRecord> {
 
 /// Test that the environment variable is correctly parsed when set to "1".
 #[test]
+#[serial]
 fn issue_182_env_var_parsing() {
     // Test with env var set to "1"
     let _guard = EnvVarGuard::set("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS", "1");
@@ -153,6 +155,7 @@ fn issue_182_env_var_parsing() {
 }
 
 #[test]
+#[serial]
 fn issue_182_env_var_parsing_not_set() {
     // Test with env var explicitly removed (using guard to restore)
     // Note: This test may fail if run in parallel with other tests that set the env var.
@@ -166,6 +169,7 @@ fn issue_182_env_var_parsing_not_set() {
 }
 
 #[test]
+#[serial]
 fn issue_182_env_var_parsing_various_values() {
     // Test with env var set to "true"
     let _guard = EnvVarGuard::set("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS", "true");
@@ -176,6 +180,7 @@ fn issue_182_env_var_parsing_various_values() {
 }
 
 #[test]
+#[serial]
 fn issue_182_env_var_parsing_disabled() {
     // Test with env var set to "0" - should be disabled
     let _guard = EnvVarGuard::set("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS", "0");
