@@ -28,9 +28,8 @@ echo "✅ Running type checks..."
 cargo check --all-targets --all-features
 
 echo "🧪 Running tests..."
-# Run tests sequentially to avoid interference from shared global state (deadline override, GPU failure guard)
-cargo test --all-targets --all-features
-#-- --test-threads=1
+# Run tests sequentially to avoid interference from shared global state (deadline override, GPU failure guard, env vars)
+cargo test --all-targets --all-features -- --test-threads=1
 
 echo "🏗️ Building release library..."
 cargo build --release --lib

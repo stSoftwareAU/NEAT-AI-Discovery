@@ -1606,6 +1606,25 @@ whether discovery should be enabled:
 
   Hidden/constant sources keep weight 1.0; only `input-N` sources are biased.
 
+  **Focus on unused observations (10-Jan-2026, Issue #182)**: If you've added new observations
+  (input neurons) to your training data and want discovery to focus on these "unused" inputs
+  before evaluating existing connections, set `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1`.
+
+  When enabled, input neurons that have NO existing outgoing synapses are prioritised
+  (moved to the front of the evaluation queue). This is particularly useful when:
+
+  - You've added a few hundred new observations to the training data
+  - You want to quickly evaluate whether these new inputs improve the network
+  - You're using deadline-constrained runs and want new inputs evaluated first
+
+  Values that enable the feature: `1`, `true`, `yes` (case-insensitive)
+  Values that disable the feature: unset, empty, `0`, `false`, `no`
+
+  Example:
+  ```bash
+  export NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1
+  ```
+
   **Optional folding of constant sources into bias (7-Jan-2026)**: When a source neuron’s
   activation range is ~0, an add-synapse from that source behaves like a constant offset
   on the downstream neuron (equivalent to a bias change). To avoid paying complexity cost

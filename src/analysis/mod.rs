@@ -39,6 +39,9 @@ pub use shared::{NeuronNoCandidateDetail, SynapseNoCandidateDetail};
 // Re-export check_memory_for_parquet and ACTIVATION_SPECS from implementation (hasn't been moved yet)
 pub use implementation::{check_memory_for_parquet, ACTIVATION_SPECS};
 
+// Re-export focus_unused_observations_from_env for tests (Issue #182)
+pub use implementation::focus_unused_observations_from_env;
+
 // Implement analyze_all using the module functions
 use crate::{
     AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson,

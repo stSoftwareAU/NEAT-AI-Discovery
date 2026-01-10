@@ -1152,20 +1152,78 @@ fn source_input_index_bias_from_env() -> Option<f64> {
     }
 }
 
+/// Check if discovery should focus on unused observations (Issue #182).
+///
+/// When enabled via `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1`, input neurons
+/// that have NO existing outgoing synapses are prioritised in the source ordering.
+/// This is useful when new observations have been added to the training data and
+/// the user wants discovery to focus on connecting these new inputs first.
+///
+/// Values that enable the feature: "1", "true", "yes" (case-insensitive)
+/// Values that disable the feature: unset, empty, "0", "false", "no"
+pub fn focus_unused_observations_from_env() -> bool {
+    let raw = match std::env::var("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS") {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let trimmed = raw.trim().to_lowercase();
+    matches!(trimmed.as_str(), "1" | "true" | "yes")
+}
+
 /// Order eligible sources for evaluation.
 ///
 /// - Always respects forward-only candidate constraints (caller must filter by index).
 /// - Default behaviour is a pure random shuffle (no special casing for input indices).
 /// - If `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` is set, input sources are ordered
 ///   by a weighted random permutation favouring higher input indices.
+/// - If `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1` is set, input neurons with NO
+///   existing outgoing synapses are prioritised (moved to the front) before any other
+///   ordering is applied (Issue #182).
 fn order_eligible_sources(
     eligible_sources: &mut Vec<&OrderedNeuron>,
     seed: Option<u64>,
     context: &str,
     creature_input_count: usize,
+    used_inputs: Option<&HashSet<String>>,
 ) {
     if eligible_sources.len() <= 1 {
         return;
+    }
+
+    // Issue #182: When NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1 is set,
+    // prioritise input neurons that have NO existing outgoing synapses.
+    // These "unused observations" are moved to the front of the list.
+    if focus_unused_observations_from_env() {
+        if let Some(used) = used_inputs {
+            // Partition: unused inputs first, then others
+            // An input is "unused" if it's an input neuron AND not in the used_inputs set
+            let (mut unused_inputs, mut others): (Vec<_>, Vec<_>) = eligible_sources
+                .drain(..)
+                .partition(|n| parse_input_index(&n.uuid).is_some() && !used.contains(&n.uuid));
+
+            // Log when focusing on unused observations
+            if verbose_enabled() && !unused_inputs.is_empty() {
+                let unused_count = unused_inputs.len();
+                let used_count = others
+                    .iter()
+                    .filter(|n| parse_input_index(&n.uuid).is_some())
+                    .count();
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Focus unused observations: prioritising {} unused inputs over {} used inputs and {} other sources",
+                    unused_count,
+                    used_count,
+                    others.len() - used_count
+                );
+            }
+
+            // Shuffle each partition separately, then concatenate
+            shuffle_slice(&mut unused_inputs, seed, &format!("{context}:unused"));
+            shuffle_slice(&mut others, seed, &format!("{context}:others"));
+
+            eligible_sources.extend(unused_inputs);
+            eligible_sources.extend(others);
+            return;
+        }
     }
 
     let Some(bias) = source_input_index_bias_from_env() else {
@@ -7840,6 +7898,17 @@ pub(crate) fn analyze_neurons_with_cache(
     let order_map_arc = Arc::new(order_map);
     let neuron_squash_map_arc = Arc::new(neuron_squash_map);
 
+    // Issue #182: Build a set of "used" input neurons (those with at least one outgoing synapse)
+    // for the focus_unused_observations feature. Unused inputs will be prioritised in source ordering.
+    let used_inputs: HashSet<String> = input
+        .creature
+        .synapses
+        .iter()
+        .filter(|s| parse_input_index(&s.from_uuid).is_some())
+        .map(|s| s.from_uuid.clone())
+        .collect();
+    let used_inputs_arc = Arc::new(used_inputs);
+
     // Create a shared GPU work queue ONCE before the parallel loop.
     // This eliminates the overhead of creating multiple GPU devices (one per thread).
     // All GPU operations are processed by a single dedicated thread, improving utilisation.
@@ -7924,6 +7993,8 @@ pub(crate) fn analyze_neurons_with_cache(
             // - Candidates must remain forward-only (index < target_index).
             // - Under timeouts we want coverage over time, so we fully shuffle ALL
             //   eligible sources (inputs + hidden + constants).
+            // - If NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1, unused inputs are
+            //   prioritised to the front (Issue #182).
             //
             // If `random_seed` is provided, the shuffle is deterministic for a given
             // target UUID; otherwise it's non-deterministic.
@@ -7933,6 +8004,7 @@ pub(crate) fn analyze_neurons_with_cache(
                 input.random_seed,
                 &context,
                 input.creature.input,
+                Some(&*used_inputs_arc),
             );
 
             // Track total eligible sources for diagnostics
@@ -8588,6 +8660,17 @@ pub(crate) fn analyze_synapses_with_cache(
     let order_map_arc = Arc::new(order_map);
     let neuron_squash_map_arc = Arc::new(neuron_squash_map);
 
+    // Issue #182: Build a set of "used" input neurons (those with at least one outgoing synapse)
+    // for the focus_unused_observations feature. Unused inputs will be prioritised in source ordering.
+    let used_inputs: HashSet<String> = input
+        .creature
+        .synapses
+        .iter()
+        .filter(|s| parse_input_index(&s.from_uuid).is_some())
+        .map(|s| s.from_uuid.clone())
+        .collect();
+    let used_inputs_arc = Arc::new(used_inputs);
+
     // Map of neuron UUID -> bias, used when folding constant-source synapses into `setBias`.
     // Inputs are not present here (they have no bias).
     let neuron_bias_map: HashMap<String, f32> = input
@@ -8780,6 +8863,7 @@ pub(crate) fn analyze_synapses_with_cache(
                 input.random_seed,
                 &context,
                 input.creature.input,
+                Some(&*used_inputs_arc),
             );
 
             // Improved GPU utilisation: Build samples on CPU in parallel, then batch GPU evaluation
