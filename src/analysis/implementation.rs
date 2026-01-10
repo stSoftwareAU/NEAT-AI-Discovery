@@ -7844,6 +7844,7 @@ pub(crate) fn analyze_neurons_with_cache(
                 timed_out: false,
                 completed_focus_neurons: 0,
                 total_focus_neurons: original_focus_count,
+                timing: None,
             },
         });
     }
@@ -8392,6 +8393,7 @@ pub(crate) fn analyze_neurons_with_cache(
             // differ from the requested focus list. We keep the "requested" semantics so callers
             // can track long-run coverage consistently across early/normal return paths.
             total_focus_neurons: original_focus_count,
+            timing: None, // TODO: Implement timing collection for neuron analysis
         },
     })
 }
@@ -8591,6 +8593,12 @@ pub(crate) fn analyze_synapses_with_cache(
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_synapses")?;
 
     let diagnostics = Arc::new(Mutex::new(TargetDiagnostics::new(&unique_focus)));
+
+    // GPU timing collector (Issue #195)
+    // Only collects timing data when NEAT_AI_DISCOVERY_GPU_TIMING=1 is set
+    let timing_collector = Arc::new(super::shared::TimingCollector::new(
+        super::utils::gpu_timing_enabled(),
+    ));
 
     let deadline = build_deadline(input.analysis_deadline_ms);
     // Randomise the focus neuron order so that repeated runs with timeouts will
@@ -10094,6 +10102,7 @@ pub(crate) fn analyze_synapses_with_cache(
         total_focus_neurons: total_focus_count,
         input_index_min_seen_with_records: if saw_any_input { Some(input_min) } else { None },
         input_index_max_seen_with_records: if saw_any_input { Some(input_max) } else { None },
+        timing: timing_collector.finalize(),
     };
 
     Ok(AnalyzeSynapsesResult {

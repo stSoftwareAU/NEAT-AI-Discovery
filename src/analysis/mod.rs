@@ -25,13 +25,26 @@ mod implementation;
 
 // Re-export shared types
 pub use shared::{
-    AnalyzeAllResult, AnalyzeNeuronsResult, AnalyzeSynapsesResult, NeuronAnalysisMetadata,
-    NeuronNoCandidateReason, NeuronNoCandidateSummary, SynapseAnalysisMetadata,
-    SynapseNoCandidateReason, SynapseNoCandidateSummary,
+    // GPU timing types (Issue #195)
+    AnalysisTiming,
+    AnalyzeAllResult,
+    AnalyzeNeuronsResult,
+    AnalyzeSynapsesResult,
+    CpuTimingBreakdown,
+    GpuTimingBreakdown,
+    NeuronAnalysisMetadata,
+    NeuronNoCandidateReason,
+    NeuronNoCandidateSummary,
+    ShaderTiming,
+    SynapseAnalysisMetadata,
+    SynapseNoCandidateReason,
+    SynapseNoCandidateSummary,
+    TimingCollector,
+    TimingScope,
 };
 
 // Re-export from utils
-pub use utils::verbose_enabled;
+pub use utils::{gpu_timing_enabled, verbose_enabled};
 
 // Re-export Detail types from shared
 pub use shared::{NeuronNoCandidateDetail, SynapseNoCandidateDetail};
