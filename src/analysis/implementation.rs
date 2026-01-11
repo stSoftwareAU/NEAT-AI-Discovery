@@ -10,7 +10,7 @@ use anyhow::{anyhow, Context, Result};
 use crate::analysis::shared::{
     AnalyzeNeuronsResult, AnalyzeSynapsesResult, NeuronNoCandidateDetail, NeuronNoCandidateReason,
     NeuronNoCandidateSummary, SynapseNoCandidateDetail, SynapseNoCandidateReason,
-    SynapseNoCandidateSummary,
+    SynapseNoCandidateSummary, TimingScope,
 };
 use bytemuck::{Pod, Zeroable};
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -7721,6 +7721,12 @@ pub(crate) fn analyze_neurons_with_cache(
 
     let diagnostics = Arc::new(Mutex::new(NeuronDiagnostics::new(&unique_focus)));
 
+    // GPU timing collector (Issue #195)
+    // Only collects timing data when NEAT_AI_DISCOVERY_GPU_TIMING=1 is set
+    let timing_collector = Arc::new(super::shared::TimingCollector::new(
+        super::utils::gpu_timing_enabled(),
+    ));
+
     let deadline = build_deadline(input.analysis_deadline_ms);
     // GPU is always required - TypeScript layer calls check_gpu_available() and skips
     // discovery entirely on machines without GPU. Reaching here without GPU is a bug.
@@ -7844,6 +7850,7 @@ pub(crate) fn analyze_neurons_with_cache(
                 timed_out: false,
                 completed_focus_neurons: 0,
                 total_focus_neurons: original_focus_count,
+                timing: None,
             },
         });
     }
@@ -8114,19 +8121,22 @@ pub(crate) fn analyze_neurons_with_cache(
                 samples: Vec<HelpfulSample>,
             }
 
-            let work_results: Vec<NeuronWorkResult> = sources_to_process
-                .par_iter()
-                .map(|(source, from_records_arc)| {
-                    let source_uuid = source.uuid.as_str();
-                    let from_records = from_records_arc.as_ref();
-                    // Use pre-built target map - avoids rebuilding HashMap for each source
-                    let samples = target_map_ref.build_samples_from(from_records);
-                    NeuronWorkResult {
-                        source_uuid: source_uuid.to_string(),
-                        samples,
-                    }
-                })
-                .collect();
+            let work_results: Vec<NeuronWorkResult> = {
+                let _timing = TimingScope::sample_building(&timing_collector);
+                sources_to_process
+                    .par_iter()
+                    .map(|(source, from_records_arc)| {
+                        let source_uuid = source.uuid.as_str();
+                        let from_records = from_records_arc.as_ref();
+                        // Use pre-built target map - avoids rebuilding HashMap for each source
+                        let samples = target_map_ref.build_samples_from(from_records);
+                        NeuronWorkResult {
+                            source_uuid: source_uuid.to_string(),
+                            samples,
+                        }
+                    })
+                    .collect()
+            };
 
             // Phase 3: Batch diagnostics updates for sample building results
             {
@@ -8183,14 +8193,17 @@ pub(crate) fn analyze_neurons_with_cache(
                     //
                     // NOTE: We don't use "averaging over all samples" because when errors are
                     // split ~50/50, the average cancels out and no candidate is found.
-                    let split_result = evaluate_relu_candidates_split(
-                        gpu,
-                        &result.source_uuid,
-                        target_uuid,
-                        &result.samples,
-                        threshold,
-                        target_squash,
-                    )?;
+                    let split_result = {
+                        let _timing = TimingScope::shader(&timing_collector, "relu");
+                        evaluate_relu_candidates_split(
+                            gpu,
+                            &result.source_uuid,
+                            target_uuid,
+                            &result.samples,
+                            threshold,
+                            target_squash,
+                        )?
+                    };
 
                     if let Some(mut candidate) = split_result.positive_error_candidate {
                         // Issue #130: Apply source variance discount
@@ -8237,15 +8250,19 @@ pub(crate) fn analyze_neurons_with_cache(
                     }
 
                     for spec in ACTIVATION_SPECS.iter() {
-                        if let Some(mut candidate) = evaluate_activation_candidate(
-                            gpu,
-                            &result.source_uuid,
-                            target_uuid,
-                            &result.samples,
-                            threshold,
-                            spec,
-                            target_squash,
-                        )? {
+                        let candidate_result = {
+                            let _timing = TimingScope::shader(&timing_collector, "activation");
+                            evaluate_activation_candidate(
+                                gpu,
+                                &result.source_uuid,
+                                target_uuid,
+                                &result.samples,
+                                threshold,
+                                spec,
+                                target_squash,
+                            )?
+                        };
+                        if let Some(mut candidate) = candidate_result {
                             // Issue #130: Apply source variance discount
                             candidate.expected_creature_error_reduction *= source_variance_discount;
                             candidate.expected_creature_score_gain *= source_variance_discount;
@@ -8392,6 +8409,7 @@ pub(crate) fn analyze_neurons_with_cache(
             // differ from the requested focus list. We keep the "requested" semantics so callers
             // can track long-run coverage consistently across early/normal return paths.
             total_focus_neurons: original_focus_count,
+            timing: timing_collector.finalize(),
         },
     })
 }
@@ -8591,6 +8609,12 @@ pub(crate) fn analyze_synapses_with_cache(
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_synapses")?;
 
     let diagnostics = Arc::new(Mutex::new(TargetDiagnostics::new(&unique_focus)));
+
+    // GPU timing collector (Issue #195)
+    // Only collects timing data when NEAT_AI_DISCOVERY_GPU_TIMING=1 is set
+    let timing_collector = Arc::new(super::shared::TimingCollector::new(
+        super::utils::gpu_timing_enabled(),
+    ));
 
     let deadline = build_deadline(input.analysis_deadline_ms);
     // Randomise the focus neuron order so that repeated runs with timeouts will
@@ -9225,36 +9249,39 @@ pub(crate) fn analyze_synapses_with_cache(
 
             // Even if target_map is empty, we continue to record diagnostics
             // about what sources were evaluated (important for debugging).
-            let source_results: Vec<SourceWorkResult> = sources_to_process
-                .par_iter()
-                .map(|(source, from_records_arc)| {
-                    let source_uuid = source.uuid.as_str();
-                    let from_records = from_records_arc.as_ref();
-                    let record_count = from_records.len();
+            let source_results: Vec<SourceWorkResult> = {
+                let _timing = TimingScope::sample_building(&timing_collector);
+                sources_to_process
+                    .par_iter()
+                    .map(|(source, from_records_arc)| {
+                        let source_uuid = source.uuid.as_str();
+                        let from_records = from_records_arc.as_ref();
+                        let record_count = from_records.len();
 
-                    // Use pre-built target map - avoids rebuilding HashMap for each source
-                    let samples = target_map_ref.build_samples_from(from_records);
-                    let had_samples = !samples.is_empty();
+                        // Use pre-built target map - avoids rebuilding HashMap for each source
+                        let samples = target_map_ref.build_samples_from(from_records);
+                        let had_samples = !samples.is_empty();
 
-                    let work = if had_samples {
-                        Some(HelpfulWork {
+                        let work = if had_samples {
+                            Some(HelpfulWork {
+                                source_uuid: source_uuid.to_string(),
+                                target_uuid: target_uuid.to_string(),
+                                samples,
+                                existing_weight: None,
+                            })
+                        } else {
+                            None
+                        };
+
+                        SourceWorkResult {
+                            work,
+                            had_samples,
                             source_uuid: source_uuid.to_string(),
-                            target_uuid: target_uuid.to_string(),
-                            samples,
-                            existing_weight: None,
-                        })
-                    } else {
-                        None
-                    };
-
-                    SourceWorkResult {
-                        work,
-                        had_samples,
-                        source_uuid: source_uuid.to_string(),
-                        record_count,
-                    }
-                })
-                .collect();
+                            record_count,
+                        }
+                    })
+                    .collect()
+            };
 
             // Extract work batch and batch diagnostics updates
             let mut helpful_work_batch: Vec<HelpfulWork> = Vec::new();
@@ -9327,7 +9354,10 @@ pub(crate) fn analyze_synapses_with_cache(
                     }
                 }
 
-                let helpful_stats_batch = gpu.evaluate_helpful_batch(helpful_samples, &deadline)?;
+                let helpful_stats_batch = {
+                    let _timing = TimingScope::shader(&timing_collector, "helpful");
+                    gpu.evaluate_helpful_batch(helpful_samples, &deadline)?
+                };
 
                 // Process results - collect all updates first, then apply in batches (reduces mutex contention)
                 let mut candidates_to_add = Vec::new();
@@ -9336,7 +9366,9 @@ pub(crate) fn analyze_synapses_with_cache(
                 let mut diagnostics_below_threshold = Vec::new();
                 let mut diagnostics_selected = Vec::new();
 
-                for (work, stats) in helpful_work_batch.iter().zip(helpful_stats_batch.iter()) {
+                {
+                    let _timing = TimingScope::result_processing(&timing_collector);
+                    for (work, stats) in helpful_work_batch.iter().zip(helpful_stats_batch.iter()) {
                     let positive_is_better = stats.positive_count >= stats.negative_count;
                     let gpu_improved_count = if positive_is_better {
                         stats.positive_count
@@ -9539,6 +9571,7 @@ pub(crate) fn analyze_synapses_with_cache(
                             target_neuron_stats: target_stats,
                         });
                     }
+                    } // End timing scope for result processing
                 }
 
                 // Apply all diagnostics updates in batches (minimizes mutex contention)
@@ -9615,7 +9648,10 @@ pub(crate) fn analyze_synapses_with_cache(
                             .map(|w| (w.samples.clone(), w.synapse.weight))
                             .collect();
 
-                        let batch_stats = gpu.evaluate_harmful_batch(batch_input, &deadline)?;
+                        let batch_stats = {
+                            let _timing = TimingScope::shader(&timing_collector, "harmful");
+                            gpu.evaluate_harmful_batch(batch_input, &deadline)?
+                        };
 
                         // Phase 3: Process results
                         let mut harmful_candidates = Vec::with_capacity(batch_stats.len());
@@ -10094,6 +10130,7 @@ pub(crate) fn analyze_synapses_with_cache(
         total_focus_neurons: total_focus_count,
         input_index_min_seen_with_records: if saw_any_input { Some(input_min) } else { None },
         input_index_max_seen_with_records: if saw_any_input { Some(input_max) } else { None },
+        timing: timing_collector.finalize(),
     };
 
     Ok(AnalyzeSynapsesResult {

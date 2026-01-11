@@ -492,6 +492,10 @@ pub struct SynapseAnalysisMetadataJson {
     /// Maximum input index observed with non-empty records (eg 1555).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_index_max_seen_with_records: Option<usize>,
+    /// GPU timing data for performance diagnostics (Issue #195).
+    /// Only present when `NEAT_AI_DISCOVERY_GPU_TIMING=1` is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timing: Option<AnalysisTimingJson>,
 }
 
 /// JSON representation of neuron analysis metadata.
@@ -508,6 +512,64 @@ pub struct NeuronAnalysisMetadataJson {
     pub completed_focus_neurons: usize,
     /// Total focus neurons requested for this analysis invocation.
     pub total_focus_neurons: usize,
+    /// GPU timing data for performance diagnostics (Issue #195).
+    /// Only present when `NEAT_AI_DISCOVERY_GPU_TIMING=1` is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timing: Option<AnalysisTimingJson>,
+}
+
+// =============================================================================
+// GPU Timing JSON Types (Issue #195)
+// =============================================================================
+
+/// JSON representation of per-shader timing statistics.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ShaderTimingJson {
+    /// Number of times this shader was executed.
+    pub calls: u32,
+    /// Total execution time in milliseconds.
+    pub total_ms: f64,
+    /// Average execution time per call in milliseconds.
+    pub avg_ms: f64,
+}
+
+/// JSON representation of GPU-side timing breakdown.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuTimingBreakdownJson {
+    /// Total time spent in shader execution (all shaders combined) in milliseconds.
+    pub shader_execution_ms: f64,
+    /// Total time spent in buffer mapping/transfers in milliseconds.
+    pub buffer_transfer_ms: f64,
+    /// Per-shader timing statistics.
+    /// Keys are shader names: "helpful", "harmful", "relu", "activation", "bias"
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub shader_timings: std::collections::HashMap<String, ShaderTimingJson>,
+}
+
+/// JSON representation of CPU-side timing breakdown.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CpuTimingBreakdownJson {
+    /// Time spent building samples for GPU evaluation in milliseconds.
+    pub sample_building_ms: f64,
+    /// Time spent processing results from GPU in milliseconds.
+    pub result_processing_ms: f64,
+}
+
+/// JSON representation of complete timing data for an analysis run.
+///
+/// Only populated when `NEAT_AI_DISCOVERY_GPU_TIMING=1` is set.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisTimingJson {
+    /// Total wall-clock time for the analysis in milliseconds.
+    pub total_analysis_ms: f64,
+    /// GPU-side timing breakdown.
+    pub gpu: GpuTimingBreakdownJson,
+    /// CPU-side timing breakdown.
+    pub cpu: CpuTimingBreakdownJson,
 }
 
 /// Internal input structure for synapse analysis (used by analyze_all)
@@ -768,6 +830,36 @@ pub struct NeuronDiagnosticDetailJson {
     pub threshold: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outgoing_weight: Option<f32>,
+}
+
+/// Convert internal timing data to JSON representation.
+fn timing_to_json(timing: &analysis::AnalysisTiming) -> AnalysisTimingJson {
+    AnalysisTimingJson {
+        total_analysis_ms: timing.total_analysis_ms,
+        gpu: GpuTimingBreakdownJson {
+            shader_execution_ms: timing.gpu.shader_execution_ms,
+            buffer_transfer_ms: timing.gpu.buffer_transfer_ms,
+            shader_timings: timing
+                .gpu
+                .shader_timings
+                .iter()
+                .map(|(name, st)| {
+                    (
+                        name.clone(),
+                        ShaderTimingJson {
+                            calls: st.calls,
+                            total_ms: st.total_ms,
+                            avg_ms: st.avg_ms,
+                        },
+                    )
+                })
+                .collect(),
+        },
+        cpu: CpuTimingBreakdownJson {
+            sample_building_ms: timing.cpu.sample_building_ms,
+            result_processing_ms: timing.cpu.result_processing_ms,
+        },
+    }
 }
 
 fn synapse_diagnostics_json(
@@ -1107,6 +1199,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     total_focus_neurons: s.metadata.total_focus_neurons,
                     input_index_min_seen_with_records: s.metadata.input_index_min_seen_with_records,
                     input_index_max_seen_with_records: s.metadata.input_index_max_seen_with_records,
+                    timing: s.metadata.timing.as_ref().map(timing_to_json),
                 }),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 synapse_weight_updates,
@@ -1121,6 +1214,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     timed_out: n.metadata.timed_out,
                     completed_focus_neurons: n.metadata.completed_focus_neurons,
                     total_focus_neurons: n.metadata.total_focus_neurons,
+                    timing: n.metadata.timing.as_ref().map(timing_to_json),
                 }),
                 error: None,
             };

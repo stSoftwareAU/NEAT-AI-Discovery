@@ -1786,6 +1786,52 @@ This logs:
 - Selected batch size
 - Tuning hints
 
+### GPU Kernel Profiling (Issue #195)
+
+For performance diagnostics, the library can collect timing data for GPU operations.
+This helps identify:
+- Which shaders are slowest
+- CPU vs GPU time breakdown
+- Buffer transfer overhead
+
+Enable GPU timing collection:
+
+```bash
+export NEAT_AI_DISCOVERY_GPU_TIMING=1
+```
+
+When enabled, the `synapseMetadata` (and `neuronMetadata`) in the JSON response
+includes a `timing` object:
+
+```json
+{
+  "synapseMetadata": {
+    "candidatesFound": 150,
+    "timing": {
+      "totalAnalysisMs": 5678.5,
+      "gpu": {
+        "shaderExecutionMs": 2345.2,
+        "bufferTransferMs": 1234.1,
+        "shaderTimings": {
+          "helpful": { "calls": 150, "totalMs": 234.5, "avgMs": 1.56 },
+          "harmful": { "calls": 150, "totalMs": 189.2, "avgMs": 1.26 }
+        }
+      },
+      "cpu": {
+        "sampleBuildingMs": 1500.0,
+        "resultProcessingMs": 599.2
+      }
+    }
+  }
+}
+```
+
+**Notes**:
+- Timing collection adds approximately 5% overhead when enabled
+- Disabled by default for production use
+- Timing data is only present when the env var is set before analysis starts
+- The env var check is cached on first use, so it must be set before the first analysis
+
 ## Debugging Deadlocks
 
 The library includes built-in debugging tools for diagnosing stuck processes and
@@ -2479,16 +2525,8 @@ if (estimatedBytes > FLUSH_THRESHOLD) {
 ## Code Quality
 
 ```bash
-# Format code
-cargo fmt
 
-# Lint code
-cargo clippy
-
-# Check code
-cargo check
-
-# Run quality checks
+# Run quality checks ( format, check & test)
 ./quality.sh
 ```
 
