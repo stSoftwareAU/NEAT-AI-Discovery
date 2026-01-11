@@ -2525,16 +2525,8 @@ if (estimatedBytes > FLUSH_THRESHOLD) {
 ## Code Quality
 
 ```bash
-# Format code
-cargo fmt
 
-# Lint code
-cargo clippy
-
-# Check code
-cargo check
-
-# Run quality checks
+# Run quality checks ( format, check & test)
 ./quality.sh
 ```
 
