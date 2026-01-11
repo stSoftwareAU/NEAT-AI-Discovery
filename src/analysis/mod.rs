@@ -31,6 +31,9 @@ pub use shared::{
     AnalyzeNeuronsResult,
     AnalyzeSynapsesResult,
     CpuTimingBreakdown,
+    // GPU info and zero-copy types (Issue #228)
+    GpuAdapterInfo,
+    GpuDeviceType,
     GpuTimingBreakdown,
     NeuronAnalysisMetadata,
     NeuronNoCandidateReason,
@@ -41,6 +44,7 @@ pub use shared::{
     SynapseNoCandidateSummary,
     TimingCollector,
     TimingScope,
+    ZeroCopyBufferConfig,
 };
 
 // Re-export from utils
@@ -441,6 +445,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 }
 
 // Re-export from modules
+pub use gpu::supports_unified_memory;
 pub use gpu::GpuAnalyzer;
 pub use gpu::GpuAvailabilityResult;
 pub use neuron::analyze_neurons;

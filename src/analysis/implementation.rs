@@ -500,6 +500,35 @@ enum GpuPerformanceTier {
     Unknown,
 }
 
+/// Detect if the GPU has unified memory architecture.
+///
+/// Unified memory means CPU and GPU share the same physical memory,
+/// enabling zero-copy buffer sharing.
+///
+/// Returns `true` for:
+/// - Apple Silicon (M1/M2/M3/M4) - always unified memory
+/// - Integrated GPUs on some Vulkan devices (may support unified memory)
+///
+/// Returns `false` for:
+/// - Discrete GPUs (separate VRAM)
+fn detect_unified_memory(adapter_info: &wgpu::AdapterInfo) -> bool {
+    let name = adapter_info.name.to_lowercase();
+
+    // Apple Silicon always has unified memory
+    if name.contains("apple") {
+        return true;
+    }
+
+    // Integrated GPUs may have unified memory (e.g., Intel, AMD APUs)
+    // However, wgpu doesn't expose whether the memory is actually unified,
+    // so we're conservative and only claim unified for Apple Silicon.
+    //
+    // Note: Some integrated GPUs on Linux with Vulkan might support unified memory,
+    // but the wgpu API doesn't expose this information reliably.
+    // We could enable this in the future with more testing.
+    false
+}
+
 /// Detect GPU performance tier from adapter info.
 /// Returns High for M4, Pro/Max variants; Standard for base M-series; Unknown otherwise.
 fn detect_gpu_tier(adapter_info: &wgpu::AdapterInfo) -> GpuPerformanceTier {
@@ -4493,6 +4522,71 @@ impl GpuAnalyzer {
         }
     }
 
+    /// Check if the GPU supports unified memory architecture.
+    ///
+    /// On unified memory systems (Apple Silicon), CPU and GPU share the same
+    /// physical memory, enabling zero-copy buffer sharing.
+    ///
+    /// Returns `true` if:
+    /// - GPU name contains "Apple" (Apple Silicon Macs)
+    /// - GPU is an integrated GPU (Intel/AMD integrated)
+    ///
+    /// Returns `false` if:
+    /// - Discrete GPU (separate VRAM)
+    /// - GPU not available
+    pub fn supports_unified_memory() -> bool {
+        use std::sync::OnceLock;
+        static UNIFIED_MEMORY: OnceLock<bool> = OnceLock::new();
+
+        *UNIFIED_MEMORY.get_or_init(|| {
+            let Some(info) = Self::get_adapter_info_internal() else {
+                return false;
+            };
+            detect_unified_memory(&info)
+        })
+    }
+
+    /// Get information about the GPU adapter.
+    ///
+    /// Returns `None` if no GPU is available.
+    pub fn get_adapter_info() -> Option<crate::analysis::shared::GpuAdapterInfo> {
+        use std::sync::OnceLock;
+        static ADAPTER_INFO: OnceLock<Option<crate::analysis::shared::GpuAdapterInfo>> =
+            OnceLock::new();
+
+        ADAPTER_INFO
+            .get_or_init(|| {
+                let raw_info = Self::get_adapter_info_internal()?;
+                let has_unified_memory = detect_unified_memory(&raw_info);
+                let config = crate::analysis::shared::ZeroCopyBufferConfig::from_env();
+                let zero_copy_enabled = config.enabled_with_hardware(has_unified_memory);
+
+                Some(crate::analysis::shared::GpuAdapterInfo {
+                    name: raw_info.name,
+                    device_type: raw_info.device_type.into(),
+                    has_unified_memory,
+                    zero_copy_enabled,
+                })
+            })
+            .clone()
+    }
+
+    /// Internal helper to get raw wgpu adapter info.
+    fn get_adapter_info_internal() -> Option<wgpu::AdapterInfo> {
+        // Suppress Mesa/libEGL warnings
+        suppress_mesa_warnings_if_requested();
+        ensure_xdg_runtime_dir();
+
+        let instance = create_wgpu_instance_safely()?;
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))?;
+
+        Some(adapter.get_info())
+    }
+
     fn new() -> Result<Self> {
         // Suppress Mesa/libEGL warnings if requested (must be called before GPU init)
         suppress_mesa_warnings_if_requested();
@@ -7851,6 +7945,7 @@ pub(crate) fn analyze_neurons_with_cache(
                 completed_focus_neurons: 0,
                 total_focus_neurons: original_focus_count,
                 timing: None,
+                gpu_info: GpuAnalyzer::get_adapter_info(),
             },
         });
     }
@@ -8410,6 +8505,7 @@ pub(crate) fn analyze_neurons_with_cache(
             // can track long-run coverage consistently across early/normal return paths.
             total_focus_neurons: original_focus_count,
             timing: timing_collector.finalize(),
+            gpu_info: GpuAnalyzer::get_adapter_info(),
         },
     })
 }
@@ -10131,6 +10227,7 @@ pub(crate) fn analyze_synapses_with_cache(
         input_index_min_seen_with_records: if saw_any_input { Some(input_min) } else { None },
         input_index_max_seen_with_records: if saw_any_input { Some(input_max) } else { None },
         timing: timing_collector.finalize(),
+        gpu_info: GpuAnalyzer::get_adapter_info(),
     };
 
     Ok(AnalyzeSynapsesResult {

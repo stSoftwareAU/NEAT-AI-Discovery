@@ -496,6 +496,9 @@ pub struct SynapseAnalysisMetadataJson {
     /// Only present when `NEAT_AI_DISCOVERY_GPU_TIMING=1` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timing: Option<AnalysisTimingJson>,
+    /// Information about the GPU adapter used (Issue #228).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_info: Option<GpuAdapterInfoJson>,
 }
 
 /// JSON representation of neuron analysis metadata.
@@ -516,6 +519,25 @@ pub struct NeuronAnalysisMetadataJson {
     /// Only present when `NEAT_AI_DISCOVERY_GPU_TIMING=1` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timing: Option<AnalysisTimingJson>,
+    /// Information about the GPU adapter used (Issue #228).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_info: Option<GpuAdapterInfoJson>,
+}
+
+// =============================================================================
+// GPU Info JSON Types (Issue #228)
+// =============================================================================
+
+/// JSON representation of GPU adapter information.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuAdapterInfoJson {
+    /// Human-readable name of the GPU (e.g., "Apple M4 Pro").
+    pub name: String,
+    /// Whether the GPU has unified memory architecture.
+    pub unified_memory: bool,
+    /// Whether zero-copy buffer sharing is currently enabled.
+    pub zero_copy_enabled: bool,
 }
 
 // =============================================================================
@@ -830,6 +852,15 @@ pub struct NeuronDiagnosticDetailJson {
     pub threshold: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outgoing_weight: Option<f32>,
+}
+
+/// Convert GPU adapter info to JSON representation.
+fn gpu_info_to_json(info: &analysis::GpuAdapterInfo) -> GpuAdapterInfoJson {
+    GpuAdapterInfoJson {
+        name: info.name.clone(),
+        unified_memory: info.has_unified_memory,
+        zero_copy_enabled: info.zero_copy_enabled,
+    }
 }
 
 /// Convert internal timing data to JSON representation.
@@ -1200,6 +1231,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     input_index_min_seen_with_records: s.metadata.input_index_min_seen_with_records,
                     input_index_max_seen_with_records: s.metadata.input_index_max_seen_with_records,
                     timing: s.metadata.timing.as_ref().map(timing_to_json),
+                    gpu_info: s.metadata.gpu_info.as_ref().map(gpu_info_to_json),
                 }),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 synapse_weight_updates,
@@ -1215,6 +1247,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     completed_focus_neurons: n.metadata.completed_focus_neurons,
                     total_focus_neurons: n.metadata.total_focus_neurons,
                     timing: n.metadata.timing.as_ref().map(timing_to_json),
+                    gpu_info: n.metadata.gpu_info.as_ref().map(gpu_info_to_json),
                 }),
                 error: None,
             };
