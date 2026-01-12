@@ -2555,4 +2555,5 @@ All dependencies build automatically on remote, unattended machines.
 
 ## License
 
-This project is licensed under the terms specified in the LICENSE file.
+This project is licensed under the terms of the Apache License 2.0. For the full
+license text, please see [LICENSE](./LICENSE)
