@@ -1119,14 +1119,27 @@ pub fn rank_focus_neurons(
     const DEFAULT_COST_OF_GROWTH: f32 = 1e-7;
     let cost_of_growth_threshold = cost_of_growth.unwrap_or(DEFAULT_COST_OF_GROWTH);
 
-    // Return ALL neurons with impact below costOfGrowth as removal candidates
+    // Issue #235: Return ALL neurons where removal improves the creature's score.
+    //
+    // The only filter is: "will this candidate improve the creature's score?"
+    // A removal improves score when: removal_savings > activation_weighted_impact
+    //
+    // Previously, we filtered on activation_weighted_impact < cost_of_growth_threshold,
+    // but this missed neurons where removal_savings (due to many synapses) exceeds
+    // the neuron's contribution even when activation_weighted_impact is above threshold.
+    //
     // Use parallel iteration for faster processing on multi-core systems
     let mut removal_candidates: Vec<RemovalCandidate> = neurons
         .par_iter()
-        .filter(|n| n.activation_weighted_impact < cost_of_growth_threshold)
-        .map(|n| {
+        .filter_map(|n| {
             let (incoming, outgoing) = count_synapses_for_neuron(&n.neuron_uuid, creature);
             let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
+
+            // Issue #235: Filter on savings > impact (removal improves score)
+            // instead of impact < threshold (may miss valid candidates)
+            if savings <= n.activation_weighted_impact {
+                return None;
+            }
 
             // Issue #117: expected_error_reduction should be based on activation_weighted_impact,
             // NOT total_error. The activation_weighted_impact represents the actual contribution
@@ -1136,7 +1149,10 @@ pub fn rank_focus_neurons(
             // predictions like 27% when actual reduction was ~0% (for low-impact neurons).
             let expected_error_reduction = n.activation_weighted_impact;
 
-            RemovalCandidate {
+            // Net score improvement = savings - impact
+            let net_improvement = savings - n.activation_weighted_impact;
+
+            Some(RemovalCandidate {
                 neuron_uuid: n.neuron_uuid.clone(),
                 total_error: n.total_error,
                 impact: n.impact,
@@ -1147,13 +1163,14 @@ pub fn rank_focus_neurons(
                 removal_savings: savings,
                 expected_error_reduction,
                 reason: format!(
-                    "Impact {:.2e} < costOfGrowth ({:.2e}), {} synapses, saves {:.2e}",
+                    "Removal improves score: saves {:.2e} > impact {:.2e} (net +{:.2e}), {} synapses, costOfGrowth={:.2e}",
+                    savings,
                     n.activation_weighted_impact,
-                    cost_of_growth_threshold,
+                    net_improvement,
                     incoming + outgoing,
-                    savings
+                    cost_of_growth_threshold,
                 ),
-            }
+            })
         })
         .collect();
 
@@ -1229,14 +1246,21 @@ pub fn rank_focus_neurons(
         }
     }
 
-    // Sort so "safe prunes" (activation_weighted_impact < costOfGrowth) remain first,
-    // followed by exploratory candidates, then within each group by ascending impact.
+    // Issue #235: Sort by net improvement (removal_savings - activation_weighted_impact).
+    // Higher net improvement = better candidate (removing it saves more than its contribution).
+    // Exploratory candidates (from high-error section) have expected_error_reduction = 0.0,
+    // so they sort last (their net improvement calculation uses impact directly).
     removal_candidates.sort_by(|a, b| {
-        let a_safe = a.activation_weighted_impact < cost_of_growth_threshold;
-        let b_safe = b.activation_weighted_impact < cost_of_growth_threshold;
-        b_safe
-            .cmp(&a_safe)
+        // Calculate net improvement for each candidate
+        let a_net = a.removal_savings - a.activation_weighted_impact;
+        let b_net = b.removal_savings - b.activation_weighted_impact;
+
+        // Sort by descending net improvement (best candidates first)
+        b_net
+            .partial_cmp(&a_net)
+            .unwrap_or(Ordering::Equal)
             .then_with(|| {
+                // For ties, prefer lower impact (safer removal)
                 a.activation_weighted_impact
                     .partial_cmp(&b.activation_weighted_impact)
                     .unwrap_or(Ordering::Equal)

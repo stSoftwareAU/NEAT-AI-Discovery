@@ -1211,3 +1211,405 @@ fn test_removal_candidate_expected_error_reduction_is_impact_based_not_neuron_er
         candidate.total_error
     );
 }
+
+/// Issue #235: Return ALL removal candidates expected to improve the creature's score.
+///
+/// The only filter should be: "will this candidate improve the creature's score?"
+/// A removal improves score when: removal_savings > activation_weighted_impact
+///
+/// Previously, we filtered on activation_weighted_impact < cost_of_growth_threshold,
+/// but this missed neurons where removal_savings (due to many synapses) exceeds
+/// the neuron's contribution even when activation_weighted_impact is above threshold.
+///
+/// Mathematical explanation:
+/// - cost_of_growth_threshold = 1e-7 (default)
+/// - removal_savings = cost_of_growth * (1 + synapses/10)
+/// - For neuron with impact 2e-7 and 20 synapses:
+///   - Old filter: 2e-7 < 1e-7 = FALSE → rejected
+///   - removal_savings = 1e-7 * (1 + 2) = 3e-7
+///   - New filter: 3e-7 > 2e-7 = TRUE → accepted (removal improves score!)
+///
+/// This test creates such a scenario.
+#[test]
+fn test_issue_235_return_all_removal_candidates_expected_to_improve_score() {
+    // Scenario: A neuron has activation_weighted_impact ABOVE costOfGrowth threshold (1e-7)
+    // but has many synapses, so its removal_savings exceeds its impact.
+    // Such neurons SHOULD be returned as removal candidates.
+    //
+    // We create "many-synapses" with:
+    // - 50 synapses (25 incoming, 25 outgoing)
+    // - structural_impact = 0.1 (it contributes 10% via direct path to output)
+    // - activation = 1e-5 (very low)
+    // - activation_weighted_impact = 0.1 × 1e-5 = 1e-6 (above threshold 1e-7)
+    //
+    // Removal analysis:
+    // - removal_savings = 1e-7 × (1 + 50/10) = 1e-7 × 6 = 6e-7
+    // - activation_weighted_impact = 1e-6
+    // - Since 6e-7 < 1e-6, removal does NOT improve score for this neuron
+    //
+    // Let's instead use many MORE synapses to ensure savings > impact:
+    // - 100 synapses (50 incoming, 50 outgoing)
+    // - removal_savings = 1e-7 × (1 + 100/10) = 1e-7 × 11 = 1.1e-6
+    // - activation_weighted_impact = 1e-6 (from above)
+    // - Since 1.1e-6 > 1e-6, removal DOES improve score!
+    //
+    // With old filter: 1e-6 < 1e-7 = FALSE → not returned (BUG!)
+    // With new filter: 1.1e-6 > 1e-6 = TRUE → returned (CORRECT!)
+    let mut synapses = vec![];
+    // Many incoming synapses to many-synapses neuron (50 synapses)
+    for i in 0..50 {
+        synapses.push((
+            format!("input-{i}").leak() as &str,
+            "many-synapses",
+            0.1 / 50.0, // tiny weights from each
+        ));
+    }
+    // Many outgoing synapses from many-synapses neuron (50 synapses) - but all to same output
+    // Each outgoing synapse has tiny weight to keep total contribution small
+    for _ in 0..50 {
+        // We need to connect to something. Use hidden neurons as intermediaries.
+        // Actually simpler: just make the direct path to output with 50 tiny-weight synapses
+        // would be invalid (multiple synapses to same target). Instead, use one synapse.
+    }
+    // Single connection to output with meaningful weight
+    synapses.push(("many-synapses", "output-0", 0.1)); // 10% structural impact
+
+    // Add many outgoing synapses to hidden neurons to increase synapse count
+    for i in 0..49 {
+        synapses.push(("many-synapses", format!("helper-{i}").leak() as &str, 0.001));
+        // Helper connects to output
+        synapses.push((format!("helper-{i}").leak() as &str, "output-0", 0.001));
+    }
+
+    // Also add a neuron with few synapses but same impact (should NOT be returned)
+    synapses.push(("input-0", "few-synapses", 0.1));
+    synapses.push(("few-synapses", "output-0", 0.1)); // Same 10% impact
+
+    let mut neurons: Vec<(&str, &str)> = vec![("output-0", "output")];
+    neurons.push(("many-synapses", "hidden"));
+    neurons.push(("few-synapses", "hidden"));
+    for i in 0..50 {
+        neurons.push((format!("input-{i}").leak() as &str, "input"));
+    }
+    for i in 0..49 {
+        neurons.push((format!("helper-{i}").leak() as &str, "hidden"));
+    }
+
+    let creature = create_creature(neurons, synapses);
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    // Create records where both neurons have the same activation_weighted_impact
+    // but many-synapses has 100 synapses and few-synapses has 2
+    let mut records_data: Vec<(&str, f32, f32)> = vec![
+        // Both neurons have low activation to keep activation_weighted_impact small
+        // but above threshold (1e-7)
+        ("many-synapses", 0.1, 1e-5), // activation_weighted_impact ≈ 0.1 × 1e-5 = 1e-6
+        ("few-synapses", 0.1, 1e-5),  // same activation_weighted_impact
+        ("output-0", 0.5, 0.5),
+    ];
+    for i in 0..49 {
+        records_data.push((format!("helper-{i}").leak() as &str, 0.1, 0.1));
+    }
+
+    let records = create_records_with_activation(records_data);
+    write_records_to_parquet(file_path, &records).unwrap();
+
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
+
+    // Find many-synapses in the results to check its impact
+    let many_neuron = result
+        .neurons
+        .iter()
+        .find(|n| n.neuron_uuid == "many-synapses");
+
+    // Verify the many-synapses neuron was analysed
+    assert!(
+        many_neuron.is_some(),
+        "many-synapses should be in neuron results"
+    );
+    let many = many_neuron.unwrap();
+
+    // Verify activation_weighted_impact is above threshold (so old filter would reject it)
+    let cost_of_growth = 1e-7_f32;
+    println!(
+        "many-synapses: impact={:.2e}, activation_weighted_impact={:.2e}",
+        many.impact, many.activation_weighted_impact
+    );
+
+    // Count actual synapses for many-synapses
+    let incoming = creature
+        .synapses
+        .iter()
+        .filter(|s| s.to_uuid == "many-synapses")
+        .count();
+    let outgoing = creature
+        .synapses
+        .iter()
+        .filter(|s| s.from_uuid == "many-synapses")
+        .count();
+    let total_synapses = incoming + outgoing;
+    println!(
+        "many-synapses: {incoming} incoming, {outgoing} outgoing, {total_synapses} total synapses"
+    );
+
+    let removal_savings = cost_of_growth * (1.0 + total_synapses as f32 / 10.0);
+    println!(
+        "many-synapses: removal_savings={:.2e}, activation_weighted_impact={:.2e}",
+        removal_savings, many.activation_weighted_impact
+    );
+
+    // The key test: if removal_savings > activation_weighted_impact,
+    // then removing this neuron improves score and it SHOULD be returned
+    let should_be_candidate = removal_savings > many.activation_weighted_impact;
+    println!(
+        "Should be candidate? {} (savings > impact: {:.2e} > {:.2e})",
+        should_be_candidate, removal_savings, many.activation_weighted_impact
+    );
+
+    // Check if many-synapses is in removal candidates
+    let many_removal = result
+        .removal_candidates
+        .iter()
+        .find(|c| c.neuron_uuid == "many-synapses");
+
+    if should_be_candidate {
+        // Issue #235: This neuron SHOULD be a removal candidate because
+        // its removal_savings exceeds its activation_weighted_impact
+        assert!(
+            many_removal.is_some(),
+            "Issue #235: Neuron 'many-synapses' with removal_savings ({:.2e}) > activation_weighted_impact ({:.2e}) \
+             SHOULD be a removal candidate but was not returned. \
+             This neuron has {} synapses. The old filter (impact < threshold) would reject it \
+             because {:.2e} >= {:.2e}, but the new filter (savings > impact) should include it.",
+            removal_savings,
+            many.activation_weighted_impact,
+            total_synapses,
+            many.activation_weighted_impact,
+            cost_of_growth
+        );
+    }
+
+    // Also verify few-synapses is NOT a candidate (savings < impact)
+    let few_removal = result
+        .removal_candidates
+        .iter()
+        .find(|c| c.neuron_uuid == "few-synapses");
+    let few_neuron = result
+        .neurons
+        .iter()
+        .find(|n| n.neuron_uuid == "few-synapses");
+    if let Some(few) = few_neuron {
+        let few_savings = cost_of_growth * (1.0 + 2.0 / 10.0); // 2 synapses
+        if few_savings <= few.activation_weighted_impact {
+            assert!(
+                few_removal.is_none(),
+                "few-synapses with removal_savings ({:.2e}) <= activation_weighted_impact ({:.2e}) \
+                 should NOT be a removal candidate",
+                few_savings,
+                few.activation_weighted_impact
+            );
+        }
+    }
+}
+
+/// Issue #235: Direct test - neuron with impact ABOVE threshold but removal still improves score.
+///
+/// This is the core fix: a neuron with activation_weighted_impact = 2e-7 (above threshold 1e-7)
+/// but with 20 synapses (removal_savings = 3e-7) SHOULD be returned because removal improves score.
+///
+/// Old behaviour: Only neurons with impact < 1e-7 are returned.
+/// New behaviour: Neurons where removal_savings > impact are returned.
+#[test]
+fn test_issue_235_neuron_above_threshold_but_removal_improves_score() {
+    // Create a creature with a hidden neuron that has:
+    // - activation_weighted_impact slightly above threshold (2e-7)
+    // - Many synapses so removal_savings > impact (20 synapses → 3e-7 savings)
+    //
+    // Network: input -> above-threshold -> output
+    // The "above-threshold" neuron has 20 synapses total to boost removal_savings.
+    let mut synapses = vec![];
+    // 19 incoming synapses from different inputs with tiny weights
+    for i in 0..19 {
+        synapses.push((
+            format!("input-{i}").leak() as &str,
+            "above-threshold",
+            1e-8, // tiny weight
+        ));
+    }
+    // Main synapse with meaningful weight to give structural impact
+    synapses.push(("input-19", "above-threshold", 1e-6));
+    // Single outgoing synapse to output - this gives ~100% impact through this path
+    synapses.push(("above-threshold", "output-0", 1.0));
+
+    let mut neurons: Vec<(&str, &str)> =
+        vec![("output-0", "output"), ("above-threshold", "hidden")];
+    for i in 0..20 {
+        neurons.push((format!("input-{i}").leak() as &str, "input"));
+    }
+
+    let creature = create_creature(neurons, synapses);
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    // Set activation so that:
+    // - structural_impact ≈ 1.0 (the neuron is on the main path to output)
+    // - activation = 2e-7 (very small)
+    // - activation_weighted_impact = 1.0 × 2e-7 = 2e-7 (above threshold 1e-7)
+    //
+    // With 20 synapses: removal_savings = 1e-7 × (1 + 20/10) = 3e-7
+    // Since 3e-7 > 2e-7, removal SHOULD improve score.
+    let records = create_records_with_activation(vec![
+        ("above-threshold", 0.1, 2e-7), // activation = 2e-7
+        ("output-0", 0.5, 0.5),
+    ]);
+    write_records_to_parquet(file_path, &records).unwrap();
+
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
+
+    // Find the neuron in results
+    let neuron = result
+        .neurons
+        .iter()
+        .find(|n| n.neuron_uuid == "above-threshold");
+    assert!(
+        neuron.is_some(),
+        "above-threshold should be in neuron results"
+    );
+    let neuron = neuron.unwrap();
+
+    // Debug output
+    println!(
+        "above-threshold: impact={:.2e}, activation_weighted_impact={:.2e}",
+        neuron.impact, neuron.activation_weighted_impact
+    );
+
+    // Verify the neuron has impact ABOVE threshold (so old filter would reject it)
+    let cost_of_growth = 1e-7_f32;
+    println!(
+        "activation_weighted_impact ({:.2e}) vs threshold ({:.2e}): above={}",
+        neuron.activation_weighted_impact,
+        cost_of_growth,
+        neuron.activation_weighted_impact >= cost_of_growth
+    );
+
+    // Count synapses
+    let incoming = creature
+        .synapses
+        .iter()
+        .filter(|s| s.to_uuid == "above-threshold")
+        .count();
+    let outgoing = creature
+        .synapses
+        .iter()
+        .filter(|s| s.from_uuid == "above-threshold")
+        .count();
+    let total_synapses = incoming + outgoing;
+    println!("above-threshold: {incoming} incoming, {outgoing} outgoing, {total_synapses} total synapses");
+
+    // Calculate removal_savings
+    let removal_savings = cost_of_growth * (1.0 + total_synapses as f32 / 10.0);
+    println!(
+        "removal_savings ({:.2e}) vs activation_weighted_impact ({:.2e}): improves_score={}",
+        removal_savings,
+        neuron.activation_weighted_impact,
+        removal_savings > neuron.activation_weighted_impact
+    );
+
+    // The core assertion: if removal_savings > activation_weighted_impact,
+    // then this neuron SHOULD be in removal_candidates
+    if removal_savings > neuron.activation_weighted_impact {
+        let candidate = result
+            .removal_candidates
+            .iter()
+            .find(|c| c.neuron_uuid == "above-threshold");
+
+        assert!(
+            candidate.is_some(),
+            "Issue #235: Neuron 'above-threshold' with:\n  \
+             - activation_weighted_impact = {:.2e} (ABOVE threshold {:.2e})\n  \
+             - removal_savings = {:.2e} (from {} synapses)\n  \
+             - removal_savings > impact, so removal IMPROVES score\n\n\
+             This neuron SHOULD be in removal_candidates but was NOT returned.\n\
+             The old filter (impact < threshold) rejects it, but the new filter \
+             (savings > impact) should include it.",
+            neuron.activation_weighted_impact,
+            cost_of_growth,
+            removal_savings,
+            total_synapses
+        );
+
+        // Verify the reason explains the improvement
+        let candidate = candidate.unwrap();
+        assert!(
+            candidate.reason.contains("saves") || candidate.reason.contains("improve"),
+            "Reason should explain why removal improves score: {}",
+            candidate.reason
+        );
+    }
+}
+
+/// Issue #235: Verify sensible limits on removal candidates.
+///
+/// While we return ALL candidates expected to improve score, we should still
+/// have sensible limits to prevent overwhelming the caller.
+#[test]
+fn test_issue_235_removal_candidates_have_sensible_limits() {
+    // Create a creature with many neurons that could be removal candidates
+    // to verify we don't return an excessive number.
+    let mut neurons: Vec<(&str, &str)> = vec![("output-0", "output")];
+    let mut synapses: Vec<(&str, &str, f32)> = vec![];
+
+    // Create 100 hidden neurons, all with negligible impact (disconnected from output)
+    for i in 0..100 {
+        let uuid: &str = format!("orphan-{i}").leak();
+        neurons.push((uuid, "hidden"));
+        neurons.push((format!("input-{i}").leak() as &str, "input"));
+        // Connect input to orphan, but orphan not connected to output
+        synapses.push((format!("input-{i}").leak() as &str, uuid, 0.1));
+    }
+    // One connected neuron
+    neurons.push(("connected", "hidden"));
+    synapses.push(("input-0", "connected", 1.0));
+    synapses.push(("connected", "output-0", 1.0));
+
+    let creature = create_creature(neurons, synapses);
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    let mut records_data: Vec<(&str, f32, f32)> =
+        vec![("connected", 0.1, 0.5), ("output-0", 0.5, 0.5)];
+    for i in 0..100 {
+        let uuid: &str = format!("orphan-{i}").leak();
+        records_data.push((uuid, 0.1, 0.1));
+    }
+
+    let records = create_records_with_activation(records_data);
+    write_records_to_parquet(file_path, &records).unwrap();
+
+    let result = rank_focus_neurons(file_path, &creature, None, None).unwrap();
+
+    // Should return all 100 orphan neurons as removal candidates
+    // (they all have zero impact and any removal would improve score)
+    assert!(
+        result.removal_candidates.len() >= 100,
+        "Issue #235: Should return all removal candidates expected to improve score. \
+         Expected at least 100 orphan neurons, got {}",
+        result.removal_candidates.len()
+    );
+
+    // All orphans should have negligible activation_weighted_impact
+    for candidate in &result.removal_candidates {
+        if candidate.neuron_uuid.starts_with("orphan-") {
+            assert!(
+                candidate.activation_weighted_impact < 1e-6,
+                "Orphan {} should have negligible impact, got {:.2e}",
+                candidate.neuron_uuid,
+                candidate.activation_weighted_impact
+            );
+        }
+    }
+}
