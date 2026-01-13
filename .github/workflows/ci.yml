@@ -206,7 +206,7 @@ jobs:
       run: cargo build --lib
       
     - name: Run tests
-      run: cargo test --all-targets --all-features --verbose
+      run: cargo test --all-targets --all-features --verbose -- --test-threads=2
 
   security:
     uses: ./.github/workflows/security.yml
