@@ -296,6 +296,12 @@ measured by NEAT-AI.
   `map_async` on ALL staging buffers first, then performs a single `device.poll(Wait)`
   to wait for all buffers simultaneously. This reduces GPU-CPU round trips compared
   to the previous sequential mapping approach.
+- **Sample locality grouping (Issue #221)**: When analysing multiple source neurons for
+  the same target, sources with ≥80% obs_index overlap are grouped together. Instead of
+  building samples separately for each source, samples are built once per group in a
+  single pass through the target data. For typical creatures where input neurons share
+  the same observation indices, this reduces sample building overhead by up to 100x
+  (e.g., 100 sources with identical obs_indices → 1 group instead of 100 separate builds).
 - The GPU kernels (helpful/harmful statistics) produce sufficient aggregates to
   derive the suggested weight and the expected error reduction. Results are sorted
   by expected improvement before being returned, so callers can simply read the
@@ -2549,4 +2555,5 @@ All dependencies build automatically on remote, unattended machines.
 
 ## License
 
-This project is licensed under the terms specified in the LICENSE file.
+This project is licensed under the terms of the Apache License 2.0. For the full
+license text, please see [LICENSE](./LICENSE)

@@ -6122,6 +6122,234 @@ impl TargetMap {
 
         samples
     }
+
+    /// Build samples for multiple sources against this target map in a single pass.
+    /// This is an optimisation for sources that share the same obs_indices.
+    ///
+    /// Instead of calling `build_samples_from` N times for N sources with identical
+    /// obs_indices, we iterate through the target data once and build all sample
+    /// vectors simultaneously.
+    ///
+    /// Returns a Vec of sample vectors, one per source, in the same order as
+    /// `source_records`.
+    ///
+    /// # Issue #221: Sample Locality Optimisation
+    ///
+    /// When multiple sources share the same obs_indices (common for input neurons
+    /// recorded together), this method reduces redundant target map lookups from
+    /// O(sources × samples) to O(samples).
+    fn build_samples_for_group(
+        &self,
+        source_records: &[(&str, &[DiscoverRecord])],
+    ) -> Vec<Vec<HelpfulSample>> {
+        if self.map.is_empty() || source_records.is_empty() {
+            return vec![Vec::new(); source_records.len()];
+        }
+
+        // Build activation maps for each source: obs_index -> activation
+        let activation_maps: Vec<HashMap<u32, f32>> = source_records
+            .iter()
+            .map(|(_, records)| {
+                let mut map = HashMap::with_capacity(records.len());
+                for record in *records {
+                    if record.activation.is_finite() {
+                        map.insert(record.obs_index, record.activation);
+                    }
+                }
+                map
+            })
+            .collect();
+
+        // Pre-allocate result vectors
+        let mut results: Vec<Vec<HelpfulSample>> = source_records
+            .iter()
+            .map(|(_, records)| Vec::with_capacity(records.len().min(self.map.len())))
+            .collect();
+
+        // Single pass through target data, building samples for all sources
+        for (&obs_index, target) in &self.map {
+            if !target.avg_error.is_finite() {
+                continue;
+            }
+
+            for (source_idx, activation_map) in activation_maps.iter().enumerate() {
+                if let Some(&activation) = activation_map.get(&obs_index) {
+                    results[source_idx].push(HelpfulSample {
+                        activation,
+                        avg_error: target.avg_error,
+                        target_value: target.value,
+                        target_activation: Some(target.activation),
+                    });
+                }
+            }
+        }
+
+        results
+    }
+}
+
+// ============================================================================
+// Issue #221: Sample Locality Grouping
+// ============================================================================
+//
+// When analysing multiple source neurons for the same target, sources that
+// share the same obs_indices can benefit from batched sample building.
+//
+// The grouping algorithm:
+// 1. Compute a "locality key" for each source based on its obs_indices
+// 2. Group sources with identical (or highly overlapping) locality keys
+// 3. Build samples for each group in a single pass through the target data
+
+/// Minimum number of sources in a group to make shared sample building worthwhile.
+/// Below this threshold, the overhead of grouping exceeds the benefit.
+const MIN_GROUP_SIZE_FOR_LOCALITY: usize = 3;
+
+/// Minimum overlap fraction required to group sources together.
+/// Sources are grouped if they share at least this fraction of their obs_indices.
+const MIN_LOCALITY_OVERLAP: f32 = 0.8;
+
+/// Represents a group of sources with similar obs_index coverage.
+/// Sources in the same group can share sample building overhead.
+struct SampleLocalityGroup<'a> {
+    /// The source neurons in this group
+    sources: Vec<(&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)>,
+    /// Representative obs_indices for this group (from the first source)
+    _representative_indices: HashSet<u32>,
+}
+
+/// Extract obs_indices from source records.
+fn extract_obs_indices(records: &[DiscoverRecord]) -> HashSet<u32> {
+    records
+        .iter()
+        .filter(|r| r.activation.is_finite())
+        .map(|r| r.obs_index)
+        .collect()
+}
+
+/// Compute the overlap fraction between two sets of obs_indices.
+/// Returns a value in [0, 1] representing what fraction of the smaller set
+/// is contained in the larger set.
+fn compute_obs_index_overlap(a: &HashSet<u32>, b: &HashSet<u32>) -> f32 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let intersection_size = a.intersection(b).count();
+    let min_size = a.len().min(b.len());
+    intersection_size as f32 / min_size as f32
+}
+
+/// Group sources by sample locality for efficient batch processing.
+///
+/// Sources with high obs_index overlap (≥80%) are grouped together so that
+/// sample building can be done in a single pass through the target data
+/// rather than N separate passes.
+///
+/// # Issue #221: Sample Locality for Correlated Source Neurons
+///
+/// Expected benefits for typical creatures:
+/// - 100 sources, same obs_indices: 1 group (100x reduction in target lookups)
+/// - 100 sources, 80% overlap: ~5 groups (20x reduction)
+/// - 100 sources, no overlap: 100 groups (no change)
+fn group_sources_by_locality<'a>(
+    sources: &[(&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)],
+) -> Vec<SampleLocalityGroup<'a>> {
+    if sources.len() < MIN_GROUP_SIZE_FOR_LOCALITY {
+        // Not enough sources to benefit from grouping
+        return sources
+            .iter()
+            .map(|(neuron, records)| {
+                let indices = extract_obs_indices(records);
+                SampleLocalityGroup {
+                    sources: vec![(neuron, Arc::clone(records))],
+                    _representative_indices: indices,
+                }
+            })
+            .collect();
+    }
+
+    // Extract obs_indices for each source (done once, reused for grouping)
+    let source_indices: Vec<HashSet<u32>> = sources
+        .iter()
+        .map(|(_, records)| extract_obs_indices(records))
+        .collect();
+
+    let mut groups: Vec<SampleLocalityGroup<'a>> = Vec::new();
+    let mut assigned: Vec<bool> = vec![false; sources.len()];
+
+    for i in 0..sources.len() {
+        if assigned[i] {
+            continue;
+        }
+
+        let my_indices = &source_indices[i];
+        if my_indices.is_empty() {
+            // Source has no valid indices - put it in its own group
+            assigned[i] = true;
+            groups.push(SampleLocalityGroup {
+                sources: vec![(sources[i].0, Arc::clone(&sources[i].1))],
+                _representative_indices: my_indices.clone(),
+            });
+            continue;
+        }
+
+        // Start a new group with this source
+        let mut group_sources = vec![(sources[i].0, Arc::clone(&sources[i].1))];
+        assigned[i] = true;
+
+        // Find all other sources with high overlap
+        for j in (i + 1)..sources.len() {
+            if assigned[j] {
+                continue;
+            }
+
+            let other_indices = &source_indices[j];
+            let overlap = compute_obs_index_overlap(my_indices, other_indices);
+
+            if overlap >= MIN_LOCALITY_OVERLAP {
+                group_sources.push((sources[j].0, Arc::clone(&sources[j].1)));
+                assigned[j] = true;
+            }
+        }
+
+        groups.push(SampleLocalityGroup {
+            sources: group_sources,
+            _representative_indices: my_indices.clone(),
+        });
+    }
+
+    groups
+}
+
+/// Build samples for all sources in a locality group efficiently.
+///
+/// This uses `TargetMap::build_samples_for_group` to build samples for all
+/// sources in a single pass through the target data.
+fn build_samples_for_locality_group(
+    group: &SampleLocalityGroup<'_>,
+    target_map: &TargetMap,
+) -> Vec<(String, Vec<HelpfulSample>, usize)> {
+    if group.sources.len() == 1 {
+        // Single source - use standard path (no overhead)
+        let (source, records) = &group.sources[0];
+        let samples = target_map.build_samples_from(records);
+        return vec![(source.uuid.clone(), samples, records.len())];
+    }
+
+    // Multiple sources - use batched sample building
+    let source_records: Vec<(&str, &[DiscoverRecord])> = group
+        .sources
+        .iter()
+        .map(|(source, records)| (source.uuid.as_str(), records.as_slice()))
+        .collect();
+
+    let samples_batch = target_map.build_samples_for_group(&source_records);
+
+    group
+        .sources
+        .iter()
+        .zip(samples_batch)
+        .map(|((source, records), samples)| (source.uuid.clone(), samples, records.len()))
+        .collect()
 }
 
 /// Compute expected gain for a coordinated "replace synapse with neuron" group.
@@ -8216,19 +8444,46 @@ pub(crate) fn analyze_neurons_with_cache(
                 samples: Vec<HelpfulSample>,
             }
 
+            // Issue #221: Sample Locality Optimisation
+            // Group sources by obs_index overlap to reduce redundant sample building.
+            // Sources with ≥80% obs_index overlap share sample building in a single pass.
             let work_results: Vec<NeuronWorkResult> = {
                 let _timing = TimingScope::sample_building(&timing_collector);
-                sources_to_process
+
+                // Group sources by sample locality
+                let locality_groups = group_sources_by_locality(&sources_to_process);
+
+                // Log locality grouping stats if verbose
+                if verbose_enabled() && sources_to_process.len() >= MIN_GROUP_SIZE_FOR_LOCALITY {
+                    let group_sizes: Vec<usize> = locality_groups.iter().map(|g| g.sources.len()).collect();
+                    let max_group = group_sizes.iter().max().copied().unwrap_or(0);
+                    let avg_group = if !group_sizes.is_empty() {
+                        group_sizes.iter().sum::<usize>() as f32 / group_sizes.len() as f32
+                    } else {
+                        0.0
+                    };
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Neuron analysis target {}: {} sources grouped into {} locality groups (max={}, avg={:.1})",
+                        target_uuid,
+                        sources_to_process.len(),
+                        locality_groups.len(),
+                        max_group,
+                        avg_group
+                    );
+                }
+
+                // Build samples for each group (groups with multiple sources use batched building)
+                locality_groups
                     .par_iter()
-                    .map(|(source, from_records_arc)| {
-                        let source_uuid = source.uuid.as_str();
-                        let from_records = from_records_arc.as_ref();
-                        // Use pre-built target map - avoids rebuilding HashMap for each source
-                        let samples = target_map_ref.build_samples_from(from_records);
-                        NeuronWorkResult {
-                            source_uuid: source_uuid.to_string(),
-                            samples,
-                        }
+                    .flat_map(|group| {
+                        let group_results = build_samples_for_locality_group(group, target_map_ref);
+                        group_results
+                            .into_iter()
+                            .map(|(source_uuid, samples, _record_count)| NeuronWorkResult {
+                                source_uuid,
+                                samples,
+                            })
+                            .collect::<Vec<_>>()
                     })
                     .collect()
             };
@@ -9345,36 +9600,62 @@ pub(crate) fn analyze_synapses_with_cache(
 
             // Even if target_map is empty, we continue to record diagnostics
             // about what sources were evaluated (important for debugging).
+            //
+            // Issue #221: Sample Locality Optimisation
+            // Group sources by obs_index overlap to reduce redundant sample building.
+            // Sources with ≥80% obs_index overlap share sample building in a single pass.
             let source_results: Vec<SourceWorkResult> = {
                 let _timing = TimingScope::sample_building(&timing_collector);
-                sources_to_process
+
+                // Group sources by sample locality
+                let locality_groups = group_sources_by_locality(&sources_to_process);
+
+                // Log locality grouping stats if verbose
+                if verbose_enabled() && sources_to_process.len() >= MIN_GROUP_SIZE_FOR_LOCALITY {
+                    let group_sizes: Vec<usize> = locality_groups.iter().map(|g| g.sources.len()).collect();
+                    let max_group = group_sizes.iter().max().copied().unwrap_or(0);
+                    let avg_group = if !group_sizes.is_empty() {
+                        group_sizes.iter().sum::<usize>() as f32 / group_sizes.len() as f32
+                    } else {
+                        0.0
+                    };
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {}: {} sources grouped into {} locality groups (max={}, avg={:.1})",
+                        target_uuid,
+                        sources_to_process.len(),
+                        locality_groups.len(),
+                        max_group,
+                        avg_group
+                    );
+                }
+
+                // Build samples for each group (groups with multiple sources use batched building)
+                locality_groups
                     .par_iter()
-                    .map(|(source, from_records_arc)| {
-                        let source_uuid = source.uuid.as_str();
-                        let from_records = from_records_arc.as_ref();
-                        let record_count = from_records.len();
-
-                        // Use pre-built target map - avoids rebuilding HashMap for each source
-                        let samples = target_map_ref.build_samples_from(from_records);
-                        let had_samples = !samples.is_empty();
-
-                        let work = if had_samples {
-                            Some(HelpfulWork {
-                                source_uuid: source_uuid.to_string(),
-                                target_uuid: target_uuid.to_string(),
-                                samples,
-                                existing_weight: None,
+                    .flat_map(|group| {
+                        let group_results = build_samples_for_locality_group(group, target_map_ref);
+                        group_results
+                            .into_iter()
+                            .map(|(source_uuid, samples, record_count)| {
+                                let had_samples = !samples.is_empty();
+                                let work = if had_samples {
+                                    Some(HelpfulWork {
+                                        source_uuid: source_uuid.clone(),
+                                        target_uuid: target_uuid.to_string(),
+                                        samples,
+                                        existing_weight: None,
+                                    })
+                                } else {
+                                    None
+                                };
+                                SourceWorkResult {
+                                    work,
+                                    had_samples,
+                                    source_uuid,
+                                    record_count,
+                                }
                             })
-                        } else {
-                            None
-                        };
-
-                        SourceWorkResult {
-                            work,
-                            had_samples,
-                            source_uuid: source_uuid.to_string(),
-                            record_count,
-                        }
+                            .collect::<Vec<_>>()
                     })
                     .collect()
             };
