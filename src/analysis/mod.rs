@@ -7,12 +7,14 @@
 //! into focused submodules. The target structure is:
 //! - `shared.rs` - Common types, result structures, diagnostics
 //! - `synapse.rs` - Synapse analysis functions
-//! - `neuron.rs` - Neuron analysis functions  
+//! - `neuron.rs` - Neuron analysis functions
 //! - `gpu.rs` - GPU infrastructure (GpuAnalyzer, GpuWorkQueue)
-//! - `utils.rs` - Utility functions (memory checks, deadlines, activation functions)
+//! - `utils.rs` - Utility functions (memory checks, deadlines)
+//! - `activation.rs` - Activation function related code (Issue #266)
 //!
-//! For now, everything is still in `impl.rs` and will be gradually moved.
+//! For now, much of the code is still in `impl.rs` and will be gradually moved.
 
+pub mod activation;
 pub mod gpu;
 pub mod neuron;
 pub mod shared;
@@ -53,8 +55,11 @@ pub use utils::{gpu_timing_enabled, verbose_enabled};
 // Re-export Detail types from shared
 pub use shared::{NeuronNoCandidateDetail, SynapseNoCandidateDetail};
 
-// Re-export check_memory_for_parquet and ACTIVATION_SPECS from implementation (hasn't been moved yet)
-pub use implementation::{check_memory_for_parquet, ACTIVATION_SPECS};
+// Re-export check_memory_for_parquet from implementation (hasn't been moved yet)
+pub use implementation::check_memory_for_parquet;
+
+// Re-export ACTIVATION_SPECS from activation module (Issue #266)
+pub use activation::ACTIVATION_SPECS;
 
 // Re-export focus_unused_observations_from_env for tests (Issue #182)
 pub use implementation::focus_unused_observations_from_env;
