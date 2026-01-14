@@ -52,11 +52,11 @@ pub use shared::{
 // Re-export from utils
 pub use utils::{gpu_timing_enabled, verbose_enabled};
 
+// Re-export memory functions from utils (Issue #267)
+pub use utils::check_memory_for_parquet;
+
 // Re-export Detail types from shared
 pub use shared::{NeuronNoCandidateDetail, SynapseNoCandidateDetail};
-
-// Re-export check_memory_for_parquet from implementation (hasn't been moved yet)
-pub use implementation::check_memory_for_parquet;
 
 // Re-export ACTIVATION_SPECS from activation module (Issue #266)
 pub use activation::ACTIVATION_SPECS;
