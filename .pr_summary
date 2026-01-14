@@ -1,0 +1,59 @@
+## Summary
+
+Extracted memory detection and system requirements checking code from `implementation.rs` (~500 lines) to a dedicated `utils/memory.rs` module, as part of the ongoing refactoring of the `implementation.rs` monolith (parent issue #185).
+
+### Changes Made
+
+- **Created `src/analysis/utils/` directory structure** with:
+  - `mod.rs` - Module coordination and re-exports
+  - `memory.rs` - Memory detection, tier classification, and system requirements validation
+  - `platform.rs` - Platform-specific setup (Linux XDG, Mesa warnings)
+  - `memory_tests.rs` - Comprehensive tests for memory functions
+
+- **Extracted functions** from `implementation.rs`:
+  - Memory detection: `detect_memory_tier()`, `get_memory_info()` (macOS, Linux, fallback variants)
+  - Parsing helpers: `parse_vm_stat_line()`, `parse_vm_stat_page_size()` (macOS), `parse_meminfo_line()` (Linux)
+  - Memory validation: `check_memory_for_parquet()`, `validate_parquet_memory_requirements()`, `check_system_memory_requirements()`
+  - GPU batch sizing: `cap_gpu_batch_size_by_bytes()`, `get_work_queue_capacity()`, `get_work_queue_capacity_for_tier()`
+  - Platform setup: `suppress_mesa_warnings_if_requested()`, `ensure_xdg_runtime_dir()`
+  - Types: `MemoryTier` enum, batch size constants
+
+- **Updated `implementation.rs`** to import functions from the new module
+- **Updated `analysis/mod.rs`** to re-export `check_memory_for_parquet` from utils (public API preserved)
+- **Updated test imports** in `tests/unit/analysis_implementation.rs` to use new module paths
+
+### Evidence
+
+Unable to generate screenshot: This is a CLI library with no visual interface. The refactoring is a pure code reorganisation with no behavioural changes.
+
+### Test Plan
+
+**New tests added** (`src/analysis/utils/memory_tests.rs`):
+- `test_memory_tier_low_threshold` - Verifies low tier classification (<8GB)
+- `test_memory_tier_standard_threshold` - Verifies standard tier classification (8-16GB)
+- `test_memory_tier_high_threshold` - Verifies high tier classification (>16GB)
+- `test_check_parquet_memory_small_file` - Small files pass on reasonable systems
+- `test_check_parquet_memory_insufficient_available` - Rejects when available memory is too low
+- `test_check_parquet_memory_exceeds_50_percent` - Rejects when exceeding 50% of total RAM
+- `test_system_requirements_sufficient_memory` - Returns None when requirements met
+- `test_system_requirements_low_total_memory` - Returns reason when total RAM too low
+- `test_system_requirements_low_available_memory` - Returns reason when available RAM too low
+- Platform-specific tests for macOS vm_stat parsing and Linux meminfo parsing
+- `test_cap_gpu_batch_size_by_bytes_*` - GPU batch size capping tests
+- `test_work_queue_capacity_by_tier` - Work queue capacity tests
+
+**Platform tests** (`src/analysis/utils/platform.rs`):
+- `test_suppress_mesa_warnings_does_not_panic`
+- `test_ensure_xdg_runtime_dir_does_not_panic`
+
+**Existing tests verified passing**: All 240 unit tests and integration tests pass, including the existing macOS-specific tests that were updated to use the new module path.
+
+### Success Criteria Met
+
+- [x] All memory functions moved to appropriate module
+- [x] `check_memory_for_parquet` remains accessible via re-export (public API)
+- [x] Platform-specific code properly conditionally compiled
+- [x] All existing tests pass (`./quality.sh`)
+- [x] No public API changes
+
+Closes #267

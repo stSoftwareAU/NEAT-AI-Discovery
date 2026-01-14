@@ -6,6 +6,12 @@
     use super::*;
     use crate::analysis::ACTIVATION_SPECS;
 
+    // Import memory parsing functions from the new utils module (Issue #267)
+    #[cfg(target_os = "macos")]
+    use crate::analysis::utils::memory::parse_vm_stat_page_size;
+    #[cfg(target_os = "linux")]
+    use crate::analysis::utils::memory::parse_meminfo_line;
+
     // ==================== GPU Tier Detection Tests ====================
 
     #[test]
