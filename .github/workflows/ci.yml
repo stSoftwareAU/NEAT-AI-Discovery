@@ -166,7 +166,21 @@ jobs:
         
     - name: Pull latest changes
       run: git pull origin ${{ github.head_ref }}
-        
+
+    - name: Free up runner disk space
+      run: |
+        # GitHub runners start with ~17GB free but Rust builds can exceed this.
+        # Remove large pre-installed software we don't need to free 10-20GB.
+        echo "Disk usage before cleanup:"
+        df -h /
+        sudo rm -rf /usr/share/dotnet      # ~3GB
+        sudo rm -rf /usr/local/lib/android # ~14GB
+        sudo rm -rf /opt/ghc               # ~5GB (Haskell)
+        sudo rm -rf /opt/hostedtoolcache/CodeQL # ~1GB
+        sudo rm -rf /usr/share/swift       # ~1.5GB
+        echo "Disk usage after cleanup:"
+        df -h /
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -204,7 +218,19 @@ jobs:
       
     - name: Build library
       run: cargo build --lib
-      
+
+    - name: Clean intermediate artefacts before tests
+      run: |
+        # Test compilation generates many large binaries. Remove incremental
+        # compilation data and fingerprints to free space before this step.
+        echo "Disk usage before cleanup:"
+        df -h /
+        find target -name "incremental" -type d -exec rm -rf {} + 2>/dev/null || true
+        find target -name ".fingerprint" -type d -exec rm -rf {} + 2>/dev/null || true
+        find target -name "build" -type d -exec rm -rf {} + 2>/dev/null || true
+        echo "Disk usage after cleanup:"
+        df -h /
+
     - name: Run tests
       run: cargo test --all-targets --all-features --verbose -- --test-threads=2
 
