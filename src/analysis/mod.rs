@@ -62,7 +62,8 @@ pub use shared::{NeuronNoCandidateDetail, SynapseNoCandidateDetail};
 pub use activation::ACTIVATION_SPECS;
 
 // Re-export focus_unused_observations_from_env for tests (Issue #182)
-pub use implementation::focus_unused_observations_from_env;
+// Moved to utils/deadline module in Issue #268
+pub use utils::focus_unused_observations_from_env;
 
 // Implement analyze_all using the module functions
 use crate::{

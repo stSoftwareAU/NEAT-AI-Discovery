@@ -1,59 +1,85 @@
 ## Summary
 
-Extracted memory detection and system requirements checking code from `implementation.rs` (~500 lines) to a dedicated `utils/memory.rs` module, as part of the ongoing refactoring of the `implementation.rs` monolith (parent issue #185).
+Extracted deadline handling and logging utility code (~820 lines) from `implementation.rs` to a dedicated module at `src/analysis/utils/deadline.rs` (Issue #268).
 
-### Changes Made
+This refactoring is part of the larger effort to break down the implementation.rs monolith (Parent issue #185).
 
-- **Created `src/analysis/utils/` directory structure** with:
-  - `mod.rs` - Module coordination and re-exports
-  - `memory.rs` - Memory detection, tier classification, and system requirements validation
-  - `platform.rs` - Platform-specific setup (Linux XDG, Mesa warnings)
-  - `memory_tests.rs` - Comprehensive tests for memory functions
+### Functions Moved
 
-- **Extracted functions** from `implementation.rs`:
-  - Memory detection: `detect_memory_tier()`, `get_memory_info()` (macOS, Linux, fallback variants)
-  - Parsing helpers: `parse_vm_stat_line()`, `parse_vm_stat_page_size()` (macOS), `parse_meminfo_line()` (Linux)
-  - Memory validation: `check_memory_for_parquet()`, `validate_parquet_memory_requirements()`, `check_system_memory_requirements()`
-  - GPU batch sizing: `cap_gpu_batch_size_by_bytes()`, `get_work_queue_capacity()`, `get_work_queue_capacity_for_tier()`
-  - Platform setup: `suppress_mesa_warnings_if_requested()`, `ensure_xdg_runtime_dir()`
-  - Types: `MemoryTier` enum, batch size constants
+**Deadline Utilities:**
+- `calculate_effective_timeout_ms()` - Compute timeout from deadline
+- `build_deadline()` - Create deadline from timeout ms
+- `deadline_passed()` - Check if deadline expired
+- `calculate_gpu_batch_timeout()` - Deadline-aware GPU timeout calculation
 
-- **Updated `implementation.rs`** to import functions from the new module
-- **Updated `analysis/mod.rs`** to re-export `check_memory_for_parquet` from utils (public API preserved)
-- **Updated test imports** in `tests/unit/analysis_implementation.rs` to use new module paths
+**Logging Functions:**
+- `log_analysis_start()` - Log analysis beginning
+- `log_analysis_timeout()` - Log timeout occurrences
 
-### Evidence
+**Randomisation Utilities:**
+- `derive_seed()` - Deterministic seed derivation
+- `shuffle_slice()` - Seeded shuffling
+- `shuffle_within_top_k()` - Shuffle top K while preserving rest
 
-Unable to generate screenshot: This is a CLI library with no visual interface. The refactoring is a pure code reorganisation with no behavioural changes.
+**Environment Variable Helpers:**
+- `parse_input_index()` - Parse neuron index from string
+- `source_input_index_bias_from_env()` - Get input index bias override
+- `focus_unused_observations_from_env()` - Check focus on unused observations (PUBLIC API)
+- `order_eligible_sources()` - Order source neurons for analysis
 
-### Test Plan
+**Types and Constants:**
+- `OrderedNeuron` struct
+- `DEFAULT_DURATION_MS`, `YEAR_2000_MS`, `MIN_DURATION_MS`, `MAX_DURATION_MS`
+- `GPU_QUEUE_TIMEOUT_MIN_SECS`, `GPU_QUEUE_TIMEOUT_MAX_SECS`
 
-**New tests added** (`src/analysis/utils/memory_tests.rs`):
-- `test_memory_tier_low_threshold` - Verifies low tier classification (<8GB)
-- `test_memory_tier_standard_threshold` - Verifies standard tier classification (8-16GB)
-- `test_memory_tier_high_threshold` - Verifies high tier classification (>16GB)
-- `test_check_parquet_memory_small_file` - Small files pass on reasonable systems
-- `test_check_parquet_memory_insufficient_available` - Rejects when available memory is too low
-- `test_check_parquet_memory_exceeds_50_percent` - Rejects when exceeding 50% of total RAM
-- `test_system_requirements_sufficient_memory` - Returns None when requirements met
-- `test_system_requirements_low_total_memory` - Returns reason when total RAM too low
-- `test_system_requirements_low_available_memory` - Returns reason when available RAM too low
-- Platform-specific tests for macOS vm_stat parsing and Linux meminfo parsing
-- `test_cap_gpu_batch_size_by_bytes_*` - GPU batch size capping tests
-- `test_work_queue_capacity_by_tier` - Work queue capacity tests
+**Test Infrastructure:**
+- `deadline_override` module for deterministic testing of deadline behaviour
 
-**Platform tests** (`src/analysis/utils/platform.rs`):
-- `test_suppress_mesa_warnings_does_not_panic`
-- `test_ensure_xdg_runtime_dir_does_not_panic`
+### Changes
 
-**Existing tests verified passing**: All 240 unit tests and integration tests pass, including the existing macOS-specific tests that were updated to use the new module path.
+- **src/analysis/utils/deadline.rs** (588 lines): New module containing all deadline-related utilities
+- **src/analysis/utils/deadline_tests.rs** (514 lines): Tests for the new deadline module
+- **src/analysis/utils/mod.rs**: Added deadline module and re-exports
+- **src/analysis/mod.rs**: Updated re-export path for `focus_unused_observations_from_env`
+- **src/analysis/implementation.rs**: Removed ~820 lines, now imports from deadline module
 
-### Success Criteria Met
+## Evidence
 
-- [x] All memory functions moved to appropriate module
-- [x] `check_memory_for_parquet` remains accessible via re-export (public API)
-- [x] Platform-specific code properly conditionally compiled
-- [x] All existing tests pass (`./quality.sh`)
-- [x] No public API changes
+Unable to generate screenshot: This is a Rust library with no visual interface. All changes are internal refactoring that preserve the existing public API and behaviour.
 
-Closes #267
+## Test Plan
+
+All existing tests pass (259 unit tests + 53 integration test files):
+
+**New tests in `src/analysis/utils/deadline_tests.rs`:**
+- `shuffle_within_top_k_deterministic_with_seed`
+- `shuffle_within_top_k_only_shuffles_prefix`
+- `shuffle_within_top_k_preserves_multiset`
+- `shuffle_within_top_k_no_op_when_top_k_is_zero`
+- `deadline_passed_detects_elapsed_wall_clock_deadline`
+- `build_deadline_handles_absolute_timestamps_and_relative_durations`
+- `build_deadline_validates_duration_bounds`
+- `calculate_effective_timeout_ms_matches_build_deadline_logic`
+- `parse_input_index_parses_valid_input_uuids`
+- `parse_input_index_returns_none_for_invalid_uuids`
+- `derive_seed_is_deterministic`
+- `derive_seed_varies_with_context`
+- `derive_seed_varies_with_salt`
+- `derive_seed_varies_with_base_seed`
+- `shuffle_slice_is_deterministic_with_seed`
+- `shuffle_slice_preserves_elements`
+- `shuffle_slice_no_op_for_single_element`
+- `shuffle_slice_no_op_for_empty`
+- `calculate_gpu_batch_timeout_returns_max_when_no_deadline`
+- `calculate_gpu_batch_timeout_returns_min_when_deadline_passed`
+- `calculate_gpu_batch_timeout_uses_half_remaining_time`
+- `calculate_gpu_batch_timeout_clamps_to_min`
+- `calculate_gpu_batch_timeout_clamps_to_max`
+- `ordered_neuron_stores_uuid_and_index`
+- `order_eligible_sources_shuffles_deterministically_with_seed`
+- `order_eligible_sources_preserves_all_elements`
+- `order_eligible_sources_no_op_for_single_element`
+
+**Verification:**
+- `./quality.sh` passes all checks (build, lint, type-check, tests)
+- No public API changes (`focus_unused_observations_from_env` remains accessible via re-export)
