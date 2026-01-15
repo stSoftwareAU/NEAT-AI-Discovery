@@ -38,7 +38,17 @@ use crate::analysis::utils::{
     log_analysis_timeout, order_eligible_sources, parse_input_index, shuffle_slice,
     shuffle_within_top_k, OrderedNeuron, GPU_QUEUE_TIMEOUT_MAX_SECS,
 };
-use bytemuck::{Pod, Zeroable};
+
+// Import sample data structures from dedicated module (Issue #269)
+use crate::analysis::samples::{
+    compute_source_variance_discount, constant_source_effect_threshold_from_env, ActivationOutput,
+    ActivationUniforms, BiasResult, BiasUniforms, GpuHelpfulSample, HarmfulContribution,
+    HarmfulStats, HarmfulUniforms, HelpfulContribution, HelpfulSample, HelpfulStats,
+    HelpfulUniforms, NeuronStats, ReluContribution, ReluOrientation, ReluStats, ReluUniforms,
+    EPSILON,
+};
+
+use bytemuck::Zeroable;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
@@ -49,8 +59,6 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use wgpu::util::DeviceExt;
-
-const EPSILON: f32 = 1e-8;
 /// Workgroup size for GPU compute shaders. Must match the @workgroup_size in WGSL shaders.
 /// 256 is optimal for Apple Silicon: divisible by SIMD width (32), good occupancy,
 /// and allows efficient wavefront scheduling on M1/M2/M3/M4 GPUs.
@@ -71,18 +79,6 @@ const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 /// This threshold rejects candidates where the output standard deviation is below 0.01,
 /// meaning the neuron produces nearly identical output across all samples.
 const MIN_NEURON_OUTPUT_STD_DEV: f32 = 0.01;
-
-/// Default threshold for treating an add-synapse candidate as an effective bias change.
-///
-/// Issue #178 (7-Jan-2026): When the source activation range is ~0, adding a synapse
-/// only contributes a near-constant offset to the target. This is better represented as
-/// a `setBias` coordinated-structural operation than paying complexity cost for a new edge.
-///
-/// The heuristic is based on the *range* of the contribution:
-///   effect_range ≈ |weight| × (max_activation - min_activation)
-///
-/// If `effect_range <= threshold`, we fold the synapse into `setBias`.
-const DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD: f32 = 1e-7;
 
 /// Maximum absolute value for outgoing weights in add-neuron candidates.
 ///
@@ -165,95 +161,6 @@ fn has_sufficient_output_variance(
 
     // If input has variance but output doesn't, the neuron is saturated - reject
     output_std_dev >= MIN_NEURON_OUTPUT_STD_DEV
-}
-
-/// Compute source activation variance discount factor.
-///
-/// Issue #130 (v0.2.2): When a source neuron has constant or near-constant activation,
-/// adding a connection from it cannot reduce error correlation - it only adds a constant
-/// offset. The prediction model must discount improvements based on source variance.
-///
-/// **Key insight**: If source activation is constant, the new connection acts like a
-/// bias change, not a meaningful signal. A constant cannot correlate with varying error.
-///
-/// **Production example**: input-1244 had variance 0.000000 (completely constant), yet
-/// the model predicted 29.6% error reduction. Actual result was 0%.
-///
-/// # Returns
-/// A discount factor in [0, 1]:
-/// - 1.0: Source has high variance (no discount)
-/// - 0.0: Source is constant (full discount → zero improvement)
-/// - Between: Proportional discount based on variance ratio
-///
-/// # Formula
-/// `discount = min(1.0, source_std_dev / MIN_SOURCE_STD_DEV)`
-///
-/// Where MIN_SOURCE_STD_DEV = 0.05 (sources with std dev < 0.05 are progressively discounted)
-fn compute_source_variance_discount(samples: &[HelpfulSample]) -> f32 {
-    if samples.len() < 2 {
-        return 0.0;
-    }
-
-    // Minimum source standard deviation for full credit.
-    // Sources with std dev below this are progressively discounted.
-    // Value chosen based on production analysis: input-1064 had std dev 0.01 and caused
-    // massive over-prediction. Sources should have at least 0.05 std dev for reliable correlation.
-    const MIN_SOURCE_STD_DEV: f32 = 0.05;
-
-    let mut activation_sum = 0.0f64;
-    let mut activation_sq_sum = 0.0f64;
-    let mut count = 0u32;
-
-    for sample in samples {
-        if sample.activation.is_finite() {
-            let a = sample.activation as f64;
-            activation_sum += a;
-            activation_sq_sum += a * a;
-            count += 1;
-        }
-    }
-
-    if count < 2 {
-        return 0.0;
-    }
-
-    let n = count as f64;
-    let mean = activation_sum / n;
-    let variance = (activation_sq_sum / n) - (mean * mean);
-    let std_dev = variance.max(0.0).sqrt() as f32;
-
-    // Linear discount: full credit at MIN_SOURCE_STD_DEV, zero at 0
-    // Values above MIN_SOURCE_STD_DEV get full credit (capped at 1.0)
-    (std_dev / MIN_SOURCE_STD_DEV).clamp(0.0, 1.0)
-}
-
-/// Optional threshold for folding constant/near-constant sources into `setBias`.
-///
-/// Controlled via `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD`:
-/// - unset / empty: enabled with default (`DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD`)
-/// - `0`: disabled (never fold)
-/// - `> 0`: enabled with the configured threshold
-fn constant_source_effect_threshold_from_env() -> Option<f32> {
-    let raw = std::env::var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD").ok();
-    let Some(raw) = raw else {
-        return Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
-    };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
-    }
-    match trimmed.parse::<f32>() {
-        Ok(v) if v.is_finite() && v == 0.0 => None,
-        Ok(v) if v.is_finite() && v > 0.0 => Some(v),
-        _ => {
-            if verbose_enabled() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Ignoring invalid NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD={trimmed:?} (expected 0 or a finite number > 0)"
-                );
-            }
-            Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD)
-        }
-    }
 }
 
 // GPU_QUEUE_TIMEOUT_MIN_SECS and GPU_QUEUE_TIMEOUT_MAX_SECS moved to utils/deadline.rs (Issue #268)
@@ -1725,363 +1632,9 @@ fn require_unique_focus<'a>(focus_neurons: &'a [String], context: &str) -> Resul
     Ok(unique_focus)
 }
 
-/// Sample data for evaluating potential synapses/neurons.
-///
-/// For accurate HARD_TANH modelling, we need the target's pre-activation value
-/// to properly simulate clamping behaviour. When `target_value` is `Some`, we can
-/// compute the actual effect of adding a contribution rather than using the linear
-/// approximation.
-#[derive(Clone, Copy, Default)]
-struct HelpfulSample {
-    /// Source neuron's activation (what we're considering adding a connection FROM)
-    activation: f32,
-    /// Target neuron's average error (expected - actual output)
-    avg_error: f32,
-    /// Target neuron's pre-activation value (input sum before squash function).
-    /// Used for accurate HARD_TANH/clamping calculations. None for GPU-matched samples.
-    target_value: Option<f32>,
-    /// Target neuron's post-activation output (after squash function).
-    /// Note: avg_error is in VALUE domain, so expected = squash(target_value + avg_error)
-    target_activation: Option<f32>,
-}
-
-/// Statistics computed from neuron error and activation samples
-#[derive(Debug, Clone)]
-struct NeuronStats {
-    mean_error: f32,
-    error_variance: f32,
-    mean_activation: f32,
-    activation_variance: f32,
-    error_spike_count: u32,
-    activation_spike_count: u32,
-    activation_min: f32,
-    activation_max: f32,
-}
-
-impl NeuronStats {
-    /// Compute statistics from a slice of discovery records (for target neurons)
-    fn from_records(records: &[DiscoverRecord]) -> Option<Self> {
-        if records.is_empty() {
-            return None;
-        }
-
-        let mut samples = Vec::new();
-        for record in records {
-            if record.errors.is_empty() {
-                continue;
-            }
-            // Compute average error for this record
-            let mut error_sum = 0.0;
-            let mut error_count = 0;
-            for &err in &record.errors {
-                if err.is_finite() {
-                    error_sum += err;
-                    error_count += 1;
-                }
-            }
-            if error_count > 0 && record.activation.is_finite() {
-                let avg_error = error_sum / error_count as f32;
-                samples.push(HelpfulSample {
-                    activation: record.activation,
-                    avg_error,
-                    target_value: record.value,
-                    target_activation: Some(record.activation),
-                });
-            }
-        }
-
-        Self::from_samples(&samples)
-    }
-
-    /// Compute statistics from a slice of samples
-    fn from_samples(samples: &[HelpfulSample]) -> Option<Self> {
-        if samples.is_empty() {
-            return None;
-        }
-
-        let mut error_sum = 0.0;
-        let mut error_sq_sum = 0.0;
-        let mut activation_sum = 0.0;
-        let mut activation_sq_sum = 0.0;
-        let mut error_spike_count = 0u32;
-        let mut activation_spike_count = 0u32;
-        let mut activation_min = f32::INFINITY;
-        let mut activation_max = f32::NEG_INFINITY;
-        let mut valid_count = 0usize;
-
-        // Spike thresholds: 2 standard deviations (we'll approximate with mean + 2*mean for now)
-        // We'll compute proper thresholds after we have the mean
-        let mut error_abs_sum = 0.0;
-        let mut activation_abs_sum = 0.0;
-
-        for sample in samples {
-            if !sample.avg_error.is_finite() || !sample.activation.is_finite() {
-                continue;
-            }
-            valid_count += 1;
-            let error_abs = sample.avg_error.abs();
-            let activation_abs = sample.activation.abs();
-
-            error_sum += sample.avg_error;
-            error_sq_sum += sample.avg_error * sample.avg_error;
-            error_abs_sum += error_abs;
-
-            activation_sum += sample.activation;
-            activation_sq_sum += sample.activation * sample.activation;
-            activation_abs_sum += activation_abs;
-
-            if activation_min > sample.activation {
-                activation_min = sample.activation;
-            }
-            if activation_max < sample.activation {
-                activation_max = sample.activation;
-            }
-        }
-
-        if valid_count == 0 {
-            return None;
-        }
-
-        let count_f = valid_count as f32;
-        let mean_error = error_sum / count_f;
-        let mean_activation = activation_sum / count_f;
-        let mean_error_abs = error_abs_sum / count_f;
-        let mean_activation_abs = activation_abs_sum / count_f;
-
-        // Compute variance using E[X^2] - E[X]^2
-        let error_variance = (error_sq_sum / count_f) - (mean_error * mean_error);
-        let activation_variance =
-            (activation_sq_sum / count_f) - (mean_activation * mean_activation);
-
-        // Spike detection: count samples where error/activation exceeds 2x the mean absolute value
-        // This is a simple heuristic; more sophisticated methods could use actual std dev
-        let error_spike_threshold = mean_error_abs * 2.0;
-        let activation_spike_threshold = mean_activation_abs * 2.0;
-
-        for sample in samples {
-            if !sample.avg_error.is_finite() || !sample.activation.is_finite() {
-                continue;
-            }
-            if sample.avg_error.abs() > error_spike_threshold {
-                error_spike_count += 1;
-            }
-            if sample.activation.abs() > activation_spike_threshold {
-                activation_spike_count += 1;
-            }
-        }
-
-        Some(Self {
-            mean_error,
-            error_variance: error_variance.max(0.0), // Variance should be non-negative
-            mean_activation,
-            activation_variance: activation_variance.max(0.0),
-            error_spike_count,
-            activation_spike_count,
-            activation_min: if activation_min.is_finite() {
-                activation_min
-            } else {
-                0.0
-            },
-            activation_max: if activation_max.is_finite() {
-                activation_max
-            } else {
-                0.0
-            },
-        })
-    }
-
-    fn to_json(&self) -> crate::NeuronStatsJson {
-        crate::NeuronStatsJson {
-            mean_error: self.mean_error,
-            error_variance: self.error_variance,
-            mean_activation: self.mean_activation,
-            activation_variance: self.activation_variance,
-            error_spike_count: self.error_spike_count,
-            activation_spike_count: self.activation_spike_count,
-            activation_min: self.activation_min,
-            activation_max: self.activation_max,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct GpuHelpfulSample {
-    activation: f32,
-    avg_error: f32,
-}
-
-/// Extended sample struct for GPU matching output, includes target neuron data.
-impl From<HelpfulSample> for GpuHelpfulSample {
-    fn from(value: HelpfulSample) -> Self {
-        Self {
-            activation: value.activation,
-            avg_error: value.avg_error,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct HelpfulContribution {
-    positive_flag: u32,
-    negative_flag: u32,
-    positive_improvement: f32,
-    negative_improvement: f32,
-    positive_activation: f32,
-    negative_activation: f32,
-    error_squared: f32,
-    activation_squared: f32,
-    error_activation: f32,
-    pad0: f32,
-    pad1: f32,
-    pad2: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct HelpfulUniforms {
-    length: u32,
-    pad0: u32,
-    epsilon: f32,
-    pad1: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct HarmfulContribution {
-    harmful_flag: u32,
-    helpful_flag: u32,
-    error_magnitude: f32,
-    pad0: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct HarmfulUniforms {
-    length: u32,
-    pad0: u32,
-    epsilon: f32,
-    weight: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct ReluContribution {
-    positive_activation_sq: f32,
-    positive_error_activation: f32,
-    positive_count: u32,
-    negative_activation_sq: f32,
-    negative_error_activation: f32,
-    negative_count: u32,
-    error_sq: f32,
-    pad0: f32,
-    pad1: u32,
-    pad2: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct ReluUniforms {
-    length: u32,
-    threshold: f32,
-    epsilon: f32,
-    pad0: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct BiasResult {
-    bias_value: f32,
-    error_reduction: f32,
-    valid_sample_count: u32,
-    pad0: u32,
-}
-
-impl BiasResult {
-    fn zeroed() -> Self {
-        Self {
-            bias_value: 0.0,
-            error_reduction: 0.0,
-            valid_sample_count: 0,
-            pad0: 0,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct BiasUniforms {
-    sample_count: u32,
-    bias_count: u32,
-    incoming_weight: f32,
-    outgoing_weight: f32,
-    activation_type: u32,
-    epsilon: f32,
-    min_sample_count: u32,
-    pad0: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct ActivationOutput {
-    output: f32,
-    output_sq: f32,
-    error_output: f32,
-    valid: u32,
-    pad0: u32,
-    pad1: u32,
-    pad2: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct ActivationUniforms {
-    sample_count: u32,
-    orientation: f32,
-    scale: f32,
-    activation_type: u32,
-    epsilon: f32,
-    pad0: f32,
-    pad1: f32,
-}
-
-#[derive(Default)]
-struct HelpfulStats {
-    positive_count: u32,
-    negative_count: u32,
-    positive_improvement_sum: f32,
-    negative_improvement_sum: f32,
-    positive_activation_sum: f32,
-    negative_activation_sum: f32,
-    error_sq_sum: f32,
-    activation_sq_sum: f32,
-    error_activation_sum: f32,
-}
-
-#[derive(Clone, Copy)]
-enum ReluOrientation {
-    Positive,
-    Negative,
-}
-
-struct ReluStats {
-    orientation: ReluOrientation,
-    samples: Vec<(f32, f32)>,
-    activation_sq_sum: f32,
-    error_activation_sum: f32,
-}
+// Sample data structures moved to crate::analysis::samples module (Issue #269)
 
 impl ReluStats {
-    fn new(orientation: ReluOrientation) -> Self {
-        Self {
-            orientation,
-            samples: Vec::new(),
-            activation_sq_sum: 0.0,
-            error_activation_sum: 0.0,
-        }
-    }
-
     /// Evaluate this orientation and return a candidate if it passes the threshold.
     fn evaluate(
         &self,
@@ -2537,12 +2090,7 @@ fn calculate_optimal_bias(
     best_bias
 }
 
-#[derive(Default)]
-struct HarmfulStats {
-    harmful_count: u32,
-    helpful_count: u32,
-    harmful_error_sum: f32,
-}
+// HarmfulStats moved to crate::analysis::samples module (Issue #269)
 
 pub struct GpuAnalyzer {
     device: Option<wgpu::Device>,

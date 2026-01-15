@@ -11,12 +11,14 @@
 //! - `gpu.rs` - GPU infrastructure (GpuAnalyzer, GpuWorkQueue)
 //! - `utils.rs` - Utility functions (memory checks, deadlines)
 //! - `activation.rs` - Activation function related code (Issue #266)
+//! - `samples.rs` - Sample data structures and GPU formats (Issue #269)
 //!
 //! For now, much of the code is still in `impl.rs` and will be gradually moved.
 
 pub mod activation;
 pub mod gpu;
 pub mod neuron;
+pub mod samples;
 pub mod shared;
 pub mod synapse;
 pub mod utils;
@@ -60,6 +62,15 @@ pub use shared::{NeuronNoCandidateDetail, SynapseNoCandidateDetail};
 
 // Re-export ACTIVATION_SPECS from activation module (Issue #266)
 pub use activation::ACTIVATION_SPECS;
+
+// Re-export sample data structures from samples module (Issue #269)
+pub use samples::{
+    compute_source_variance_discount, constant_source_effect_threshold_from_env, ActivationOutput,
+    ActivationUniforms, BiasResult, BiasUniforms, GpuHelpfulSample, HarmfulContribution,
+    HarmfulStats, HarmfulUniforms, HelpfulContribution, HelpfulSample, HelpfulStats,
+    HelpfulUniforms, NeuronStats, ReluContribution, ReluOrientation, ReluStats, ReluUniforms,
+    DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD, EPSILON,
+};
 
 // Re-export focus_unused_observations_from_env for tests (Issue #182)
 // Moved to utils/deadline module in Issue #268
