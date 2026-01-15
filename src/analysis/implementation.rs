@@ -31,7 +31,7 @@ use crate::analysis::utils::deadline_override;
 use crate::analysis::utils::{
     build_deadline, calculate_gpu_batch_timeout, deadline_passed, log_analysis_start,
     log_analysis_timeout, order_eligible_sources, parse_input_index, shuffle_slice,
-    shuffle_within_top_k, OrderedNeuron, GPU_QUEUE_TIMEOUT_MAX_SECS,
+    shuffle_within_top_k, OrderedNeuron,
 };
 
 // Import sample data structures from dedicated module (Issue #269)
@@ -48,6 +48,13 @@ use crate::analysis::diagnostics::{
     compute_impact_scores_for_discounting, filter_focus_targets_for_neuron_analysis,
     require_unique_focus, FocusTargetFilterResult, NeuronDiagnostics, TargetDiagnostics, TargetMap,
     ThresholdContext,
+};
+
+// Import GPU device management from dedicated module (Issue #272)
+use crate::analysis::gpu::{
+    create_wgpu_instance_safely, detect_gpu_tier, detect_unified_memory, get_adapter_info_internal,
+    no_gpu_result, poll_device_until_idle, wait_for_buffer_map, wait_for_buffer_maps_batch,
+    GpuAvailabilityResult, GpuPerformanceTier, GPU_BUFFER_MAP_TIMEOUT_SECS, GPU_INIT_TIMEOUT_SECS,
 };
 
 // Re-import shared types needed by implementation
@@ -174,17 +181,7 @@ fn has_sufficient_output_variance(
 }
 
 // GPU_QUEUE_TIMEOUT_MIN_SECS and GPU_QUEUE_TIMEOUT_MAX_SECS moved to utils/deadline.rs (Issue #268)
-
-/// Buffer map timeout is always 5 seconds shorter than queue timeout to avoid race conditions.
-/// If both timeouts are the same, the queue might timeout before the GPU thread
-/// has a chance to return its own timeout error, leaving the thread stuck.
-const GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS: u64 = 5;
-
-/// Default buffer map timeout for internal GPU operations (in seconds).
-/// This is used inside the GPU thread where we don't have access to the external deadline.
-/// Set to max queue timeout minus margin for safety.
-const GPU_BUFFER_MAP_TIMEOUT_SECS: u64 =
-    GPU_QUEUE_TIMEOUT_MAX_SECS - GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS;
+// GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS, GPU_BUFFER_MAP_TIMEOUT_SECS moved to gpu/device.rs (Issue #272)
 
 /// Maximum estimated bytes of GPU-side buffers we allow per *batched* submission.
 ///
@@ -202,206 +199,15 @@ const GPU_BUFFER_MAP_TIMEOUT_SECS: u64 =
 /// Apple Silicon (and makes time-bounded runs far more reliable).
 const GPU_MAX_BATCH_ALLOC_BYTES: usize = 256 * 1024 * 1024; // 256MB
 
-/// Timeout for GPU thread initialisation (in seconds).
-/// GPU device creation should be fast; if it takes longer, something is wrong.
-const GPU_INIT_TIMEOUT_SECS: u64 = 30;
+// GPU_INIT_TIMEOUT_SECS moved to gpu/device.rs (Issue #272)
 
 // calculate_gpu_batch_timeout moved to utils/deadline.rs (Issue #268)
 
-/// Poll the GPU device until it has no work in flight, or a timeout is reached.
-///
-/// This intentionally avoids `Maintain::Wait` because that can block forever on
-/// some machines if the GPU driver wedges. Instead, we poll in a loop and bail
-/// out with an error so unattended workers can recover (or watchdog can abort).
-fn poll_device_until_idle(device: &wgpu::Device, timeout: Duration, label: &str) -> Result<()> {
-    use std::time::Instant;
-    let start = Instant::now();
-    loop {
-        let result = device.poll(wgpu::Maintain::Poll);
-        if result.is_queue_empty() {
-            return Ok(());
-        }
-        if start.elapsed() > timeout {
-            return Err(anyhow!(
-                "GPU device poll timed out after {:.1}s ({label}). The GPU driver may be unresponsive.",
-                timeout.as_secs_f64()
-            ));
-        }
-        // Short sleep to avoid busy-waiting.
-        thread::sleep(Duration::from_millis(10));
-    }
-}
+// poll_device_until_idle, wait_for_buffer_map, wait_for_buffer_maps_batch
+// moved to gpu/device.rs (Issue #272)
 
-/// Wait for a GPU buffer mapping to complete.
-///
-/// We avoid `Maintain::Wait` because that can block forever on some machines if
-/// the GPU driver is wedged. Instead, we poll in a loop until the callback fires
-/// or the timeout is reached.
-fn wait_for_buffer_map(
-    device: &wgpu::Device,
-    receiver: &std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
-    timeout_secs: u64,
-) -> Result<()> {
-    use std::time::Instant;
-
-    let timeout = Duration::from_secs(timeout_secs);
-    let start = Instant::now();
-    loop {
-        match receiver.try_recv() {
-            Ok(Ok(())) => return Ok(()),
-            Ok(Err(err)) => return Err(anyhow!("Buffer mapping failed: {err}")),
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                return Err(anyhow!("GPU callback channel disconnected"));
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // Not ready yet; keep polling.
-            }
-        }
-
-        let result = device.poll(wgpu::Maintain::Poll);
-        if result.is_queue_empty() && start.elapsed() > Duration::from_millis(250) {
-            // If the queue is empty but the callback hasn't fired, something is off.
-            // Keep trying until timeout, but this is a strong signal of driver trouble.
-        }
-
-        if start.elapsed() > timeout {
-            return Err(anyhow!(
-                "GPU buffer mapping timed out after {:.1}s. The GPU driver may be unresponsive.",
-                timeout.as_secs_f64()
-            ));
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
-/// Wait for multiple GPU buffer mappings to complete.
-fn wait_for_buffer_maps_batch(
-    device: &wgpu::Device,
-    receivers: &[std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>],
-    timeout_secs: u64,
-) -> Result<()> {
-    if receivers.is_empty() {
-        return Ok(());
-    }
-
-    use std::time::Instant;
-
-    let timeout = Duration::from_secs(timeout_secs);
-    let start = Instant::now();
-    let mut done: Vec<Option<Result<(), wgpu::BufferAsyncError>>> = vec![None; receivers.len()];
-
-    loop {
-        // Drain as many completion callbacks as possible.
-        for (i, receiver) in receivers.iter().enumerate() {
-            if done[i].is_some() {
-                continue;
-            }
-            match receiver.try_recv() {
-                Ok(result) => done[i] = Some(result),
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    return Err(anyhow!("Buffer {i} callback channel disconnected"));
-                }
-            }
-        }
-
-        if done.iter().all(|x| x.is_some()) {
-            // Validate all results.
-            for (i, result) in done.into_iter().enumerate() {
-                match result.expect("checked is_some") {
-                    Ok(()) => {}
-                    Err(err) => return Err(anyhow!("Buffer {i} mapping failed: {err}")),
-                }
-            }
-            return Ok(());
-        }
-
-        device.poll(wgpu::Maintain::Poll);
-
-        if start.elapsed() > timeout {
-            return Err(anyhow!(
-                "GPU batch buffer mapping timed out after {:.1}s. The GPU driver may be unresponsive.",
-                timeout.as_secs_f64()
-            ));
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
-/// Detected GPU performance tier for auto-tuning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GpuPerformanceTier {
-    /// High-performance GPU (M4, M3 Pro/Max, M2 Pro/Max, dedicated GPUs)
-    High,
-    /// Standard GPU (M1, M2, M3 base, integrated GPUs)
-    Standard,
-    /// Unknown/fallback
-    Unknown,
-}
-
-/// Detect if the GPU has unified memory architecture.
-///
-/// Unified memory means CPU and GPU share the same physical memory,
-/// enabling zero-copy buffer sharing.
-///
-/// Returns `true` for:
-/// - Apple Silicon (M1/M2/M3/M4) - always unified memory
-/// - Integrated GPUs on some Vulkan devices (may support unified memory)
-///
-/// Returns `false` for:
-/// - Discrete GPUs (separate VRAM)
-fn detect_unified_memory(adapter_info: &wgpu::AdapterInfo) -> bool {
-    let name = adapter_info.name.to_lowercase();
-
-    // Apple Silicon always has unified memory
-    if name.contains("apple") {
-        return true;
-    }
-
-    // Integrated GPUs may have unified memory (e.g., Intel, AMD APUs)
-    // However, wgpu doesn't expose whether the memory is actually unified,
-    // so we're conservative and only claim unified for Apple Silicon.
-    //
-    // Note: Some integrated GPUs on Linux with Vulkan might support unified memory,
-    // but the wgpu API doesn't expose this information reliably.
-    // We could enable this in the future with more testing.
-    false
-}
-
-/// Detect GPU performance tier from adapter info.
-/// Returns High for M4, Pro/Max variants; Standard for base M-series; Unknown otherwise.
-fn detect_gpu_tier(adapter_info: &wgpu::AdapterInfo) -> GpuPerformanceTier {
-    let name = adapter_info.name.to_lowercase();
-
-    // M4 series - highest performance
-    if name.contains("m4") {
-        return GpuPerformanceTier::High;
-    }
-
-    // Pro/Max/Ultra variants of any M-series - high performance
-    if (name.contains("m1") || name.contains("m2") || name.contains("m3"))
-        && (name.contains("pro") || name.contains("max") || name.contains("ultra"))
-    {
-        return GpuPerformanceTier::High;
-    }
-
-    // Base M-series - standard performance
-    if name.contains("m1") || name.contains("m2") || name.contains("m3") {
-        return GpuPerformanceTier::Standard;
-    }
-
-    // Dedicated GPUs are typically high performance
-    if adapter_info.device_type == wgpu::DeviceType::DiscreteGpu {
-        return GpuPerformanceTier::High;
-    }
-
-    // Integrated GPUs - standard
-    if adapter_info.device_type == wgpu::DeviceType::IntegratedGpu {
-        return GpuPerformanceTier::Standard;
-    }
-
-    GpuPerformanceTier::Unknown
-}
+// GpuPerformanceTier, detect_unified_memory, detect_gpu_tier
+// moved to gpu/device.rs (Issue #272)
 
 // Memory detection functions moved to crate::analysis::utils::memory (Issue #267)
 
@@ -533,87 +339,7 @@ fn log_gpu_info_once(
 // Deadline handling, logging, and randomisation utilities moved to utils/deadline.rs (Issue #268)
 // All functions now imported from crate::analysis::utils
 
-/// Safely create a wgpu Instance, avoiding panics from backend probing.
-///
-/// On Linux with old hardware or missing GPU drivers, wgpu's EGL/OpenGL backend
-/// can panic during initialisation (e.g., "BadDisplay" errors). This function:
-///
-/// - On Linux: Disables the GL backend entirely, using only Vulkan to avoid EGL panics
-/// - On macOS: Uses Metal (the default and only backend on macOS)
-/// - On all platforms: Wraps instance creation in `catch_unwind` as a safety net
-///
-/// Returns `None` if instance creation fails or panics, allowing callers to handle
-/// the failure gracefully (e.g., treating missing GPU as discovery-disabled on Linux).
-fn create_wgpu_instance_safely() -> Option<wgpu::Instance> {
-    use std::panic;
-
-    // On Linux, avoid GL/GLES backend which can panic on EGL initialisation
-    // when /dev/dri devices are missing or inaccessible.
-    #[cfg(target_os = "linux")]
-    let backends = wgpu::Backends::VULKAN;
-
-    // On macOS, Metal is the only backend and should always work
-    #[cfg(target_os = "macos")]
-    let backends = wgpu::Backends::METAL;
-
-    // On other platforms, use all available backends
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    let backends = wgpu::Backends::all();
-
-    // Wrap in catch_unwind to handle any remaining panics from backend probing
-    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-        wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends,
-            flags: wgpu::InstanceFlags::default(),
-            dx12_shader_compiler: wgpu::Dx12Compiler::default(),
-            gles_minor_version: wgpu::Gles3MinorVersion::default(),
-        })
-    }));
-
-    match result {
-        Ok(instance) => Some(instance),
-        Err(panic_info) => {
-            // Log the panic but don't propagate it
-            let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-                s.to_string()
-            } else if let Some(s) = panic_info.downcast_ref::<String>() {
-                s.clone()
-            } else {
-                "Unknown panic during wgpu instance creation".to_string()
-            };
-
-            #[cfg(target_os = "linux")]
-            {
-                // On Linux, this is expected on headless servers without GPU
-                if verbose_enabled() {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] wgpu instance creation failed: {panic_msg}. \
-                         Discovery will be disabled on this machine."
-                    );
-                }
-            }
-
-            #[cfg(target_os = "macos")]
-            {
-                // On macOS, this is unexpected - Metal should always be available
-                eprintln!(
-                    "[NEAT-AI-Discovery] ERROR: wgpu instance creation failed on macOS: {panic_msg}. \
-                     This indicates a system configuration issue."
-                );
-            }
-
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            {
-                eprintln!(
-                    "[NEAT-AI-Discovery] wgpu instance creation failed: {panic_msg}. \
-                     Discovery will be disabled on this machine."
-                );
-            }
-
-            None
-        }
-    }
-}
+// create_wgpu_instance_safely moved to gpu/device.rs (Issue #272)
 
 // Types moved to shared.rs - using imports from there
 // OrderedNeuron moved to utils/deadline.rs (Issue #268)
@@ -1245,15 +971,8 @@ pub struct GpuAnalyzer {
     batch_size: usize,
 }
 
-/// Result of GPU availability check with detailed diagnostics.
-pub struct GpuAvailabilityResult {
-    /// Whether a GPU is available for use.
-    pub available: bool,
-    /// Human-readable reason for the availability status.
-    pub reason: Option<String>,
-    /// Whether this is an error condition (true on macOS when GPU unavailable).
-    pub is_error: bool,
-}
+// GpuAvailabilityResult moved to gpu/device.rs (Issue #272)
+// Now imported from crate::analysis::gpu
 
 // =============================================================================
 // GPU Evaluator Trait - Abstracts over GpuAnalyzer and GpuWorkQueue
@@ -1855,7 +1574,7 @@ impl GpuAnalyzer {
 
         // Use safe instance creation to avoid panics from EGL/GL backend probing on Linux
         let Some(instance) = create_wgpu_instance_safely() else {
-            return Self::no_gpu_result("wgpu instance creation failed (GPU backend unavailable)");
+            return no_gpu_result("wgpu instance creation failed (GPU backend unavailable)");
         };
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -1864,7 +1583,7 @@ impl GpuAnalyzer {
         }));
 
         let Some(adapter) = adapter else {
-            return Self::no_gpu_result("No GPU adapter found");
+            return no_gpu_result("No GPU adapter found");
         };
 
         let device_result = pollster::block_on(adapter.request_device(
@@ -1882,50 +1601,12 @@ impl GpuAnalyzer {
                 reason: None,
                 is_error: false,
             },
-            Err(e) => Self::no_gpu_result(&format!("GPU device creation failed: {e}")),
+            Err(e) => no_gpu_result(&format!("GPU device creation failed: {e}")),
         }
     }
 
-    /// Create a result for when GPU is not available.
-    /// On macOS this is an error; on Linux it gracefully disables discovery.
-    fn no_gpu_result(reason: &str) -> GpuAvailabilityResult {
-        #[cfg(target_os = "macos")]
-        {
-            // On macOS, Metal should always be available - missing GPU is an error
-            GpuAvailabilityResult {
-                available: false,
-                reason: Some(format!(
-                    "{reason}. On macOS, GPU (Metal) should always be available. \
-                     This may indicate a system configuration issue."
-                )),
-                is_error: true,
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            // On Linux, GPU may not be available on headless servers - gracefully disable
-            GpuAvailabilityResult {
-                available: false,
-                reason: Some(format!(
-                    "{reason}. Discovery disabled on this machine. \
-                     This is normal for headless Linux servers without GPU hardware or \
-                     without proper permissions to access /dev/dri devices."
-                )),
-                is_error: false,
-            }
-        }
-
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        {
-            // For other platforms, treat as non-error (graceful disable)
-            GpuAvailabilityResult {
-                available: false,
-                reason: Some(format!("{reason}. Discovery disabled on this platform.")),
-                is_error: false,
-            }
-        }
-    }
+    // no_gpu_result moved to gpu/device.rs (Issue #272)
+    // Now using the standalone function from the device module
 
     /// Check if the GPU supports unified memory architecture.
     ///
@@ -1944,7 +1625,7 @@ impl GpuAnalyzer {
         static UNIFIED_MEMORY: OnceLock<bool> = OnceLock::new();
 
         *UNIFIED_MEMORY.get_or_init(|| {
-            let Some(info) = Self::get_adapter_info_internal() else {
+            let Some(info) = get_adapter_info_internal() else {
                 return false;
             };
             detect_unified_memory(&info)
@@ -1961,7 +1642,7 @@ impl GpuAnalyzer {
 
         ADAPTER_INFO
             .get_or_init(|| {
-                let raw_info = Self::get_adapter_info_internal()?;
+                let raw_info = get_adapter_info_internal()?;
                 let has_unified_memory = detect_unified_memory(&raw_info);
                 let config = crate::analysis::shared::ZeroCopyBufferConfig::from_env();
                 let zero_copy_enabled = config.enabled_with_hardware(has_unified_memory);
@@ -1976,21 +1657,8 @@ impl GpuAnalyzer {
             .clone()
     }
 
-    /// Internal helper to get raw wgpu adapter info.
-    fn get_adapter_info_internal() -> Option<wgpu::AdapterInfo> {
-        // Suppress Mesa/libEGL warnings
-        suppress_mesa_warnings_if_requested();
-        ensure_xdg_runtime_dir();
-
-        let instance = create_wgpu_instance_safely()?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))?;
-
-        Some(adapter.get_info())
-    }
+    // get_adapter_info_internal moved to gpu/device.rs (Issue #272)
+    // Now using the standalone function from the device module
 
     fn new() -> Result<Self> {
         // Suppress Mesa/libEGL warnings if requested (must be called before GPU init)
