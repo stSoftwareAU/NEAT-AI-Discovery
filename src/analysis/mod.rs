@@ -12,10 +12,12 @@
 //! - `utils.rs` - Utility functions (memory checks, deadlines)
 //! - `activation.rs` - Activation function related code (Issue #266)
 //! - `samples.rs` - Sample data structures and GPU formats (Issue #269)
+//! - `diagnostics.rs` - Diagnostic tracking and rejection reasons (Issue #271)
 //!
 //! For now, much of the code is still in `impl.rs` and will be gradually moved.
 
 pub mod activation;
+pub mod diagnostics;
 pub mod gpu;
 pub mod neuron;
 pub mod samples;
