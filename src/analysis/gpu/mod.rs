@@ -3,26 +3,25 @@
 //! This module contains GPU-related code including device management, GpuAnalyzer,
 //! GpuWorkQueue, and GPU evaluation functions.
 //!
-//! ## Module Structure (Issue #272)
+//! ## Module Structure (Issue #272, #273)
 //!
 //! ```text
 //! src/analysis/gpu/
 //! ├── mod.rs          <- This file: module router and re-exports
 //! ├── device.rs       <- GPU device management (Issue #272)
-//! ├── analyzer.rs     <- GpuAnalyzer struct (future)
+//! ├── analyzer.rs     <- GpuAnalyzer struct and GpuEvaluator trait (Issue #273)
 //! ├── queue.rs        <- GpuWorkQueue (future)
-//! ├── evaluator.rs    <- GpuEvaluator trait (future)
 //! └── pipelines.rs    <- Pipeline builders (future)
 //! ```
 //!
 //! ## Refactoring Progress
 //!
 //! - [x] device.rs - GPU device initialisation, detection, buffer management (Issue #272)
-//! - [ ] analyzer.rs - GpuAnalyzer struct and implementation
+//! - [x] analyzer.rs - GpuAnalyzer struct, GpuEvaluator trait, pipeline builders (Issue #273)
 //! - [ ] queue.rs - GpuWorkQueue struct and implementation
-//! - [ ] evaluator.rs - GpuEvaluator trait
-//! - [ ] pipelines.rs - Pipeline builders
+//! - [ ] pipelines.rs - Shared pipeline builder utilities
 
+pub mod analyzer;
 pub mod device;
 
 // Re-export device module contents for backwards compatibility
@@ -36,12 +35,12 @@ pub use device::{
 // Re-export GPU_QUEUE_TIMEOUT_MAX_SECS from device (which gets it from utils)
 pub use device::GPU_QUEUE_TIMEOUT_MAX_SECS;
 
-// Temporarily re-export from implementation until full refactoring is complete
-use super::implementation;
+// Re-export analyzer module contents
+pub use analyzer::{GpuAnalyzer, GpuEvaluator, GPU_MAX_BATCH_ALLOC_BYTES};
 
-/// GPU analyzer for performing GPU-accelerated analysis operations.
-/// Temporarily re-exported from implementation until refactoring is complete.
-pub use implementation::GpuAnalyzer;
+// Re-export test helper function for batch size tests
+#[cfg(test)]
+pub use analyzer::get_batch_size_for_tier;
 
 /// Check if the current GPU supports unified memory architecture.
 ///
@@ -77,5 +76,15 @@ mod tests {
         // Verify constants are accessible using const assertions
         const _: () = assert!(GPU_BUFFER_MAP_TIMEOUT_SECS > 0);
         const _: () = assert!(GPU_INIT_TIMEOUT_SECS > 0);
+    }
+
+    #[test]
+    fn test_gpu_analyzer_is_exported() {
+        // Verify GpuAnalyzer type is accessible via the gpu module
+        // We can't create an instance without GPU, but we can reference the type
+        fn _takes_analyzer(_: &GpuAnalyzer) {}
+
+        // Verify GpuEvaluator trait is accessible
+        fn _takes_evaluator<T: GpuEvaluator>(_: &T) {}
     }
 }

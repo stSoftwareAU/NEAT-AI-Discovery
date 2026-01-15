@@ -6,6 +6,19 @@
     use super::*;
     use crate::analysis::ACTIVATION_SPECS;
 
+    // Import GPU types from the refactored gpu module (Issue #272, #273)
+    use crate::analysis::gpu::{
+        detect_gpu_tier, get_batch_size_for_tier, GpuPerformanceTier, GPU_MAX_BATCH_ALLOC_BYTES,
+    };
+
+    // Import GPU buffer sample types for batch size tests (Issue #273)
+    use crate::analysis::samples::{GpuHelpfulSample, HarmfulContribution, HelpfulContribution};
+
+    // Import batch size utilities and constants (Issue #267)
+    use crate::analysis::utils::{
+        cap_gpu_batch_size_by_bytes, DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE,
+    };
+
     // Import memory parsing functions from the new utils module (Issue #267)
     #[cfg(target_os = "macos")]
     use crate::analysis::utils::memory::parse_vm_stat_page_size;
