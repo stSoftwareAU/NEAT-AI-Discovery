@@ -157,7 +157,7 @@ large creatures with hundreds of neurons.
    ```
 
 3. Confirm the artefact exists at `~/.cargo/lib/libneat_ai_discovery.*`.
-4. Run the quality gate before committing:
+4. **Always run the quality gate before committing** (CI treats warnings as errors, so don’t skip this):
 
    ```bash
    ./quality.sh
@@ -165,7 +165,9 @@ large creatures with hundreds of neurons.
 
 ## Deployment Checklist
 
-Before committing code changes, ensure you complete the following steps:
+Before committing code changes, ensure you complete the following steps.
+
+**Important**: Always run `./quality.sh` locally before committing/pushing. This repo runs Clippy with `-D warnings`, so even “minor” warnings (dead code, Clippy lints, etc.) will fail CI.
 
 1. **Run quality checks in both repositories:**
    ```bash
