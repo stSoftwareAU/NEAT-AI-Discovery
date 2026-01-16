@@ -41,7 +41,7 @@ use crate::analysis::utils::{
 // HelpfulStats still needed for tests - see test module imports
 use crate::analysis::samples::{
     compute_source_variance_discount, constant_source_effect_threshold_from_env, HelpfulSample,
-    NeuronStats, ReluOrientation, ReluStats, EPSILON,
+    NeuronStats, EPSILON,
 };
 
 // Import weight calculation functions from dedicated module (Issue #270)
@@ -354,95 +354,7 @@ impl RecordCache {
 // require_unique_focus moved to crate::analysis::diagnostics module (Issue #271)
 
 // Sample data structures moved to crate::analysis::samples module (Issue #269)
-
-impl ReluStats {
-    /// Evaluate this orientation and return a candidate if it passes the threshold.
-    fn evaluate(
-        &self,
-        source_uuid: &str,
-        target_uuid: &str,
-        threshold: f32,
-        total_baseline_error_sq: f32,
-        original_samples: &[HelpfulSample],
-    ) -> Option<CandidateNeuronJson> {
-        let sample_count = self.samples.len();
-        if sample_count < MIN_NEURON_SAMPLE_COUNT || self.activation_sq_sum <= EPSILON {
-            return None;
-        }
-
-        let mut outgoing_weight = self.error_activation_sum / (self.activation_sq_sum + EPSILON);
-        if !outgoing_weight.is_finite() || outgoing_weight.abs() <= EPSILON {
-            return None;
-        }
-        outgoing_weight = outgoing_weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
-
-        let mut improved_count = 0u32;
-        for (relu_activation, error) in &self.samples {
-            let new_error = error - outgoing_weight * relu_activation;
-            if new_error.abs() + EPSILON < error.abs() {
-                improved_count += 1;
-            }
-        }
-
-        // Calculate improvement based on magnitude (reduction in squared error)
-        // improvement = baseline_sq - new_sq
-        // = 2*w*sum(ea) - w^2*sum(aa)
-        let improvement_magnitude = 2.0 * outgoing_weight * self.error_activation_sum
-            - outgoing_weight * outgoing_weight * self.activation_sq_sum;
-
-        // Normalise by total baseline error of ALL samples (not just active ones)
-        let expected_improvement = if total_baseline_error_sq > EPSILON {
-            let result = improvement_magnitude / total_baseline_error_sq;
-            if result.is_finite() {
-                result
-            } else {
-                0.0
-            }
-        } else {
-            0.0
-        };
-
-        if expected_improvement <= threshold {
-            return None;
-        }
-
-        let incoming_weight = match self.orientation {
-            ReluOrientation::Positive => 1.0,
-            ReluOrientation::Negative => -1.0,
-        };
-
-        // For split-error ReLU evaluation, use bias=0.
-        // The whole point of split-error is that the ReLU should fire for ONE subset
-        // (positive or negative error samples) but NOT the other.
-        // Optimising bias on the subset alone can find a large positive bias that makes
-        // the ReLU fire for ALL samples, defeating the split-error approach.
-        // With bias=0, the ReLU naturally fires only when source activation > 0.
-        let optimal_bias = 0.0;
-
-        let target_stats = NeuronStats::from_samples(original_samples).map(|s| s.to_json());
-        let total_count = self.samples.len() as u32;
-
-        // Issue #128: Use creature-level metrics instead of neuron-level percentage.
-        // target_neuron_impact will be updated during impact discounting.
-        Some(CandidateNeuronJson {
-            source_neuron_uuid: source_uuid.to_string(),
-            target_neuron_uuid: target_uuid.to_string(),
-            source_neuron_index: None, // Set during impact discounting
-            target_neuron_index: None, // Set during impact discounting
-            incoming_weight,
-            outgoing_weight,
-            squash: "ReLU".to_string(),
-            bias: optimal_bias,
-            comment: None,
-            target_neuron_impact: 1.0,
-            expected_creature_error_reduction: expected_improvement,
-            expected_creature_score_gain: expected_improvement,
-            improved_count,
-            total_count,
-            target_neuron_stats: target_stats,
-        })
-    }
-}
+// ReluStats::evaluate() moved to samples.rs (Issue #275)
 
 // Note: ActivationCandidateSpec, ACTIVATION_SPECS, activation functions, and bias helpers
 // have been moved to crate::analysis::activation module (Issue #266)
@@ -3141,7 +3053,9 @@ pub(crate) fn truncate_combined_synapse_candidate_sets(
     (helpful_out, harmful_out, coordinated_out)
 }
 
-pub(crate) fn analyze_synapses_with_cache(
+/// Internal implementation of synapse analysis with cache.
+/// This is called from the synapse module which owns the public API.
+pub(crate) fn analyze_synapses_with_cache_impl(
     input: &AnalyzeSynapsesInput,
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeSynapsesResult> {
@@ -4755,19 +4669,13 @@ pub(crate) fn analyze_synapses_with_cache(
     })
 }
 
-pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesResult> {
-    // Validate focus_neurons before expensive pre-loading
-    require_unique_focus(&input.focus_neurons, "Synapse analysis")?;
-
-    // Pre-load all records for faster analysis (1 scan vs ~2000 scans)
-    let cache = Arc::new(RecordCache::new_adaptive(&input.parquet_file)?);
-    analyze_synapses_with_cache(input, cache)
-}
+// analyze_synapses has been moved to src/analysis/synapse.rs (Issue #275)
 
 #[cfg(test)]
 mod tests_synapses {
     use super::*;
     use crate::analysis::analyze_all;
+    use crate::analysis::analyze_synapses;
     use crate::analysis::samples::HelpfulStats;
     use crate::parquet_format::write_records_to_parquet;
     use crate::{AnalyzeAllInput, CreatureJson, NeuronJson, SynapseJson};
@@ -9205,6 +9113,7 @@ mod tests_synapses {
 #[cfg(test)]
 mod tests_optimal_outgoing_weight {
     use super::*;
+    use crate::analysis::samples::ReluStats;
     use anyhow::anyhow;
 
     struct AlwaysFailGpuEvaluator;

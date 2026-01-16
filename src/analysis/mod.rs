@@ -284,7 +284,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 "analysis::analyze_all → synapse analysis skipped",
                 || {
                     let inner = synapse_input.expect("checked is_some");
-                    implementation::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
+                    synapse::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
                 },
             )?;
 
@@ -319,7 +319,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 "analysis::analyze_all → synapse analysis skipped",
                 || {
                     let inner = synapse_input.expect("checked is_some");
-                    implementation::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
+                    synapse::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
                 },
             )?;
 
@@ -347,7 +347,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             "analysis::analyze_all → synapse analysis skipped",
             || {
                 let inner = synapse_input.expect("checked is_some");
-                implementation::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
+                synapse::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
             },
         )?;
 

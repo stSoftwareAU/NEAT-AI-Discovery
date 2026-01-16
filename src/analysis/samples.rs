@@ -414,6 +414,109 @@ impl ReluStats {
             error_activation_sum: 0.0,
         }
     }
+
+    /// Evaluate this orientation and return a candidate if it passes the threshold.
+    ///
+    /// This method computes the optimal outgoing weight and expected improvement for
+    /// a ReLU candidate, returning a candidate JSON if it exceeds the threshold.
+    ///
+    /// # Arguments
+    /// * `source_uuid` - UUID of the source neuron
+    /// * `target_uuid` - UUID of the target neuron
+    /// * `threshold` - Minimum improvement required
+    /// * `total_baseline_error_sq` - Total squared error baseline for normalisation
+    /// * `original_samples` - Original samples for statistics computation
+    ///
+    /// **Extracted from implementation.rs as part of Issue #275**
+    pub fn evaluate(
+        &self,
+        source_uuid: &str,
+        target_uuid: &str,
+        threshold: f32,
+        total_baseline_error_sq: f32,
+        original_samples: &[HelpfulSample],
+    ) -> Option<crate::CandidateNeuronJson> {
+        use crate::analysis::weights::MAX_OUTGOING_WEIGHT;
+
+        const MIN_NEURON_SAMPLE_COUNT: usize = 10;
+
+        let sample_count = self.samples.len();
+        if sample_count < MIN_NEURON_SAMPLE_COUNT || self.activation_sq_sum <= EPSILON {
+            return None;
+        }
+
+        let mut outgoing_weight = self.error_activation_sum / (self.activation_sq_sum + EPSILON);
+        if !outgoing_weight.is_finite() || outgoing_weight.abs() <= EPSILON {
+            return None;
+        }
+        outgoing_weight = outgoing_weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+
+        let mut improved_count = 0u32;
+        for (relu_activation, error) in &self.samples {
+            let new_error = error - outgoing_weight * relu_activation;
+            if new_error.abs() + EPSILON < error.abs() {
+                improved_count += 1;
+            }
+        }
+
+        // Calculate improvement based on magnitude (reduction in squared error)
+        // improvement = baseline_sq - new_sq
+        // = 2*w*sum(ea) - w^2*sum(aa)
+        let improvement_magnitude = 2.0 * outgoing_weight * self.error_activation_sum
+            - outgoing_weight * outgoing_weight * self.activation_sq_sum;
+
+        // Normalise by total baseline error of ALL samples (not just active ones)
+        let expected_improvement = if total_baseline_error_sq > EPSILON {
+            let result = improvement_magnitude / total_baseline_error_sq;
+            if result.is_finite() {
+                result
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        if expected_improvement <= threshold {
+            return None;
+        }
+
+        let incoming_weight = match self.orientation {
+            ReluOrientation::Positive => 1.0,
+            ReluOrientation::Negative => -1.0,
+        };
+
+        // For split-error ReLU evaluation, use bias=0.
+        // The whole point of split-error is that the ReLU should fire for ONE subset
+        // (positive or negative error samples) but NOT the other.
+        // Optimising bias on the subset alone can find a large positive bias that makes
+        // the ReLU fire for ALL samples, defeating the split-error approach.
+        // With bias=0, the ReLU naturally fires only when source activation > 0.
+        let optimal_bias = 0.0;
+
+        let target_stats = NeuronStats::from_samples(original_samples).map(|s| s.to_json());
+        let total_count = self.samples.len() as u32;
+
+        // Issue #128: Use creature-level metrics instead of neuron-level percentage.
+        // target_neuron_impact will be updated during impact discounting.
+        Some(crate::CandidateNeuronJson {
+            source_neuron_uuid: source_uuid.to_string(),
+            target_neuron_uuid: target_uuid.to_string(),
+            source_neuron_index: None, // Set during impact discounting
+            target_neuron_index: None, // Set during impact discounting
+            incoming_weight,
+            outgoing_weight,
+            squash: "ReLU".to_string(),
+            bias: optimal_bias,
+            comment: None,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: expected_improvement,
+            expected_creature_score_gain: expected_improvement,
+            improved_count,
+            total_count,
+            target_neuron_stats: target_stats,
+        })
+    }
 }
 
 /// Computed statistics for harmful synapse evaluation.
