@@ -61,8 +61,8 @@ use crate::analysis::diagnostics::{require_unique_focus, TargetMap};
 // Import GPU infrastructure from dedicated modules (Issue #272, #273, #274)
 use crate::analysis::gpu::GpuEvaluator;
 
-// Import RecordCache from implementation (still there for now)
-use super::implementation::RecordCache;
+// Import RecordCache from cache module (Issue #185)
+use super::cache::RecordCache;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -82,7 +82,7 @@ const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 
 /// Minimum number of sources in a group to make shared sample building worthwhile.
 /// Below this threshold, the overhead of grouping exceeds the benefit.
-const MIN_GROUP_SIZE_FOR_LOCALITY: usize = 3;
+pub(crate) const MIN_GROUP_SIZE_FOR_LOCALITY: usize = 3;
 
 /// Minimum overlap fraction required to group sources together.
 /// Sources are grouped if they share at least this fraction of their obs_indices.

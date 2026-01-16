@@ -42,7 +42,7 @@ use crate::analysis::utils::verbose_enabled;
 /// (MINIMUM/MAXIMUM/IF) during candidate discounting, rather than falling back to the conservative
 /// 1/N probability model.
 pub(crate) struct RecordCacheProvider<'a> {
-    pub(crate) cache: &'a super::implementation::RecordCache,
+    pub(crate) cache: &'a super::cache::RecordCache,
 }
 
 impl RecordProvider for RecordCacheProvider<'_> {
@@ -71,7 +71,7 @@ impl RecordProvider for RecordCacheProvider<'_> {
 /// don't get incorrectly diluted via the 1/N fallback.
 pub(crate) fn compute_impact_scores_for_discounting(
     creature: &crate::CreatureJson,
-    cache: &super::implementation::RecordCache,
+    cache: &super::cache::RecordCache,
 ) -> HashMap<String, f32> {
     let provider = RecordCacheProvider { cache };
     match compute_impacts_with_activations(creature, &provider) {
