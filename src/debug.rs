@@ -237,7 +237,8 @@ fn run_sample_command(pid: u32) {
     ));
     let out_path_str = out_path.to_string_lossy().to_string();
 
-    let sample_program = std::env::var("NEAT_AI_DISCOVERY_SAMPLE_PROGRAM").unwrap_or_else(|_| "sample".to_string());
+    let sample_program =
+        std::env::var("NEAT_AI_DISCOVERY_SAMPLE_PROGRAM").unwrap_or_else(|_| "sample".to_string());
     let sample_args = vec![
         pid.to_string(),
         "1".to_string(),
@@ -267,7 +268,9 @@ fn run_sample_command(pid: u32) {
         );
         match std::fs::read_to_string(&out_path) {
             Ok(contents) => {
-                eprintln!("[NEAT-AI-Discovery][debug] Partial 'sample' output saved to: {out_path_str}\n");
+                eprintln!(
+                    "[NEAT-AI-Discovery][debug] Partial 'sample' output saved to: {out_path_str}\n"
+                );
                 print_filtered_sample_output(&contents);
             }
             Err(e) => {
@@ -294,7 +297,9 @@ fn run_sample_command(pid: u32) {
     if status.success() {
         match std::fs::read_to_string(&out_path) {
             Ok(contents) => {
-                eprintln!("[NEAT-AI-Discovery][debug] Full 'sample' output saved to: {out_path_str}\n");
+                eprintln!(
+                    "[NEAT-AI-Discovery][debug] Full 'sample' output saved to: {out_path_str}\n"
+                );
                 print_filtered_sample_output(&contents);
             }
             Err(e) => {
