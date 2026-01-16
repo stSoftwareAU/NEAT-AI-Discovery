@@ -9,6 +9,7 @@
 //! - `neuron.rs` - Neuron analysis functions
 //! - `gpu.rs` - GPU infrastructure (GpuAnalyzer, GpuWorkQueue)
 //! - `utils.rs` - Utility functions (memory checks, deadlines)
+//! - `system.rs` - System utilities facade (memory, GPU tier detection) (Issue #239)
 //! - `activation.rs` - Activation function related code (Issue #266)
 //! - `samples.rs` - Sample data structures and GPU formats (Issue #269)
 //! - `diagnostics.rs` - Diagnostic tracking and rejection reasons (Issue #271)
@@ -22,6 +23,7 @@ pub mod neuron;
 pub mod samples;
 pub mod shared;
 pub mod synapse;
+pub mod system;
 pub mod utils;
 pub mod weights;
 
@@ -57,6 +59,33 @@ pub use utils::{gpu_timing_enabled, verbose_enabled};
 
 // Re-export memory functions from utils (Issue #267)
 pub use utils::check_memory_for_parquet;
+
+// Re-export system utilities for backward compatibility (Issue #239)
+// These are the primary types and functions for memory detection and GPU performance
+pub use system::{
+    // GPU batch size utilities
+    cap_gpu_batch_size_by_bytes,
+    // Memory tier classification
+    categorise_memory_tier,
+    // System requirements
+    check_system_memory_requirements,
+    // GPU performance tier
+    detect_gpu_tier,
+    detect_memory_tier,
+    detect_unified_memory,
+    // Memory detection
+    get_memory_info,
+    get_work_queue_capacity,
+    get_work_queue_capacity_for_tier,
+    // Parquet memory validation
+    validate_parquet_memory_requirements,
+    GpuPerformanceTier,
+    MemoryTier,
+    // GPU batch size constants
+    DEFAULT_GPU_BATCH_SIZE,
+    HIGH_PERF_GPU_BATCH_SIZE,
+    LOW_MEMORY_GPU_BATCH_SIZE,
+};
 
 // Re-export Detail types from shared
 pub use shared::{NeuronNoCandidateDetail, SynapseNoCandidateDetail};
