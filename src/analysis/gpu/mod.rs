@@ -3,14 +3,14 @@
 //! This module contains GPU-related code including device management, GpuAnalyzer,
 //! GpuWorkQueue, and GPU evaluation functions.
 //!
-//! ## Module Structure (Issue #272, #273)
+//! ## Module Structure (Issue #272, #273, #274)
 //!
 //! ```text
 //! src/analysis/gpu/
 //! ├── mod.rs          <- This file: module router and re-exports
 //! ├── device.rs       <- GPU device management (Issue #272)
 //! ├── analyzer.rs     <- GpuAnalyzer struct and GpuEvaluator trait (Issue #273)
-//! ├── queue.rs        <- GpuWorkQueue (future)
+//! ├── queue.rs        <- GpuWorkQueue struct and thread management (Issue #274)
 //! └── pipelines.rs    <- Pipeline builders (future)
 //! ```
 //!
@@ -18,11 +18,12 @@
 //!
 //! - [x] device.rs - GPU device initialisation, detection, buffer management (Issue #272)
 //! - [x] analyzer.rs - GpuAnalyzer struct, GpuEvaluator trait, pipeline builders (Issue #273)
-//! - [ ] queue.rs - GpuWorkQueue struct and implementation
+//! - [x] queue.rs - GpuWorkQueue struct and implementation (Issue #274)
 //! - [ ] pipelines.rs - Shared pipeline builder utilities
 
 pub mod analyzer;
 pub mod device;
+pub mod queue;
 
 // Re-export device module contents for backwards compatibility
 pub use device::{
@@ -37,6 +38,9 @@ pub use device::GPU_QUEUE_TIMEOUT_MAX_SECS;
 
 // Re-export analyzer module contents
 pub use analyzer::{GpuAnalyzer, GpuEvaluator, GPU_MAX_BATCH_ALLOC_BYTES};
+
+// Re-export queue module contents (Issue #274)
+pub use queue::GpuWorkQueue;
 
 // Re-export test helper function for batch size tests
 #[cfg(test)]
