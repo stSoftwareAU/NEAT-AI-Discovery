@@ -24,6 +24,7 @@ pub mod samples;
 pub mod shared;
 pub mod synapse;
 pub mod utils;
+pub mod weights;
 
 // Implementation module - contains all the analysis code
 // TODO: Gradually extract pieces into focused modules (synapse.rs, neuron.rs, gpu.rs, utils.rs)
@@ -77,6 +78,13 @@ pub use samples::{
 // Re-export focus_unused_observations_from_env for tests (Issue #182)
 // Moved to utils/deadline module in Issue #268
 pub use utils::focus_unused_observations_from_env;
+
+// Re-export weight calculation functions from weights module (Issue #270)
+pub use weights::{
+    calculate_optimal_bias, calculate_optimal_identity_outgoing_and_bias,
+    calculate_optimal_outgoing_weight, clamp_weight_update_delta,
+    coordinated_structural_activation_delta, MAX_OUTGOING_WEIGHT,
+};
 
 // Implement analyze_all using the module functions
 use crate::{
