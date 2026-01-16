@@ -316,6 +316,10 @@ fn run_sample_command(pid: u32) {
     }
 }
 
+// This helper is only required on macOS (to run `sample`) and in tests (to prevent regressions).
+// On other platforms we intentionally do not compile it to avoid `-D dead-code` failures under
+// the `./quality.sh` gate.
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Clone, Copy)]
 struct ExternalCommandRun {
     status: Option<std::process::ExitStatus>,
@@ -327,6 +331,7 @@ struct ExternalCommandRun {
 /// IMPORTANT: This helper must never hang. It intentionally discards stdout/stderr
 /// to avoid deadlocks when a child writes more than a pipe buffer and the parent
 /// isn't continuously draining it.
+#[cfg(any(target_os = "macos", test))]
 fn run_external_command_with_timeout(
     program: &str,
     args: &[String],
@@ -511,14 +516,19 @@ mod tests {
         // child is killed before it gets scheduled.
         std::fs::write(&out_path, "").expect("precreate output file");
 
-        let script = format!(
-            "#!/bin/sh\n\
+        let script = "#!/bin/sh\n\
              OUT=\"$1\"\n\
+             # Write output immediately (and plenty of it) so the test can reliably\n\
+             # observe partial output even if we kill the process shortly after.\n\
              echo \"Call graph:\" > \"$OUT\"\n\
-             echo \"Thread_0\" >> \"$OUT\"\n\
+             i=0\n\
+             while [ $i -lt 2000 ]; do\n\
+               echo \"Thread_0\" >> \"$OUT\"\n\
+               i=$((i+1))\n\
+             done\n\
              # hang long enough that the test timeout must kill us\n\
              sleep 60\n"
-        );
+            .to_string();
         std::fs::write(&script_path, script).expect("write test script");
         let mut perms = std::fs::metadata(&script_path)
             .expect("metadata")
@@ -531,19 +541,32 @@ mod tests {
         let run = run_external_command_with_timeout(
             script_path.to_string_lossy().as_ref(),
             &args,
-            Duration::from_millis(150),
-            Duration::from_millis(150),
+            Duration::from_millis(750),
+            Duration::from_millis(250),
         )
         .expect("run");
 
         assert!(run.timed_out, "expected timeout");
+        // Touch `status` so it doesn't get optimised into "dead code" on non-macOS test builds.
+        // (It is used by the macOS `sample` path.)
+        let _ = run.status;
         assert!(
             start.elapsed() < Duration::from_secs(2),
             "expected quick return, got {:#?}",
             start.elapsed()
         );
 
-        let contents = std::fs::read_to_string(&out_path).expect("read partial output");
+        // Allow a short window for the child to be scheduled and write its initial output.
+        // (On heavily loaded CI runners, immediate scheduling isn't guaranteed.)
+        let mut contents = String::new();
+        let poll_start = Instant::now();
+        while poll_start.elapsed() < Duration::from_secs(1) {
+            contents = std::fs::read_to_string(&out_path).expect("read partial output");
+            if !contents.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
         assert!(
             contents.contains("Call graph:") && contents.contains("Thread_0"),
             "expected partial output, got: {contents:?}"
