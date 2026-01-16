@@ -8,7 +8,9 @@ name: CI/CD Pipeline
 
 on:
   pull_request:
-    branches: [ Develop ]
+    branches:
+      - Develop
+  workflow_dispatch: # Allow manual trigger if needed
 
 env:
   CARGO_TERM_COLOR: always
