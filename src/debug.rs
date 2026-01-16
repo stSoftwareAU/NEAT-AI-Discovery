@@ -212,9 +212,7 @@ fn dump_all_threads() {
 /// Run macOS `sample` command to capture all thread backtraces.
 #[cfg(target_os = "macos")]
 fn run_sample_command(pid: u32) {
-    use std::io::Read;
-    use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     // IMPORTANT: This must NEVER hang. It's used for debugging stuck processes.
     //
@@ -222,65 +220,159 @@ fn run_sample_command(pid: u32) {
     // extreme pressure or a driver is wedged). If we block here, we make the
     // original hang harder to diagnose on unattended machines.
     const SAMPLE_TIMEOUT_SECS: u64 = 5;
+    const SAMPLE_KILL_GRACE_MS: u64 = 500;
 
     // Run sample for 1 second to get a snapshot (not a profile).
     // Note: We use `-mayDie` to avoid requiring elevated permissions.
-    let mut child = match Command::new("sample")
-        .args([&pid.to_string(), "1", "-mayDie"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
+    //
+    // IMPORTANT: Do NOT pipe stdout here. `sample` can emit a lot of output; if we
+    // pipe it and don't continuously drain the pipe, the child can block forever
+    // once the buffer fills. That manifests exactly as "sample did not exit".
+    let out_path = std::env::temp_dir().join(format!(
+        "neat_ai_discovery.sample.{pid}.{}.txt",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    ));
+    let out_path_str = out_path.to_string_lossy().to_string();
+
+    let sample_program = std::env::var("NEAT_AI_DISCOVERY_SAMPLE_PROGRAM").unwrap_or_else(|_| "sample".to_string());
+    let sample_args = vec![
+        pid.to_string(),
+        "1".to_string(),
+        "-mayDie".to_string(),
+        "-file".to_string(),
+        out_path_str.clone(),
+    ];
+
+    let run = match run_external_command_with_timeout(
+        &sample_program,
+        &sample_args,
+        Duration::from_secs(SAMPLE_TIMEOUT_SECS),
+        Duration::from_millis(SAMPLE_KILL_GRACE_MS),
+    ) {
+        Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to run 'sample': {e}");
-            eprintln!("Try manually: sample {pid} 1 -file /tmp/sample.txt");
+            eprintln!("Try manually: sample {pid} 1 -mayDie -file /tmp/sample.txt");
             return;
         }
     };
+
+    if run.timed_out {
+        eprintln!(
+            "[NEAT-AI-Discovery][debug] WARNING: 'sample' did not exit within {SAMPLE_TIMEOUT_SECS}s. \
+             Attempting to print any partial output captured so far."
+        );
+        match std::fs::read_to_string(&out_path) {
+            Ok(contents) => {
+                eprintln!("[NEAT-AI-Discovery][debug] Partial 'sample' output saved to: {out_path_str}\n");
+                print_filtered_sample_output(&contents);
+            }
+            Err(e) => {
+                eprintln!(
+                    "[NEAT-AI-Discovery][debug] WARNING: Could not read partial 'sample' output file: {e}"
+                );
+                eprintln!("Expected output at: {out_path_str}");
+                eprintln!("Try manually: sample {pid} 1 -mayDie -file /tmp/sample.txt");
+            }
+        }
+        return;
+    }
+
+    let Some(status) = run.status else {
+        // We only return `None` status when the child was killed but didn't report status
+        // within the grace window.
+        eprintln!(
+            "[NEAT-AI-Discovery][debug] WARNING: 'sample' did not report an exit status. \
+             See partial output at: {out_path_str}"
+        );
+        return;
+    };
+
+    if status.success() {
+        match std::fs::read_to_string(&out_path) {
+            Ok(contents) => {
+                eprintln!("[NEAT-AI-Discovery][debug] Full 'sample' output saved to: {out_path_str}\n");
+                print_filtered_sample_output(&contents);
+            }
+            Err(e) => {
+                eprintln!(
+                    "[NEAT-AI-Discovery][debug] 'sample' exited successfully but output file could not be read: {e}"
+                );
+                eprintln!("Expected output at: {out_path_str}");
+                eprintln!("Try manually: sample {pid} 1 -mayDie -file /tmp/sample.txt");
+            }
+        }
+    } else {
+        eprintln!("'sample' command failed (exit code: {status}).");
+        eprintln!("Try manually: sample {pid} 1 -mayDie -file /tmp/sample.txt");
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExternalCommandRun {
+    status: Option<std::process::ExitStatus>,
+    timed_out: bool,
+}
+
+/// Run an external command with a hard timeout, avoiding pipe backpressure.
+///
+/// IMPORTANT: This helper must never hang. It intentionally discards stdout/stderr
+/// to avoid deadlocks when a child writes more than a pipe buffer and the parent
+/// isn't continuously draining it.
+fn run_external_command_with_timeout(
+    program: &str,
+    args: &[String],
+    timeout: Duration,
+    kill_grace: Duration,
+) -> std::io::Result<ExternalCommandRun> {
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
+
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
 
     let start = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let mut stdout = Vec::new();
-                let mut stderr = Vec::new();
-
-                if let Some(mut out) = child.stdout.take() {
-                    let _ = out.read_to_end(&mut stdout);
-                }
-                if let Some(mut err) = child.stderr.take() {
-                    let _ = err.read_to_end(&mut stderr);
-                }
-
-                if status.success() {
-                    let stdout = String::from_utf8_lossy(&stdout);
-                    // Filter to show the most relevant parts.
-                    print_filtered_sample_output(&stdout);
-                } else {
-                    let stderr = String::from_utf8_lossy(&stderr);
-                    eprintln!("'sample' command failed: {stderr}");
-                    eprintln!("Try manually: sample {pid} 1 -file /tmp/sample.txt");
-                }
-                return;
+                return Ok(ExternalCommandRun {
+                    status: Some(status),
+                    timed_out: false,
+                });
             }
             Ok(None) => {
-                if start.elapsed() > Duration::from_secs(SAMPLE_TIMEOUT_SECS) {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][debug] WARNING: 'sample' did not exit within {SAMPLE_TIMEOUT_SECS}s. \
-                         Skipping thread dump capture to avoid hanging the process."
-                    );
+                if start.elapsed() > timeout {
                     let _ = child.kill();
-                    let _ = child.wait();
-                    return;
+
+                    // Never block indefinitely waiting for the child to die.
+                    let kill_start = Instant::now();
+                    while kill_start.elapsed() < kill_grace {
+                        match child.try_wait() {
+                            Ok(Some(status)) => {
+                                return Ok(ExternalCommandRun {
+                                    status: Some(status),
+                                    timed_out: true,
+                                });
+                            }
+                            Ok(None) => thread::sleep(Duration::from_millis(25)),
+                            Err(_) => break,
+                        }
+                    }
+
+                    return Ok(ExternalCommandRun {
+                        status: None,
+                        timed_out: true,
+                    });
                 }
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(Duration::from_millis(25));
             }
-            Err(e) => {
-                eprintln!("Failed to run 'sample': {e}");
-                eprintln!("Try manually: sample {pid} 1 -file /tmp/sample.txt");
-                return;
-            }
+            Err(e) => return Err(e),
         }
     }
 }
@@ -363,6 +455,7 @@ fn chrono_lite_timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn test_init_debug_handlers_is_idempotent() {
@@ -388,5 +481,70 @@ mod tests {
             deadlocks.is_empty(),
             "No deadlocks should exist in clean test"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn run_external_command_with_timeout_does_not_hang_and_preserves_partial_output() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Create a small shell script that writes to a file immediately, then hangs.
+        // This simulates the "child doesn't exit promptly" scenario while ensuring we
+        // can still read partial output from the file after we kill it.
+        let tmp = std::env::temp_dir();
+        let script_path = tmp.join(format!(
+            "neat_ai_discovery_test_hang_{}_{}.sh",
+            std::process::id(),
+            chrono_lite_timestamp().replace(' ', "_")
+        ));
+        let out_path = tmp.join(format!(
+            "neat_ai_discovery_test_output_{}_{}.txt",
+            std::process::id(),
+            chrono_lite_timestamp().replace(' ', "_")
+        ));
+        // Pre-create the output file so the test can't fail with "not found" if the
+        // child is killed before it gets scheduled.
+        std::fs::write(&out_path, "").expect("precreate output file");
+
+        let script = format!(
+            "#!/bin/sh\n\
+             OUT=\"$1\"\n\
+             echo \"Call graph:\" > \"$OUT\"\n\
+             echo \"Thread_0\" >> \"$OUT\"\n\
+             # hang long enough that the test timeout must kill us\n\
+             sleep 60\n"
+        );
+        std::fs::write(&script_path, script).expect("write test script");
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).expect("chmod");
+
+        let start = Instant::now();
+        let args = vec![out_path.to_string_lossy().to_string()];
+        let run = run_external_command_with_timeout(
+            script_path.to_string_lossy().as_ref(),
+            &args,
+            Duration::from_millis(150),
+            Duration::from_millis(150),
+        )
+        .expect("run");
+
+        assert!(run.timed_out, "expected timeout");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "expected quick return, got {:#?}",
+            start.elapsed()
+        );
+
+        let contents = std::fs::read_to_string(&out_path).expect("read partial output");
+        assert!(
+            contents.contains("Call graph:") && contents.contains("Thread_0"),
+            "expected partial output, got: {contents:?}"
+        );
+
+        let _ = std::fs::remove_file(&script_path);
+        let _ = std::fs::remove_file(&out_path);
     }
 }
