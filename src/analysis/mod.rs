@@ -63,8 +63,45 @@ pub use utils::check_memory_for_parquet;
 // Re-export Detail types from shared
 pub use shared::{NeuronNoCandidateDetail, SynapseNoCandidateDetail};
 
-// Re-export ACTIVATION_SPECS from activation module (Issue #266)
-pub use activation::ACTIVATION_SPECS;
+// Re-export activation-related items from activation module (Issue #266, #238)
+pub use activation::{
+    // Activation functions
+    absolute_activation,
+    // GPU ID mapping
+    activation_name_to_gpu_id,
+    arctan_activation,
+    bent_identity_activation,
+    bipolar_activation,
+    // Target simulation functions (Issue #238)
+    can_use_hard_tanh,
+    clipped_activation,
+    elu_activation,
+    gelu_activation,
+    // Bias helpers
+    get_bias_range,
+    get_bias_values,
+    get_target_activation_fn,
+    get_target_simulation_fn,
+    get_target_simulation_mode,
+    hard_tanh_activation,
+    has_sufficient_output_variance,
+    identity_activation,
+    // Activation predicates
+    is_threshold_activation,
+    logistic_activation,
+    mish_activation,
+    relu6_activation,
+    softplus_activation,
+    softsign_activation,
+    tanh_activation,
+    // Activation candidate spec
+    ActivationCandidateSpec,
+    TargetSimulationMode,
+    ACTIVATION_SPECS,
+    ORIENTATIONS_BIDIRECTIONAL,
+    SCALES_SMOOTH,
+    SCALES_WIDE,
+};
 
 // Re-export sample data structures from samples module (Issue #269)
 pub use samples::{
