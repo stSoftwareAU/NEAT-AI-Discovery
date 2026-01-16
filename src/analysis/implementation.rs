@@ -23,22 +23,25 @@ use crate::analysis::activation::{
 // ensure_xdg_runtime_dir, get_memory_info, suppress_mesa_warnings_if_requested, MemoryTier,
 // DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE, LOW_MEMORY_GPU_BATCH_SIZE moved to
 // gpu/analyzer.rs (Issue #273)
-use crate::analysis::utils::{check_memory_for_parquet, get_work_queue_capacity, verbose_enabled};
+// get_work_queue_capacity moved to gpu/queue.rs usage (Issue #274)
+use crate::analysis::utils::{check_memory_for_parquet, verbose_enabled};
 
 // Import deadline handling and logging utilities from dedicated module (Issue #268)
 #[cfg(test)]
 use crate::analysis::utils::deadline_override;
+// calculate_gpu_batch_timeout moved to gpu/queue.rs usage (Issue #274)
 use crate::analysis::utils::{
-    build_deadline, calculate_gpu_batch_timeout, deadline_passed, log_analysis_start,
-    log_analysis_timeout, order_eligible_sources, parse_input_index, shuffle_slice,
-    shuffle_within_top_k, OrderedNeuron,
+    build_deadline, deadline_passed, log_analysis_start, log_analysis_timeout,
+    order_eligible_sources, parse_input_index, shuffle_slice, shuffle_within_top_k, OrderedNeuron,
 };
 
 // Import sample data structures from dedicated module (Issue #269)
 // Note: Many GPU buffer types moved to gpu/analyzer.rs (Issue #273)
+// HarmfulStats, HelpfulStats moved to gpu/queue.rs usage (Issue #274)
+// HelpfulStats still needed for tests - see test module imports
 use crate::analysis::samples::{
-    compute_source_variance_discount, constant_source_effect_threshold_from_env, HarmfulStats,
-    HelpfulSample, HelpfulStats, NeuronStats, ReluOrientation, ReluStats, EPSILON,
+    compute_source_variance_discount, constant_source_effect_threshold_from_env, HelpfulSample,
+    NeuronStats, ReluOrientation, ReluStats, EPSILON,
 };
 
 // Import weight calculation functions from dedicated module (Issue #270)
@@ -55,9 +58,10 @@ use crate::analysis::diagnostics::{
     ThresholdContext,
 };
 
-// Import GPU infrastructure from dedicated modules (Issue #272, #273)
+// Import GPU infrastructure from dedicated modules (Issue #272, #273, #274)
 // Most GPU types and functions are now used only via GpuAnalyzer/GpuWorkQueue
-use crate::analysis::gpu::{GpuAnalyzer, GpuEvaluator, GPU_INIT_TIMEOUT_SECS};
+// GPU_INIT_TIMEOUT_SECS now used by gpu/queue.rs (Issue #274)
+use crate::analysis::gpu::{GpuAnalyzer, GpuEvaluator, GpuWorkQueue};
 
 // Re-import shared types needed by implementation
 use crate::analysis::shared::{NeuronNoCandidateReason, NeuronNoCandidateSummary};
@@ -69,14 +73,14 @@ use crate::analysis::diagnostics::RejectionReason;
 use crate::analysis::shared::SynapseNoCandidateReason;
 
 // bytemuck::Zeroable moved to gpu/analyzer.rs (Issue #273)
-use crossbeam_channel::{bounded, Receiver, Sender};
+// crossbeam_channel::{bounded, Receiver, Sender} moved to gpu/queue.rs (Issue #274)
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+// std::thread::{self, JoinHandle} moved to gpu/queue.rs (Issue #274)
+// std::time::Duration moved to gpu/queue.rs usage (Issue #274)
 
 // WORKGROUP_SIZE moved to gpu/analyzer.rs (Issue #273)
 
@@ -458,515 +462,15 @@ impl ReluStats {
 // GpuEvaluator trait and impl GpuEvaluator for GpuAnalyzer moved to gpu/analyzer.rs (Issue #273)
 // Now imported from crate::analysis::gpu
 
-/// Implementation for shared GpuWorkQueue.
-/// NOTE: These trait methods use `None` deadline, which gives maximum timeout (5 minutes).
-/// For deadline-aware evaluation, use the batch methods directly with an explicit deadline.
-impl GpuEvaluator for GpuWorkQueue {
-    fn evaluate_relu(
-        &self,
-        samples: &[HelpfulSample],
-        threshold: f32,
-    ) -> Result<(ReluStats, ReluStats, f32)> {
-        // Clone samples to send to the GPU thread
-        // Uses None deadline = maximum timeout (5 minutes)
-        self.evaluate_relu_gpu(samples.to_vec(), threshold, &None)
-    }
-
-    fn evaluate_activation(
-        &self,
-        samples: &[HelpfulSample],
-        activation_type: u32,
-        orientation: f32,
-        scale: f32,
-    ) -> Result<(f32, f32, f32, u32)> {
-        // Uses None deadline = maximum timeout (5 minutes)
-        self.evaluate_activation_gpu(samples.to_vec(), activation_type, orientation, scale, &None)
-    }
-}
-
-// =============================================================================
-// GPU Work Queue - Centralised GPU thread for improved utilisation
-// =============================================================================
-
-/// Work request types for the GPU queue.
-/// Each variant contains the data needed for a specific GPU operation.
-enum GpuWorkRequest {
-    /// Batch of helpful synapse/neuron evaluations.
-    /// Each item is a slice of samples to evaluate.
-    HelpfulBatch {
-        /// Samples for each evaluation, indexed by request ID.
-        samples: Vec<Vec<HelpfulSample>>,
-        /// Channel to send results back.
-        response_tx: Sender<Result<Vec<HelpfulStats>>>,
-    },
-    /// Batch of harmful synapse evaluations.
-    /// Each item is (samples, weight) pair.
-    HarmfulBatch {
-        /// (samples, weight) pairs for each evaluation.
-        samples_with_weights: Vec<(Vec<HelpfulSample>, f32)>,
-        /// Channel to send results back.
-        response_tx: Sender<Result<Vec<HarmfulStats>>>,
-    },
-    /// ReLU activation evaluation for neuron candidates.
-    ReluEval {
-        samples: Vec<HelpfulSample>,
-        threshold: f32,
-        response_tx: Sender<Result<(ReluStats, ReluStats, f32)>>,
-    },
-    /// General activation function evaluation for neuron candidates.
-    ActivationEval {
-        samples: Vec<HelpfulSample>,
-        activation_type: u32,
-        orientation: f32,
-        scale: f32,
-        response_tx: Sender<Result<(f32, f32, f32, u32)>>,
-    },
-    /// Request to shut down the GPU thread.
-    Shutdown,
-}
-
-/// Centralised GPU work queue that processes all GPU operations on a single thread.
-///
-/// This eliminates the overhead of creating multiple GPU devices (one per parallel
-/// focus neuron) and improves GPU utilisation by batching work from multiple sources.
-///
-/// # Architecture
-///
-/// ```text
-/// ┌─────────────────────────────────────────────────────────────┐
-/// │  CPU Threads (rayon par_iter)                               │
-/// │  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐                    │
-/// │  │Focus1│  │Focus2│  │Focus3│  │Focus4│  ...               │
-/// │  └──┬───┘  └──┬───┘  └──┬───┘  └──┬───┘                    │
-/// │     │         │         │         │                         │
-/// │     └────┬────┴────┬────┴────┬────┘                         │
-/// │          │         │         │                              │
-/// │          ▼         ▼         ▼                              │
-/// │  ┌─────────────────────────────────────────────────┐       │
-/// │  │           GPU Work Queue (crossbeam channel)     │       │
-/// │  └──────────────────────┬──────────────────────────┘       │
-/// │                         │                                   │
-/// │                         ▼                                   │
-/// │  ┌─────────────────────────────────────────────────┐       │
-/// │  │           GPU Thread (owns GpuAnalyzer)          │       │
-/// │  │  • Batches work from multiple focus neurons      │       │
-/// │  │  • Single GPU device for all operations          │       │
-/// │  │  • Optimal GPU utilisation                       │       │
-/// │  └─────────────────────────────────────────────────┘       │
-/// └─────────────────────────────────────────────────────────────┘
-/// ```
-struct GpuWorkQueue {
-    /// Channel to send work to the GPU thread.
-    work_tx: Sender<GpuWorkRequest>,
-    /// Handle to the GPU thread (for clean shutdown).
-    thread_handle: Option<JoinHandle<()>>,
-    /// Channel to receive notification when GPU thread exits.
-    /// This allows Drop to use a timeout instead of blocking forever.
-    exit_rx: Receiver<()>,
-}
-
-impl GpuWorkQueue {
-    /// Create a new GPU work queue with a dedicated GPU thread.
-    ///
-    /// The GPU thread is spawned immediately and owns the GpuAnalyzer.
-    /// All GPU operations are processed sequentially on this thread,
-    /// eliminating device creation overhead and improving utilisation.
-    ///
-    /// CRITICAL: The GpuAnalyzer is created INSIDE the GPU thread, not before.
-    /// wgpu devices have thread-local state that doesn't transfer properly when
-    /// moved across threads, causing deadlocks in device.poll().
-    pub fn new() -> Result<Self> {
-        // Create the channel for sending work to the GPU thread.
-        // Capacity is dynamically sized based on available system memory.
-        // Lower capacity = more backpressure = less memory usage.
-        // This prevents Metal command buffer exhaustion on memory-constrained systems.
-        let queue_capacity = get_work_queue_capacity();
-        let (work_tx, work_rx): (Sender<GpuWorkRequest>, Receiver<GpuWorkRequest>) =
-            bounded(queue_capacity);
-
-        // Channel to receive initialization result from the GPU thread.
-        // This ensures the GpuAnalyzer is created ON the GPU thread, not moved to it.
-        let (init_tx, init_rx): (Sender<Result<()>>, Receiver<Result<()>>) = bounded(1);
-
-        // Channel to receive notification when GPU thread exits.
-        // This allows Drop to use a timeout instead of blocking forever if the GPU hangs.
-        let (exit_tx, exit_rx): (Sender<()>, Receiver<()>) = bounded(1);
-
-        // Spawn dedicated GPU thread - analyzer is created INSIDE this thread
-        let thread_handle = thread::spawn(move || {
-            // Create analyzer on THIS thread to avoid wgpu thread-local state issues
-            match GpuAnalyzer::new() {
-                Ok(analyzer) => {
-                    // Signal successful initialization
-                    let _ = init_tx.send(Ok(()));
-                    // Run the main loop
-                    Self::gpu_thread_loop(analyzer, work_rx);
-                }
-                Err(e) => {
-                    // Signal initialization failure
-                    let _ = init_tx.send(Err(e));
-                }
-            }
-            // Always signal exit, even if initialization failed or loop panicked
-            let _ = exit_tx.send(());
-        });
-
-        // Wait for initialization to complete with timeout
-        let init_timeout = Duration::from_secs(GPU_INIT_TIMEOUT_SECS);
-        match init_rx.recv_timeout(init_timeout) {
-            Ok(Ok(())) => {} // Success
-            Ok(Err(e)) => return Err(e),
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                return Err(anyhow!(
-                    "GPU initialisation timed out after {GPU_INIT_TIMEOUT_SECS}s. \
-                     The GPU may be unresponsive or overwhelmed. \
-                     Try restarting the process or reducing workload."
-                ));
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                return Err(anyhow!("GPU thread failed to start (channel disconnected)"));
-            }
-        }
-
-        Ok(Self {
-            work_tx,
-            thread_handle: Some(thread_handle),
-            exit_rx,
-        })
-    }
-
-    /// The main loop for the GPU thread.
-    /// Processes work requests until shutdown is requested.
-    fn gpu_thread_loop(analyzer: GpuAnalyzer, work_rx: Receiver<GpuWorkRequest>) {
-        while let Ok(request) = work_rx.recv() {
-            match request {
-                GpuWorkRequest::HelpfulBatch {
-                    samples,
-                    response_tx,
-                } => {
-                    // Convert Vec<Vec<HelpfulSample>> to &[&[HelpfulSample]] for the API
-                    let samples_refs: Vec<&[HelpfulSample]> =
-                        samples.iter().map(|v| v.as_slice()).collect();
-                    let result = analyzer.evaluate_helpful_batch(&samples_refs);
-                    // Send result back (ignore send errors - receiver may have dropped)
-                    let _ = response_tx.send(result);
-                }
-                GpuWorkRequest::HarmfulBatch {
-                    samples_with_weights,
-                    response_tx,
-                } => {
-                    // Convert to the format expected by evaluate_harmful_batch
-                    let batch_refs: Vec<(&[HelpfulSample], f32)> = samples_with_weights
-                        .iter()
-                        .map(|(samples, weight)| (samples.as_slice(), *weight))
-                        .collect();
-                    let result = analyzer.evaluate_harmful_batch(&batch_refs);
-                    let _ = response_tx.send(result);
-                }
-                GpuWorkRequest::ReluEval {
-                    samples,
-                    threshold,
-                    response_tx,
-                } => {
-                    let result = analyzer.evaluate_relu_gpu(&samples, threshold);
-                    let _ = response_tx.send(result);
-                }
-                GpuWorkRequest::ActivationEval {
-                    samples,
-                    activation_type,
-                    orientation,
-                    scale,
-                    response_tx,
-                } => {
-                    let result = analyzer.evaluate_activation_gpu(
-                        &samples,
-                        activation_type,
-                        orientation,
-                        scale,
-                    );
-                    let _ = response_tx.send(result);
-                }
-                GpuWorkRequest::Shutdown => {
-                    // Clean shutdown requested
-                    break;
-                }
-            }
-        }
-    }
-
-    /// Submit a batch of helpful evaluations and wait for results.
-    ///
-    /// This is a synchronous call that blocks until the GPU thread processes
-    /// the batch and returns results.
-    ///
-    /// The `deadline` parameter is used to calculate an adaptive timeout:
-    /// - With deadline: uses up to half remaining time (60s-5min)
-    /// - Without deadline: uses maximum timeout (5 minutes)
-    pub fn evaluate_helpful_batch(
-        &self,
-        samples: Vec<Vec<HelpfulSample>>,
-        deadline: &Option<std::time::SystemTime>,
-    ) -> Result<Vec<HelpfulStats>> {
-        if samples.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Create a one-shot channel for the response
-        let (response_tx, response_rx) = bounded(1);
-
-        // Calculate timeout based on remaining deadline
-        let timeout = calculate_gpu_batch_timeout(deadline);
-        let timeout_secs = timeout.as_secs();
-
-        // Send the work request with timeout to prevent deadlock if GPU thread is hung
-        // If the channel is full (GPU not processing), this will timeout instead of blocking forever
-        match self.work_tx.send_timeout(
-            GpuWorkRequest::HelpfulBatch {
-                samples,
-                response_tx,
-            },
-            timeout,
-        ) {
-            Ok(()) => {}
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(anyhow!(
-                    "GPU work queue full - send timed out after {timeout_secs}s. \
-                     The GPU thread may be hung. Consider restarting the process."
-                ));
-            }
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                return Err(anyhow!("GPU work queue channel closed"));
-            }
-        }
-
-        // Wait for the response with timeout
-        match response_rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU helpful batch evaluation timed out after {timeout_secs}s. \
-                     The GPU may be unresponsive. Consider reducing batch size or restarting."
-            )),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                Err(anyhow!("GPU response channel closed unexpectedly"))
-            }
-        }
-    }
-
-    /// Submit a batch of harmful evaluations and wait for results.
-    ///
-    /// The `deadline` parameter is used to calculate an adaptive timeout (60s-5min).
-    pub fn evaluate_harmful_batch(
-        &self,
-        samples_with_weights: Vec<(Vec<HelpfulSample>, f32)>,
-        deadline: &Option<std::time::SystemTime>,
-    ) -> Result<Vec<HarmfulStats>> {
-        if samples_with_weights.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let (response_tx, response_rx) = bounded(1);
-        let timeout = calculate_gpu_batch_timeout(deadline);
-        let timeout_secs = timeout.as_secs();
-
-        // Send with timeout to prevent deadlock if GPU thread is hung
-        match self.work_tx.send_timeout(
-            GpuWorkRequest::HarmfulBatch {
-                samples_with_weights,
-                response_tx,
-            },
-            timeout,
-        ) {
-            Ok(()) => {}
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(anyhow!(
-                    "GPU work queue full - send timed out after {timeout_secs}s. \
-                     The GPU thread may be hung. Consider restarting the process."
-                ));
-            }
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                return Err(anyhow!("GPU work queue channel closed"));
-            }
-        }
-
-        match response_rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU harmful batch evaluation timed out after {timeout_secs}s. \
-                     The GPU may be unresponsive. Consider reducing batch size or restarting."
-            )),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                Err(anyhow!("GPU response channel closed unexpectedly"))
-            }
-        }
-    }
-
-    /// Submit a ReLU evaluation and wait for results.
-    /// Returns (positive_stats, negative_stats, baseline_error_sq).
-    ///
-    /// The `deadline` parameter is used to calculate an adaptive timeout (60s-5min).
-    fn evaluate_relu_gpu(
-        &self,
-        samples: Vec<HelpfulSample>,
-        threshold: f32,
-        deadline: &Option<std::time::SystemTime>,
-    ) -> Result<(ReluStats, ReluStats, f32)> {
-        if samples.is_empty() {
-            return Ok((
-                ReluStats::new(ReluOrientation::Positive),
-                ReluStats::new(ReluOrientation::Negative),
-                0.0,
-            ));
-        }
-
-        let (response_tx, response_rx) = bounded(1);
-        let timeout = calculate_gpu_batch_timeout(deadline);
-        let timeout_secs = timeout.as_secs();
-
-        // Send with timeout to prevent deadlock if GPU thread is hung
-        match self.work_tx.send_timeout(
-            GpuWorkRequest::ReluEval {
-                samples,
-                threshold,
-                response_tx,
-            },
-            timeout,
-        ) {
-            Ok(()) => {}
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(anyhow!(
-                    "GPU work queue full - send timed out after {timeout_secs}s. \
-                     The GPU thread may be hung. Consider restarting the process."
-                ));
-            }
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                return Err(anyhow!("GPU work queue channel closed"));
-            }
-        }
-
-        match response_rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU ReLU evaluation timed out after {timeout_secs}s. \
-                     The GPU may be unresponsive. Consider reducing batch size or restarting."
-            )),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                Err(anyhow!("GPU response channel closed unexpectedly"))
-            }
-        }
-    }
-
-    /// Submit an activation evaluation and wait for results.
-    /// Returns (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count).
-    ///
-    /// The `deadline` parameter is used to calculate an adaptive timeout (60s-5min).
-    fn evaluate_activation_gpu(
-        &self,
-        samples: Vec<HelpfulSample>,
-        activation_type: u32,
-        orientation: f32,
-        scale: f32,
-        deadline: &Option<std::time::SystemTime>,
-    ) -> Result<(f32, f32, f32, u32)> {
-        if samples.is_empty() {
-            return Ok((0.0, 0.0, 0.0, 0));
-        }
-
-        let (response_tx, response_rx) = bounded(1);
-        let timeout = calculate_gpu_batch_timeout(deadline);
-        let timeout_secs = timeout.as_secs();
-
-        // Send with timeout to prevent deadlock if GPU thread is hung
-        match self.work_tx.send_timeout(
-            GpuWorkRequest::ActivationEval {
-                samples,
-                activation_type,
-                orientation,
-                scale,
-                response_tx,
-            },
-            timeout,
-        ) {
-            Ok(()) => {}
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(anyhow!(
-                    "GPU work queue full - send timed out after {timeout_secs}s. \
-                     The GPU thread may be hung. Consider restarting the process."
-                ));
-            }
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                return Err(anyhow!("GPU work queue channel closed"));
-            }
-        }
-
-        match response_rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU activation evaluation timed out after {timeout_secs}s. \
-                     The GPU may be unresponsive. Consider reducing batch size or restarting."
-            )),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                Err(anyhow!("GPU response channel closed unexpectedly"))
-            }
-        }
-    }
-
-    /// Request the GPU thread to shut down.
-    /// This should be called before dropping the queue to ensure clean shutdown.
-    ///
-    /// Uses a timeout to avoid blocking forever if the queue is full and the GPU
-    /// thread is hung. If the send times out, the GPU thread is likely unresponsive
-    /// and the Drop implementation will handle cleanup via the exit_rx timeout.
-    pub fn shutdown(&self) {
-        // Use timeout to avoid blocking forever if queue is full and GPU thread is hung.
-        // 2 seconds is generous - if the GPU thread is responsive, it should drain
-        // items much faster. If this times out, proceed to exit_rx timeout in Drop.
-        let shutdown_send_timeout = Duration::from_secs(2);
-        let _ = self
-            .work_tx
-            .send_timeout(GpuWorkRequest::Shutdown, shutdown_send_timeout);
-    }
-}
-
-/// Timeout for GPU thread shutdown during Drop.
-/// If the GPU thread doesn't exit within this time, we abandon it.
-/// This prevents the process from hanging forever if the GPU driver is stuck.
-const GPU_SHUTDOWN_TIMEOUT_SECS: u64 = 10;
-
-impl Drop for GpuWorkQueue {
-    fn drop(&mut self) {
-        // Request shutdown
-        self.shutdown();
-
-        // Wait for GPU thread to exit with timeout
-        // This prevents hanging forever if the GPU driver is stuck (e.g., Metal semaphore wait)
-        let timeout = Duration::from_secs(GPU_SHUTDOWN_TIMEOUT_SECS);
-        match self.exit_rx.recv_timeout(timeout) {
-            Ok(()) => {
-                // Thread exited cleanly, now safe to join
-                if let Some(handle) = self.thread_handle.take() {
-                    let _ = handle.join();
-                }
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                // GPU thread is stuck (likely in Metal driver)
-                // Log warning and abandon the thread - it will be cleaned up on process exit
-                eprintln!(
-                    "[NEAT-AI-Discovery] WARNING: GPU thread did not exit within {GPU_SHUTDOWN_TIMEOUT_SECS}s. \
-                     The GPU driver may be hung. Abandoning thread to prevent deadlock. \
-                     Consider restarting the process."
-                );
-                // Don't join - the thread is stuck and joining would block forever
-                let _ = self.thread_handle.take();
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                // Channel disconnected - thread already exited (possibly via panic)
-                if let Some(handle) = self.thread_handle.take() {
-                    let _ = handle.join();
-                }
-            }
-        }
-    }
-}
+// GpuWorkQueue struct and impl moved to gpu/queue.rs (Issue #274)
+// Now imported from crate::analysis::gpu
+// The following items are now in the queue module:
+// - GpuWorkRequest enum (pub(crate))
+// - GpuWorkQueue struct
+// - impl GpuWorkQueue (new, gpu_thread_loop, evaluate_helpful_batch, etc.)
+// - impl Drop for GpuWorkQueue
+// - impl GpuEvaluator for GpuWorkQueue
+// - GPU_SHUTDOWN_TIMEOUT_SECS constant
 
 // GpuAnalyzer implementation moved to gpu/analyzer.rs (Issue #273)
 // The following functions are now in the analyzer module:
@@ -5264,6 +4768,7 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 mod tests_synapses {
     use super::*;
     use crate::analysis::analyze_all;
+    use crate::analysis::samples::HelpfulStats;
     use crate::parquet_format::write_records_to_parquet;
     use crate::{AnalyzeAllInput, CreatureJson, NeuronJson, SynapseJson};
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
