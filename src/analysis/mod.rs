@@ -3,8 +3,7 @@
 //! This module provides functions for analysing recorded discovery data to identify
 //! beneficial new synapses and neurons that would reduce error.
 //!
-//! **Note**: This module is currently being refactored from a single large file (~14k lines)
-//! into focused submodules. The target structure is:
+//! The module is organised into focused submodules:
 //! - `shared.rs` - Common types, result structures, diagnostics
 //! - `synapse.rs` - Synapse analysis functions
 //! - `neuron.rs` - Neuron analysis functions
@@ -13,10 +12,10 @@
 //! - `activation.rs` - Activation function related code (Issue #266)
 //! - `samples.rs` - Sample data structures and GPU formats (Issue #269)
 //! - `diagnostics.rs` - Diagnostic tracking and rejection reasons (Issue #271)
-//!
-//! For now, much of the code is still in `impl.rs` and will be gradually moved.
+//! - `cache.rs` - Record caching for parquet files (Issue #185)
 
 pub mod activation;
+pub(crate) mod cache;
 pub mod diagnostics;
 pub mod gpu;
 pub mod neuron;
@@ -26,8 +25,7 @@ pub mod synapse;
 pub mod utils;
 pub mod weights;
 
-// Implementation module - contains all the analysis code
-// TODO: Gradually extract pieces into focused modules (synapse.rs, neuron.rs, gpu.rs, utils.rs)
+// Implementation module - helper functions for neuron/synapse analysis
 mod implementation;
 
 // Re-export shared types
@@ -196,14 +194,13 @@ fn merge_coordinated_structural_replacements(
     }
 
     if let Some(limit) = max_synapse_candidates {
-        let (helpful, harmful, coordinated) =
-            implementation::truncate_combined_synapse_candidate_sets(
-                mem::take(&mut synapse.helpful_synapses),
-                mem::take(&mut synapse.harmful_synapses),
-                mem::take(&mut synapse.coordinated_structural_candidates),
-                limit,
-                diversify,
-            );
+        let (helpful, harmful, coordinated) = synapse::truncate_combined_synapse_candidate_sets(
+            mem::take(&mut synapse.helpful_synapses),
+            mem::take(&mut synapse.harmful_synapses),
+            mem::take(&mut synapse.coordinated_structural_candidates),
+            limit,
+            diversify,
+        );
         synapse.helpful_synapses = helpful;
         synapse.harmful_synapses = harmful;
         synapse.coordinated_structural_candidates = coordinated;
@@ -257,9 +254,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
     // Pre-load ALL records from parquet in one pass. This is MUCH faster than
     // lazy-loading each neuron separately (1 scan vs ~2000 scans for large creatures).
-    let shared_cache = Arc::new(implementation::RecordCache::new_adaptive(
-        &input.parquet_file,
-    )?);
+    let shared_cache = Arc::new(cache::RecordCache::new_adaptive(&input.parquet_file)?);
     crate::watchdog::beat("analysis::analyze_all → parquet cache loaded");
 
     let synapse_input = if include_synapse {
@@ -332,7 +327,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 "analysis::analyze_all → neuron analysis skipped",
                 || {
                     let inner = neuron_input.expect("checked is_some");
-                    implementation::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
+                    neuron::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
                 },
             )?;
 
@@ -345,7 +340,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 "analysis::analyze_all → neuron analysis skipped",
                 || {
                     let inner = neuron_input.expect("checked is_some");
-                    implementation::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
+                    neuron::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
                 },
             )?;
 
@@ -373,7 +368,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             "analysis::analyze_all → neuron analysis skipped",
             || {
                 let inner = neuron_input.expect("checked is_some");
-                implementation::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
+                neuron::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
             },
         )?;
 
@@ -424,7 +419,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 continue;
             };
 
-            let new_neuron_uuid = implementation::deterministic_coordinated_neuron_uuid(
+            let new_neuron_uuid = synapse::deterministic_coordinated_neuron_uuid(
                 &candidate.source_neuron_uuid,
                 &candidate.target_neuron_uuid,
                 &candidate.squash,
@@ -433,18 +428,17 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 candidate.bias,
             );
 
-            let mut expected_gain =
-                implementation::expected_gain_replace_synapse_with_hidden_neuron(
-                    shared_cache.as_ref(),
-                    &candidate.source_neuron_uuid,
-                    &candidate.target_neuron_uuid,
-                    old_weight,
-                    candidate.incoming_weight,
-                    candidate.outgoing_weight,
-                    candidate.bias,
-                    &candidate.squash,
-                )
-                .unwrap_or(candidate.expected_creature_score_gain);
+            let mut expected_gain = synapse::expected_gain_replace_synapse_with_hidden_neuron(
+                shared_cache.as_ref(),
+                &candidate.source_neuron_uuid,
+                &candidate.target_neuron_uuid,
+                old_weight,
+                candidate.incoming_weight,
+                candidate.outgoing_weight,
+                candidate.bias,
+                &candidate.squash,
+            )
+            .unwrap_or(candidate.expected_creature_score_gain);
 
             // Apply a conservative impact discount when the target is hidden.
             // This mirrors the synapse/neurons discounting semantics without requiring deep graph analysis.
