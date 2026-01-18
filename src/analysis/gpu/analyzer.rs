@@ -38,7 +38,8 @@ use crate::analysis::gpu::device::{
 
 // Import shader constants (Issue #277)
 use crate::analysis::gpu::shaders::{
-    ACTIVATION_SHADER, BIAS_SHADER, GPU_INIT_TIMEOUT_SECS, HARMFUL_SHADER, HELPFUL_SHADER,
+    ACTIVATION_SHADER, BIAS_SHADER, GPU_INIT_TIMEOUT_SECS, GPU_REDUCTION_THRESHOLD,
+    HARMFUL_REDUCE_SHADER, HARMFUL_SHADER, HELPFUL_REDUCE_SHADER, HELPFUL_SHADER,
     MIN_NEURON_SAMPLE_COUNT, RELU_SHADER, WORKGROUP_SIZE,
 };
 
@@ -46,8 +47,8 @@ use crate::analysis::gpu::shaders::{
 use crate::analysis::samples::{
     ActivationOutput, ActivationUniforms, BiasResult, BiasUniforms, GpuHelpfulSample,
     HarmfulContribution, HarmfulStats, HarmfulUniforms, HelpfulContribution, HelpfulSample,
-    HelpfulStats, HelpfulUniforms, ReluContribution, ReluOrientation, ReluStats, ReluUniforms,
-    EPSILON,
+    HelpfulStats, HelpfulUniforms, ReductionUniforms, ReluContribution, ReluOrientation, ReluStats,
+    ReluUniforms, EPSILON,
 };
 
 // Import utility functions
@@ -104,6 +105,12 @@ pub struct GpuAnalyzer {
     activation_pipeline: Option<wgpu::ComputePipeline>,
     bias_layout: Option<wgpu::BindGroupLayout>,
     bias_pipeline: Option<wgpu::ComputePipeline>,
+    /// Reduction pipeline for HelpfulContribution aggregation (Issue #218)
+    helpful_reduce_layout: Option<wgpu::BindGroupLayout>,
+    helpful_reduce_pipeline: Option<wgpu::ComputePipeline>,
+    /// Reduction pipeline for HarmfulContribution aggregation (Issue #218)
+    harmful_reduce_layout: Option<wgpu::BindGroupLayout>,
+    harmful_reduce_pipeline: Option<wgpu::ComputePipeline>,
     /// Optimised GPU batch size based on detected hardware.
     /// Higher values improve GPU utilisation on high-performance hardware.
     batch_size: usize,
@@ -502,6 +509,11 @@ impl GpuAnalyzer {
         let (activation_layout, activation_pipeline) =
             Self::build_activation_pipeline(&device, "activation-pipeline");
         let (bias_layout, bias_pipeline) = Self::build_bias_pipeline(&device, "bias-pipeline");
+        // Issue #218: Build reduction pipelines for GPU-side aggregation
+        let (helpful_reduce_layout, helpful_reduce_pipeline) =
+            Self::build_helpful_reduce_pipeline(&device, "helpful-reduce-pipeline");
+        let (harmful_reduce_layout, harmful_reduce_pipeline) =
+            Self::build_harmful_reduce_pipeline(&device, "harmful-reduce-pipeline");
 
         // CRITICAL: Warm up the GPU by polling to ensure all pipeline creation work is complete.
         //
@@ -527,6 +539,10 @@ impl GpuAnalyzer {
             activation_pipeline: Some(activation_pipeline),
             bias_layout: Some(bias_layout),
             bias_pipeline: Some(bias_pipeline),
+            helpful_reduce_layout: Some(helpful_reduce_layout),
+            helpful_reduce_pipeline: Some(helpful_reduce_pipeline),
+            harmful_reduce_layout: Some(harmful_reduce_layout),
+            harmful_reduce_pipeline: Some(harmful_reduce_pipeline),
             batch_size,
         })
     }
@@ -854,6 +870,142 @@ impl GpuAnalyzer {
         (layout, pipeline)
     }
 
+    /// Build the helpful contribution reduction pipeline (Issue #218).
+    ///
+    /// This pipeline aggregates HelpfulContribution data on the GPU using parallel
+    /// tree reduction within workgroups, reducing GPU→CPU transfer by ~250×.
+    fn build_helpful_reduce_pipeline(
+        device: &wgpu::Device,
+        label: &str,
+    ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("helpful-reduce-shader"),
+            source: wgpu::ShaderSource::Wgsl(HELPFUL_REDUCE_SHADER.into()),
+        });
+
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("helpful-reduce-bind-group"),
+            entries: &[
+                // Binding 0: contributions (read-only input)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 1: partial_sums (read-write output)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 2: uniforms
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
+        });
+
+        (layout, pipeline)
+    }
+
+    /// Build the harmful contribution reduction pipeline (Issue #218).
+    ///
+    /// This pipeline aggregates HarmfulContribution data on the GPU using parallel
+    /// tree reduction within workgroups, reducing GPU→CPU transfer by ~250×.
+    fn build_harmful_reduce_pipeline(
+        device: &wgpu::Device,
+        label: &str,
+    ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("harmful-reduce-shader"),
+            source: wgpu::ShaderSource::Wgsl(HARMFUL_REDUCE_SHADER.into()),
+        });
+
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("harmful-reduce-bind-group"),
+            entries: &[
+                // Binding 0: contributions (read-only input)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 1: partial_sums (read-write output)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 2: uniforms
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
+        });
+
+        (layout, pipeline)
+    }
+
     // =========================================================================
     // Batch Evaluation Methods
     // =========================================================================
@@ -863,6 +1015,9 @@ impl GpuAnalyzer {
     ///
     /// This reduces CPU-GPU round trips by submitting multiple GPU dispatches in a single
     /// command buffer, significantly improving throughput for harmful synapse analysis.
+    ///
+    /// For sample sets with >= GPU_REDUCTION_THRESHOLD samples, uses GPU-side
+    /// workgroup reduction to minimise data transfer (Issue #218).
     pub fn evaluate_harmful_batch(
         &self,
         samples_batch: &[(&[HelpfulSample], f32)],
@@ -888,6 +1043,15 @@ impl GpuAnalyzer {
             .harmful_pipeline
             .as_ref()
             .context("GPU pipeline not initialised for batched harmful analysis")?;
+        // Issue #218: Get reduction pipeline for large sample sets
+        let harmful_reduce_layout = self
+            .harmful_reduce_layout
+            .as_ref()
+            .context("GPU harmful reduce layout not initialised")?;
+        let harmful_reduce_pipeline = self
+            .harmful_reduce_pipeline
+            .as_ref()
+            .context("GPU harmful reduce pipeline not initialised")?;
 
         // Process in batches to avoid excessive memory usage
         // Apple Silicon optimisation: Use single encoder per batch to reduce Metal driver overhead
@@ -926,6 +1090,8 @@ impl GpuAnalyzer {
             let mut batch_staging_buffers = Vec::new();
             let mut batch_contribution_sizes = Vec::new();
             let mut batch_contributions_buffers = Vec::new();
+            // Issue #218: Track whether each sample set uses reduction
+            let mut uses_reduction_flags: Vec<bool> = Vec::with_capacity(batch_chunk.len());
 
             // Single encoder for entire batch - reduces Metal driver overhead on Apple Silicon
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -936,6 +1102,7 @@ impl GpuAnalyzer {
             for (samples, weight) in batch_chunk {
                 if samples.is_empty() {
                     empty_flags.push(true);
+                    uses_reduction_flags.push(false);
                     continue;
                 }
                 empty_flags.push(false);
@@ -993,16 +1160,7 @@ impl GpuAnalyzer {
                     label: Some("harmful-bind-group-batch"),
                 });
 
-                let contribution_size =
-                    (std::mem::size_of::<HarmfulContribution>() * samples.len()) as u64;
-                let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("harmful-staging-buffer-batch"),
-                    size: contribution_size,
-                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-
-                // Add compute pass to shared encoder (reduces command buffer overhead)
+                // Add compute pass for per-sample contribution calculation
                 {
                     let mut compute_pass =
                         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1015,9 +1173,102 @@ impl GpuAnalyzer {
                     compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
                 }
 
-                batch_contributions_buffers.push(contributions_buffer);
-                batch_staging_buffers.push(staging_buffer);
-                batch_contribution_sizes.push(contribution_size);
+                // Issue #218: Use reduction for large sample counts
+                let use_reduction = samples.len() >= GPU_REDUCTION_THRESHOLD;
+                uses_reduction_flags.push(use_reduction);
+
+                if use_reduction {
+                    // Calculate number of workgroups for reduction
+                    let num_workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
+                    let partial_sums_size = (std::mem::size_of::<HarmfulContribution>()
+                        * num_workgroups as usize)
+                        as u64;
+
+                    // Create partial sums buffer for reduction output
+                    let partial_sums_zeroed =
+                        vec![HarmfulContribution::zeroed(); num_workgroups as usize];
+                    let partial_sums_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("harmful-partial-sums-buffer"),
+                            contents: bytemuck::cast_slice(&partial_sums_zeroed),
+                            usage: wgpu::BufferUsages::STORAGE
+                                | wgpu::BufferUsages::COPY_SRC
+                                | wgpu::BufferUsages::COPY_DST,
+                        });
+
+                    // Create reduction uniforms
+                    let reduction_uniforms = ReductionUniforms {
+                        contribution_count: samples.len() as u32,
+                        pad0: 0,
+                        pad1: 0,
+                        pad2: 0,
+                    };
+                    let reduction_uniform_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("harmful-reduction-uniform-buffer"),
+                            contents: bytemuck::bytes_of(&reduction_uniforms),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+
+                    // Create reduction bind group
+                    let reduction_bind_group =
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: harmful_reduce_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: contributions_buffer.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: partial_sums_buffer.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: reduction_uniform_buffer.as_entire_binding(),
+                                },
+                            ],
+                            label: Some("harmful-reduction-bind-group"),
+                        });
+
+                    // Add reduction compute pass
+                    {
+                        let mut compute_pass =
+                            encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                                label: Some("harmful-reduction-compute-pass"),
+                                timestamp_writes: None,
+                            });
+                        compute_pass.set_pipeline(harmful_reduce_pipeline);
+                        compute_pass.set_bind_group(0, &reduction_bind_group, &[]);
+                        compute_pass.dispatch_workgroups(num_workgroups, 1, 1);
+                    }
+
+                    // Staging buffer for partial sums (much smaller than full contributions)
+                    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("harmful-staging-buffer-reduced"),
+                        size: partial_sums_size,
+                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+
+                    batch_contributions_buffers.push(partial_sums_buffer);
+                    batch_staging_buffers.push(staging_buffer);
+                    batch_contribution_sizes.push(partial_sums_size);
+                } else {
+                    // Original path: transfer all contributions to CPU
+                    let contribution_size =
+                        (std::mem::size_of::<HarmfulContribution>() * samples.len()) as u64;
+                    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("harmful-staging-buffer-batch"),
+                        size: contribution_size,
+                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+
+                    batch_contributions_buffers.push(contributions_buffer);
+                    batch_staging_buffers.push(staging_buffer);
+                    batch_contribution_sizes.push(contribution_size);
+                }
             }
 
             // Add all buffer copies after compute passes (better GPU scheduling)
@@ -1057,6 +1308,14 @@ impl GpuAnalyzer {
 
             // Process results - maintain order with empty flags
             // Note: wait_for_buffer_maps_batch already verified all buffers are mapped
+            // Issue #218: Filter uses_reduction_flags to only include non-empty samples
+            let non_empty_reduction_flags: Vec<bool> = uses_reduction_flags
+                .iter()
+                .zip(empty_flags.iter())
+                .filter(|(_, &empty)| !empty)
+                .map(|(&reduce, _)| reduce)
+                .collect();
+
             let mut buffer_idx = 0;
             for is_empty in empty_flags {
                 if is_empty {
@@ -1069,10 +1328,25 @@ impl GpuAnalyzer {
                     let contributions: &[HarmfulContribution] = bytemuck::cast_slice(&data);
 
                     let mut stats = HarmfulStats::default();
+                    // Both reduction and non-reduction paths produce HarmfulContribution,
+                    // we just iterate over fewer elements when using reduction
                     for contribution in contributions {
                         stats.harmful_count += contribution.harmful_flag;
                         stats.helpful_count += contribution.helpful_flag;
                         stats.harmful_error_sum += contribution.error_magnitude;
+                    }
+
+                    // Log reduction usage for verbose output
+                    if verbose_enabled()
+                        && non_empty_reduction_flags
+                            .get(buffer_idx)
+                            .copied()
+                            .unwrap_or(false)
+                    {
+                        let num_partial_sums = contributions.len();
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] GPU reduction (harmful): transferred {num_partial_sums} partial sums instead of full contributions"
+                        );
                     }
 
                     drop(data);
@@ -1615,6 +1889,9 @@ impl GpuAnalyzer {
 
     /// Batch evaluate multiple helpful operations to improve GPU utilisation.
     /// Returns a vector of stats in the same order as the input samples.
+    ///
+    /// For sample sets with >= GPU_REDUCTION_THRESHOLD samples, uses GPU-side
+    /// workgroup reduction to minimise data transfer (Issue #218).
     pub fn evaluate_helpful_batch(
         &self,
         samples_batch: &[&[HelpfulSample]],
@@ -1640,6 +1917,15 @@ impl GpuAnalyzer {
             .helpful_pipeline
             .as_ref()
             .context("GPU pipeline not initialised for batched helpful analysis")?;
+        // Issue #218: Get reduction pipeline for large sample sets
+        let helpful_reduce_layout = self
+            .helpful_reduce_layout
+            .as_ref()
+            .context("GPU helpful reduce layout not initialised")?;
+        let helpful_reduce_pipeline = self
+            .helpful_reduce_pipeline
+            .as_ref()
+            .context("GPU helpful reduce pipeline not initialised")?;
 
         // Process in batches to avoid excessive memory usage
         // Apple Silicon optimisation: Use single encoder per batch to reduce Metal driver overhead
@@ -1674,6 +1960,8 @@ impl GpuAnalyzer {
             let mut batch_staging_buffers = Vec::new();
             let mut batch_contribution_sizes = Vec::new();
             let mut batch_contributions_buffers = Vec::new();
+            // Issue #218: Track whether each sample set uses reduction
+            let mut uses_reduction_flags: Vec<bool> = Vec::with_capacity(batch_chunk.len());
 
             // Single encoder for entire batch - reduces Metal driver overhead on Apple Silicon
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1684,6 +1972,7 @@ impl GpuAnalyzer {
             for samples in batch_chunk {
                 if samples.is_empty() {
                     empty_flags.push(true);
+                    uses_reduction_flags.push(false);
                     continue;
                 }
                 empty_flags.push(false);
@@ -1741,16 +2030,7 @@ impl GpuAnalyzer {
                     label: Some("helpful-bind-group-batch"),
                 });
 
-                let contribution_size =
-                    (std::mem::size_of::<HelpfulContribution>() * samples.len()) as u64;
-                let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("helpful-staging-buffer-batch"),
-                    size: contribution_size,
-                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-
-                // Add compute pass to shared encoder (reduces command buffer overhead)
+                // Add compute pass for per-sample contribution calculation
                 {
                     let mut compute_pass =
                         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1763,9 +2043,102 @@ impl GpuAnalyzer {
                     compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
                 }
 
-                batch_contributions_buffers.push(contributions_buffer);
-                batch_staging_buffers.push(staging_buffer);
-                batch_contribution_sizes.push((contribution_size, samples.len()));
+                // Issue #218: Use reduction for large sample counts
+                let use_reduction = samples.len() >= GPU_REDUCTION_THRESHOLD;
+                uses_reduction_flags.push(use_reduction);
+
+                if use_reduction {
+                    // Calculate number of workgroups for reduction
+                    let num_workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
+                    let partial_sums_size = (std::mem::size_of::<HelpfulContribution>()
+                        * num_workgroups as usize)
+                        as u64;
+
+                    // Create partial sums buffer for reduction output
+                    let partial_sums_zeroed =
+                        vec![HelpfulContribution::zeroed(); num_workgroups as usize];
+                    let partial_sums_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("helpful-partial-sums-buffer"),
+                            contents: bytemuck::cast_slice(&partial_sums_zeroed),
+                            usage: wgpu::BufferUsages::STORAGE
+                                | wgpu::BufferUsages::COPY_SRC
+                                | wgpu::BufferUsages::COPY_DST,
+                        });
+
+                    // Create reduction uniforms
+                    let reduction_uniforms = ReductionUniforms {
+                        contribution_count: samples.len() as u32,
+                        pad0: 0,
+                        pad1: 0,
+                        pad2: 0,
+                    };
+                    let reduction_uniform_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("helpful-reduction-uniform-buffer"),
+                            contents: bytemuck::bytes_of(&reduction_uniforms),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+
+                    // Create reduction bind group
+                    let reduction_bind_group =
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: helpful_reduce_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: contributions_buffer.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: partial_sums_buffer.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: reduction_uniform_buffer.as_entire_binding(),
+                                },
+                            ],
+                            label: Some("helpful-reduction-bind-group"),
+                        });
+
+                    // Add reduction compute pass
+                    {
+                        let mut compute_pass =
+                            encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                                label: Some("helpful-reduction-compute-pass"),
+                                timestamp_writes: None,
+                            });
+                        compute_pass.set_pipeline(helpful_reduce_pipeline);
+                        compute_pass.set_bind_group(0, &reduction_bind_group, &[]);
+                        compute_pass.dispatch_workgroups(num_workgroups, 1, 1);
+                    }
+
+                    // Staging buffer for partial sums (much smaller than full contributions)
+                    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("helpful-staging-buffer-reduced"),
+                        size: partial_sums_size,
+                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+
+                    batch_contributions_buffers.push(partial_sums_buffer);
+                    batch_staging_buffers.push(staging_buffer);
+                    batch_contribution_sizes.push((partial_sums_size, num_workgroups as usize));
+                } else {
+                    // Original path: transfer all contributions to CPU
+                    let contribution_size =
+                        (std::mem::size_of::<HelpfulContribution>() * samples.len()) as u64;
+                    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("helpful-staging-buffer-batch"),
+                        size: contribution_size,
+                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+
+                    batch_contributions_buffers.push(contributions_buffer);
+                    batch_staging_buffers.push(staging_buffer);
+                    batch_contribution_sizes.push((contribution_size, samples.len()));
+                }
             }
 
             // Add all buffer copies after compute passes (better GPU scheduling)
@@ -1806,12 +2179,22 @@ impl GpuAnalyzer {
             // Now read all the mapped data (buffers are already mapped)
             let mut batch_results = Vec::with_capacity(batch_contribution_sizes.len());
             // Buffer mappings already verified by wait_for_buffer_maps_batch
-            for staging_buffer in batch_staging_buffers.iter() {
+            // Issue #218: Filter uses_reduction_flags to only include non-empty samples
+            let non_empty_reduction_flags: Vec<bool> = uses_reduction_flags
+                .iter()
+                .zip(empty_flags.iter())
+                .filter(|(_, &empty)| !empty)
+                .map(|(&reduce, _)| reduce)
+                .collect();
+
+            for (i, staging_buffer) in batch_staging_buffers.iter().enumerate() {
                 let buffer_slice = staging_buffer.slice(..);
                 let data = buffer_slice.get_mapped_range();
                 let contributions: &[HelpfulContribution] = bytemuck::cast_slice(&data);
 
                 let mut stats = HelpfulStats::default();
+                // Both reduction and non-reduction paths produce HelpfulContribution,
+                // we just iterate over fewer elements when using reduction
                 for contribution in contributions {
                     stats.positive_count += contribution.positive_flag;
                     stats.negative_count += contribution.negative_flag;
@@ -1822,6 +2205,14 @@ impl GpuAnalyzer {
                     stats.error_sq_sum += contribution.error_squared;
                     stats.activation_sq_sum += contribution.activation_squared;
                     stats.error_activation_sum += contribution.error_activation;
+                }
+
+                // Log reduction usage for verbose output
+                if verbose_enabled() && non_empty_reduction_flags.get(i).copied().unwrap_or(false) {
+                    let (_, count) = batch_contribution_sizes[i];
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] GPU reduction: transferred {count} partial sums instead of full contributions"
+                    );
                 }
 
                 drop(data);

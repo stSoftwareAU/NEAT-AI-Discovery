@@ -66,6 +66,22 @@ pub const ACTIVATION_SHADER: &str = include_str!("../../shaders/activation.wgsl"
 /// bias for a new neuron. Uses GPU-accelerated error computation.
 pub const BIAS_SHADER: &str = include_str!("../../shaders/bias.wgsl");
 
+/// Helpful contribution reduction shader (Issue #218).
+///
+/// Performs parallel tree reduction within workgroups to aggregate HelpfulContribution
+/// data on the GPU. This reduces GPU→CPU data transfer by ~250× for large sample counts.
+///
+/// For 100K samples: 4.8MB → 18.8KB transfer
+pub const HELPFUL_REDUCE_SHADER: &str = include_str!("../../shaders/helpful_reduce.wgsl");
+
+/// Harmful contribution reduction shader (Issue #218).
+///
+/// Performs parallel tree reduction within workgroups to aggregate HarmfulContribution
+/// data on the GPU. This reduces GPU→CPU data transfer by ~250× for large sample counts.
+///
+/// For 100K samples: 1.6MB → 6.3KB transfer
+pub const HARMFUL_REDUCE_SHADER: &str = include_str!("../../shaders/harmful_reduce.wgsl");
+
 // =============================================================================
 // Workgroup Configuration
 // =============================================================================
@@ -148,6 +164,38 @@ pub const GPU_SHUTDOWN_TIMEOUT_SECS: u64 = 10;
 pub const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 
 // =============================================================================
+// GPU Reduction Configuration (Issue #218)
+// =============================================================================
+
+/// Minimum sample count threshold for using GPU workgroup reduction.
+///
+/// For small sample counts, the overhead of a second shader pass may not be
+/// worthwhile. This threshold determines when to use reduction vs direct
+/// CPU aggregation.
+///
+/// ## Analysis
+///
+/// With workgroup size 256:
+/// - Below threshold: Transfer all contributions, reduce on CPU
+/// - At/above threshold: Run reduction shader, transfer partial sums only
+///
+/// The break-even point depends on:
+/// - GPU dispatch overhead (~10-50μs per dispatch)
+/// - Memory bandwidth (GPU→CPU transfer cost)
+/// - CPU reduction cost
+///
+/// ## Valid Range
+///
+/// - Minimum: 256 (one workgroup - no benefit from reduction)
+/// - Maximum: 50,000 (issue mentions 50K+ as benefiting)
+/// - Default: 10,000 (conservative to ensure reduction helps)
+///
+/// For 10K samples:
+/// - Without reduction: 10K × 48 bytes = 480KB transfer
+/// - With reduction: 40 workgroups × 48 bytes = 1.9KB transfer
+pub const GPU_REDUCTION_THRESHOLD: usize = 10_000;
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -172,6 +220,14 @@ mod tests {
             "ACTIVATION_SHADER should not be empty"
         );
         assert!(!BIAS_SHADER.is_empty(), "BIAS_SHADER should not be empty");
+        assert!(
+            !HELPFUL_REDUCE_SHADER.is_empty(),
+            "HELPFUL_REDUCE_SHADER should not be empty"
+        );
+        assert!(
+            !HARMFUL_REDUCE_SHADER.is_empty(),
+            "HARMFUL_REDUCE_SHADER should not be empty"
+        );
     }
 
     #[test]
@@ -198,6 +254,14 @@ mod tests {
         assert!(
             BIAS_SHADER.contains(&expected_workgroup),
             "BIAS_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
+        );
+        assert!(
+            HELPFUL_REDUCE_SHADER.contains(&expected_workgroup),
+            "HELPFUL_REDUCE_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
+        );
+        assert!(
+            HARMFUL_REDUCE_SHADER.contains(&expected_workgroup),
+            "HARMFUL_REDUCE_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
         );
     }
 
@@ -245,6 +309,8 @@ mod tests {
             ("relu", RELU_SHADER),
             ("activation", ACTIVATION_SHADER),
             ("bias", BIAS_SHADER),
+            ("helpful_reduce", HELPFUL_REDUCE_SHADER),
+            ("harmful_reduce", HARMFUL_REDUCE_SHADER),
         ] {
             assert!(
                 shader.contains("struct") || shader.contains("fn "),
@@ -255,5 +321,53 @@ mod tests {
                 "{name} shader should contain @compute decorator"
             );
         }
+    }
+
+    #[test]
+    fn test_gpu_reduction_threshold_is_valid() {
+        // Reduction threshold must be reasonable
+        // Using const blocks to satisfy clippy::assertions_on_constants
+        const _: () = assert!(
+            GPU_REDUCTION_THRESHOLD >= 256,
+            "Reduction threshold too low (no benefit below one workgroup)"
+        );
+        const _: () = assert!(
+            GPU_REDUCTION_THRESHOLD <= 100_000,
+            "Reduction threshold too high (would miss optimisation opportunities)"
+        );
+    }
+
+    #[test]
+    fn test_reduction_shaders_contain_required_functions() {
+        // Verify reduction shaders have the required add_contributions and zero_contribution functions
+        assert!(
+            HELPFUL_REDUCE_SHADER.contains("fn add_contributions"),
+            "HELPFUL_REDUCE_SHADER should contain add_contributions function"
+        );
+        assert!(
+            HELPFUL_REDUCE_SHADER.contains("fn zero_contribution"),
+            "HELPFUL_REDUCE_SHADER should contain zero_contribution function"
+        );
+        assert!(
+            HARMFUL_REDUCE_SHADER.contains("fn add_contributions"),
+            "HARMFUL_REDUCE_SHADER should contain add_contributions function"
+        );
+        assert!(
+            HARMFUL_REDUCE_SHADER.contains("fn zero_contribution"),
+            "HARMFUL_REDUCE_SHADER should contain zero_contribution function"
+        );
+    }
+
+    #[test]
+    fn test_reduction_shaders_use_shared_memory() {
+        // Verify reduction shaders use workgroup shared memory
+        assert!(
+            HELPFUL_REDUCE_SHADER.contains("var<workgroup>"),
+            "HELPFUL_REDUCE_SHADER should use workgroup shared memory"
+        );
+        assert!(
+            HARMFUL_REDUCE_SHADER.contains("var<workgroup>"),
+            "HARMFUL_REDUCE_SHADER should use workgroup shared memory"
+        );
     }
 }
