@@ -18,6 +18,7 @@ larger.
 Controllers call into the library via Deno FFI to power `Creature.discoveryDir()`
 workflows.
 
+
 ## TL;DR
 
 - **This library finds candidates, it does not “auto-fix” creatures**: NEAT-AI validates candidates by rescoring on the full training set.
