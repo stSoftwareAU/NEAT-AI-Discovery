@@ -42,7 +42,8 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::analysis::gpu::{GpuAnalyzer, GpuEvaluator, GPU_INIT_TIMEOUT_SECS};
+use crate::analysis::gpu::analyzer::{GpuAnalyzer, GpuEvaluator};
+use crate::analysis::gpu::shaders::{GPU_INIT_TIMEOUT_SECS, GPU_SHUTDOWN_TIMEOUT_SECS};
 use crate::analysis::samples::{
     HarmfulStats, HelpfulSample, HelpfulStats, ReluOrientation, ReluStats,
 };
@@ -465,10 +466,7 @@ impl GpuWorkQueue {
     }
 }
 
-/// Timeout for GPU thread shutdown during Drop.
-/// If the GPU thread doesn't exit within this time, we abandon it.
-/// This prevents the process from hanging forever if the GPU driver is stuck.
-const GPU_SHUTDOWN_TIMEOUT_SECS: u64 = 10;
+// Note: GPU_SHUTDOWN_TIMEOUT_SECS is imported from gpu/shaders.rs (Issue #277)
 
 impl Drop for GpuWorkQueue {
     fn drop(&mut self) {
