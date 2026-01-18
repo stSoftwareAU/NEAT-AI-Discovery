@@ -30,10 +30,16 @@ use std::time::Duration;
 use wgpu::util::DeviceExt;
 
 // Import device management functions
-use crate::analysis::gpu::{
+use crate::analysis::gpu::device::{
     create_wgpu_instance_safely, detect_gpu_tier, detect_unified_memory, get_adapter_info_internal,
     no_gpu_result, poll_device_until_idle, wait_for_buffer_map, wait_for_buffer_maps_batch,
-    GpuAvailabilityResult, GpuPerformanceTier, GPU_BUFFER_MAP_TIMEOUT_SECS, GPU_INIT_TIMEOUT_SECS,
+    GpuAvailabilityResult, GpuPerformanceTier, GPU_BUFFER_MAP_TIMEOUT_SECS,
+};
+
+// Import shader constants (Issue #277)
+use crate::analysis::gpu::shaders::{
+    ACTIVATION_SHADER, BIAS_SHADER, GPU_INIT_TIMEOUT_SECS, HARMFUL_SHADER, HELPFUL_SHADER,
+    MIN_NEURON_SAMPLE_COUNT, RELU_SHADER, WORKGROUP_SIZE,
 };
 
 // Import sample data structures
@@ -55,13 +61,8 @@ use crate::analysis::utils::{
 // Constants
 // =============================================================================
 
-/// Workgroup size for GPU compute shaders. Must match the @workgroup_size in WGSL shaders.
-/// 256 is optimal for Apple Silicon: divisible by SIMD width (32), good occupancy,
-/// and allows efficient wavefront scheduling on M1/M2/M3/M4 GPUs.
-const WORKGROUP_SIZE: u32 = 256;
-
-/// Minimum sample count for valid neuron analysis.
-const MIN_NEURON_SAMPLE_COUNT: usize = 10;
+// Note: WORKGROUP_SIZE, MIN_NEURON_SAMPLE_COUNT, and shader sources have been moved
+// to gpu/shaders.rs (Issue #277) for centralised GPU configuration.
 
 /// Maximum allocation size for a single GPU batch operation.
 ///
@@ -77,16 +78,6 @@ const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 /// This cap is conservative by design; it trades a bit of peak throughput for stability on
 /// Apple Silicon (and makes time-bounded runs far more reliable).
 pub const GPU_MAX_BATCH_ALLOC_BYTES: usize = 256 * 1024 * 1024; // 256MB
-
-// =============================================================================
-// Shader Sources
-// =============================================================================
-
-const HELPFUL_SHADER: &str = include_str!("../../shaders/helpful.wgsl");
-const HARMFUL_SHADER: &str = include_str!("../../shaders/harmful.wgsl");
-const RELU_SHADER: &str = include_str!("../../shaders/relu.wgsl");
-const ACTIVATION_SHADER: &str = include_str!("../../shaders/activation.wgsl");
-const BIAS_SHADER: &str = include_str!("../../shaders/bias.wgsl");
 
 // =============================================================================
 // GpuAnalyzer Struct

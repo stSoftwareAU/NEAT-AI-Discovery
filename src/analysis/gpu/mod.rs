@@ -3,11 +3,12 @@
 //! This module contains GPU-related code including device management, GpuAnalyzer,
 //! GpuWorkQueue, and GPU evaluation functions.
 //!
-//! ## Module Structure (Issue #272, #273, #274)
+//! ## Module Structure (Issue #272, #273, #274, #277)
 //!
 //! ```text
 //! src/analysis/gpu/
 //! ├── mod.rs          <- This file: module router and re-exports
+//! ├── shaders.rs      <- GPU shader constants and references (Issue #277)
 //! ├── device.rs       <- GPU device management (Issue #272)
 //! ├── analyzer.rs     <- GpuAnalyzer struct and GpuEvaluator trait (Issue #273)
 //! ├── queue.rs        <- GpuWorkQueue struct and thread management (Issue #274)
@@ -16,6 +17,7 @@
 //!
 //! ## Refactoring Progress
 //!
+//! - [x] shaders.rs - GPU shader constants and references (Issue #277)
 //! - [x] device.rs - GPU device initialisation, detection, buffer management (Issue #272)
 //! - [x] analyzer.rs - GpuAnalyzer struct, GpuEvaluator trait, pipeline builders (Issue #273)
 //! - [x] queue.rs - GpuWorkQueue struct and implementation (Issue #274)
@@ -24,6 +26,7 @@
 pub mod analyzer;
 pub mod device;
 pub mod queue;
+pub mod shaders;
 
 // Re-export device module contents for backwards compatibility
 pub use device::{
@@ -41,6 +44,13 @@ pub use analyzer::{GpuAnalyzer, GpuEvaluator, GPU_MAX_BATCH_ALLOC_BYTES};
 
 // Re-export queue module contents (Issue #274)
 pub use queue::GpuWorkQueue;
+
+// Re-export shader module contents (Issue #277)
+pub use shaders::{
+    ACTIVATION_SHADER, BIAS_SHADER, GPU_INIT_TIMEOUT_SECS as SHADER_GPU_INIT_TIMEOUT_SECS,
+    GPU_SHUTDOWN_TIMEOUT_SECS, HARMFUL_SHADER, HELPFUL_SHADER, MIN_NEURON_SAMPLE_COUNT,
+    RELU_SHADER, WORKGROUP_SIZE,
+};
 
 // Re-export test helper function for batch size tests
 #[cfg(test)]
@@ -90,5 +100,25 @@ mod tests {
 
         // Verify GpuEvaluator trait is accessible
         fn _takes_evaluator<T: GpuEvaluator>(_: &T) {}
+    }
+
+    #[test]
+    fn test_shader_constants_are_exported() {
+        // Verify shader constants are accessible via the gpu module (Issue #277)
+        assert!(!HELPFUL_SHADER.is_empty());
+        assert!(!HARMFUL_SHADER.is_empty());
+        assert!(!RELU_SHADER.is_empty());
+        assert!(!ACTIVATION_SHADER.is_empty());
+        assert!(!BIAS_SHADER.is_empty());
+
+        // Verify workgroup size matches shaders
+        assert_eq!(WORKGROUP_SIZE, 256);
+
+        // Verify timing constants are accessible
+        const _: () = assert!(SHADER_GPU_INIT_TIMEOUT_SECS > 0);
+        const _: () = assert!(GPU_SHUTDOWN_TIMEOUT_SECS > 0);
+
+        // Verify sample count constant
+        assert_eq!(MIN_NEURON_SAMPLE_COUNT, 10);
     }
 }
