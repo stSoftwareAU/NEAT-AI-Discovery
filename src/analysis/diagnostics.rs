@@ -13,6 +13,7 @@
 use crate::focus::{compute_impacts_public, compute_impacts_with_activations, RecordProvider};
 use crate::types::DiscoverRecord;
 use anyhow::Result;
+use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
@@ -144,6 +145,7 @@ pub(crate) struct ThresholdContext {
 }
 
 /// Per-target diagnostic entry for synapse analysis.
+#[derive(Clone)]
 pub(crate) struct TargetDiagnosticEntry {
     pub(crate) target_uuid: String,
     pub(crate) target_record_count: usize,
@@ -189,15 +191,22 @@ impl TargetDiagnosticEntry {
 }
 
 /// Collection of target diagnostics for synapse analysis.
+///
+/// Uses `DashMap` internally for lock-free concurrent access (Issue #216).
+/// All methods take `&self` instead of `&mut self` to allow concurrent updates
+/// from multiple threads without external synchronisation.
 pub(crate) struct TargetDiagnostics {
     log_enabled: bool,
-    pub(crate) entries: HashMap<String, TargetDiagnosticEntry>,
+    /// Lock-free concurrent map for diagnostic entries.
+    /// Each focus neuron is processed by a separate thread, and diagnostics
+    /// are recorded without contention using DashMap's sharded internal structure.
+    pub(crate) entries: DashMap<String, TargetDiagnosticEntry>,
 }
 
 impl TargetDiagnostics {
     pub(crate) fn new(targets: &[&String]) -> Self {
         let log_enabled = verbose_enabled();
-        let mut entries = HashMap::new();
+        let entries = DashMap::new();
         for target in targets {
             entries.insert(target.to_string(), TargetDiagnosticEntry::new(target));
         }
@@ -209,7 +218,7 @@ impl TargetDiagnostics {
 
     #[cfg(test)]
     pub(crate) fn new_for_tests(targets: &[&str]) -> Self {
-        let mut entries = HashMap::new();
+        let entries = DashMap::new();
         for target in targets {
             entries.insert((*target).to_string(), TargetDiagnosticEntry::new(target));
         }
@@ -219,38 +228,38 @@ impl TargetDiagnostics {
         }
     }
 
-    pub(crate) fn set_target_record_count(&mut self, target_uuid: &str, count: usize) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn set_target_record_count(&self, target_uuid: &str, count: usize) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.target_record_count = count;
         }
     }
 
-    pub(crate) fn set_total_eligible_sources(&mut self, target_uuid: &str, count: u32) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn set_total_eligible_sources(&self, target_uuid: &str, count: u32) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.total_eligible_sources = count;
         }
     }
 
-    pub(crate) fn set_input_neuron_count(&mut self, target_uuid: &str, count: u32) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn set_input_neuron_count(&self, target_uuid: &str, count: u32) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.input_neuron_count = count;
         }
     }
 
-    pub(crate) fn record_already_connected(&mut self, target_uuid: &str) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn record_already_connected(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.already_connected_count += 1;
         }
     }
 
-    pub(crate) fn record_load_failure(&mut self, target_uuid: &str) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn record_load_failure(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.record_load_failures += 1;
         }
     }
 
-    pub(crate) fn record_candidate_attempt(&mut self, target_uuid: &str, had_samples: bool) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn record_candidate_attempt(&self, target_uuid: &str, had_samples: bool) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.evaluated_candidates += 1;
             if had_samples {
                 entry.candidates_with_samples += 1;
@@ -259,12 +268,12 @@ impl TargetDiagnostics {
     }
 
     pub(crate) fn record_no_samples(
-        &mut self,
+        &self,
         target_uuid: &str,
         source_uuid: &str,
         source_record_count: usize,
     ) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.update_best(RejectionDetail {
                 source_uuid: source_uuid.to_string(),
                 reason: RejectionReason::NoSamples,
@@ -280,14 +289,14 @@ impl TargetDiagnostics {
     }
 
     pub(crate) fn record_zero_improvement(
-        &mut self,
+        &self,
         target_uuid: &str,
         source_uuid: &str,
         sample_count: usize,
         positive_count: u32,
         negative_count: u32,
     ) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.update_best(RejectionDetail {
                 source_uuid: source_uuid.to_string(),
                 reason: RejectionReason::ZeroImprovement,
@@ -303,12 +312,12 @@ impl TargetDiagnostics {
     }
 
     pub(crate) fn record_below_threshold(
-        &mut self,
+        &self,
         target_uuid: &str,
         source_uuid: &str,
         context: ThresholdContext,
     ) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.update_best(RejectionDetail {
                 source_uuid: source_uuid.to_string(),
                 reason: RejectionReason::BelowThreshold,
@@ -323,8 +332,8 @@ impl TargetDiagnostics {
         }
     }
 
-    pub(crate) fn mark_candidate_selected(&mut self, target_uuid: &str) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn mark_candidate_selected(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.had_candidate = true;
         }
     }
@@ -334,7 +343,8 @@ impl TargetDiagnostics {
             return;
         }
 
-        for entry in self.entries.values() {
+        for entry_ref in self.entries.iter() {
+            let entry = entry_ref.value();
             if entry.had_candidate {
                 continue;
             }
@@ -434,15 +444,16 @@ impl TargetDiagnostics {
     }
 
     #[cfg(test)]
-    pub(crate) fn entry_for(&self, target_uuid: &str) -> Option<&TargetDiagnosticEntry> {
-        self.entries.get(target_uuid)
+    pub(crate) fn entry_for(&self, target_uuid: &str) -> Option<TargetDiagnosticEntry> {
+        self.entries.get(target_uuid).map(|r| r.value().clone())
     }
 
     pub(crate) fn no_candidate_summaries(&self) -> Vec<SynapseNoCandidateSummary> {
         self.entries
-            .values()
-            .filter(|entry| !entry.had_candidate)
-            .map(|entry| {
+            .iter()
+            .filter(|entry_ref| !entry_ref.value().had_candidate)
+            .map(|entry_ref| {
+                let entry = entry_ref.value();
                 // Only report "no eligible sources" if both total_eligible_sources and evaluated_candidates are 0
                 // This handles the case where total_eligible_sources might be 0 in tests but evaluated_candidates > 0
                 if entry.total_eligible_sources == 0 && entry.evaluated_candidates == 0 {
@@ -537,6 +548,7 @@ impl NeuronRejectionDetail {
 }
 
 /// Per-neuron diagnostic entry for neuron analysis.
+#[derive(Clone)]
 pub(crate) struct NeuronDiagnosticEntry {
     pub(crate) target_uuid: String,
     pub(crate) target_record_count: usize,
@@ -590,15 +602,22 @@ impl NeuronDiagnosticEntry {
 }
 
 /// Collection of neuron diagnostics for neuron analysis.
+///
+/// Uses `DashMap` internally for lock-free concurrent access (Issue #216).
+/// All methods take `&self` instead of `&mut self` to allow concurrent updates
+/// from multiple threads without external synchronisation.
 pub(crate) struct NeuronDiagnostics {
     log_enabled: bool,
-    pub(crate) entries: HashMap<String, NeuronDiagnosticEntry>,
+    /// Lock-free concurrent map for diagnostic entries.
+    /// Each focus neuron is processed by a separate thread, and diagnostics
+    /// are recorded without contention using DashMap's sharded internal structure.
+    pub(crate) entries: DashMap<String, NeuronDiagnosticEntry>,
 }
 
 impl NeuronDiagnostics {
     pub(crate) fn new(targets: &[&String]) -> Self {
         let log_enabled = verbose_enabled();
-        let mut entries = HashMap::new();
+        let entries = DashMap::new();
         for target in targets {
             entries.insert(target.to_string(), NeuronDiagnosticEntry::new(target));
         }
@@ -610,7 +629,7 @@ impl NeuronDiagnostics {
 
     #[cfg(test)]
     pub(crate) fn new_for_tests(targets: &[&str]) -> Self {
-        let mut entries = HashMap::new();
+        let entries = DashMap::new();
         for target in targets {
             entries.insert((*target).to_string(), NeuronDiagnosticEntry::new(target));
         }
@@ -620,26 +639,26 @@ impl NeuronDiagnostics {
         }
     }
 
-    pub(crate) fn set_target_record_count(&mut self, target_uuid: &str, count: usize) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn set_target_record_count(&self, target_uuid: &str, count: usize) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.target_record_count = count;
         }
     }
 
-    pub(crate) fn set_total_eligible_sources(&mut self, target_uuid: &str, count: u32) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn set_total_eligible_sources(&self, target_uuid: &str, count: u32) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.total_eligible_sources = count;
         }
     }
 
-    pub(crate) fn record_load_failure(&mut self, target_uuid: &str) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn record_load_failure(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.record_load_failures += 1;
         }
     }
 
-    pub(crate) fn record_candidate_attempt(&mut self, target_uuid: &str, had_samples: bool) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn record_candidate_attempt(&self, target_uuid: &str, had_samples: bool) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.evaluated_sources += 1;
             if had_samples {
                 entry.sources_with_samples += 1;
@@ -647,8 +666,8 @@ impl NeuronDiagnostics {
         }
     }
 
-    pub(crate) fn record_no_samples(&mut self, target_uuid: &str, source_uuid: &str) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn record_no_samples(&self, target_uuid: &str, source_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.update_best(NeuronRejectionDetail {
                 source_uuid: source_uuid.to_string(),
                 orientation: None,
@@ -658,8 +677,8 @@ impl NeuronDiagnostics {
         }
     }
 
-    pub(crate) fn mark_candidate_selected(&mut self, target_uuid: &str) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn mark_candidate_selected(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.had_candidate = true;
         }
     }
@@ -667,8 +686,8 @@ impl NeuronDiagnostics {
     /// Mark a neuron as filtered out because it's a hidden neuron.
     /// Hidden neurons are not valid targets for add-neuron analysis because their
     /// backpropagated errors don't reliably translate to output error reduction.
-    pub(crate) fn mark_hidden_filtered(&mut self, target_uuid: &str) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn mark_hidden_filtered(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.hidden_filtered = true;
         }
     }
@@ -676,8 +695,8 @@ impl NeuronDiagnostics {
     /// Mark a neuron as filtered out because it's an input neuron.
     /// Input neurons are observation sources, not computation nodes - they have
     /// no activation function or error to reduce.
-    pub(crate) fn mark_input_filtered(&mut self, target_uuid: &str) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn mark_input_filtered(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.input_filtered = true;
         }
     }
@@ -685,8 +704,8 @@ impl NeuronDiagnostics {
     /// Mark a neuron as filtered out because it's a constant neuron.
     /// Constant neurons don't receive inputs - they always output a fixed value
     /// regardless of network state, so adding a connection to them has no effect.
-    pub(crate) fn mark_constant_filtered(&mut self, target_uuid: &str) {
-        if let Some(entry) = self.entries.get_mut(target_uuid) {
+    pub(crate) fn mark_constant_filtered(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.constant_filtered = true;
         }
     }
@@ -696,7 +715,8 @@ impl NeuronDiagnostics {
             return;
         }
 
-        for entry in self.entries.values() {
+        for entry_ref in self.entries.iter() {
+            let entry = entry_ref.value();
             if entry.had_candidate {
                 continue;
             }
@@ -797,16 +817,17 @@ impl NeuronDiagnostics {
     }
 
     #[cfg(test)]
-    pub(crate) fn entry_for(&self, target_uuid: &str) -> Option<&NeuronDiagnosticEntry> {
-        self.entries.get(target_uuid)
+    pub(crate) fn entry_for(&self, target_uuid: &str) -> Option<NeuronDiagnosticEntry> {
+        self.entries.get(target_uuid).map(|r| r.value().clone())
     }
 
     pub(crate) fn no_candidate_summaries(&self) -> Vec<NeuronNoCandidateSummary> {
         self.entries
-            .values()
+            .iter()
             // Include entries that never had a candidate
-            .filter(|entry| !entry.had_candidate)
-            .map(|entry| {
+            .filter(|entry_ref| !entry_ref.value().had_candidate)
+            .map(|entry_ref| {
+                let entry = entry_ref.value();
                 // Check pre-analysis filters FIRST - these take precedence over other reasons.
                 // These neurons are filtered out before analysis even begins, so they won't
                 // have any other diagnostic data (eligible sources, samples, etc.).
@@ -1218,7 +1239,8 @@ mod tests {
     fn test_target_diagnostics_tracks_candidate() {
         let targets = ["target-1".to_string()];
         let target_refs: Vec<&String> = targets.iter().collect();
-        let mut diagnostics = TargetDiagnostics::new_for_tests(
+        // Issue #216: Methods now take &self, not &mut self
+        let diagnostics = TargetDiagnostics::new_for_tests(
             &target_refs.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
         );
 
@@ -1238,7 +1260,8 @@ mod tests {
     fn test_neuron_diagnostics_tracks_filtered() {
         let targets = ["hidden-1".to_string(), "output-1".to_string()];
         let target_refs: Vec<&String> = targets.iter().collect();
-        let mut diagnostics = NeuronDiagnostics::new_for_tests(
+        // Issue #216: Methods now take &self, not &mut self
+        let diagnostics = NeuronDiagnostics::new_for_tests(
             &target_refs.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
         );
 
@@ -1378,5 +1401,250 @@ mod tests {
         assert_eq!(samples.len(), 1);
         assert!((samples[0].activation - 0.8).abs() < 0.01);
         assert!((samples[0].avg_error - 0.1).abs() < 0.01);
+    }
+
+    // =============================================================================
+    // Concurrent Diagnostic Insertion Tests (Issue #216)
+    // =============================================================================
+    //
+    // These tests verify that diagnostic aggregation works correctly when accessed
+    // concurrently from multiple threads. The diagnostics structs use DashMap
+    // internally for lock-free concurrent access.
+
+    use std::sync::Arc;
+    use std::thread;
+
+    #[test]
+    fn test_target_diagnostics_concurrent_record_count() {
+        // Test concurrent updates to target record counts from multiple threads
+        let targets: Vec<String> = (0..64).map(|i| format!("target-{i}")).collect();
+        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let diagnostics = Arc::new(TargetDiagnostics::new_for_tests(&target_refs));
+
+        let handles: Vec<_> = (0..64)
+            .map(|i| {
+                let diag = Arc::clone(&diagnostics);
+                let target_uuid = format!("target-{i}");
+                thread::spawn(move || {
+                    // Each thread sets record count for its own target
+                    diag.set_target_record_count(&target_uuid, (i + 1) * 100);
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // Verify all updates were recorded correctly
+        for i in 0..64 {
+            let target_uuid = format!("target-{i}");
+            let entry = diagnostics.entry_for(&target_uuid).unwrap();
+            assert_eq!(
+                entry.target_record_count,
+                (i + 1) * 100,
+                "Target {target_uuid} has incorrect record count"
+            );
+        }
+    }
+
+    #[test]
+    fn test_target_diagnostics_concurrent_candidate_attempts() {
+        // Test concurrent candidate attempt recording from multiple threads
+        let targets: Vec<String> = (0..8).map(|i| format!("target-{i}")).collect();
+        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let diagnostics = Arc::new(TargetDiagnostics::new_for_tests(&target_refs));
+
+        // Each thread will record 10 candidate attempts for each target
+        let num_threads = 8;
+        let attempts_per_thread = 10;
+
+        let handles: Vec<_> = (0..num_threads)
+            .map(|_| {
+                let diag = Arc::clone(&diagnostics);
+                let targets_clone = targets.clone();
+                thread::spawn(move || {
+                    for target_uuid in &targets_clone {
+                        for _ in 0..attempts_per_thread {
+                            diag.record_candidate_attempt(target_uuid, true);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // Verify all targets received the expected number of candidate attempts
+        let expected_attempts = num_threads * attempts_per_thread;
+        for target_uuid in &targets {
+            let entry = diagnostics.entry_for(target_uuid).unwrap();
+            assert_eq!(
+                entry.evaluated_candidates, expected_attempts as u32,
+                "Target {target_uuid} has incorrect evaluated_candidates count"
+            );
+            assert_eq!(
+                entry.candidates_with_samples, expected_attempts as u32,
+                "Target {target_uuid} has incorrect candidates_with_samples count"
+            );
+        }
+    }
+
+    #[test]
+    fn test_target_diagnostics_concurrent_mark_selected() {
+        // Test concurrent marking of candidates as selected
+        let targets: Vec<String> = (0..32).map(|i| format!("target-{i}")).collect();
+        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let diagnostics = Arc::new(TargetDiagnostics::new_for_tests(&target_refs));
+
+        let handles: Vec<_> = (0..32)
+            .map(|i| {
+                let diag = Arc::clone(&diagnostics);
+                let target_uuid = format!("target-{i}");
+                thread::spawn(move || {
+                    diag.mark_candidate_selected(&target_uuid);
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // Verify all targets were marked as having candidates
+        for i in 0..32 {
+            let target_uuid = format!("target-{i}");
+            let entry = diagnostics.entry_for(&target_uuid).unwrap();
+            assert!(
+                entry.had_candidate,
+                "Target {target_uuid} should have had_candidate=true"
+            );
+        }
+    }
+
+    #[test]
+    fn test_neuron_diagnostics_concurrent_record_count() {
+        // Test concurrent updates to neuron record counts from multiple threads
+        let targets: Vec<String> = (0..64).map(|i| format!("neuron-{i}")).collect();
+        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let diagnostics = Arc::new(NeuronDiagnostics::new_for_tests(&target_refs));
+
+        let handles: Vec<_> = (0..64)
+            .map(|i| {
+                let diag = Arc::clone(&diagnostics);
+                let target_uuid = format!("neuron-{i}");
+                thread::spawn(move || {
+                    diag.set_target_record_count(&target_uuid, (i + 1) * 50);
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // Verify all updates were recorded correctly
+        for i in 0..64 {
+            let target_uuid = format!("neuron-{i}");
+            let entry = diagnostics.entry_for(&target_uuid).unwrap();
+            assert_eq!(
+                entry.target_record_count,
+                (i + 1) * 50,
+                "Neuron {target_uuid} has incorrect record count"
+            );
+        }
+    }
+
+    #[test]
+    fn test_neuron_diagnostics_concurrent_candidate_attempts() {
+        // Test concurrent candidate attempt recording from multiple threads
+        let targets: Vec<String> = (0..8).map(|i| format!("neuron-{i}")).collect();
+        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let diagnostics = Arc::new(NeuronDiagnostics::new_for_tests(&target_refs));
+
+        // Each thread will record 10 candidate attempts for each target
+        let num_threads = 8;
+        let attempts_per_thread = 10;
+
+        let handles: Vec<_> = (0..num_threads)
+            .map(|_| {
+                let diag = Arc::clone(&diagnostics);
+                let targets_clone = targets.clone();
+                thread::spawn(move || {
+                    for target_uuid in &targets_clone {
+                        for _ in 0..attempts_per_thread {
+                            diag.record_candidate_attempt(target_uuid, true);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // Verify all targets received the expected number of candidate attempts
+        let expected_attempts = num_threads * attempts_per_thread;
+        for target_uuid in &targets {
+            let entry = diagnostics.entry_for(target_uuid).unwrap();
+            assert_eq!(
+                entry.evaluated_sources, expected_attempts as u32,
+                "Neuron {target_uuid} has incorrect evaluated_sources count"
+            );
+            assert_eq!(
+                entry.sources_with_samples, expected_attempts as u32,
+                "Neuron {target_uuid} has incorrect sources_with_samples count"
+            );
+        }
+    }
+
+    #[test]
+    fn test_neuron_diagnostics_concurrent_filtered_marking() {
+        // Test concurrent marking of neurons as filtered
+        let targets: Vec<String> = (0..30).map(|i| format!("neuron-{i}")).collect();
+        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let diagnostics = Arc::new(NeuronDiagnostics::new_for_tests(&target_refs));
+
+        let handles: Vec<_> = (0..30)
+            .map(|i| {
+                let diag = Arc::clone(&diagnostics);
+                let target_uuid = format!("neuron-{i}");
+                thread::spawn(move || {
+                    // Distribute different filter types across threads
+                    match i % 3 {
+                        0 => diag.mark_hidden_filtered(&target_uuid),
+                        1 => diag.mark_input_filtered(&target_uuid),
+                        _ => diag.mark_constant_filtered(&target_uuid),
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // Verify each neuron was marked with the correct filter
+        for i in 0..30 {
+            let target_uuid = format!("neuron-{i}");
+            let entry = diagnostics.entry_for(&target_uuid).unwrap();
+            match i % 3 {
+                0 => assert!(
+                    entry.hidden_filtered,
+                    "Neuron {target_uuid} should have hidden_filtered=true"
+                ),
+                1 => assert!(
+                    entry.input_filtered,
+                    "Neuron {target_uuid} should have input_filtered=true"
+                ),
+                _ => assert!(
+                    entry.constant_filtered,
+                    "Neuron {target_uuid} should have constant_filtered=true"
+                ),
+            }
+        }
     }
 }

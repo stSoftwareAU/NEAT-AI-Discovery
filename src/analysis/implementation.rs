@@ -219,7 +219,9 @@ pub(crate) fn analyze_synapses_with_cache_impl(
 
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_synapses")?;
 
-    let diagnostics = Arc::new(Mutex::new(TargetDiagnostics::new(&unique_focus)));
+    // Issue #216: TargetDiagnostics uses DashMap internally for lock-free concurrent access.
+    // No Mutex wrapper needed - the struct handles concurrency internally.
+    let diagnostics = Arc::new(TargetDiagnostics::new(&unique_focus));
 
     // GPU timing collector (Issue #195)
     // Only collects timing data when NEAT_AI_DISCOVERY_GPU_TIMING=1 is set
@@ -367,17 +369,11 @@ pub(crate) fn analyze_synapses_with_cache_impl(
 
             let target_records_arc = cache.get(target_uuid.as_str())?;
             if target_records_arc.is_empty() {
-                diagnostics
-                    .lock()
-                    .expect("Mutex poisoned: diagnostics")
-                    .set_target_record_count(target_uuid, 0);
+                diagnostics.set_target_record_count(target_uuid, 0);
                 return Ok(());
             }
             let target_records = target_records_arc.as_ref();
-            diagnostics
-                .lock()
-                .expect("Mutex poisoned: diagnostics")
-                .set_target_record_count(target_uuid, target_records.len());
+            diagnostics.set_target_record_count(target_uuid, target_records.len());
 
             let target_index = match order_map_arc.get(target_uuid.as_str()) {
                 Some(index) => *index,
@@ -483,14 +479,8 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                 .iter()
                 .filter(|neuron| input_neuron_uuids_arc.contains(&neuron.uuid))
                 .count() as u32;
-            diagnostics
-                .lock()
-                .expect("Mutex poisoned: diagnostics")
-                .set_total_eligible_sources(target_uuid, total_eligible);
-            diagnostics
-                .lock()
-                .expect("Mutex poisoned: diagnostics")
-                .set_input_neuron_count(target_uuid, input_neuron_count);
+            diagnostics.set_total_eligible_sources(target_uuid, total_eligible);
+            diagnostics.set_input_neuron_count(target_uuid, input_neuron_count);
 
             let context = format!("synapse:eligible_sources:{target_uuid}");
             order_eligible_sources(
@@ -621,21 +611,21 @@ pub(crate) fn analyze_synapses_with_cache_impl(
             }
 
             // Update diagnostics for already-connected, load failures, and empty records
+            // Issue #216: Direct method calls - no lock needed with DashMap-based diagnostics
             if already_connected_count > 0
                 || load_failure_count > 0
                 || !empty_record_sources.is_empty()
             {
-                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
                 for _ in 0..already_connected_count {
-                    diag.record_already_connected(target_uuid);
+                    diagnostics.record_already_connected(target_uuid);
                 }
                 for _ in 0..load_failure_count {
-                    diag.record_load_failure(target_uuid);
+                    diagnostics.record_load_failure(target_uuid);
                 }
                 // Record diagnostics for sources with empty records (matches old sequential behaviour)
                 for source_uuid in &empty_record_sources {
-                    diag.record_candidate_attempt(target_uuid, false);
-                    diag.record_no_samples(target_uuid, source_uuid, 0);
+                    diagnostics.record_candidate_attempt(target_uuid, false);
+                    diagnostics.record_no_samples(target_uuid, source_uuid, 0);
                 }
             }
 
@@ -936,14 +926,11 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                 ));
             }
 
-            // Apply all diagnostics updates in a single lock (reduces contention)
-            if !diagnostics_updates.is_empty() {
-                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
-                for (target, source, had_samples, record_count) in diagnostics_updates {
-                    diag.record_candidate_attempt(&target, had_samples);
-                    if !had_samples {
-                        diag.record_no_samples(&target, &source, record_count);
-                    }
+            // Apply all diagnostics updates directly (no lock needed with DashMap - Issue #216)
+            for (target, source, had_samples, record_count) in diagnostics_updates {
+                diagnostics.record_candidate_attempt(&target, had_samples);
+                if !had_samples {
+                    diagnostics.record_no_samples(&target, &source, record_count);
                 }
             }
 
@@ -1211,24 +1198,15 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                     } // End timing scope for result processing
                 }
 
-                // Apply all diagnostics updates in batches (minimizes mutex contention)
-                if !diagnostics_zero_improvements.is_empty() {
-                    let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
-                    for (target, source, sample_count, pos, neg) in diagnostics_zero_improvements {
-                        diag.record_zero_improvement(&target, &source, sample_count, pos, neg);
-                    }
+                // Apply all diagnostics updates directly (no lock needed with DashMap - Issue #216)
+                for (target, source, sample_count, pos, neg) in diagnostics_zero_improvements {
+                    diagnostics.record_zero_improvement(&target, &source, sample_count, pos, neg);
                 }
-                if !diagnostics_below_threshold.is_empty() {
-                    let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
-                    for (target, source, context) in diagnostics_below_threshold {
-                        diag.record_below_threshold(&target, &source, context);
-                    }
+                for (target, source, context) in diagnostics_below_threshold {
+                    diagnostics.record_below_threshold(&target, &source, context);
                 }
-                if !diagnostics_selected.is_empty() {
-                    let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
-                    for target in diagnostics_selected {
-                        diag.mark_candidate_selected(&target);
-                    }
+                for target in diagnostics_selected {
+                    diagnostics.mark_candidate_selected(&target);
                 }
                 if !candidates_to_add.is_empty() {
                     let mut results = helpful_results
@@ -1353,7 +1331,6 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         .expect("Mutex poisoned")
         .clone();
     let mut helpful_fallback = helpful_fallback.lock().expect("Mutex poisoned").take();
-    let mut diagnostics = diagnostics.lock().expect("Mutex poisoned");
 
     // Log timeout with completion stats (always visible, not just verbose)
     if analysis_timed_out {
@@ -1363,6 +1340,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
 
     if helpful_results.is_empty() {
         if let Some(candidate) = helpful_fallback.take() {
+            // Issue #216: Direct method call - no lock needed with DashMap-based diagnostics
             diagnostics.mark_candidate_selected(&candidate.to_neuron_uuid);
             helpful_results.push(candidate);
         }

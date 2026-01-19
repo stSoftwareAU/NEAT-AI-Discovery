@@ -176,7 +176,9 @@ pub(crate) fn analyze_neurons_with_cache(
         CandidateNeuronJson,
     >::new()));
 
-    let diagnostics = Arc::new(Mutex::new(NeuronDiagnostics::new(&unique_focus)));
+    // Issue #216: NeuronDiagnostics uses DashMap internally for lock-free concurrent access.
+    // No Mutex wrapper needed - the struct handles concurrency internally.
+    let diagnostics = Arc::new(NeuronDiagnostics::new(&unique_focus));
 
     // GPU timing collector (Issue #195)
     // Only collects timing data when NEAT_AI_DISCOVERY_GPU_TIMING=1 is set
@@ -316,23 +318,15 @@ pub(crate) fn analyze_neurons_with_cache(
     // Mark skipped neurons in diagnostics so they appear with the correct reason
     // instead of misleading reasons like NoEligibleSources.
     // This is the normal flow case where some output neurons exist.
+    // Issue #216: Direct method calls - no lock needed with DashMap-based diagnostics.
     for input_uuid in &skipped_input {
-        diagnostics
-            .lock()
-            .expect("Mutex poisoned: diagnostics")
-            .mark_input_filtered(input_uuid);
+        diagnostics.mark_input_filtered(input_uuid);
     }
     for hidden_uuid in &skipped_hidden {
-        diagnostics
-            .lock()
-            .expect("Mutex poisoned: diagnostics")
-            .mark_hidden_filtered(hidden_uuid);
+        diagnostics.mark_hidden_filtered(hidden_uuid);
     }
     for constant_uuid in &skipped_constant {
-        diagnostics
-            .lock()
-            .expect("Mutex poisoned: diagnostics")
-            .mark_constant_filtered(constant_uuid);
+        diagnostics.mark_constant_filtered(constant_uuid);
     }
 
     // Log threshold-crossing neurons for visibility
@@ -411,17 +405,11 @@ pub(crate) fn analyze_neurons_with_cache(
                 }
             };
             if target_records_arc.is_empty() {
-                diagnostics
-                    .lock()
-                    .expect("Mutex poisoned: diagnostics")
-                    .set_target_record_count(target_uuid, 0);
+                diagnostics.set_target_record_count(target_uuid, 0);
                 return Ok(());
             }
             let target_records = target_records_arc.as_ref();
-            diagnostics
-                .lock()
-                .expect("Mutex poisoned: diagnostics")
-                .set_target_record_count(target_uuid, target_records.len());
+            diagnostics.set_target_record_count(target_uuid, target_records.len());
 
             // Log target neuron obs_index range for debugging sample matching
             if verbose_enabled() && !target_records.is_empty() {
@@ -474,10 +462,7 @@ pub(crate) fn analyze_neurons_with_cache(
 
             // Track total eligible sources for diagnostics
             let total_eligible = eligible_sources.len() as u32;
-            diagnostics
-                .lock()
-                .expect("Mutex poisoned: diagnostics")
-                .set_total_eligible_sources(target_uuid, total_eligible);
+            diagnostics.set_total_eligible_sources(target_uuid, total_eligible);
 
             // Log focus neuron details for debugging
             if verbose_enabled() && total_eligible == 0 {
@@ -523,12 +508,9 @@ pub(crate) fn analyze_neurons_with_cache(
                 }
             }
 
-            // Record load failures in diagnostics
-            if load_failure_count > 0 {
-                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
-                for _ in 0..load_failure_count {
-                    diag.record_load_failure(target_uuid);
-                }
+            // Record load failures in diagnostics (no lock needed with DashMap - Issue #216)
+            for _ in 0..load_failure_count {
+                diagnostics.record_load_failure(target_uuid);
             }
 
             // Log summary of source loading results for debugging
@@ -552,13 +534,10 @@ pub(crate) fn analyze_neurons_with_cache(
                 }
             }
 
-            // Batch diagnostics for empty record sources
-            if !empty_record_sources.is_empty() {
-                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
-                for source_uuid in &empty_record_sources {
-                    diag.record_candidate_attempt(target_uuid, false);
-                    diag.record_no_samples(target_uuid, source_uuid);
-                }
+            // Batch diagnostics for empty record sources (no lock needed with DashMap - Issue #216)
+            for source_uuid in &empty_record_sources {
+                diagnostics.record_candidate_attempt(target_uuid, false);
+                diagnostics.record_no_samples(target_uuid, source_uuid);
             }
 
             // Check if timed out during pre-filtering
@@ -623,14 +602,11 @@ pub(crate) fn analyze_neurons_with_cache(
                     .collect()
             };
 
-            // Phase 3: Batch diagnostics updates for sample building results
-            {
-                let mut diag = diagnostics.lock().expect("Mutex poisoned: diagnostics");
-                for result in &work_results {
-                    diag.record_candidate_attempt(target_uuid, !result.samples.is_empty());
-                    if result.samples.is_empty() {
-                        diag.record_no_samples(target_uuid, &result.source_uuid);
-                    }
+            // Phase 3: Batch diagnostics updates for sample building results (no lock needed with DashMap - Issue #216)
+            for result in &work_results {
+                diagnostics.record_candidate_attempt(target_uuid, !result.samples.is_empty());
+                if result.samples.is_empty() {
+                    diagnostics.record_no_samples(target_uuid, &result.source_uuid);
                 }
             }
 
@@ -704,10 +680,8 @@ pub(crate) fn analyze_neurons_with_cache(
                                 source_variance_discount
                             );
                         }
-                        diagnostics
-                            .lock()
-                            .expect("Mutex poisoned: diagnostics")
-                            .mark_candidate_selected(target_uuid);
+                        // Issue #216: Direct method call - no lock needed with DashMap-based diagnostics
+                        diagnostics.mark_candidate_selected(target_uuid);
                         let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
                         upsert_candidate(&mut map, candidate);
                     }
@@ -726,10 +700,8 @@ pub(crate) fn analyze_neurons_with_cache(
                                 source_variance_discount
                             );
                         }
-                        diagnostics
-                            .lock()
-                            .expect("Mutex poisoned: diagnostics")
-                            .mark_candidate_selected(target_uuid);
+                        // Issue #216: Direct method call - no lock needed with DashMap-based diagnostics
+                        diagnostics.mark_candidate_selected(target_uuid);
                         let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
                         upsert_candidate(&mut map, candidate);
                     }
@@ -752,10 +724,8 @@ pub(crate) fn analyze_neurons_with_cache(
                             candidate.expected_creature_error_reduction *= source_variance_discount;
                             candidate.expected_creature_score_gain *= source_variance_discount;
 
-                            diagnostics
-                                .lock()
-                                .expect("Mutex poisoned: diagnostics")
-                                .mark_candidate_selected(target_uuid);
+                            // Issue #216: Direct method call - no lock needed with DashMap-based diagnostics
+                            diagnostics.mark_candidate_selected(target_uuid);
                             let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
                             upsert_candidate(&mut map, candidate);
                         }
@@ -779,7 +749,6 @@ pub(crate) fn analyze_neurons_with_cache(
         .lock()
         .expect("Mutex poisoned: helpful_map")
         .clone();
-    let diagnostics = diagnostics.lock().expect("Mutex poisoned: diagnostics");
 
     // Log timeout with completion stats (always visible, not just verbose)
     if analysis_timed_out {
