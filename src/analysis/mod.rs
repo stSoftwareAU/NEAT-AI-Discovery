@@ -14,10 +14,12 @@
 //! - `samples.rs` - Sample data structures and GPU formats (Issue #269)
 //! - `diagnostics.rs` - Diagnostic tracking and rejection reasons (Issue #271)
 //! - `cache.rs` - Record caching for parquet files (Issue #185)
+//! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 
 pub mod activation;
 pub(crate) mod cache;
 pub mod diagnostics;
+pub mod early_termination;
 pub mod gpu;
 pub mod neuron;
 pub mod samples;
@@ -537,6 +539,12 @@ pub use gpu::GpuAnalyzer;
 pub use gpu::GpuAvailabilityResult;
 pub use neuron::analyze_neurons;
 pub use synapse::analyze_synapses;
+
+// Re-export early termination types (Issue #219)
+pub use early_termination::{
+    check_batch_early_termination, EarlyTerminationConfig, EarlyTerminationDecision,
+    EarlyTerminationResult, SequentialEvaluator,
+};
 
 #[cfg(test)]
 mod mod_tests;
