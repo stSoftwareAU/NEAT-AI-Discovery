@@ -766,7 +766,8 @@ mod tests_synapses {
 
     #[test]
     fn diagnostics_prefers_higher_expected_improvement() {
-        let mut diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
+        // Issue #216: Methods now take &self, not &mut self
+        let diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
         diagnostics.set_target_record_count("output-0", 1_500);
         diagnostics.record_candidate_attempt("output-0", false);
         diagnostics.record_no_samples("output-0", "input-0", 0);
@@ -797,7 +798,8 @@ mod tests_synapses {
 
     #[test]
     fn diagnostics_marks_candidate_selection() {
-        let mut diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
+        // Issue #216: Methods now take &self, not &mut self
+        let diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
         diagnostics.mark_candidate_selected("output-0");
         let entry = diagnostics
             .entry_for("output-0")
@@ -931,7 +933,8 @@ mod tests_synapses {
     fn neuron_diagnostics_tracks_load_failures() {
         // Test that when eligible sources exist but all fail to load, we report
         // NoSamples rather than NoEligibleSources
-        let mut diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
+        // Issue #216: Methods now take &self, not &mut self
+        let diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
         diagnostics.set_target_record_count("output-0", 100);
         diagnostics.set_total_eligible_sources("output-0", 10); // 10 eligible sources exist
                                                                 // All 10 sources fail to load
@@ -965,7 +968,8 @@ mod tests_synapses {
     #[test]
     fn neuron_diagnostics_reports_genuine_no_eligible_sources() {
         // Test that when there are genuinely no eligible sources, we correctly report that
-        let mut diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
+        // Issue #216: Methods now take &self, not &mut self
+        let diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
         diagnostics.set_target_record_count("output-0", 100);
         diagnostics.set_total_eligible_sources("output-0", 0); // No eligible sources
 
@@ -988,7 +992,8 @@ mod tests_synapses {
 
     #[test]
     fn target_diagnostics_reports_no_samples_reason() {
-        let mut diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
+        // Issue #216: Methods now take &self, not &mut self
+        let diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
         diagnostics.set_target_record_count("output-0", 25);
         diagnostics.record_candidate_attempt("output-0", false);
         diagnostics.record_no_samples("output-0", "input-0", 8);
@@ -4326,7 +4331,8 @@ mod tests_synapses {
         // Bug scenario: When focus_order is NOT empty (some output neurons exist),
         // the skipped_hidden neurons were never merged into diagnostics, so they
         // appeared with misleading reasons like NoEligibleSources.
-        let mut diagnostics = NeuronDiagnostics::new_for_tests(&["output-0", "hidden-1"]);
+        // Issue #216: Methods now take &self, not &mut self
+        let diagnostics = NeuronDiagnostics::new_for_tests(&["output-0", "hidden-1"]);
 
         // Mark hidden-1 as filtered (this is what should happen in normal flow)
         diagnostics.mark_hidden_filtered("hidden-1");
@@ -4373,8 +4379,8 @@ mod tests_synapses {
         // `neuron_type != Some("output")` evaluated to true. The input neuron
         // was incorrectly added to skipped_hidden and reported with
         // HiddenNeuronFiltered reason.
-        let mut diagnostics =
-            NeuronDiagnostics::new_for_tests(&["output-0", "input-1", "hidden-2"]);
+        // Issue #216: Methods now take &self, not &mut self
+        let diagnostics = NeuronDiagnostics::new_for_tests(&["output-0", "input-1", "hidden-2"]);
 
         // Mark input-1 as filtered because it's an input neuron
         diagnostics.mark_input_filtered("input-1");
@@ -4435,8 +4441,8 @@ mod tests_synapses {
         // incorrect - constant neurons don't receive inputs because they always
         // output a fixed value, which is different from hidden neurons whose
         // backpropagated errors don't reliably predict output error.
-        let mut diagnostics =
-            NeuronDiagnostics::new_for_tests(&["output-0", "constant-1", "hidden-2"]);
+        // Issue #216: Methods now take &self, not &mut self
+        let diagnostics = NeuronDiagnostics::new_for_tests(&["output-0", "constant-1", "hidden-2"]);
 
         // Mark constant-1 as filtered because it's a constant neuron
         diagnostics.mark_constant_filtered("constant-1");
