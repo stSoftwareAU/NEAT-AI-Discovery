@@ -371,6 +371,17 @@ pub struct ActivationUniforms {
     pub pad1: f32,
 }
 
+/// GPU shader uniforms for workgroup reduction (Issue #218).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct ReductionUniforms {
+    /// Total number of contributions to reduce
+    pub contribution_count: u32,
+    pub pad0: u32,
+    pub pad1: u32,
+    pub pad2: u32,
+}
+
 // =============================================================================
 // Statistics Results
 // =============================================================================
