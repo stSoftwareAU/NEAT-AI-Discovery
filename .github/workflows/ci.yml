@@ -7,6 +7,12 @@
 name: CI/CD Pipeline
 
 on:
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - '**.md'          # Skip CI for documentation-only changes
+      - 'docs/**'
   pull_request:
     branches:
       - Develop
