@@ -3886,6 +3886,8 @@ mod tests_synapses {
             error_sq_sum: 0.8 * 0.8 + 0.6 * 0.6 + 0.4 * 0.4, // 0.64 + 0.36 + 0.16 = 1.16
             activation_sq_sum: 14.0,                         // Σ(activation²) = 4 + 9 + 1
             error_activation_sum: 3.8, // Σ(error × activation) = 1.6 + 1.8 + 0.4
+            samples_evaluated: 3,      // Issue #219: track evaluated samples
+            early_terminated: false,   // Issue #219: not terminated early
         };
 
         // Apply the correct formula used in production (after fix):
@@ -3929,6 +3931,8 @@ mod tests_synapses {
             error_sq_sum: 13.0,        // 2² + 3² = 4 + 9 = 13
             activation_sq_sum: 2.0,    // 1² + 1² = 2
             error_activation_sum: 5.0, // 2×1 + 3×1 = 5
+            samples_evaluated: 2,      // Issue #219: track evaluated samples
+            early_terminated: false,   // Issue #219: not terminated early
         };
 
         let raw_weight2 = if stats_would_clamp.activation_sq_sum > EPSILON {

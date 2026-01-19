@@ -398,6 +398,72 @@ pub struct HelpfulStats {
     pub error_sq_sum: f32,
     pub activation_sq_sum: f32,
     pub error_activation_sum: f32,
+    /// Total samples evaluated (for early termination tracking - Issue #219).
+    /// When using early termination, this may be less than the total available samples.
+    pub samples_evaluated: u32,
+    /// Whether evaluation was terminated early (Issue #219).
+    pub early_terminated: bool,
+}
+
+impl HelpfulStats {
+    /// Get the total count of samples evaluated.
+    #[must_use]
+    pub fn total_count(&self) -> u32 {
+        self.positive_count + self.negative_count
+    }
+
+    /// Get the improvement ratio (positive_count / total_count).
+    ///
+    /// Returns 0.5 (neutral) if no samples have been evaluated.
+    #[must_use]
+    pub fn improvement_ratio(&self) -> f64 {
+        let total = self.total_count();
+        if total == 0 {
+            return 0.5;
+        }
+        f64::from(self.positive_count) / f64::from(total)
+    }
+
+    /// Check if this candidate appears strongly beneficial based on current statistics.
+    ///
+    /// This is a quick heuristic for deciding whether to continue evaluation.
+    /// A candidate with >70% positive samples is considered strongly beneficial.
+    #[must_use]
+    pub fn is_strongly_beneficial(&self) -> bool {
+        let total = self.total_count();
+        if total < 30 {
+            return false;
+        }
+        self.improvement_ratio() > 0.7
+    }
+
+    /// Check if this candidate appears strongly harmful based on current statistics.
+    ///
+    /// This is a quick heuristic for deciding whether to continue evaluation.
+    /// A candidate with <30% positive samples is considered strongly harmful.
+    #[must_use]
+    pub fn is_strongly_harmful(&self) -> bool {
+        let total = self.total_count();
+        if total < 30 {
+            return false;
+        }
+        self.improvement_ratio() < 0.3
+    }
+
+    /// Merge another stats instance into this one (for incremental batch processing).
+    pub fn merge(&mut self, other: &Self) {
+        self.positive_count += other.positive_count;
+        self.negative_count += other.negative_count;
+        self.positive_improvement_sum += other.positive_improvement_sum;
+        self.negative_improvement_sum += other.negative_improvement_sum;
+        self.positive_activation_sum += other.positive_activation_sum;
+        self.negative_activation_sum += other.negative_activation_sum;
+        self.error_sq_sum += other.error_sq_sum;
+        self.activation_sq_sum += other.activation_sq_sum;
+        self.error_activation_sum += other.error_activation_sum;
+        self.samples_evaluated += other.samples_evaluated;
+        // Don't merge early_terminated - let caller decide
+    }
 }
 
 /// ReLU split direction for neuron candidates.
@@ -536,6 +602,51 @@ pub struct HarmfulStats {
     pub harmful_count: u32,
     pub helpful_count: u32,
     pub harmful_error_sum: f32,
+    /// Total samples evaluated (for early termination tracking - Issue #219).
+    pub samples_evaluated: u32,
+    /// Whether evaluation was terminated early (Issue #219).
+    pub early_terminated: bool,
+}
+
+impl HarmfulStats {
+    /// Get the total count of samples evaluated.
+    #[must_use]
+    pub fn total_count(&self) -> u32 {
+        self.harmful_count + self.helpful_count
+    }
+
+    /// Get the harmful ratio (harmful_count / total_count).
+    ///
+    /// Returns 0.5 (neutral) if no samples have been evaluated.
+    #[must_use]
+    pub fn harmful_ratio(&self) -> f64 {
+        let total = self.total_count();
+        if total == 0 {
+            return 0.5;
+        }
+        f64::from(self.harmful_count) / f64::from(total)
+    }
+
+    /// Check if this synapse appears strongly harmful based on current statistics.
+    ///
+    /// A synapse with >70% harmful samples is considered a good removal candidate.
+    #[must_use]
+    pub fn is_clearly_harmful(&self) -> bool {
+        let total = self.total_count();
+        if total < 30 {
+            return false;
+        }
+        self.harmful_ratio() > 0.7
+    }
+
+    /// Merge another stats instance into this one (for incremental batch processing).
+    pub fn merge(&mut self, other: &Self) {
+        self.harmful_count += other.harmful_count;
+        self.helpful_count += other.helpful_count;
+        self.harmful_error_sum += other.harmful_error_sum;
+        self.samples_evaluated += other.samples_evaluated;
+        // Don't merge early_terminated - let caller decide
+    }
 }
 
 // =============================================================================
