@@ -745,6 +745,14 @@ pub struct RankFocusNeuronsOutput {
     /// Neurons with high error but very low impact - candidates for removal
     #[serde(skip_serializing_if = "Option::is_none")]
     pub removal_candidates: Option<Vec<RemovalCandidateJson>>,
+    /// Issue #306: Coordinated structural candidates for removing constant-value neurons.
+    /// When a hidden neuron has near-zero activation variance (constant output), it can be
+    /// removed and its effect folded into bias adjustments for downstream neurons.
+    /// Each candidate contains:
+    /// - A RemoveNeuron operation for the constant neuron
+    /// - SetBias operations for all downstream neurons with adjusted biases
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub constant_neuron_removals: Option<Vec<CoordinatedStructuralCandidateJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_error: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1328,6 +1336,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 success: false,
                 neurons: None,
                 removal_candidates: None,
+                constant_neuron_removals: None,
                 max_output_error: None,
                 processed_neurons: None,
                 total_neurons: None,
@@ -1380,6 +1389,12 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 } else {
                     Some(removal_candidates)
                 },
+                // Issue #306: Return constant neuron removal candidates
+                constant_neuron_removals: if stats.constant_neuron_removals.is_empty() {
+                    None
+                } else {
+                    Some(stats.constant_neuron_removals)
+                },
                 max_output_error: Some(stats.max_output_error),
                 processed_neurons: Some(stats.processed_neurons),
                 total_neurons: Some(stats.total_neurons),
@@ -1393,6 +1408,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 success: false,
                 neurons: None,
                 removal_candidates: None,
+                constant_neuron_removals: None,
                 max_output_error: None,
                 processed_neurons: None,
                 total_neurons: None,
@@ -2046,6 +2062,7 @@ pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mu
                     success: false,
                     neurons: None,
                     removal_candidates: None,
+                    constant_neuron_removals: None,
                     max_output_error: None,
                     processed_neurons: None,
                     total_neurons: None,
