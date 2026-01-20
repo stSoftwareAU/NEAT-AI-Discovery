@@ -1,7 +1,10 @@
 use crate::analysis::{check_memory_for_parquet, verbose_enabled};
 use crate::parquet_format::{read_all_records_grouped_by_neuron, read_records_from_parquet};
 use crate::types::DiscoverRecord;
-use crate::{CreatureJson, NeuronJson, SynapseJson};
+use crate::{
+    CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson, NeuronJson,
+    SynapseJson,
+};
 use anyhow::{anyhow, Context, Result};
 use rayon::prelude::*;
 use std::cmp::Ordering;
@@ -587,6 +590,13 @@ pub struct RankFocusStats {
     pub neurons: Vec<RankedNeuron>,
     /// Neurons with impact below costOfGrowth - candidates for removal
     pub removal_candidates: Vec<RemovalCandidate>,
+    /// Issue #306: Coordinated structural candidates for removing constant-value neurons.
+    /// When a hidden neuron has near-zero activation variance (constant output), it can be
+    /// removed and its effect folded into bias adjustments for downstream neurons.
+    /// Each candidate contains:
+    /// - A RemoveNeuron operation for the constant neuron
+    /// - SetBias operations for all downstream neurons with adjusted biases
+    pub constant_neuron_removals: Vec<CoordinatedStructuralCandidateJson>,
     pub max_output_error: f32,
     pub processed_neurons: usize,
     pub total_neurons: usize,
@@ -695,6 +705,54 @@ fn mean_absolute_activation_from_records(records: &[DiscoverRecord]) -> f32 {
         sum / count as f32
     }
 }
+
+/// Compute activation variance and mean from discovery records.
+///
+/// Issue #306: Used to detect constant-value neurons for removal with bias adjustments.
+/// A neuron with near-zero variance has constant activation and can be removed,
+/// with its effect folded into bias adjustments for downstream neurons.
+///
+/// # Returns
+/// A tuple of (mean_activation, variance) where:
+/// - `mean_activation` is the arithmetic mean (NOT absolute value)
+/// - `variance` is the statistical variance of activations
+///
+/// Returns (0.0, 0.0) if there are insufficient records.
+fn activation_mean_and_variance_from_records(records: &[DiscoverRecord]) -> (f32, f32) {
+    if records.len() < 2 {
+        return (0.0, 0.0);
+    }
+
+    let mut sum = 0.0f64;
+    let mut sum_sq = 0.0f64;
+    let mut count = 0u32;
+
+    for record in records {
+        if record.activation.is_finite() {
+            let a = record.activation as f64;
+            sum += a;
+            sum_sq += a * a;
+            count += 1;
+        }
+    }
+
+    if count < 2 {
+        return (0.0, 0.0);
+    }
+
+    let n = count as f64;
+    let mean = sum / n;
+    let variance = (sum_sq / n) - (mean * mean);
+
+    (mean as f32, variance.max(0.0) as f32)
+}
+
+/// Threshold for considering a neuron as "constant" (near-zero variance).
+/// Issue #217/306: Neurons with variance below this threshold are treated as constant
+/// and can be removed with bias adjustments for downstream neurons.
+///
+/// Value 1e-10 is from Issue #217's proposal for DEAD_VARIANCE_THRESHOLD.
+const CONSTANT_VARIANCE_THRESHOLD: f32 = 1e-10;
 
 fn build_adjacency(creature: &CreatureJson) -> HashMap<String, Vec<(String, f32)>> {
     let mut adjacency: HashMap<String, Vec<(String, f32)>> = HashMap::new();
@@ -1346,6 +1404,7 @@ pub fn rank_focus_neurons(
         return Ok(RankFocusStats {
             neurons: Vec::new(),
             removal_candidates: Vec::new(),
+            constant_neuron_removals: Vec::new(),
             max_output_error: 0.0,
             processed_neurons: 0,
             total_neurons: 0,
@@ -1642,9 +1701,113 @@ pub fn rank_focus_neurons(
         }
     }
 
+    // Issue #306: Detect constant-value neurons and create coordinated structural candidates
+    // that remove the neuron and adjust downstream biases.
+    //
+    // A neuron with near-zero activation variance is "constant" - it always outputs roughly
+    // the same value regardless of input. Removing it is equivalent to adjusting the biases
+    // of downstream neurons by: bias_adjustment = synapse_weight × mean_activation
+    //
+    // This is a win because:
+    // 1. We reduce complexity (one less neuron and its synapses)
+    // 2. We preserve the network's behaviour (downstream biases compensate)
+    // 3. The constant neuron wasn't contributing useful signal anyway
+    let neuron_types: HashMap<&str, &str> = creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.as_str(), n.neuron_type.as_str()))
+        .collect();
+
+    let neuron_biases: HashMap<&str, f32> = creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.as_str(), n.bias))
+        .collect();
+
+    // Build outgoing synapse map: from_uuid -> [(to_uuid, weight)]
+    let outgoing_synapses: HashMap<&str, Vec<(&str, f32)>> =
+        creature
+            .synapses
+            .iter()
+            .fold(HashMap::new(), |mut map, syn| {
+                map.entry(syn.from_uuid.as_str())
+                    .or_default()
+                    .push((syn.to_uuid.as_str(), syn.weight));
+                map
+            });
+
+    // Find constant hidden neurons and create coordinated removal candidates
+    let constant_neuron_removals: Vec<CoordinatedStructuralCandidateJson> = selectable
+        .par_iter()
+        .filter_map(|neuron| {
+            // Only consider hidden neurons for constant removal
+            let neuron_type = neuron_types.get(neuron.uuid.as_str())?;
+            if *neuron_type != "hidden" {
+                return None;
+            }
+
+            // Get records and compute variance
+            let records = get_records_or_error(records_provider.as_ref(), &neuron.uuid).ok()?;
+            let (mean_activation, variance) = activation_mean_and_variance_from_records(&records);
+
+            // Check if variance is below threshold (constant neuron)
+            if variance > CONSTANT_VARIANCE_THRESHOLD {
+                return None;
+            }
+
+            // Get outgoing synapses for this neuron
+            let outgoing = outgoing_synapses.get(neuron.uuid.as_str())?;
+            if outgoing.is_empty() {
+                return None;
+            }
+
+            // Build coordinated structural candidate:
+            // 1. SetBias operations for all downstream neurons
+            // 2. RemoveNeuron operation
+            let mut operations = Vec::with_capacity(outgoing.len() + 1);
+
+            // Add SetBias operations for all downstream neurons
+            for (to_uuid, weight) in outgoing {
+                let old_bias = neuron_biases.get(to_uuid).copied().unwrap_or(0.0);
+                let bias_adjustment = weight * mean_activation;
+                let new_bias = old_bias + bias_adjustment;
+
+                if new_bias.is_finite() {
+                    operations.push(CoordinatedStructuralOpJson::SetBias {
+                        neuron_uuid: to_uuid.to_string(),
+                        bias: new_bias,
+                    });
+                }
+            }
+
+            // Add RemoveNeuron operation (must be last so bias adjustments happen first)
+            operations.push(CoordinatedStructuralOpJson::RemoveNeuron {
+                neuron_uuid: neuron.uuid.clone(),
+            });
+
+            // Calculate expected improvement: removal savings (complexity reduction)
+            let (incoming_count, outgoing_count) =
+                count_synapses_for_neuron(&neuron.uuid, creature);
+            let removal_savings =
+                calculate_removal_savings(incoming_count, outgoing_count, cost_of_growth_threshold);
+
+            Some(CoordinatedStructuralCandidateJson {
+                operations,
+                expected_creature_score_gain: removal_savings,
+                comment: Some(format!(
+                    "Issue #306: Constant neuron removal with bias adjustments. \
+                     mean_activation={mean_activation:.6}, variance={variance:.2e}, \
+                     {} downstream neurons, savings={removal_savings:.2e}",
+                    outgoing.len()
+                )),
+            })
+        })
+        .collect();
+
     Ok(RankFocusStats {
         neurons,
         removal_candidates,
+        constant_neuron_removals,
         max_output_error,
         processed_neurons: total_neurons,
         total_neurons,
