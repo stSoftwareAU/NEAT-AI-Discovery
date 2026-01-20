@@ -23,6 +23,374 @@ type SynapseContribution = ((String, String), f32);
 /// Used to determine which synapse wins (has min/max value) for each observation.
 type ObservationContributions = HashMap<u32, Vec<SynapseContribution>>;
 
+// =============================================================================
+// Hierarchical Focus Selection (Issue #222)
+// =============================================================================
+
+/// Represents a layer of neurons at a specific depth in the network.
+///
+/// Neurons are grouped by their distance from inputs (measured in synapse hops).
+/// This enables hierarchical focus selection that guarantees coverage across
+/// all network depths.
+#[derive(Debug, Clone)]
+pub struct NeuronLayer {
+    /// Distance from inputs (0 = directly connected to inputs)
+    pub depth: usize,
+    /// Neurons at this depth (references to creature's neuron list)
+    pub neurons: Vec<NeuronInfo>,
+}
+
+/// Basic neuron information for layer assignment.
+#[derive(Debug, Clone)]
+pub struct NeuronInfo {
+    pub uuid: String,
+    pub neuron_type: String,
+}
+
+/// Strategy for allocating focus budget across layers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllocationStrategy {
+    /// Equal allocation per layer (total / num_layers)
+    Equal,
+    /// Proportional to layer size (larger layers get more slots)
+    Proportional,
+    /// Prioritise output layers (allocate from deepest to shallowest)
+    OutputFirst,
+}
+
+/// Compute network layers by organising neurons based on their depth from inputs.
+///
+/// Depth is computed using BFS from input neurons:
+/// - Depth 0: Input neurons (not included in returned layers as they're not selectable)
+/// - Depth 1: Neurons directly connected to inputs
+/// - Depth N: Neurons at N hops from any input
+///
+/// # Algorithm
+///
+/// Uses BFS to compute the MAXIMUM depth for each neuron. When a neuron has
+/// multiple incoming paths, we use the longest path to determine its layer.
+/// This ensures output-adjacent neurons are in deeper layers even if they
+/// have short paths from some inputs.
+///
+/// # Handling edge cases
+///
+/// - **Cycles**: Detected and handled by tracking visited nodes. A node in a cycle
+///   gets its depth from the first path that reaches it.
+/// - **Disconnected components**: Neurons not reachable from inputs are assigned
+///   to a special "unreachable" layer (depth = usize::MAX, sorted last).
+///
+/// # Arguments
+/// * `creature` - The creature to analyse
+///
+/// # Returns
+/// Vector of NeuronLayers sorted by depth (shallowest first)
+pub fn compute_network_layers(creature: &CreatureJson) -> Vec<NeuronLayer> {
+    // Build reverse adjacency: to_uuid -> list of from_uuids
+    // This lets us trace back from outputs to inputs
+    let mut forward_adjacency: HashMap<String, Vec<String>> = HashMap::new();
+    for synapse in &creature.synapses {
+        forward_adjacency
+            .entry(synapse.from_uuid.clone())
+            .or_default()
+            .push(synapse.to_uuid.clone());
+    }
+
+    // Identify input neuron UUIDs (inputs are represented by creature.input count, not in neurons list)
+    // Input UUIDs follow the pattern "input-{index}" or similar based on observation slot
+    // We need to find all source UUIDs that don't correspond to neurons in the creature
+    let neuron_uuids: HashSet<String> = creature.neurons.iter().map(|n| n.uuid.clone()).collect();
+
+    // Find all unique "from" UUIDs that are not in the neuron list - these are inputs/observations
+    let input_uuids: HashSet<String> = creature
+        .synapses
+        .iter()
+        .filter(|s| !neuron_uuids.contains(&s.from_uuid))
+        .map(|s| s.from_uuid.clone())
+        .collect();
+
+    // BFS to compute depth from inputs
+    // We use a modified BFS that tracks the maximum depth for each node.
+    // To handle cycles, we limit depth updates to prevent infinite loops.
+    let mut depths: HashMap<String, usize> = HashMap::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+
+    // Maximum depth to prevent infinite loops with cycles
+    // A creature with N neurons can have at most N-1 layers (linear chain)
+    let max_depth = creature.neurons.len() + creature.input + 1;
+
+    // Initialise: all input UUIDs have depth 0
+    for uuid in &input_uuids {
+        depths.insert(uuid.clone(), 0);
+        queue.push_back(uuid.clone());
+    }
+
+    // BFS traversal with cycle protection
+    while let Some(uuid) = queue.pop_front() {
+        let current_depth = depths[&uuid];
+
+        // Stop propagating if we've exceeded max depth (cycle detection)
+        if current_depth >= max_depth {
+            continue;
+        }
+
+        if let Some(targets) = forward_adjacency.get(&uuid) {
+            for to_uuid in targets {
+                let new_depth = current_depth + 1;
+
+                // Only update if we haven't seen this node or found a longer path
+                // BUT cap at max_depth to handle cycles
+                if new_depth <= max_depth {
+                    let should_update = match depths.get(to_uuid) {
+                        Some(&existing) => new_depth > existing && new_depth <= max_depth,
+                        None => true,
+                    };
+
+                    if should_update {
+                        depths.insert(to_uuid.clone(), new_depth);
+                        queue.push_back(to_uuid.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // Handle disconnected neurons (not reachable from any input)
+    for neuron in &creature.neurons {
+        if !depths.contains_key(&neuron.uuid) {
+            depths.insert(neuron.uuid.clone(), usize::MAX);
+        }
+    }
+
+    // Group neurons by depth
+    let mut layers_map: HashMap<usize, Vec<NeuronInfo>> = HashMap::new();
+    for neuron in &creature.neurons {
+        // Skip input and constant neurons (not selectable)
+        if neuron.neuron_type == "input" || neuron.neuron_type == "constant" {
+            continue;
+        }
+
+        let depth = depths.get(&neuron.uuid).copied().unwrap_or(usize::MAX);
+        layers_map.entry(depth).or_default().push(NeuronInfo {
+            uuid: neuron.uuid.clone(),
+            neuron_type: neuron.neuron_type.clone(),
+        });
+    }
+
+    // Convert to sorted vector
+    let mut layers: Vec<NeuronLayer> = layers_map
+        .into_iter()
+        .map(|(depth, neurons)| NeuronLayer { depth, neurons })
+        .collect();
+
+    // Sort by depth (shallowest first, unreachable last)
+    layers.sort_by_key(|l| l.depth);
+
+    layers
+}
+
+/// Allocate focus budget across layers based on the specified strategy.
+///
+/// # Arguments
+/// * `total` - Total focus budget to allocate
+/// * `layers` - Network layers (from compute_network_layers)
+/// * `strategy` - Allocation strategy to use
+///
+/// # Returns
+/// Vector of allocations, one per layer, in the same order as `layers`
+fn allocate_focus_budget(
+    total: usize,
+    layers: &[NeuronLayer],
+    strategy: AllocationStrategy,
+) -> Vec<usize> {
+    if layers.is_empty() {
+        return Vec::new();
+    }
+
+    match strategy {
+        AllocationStrategy::Equal => {
+            // Divide equally among layers
+            let per_layer = total / layers.len();
+            let remainder = total % layers.len();
+            let mut alloc = vec![per_layer; layers.len()];
+
+            // Distribute remainder to last layers (closer to output)
+            for i in 0..remainder {
+                let idx = layers.len() - 1 - i;
+                alloc[idx] += 1;
+            }
+            alloc
+        }
+
+        AllocationStrategy::Proportional => {
+            // Allocate proportionally to layer size
+            let total_neurons: usize = layers.iter().map(|l| l.neurons.len()).sum();
+            if total_neurons == 0 {
+                return vec![0; layers.len()];
+            }
+
+            let mut alloc: Vec<usize> = layers
+                .iter()
+                .map(|l| (total * l.neurons.len()) / total_neurons)
+                .collect();
+
+            // Distribute any remainder
+            let allocated: usize = alloc.iter().sum();
+            let remainder = total.saturating_sub(allocated);
+            for i in 0..remainder {
+                let idx = layers.len() - 1 - (i % layers.len());
+                alloc[idx] += 1;
+            }
+            alloc
+        }
+
+        AllocationStrategy::OutputFirst => {
+            // Prioritise layers closest to output (deepest first)
+            let mut alloc = vec![0usize; layers.len()];
+            let mut remaining = total;
+
+            // Process from deepest to shallowest
+            for i in (0..layers.len()).rev() {
+                if remaining == 0 {
+                    break;
+                }
+                // Take at most half of remaining budget for this layer,
+                // but cap at layer size
+                let take = (remaining / 2).max(1).min(layers[i].neurons.len());
+                alloc[i] = take;
+                remaining = remaining.saturating_sub(take);
+            }
+
+            // If we still have budget, distribute to layers that can take more
+            for i in (0..layers.len()).rev() {
+                if remaining == 0 {
+                    break;
+                }
+                let can_take = layers[i].neurons.len().saturating_sub(alloc[i]);
+                let take = can_take.min(remaining);
+                alloc[i] += take;
+                remaining = remaining.saturating_sub(take);
+            }
+
+            alloc
+        }
+    }
+}
+
+/// Select focus neurons hierarchically, ensuring coverage across all network layers.
+///
+/// This function implements hierarchical focus selection for large creatures,
+/// addressing the issue where flat selection tends to over-represent certain
+/// layers (typically those with the highest raw error scores).
+///
+/// # Algorithm
+///
+/// 1. Allocate focus budget across layers using the specified strategy
+/// 2. Within each layer, select the top-scoring neurons up to the allocation
+/// 3. If a layer doesn't have enough neurons, redistribute its unused slots
+///
+/// # Arguments
+/// * `creature` - The creature (used for validation)
+/// * `layers` - Pre-computed network layers from `compute_network_layers`
+/// * `max_focus` - Maximum number of neurons to select
+/// * `strategy` - How to allocate budget across layers
+/// * `scores` - Map from neuron UUID to score (higher = more likely to select)
+///
+/// # Returns
+/// Vector of selected neuron UUIDs
+pub fn hierarchical_focus_selection(
+    _creature: &CreatureJson,
+    layers: &[NeuronLayer],
+    max_focus: usize,
+    strategy: AllocationStrategy,
+    scores: &HashMap<String, f32>,
+) -> Vec<String> {
+    if layers.is_empty() || max_focus == 0 {
+        return Vec::new();
+    }
+
+    // Allocate budget across layers
+    let allocations = allocate_focus_budget(max_focus, layers, strategy);
+
+    let mut selected: Vec<String> = Vec::with_capacity(max_focus);
+    let mut unused_slots = 0usize;
+
+    // Select from each layer
+    for (i, layer) in layers.iter().enumerate() {
+        let allocation = allocations[i] + unused_slots;
+        unused_slots = 0;
+
+        if allocation == 0 {
+            continue;
+        }
+
+        // Sort neurons in this layer by score (descending)
+        let mut layer_neurons: Vec<(&NeuronInfo, f32)> = layer
+            .neurons
+            .iter()
+            .map(|n| (n, scores.get(&n.uuid).copied().unwrap_or(0.0)))
+            .collect();
+
+        layer_neurons.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.0.uuid.cmp(&b.0.uuid))
+        });
+
+        // Select top neurons from this layer
+        let to_select = allocation.min(layer_neurons.len());
+        for (neuron, _score) in layer_neurons.into_iter().take(to_select) {
+            selected.push(neuron.uuid.clone());
+        }
+
+        // Track unused slots for redistribution
+        unused_slots = allocation.saturating_sub(to_select);
+    }
+
+    // If we still have unused slots and haven't reached max_focus,
+    // go back and select more from layers that have neurons left
+    if selected.len() < max_focus && unused_slots > 0 {
+        let already_selected: HashSet<_> = selected.iter().cloned().collect();
+
+        for layer in layers.iter().rev() {
+            // Output layers first (reversed order)
+            if unused_slots == 0 {
+                break;
+            }
+
+            let mut remaining: Vec<(&NeuronInfo, f32)> = layer
+                .neurons
+                .iter()
+                .filter(|n| !already_selected.contains(&n.uuid))
+                .map(|n| (n, scores.get(&n.uuid).copied().unwrap_or(0.0)))
+                .collect();
+
+            remaining.sort_by(|a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| a.0.uuid.cmp(&b.0.uuid))
+            });
+
+            for (neuron, _score) in remaining {
+                if unused_slots == 0 {
+                    break;
+                }
+                selected.push(neuron.uuid.clone());
+                unused_slots -= 1;
+            }
+        }
+    }
+
+    // Ensure we don't exceed max_focus
+    selected.truncate(max_focus);
+
+    selected
+}
+
+/// Threshold for using hierarchical selection (number of selectable neurons).
+/// Below this threshold, flat selection is used for simplicity.
+/// Above this threshold, hierarchical selection provides better coverage.
+pub const HIERARCHICAL_SELECTION_THRESHOLD: usize = 100;
+
 /// Provides access to recorded discovery data without assuming an in-memory HashMap.
 /// Implementations may pre-load all records or stream them on demand with bounded caching.
 pub trait RecordProvider: Send + Sync {
