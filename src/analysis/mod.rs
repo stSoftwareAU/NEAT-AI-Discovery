@@ -17,7 +17,7 @@
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 
 pub mod activation;
-pub(crate) mod cache;
+pub mod cache;
 pub mod diagnostics;
 pub mod early_termination;
 pub mod gpu;

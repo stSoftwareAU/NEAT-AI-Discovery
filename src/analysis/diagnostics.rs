@@ -57,12 +57,7 @@ impl RecordProvider for RecordCacheProvider<'_> {
     }
 
     fn len(&self) -> usize {
-        let cache = self
-            .cache
-            .cache
-            .lock()
-            .expect("record cache mutex poisoned");
-        cache.len()
+        self.cache.len()
     }
 }
 
