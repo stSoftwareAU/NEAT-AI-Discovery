@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.7.39"
+version = "0.7.41"
 edition = "2021"
 
 [lib]
@@ -29,4 +29,9 @@ signal-hook = "0.3"  # Signal handling (SIGUSR1 for thread dumps)
 [dev-dependencies]
 tempfile = "3.8"
 serial_test = "3.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "synapse_counts"
+harness = false
 

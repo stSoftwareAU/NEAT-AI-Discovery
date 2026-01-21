@@ -29,7 +29,8 @@ cargo check --all-targets --all-features
 
 echo "🧪 Running tests..."
 # Run tests sequentially to avoid interference from shared global state (deadline override, GPU failure guard, env vars)
-cargo test --all-targets --all-features -- --test-threads=1
+# Note: Exclude benchmarks (--benches) since criterion benchmarks use custom harness and fail with --test-threads
+cargo test --lib --tests --all-features -- --test-threads=1
 
 echo "🏗️ Building release library..."
 cargo build --release --lib
