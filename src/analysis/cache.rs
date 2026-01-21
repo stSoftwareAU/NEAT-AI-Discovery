@@ -6,21 +6,39 @@
 //! - **Lazy-loaded mode**: Memory-efficient, loads records on-demand per neuron
 //!
 //! The cache automatically chooses the best strategy based on available system memory.
+//!
+//! ## Issue #186: RwLock for Read-Heavy Workloads
+//!
+//! This module uses `parking_lot::RwLock` instead of `std::sync::Mutex` to allow
+//! concurrent reads during analysis. During the analysis phase, the cache is
+//! predominantly read (getting neuron records) with writes only happening on cache
+//! misses. Using `RwLock` allows multiple focus neurons to be analysed in parallel
+//! without serialising on lock acquisition.
 
 use crate::types::DiscoverRecord;
 use anyhow::{Context, Result};
 use once_cell::sync::OnceCell;
+use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::analysis::utils::{check_memory_for_parquet, verbose_enabled};
 
 type RecordCacheLoader = dyn Fn(&str, &str) -> Result<Vec<DiscoverRecord>> + Send + Sync + 'static;
 type CachedNeuronRecords = OnceCell<Arc<Vec<DiscoverRecord>>>;
 
-pub(crate) struct RecordCache {
+/// A thread-safe cache for neuron discovery records loaded from parquet files.
+///
+/// Uses `RwLock` to allow concurrent reads during the analysis phase, which is
+/// read-heavy after the initial cache population. This significantly improves
+/// throughput when multiple focus neurons are analysed in parallel using Rayon.
+pub struct RecordCache {
     parquet_file: String,
-    pub(crate) cache: Mutex<HashMap<String, Arc<CachedNeuronRecords>>>,
+    /// The cache uses `RwLock` instead of `Mutex` to allow concurrent reads.
+    /// During analysis, most accesses are reads (cache hits), with writes only
+    /// occurring on cache misses. This allows Rayon parallel iteration over
+    /// focus neurons without serialising on lock acquisition.
+    pub(crate) cache: RwLock<HashMap<String, Arc<CachedNeuronRecords>>>,
     loader: Arc<RecordCacheLoader>,
 }
 
@@ -68,7 +86,7 @@ impl RecordCache {
 
         Ok(Self {
             parquet_file: parquet_file.to_string(),
-            cache: Mutex::new(HashMap::new()),
+            cache: RwLock::new(HashMap::new()),
             loader: Arc::new(move |file: &str, neuron_uuid: &str| {
                 read_records_from_parquet(file, neuron_uuid)
             }),
@@ -85,7 +103,7 @@ impl RecordCache {
         let elapsed = start.elapsed();
 
         // Pre-populate the cache with OnceCell-wrapped records
-        let cache: Mutex<HashMap<String, Arc<CachedNeuronRecords>>> = Mutex::new(
+        let cache: RwLock<HashMap<String, Arc<CachedNeuronRecords>>> = RwLock::new(
             grouped
                 .into_iter()
                 .map(|(k, v)| {
@@ -98,7 +116,7 @@ impl RecordCache {
         );
 
         if verbose_enabled() {
-            let count = cache.lock().expect("Mutex poisoned").len();
+            let count = cache.read().len();
             eprintln!(
                 "[NEAT-AI-Discovery][verbose] Pre-loaded {count} neurons from parquet in {elapsed:?}"
             );
@@ -119,18 +137,38 @@ impl RecordCache {
 
     /// Get records for a specific neuron UUID.
     /// Returns an Arc to avoid cloning the data.
-    pub(crate) fn get(&self, neuron_uuid: &str) -> Result<Arc<Vec<DiscoverRecord>>> {
+    ///
+    /// This method is optimised for read-heavy workloads:
+    /// - First attempts a read lock to check if the cell already exists (fast path)
+    /// - Only acquires a write lock if the cell needs to be created (slow path)
+    ///
+    /// After obtaining the cell, uses `OnceCell::get_or_try_init()` for thread-safe
+    /// lazy initialisation without holding the cache lock.
+    pub fn get(&self, neuron_uuid: &str) -> Result<Arc<Vec<DiscoverRecord>>> {
+        // Fast path: try to get with read lock first (allows concurrent reads)
         let cell = {
-            let mut cache = self.cache.lock().expect("Mutex poisoned");
-            cache
-                .entry(neuron_uuid.to_string())
-                .or_insert_with(|| Arc::new(OnceCell::new()))
-                .clone()
+            let cache = self.cache.read();
+            cache.get(neuron_uuid).cloned()
+        };
+
+        let cell = match cell {
+            Some(c) => c,
+            None => {
+                // Slow path: need to insert a new entry (requires write lock)
+                let mut cache = self.cache.write();
+                // Double-check: another thread may have inserted while we were waiting
+                cache
+                    .entry(neuron_uuid.to_string())
+                    .or_insert_with(|| Arc::new(OnceCell::new()))
+                    .clone()
+            }
         };
 
         // Use get_or_try_init to lazily initialise the cell.
         // If the value has already been initialised (e.g., from pre-loading or
         // a previous call), this returns instantly.
+        // Note: This happens OUTSIDE the cache lock, so other threads can access
+        // other neurons while this one is being loaded.
         let records = cell.get_or_try_init(|| -> Result<Arc<Vec<DiscoverRecord>>> {
             let loader = Arc::clone(&self.loader);
             let result = loader(&self.parquet_file, neuron_uuid)
@@ -141,13 +179,26 @@ impl RecordCache {
         Ok(Arc::clone(records))
     }
 
+    /// Get the number of entries in the cache.
+    ///
+    /// Uses a read lock since this is a read-only operation.
+    pub fn len(&self) -> usize {
+        self.cache.read().len()
+    }
+
+    /// Check if the cache is empty.
+    ///
+    /// Uses a read lock since this is a read-only operation.
+    pub fn is_empty(&self) -> bool {
+        self.cache.read().is_empty()
+    }
+
     /// Create a cache with a custom loader function.
-    /// Used primarily for testing.
-    #[cfg(test)]
-    pub(crate) fn with_loader(parquet_file: &str, loader: Arc<RecordCacheLoader>) -> Self {
+    /// Used primarily for testing. Available in both unit tests and integration tests.
+    pub fn with_loader(parquet_file: &str, loader: Arc<RecordCacheLoader>) -> Self {
         Self {
             parquet_file: parquet_file.to_string(),
-            cache: Mutex::new(HashMap::new()),
+            cache: RwLock::new(HashMap::new()),
             loader,
         }
     }
