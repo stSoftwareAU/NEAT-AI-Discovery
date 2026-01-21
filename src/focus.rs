@@ -1,4 +1,5 @@
 use crate::analysis::{check_memory_for_parquet, verbose_enabled};
+use crate::discovery_history::DiscoveryHistory;
 use crate::parquet_format::{read_all_records_grouped_by_neuron, read_records_from_parquet};
 use crate::types::DiscoverRecord;
 use crate::{
@@ -1831,6 +1832,415 @@ pub fn rank_focus_neurons(
 
             // Calculate expected improvement: removal savings (complexity reduction)
             // Issue #208: Use pre-computed synapse counts for O(1) lookup
+            let (incoming_count, outgoing_count) = synapse_counts.get(&neuron.uuid);
+            let removal_savings =
+                calculate_removal_savings(incoming_count, outgoing_count, cost_of_growth_threshold);
+
+            Some(CoordinatedStructuralCandidateJson {
+                operations,
+                expected_creature_score_gain: removal_savings,
+                comment: Some(format!(
+                    "Issue #306: Constant neuron removal with bias adjustments. \
+                     mean_activation={mean_activation:.6}, variance={variance:.2e}, \
+                     {} downstream neurons, savings={removal_savings:.2e}",
+                    outgoing.len()
+                )),
+            })
+        })
+        .collect();
+
+    Ok(RankFocusStats {
+        neurons,
+        removal_candidates,
+        constant_neuron_removals,
+        max_output_error,
+        processed_neurons: total_neurons,
+        total_neurons,
+        duration_ms: start.elapsed().as_millis(),
+    })
+}
+
+/// Rank focus neurons with optional historical discovery success data.
+///
+/// Issue #227: By tracking which neurons have historically led to successful discoveries
+/// (candidates that survived ablation testing), we can prioritise them in future runs,
+/// improving the discovery hit rate.
+///
+/// This function behaves identically to `rank_focus_neurons` when no history is provided.
+/// When history is provided, the ranking score is adjusted to favour neurons with
+/// higher historical success rates using a Bayesian scoring approach:
+///
+/// ```text
+/// combined_score = base_score × history_factor
+/// ```
+///
+/// where:
+/// - `base_score` = error × impact^gamma (same as rank_focus_neurons)
+/// - `history_factor` = bayesian_score from history (0.0 to 1.0)
+/// - For neurons not in history, `history_factor` = 0.5 (neutral prior)
+///
+/// # Arguments
+///
+/// * `parquet_file` - Path to the parquet file containing discovery records
+/// * `creature` - The creature to rank neurons for
+/// * `max_results` - Optional maximum number of neurons to return
+/// * `cost_of_growth` - Optional cost of growth threshold (default: 1e-7)
+/// * `history` - Optional discovery history for historical success data
+///
+/// # Returns
+///
+/// Returns `RankFocusStats` with neurons sorted by combined score (error × impact × history).
+///
+/// # Example
+///
+/// ```ignore
+/// use neat_ai_discovery::discovery_history::DiscoveryHistory;
+/// use neat_ai_discovery::focus::rank_focus_neurons_with_history;
+///
+/// // Create history from previous runs
+/// let mut history = DiscoveryHistory::new();
+/// history.record("hidden-1", true, Some(epoch));  // Success
+/// history.record("hidden-2", false, None);         // Failure
+///
+/// // Rank neurons, prioritising those with higher historical success
+/// let result = rank_focus_neurons_with_history(
+///     "records.parquet",
+///     &creature,
+///     Some(10),      // max_results
+///     None,          // cost_of_growth (use default)
+///     Some(&history),
+/// )?;
+/// ```
+pub fn rank_focus_neurons_with_history(
+    parquet_file: &str,
+    creature: &CreatureJson,
+    max_results: Option<usize>,
+    cost_of_growth: Option<f32>,
+    history: Option<&DiscoveryHistory>,
+) -> Result<RankFocusStats> {
+    let start = Instant::now();
+    let selectable: Vec<&NeuronJson> = creature
+        .neurons
+        .iter()
+        .filter(|neuron| is_selectable_type(&neuron.neuron_type))
+        .collect();
+    let total_neurons = selectable.len();
+
+    if total_neurons == 0 {
+        return Ok(RankFocusStats {
+            neurons: Vec::new(),
+            removal_candidates: Vec::new(),
+            constant_neuron_removals: Vec::new(),
+            max_output_error: 0.0,
+            processed_neurons: 0,
+            total_neurons: 0,
+            duration_ms: start.elapsed().as_millis(),
+        });
+    }
+
+    // Try to load all records if we have enough memory.
+    // If not enough memory, fall back to lazy loading with a bounded cache.
+    let (records_provider, is_lazy_mode): (Arc<dyn RecordProvider>, bool) =
+        match check_memory_for_parquet(parquet_file) {
+            Ok(()) => {
+                let records = read_all_records_grouped_by_neuron(parquet_file)
+                    .context("Failed to read discovery records from parquet file")?;
+                (Arc::new(EagerRecordProvider::new(records)), false)
+            }
+            Err(memory_error) => {
+                eprintln!(
+                    "[NEAT-AI-Discovery] Insufficient memory for full pre-load in focus ranking. \
+                     Using lazy-loading mode (slower but memory-efficient)."
+                );
+                if verbose_enabled() {
+                    eprintln!("[NEAT-AI-Discovery][verbose] Memory check failed: {memory_error}");
+                }
+                (Arc::new(LazyRecordProvider::new(parquet_file)), true)
+            }
+        };
+
+    if is_lazy_mode && verbose_enabled() {
+        eprintln!(
+            "[NEAT-AI-Discovery][verbose] Lazy record cache initialised (cached: {} neurons)",
+            records_provider.len()
+        );
+    }
+
+    // Verify that all selectable neurons have records
+    for neuron in &selectable {
+        get_records_or_error(records_provider.as_ref(), &neuron.uuid)
+            .context("Failed to read discovery records for all selectable neurons")?;
+    }
+
+    let output_neurons: Vec<&NeuronJson> = creature
+        .neurons
+        .iter()
+        .filter(|neuron| neuron.neuron_type == "output")
+        .collect();
+
+    let max_output_error = if output_neurons.is_empty() {
+        0.0
+    } else {
+        let errors: Vec<f32> = output_neurons
+            .iter()
+            .map(|neuron| {
+                let records = get_records_or_error(records_provider.as_ref(), &neuron.uuid)?;
+                Ok(average_absolute_error_from_records(&records))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        errors.into_iter().fold(0.0, f32::max)
+    };
+
+    // Use activation-based impact calculation for more accurate MIN/MAX/IF statistics
+    let impact_map = compute_impacts_with_activations(creature, records_provider.as_ref())?;
+
+    // Pre-compute synapse counts for O(1) lookup
+    let synapse_counts = SynapseCounts::new(creature);
+
+    // Build neurons with base metrics
+    let mut neurons: Vec<RankedNeuron> = selectable
+        .par_iter()
+        .map(|neuron| -> Result<RankedNeuron> {
+            let records = get_records_or_error(records_provider.as_ref(), &neuron.uuid)?;
+            let raw_error = average_absolute_error_from_records(&records);
+            let structural_impact = *impact_map.get(&neuron.uuid).unwrap_or(&0.0);
+            let mean_activation = mean_absolute_activation_from_records(&records);
+            let activation_weighted_impact = structural_impact * mean_activation;
+
+            let total_error = if max_output_error > 0.0 {
+                raw_error.min(max_output_error)
+            } else {
+                raw_error
+            };
+            Ok(RankedNeuron {
+                neuron_uuid: neuron.uuid.clone(),
+                total_error,
+                raw_error,
+                impact: structural_impact,
+                mean_activation,
+                activation_weighted_impact,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // Sort by weighted score with optional history factor
+    // Issue #227: Incorporate historical success rate into ranking
+    const IMPACT_EPSILON: f32 = 0.0001;
+    const IMPACT_GAMMA: f32 = 0.8;
+
+    neurons.sort_by(|a, b| {
+        let a_base = a.total_error * (a.impact + IMPACT_EPSILON).powf(IMPACT_GAMMA);
+        let b_base = b.total_error * (b.impact + IMPACT_EPSILON).powf(IMPACT_GAMMA);
+
+        // Apply history factor if available
+        // History factor is in [0, 1], where 0.5 is neutral
+        // We scale it so that:
+        // - 0.5 (neutral) → multiplier of 1.0 (no change)
+        // - 1.0 (perfect success) → multiplier of 1.5 (50% boost)
+        // - 0.0 (complete failure) → multiplier of 0.5 (50% penalty)
+        // Formula: multiplier = 0.5 + history_score
+        let (a_weighted, b_weighted) = if let Some(h) = history {
+            let a_history = h.bayesian_score_for(&a.neuron_uuid) as f32;
+            let b_history = h.bayesian_score_for(&b.neuron_uuid) as f32;
+            let a_multiplier = 0.5 + a_history;
+            let b_multiplier = 0.5 + b_history;
+            (a_base * a_multiplier, b_base * b_multiplier)
+        } else {
+            (a_base, b_base)
+        };
+
+        b_weighted
+            .partial_cmp(&a_weighted)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| b.impact.partial_cmp(&a.impact).unwrap_or(Ordering::Equal))
+            .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
+    });
+
+    // Identify removal candidates (same logic as rank_focus_neurons)
+    const DEFAULT_COST_OF_GROWTH: f32 = 1e-7;
+    let cost_of_growth_threshold = cost_of_growth.unwrap_or(DEFAULT_COST_OF_GROWTH);
+
+    let mut removal_candidates: Vec<RemovalCandidate> = neurons
+        .par_iter()
+        .filter_map(|n| {
+            let (incoming, outgoing) = synapse_counts.get(&n.neuron_uuid);
+            let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
+
+            if savings <= n.activation_weighted_impact {
+                return None;
+            }
+
+            let expected_error_reduction = n.activation_weighted_impact;
+            let net_improvement = savings - n.activation_weighted_impact;
+
+            Some(RemovalCandidate {
+                neuron_uuid: n.neuron_uuid.clone(),
+                total_error: n.total_error,
+                impact: n.impact,
+                mean_activation: n.mean_activation,
+                activation_weighted_impact: n.activation_weighted_impact,
+                incoming_synapses: incoming,
+                outgoing_synapses: outgoing,
+                removal_savings: savings,
+                expected_error_reduction,
+                reason: format!(
+                    "Removal improves score: saves {:.2e} > impact {:.2e} (net +{:.2e}), {} synapses, costOfGrowth={:.2e}",
+                    savings,
+                    n.activation_weighted_impact,
+                    net_improvement,
+                    incoming + outgoing,
+                    cost_of_growth_threshold,
+                ),
+            })
+        })
+        .collect();
+
+    // Extra candidates: high-error exploratory ablations (same as rank_focus_neurons)
+    const EXPLORATORY_ABLATION_MAX: usize = 5;
+    const EXPLORATORY_ERROR_MULTIPLIER: f32 = 10.0;
+
+    if max_output_error > 0.0 {
+        let neuron_types: HashMap<&str, &str> = creature
+            .neurons
+            .iter()
+            .map(|n: &NeuronJson| (n.uuid.as_str(), n.neuron_type.as_str()))
+            .collect();
+
+        let already_selected: HashSet<&str> = removal_candidates
+            .iter()
+            .map(|c| c.neuron_uuid.as_str())
+            .collect();
+
+        let mut high_error_neurons: Vec<&RankedNeuron> = neurons
+            .iter()
+            .filter(|n| !already_selected.contains(n.neuron_uuid.as_str()))
+            .filter(|n| neuron_types.get(n.neuron_uuid.as_str()) == Some(&"hidden"))
+            .filter(|n| n.raw_error >= max_output_error * EXPLORATORY_ERROR_MULTIPLIER)
+            .collect();
+
+        high_error_neurons.sort_by(|a, b| {
+            b.raw_error
+                .partial_cmp(&a.raw_error)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| b.impact.partial_cmp(&a.impact).unwrap_or(Ordering::Equal))
+                .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
+        });
+
+        high_error_neurons.truncate(EXPLORATORY_ABLATION_MAX);
+
+        for n in high_error_neurons {
+            let (incoming, outgoing) = synapse_counts.get(&n.neuron_uuid);
+            let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
+
+            removal_candidates.push(RemovalCandidate {
+                neuron_uuid: n.neuron_uuid.clone(),
+                total_error: n.total_error,
+                impact: n.impact,
+                mean_activation: n.mean_activation,
+                activation_weighted_impact: n.activation_weighted_impact,
+                incoming_synapses: incoming,
+                outgoing_synapses: outgoing,
+                removal_savings: savings,
+                expected_error_reduction: 0.0,
+                reason: format!(
+                    "Exploratory ablation candidate (high error): raw_error {:.2e} (clamped {:.2e}), \
+                     activation_weighted_impact {:.2e} >= costOfGrowth ({:.2e}). \
+                     This is NOT a safe prune - validate by full-dataset ablation test.",
+                    n.raw_error,
+                    n.total_error,
+                    n.activation_weighted_impact,
+                    cost_of_growth_threshold
+                ),
+            });
+        }
+    }
+
+    // Sort removal candidates by net improvement
+    removal_candidates.sort_by(|a, b| {
+        let a_net = a.removal_savings - a.activation_weighted_impact;
+        let b_net = b.removal_savings - b.activation_weighted_impact;
+
+        b_net
+            .partial_cmp(&a_net)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| {
+                a.activation_weighted_impact
+                    .partial_cmp(&b.activation_weighted_impact)
+                    .unwrap_or(Ordering::Equal)
+            })
+            .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
+    });
+
+    if let Some(limit) = max_results {
+        if neurons.len() > limit {
+            neurons.truncate(limit);
+        }
+    }
+
+    // Constant neuron removals (same as rank_focus_neurons)
+    let neuron_types: HashMap<&str, &str> = creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.as_str(), n.neuron_type.as_str()))
+        .collect();
+
+    let neuron_biases: HashMap<&str, f32> = creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.as_str(), n.bias))
+        .collect();
+
+    let outgoing_synapses: HashMap<&str, Vec<(&str, f32)>> =
+        creature
+            .synapses
+            .iter()
+            .fold(HashMap::new(), |mut map, syn| {
+                map.entry(syn.from_uuid.as_str())
+                    .or_default()
+                    .push((syn.to_uuid.as_str(), syn.weight));
+                map
+            });
+
+    let constant_neuron_removals: Vec<CoordinatedStructuralCandidateJson> = selectable
+        .par_iter()
+        .filter_map(|neuron| {
+            let neuron_type = neuron_types.get(neuron.uuid.as_str())?;
+            if *neuron_type != "hidden" {
+                return None;
+            }
+
+            let records = get_records_or_error(records_provider.as_ref(), &neuron.uuid).ok()?;
+            let (mean_activation, variance) = activation_mean_and_variance_from_records(&records);
+
+            if variance > CONSTANT_VARIANCE_THRESHOLD {
+                return None;
+            }
+
+            let outgoing = outgoing_synapses.get(neuron.uuid.as_str())?;
+            if outgoing.is_empty() {
+                return None;
+            }
+
+            let mut operations = Vec::with_capacity(outgoing.len() + 1);
+
+            for (to_uuid, weight) in outgoing {
+                let old_bias = neuron_biases.get(to_uuid).copied().unwrap_or(0.0);
+                let bias_adjustment = weight * mean_activation;
+                let new_bias = old_bias + bias_adjustment;
+
+                if new_bias.is_finite() {
+                    operations.push(CoordinatedStructuralOpJson::SetBias {
+                        neuron_uuid: to_uuid.to_string(),
+                        bias: new_bias,
+                    });
+                }
+            }
+
+            operations.push(CoordinatedStructuralOpJson::RemoveNeuron {
+                neuron_uuid: neuron.uuid.clone(),
+            });
+
             let (incoming_count, outgoing_count) = synapse_counts.get(&neuron.uuid);
             let removal_savings =
                 calculate_removal_savings(incoming_count, outgoing_count, cost_of_growth_threshold);
