@@ -153,6 +153,10 @@ pub use weights::{
 };
 
 // Implement analyze_all using the module functions
+use crate::observability::{
+    global_gpu_metrics, profile_mode, report_global_gpu_metrics, PhaseTimer, ProfileData,
+    ProfileMode,
+};
 use crate::{
     AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson,
     CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson,
@@ -185,10 +189,12 @@ fn run_optional_analysis<T>(
     starting: &'static str,
     finished: &'static str,
     skipped: &'static str,
+    phase_name: &'static str,
     f: impl FnOnce() -> Result<T>,
 ) -> Result<Option<T>> {
     if enabled {
         crate::watchdog::beat(starting);
+        let _timer = PhaseTimer::new(phase_name);
         let result = f()?;
         crate::watchdog::beat(finished);
         Ok(Some(result))
@@ -267,6 +273,13 @@ fn apply_kept_neuron_candidates(
 /// backwards compatibility (neuron discovery creates new network structure and may be
 /// considered higher value when time is not constrained).
 pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
+    // Phase timer for total analysis (Issue #214)
+    let _total_timer = PhaseTimer::new("total_analysis");
+
+    // Profile data collection (when NEAT_AI_DISCOVERY_PROFILE=json)
+    let mut profile = ProfileData::new();
+    profile.set_focus_neurons_requested(input.focus_neurons.len());
+
     // Optional hang watchdog for unattended workers.
     // If enabled, this will emit a thread dump then abort the process if analysis stalls.
     let _watchdog = crate::watchdog::start_from_env("analysis::analyze_all");
@@ -285,7 +298,12 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
     // Pre-load ALL records from parquet in one pass. This is MUCH faster than
     // lazy-loading each neuron separately (1 scan vs ~2000 scans for large creatures).
+    let parquet_loading_start = std::time::Instant::now();
     let shared_cache = Arc::new(cache::RecordCache::new_adaptive(&input.parquet_file)?);
+    profile.record_phase(
+        "parquet_loading",
+        parquet_loading_start.elapsed().as_millis() as u64,
+    );
     crate::watchdog::beat("analysis::analyze_all → parquet cache loaded");
 
     let synapse_input = if include_synapse {
@@ -345,6 +363,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 "analysis::analyze_all → synapse analysis starting",
                 "analysis::analyze_all → synapse analysis finished",
                 "analysis::analyze_all → synapse analysis skipped",
+                "synapse_analysis",
                 || {
                     let inner = synapse_input.expect("checked is_some");
                     synapse::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
@@ -356,6 +375,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 "analysis::analyze_all → neuron analysis starting",
                 "analysis::analyze_all → neuron analysis finished",
                 "analysis::analyze_all → neuron analysis skipped",
+                "neuron_analysis",
                 || {
                     let inner = neuron_input.expect("checked is_some");
                     neuron::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
@@ -369,6 +389,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 "analysis::analyze_all → neuron analysis starting",
                 "analysis::analyze_all → neuron analysis finished",
                 "analysis::analyze_all → neuron analysis skipped",
+                "neuron_analysis",
                 || {
                     let inner = neuron_input.expect("checked is_some");
                     neuron::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
@@ -380,6 +401,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 "analysis::analyze_all → synapse analysis starting",
                 "analysis::analyze_all → synapse analysis finished",
                 "analysis::analyze_all → synapse analysis skipped",
+                "synapse_analysis",
                 || {
                     let inner = synapse_input.expect("checked is_some");
                     synapse::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
@@ -397,6 +419,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             "analysis::analyze_all → neuron analysis starting",
             "analysis::analyze_all → neuron analysis finished",
             "analysis::analyze_all → neuron analysis skipped",
+            "neuron_analysis",
             || {
                 let inner = neuron_input.expect("checked is_some");
                 neuron::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
@@ -408,6 +431,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             "analysis::analyze_all → synapse analysis starting",
             "analysis::analyze_all → synapse analysis finished",
             "analysis::analyze_all → synapse analysis skipped",
+            "synapse_analysis",
             || {
                 let inner = synapse_input.expect("checked is_some");
                 synapse::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
@@ -525,6 +549,59 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             input.max_synapse_candidates,
             input.analysis_deadline_ms.is_some(),
         );
+    }
+
+    // Collect final profile data (Issue #214)
+    let synapse_candidates = synapse_result
+        .as_ref()
+        .map(|s| {
+            s.helpful_synapses.len()
+                + s.harmful_synapses.len()
+                + s.coordinated_structural_candidates.len()
+        })
+        .unwrap_or(0);
+    let neuron_candidates = neuron_result
+        .as_ref()
+        .map(|n| n.helpful_neurons.len())
+        .unwrap_or(0);
+    let total_candidates = synapse_candidates + neuron_candidates;
+    profile.set_candidates_found(total_candidates);
+    profile.set_candidates_returned(total_candidates);
+
+    // Set focus neurons completed from metadata
+    let synapse_completed = synapse_result
+        .as_ref()
+        .map(|s| s.metadata.completed_focus_neurons)
+        .unwrap_or(0);
+    let neuron_completed = neuron_result
+        .as_ref()
+        .map(|n| n.metadata.completed_focus_neurons)
+        .unwrap_or(0);
+    profile.set_focus_neurons_completed(synapse_completed.max(neuron_completed));
+
+    // Get GPU device info if available
+    if let Some(info) = synapse_result
+        .as_ref()
+        .and_then(|s| s.metadata.gpu_info.as_ref())
+        .or_else(|| {
+            neuron_result
+                .as_ref()
+                .and_then(|n| n.metadata.gpu_info.as_ref())
+        })
+    {
+        profile.set_gpu_device(info.name.clone());
+    }
+
+    // Add GPU metrics to profile data (Issue #214)
+    let gpu_metrics = global_gpu_metrics();
+    profile.from_gpu_metrics(gpu_metrics);
+
+    // Output GPU metrics if enabled (Issue #214)
+    report_global_gpu_metrics();
+
+    // Output profile data if JSON profiling is enabled (Issue #214)
+    if profile_mode() == ProfileMode::Json {
+        profile.report();
     }
 
     Ok(AnalyzeAllResult {

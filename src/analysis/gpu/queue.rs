@@ -40,7 +40,7 @@
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::analysis::gpu::analyzer::{GpuAnalyzer, GpuEvaluator};
 use crate::analysis::gpu::shaders::{GPU_INIT_TIMEOUT_SECS, GPU_SHUTDOWN_TIMEOUT_SECS};
@@ -48,6 +48,7 @@ use crate::analysis::samples::{
     HarmfulStats, HelpfulSample, HelpfulStats, ReluOrientation, ReluStats,
 };
 use crate::analysis::utils::{calculate_gpu_batch_timeout, get_work_queue_capacity};
+use crate::observability::{global_gpu_metrics, gpu_metrics_enabled};
 
 // =============================================================================
 // GPU Work Queue - Centralised GPU thread for improved utilisation
@@ -176,17 +177,38 @@ impl GpuWorkQueue {
 
     /// The main loop for the GPU thread.
     /// Processes work requests until shutdown is requested.
+    ///
+    /// When `NEAT_AI_DISCOVERY_GPU_METRICS=1` is set, this loop tracks:
+    /// - Batch count and samples processed
+    /// - GPU busy time (time spent executing GPU operations)
     fn gpu_thread_loop(analyzer: GpuAnalyzer, work_rx: Receiver<GpuWorkRequest>) {
+        let track_metrics = gpu_metrics_enabled();
+
         while let Ok(request) = work_rx.recv() {
             match request {
                 GpuWorkRequest::HelpfulBatch {
                     samples,
                     response_tx,
                 } => {
+                    let sample_count: usize = samples.iter().map(|v| v.len()).sum();
+
+                    let start = if track_metrics {
+                        Some(Instant::now())
+                    } else {
+                        None
+                    };
+
                     // Convert Vec<Vec<HelpfulSample>> to &[&[HelpfulSample]] for the API
                     let samples_refs: Vec<&[HelpfulSample]> =
                         samples.iter().map(|v| v.as_slice()).collect();
                     let result = analyzer.evaluate_helpful_batch(&samples_refs);
+
+                    if let Some(start) = start {
+                        let metrics = global_gpu_metrics();
+                        metrics.record_batch(sample_count);
+                        metrics.record_gpu_busy_us(start.elapsed().as_micros() as u64);
+                    }
+
                     // Send result back (ignore send errors - receiver may have dropped)
                     let _ = response_tx.send(result);
                 }
@@ -194,12 +216,28 @@ impl GpuWorkQueue {
                     samples_with_weights,
                     response_tx,
                 } => {
+                    let sample_count: usize =
+                        samples_with_weights.iter().map(|(v, _)| v.len()).sum();
+
+                    let start = if track_metrics {
+                        Some(Instant::now())
+                    } else {
+                        None
+                    };
+
                     // Convert to the format expected by evaluate_harmful_batch
                     let batch_refs: Vec<(&[HelpfulSample], f32)> = samples_with_weights
                         .iter()
                         .map(|(samples, weight)| (samples.as_slice(), *weight))
                         .collect();
                     let result = analyzer.evaluate_harmful_batch(&batch_refs);
+
+                    if let Some(start) = start {
+                        let metrics = global_gpu_metrics();
+                        metrics.record_batch(sample_count);
+                        metrics.record_gpu_busy_us(start.elapsed().as_micros() as u64);
+                    }
+
                     let _ = response_tx.send(result);
                 }
                 GpuWorkRequest::ReluEval {
@@ -207,7 +245,22 @@ impl GpuWorkQueue {
                     threshold,
                     response_tx,
                 } => {
+                    let sample_count = samples.len();
+
+                    let start = if track_metrics {
+                        Some(Instant::now())
+                    } else {
+                        None
+                    };
+
                     let result = analyzer.evaluate_relu_gpu(&samples, threshold);
+
+                    if let Some(start) = start {
+                        let metrics = global_gpu_metrics();
+                        metrics.record_batch(sample_count);
+                        metrics.record_gpu_busy_us(start.elapsed().as_micros() as u64);
+                    }
+
                     let _ = response_tx.send(result);
                 }
                 GpuWorkRequest::ActivationEval {
@@ -217,12 +270,27 @@ impl GpuWorkQueue {
                     scale,
                     response_tx,
                 } => {
+                    let sample_count = samples.len();
+
+                    let start = if track_metrics {
+                        Some(Instant::now())
+                    } else {
+                        None
+                    };
+
                     let result = analyzer.evaluate_activation_gpu(
                         &samples,
                         activation_type,
                         orientation,
                         scale,
                     );
+
+                    if let Some(start) = start {
+                        let metrics = global_gpu_metrics();
+                        metrics.record_batch(sample_count);
+                        metrics.record_gpu_busy_us(start.elapsed().as_micros() as u64);
+                    }
+
                     let _ = response_tx.send(result);
                 }
                 GpuWorkRequest::Shutdown => {

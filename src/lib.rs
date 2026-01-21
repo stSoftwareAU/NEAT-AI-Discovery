@@ -9,6 +9,7 @@ pub mod analysis;
 pub mod debug;
 pub mod export;
 pub mod focus;
+pub mod observability;
 pub mod parquet_format;
 pub mod record;
 pub mod streaming;

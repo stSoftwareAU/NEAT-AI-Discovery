@@ -17,11 +17,15 @@ fn watchdog_beats_do_not_claim_finished_when_analysis_is_skipped() {
     let finished = "analysis::analyze_all → neuron analysis finished";
 
     // When disabled, we should record "skipped" and never execute the closure.
-    let result: Option<()> =
-        run_optional_analysis(false, "starting", finished, skipped, || -> Result<()> {
-            unreachable!("disabled analysis closure must not run")
-        })
-        .expect("should not error");
+    let result: Option<()> = run_optional_analysis(
+        false,
+        "starting",
+        finished,
+        skipped,
+        "test_phase",
+        || -> Result<()> { unreachable!("disabled analysis closure must not run") },
+    )
+    .expect("should not error");
     assert!(result.is_none());
     assert_eq!(
         crate::watchdog::active_stage_for_test().as_deref(),
@@ -30,8 +34,10 @@ fn watchdog_beats_do_not_claim_finished_when_analysis_is_skipped() {
 
     // When enabled, we should end on "finished".
     let result: Option<()> =
-        run_optional_analysis(true, "starting", finished, "skipped", || Ok(()))
-            .expect("should not error");
+        run_optional_analysis(true, "starting", finished, "skipped", "test_phase", || {
+            Ok(())
+        })
+        .expect("should not error");
     assert!(result.is_some());
     assert_eq!(
         crate::watchdog::active_stage_for_test().as_deref(),
