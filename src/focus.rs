@@ -637,26 +637,62 @@ pub fn calculate_removal_savings(
     growth_cost * (1.0 + total_synapses as f32 / 10.0)
 }
 
-/// Count the incoming and outgoing synapses for a neuron.
+/// Pre-computed synapse counts for efficient O(1) lookup.
 ///
-/// # Arguments
-/// * `neuron_uuid` - The UUID of the neuron to count synapses for
-/// * `creature` - The creature containing the synapses
+/// Issue #208: Pre-compute synapse counts to eliminate O(n×m) complexity.
 ///
-/// # Returns
-/// A tuple of (incoming_count, outgoing_count)
-fn count_synapses_for_neuron(neuron_uuid: &str, creature: &CreatureJson) -> (usize, usize) {
-    let incoming = creature
-        .synapses
-        .iter()
-        .filter(|s| s.to_uuid == neuron_uuid)
-        .count();
-    let outgoing = creature
-        .synapses
-        .iter()
-        .filter(|s| s.from_uuid == neuron_uuid)
-        .count();
-    (incoming, outgoing)
+/// Previously, `count_synapses_for_neuron` performed a linear O(m) scan through ALL synapses
+/// twice (incoming + outgoing) for each neuron being ranked. With n neurons and m synapses,
+/// this was O(n × m) complexity.
+///
+/// This struct pre-builds two HashMaps during initialisation in O(m) time, then provides
+/// O(1) lookup for any neuron's synapse counts. Total complexity is O(n + m).
+///
+/// # Example performance improvement
+///
+/// For a creature with 500 neurons and 10,000 synapses:
+/// - Previous: 500 × 10,000 × 2 = **10 million** iterations
+/// - With SynapseCounts: 10,000 + 500 = **10,500** iterations
+/// - **~1000x improvement**
+#[derive(Debug)]
+pub struct SynapseCounts {
+    /// Map from neuron UUID to count of synapses pointing TO that neuron
+    incoming: HashMap<String, usize>,
+    /// Map from neuron UUID to count of synapses pointing FROM that neuron
+    outgoing: HashMap<String, usize>,
+}
+
+impl SynapseCounts {
+    /// Create a new SynapseCounts by scanning all synapses once.
+    ///
+    /// Time complexity: O(m) where m is the number of synapses.
+    /// Space complexity: O(n) where n is the number of unique neurons with synapses.
+    pub fn new(creature: &CreatureJson) -> Self {
+        let mut incoming: HashMap<String, usize> = HashMap::new();
+        let mut outgoing: HashMap<String, usize> = HashMap::new();
+
+        for synapse in &creature.synapses {
+            *incoming.entry(synapse.to_uuid.clone()).or_default() += 1;
+            *outgoing.entry(synapse.from_uuid.clone()).or_default() += 1;
+        }
+
+        Self { incoming, outgoing }
+    }
+
+    /// Get the synapse counts for a neuron in O(1) time.
+    ///
+    /// # Arguments
+    /// * `neuron_uuid` - The UUID of the neuron to look up
+    ///
+    /// # Returns
+    /// A tuple of (incoming_count, outgoing_count). Returns (0, 0) if the neuron
+    /// has no synapses or doesn't exist in the creature.
+    pub fn get(&self, neuron_uuid: &str) -> (usize, usize) {
+        (
+            self.incoming.get(neuron_uuid).copied().unwrap_or(0),
+            self.outgoing.get(neuron_uuid).copied().unwrap_or(0),
+        )
+    }
 }
 
 fn average_absolute_error_from_records(records: &[DiscoverRecord]) -> f32 {
@@ -1469,6 +1505,12 @@ pub fn rank_focus_neurons(
     // Use activation-based impact calculation for more accurate MIN/MAX/IF statistics
     let impact_map = compute_impacts_with_activations(creature, records_provider.as_ref())?;
 
+    // Issue #208: Pre-compute synapse counts to eliminate O(n×m) complexity.
+    // Previously, count_synapses_for_neuron scanned ALL synapses twice (incoming + outgoing)
+    // for each neuron being ranked. With n neurons and m synapses, this was O(n × m).
+    // By pre-computing counts into HashMaps, we reduce to O(m) for init + O(1) per lookup.
+    let synapse_counts = SynapseCounts::new(creature);
+
     // Now we can safely unwrap since we've verified all selectable neurons have records
     // Use parallel iteration for faster processing on multi-core systems
     let mut neurons: Vec<RankedNeuron> = selectable
@@ -1559,7 +1601,8 @@ pub fn rank_focus_neurons(
     let mut removal_candidates: Vec<RemovalCandidate> = neurons
         .par_iter()
         .filter_map(|n| {
-            let (incoming, outgoing) = count_synapses_for_neuron(&n.neuron_uuid, creature);
+            // Issue #208: Use pre-computed synapse counts for O(1) lookup
+            let (incoming, outgoing) = synapse_counts.get(&n.neuron_uuid);
             let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
 
             // Issue #235: Filter on savings > impact (removal improves score)
@@ -1645,7 +1688,8 @@ pub fn rank_focus_neurons(
         high_error_neurons.truncate(EXPLORATORY_ABLATION_MAX);
 
         for n in high_error_neurons {
-            let (incoming, outgoing) = count_synapses_for_neuron(&n.neuron_uuid, creature);
+            // Issue #208: Use pre-computed synapse counts for O(1) lookup
+            let (incoming, outgoing) = synapse_counts.get(&n.neuron_uuid);
             let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
 
             removal_candidates.push(RemovalCandidate {
@@ -1786,8 +1830,8 @@ pub fn rank_focus_neurons(
             });
 
             // Calculate expected improvement: removal savings (complexity reduction)
-            let (incoming_count, outgoing_count) =
-                count_synapses_for_neuron(&neuron.uuid, creature);
+            // Issue #208: Use pre-computed synapse counts for O(1) lookup
+            let (incoming_count, outgoing_count) = synapse_counts.get(&neuron.uuid);
             let removal_savings =
                 calculate_removal_savings(incoming_count, outgoing_count, cost_of_growth_threshold);
 
