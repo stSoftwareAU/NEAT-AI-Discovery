@@ -39,3 +39,7 @@ harness = false
 name = "neuron_interning"
 harness = false
 
+[[bench]]
+name = "batched_activation"
+harness = false
+
