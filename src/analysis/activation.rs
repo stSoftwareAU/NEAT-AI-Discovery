@@ -385,9 +385,13 @@ pub fn get_bias_values(squash: &str) -> Vec<f32> {
 ///
 /// - **STEP**: Output = value > 0 ? 1 : 0
 /// - **BIPOLAR**: Output = value > 0 ? 1 : -1
+///
+/// # Performance (Issue #211)
+/// Uses `eq_ignore_ascii_case` for zero-allocation case-insensitive comparison.
+/// This function is called in hot loops during candidate evaluation.
 #[inline]
 pub fn is_threshold_activation(squash: &str) -> bool {
-    matches!(squash.to_uppercase().as_str(), "STEP" | "BIPOLAR")
+    squash.eq_ignore_ascii_case("STEP") || squash.eq_ignore_ascii_case("BIPOLAR")
 }
 
 // ============================================================================
@@ -742,6 +746,37 @@ mod tests {
         assert!(!is_threshold_activation("TANH"));
         assert!(!is_threshold_activation("RELU"));
         assert!(!is_threshold_activation("IDENTITY"));
+    }
+
+    /// Test that `is_threshold_activation` uses zero-allocation case-insensitive comparison.
+    /// Issue #211: Uses `eq_ignore_ascii_case` instead of `.to_uppercase()` to avoid
+    /// string allocations in hot loops.
+    #[test]
+    fn test_is_threshold_activation_case_variations() {
+        // All case variations should work without allocation
+        assert!(is_threshold_activation("STEP"));
+        assert!(is_threshold_activation("Step"));
+        assert!(is_threshold_activation("step"));
+        assert!(is_threshold_activation("sTeP"));
+        assert!(is_threshold_activation("BIPOLAR"));
+        assert!(is_threshold_activation("Bipolar"));
+        assert!(is_threshold_activation("bipolar"));
+        assert!(is_threshold_activation("BiPoLaR"));
+
+        // Non-threshold activations with various cases
+        assert!(!is_threshold_activation("TANH"));
+        assert!(!is_threshold_activation("tanh"));
+        assert!(!is_threshold_activation("Tanh"));
+        assert!(!is_threshold_activation("RELU"));
+        assert!(!is_threshold_activation("relu"));
+        assert!(!is_threshold_activation("ReLU"));
+        assert!(!is_threshold_activation("IDENTITY"));
+        assert!(!is_threshold_activation("identity"));
+
+        // Edge cases
+        assert!(!is_threshold_activation(""));
+        assert!(!is_threshold_activation("STEP2")); // Not exact match
+        assert!(!is_threshold_activation("STEPBIPOLAR")); // Not exact match
     }
 
     #[test]

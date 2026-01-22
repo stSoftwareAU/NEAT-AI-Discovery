@@ -178,72 +178,16 @@ pub struct ExportStats {
     pub output_count: usize,
 }
 
-/// Apply a squash function by name
+/// Apply a squash function by name.
+///
+/// # Performance (Issue #211)
+/// Delegates to `crate::activations::apply_scalar_squash` which uses `normalise_squash_name`
+/// with a fast path for already-uppercase strings (zero allocation in that case).
 fn apply_squash(squash: &str, value: f32) -> f32 {
-    match squash.to_uppercase().as_str() {
-        "IDENTITY" => value,
-        "TANH" => value.tanh(),
-        "LOGISTIC" | "SIGMOID" => 1.0 / (1.0 + (-value).exp()),
-        "RELU" => value.max(0.0),
-        "LEAKYRELU" => {
-            if value >= 0.0 {
-                value
-            } else {
-                0.01 * value
-            }
-        }
-        "STEP" => {
-            if value > 0.0 {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        "BIPOLAR" => {
-            if value > 0.0 {
-                1.0
-            } else {
-                -1.0
-            }
-        }
-        "HARD_TANH" | "CLIPPED" => value.clamp(-1.0, 1.0),
-        "SOFTSIGN" => value / (1.0 + value.abs()),
-        "SOFTPLUS" => (1.0 + value.exp()).ln(),
-        "ELU" => {
-            if value >= 0.0 {
-                value
-            } else {
-                value.exp() - 1.0
-            }
-        }
-        "SELU" => {
-            let alpha = 1.673_263_2_f32;
-            let scale = 1.050_701_f32;
-            if value >= 0.0 {
-                scale * value
-            } else {
-                scale * alpha * (value.exp() - 1.0)
-            }
-        }
-        "GELU" => {
-            // Approximate GELU
-            let cdf = 0.5 * (1.0 + (0.797_884_6_f32 * (value + 0.044715 * value.powi(3))).tanh());
-            value * cdf
-        }
-        "MISH" => value * ((1.0 + value.exp()).ln()).tanh(),
-        "SWISH" => value / (1.0 + (-value).exp()),
-        "ARCTAN" => value.atan(),
-        "BENT_IDENTITY" => ((value * value + 1.0).sqrt() - 1.0) / 2.0 + value,
-        "RELU6" => value.clamp(0.0, 6.0),
-        "GAUSSIAN" => (-value * value).exp(),
-        "SINE" | "SIN" => value.sin(),
-        "COSINE" | "COS" => value.cos(),
-        "ABSOLUTE" | "ABS" => value.abs(),
-        "INVERSE" => -value,
-        "COMPLEMENT" => 1.0 - value,
-        // Default to identity for unknown
-        _ => value,
-    }
+    // Use the centralised activation function implementation.
+    // Returns None for aggregate squashes (MINIMUM/MAXIMUM/IF/etc.) which cannot be
+    // represented as f(value). For those, default to identity (passthrough).
+    crate::activations::apply_scalar_squash(squash, value).unwrap_or(value)
 }
 
 /// Compute stats from a slice of f32 values
