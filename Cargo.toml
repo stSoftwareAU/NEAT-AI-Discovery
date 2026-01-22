@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.7.53"
+version = "0.7.55"
 edition = "2021"
 
 [lib]

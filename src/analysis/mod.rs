@@ -20,6 +20,7 @@ pub mod activation;
 pub mod cache;
 pub mod diagnostics;
 pub mod early_termination;
+pub mod epistatic;
 pub mod gpu;
 pub mod neuron;
 pub mod samples;
