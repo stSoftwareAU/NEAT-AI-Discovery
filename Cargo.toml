@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.7.49"
+version = "0.7.51"
 edition = "2021"
 
 [lib]
@@ -37,5 +37,9 @@ harness = false
 
 [[bench]]
 name = "neuron_interning"
+harness = false
+
+[[bench]]
+name = "batched_activation"
 harness = false
 

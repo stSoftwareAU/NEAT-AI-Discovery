@@ -4536,6 +4536,16 @@ mod tests_optimal_outgoing_weight {
                 "AlwaysFailGpuEvaluator: GPU not available for test"
             ))
         }
+
+        fn evaluate_activations_batched(
+            &self,
+            _samples: &[HelpfulSample],
+            _activation_configs: &[(u32, f32, f32)],
+        ) -> Result<Vec<(f32, f32, f32, u32)>> {
+            Err(anyhow!(
+                "AlwaysFailGpuEvaluator: GPU not available for test"
+            ))
+        }
     }
 
     /// Regression: IDENTITY candidates must not be skipped in the all-samples fallback path.

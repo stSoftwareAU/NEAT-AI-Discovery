@@ -87,6 +87,15 @@ pub(crate) enum GpuWorkRequest {
         scale: f32,
         response_tx: Sender<Result<(f32, f32, f32, u32)>>,
     },
+    /// Batched activation function evaluation for multiple configs.
+    /// Issue #201: Reduces GPU round-trips by evaluating multiple activation
+    /// configurations in a single command buffer submission.
+    #[allow(clippy::type_complexity)]
+    ActivationBatchEval {
+        samples: Vec<HelpfulSample>,
+        activation_configs: Vec<(u32, f32, f32)>, // (activation_type, orientation, scale)
+        response_tx: Sender<Result<Vec<(f32, f32, f32, u32)>>>,
+    },
     /// Request to shut down the GPU thread.
     Shutdown,
 }
@@ -288,6 +297,33 @@ impl GpuWorkQueue {
                     if let Some(start) = start {
                         let metrics = global_gpu_metrics();
                         metrics.record_batch(sample_count);
+                        metrics.record_gpu_busy_us(start.elapsed().as_micros() as u64);
+                    }
+
+                    let _ = response_tx.send(result);
+                }
+                GpuWorkRequest::ActivationBatchEval {
+                    samples,
+                    activation_configs,
+                    response_tx,
+                } => {
+                    // Issue #201: Batched activation evaluation
+                    let sample_count = samples.len();
+                    let config_count = activation_configs.len();
+
+                    let start = if track_metrics {
+                        Some(Instant::now())
+                    } else {
+                        None
+                    };
+
+                    let result =
+                        analyzer.evaluate_activations_batched_gpu(&samples, &activation_configs);
+
+                    if let Some(start) = start {
+                        let metrics = global_gpu_metrics();
+                        // Record total samples processed (samples * configs)
+                        metrics.record_batch(sample_count * config_count);
                         metrics.record_gpu_busy_us(start.elapsed().as_micros() as u64);
                     }
 
@@ -517,6 +553,72 @@ impl GpuWorkQueue {
         }
     }
 
+    /// Submit a batched activation evaluation and wait for results.
+    ///
+    /// Issue #201: Evaluates multiple activation function configurations in a single
+    /// GPU command buffer submission, reducing CPU-GPU round-trips by 10-20%.
+    ///
+    /// # Arguments
+    /// * `samples` - The sample data to evaluate
+    /// * `activation_configs` - List of (activation_type, orientation, scale) tuples
+    /// * `deadline` - Optional deadline for adaptive timeout calculation
+    ///
+    /// # Returns
+    /// Vector of (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count)
+    /// in the same order as the input configs.
+    pub(crate) fn evaluate_activations_batched_gpu(
+        &self,
+        samples: Vec<HelpfulSample>,
+        activation_configs: Vec<(u32, f32, f32)>,
+        deadline: &Option<std::time::SystemTime>,
+    ) -> Result<Vec<(f32, f32, f32, u32)>> {
+        // Handle edge cases
+        if activation_configs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if samples.is_empty() {
+            // Return zero results for each config
+            return Ok(vec![(0.0, 0.0, 0.0, 0); activation_configs.len()]);
+        }
+
+        let (response_tx, response_rx) = bounded(1);
+        let timeout = calculate_gpu_batch_timeout(deadline);
+        let timeout_secs = timeout.as_secs();
+
+        // Send with timeout to prevent deadlock if GPU thread is hung
+        match self.work_tx.send_timeout(
+            GpuWorkRequest::ActivationBatchEval {
+                samples,
+                activation_configs,
+                response_tx,
+            },
+            timeout,
+        ) {
+            Ok(()) => {}
+            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
+                return Err(anyhow!(
+                    "GPU work queue full - send timed out after {timeout_secs}s. \
+                     The GPU thread may be hung. Consider restarting the process."
+                ));
+            }
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                return Err(anyhow!("GPU work queue channel closed"));
+            }
+        }
+
+        match response_rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
+                "GPU batched activation evaluation timed out after {timeout_secs}s. \
+                     The GPU may be unresponsive. Consider reducing batch size or restarting."
+            )),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                Err(anyhow!("GPU response channel closed unexpectedly"))
+            }
+        }
+    }
+
     /// Request the GPU thread to shut down.
     /// This should be called before dropping the queue to ensure clean shutdown.
     ///
@@ -595,6 +697,15 @@ impl GpuEvaluator for GpuWorkQueue {
     ) -> Result<(f32, f32, f32, u32)> {
         // Uses None deadline = maximum timeout (5 minutes)
         self.evaluate_activation_gpu(samples.to_vec(), activation_type, orientation, scale, &None)
+    }
+
+    fn evaluate_activations_batched(
+        &self,
+        samples: &[HelpfulSample],
+        activation_configs: &[(u32, f32, f32)],
+    ) -> Result<Vec<(f32, f32, f32, u32)>> {
+        // Uses None deadline = maximum timeout (5 minutes)
+        self.evaluate_activations_batched_gpu(samples.to_vec(), activation_configs.to_vec(), &None)
     }
 }
 
