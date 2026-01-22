@@ -10,6 +10,7 @@ pub mod debug;
 pub mod discovery_history;
 pub mod export;
 pub mod focus;
+pub mod intern;
 pub mod observability;
 pub mod parquet_format;
 pub mod record;

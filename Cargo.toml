@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.7.45"
+version = "0.7.47"
 edition = "2021"
 
 [lib]
@@ -33,5 +33,9 @@ criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
 name = "synapse_counts"
+harness = false
+
+[[bench]]
+name = "neuron_interning"
 harness = false
 
