@@ -1,3 +1,4 @@
+use crate::intern::NeuronIndex;
 use crate::types::DiscoverRecord;
 use crate::{AnalyzeSynapsesInput, CandidateSynapseJson, SynapseJson};
 use anyhow::{anyhow, Result};
@@ -180,30 +181,56 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         .map(|neuron| (neuron.uuid.clone(), neuron.index))
         .collect();
 
-    let existing_synapses: HashSet<(String, String)> = input
-        .creature
-        .synapses
-        .iter()
-        .map(|synapse| (synapse.from_uuid.clone(), synapse.to_uuid.clone()))
-        .collect();
+    // Issue #210: Use NeuronIndex to intern UUID strings, reducing memory allocations.
+    // Instead of cloning UUID strings for each synapse (72+ bytes per entry for String pairs),
+    // we use u32 indices (8 bytes per entry) for ~89% memory reduction.
+    let mut neuron_index = NeuronIndex::with_capacity(
+        input.creature.neurons.len() + input.creature.input + input.creature.synapses.len() / 10,
+    );
 
-    let existing_synapse_weights: HashMap<(String, String), f32> = input
+    // Pre-intern all neuron UUIDs (inputs + neurons from creature)
+    for i in 0..input.creature.input {
+        neuron_index.intern(&format!("input-{i}"));
+    }
+    for neuron in &input.creature.neurons {
+        neuron_index.intern(&neuron.uuid);
+    }
+
+    // Build existing_synapses using interned indices instead of String clones
+    let existing_synapses: HashSet<(u32, u32)> = input
         .creature
         .synapses
         .iter()
         .map(|synapse| {
             (
-                (synapse.from_uuid.clone(), synapse.to_uuid.clone()),
+                neuron_index.intern(&synapse.from_uuid),
+                neuron_index.intern(&synapse.to_uuid),
+            )
+        })
+        .collect();
+
+    // Build existing_synapse_weights using interned indices
+    let existing_synapse_weights: HashMap<(u32, u32), f32> = input
+        .creature
+        .synapses
+        .iter()
+        .map(|synapse| {
+            (
+                (
+                    neuron_index.intern(&synapse.from_uuid),
+                    neuron_index.intern(&synapse.to_uuid),
+                ),
                 synapse.weight,
             )
         })
         .collect();
 
-    let synapses_by_target: HashMap<String, Vec<SynapseJson>> = input
+    // Build synapses_by_target using interned index as key
+    let synapses_by_target: HashMap<u32, Vec<SynapseJson>> = input
         .creature
         .synapses
         .iter()
-        .map(|synapse| (synapse.to_uuid.clone(), synapse.clone()))
+        .map(|synapse| (neuron_index.intern(&synapse.to_uuid), synapse.clone()))
         .fold(HashMap::new(), |mut acc, (key, val)| {
             acc.entry(key).or_default().push(val);
             acc
@@ -296,6 +323,8 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     let synapses_by_target_arc = Arc::new(synapses_by_target);
     let order_map_arc = Arc::new(order_map);
     let neuron_squash_map_arc = Arc::new(neuron_squash_map);
+    // Issue #210: Share neuron index for interned UUID lookups across parallel threads
+    let neuron_index_arc = Arc::new(neuron_index);
 
     // Issue #182: Build a set of "used" input neurons (those with at least one outgoing synapse)
     // for the focus_unused_observations feature. Unused inputs will be prioritised in source ordering.
@@ -529,16 +558,21 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                 }
                 let source_uuid = source.uuid.as_str();
 
-                let is_connected = existing_synapses_arc
-                    .contains(&(source_uuid.to_string(), target_uuid.to_string()))
-                ;
+                // Issue #210: Use interned indices for efficient lookup (avoids String allocations)
+                let source_idx = neuron_index_arc.get_index(source_uuid);
+                let target_idx = neuron_index_arc.get_index(target_uuid.as_str());
+                let is_connected = match (source_idx, target_idx) {
+                    (Some(s), Some(t)) => existing_synapses_arc.contains(&(s, t)),
+                    _ => false, // UUID not interned means it's not in the creature
+                };
                 if is_connected {
                     already_connected_count += 1;
                 };
                 let existing_weight = if is_connected {
-                    existing_synapse_weights_arc
-                        .get(&(source_uuid.to_string(), target_uuid.to_string()))
-                        .copied()
+                    match (source_idx, target_idx) {
+                        (Some(s), Some(t)) => existing_synapse_weights_arc.get(&(s, t)).copied(),
+                        _ => None,
+                    }
                 } else {
                     None
                 };
@@ -680,7 +714,9 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                     map
                 }
 
-                let existing = synapses_by_target_arc.get(target_uuid.as_str())?;
+                // Issue #210: Use interned index for synapses_by_target lookup
+                let target_idx_for_synapses = neuron_index_arc.get_index(target_uuid.as_str())?;
+                let existing = synapses_by_target_arc.get(&target_idx_for_synapses)?;
 
                 #[derive(Clone)]
                 struct IncomingInput {
@@ -1225,7 +1261,9 @@ pub(crate) fn analyze_synapses_with_cache_impl(
             // Process harmful synapses for this target - BATCHED GPU evaluation for better utilisation
             // Vertical timeout: Complete all harmful synapse processing for the current focus neuron
             if !*analysis_timed_out.lock().expect("Mutex poisoned") {
-                if let Some(existing) = synapses_by_target_arc.get(target_uuid.as_str()) {
+                // Issue #210: Use interned index for synapses_by_target lookup
+                let target_idx_for_harmful = neuron_index_arc.get_index(target_uuid.as_str());
+                if let Some(existing) = target_idx_for_harmful.and_then(|idx| synapses_by_target_arc.get(&idx)) {
                     // Phase 1: Build all samples on CPU (fast, parallel-friendly)
                     // Reuse the target_map we already built for helpful synapse processing
                     struct HarmfulWork {

@@ -1,5 +1,6 @@
 use crate::analysis::{check_memory_for_parquet, verbose_enabled};
 use crate::discovery_history::DiscoveryHistory;
+use crate::intern::NeuronIndex;
 use crate::parquet_format::{read_all_records_grouped_by_neuron, read_records_from_parquet};
 use crate::types::DiscoverRecord;
 use crate::{
@@ -89,69 +90,76 @@ pub enum AllocationStrategy {
 /// # Returns
 /// Vector of NeuronLayers sorted by depth (shallowest first)
 pub fn compute_network_layers(creature: &CreatureJson) -> Vec<NeuronLayer> {
-    // Build reverse adjacency: to_uuid -> list of from_uuids
-    // This lets us trace back from outputs to inputs
-    let mut forward_adjacency: HashMap<String, Vec<String>> = HashMap::new();
-    for synapse in &creature.synapses {
-        forward_adjacency
-            .entry(synapse.from_uuid.clone())
-            .or_default()
-            .push(synapse.to_uuid.clone());
+    // Issue #210: Use NeuronIndex for memory-efficient BFS traversal.
+    // Instead of cloning UUID strings for the adjacency map and queue,
+    // we use u32 indices (4 bytes vs ~36+ bytes per String).
+    let mut neuron_index = NeuronIndex::with_capacity(creature.neurons.len() + creature.input);
+
+    // Pre-intern all neuron UUIDs
+    for neuron in &creature.neurons {
+        neuron_index.intern(&neuron.uuid);
     }
 
-    // Identify input neuron UUIDs (inputs are represented by creature.input count, not in neurons list)
-    // Input UUIDs follow the pattern "input-{index}" or similar based on observation slot
-    // We need to find all source UUIDs that don't correspond to neurons in the creature
-    let neuron_uuids: HashSet<String> = creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-
-    // Find all unique "from" UUIDs that are not in the neuron list - these are inputs/observations
-    let input_uuids: HashSet<String> = creature
-        .synapses
+    // Build neuron UUID set using indices for efficient lookup
+    let neuron_indices: HashSet<u32> = creature
+        .neurons
         .iter()
-        .filter(|s| !neuron_uuids.contains(&s.from_uuid))
-        .map(|s| s.from_uuid.clone())
+        .map(|n| neuron_index.get_index(&n.uuid).unwrap())
         .collect();
 
-    // BFS to compute depth from inputs
-    // We use a modified BFS that tracks the maximum depth for each node.
-    // To handle cycles, we limit depth updates to prevent infinite loops.
-    let mut depths: HashMap<String, usize> = HashMap::new();
-    let mut queue: VecDeque<String> = VecDeque::new();
+    // Build forward adjacency using interned indices
+    let mut forward_adjacency: HashMap<u32, Vec<u32>> = HashMap::new();
+    for synapse in &creature.synapses {
+        let from_idx = neuron_index.intern(&synapse.from_uuid);
+        let to_idx = neuron_index.intern(&synapse.to_uuid);
+        forward_adjacency.entry(from_idx).or_default().push(to_idx);
+    }
+
+    // Identify input neuron indices (those not in the neuron list)
+    let input_indices: HashSet<u32> = creature
+        .synapses
+        .iter()
+        .map(|s| neuron_index.get_index(&s.from_uuid).unwrap())
+        .filter(|idx| !neuron_indices.contains(idx))
+        .collect();
+
+    // BFS to compute depth from inputs using indices
+    let mut depths: HashMap<u32, usize> = HashMap::new();
+    let mut queue: VecDeque<u32> = VecDeque::new();
 
     // Maximum depth to prevent infinite loops with cycles
-    // A creature with N neurons can have at most N-1 layers (linear chain)
     let max_depth = creature.neurons.len() + creature.input + 1;
 
-    // Initialise: all input UUIDs have depth 0
-    for uuid in &input_uuids {
-        depths.insert(uuid.clone(), 0);
-        queue.push_back(uuid.clone());
+    // Initialise: all input indices have depth 0
+    for &idx in &input_indices {
+        depths.insert(idx, 0);
+        queue.push_back(idx);
     }
 
     // BFS traversal with cycle protection
-    while let Some(uuid) = queue.pop_front() {
-        let current_depth = depths[&uuid];
+    while let Some(idx) = queue.pop_front() {
+        let current_depth = depths[&idx];
 
         // Stop propagating if we've exceeded max depth (cycle detection)
         if current_depth >= max_depth {
             continue;
         }
 
-        if let Some(targets) = forward_adjacency.get(&uuid) {
-            for to_uuid in targets {
+        if let Some(targets) = forward_adjacency.get(&idx) {
+            for &to_idx in targets {
                 let new_depth = current_depth + 1;
 
                 // Only update if we haven't seen this node or found a longer path
                 // BUT cap at max_depth to handle cycles
                 if new_depth <= max_depth {
-                    let should_update = match depths.get(to_uuid) {
+                    let should_update = match depths.get(&to_idx) {
                         Some(&existing) => new_depth > existing && new_depth <= max_depth,
                         None => true,
                     };
 
                     if should_update {
-                        depths.insert(to_uuid.clone(), new_depth);
-                        queue.push_back(to_uuid.clone());
+                        depths.insert(to_idx, new_depth);
+                        queue.push_back(to_idx);
                     }
                 }
             }
@@ -160,9 +168,8 @@ pub fn compute_network_layers(creature: &CreatureJson) -> Vec<NeuronLayer> {
 
     // Handle disconnected neurons (not reachable from any input)
     for neuron in &creature.neurons {
-        if !depths.contains_key(&neuron.uuid) {
-            depths.insert(neuron.uuid.clone(), usize::MAX);
-        }
+        let idx = neuron_index.get_index(&neuron.uuid).unwrap();
+        depths.entry(idx).or_insert(usize::MAX);
     }
 
     // Group neurons by depth
@@ -173,7 +180,8 @@ pub fn compute_network_layers(creature: &CreatureJson) -> Vec<NeuronLayer> {
             continue;
         }
 
-        let depth = depths.get(&neuron.uuid).copied().unwrap_or(usize::MAX);
+        let idx = neuron_index.get_index(&neuron.uuid).unwrap();
+        let depth = depths.get(&idx).copied().unwrap_or(usize::MAX);
         layers_map.entry(depth).or_default().push(NeuronInfo {
             uuid: neuron.uuid.clone(),
             neuron_type: neuron.neuron_type.clone(),
