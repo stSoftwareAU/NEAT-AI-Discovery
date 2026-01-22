@@ -7,6 +7,7 @@
 pub mod activations;
 pub mod analysis;
 pub mod debug;
+pub mod discovery_history;
 pub mod export;
 pub mod focus;
 pub mod observability;
