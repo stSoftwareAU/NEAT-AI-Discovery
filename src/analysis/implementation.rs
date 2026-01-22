@@ -44,6 +44,12 @@ use crate::analysis::diagnostics::{
     ThresholdContext,
 };
 
+// Import epistatic pair detection module (Issue #202)
+use crate::analysis::epistatic::{
+    build_source_contribution, detect_epistatic_pairs, epistatic_pairs_to_coordinated_candidates,
+    SourceContribution,
+};
+
 // Import GPU infrastructure from dedicated modules (Issue #272, #273, #274)
 use crate::analysis::gpu::{GpuAnalyzer, GpuWorkQueue};
 
@@ -1026,6 +1032,9 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                 let mut diagnostics_below_threshold = Vec::new();
                 let mut diagnostics_selected = Vec::new();
 
+                // Issue #202: Track source contributions for epistatic pair detection
+                let mut source_contributions: Vec<SourceContribution> = Vec::new();
+
                 {
                     let _timing = TimingScope::result_processing(&timing_collector);
                     for (work, stats) in helpful_work_batch.iter().zip(helpful_stats_batch.iter()) {
@@ -1114,6 +1123,19 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                                 );
                             (weight, improvement, improved, worsened)
                         };
+
+                    // Issue #202: Track source contribution for epistatic pair detection
+                    // Collect ALL sources (including non-positive improvements) because
+                    // epistatic pairs may have low individual improvements but high combined
+                    if work.existing_weight.is_none() {
+                        source_contributions.push(build_source_contribution(
+                            &work.source_uuid,
+                            work.samples.clone(),
+                            stats.clone(),
+                            applied_weight,
+                            neuron_error_improvement,
+                        ));
+                    }
 
                     // Accept all positive improvements as candidates (not just those above threshold)
                     // Only reject if improvement is non-positive (<= 0.0)
@@ -1255,6 +1277,52 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                         .lock()
                         .expect("Mutex poisoned: coordinated_structural_results");
                     results.extend(coordinated_to_add);
+                }
+
+                // Issue #202: Detect epistatic neuron pairs for this target
+                // Epistatic pairs are sources where neither improves individually, but
+                // both together could improve the target due to complementary patterns.
+                if verbose_enabled() {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {target_uuid}: collected {} source contributions for epistatic detection",
+                        source_contributions.len()
+                    );
+                }
+                if source_contributions.len() >= 2 {
+                    // Get target neuron impact for discounting
+                    let target_is_output = neuron_type_map_arc
+                        .get(target_uuid.as_str())
+                        .map(|t| t == "output")
+                        .unwrap_or(false);
+                    let target_impact = if target_is_output {
+                        1.0
+                    } else {
+                        // Use a default impact for hidden neurons (will be recalculated later)
+                        0.5
+                    };
+
+                    let epistatic_pairs = detect_epistatic_pairs(
+                        target_uuid.as_str(),
+                        &source_contributions,
+                        target_impact,
+                    );
+
+                    if !epistatic_pairs.is_empty() {
+                        let epistatic_candidates = epistatic_pairs_to_coordinated_candidates(&epistatic_pairs);
+                        if !epistatic_candidates.is_empty() {
+                            let mut results = coordinated_structural_results
+                                .lock()
+                                .expect("Mutex poisoned: coordinated_structural_results");
+                            results.extend(epistatic_candidates);
+
+                            if verbose_enabled() {
+                                eprintln!(
+                                    "[NEAT-AI-Discovery][verbose] Target {target_uuid}: found {} epistatic pair(s)",
+                                    epistatic_pairs.len()
+                                );
+                            }
+                        }
+                    }
                 }
             }
 

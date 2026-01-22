@@ -40,7 +40,7 @@ pub const DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD: f32 = 1e-7;
 /// to properly simulate clamping behaviour. When `target_value` is `Some`, we can
 /// compute the actual effect of adding a contribution rather than using the linear
 /// approximation.
-#[derive(Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct HelpfulSample {
     /// Source neuron's activation (what we're considering adding a connection FROM)
     pub activation: f32,
@@ -387,7 +387,7 @@ pub struct ReductionUniforms {
 // =============================================================================
 
 /// Computed statistics for helpful synapse evaluation.
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct HelpfulStats {
     pub positive_count: u32,
     pub negative_count: u32,

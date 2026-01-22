@@ -348,7 +348,24 @@ To support this, the Rust analysis can return **grouped candidates** via `coordi
 - **Weight changes**: Existing synapse weight adjustments are represented as a single `setWeight` operation (Issue #180), directly expressing the intent to modify the weight.
 - **Candidate budgets**: `maxSynapseCandidates` is a **global cap** across `helpfulSynapses + harmfulSynapses + coordinatedStructuralCandidates`. If you set `maxSynapseCandidates: 0`, coordinated structural candidates will also be truncated to zero.
 
-#### Example: “noisy vs trusted” inputs (thermometer pattern)
+#### Epistatic Neuron Pair Pre-Detection (Issue #202)
+
+During synapse analysis, the library proactively detects **epistatic neuron pairs** - cases where two source neurons targeting the same output would provide better improvement when added together than either would alone. This addresses the "neutral plateau" problem where individual operations appear to have little benefit.
+
+**Detection strategy**:
+- **Complementary pattern detection**: Identifies source neurons with non-overlapping "firing" patterns (activation ≥ 0.5). When neuron A fires on one subset of samples and neuron B fires on a different subset, adding both synapses together covers more samples than either alone.
+- **Combined improvement estimation**: For pairs with high complementarity (≥70% non-overlap), the library estimates the combined improvement as roughly the sum of individual improvements.
+
+**When epistatic pairs are detected**:
+- Both individual improvements are positive, AND
+- Complementarity is ≥70% (firing patterns have low overlap), AND
+- Combined improvement exceeds the best individual improvement
+
+**Example**: If input-0 correlates with positive error on the first half of samples and input-1 correlates with positive error on the second half, neither alone improves overall score significantly, but adding both synapses together addresses all samples.
+
+**Output**: Epistatic pair candidates appear as entries in `coordinatedStructuralCandidates` with two `addSynapse` operations and a comment indicating the epistatic relationship.
+
+#### Example: "noisy vs trusted" inputs (thermometer pattern)
 
 If two inputs feed the same target with the same starting weight, but one input is much noisier (higher activation variance), a coordinated candidate may:
 
