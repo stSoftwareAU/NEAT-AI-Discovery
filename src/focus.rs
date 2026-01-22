@@ -835,11 +835,20 @@ enum SquashCategory {
 }
 
 impl SquashCategory {
+    /// Categorise a squash function name.
+    ///
+    /// # Performance (Issue #211)
+    /// Uses `eq_ignore_ascii_case` for zero-allocation case-insensitive comparison.
     fn from_squash(squash: &str) -> Self {
-        match squash.to_uppercase().as_str() {
-            "STEP" | "BIPOLAR" => Self::Threshold,
-            "MINIMUM" | "MAXIMUM" | "IF" => Self::Selection,
-            _ => Self::Linear,
+        if squash.eq_ignore_ascii_case("STEP") || squash.eq_ignore_ascii_case("BIPOLAR") {
+            Self::Threshold
+        } else if squash.eq_ignore_ascii_case("MINIMUM")
+            || squash.eq_ignore_ascii_case("MAXIMUM")
+            || squash.eq_ignore_ascii_case("IF")
+        {
+            Self::Selection
+        } else {
+            Self::Linear
         }
     }
 }
