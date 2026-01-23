@@ -29,7 +29,7 @@ signal-hook = "0.3"  # Signal handling (SIGUSR1 for thread dumps)
 [dev-dependencies]
 tempfile = "3.8"
 serial_test = "3.0"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.5", default-features = false, features = ["rayon", "cargo_bench_support"] }
 
 [[bench]]
 name = "synapse_counts"
