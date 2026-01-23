@@ -17,11 +17,34 @@
 
 use std::borrow::Cow;
 
-/// Natural logarithm of the largest finite `f32`.
+/// JavaScript's `Number.MAX_SAFE_INTEGER` (~9.007e15).
 ///
-/// `ln(f32::MAX) ≈ 88.72`, so using `88.0` as a conservative cutoff prevents `exp(x)`
-/// overflow from producing `inf` for `f32` inputs.
-const LN_F32_MAX: f32 = 88.0;
+/// Used as an upper bound for several activations (e.g. EXPONENTIAL) to match
+/// the NEAT-AI WASM implementation behaviour.
+const JS_MAX_SAFE_INTEGER: f32 = 9_007_199_254_740_992.0;
+
+/// Cutoff for EXPONENTIAL to match NEAT-AI WASM.
+///
+/// At x >= 36.0, EXPONENTIAL returns JS_MAX_SAFE_INTEGER to prevent runaway growth
+/// and match the TypeScript/WASM behaviour.
+const EXPONENTIAL_CUTOFF: f32 = 36.0;
+
+/// Cutoff for SOFTPLUS to match NEAT-AI WASM.
+///
+/// At x >= 709.0, ln(1+exp(x)) would overflow, so we return a large constant.
+/// NEAT-AI WASM uses 100.0 as the large threshold return value.
+const SOFTPLUS_CUTOFF: f32 = 709.0;
+
+/// Large threshold return value for SOFTPLUS.
+const SOFTPLUS_LARGE_THRESHOLD: f32 = 100.0;
+
+/// Small threshold return value for SOFTPLUS (non-finite inputs).
+const SOFTPLUS_SMALL_THRESHOLD: f32 = 1e-15;
+
+/// Epsilon for STDINVERSE to match NEAT-AI WASM.
+///
+/// Values with |x| < epsilon are clamped to ±epsilon before computing 1/x.
+const STDINVERSE_EPSILON: f32 = 1e-10;
 
 /// Uppercase, canonical-ish name for an activation.
 ///
@@ -119,12 +142,12 @@ pub fn apply_scalar_squash(name: &str, x: f32) -> Option<f32> {
         "CUBE" => Some(x * x * x),
         "ELU" => Some(if x >= 0.0 { x } else { x.exp() - 1.0 }),
         "EXPONENTIAL" => {
-            // Match NEAT-AI's safety behaviour: avoid overflow when exp(x) would blow up.
-            // Note: this is `f32`, so the safe cutoff is `ln(f32::MAX)` (not `ln(f64::MAX)`).
-            if x >= LN_F32_MAX {
-                Some(f32::MAX)
+            // Match NEAT-AI WASM behaviour (Issue #323):
+            // - For non-finite x or x >= 36.0, return JS_MAX_SAFE_INTEGER.
+            if !x.is_finite() || x >= EXPONENTIAL_CUTOFF {
+                Some(JS_MAX_SAFE_INTEGER)
             } else {
-                Some(x.exp())
+                Some(((x as f64).exp()) as f32)
             }
         }
         "GAUSSIAN" => {
@@ -173,8 +196,8 @@ pub fn apply_scalar_squash(name: &str, x: f32) -> Option<f32> {
         }
         "MISH" => {
             // Mish(x) = x * tanh(softplus(x))
-            let sp = if x > 20.0 { x } else { (1.0 + x.exp()).ln() };
-            Some(x * sp.tanh())
+            // Match NEAT-AI WASM behaviour - no cutoff needed since tanh() saturates
+            Some(x * (1.0 + x.exp()).ln().tanh())
         }
         "RELU" => Some(x.max(0.0)),
         "RELU6" => Some(x.clamp(0.0, 6.0)),
@@ -190,8 +213,16 @@ pub fn apply_scalar_squash(name: &str, x: f32) -> Option<f32> {
         }
         "SINE" | "SINUSOID" => Some(x.sin()),
         "SOFTPLUS" => {
-            // Match NEAT-AI: linearise beyond ~20 to avoid ln(1+exp(x)) overflow.
-            Some(if x > 20.0 { x } else { (1.0 + x.exp()).ln() })
+            // Match NEAT-AI WASM behaviour (Issue #323):
+            // - Non-finite x returns SMALL_THRESHOLD (1e-15).
+            // - For x >= 709.0, clamp to LARGE_THRESHOLD (100.0).
+            if !x.is_finite() {
+                Some(SOFTPLUS_SMALL_THRESHOLD)
+            } else if x >= SOFTPLUS_CUTOFF {
+                Some(SOFTPLUS_LARGE_THRESHOLD)
+            } else {
+                Some(((1.0f64 + (x as f64).exp()).ln()) as f32)
+            }
         }
         "SOFTSIGN" => Some(x / (1.0 + x.abs())),
         "SQRT" => Some(if x.is_finite() && x >= 0.0 {
@@ -201,13 +232,13 @@ pub fn apply_scalar_squash(name: &str, x: f32) -> Option<f32> {
         }),
         "SQUARE" => Some(x * x),
         "STDINVERSE" => {
-            // Match NEAT-AI `StdInverse.squash()` behaviour: 1/x with epsilon protection.
-            let eps = 1e-15_f32;
-            let safe_x = if x.abs() < eps {
+            // Match NEAT-AI WASM behaviour (Issue #323): 1/x with epsilon protection.
+            // Uses 1e-10 as epsilon to match WASM implementation.
+            let safe_x = if x.abs() < STDINVERSE_EPSILON {
                 if x >= 0.0 {
-                    eps
+                    STDINVERSE_EPSILON
                 } else {
-                    -eps
+                    -STDINVERSE_EPSILON
                 }
             } else {
                 x
@@ -256,7 +287,13 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
         "COSINE" => Some(|x| x.cos()),
         "CUBE" => Some(|x| x * x * x),
         "ELU" => Some(|x| if x >= 0.0 { x } else { x.exp() - 1.0 }),
-        "EXPONENTIAL" => Some(|x| if x >= LN_F32_MAX { f32::MAX } else { x.exp() }),
+        "EXPONENTIAL" => Some(|x| {
+            if !x.is_finite() || x >= EXPONENTIAL_CUTOFF {
+                JS_MAX_SAFE_INTEGER
+            } else {
+                ((x as f64).exp()) as f32
+            }
+        }),
         "GAUSSIAN" => Some(|x| {
             let safe_x = x.abs().min(100.0);
             (-safe_x * safe_x).exp()
@@ -286,10 +323,7 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
                 x - x.exp().ln_1p()
             }
         }),
-        "MISH" => Some(|x| {
-            let sp = if x > 20.0 { x } else { (1.0 + x.exp()).ln() };
-            x * sp.tanh()
-        }),
+        "MISH" => Some(|x| x * (1.0 + x.exp()).ln().tanh()),
         "RELU" => Some(|x| x.max(0.0)),
         "RELU6" => Some(|x| x.clamp(0.0, 6.0)),
         "SELU" => Some(|x| {
@@ -302,7 +336,15 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
             }
         }),
         "SINE" | "SINUSOID" => Some(|x| x.sin()),
-        "SOFTPLUS" => Some(|x| if x > 20.0 { x } else { (1.0 + x.exp()).ln() }),
+        "SOFTPLUS" => Some(|x| {
+            if !x.is_finite() {
+                SOFTPLUS_SMALL_THRESHOLD
+            } else if x >= SOFTPLUS_CUTOFF {
+                SOFTPLUS_LARGE_THRESHOLD
+            } else {
+                ((1.0f64 + (x as f64).exp()).ln()) as f32
+            }
+        }),
         "SOFTSIGN" => Some(|x| x / (1.0 + x.abs())),
         "SQRT" => Some(|x| {
             if x.is_finite() && x >= 0.0 {
@@ -313,12 +355,11 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
         }),
         "SQUARE" => Some(|x| x * x),
         "STDINVERSE" => Some(|x| {
-            let eps = 1e-15_f32;
-            let safe_x = if x.abs() < eps {
+            let safe_x = if x.abs() < STDINVERSE_EPSILON {
                 if x >= 0.0 {
-                    eps
+                    STDINVERSE_EPSILON
                 } else {
-                    -eps
+                    -STDINVERSE_EPSILON
                 }
             } else {
                 x
