@@ -1,30 +1,33 @@
 //! Regression tests for f32 overflow protection in activation functions.
 //!
-//! Why this matters (24-Dec-2025):
-//! - The implementation operates on `f32` values, where `ln(f32::MAX) ≈ 88.72`.
-//! - Using an f64-scale cutoff (eg 709) allows `exp(x)` to overflow to infinity
-//!   for inputs in ~[89, 709), producing `inf`/`-inf` instead of saturating to
-//!   finite `f32::MAX` / `f32::MIN`.
+//! Why this matters:
+//! - The implementation operates on `f32` values.
+//! - EXPONENTIAL must saturate to a finite value for large inputs.
+//! - Issue #323: Behaviour matches NEAT-AI WASM implementation:
+//!   - For x >= 36.0, returns JS_MAX_SAFE_INTEGER (~9e15) instead of f32::MAX.
+//!   - This ensures consistency between Discovery and NEAT-AI.
+
+const JS_MAX_SAFE_INTEGER: f32 = 9_007_199_254_740_992.0;
 
 #[test]
-fn exponential_should_saturate_to_f32_max_before_overflow() {
-    let x = 100.0_f32; // exp(100) overflows for f32
+fn exponential_should_saturate_for_large_inputs() {
+    let x = 100.0_f32; // Beyond cutoff of 36.0
     let y = neat_ai_discovery::activations::apply_scalar_squash("EXPONENTIAL", x)
         .expect("EXPONENTIAL must be a scalar squash");
     assert!(
         y.is_finite(),
         "Expected EXPONENTIAL({x}) to be finite (saturated), got {y}"
     );
-    assert_eq!(
-        y,
-        f32::MAX,
-        "Expected EXPONENTIAL({x}) to saturate to f32::MAX"
+    // Issue #323: Now saturates to JS_MAX_SAFE_INTEGER to match NEAT-AI WASM
+    assert!(
+        (y - JS_MAX_SAFE_INTEGER).abs() < 1.0,
+        "Expected EXPONENTIAL({x}) to saturate to JS_MAX_SAFE_INTEGER (~9e15), got {y}"
     );
 }
 
 #[test]
-fn exponential_target_simulation_should_saturate_to_f32_max_before_overflow() {
-    let x = 100.0_f32; // exp(100) overflows for f32
+fn exponential_target_simulation_should_saturate_for_large_inputs() {
+    let x = 100.0_f32; // Beyond cutoff of 36.0
     let f = neat_ai_discovery::activations::target_simulation_fn("EXPONENTIAL")
         .expect("EXPONENTIAL must have a target simulation function");
     let y = f(x);
@@ -32,10 +35,32 @@ fn exponential_target_simulation_should_saturate_to_f32_max_before_overflow() {
         y.is_finite(),
         "Expected EXPONENTIAL target simulation({x}) to be finite (saturated), got {y}"
     );
-    assert_eq!(
-        y,
-        f32::MAX,
-        "Expected EXPONENTIAL target simulation({x}) to saturate to f32::MAX"
+    // Issue #323: Now saturates to JS_MAX_SAFE_INTEGER to match NEAT-AI WASM
+    assert!(
+        (y - JS_MAX_SAFE_INTEGER).abs() < 1.0,
+        "Expected EXPONENTIAL target simulation({x}) to saturate to JS_MAX_SAFE_INTEGER (~9e15), got {y}"
+    );
+}
+
+#[test]
+fn exponential_at_cutoff_boundary() {
+    // At x = 36.0, should return JS_MAX_SAFE_INTEGER
+    let x = 36.0_f32;
+    let y = neat_ai_discovery::activations::apply_scalar_squash("EXPONENTIAL", x)
+        .expect("EXPONENTIAL must be a scalar squash");
+    assert!(
+        (y - JS_MAX_SAFE_INTEGER).abs() < 1.0,
+        "Expected EXPONENTIAL({x}) at cutoff to be JS_MAX_SAFE_INTEGER, got {y}"
+    );
+
+    // At x = 35.999, should return actual exp(x)
+    let x = 35.999_f32;
+    let y = neat_ai_discovery::activations::apply_scalar_squash("EXPONENTIAL", x)
+        .expect("EXPONENTIAL must be a scalar squash");
+    let expected = ((x as f64).exp()) as f32;
+    assert!(
+        (y - expected).abs() / expected.abs() < 1e-5,
+        "Expected EXPONENTIAL({x}) below cutoff to be exp(x), got {y}, expected {expected}"
     );
 }
 
