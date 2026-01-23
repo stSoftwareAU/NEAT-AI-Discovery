@@ -1,9 +1,11 @@
 //! Record cache module for parquet data loading.
 //!
 //! This module provides the `RecordCache` struct which handles efficient loading
-//! and caching of discovery records from parquet files. It supports both:
+//! and caching of discovery records from parquet files. It supports multiple modes:
+//!
 //! - **Pre-loaded mode**: Fast, loads entire file into memory upfront
 //! - **Lazy-loaded mode**: Memory-efficient, loads records on-demand per neuron
+//! - **Streaming mode** (Issue #193): Block-based loading with LRU eviction and prefetch
 //!
 //! The cache automatically chooses the best strategy based on available system memory.
 //!
@@ -14,6 +16,14 @@
 //! predominantly read (getting neuron records) with writes only happening on cache
 //! misses. Using `RwLock` allows multiple focus neurons to be analysed in parallel
 //! without serialising on lock acquisition.
+//!
+//! ## Issue #193: Streaming Mode with Prefetch
+//!
+//! For large datasets, streaming mode provides:
+//! - Block-based loading from Parquet row groups
+//! - LRU eviction for bounded memory usage
+//! - Prefetch mechanism for improved performance
+//! - Configuration via environment variables
 
 use crate::types::DiscoverRecord;
 use anyhow::{Context, Result};
@@ -23,6 +33,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::analysis::utils::{check_memory_for_parquet, verbose_enabled};
+
+// Re-export streaming module types (Issue #193)
+pub use super::streaming::{
+    get_streaming_config_from_env, is_streaming_enabled, StreamingCacheStats, StreamingConfig,
+    StreamingRecordCache,
+};
 
 type RecordCacheLoader = dyn Fn(&str, &str) -> Result<Vec<DiscoverRecord>> + Send + Sync + 'static;
 type CachedNeuronRecords = OnceCell<Arc<Vec<DiscoverRecord>>>;
@@ -53,7 +69,7 @@ impl RecordCache {
     ///   Slower (O(N) parquet scans for N neurons) but works on memory-constrained systems.
     ///
     /// This ensures discovery works on any modern Mac/PC, adapting to available resources.
-    pub(crate) fn new_adaptive(parquet_file: &str) -> Result<Self> {
+    pub fn new_adaptive(parquet_file: &str) -> Result<Self> {
         // Check if we have enough memory for pre-loading
         match check_memory_for_parquet(parquet_file) {
             Ok(()) => {
