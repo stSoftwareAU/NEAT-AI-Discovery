@@ -125,6 +125,45 @@ To reduce parquet file size:
 - Reduce `discoveryRecordTimeOutMinutes`
 - Use fewer training data files
 
+### Streaming Parquet Loading (Issue #193)
+
+For very large datasets, the library supports streaming parquet loading with block-based
+caching and prefetch. Instead of loading the entire file into memory, records are loaded
+on-demand in blocks with LRU eviction.
+
+**Benefits:**
+- Lower peak memory usage (only loaded blocks in memory)
+- Faster time-to-first-result (analysis begins as soon as first block loads)
+- Predictable memory usage (configurable block limit)
+- Better I/O parallelism (loading and analysis overlap via prefetch)
+
+**Configuration:**
+
+```bash
+# Maximum blocks to keep in memory (default: adaptive based on RAM)
+# Low memory: 10 blocks, Standard: 50 blocks, High: 100 blocks
+export NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS=100
+
+# Prefetch depth - how many blocks ahead to load (default: 2)
+export NEAT_AI_DISCOVERY_PREFETCH_DEPTH=2
+
+# Disable streaming and use full preload (like before)
+export NEAT_AI_DISCOVERY_PRELOAD_ALL=1
+
+# Block size in records (default: 10000, minimum: 10)
+export NEAT_AI_DISCOVERY_BLOCK_SIZE=10000
+```
+
+**When to use streaming:**
+- Parquet files > 500MB
+- Memory-constrained environments (< 8GB RAM)
+- When you want faster time-to-first-result
+
+**When to use full preload:**
+- Small to medium parquet files (< 500MB)
+- When you have plenty of RAM
+- When neurons are accessed in random order repeatedly
+
 ### Parallel focus selection
 
 Focus neuron selection is now parallelised using rayon for better CPU utilisation:

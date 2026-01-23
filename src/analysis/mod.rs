@@ -14,6 +14,7 @@
 //! - `samples.rs` - Sample data structures and GPU formats (Issue #269)
 //! - `diagnostics.rs` - Diagnostic tracking and rejection reasons (Issue #271)
 //! - `cache.rs` - Record caching for parquet files (Issue #185)
+//! - `streaming.rs` - Streaming parquet loading with block-based caching (Issue #193)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 
 pub mod activation;
@@ -25,6 +26,7 @@ pub mod gpu;
 pub mod neuron;
 pub mod samples;
 pub mod shared;
+pub mod streaming;
 pub mod synapse;
 pub mod system;
 pub mod utils;
