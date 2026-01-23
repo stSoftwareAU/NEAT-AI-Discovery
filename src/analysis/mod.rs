@@ -22,6 +22,7 @@ pub mod cache;
 pub mod diagnostics;
 pub mod early_termination;
 pub mod epistatic;
+pub mod error_distribution;
 pub mod gpu;
 pub mod neuron;
 pub mod samples;
@@ -153,6 +154,12 @@ pub use weights::{
     calculate_optimal_bias, calculate_optimal_identity_outgoing_and_bias,
     calculate_optimal_outgoing_weight, clamp_weight_update_delta,
     coordinated_structural_activation_delta, MAX_OUTGOING_WEIGHT,
+};
+
+// Re-export error distribution types (Issue #192)
+pub use error_distribution::{
+    detect_error_modes, outlier_analysis_enabled, outlier_percentile_from_env, ErrorDistribution,
+    ErrorMode, OutlierReductionInfo,
 };
 
 // Implement analyze_all using the module functions
