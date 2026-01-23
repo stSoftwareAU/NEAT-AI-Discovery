@@ -207,6 +207,16 @@ impl GpuEvaluator for GpuAnalyzer {
 /// without risking hangs from memory pressure. This check runs before GPU
 /// initialisation to allow discovery to be disabled gracefully.
 ///
+/// # Platform Differences
+///
+/// - **macOS**: Memory check failure is treated as an error (`is_error: true`) because
+///   macOS should always have working GPU (Metal) and sufficient reclaimable memory.
+///   This ensures callers don't just report "no GPU" when the issue is memory.
+/// - **Linux**: Memory check failure is graceful (`is_error: false`) because
+///   headless servers may genuinely lack GPU hardware.
+///
+/// Issue #326: On macOS, memory check failure was misleadingly reported as "no usable GPU".
+///
 /// Returns `Some(GpuAvailabilityResult)` if requirements are NOT met (discovery disabled).
 /// Returns `None` if requirements ARE met (continue with GPU check).
 fn check_minimum_system_requirements() -> Option<GpuAvailabilityResult> {
@@ -217,12 +227,23 @@ fn check_minimum_system_requirements() -> Option<GpuAvailabilityResult> {
         let available_gb = available as f64 / (1024.0 * 1024.0 * 1024.0);
         let total_gb = total as f64 / (1024.0 * 1024.0 * 1024.0);
         eprintln!(
-            "[NEAT-AI-Discovery] Memory check failed: {available_gb:.1}GB available / {total_gb:.1}GB total. Discovery disabled."
+            "[NEAT-AI-Discovery] Memory check failed: {available_gb:.2}GB available / {total_gb:.1}GB total. Discovery disabled."
         );
+
+        // On macOS, memory failure should be treated as an error because:
+        // 1. macOS always has working GPU (Metal)
+        // 2. macOS can quickly reclaim cached memory
+        // 3. We want callers to know this is a memory issue, not "no GPU"
+        // Issue #326: Prevent misleading "no usable GPU" messages on Mac.
+        #[cfg(target_os = "macos")]
+        let is_error = true;
+        #[cfg(not(target_os = "macos"))]
+        let is_error = false; // Graceful disable on Linux (may not have GPU)
+
         return Some(GpuAvailabilityResult {
             available: false,
             reason: Some(reason),
-            is_error: false, // Not an error - graceful disable
+            is_error,
         });
     }
 

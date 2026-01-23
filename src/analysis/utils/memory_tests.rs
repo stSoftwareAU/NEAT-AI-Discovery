@@ -125,8 +125,9 @@ fn test_system_requirements_low_total_memory() {
 
 #[test]
 fn test_system_requirements_low_available_memory() {
+    // 400MB should fail on all platforms (below both 0.5GB macOS and 1GB Linux thresholds)
     let result = check_system_memory_requirements(
-        500 * 1024 * 1024,      // 500MB available (below 1GB minimum)
+        400 * 1024 * 1024,      // 400MB available (below all minimum thresholds)
         8 * 1024 * 1024 * 1024, // 8GB total
     );
     assert!(
@@ -135,6 +136,77 @@ fn test_system_requirements_low_available_memory() {
     );
     let reason = result.unwrap();
     assert!(reason.contains("Insufficient available memory"));
+}
+
+/// Test that macOS uses a lower memory threshold (0.5GB) vs Linux (1GB).
+///
+/// Issue #326: macOS aggressively caches files, so "available" memory appears low.
+/// The kernel can quickly reclaim this memory, so we use a more lenient threshold.
+#[cfg(target_os = "macos")]
+#[test]
+fn test_system_requirements_macos_lower_threshold() {
+    // 0.6GB should pass on macOS (above 0.5GB threshold)
+    let result = check_system_memory_requirements(
+        (0.6 * 1024.0 * 1024.0 * 1024.0) as u64, // 0.6GB available
+        8 * 1024 * 1024 * 1024,                  // 8GB total
+    );
+    assert!(
+        result.is_none(),
+        "macOS should allow 0.6GB available (threshold is 0.5GB)"
+    );
+}
+
+/// Test edge case where memory is just above the macOS threshold.
+///
+/// Issue #326: The original bug showed "1.0GB available" but failed because
+/// the actual value was slightly below 1.0GB (e.g., 0.95GB displayed as 1.0GB).
+#[cfg(target_os = "macos")]
+#[test]
+fn test_system_requirements_macos_edge_case() {
+    // 0.51GB should pass on macOS (just above 0.5GB threshold)
+    let result = check_system_memory_requirements(
+        (0.51 * 1024.0 * 1024.0 * 1024.0) as u64, // 0.51GB available
+        8 * 1024 * 1024 * 1024,                   // 8GB total
+    );
+    assert!(
+        result.is_none(),
+        "macOS should allow 0.51GB available (just above 0.5GB threshold)"
+    );
+
+    // 0.49GB should fail on macOS (just below 0.5GB threshold)
+    let result = check_system_memory_requirements(
+        (0.49 * 1024.0 * 1024.0 * 1024.0) as u64, // 0.49GB available
+        8 * 1024 * 1024 * 1024,                   // 8GB total
+    );
+    assert!(
+        result.is_some(),
+        "macOS should reject 0.49GB available (below 0.5GB threshold)"
+    );
+}
+
+/// Test that Linux uses the stricter 1GB threshold.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_system_requirements_linux_stricter_threshold() {
+    // 0.6GB should fail on Linux (below 1GB threshold)
+    let result = check_system_memory_requirements(
+        (0.6 * 1024.0 * 1024.0 * 1024.0) as u64, // 0.6GB available
+        8 * 1024 * 1024 * 1024,                  // 8GB total
+    );
+    assert!(
+        result.is_some(),
+        "Linux should reject 0.6GB available (threshold is 1GB)"
+    );
+
+    // 1.1GB should pass on Linux (above 1GB threshold)
+    let result = check_system_memory_requirements(
+        (1.1 * 1024.0 * 1024.0 * 1024.0) as u64, // 1.1GB available
+        8 * 1024 * 1024 * 1024,                  // 8GB total
+    );
+    assert!(
+        result.is_none(),
+        "Linux should allow 1.1GB available (above 1GB threshold)"
+    );
 }
 
 // =============================================================================
