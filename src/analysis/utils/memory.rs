@@ -29,7 +29,19 @@ const STANDARD_MEMORY_THRESHOLD_GB: f64 = 16.0;
 /// Minimum total system memory required for discovery (4GB).
 const MINIMUM_TOTAL_MEMORY_GB: f64 = 4.0;
 
-/// Minimum available memory required for discovery (1GB).
+/// Minimum available memory required for discovery.
+///
+/// Platform-specific thresholds:
+/// - **macOS (0.5GB)**: macOS aggressively caches files, so "available" memory appears low.
+///   The kernel can quickly reclaim this cached memory when needed. Apple Silicon also has
+///   unified memory where GPU shares system RAM.
+/// - **Linux (1GB)**: Standard threshold for headless servers without aggressive file caching.
+///
+/// Issue #326: GPU detection failed on Mac due to overly strict memory check.
+#[cfg(target_os = "macos")]
+const MINIMUM_AVAILABLE_MEMORY_GB: f64 = 0.5;
+
+#[cfg(not(target_os = "macos"))]
 const MINIMUM_AVAILABLE_MEMORY_GB: f64 = 1.0;
 
 // =============================================================================
@@ -359,6 +371,15 @@ pub fn check_memory_for_parquet(parquet_file: &str) -> Result<()> {
 ///
 /// Returns `Some(reason)` if requirements are NOT met.
 /// Returns `None` if requirements ARE met.
+///
+/// # Platform Differences
+///
+/// On macOS, we use a lower threshold for available memory because:
+/// - macOS aggressively caches files in memory (appears as "inactive" or "purgeable")
+/// - The kernel can instantly reclaim this cached memory when needed
+/// - Apple Silicon has unified memory, so GPU shares system RAM efficiently
+///
+/// Issue #326: GPU detection failed on Mac due to overly strict memory check.
 pub fn check_system_memory_requirements(available_bytes: u64, total_bytes: u64) -> Option<String> {
     let available_gb = available_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
     let total_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -372,10 +393,11 @@ pub fn check_system_memory_requirements(available_bytes: u64, total_bytes: u64) 
         ));
     }
 
-    // Check available memory
+    // Check available memory - MINIMUM_AVAILABLE_MEMORY_GB is platform-specific
+    // (0.5GB on macOS, 1GB on Linux). See constant definition for rationale.
     if available_gb < MINIMUM_AVAILABLE_MEMORY_GB {
         return Some(format!(
-            "Insufficient available memory: {available_gb:.1}GB available (minimum: {MINIMUM_AVAILABLE_MEMORY_GB}GB required). \
+            "Insufficient available memory: {available_gb:.2}GB available (minimum: {MINIMUM_AVAILABLE_MEMORY_GB}GB required). \
              Discovery is disabled to prevent hangs from memory pressure. \
              Try closing other applications or reboot to free memory."
         ));
