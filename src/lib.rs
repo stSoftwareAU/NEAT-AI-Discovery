@@ -244,6 +244,12 @@ pub struct CandidateSynapseJson {
     pub total_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_neuron_stats: Option<NeuronStatsJson>,
+    /// Information about how this candidate affects outlier samples (Issue #192).
+    ///
+    /// Only populated when outlier analysis is enabled via
+    /// `NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS=1`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outlier_reduction_info: Option<analysis::OutlierReductionInfo>,
 }
 
 /// Candidate to update the weight of an existing synapse (delta-based).

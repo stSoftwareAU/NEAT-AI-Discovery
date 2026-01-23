@@ -164,6 +164,51 @@ export NEAT_AI_DISCOVERY_BLOCK_SIZE=10000
 - When you have plenty of RAM
 - When neurons are accessed in random order repeatedly
 
+### Error Distribution Analysis (Issue #192)
+
+The library computes comprehensive error distribution statistics for target neurons, enabling
+targeted discovery for specific error patterns like outliers, bimodal distributions, and
+error clusters.
+
+**Distribution statistics included in metadata:**
+
+| Statistic | Description |
+|-----------|-------------|
+| `mean` | Average error across samples |
+| `stdDev` | Standard deviation of errors |
+| `variance` | Variance of errors |
+| `skewness` | Asymmetry indicator (positive = right-tailed outliers) |
+| `kurtosis` | Tail heaviness (> 3 = heavy tails, outliers likely) |
+| `percentiles` | [p10, p25, p50, p75, p90] values |
+| `min`, `max` | Error range |
+| `iqr` | Interquartile range (p75 - p25) |
+| `sampleCount` | Number of samples analysed |
+
+**How to interpret:**
+
+- **High skewness** (> 0.5): Outlier samples with high error exist
+- **High kurtosis** (> 4): Distribution has heavy tails (more extreme values)
+- **Large IQR** relative to mean: High variability in errors
+
+**Configuration:**
+
+```bash
+# Enable outlier-focused analysis (off by default)
+# When enabled, candidates include information about how they affect outlier samples
+export NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS=1
+
+# Set the percentile threshold for outlier identification (default: 90)
+# Samples above this percentile are considered outliers
+export NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE=90
+```
+
+**Benefits:**
+
+1. **Targeted improvement**: Focus on fixing the worst samples first
+2. **Discovery efficiency**: Smaller outlier sets can be analysed faster
+3. **Better predictions**: Homogeneous error patterns are easier to model
+4. **Debugging insight**: Understand WHY errors occur through distribution analysis
+
 ### Parallel focus selection
 
 Focus neuron selection is now parallelised using rayon for better CPU utilisation:

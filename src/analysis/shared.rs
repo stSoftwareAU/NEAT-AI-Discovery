@@ -6,6 +6,9 @@ use crate::{
 };
 use std::collections::HashMap;
 
+// Re-import ErrorDistribution for metadata (Issue #192)
+use super::error_distribution::ErrorDistribution;
+
 // =============================================================================
 // GPU Timing Types (Issue #195)
 // =============================================================================
@@ -352,6 +355,12 @@ pub struct SynapseAnalysisMetadata {
     ///
     /// Includes unified memory detection and zero-copy status.
     pub gpu_info: Option<GpuAdapterInfo>,
+
+    /// Error distribution statistics for the target neurons (Issue #192).
+    ///
+    /// Provides percentiles, skewness, kurtosis and other distribution metrics
+    /// to enable targeted discovery for specific error patterns like outliers.
+    pub error_distribution: Option<ErrorDistribution>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.
@@ -382,6 +391,12 @@ pub struct NeuronAnalysisMetadata {
     ///
     /// Includes unified memory detection and zero-copy status.
     pub gpu_info: Option<GpuAdapterInfo>,
+
+    /// Error distribution statistics for the target neurons (Issue #192).
+    ///
+    /// Provides percentiles, skewness, kurtosis and other distribution metrics
+    /// to enable targeted discovery for specific error patterns like outliers.
+    pub error_distribution: Option<ErrorDistribution>,
 }
 
 /// Result of synapse analysis

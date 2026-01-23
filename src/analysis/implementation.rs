@@ -322,6 +322,10 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     let metadata_input_min_with_records = Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX));
     let metadata_input_max_with_records = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
+    // Issue #192: Collect error values for error distribution analysis
+    // We collect errors from all target neurons to compute aggregate distribution statistics
+    let error_values_for_distribution = Arc::new(Mutex::new(Vec::<f32>::new()));
+
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
     let existing_synapses_arc = Arc::new(existing_synapses);
@@ -409,6 +413,21 @@ pub(crate) fn analyze_synapses_with_cache_impl(
             }
             let target_records = target_records_arc.as_ref();
             diagnostics.set_target_record_count(target_uuid, target_records.len());
+
+            // Issue #192: Collect error values for distribution analysis
+            // Extract errors from target records and add to shared collection
+            {
+                let errors: Vec<f32> = target_records
+                    .iter()
+                    .flat_map(|r| r.errors.iter().filter(|e| e.is_finite()).copied())
+                    .collect();
+                if !errors.is_empty() {
+                    let mut error_vec = error_values_for_distribution
+                        .lock()
+                        .expect("Mutex poisoned: error_values_for_distribution");
+                    error_vec.extend(errors);
+                }
+            }
 
             let target_index = match order_map_arc.get(target_uuid.as_str()) {
                 Some(index) => *index,
@@ -1251,6 +1270,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                             improved_count,
                             total_count,
                             target_neuron_stats: target_stats,
+                            outlier_reduction_info: None, // Set during outlier analysis pass if enabled (Issue #192)
                         });
                     }
                     } // End timing scope for result processing
@@ -1406,6 +1426,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                                 improved_count: stats.harmful_count,
                                 total_count,
                                 target_neuron_stats: target_stats.clone(),
+                                outlier_reduction_info: None, // Set during outlier analysis pass if enabled (Issue #192)
                             });
                         }
 
@@ -1839,6 +1860,15 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         metadata_seen_any_input_with_records.load(std::sync::atomic::Ordering::Relaxed);
     let input_min = metadata_input_min_with_records.load(std::sync::atomic::Ordering::Relaxed);
     let input_max = metadata_input_max_with_records.load(std::sync::atomic::Ordering::Relaxed);
+
+    // Issue #192: Compute error distribution from collected error values
+    let error_distribution = {
+        let error_vec = error_values_for_distribution
+            .lock()
+            .expect("Mutex poisoned: error_values_for_distribution");
+        super::error_distribution::ErrorDistribution::from_errors(&error_vec)
+    };
+
     let metadata = super::shared::SynapseAnalysisMetadata {
         target_value_available: metadata_target_value_seen
             .load(std::sync::atomic::Ordering::Relaxed),
@@ -1853,6 +1883,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         input_index_max_seen_with_records: if saw_any_input { Some(input_max) } else { None },
         timing: timing_collector.finalize(),
         gpu_info: GpuAnalyzer::get_adapter_info(),
+        error_distribution,
     };
 
     Ok(AnalyzeSynapsesResult {

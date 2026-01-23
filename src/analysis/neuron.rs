@@ -312,6 +312,7 @@ pub(crate) fn analyze_neurons_with_cache(
                 total_focus_neurons: original_focus_count,
                 timing: None,
                 gpu_info: GpuAnalyzer::get_adapter_info(),
+                error_distribution: None,
             },
         });
     }
@@ -866,6 +867,7 @@ pub(crate) fn analyze_neurons_with_cache(
             total_focus_neurons: original_focus_count,
             timing: timing_collector.finalize(),
             gpu_info: GpuAnalyzer::get_adapter_info(),
+            error_distribution: None, // TODO: Compute from target neuron samples (Issue #192)
         },
     })
 }
