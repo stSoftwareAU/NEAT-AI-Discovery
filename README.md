@@ -1441,6 +1441,64 @@ target error. If `source_activation` is constant, the correlation is zero regard
 TypeScript already replaces constant neurons with constants - this fix makes the Rust
 predictions match that reality.
 
+#### Prediction confidence intervals (v0.7.64, Issue #194)
+
+**NEW FEATURE**: Candidates now include confidence metrics to help callers prioritise
+high-confidence predictions and filter out unreliable ones.
+
+**New fields on synapse and neuron candidates**:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `predictionConfidence` | `f32` | Overall confidence score (0.0 to 1.0) |
+| `expectedScoreGainConfidenceInterval` | `[f32; 2]` | 95% CI [lower, upper] for expected score gain |
+
+**How confidence is computed**:
+
+The overall confidence is a geometric mean of three factors:
+
+1. **Sample confidence**: `min(1.0, sample_count / 100)`
+   - More samples = higher confidence
+   - At least 100 samples needed for full confidence
+
+2. **Variance confidence**: `min(1.0, source_std_dev / 0.05)`
+   - Higher source variance = more reliable correlation
+   - Matches the source variance discounting threshold
+
+3. **Model fit confidence**: R² when available (optional)
+   - Better linear fit = higher confidence
+
+```rust
+overall_confidence = (sample_conf * variance_conf * model_conf).powf(1.0 / 3.0)
+```
+
+**Confidence interval bounds**:
+
+The confidence interval is computed using standard error, adjusted for sample size and
+source variance. Lower confidence results in wider intervals.
+
+**Usage in TypeScript**:
+
+```typescript
+// Only test high-confidence candidates
+const confident = candidates.filter(c => c.predictionConfidence > 0.7);
+
+// Or use confidence for prioritisation
+candidates.sort((a, b) =>
+    (b.expectedCreatureScoreGain * b.predictionConfidence) -
+    (a.expectedCreatureScoreGain * a.predictionConfidence)
+);
+
+// Check prediction uncertainty
+const [lower, upper] = candidate.expectedScoreGainConfidenceInterval;
+if (upper - lower > 0.1) {
+    console.log("Warning: high uncertainty in prediction");
+}
+```
+
+**This addresses the README's note about sample representativeness**:
+> "Potential solutions (future work): Confidence bounds: Only return candidates with high-confidence predictions"
+
 #### Removal candidate expected error reduction fix (v0.1.162)
 
 **CRITICAL BUG FIX (Issue #117)**: The `expectedErrorReduction` for removal candidates was

@@ -19,6 +19,7 @@
 
 pub mod activation;
 pub mod cache;
+pub mod confidence;
 pub mod diagnostics;
 pub mod early_termination;
 pub mod epistatic;
@@ -161,6 +162,9 @@ pub use error_distribution::{
     detect_error_modes, outlier_analysis_enabled, outlier_percentile_from_env, ErrorDistribution,
     ErrorMode, OutlierReductionInfo,
 };
+
+// Re-export confidence interval types (Issue #194)
+pub use confidence::{compute_confidence_metrics, PredictionConfidenceMetrics};
 
 // Implement analyze_all using the module functions
 use crate::observability::{

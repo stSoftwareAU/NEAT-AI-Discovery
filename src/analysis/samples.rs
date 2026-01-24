@@ -574,6 +574,15 @@ impl ReluStats {
         let target_stats = NeuronStats::from_samples(original_samples).map(|s| s.to_json());
         let total_count = self.samples.len() as u32;
 
+        // Issue #194: Compute confidence metrics for this candidate
+        // Note: We use original_samples for confidence calculation since self.samples
+        // is Vec<(f32, f32)> not Vec<HelpfulSample>
+        let confidence_metrics = super::confidence::compute_confidence_metrics(
+            original_samples,
+            expected_improvement,
+            None,
+        );
+
         // Issue #128: Use creature-level metrics instead of neuron-level percentage.
         // target_neuron_impact will be updated during impact discounting.
         Some(crate::CandidateNeuronJson {
@@ -592,6 +601,9 @@ impl ReluStats {
             improved_count,
             total_count,
             target_neuron_stats: target_stats,
+            prediction_confidence: confidence_metrics.prediction_confidence,
+            expected_score_gain_confidence_interval: confidence_metrics
+                .expected_score_gain_confidence_interval,
         })
     }
 }

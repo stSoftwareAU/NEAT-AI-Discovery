@@ -49,6 +49,9 @@ use crate::analysis::utils::OrderedNeuron;
 // Import sample data structures from dedicated module (Issue #269)
 use crate::analysis::samples::{HelpfulSample, NeuronStats, EPSILON};
 
+// Import confidence calculation module (Issue #194)
+use crate::analysis::confidence::compute_confidence_metrics;
+
 // Import weight calculation functions from dedicated module (Issue #270)
 use crate::analysis::weights::{
     calculate_optimal_bias, calculate_optimal_identity_outgoing_and_bias,
@@ -1002,6 +1005,9 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
                 best_net_improvement = net_improvement;
 
                 let target_stats = NeuronStats::from_samples(all_samples).map(|s| s.to_json());
+                // Issue #194: Compute confidence metrics for this candidate
+                let confidence_metrics =
+                    compute_confidence_metrics(all_samples, net_improvement, None);
                 // Issue #128: Use creature-level metrics
                 best_candidate = Some(CandidateNeuronJson {
                     source_neuron_uuid: source_uuid.to_string(),
@@ -1019,6 +1025,9 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
                     improved_count,
                     total_count,
                     target_neuron_stats: target_stats,
+                    prediction_confidence: confidence_metrics.prediction_confidence,
+                    expected_score_gain_confidence_interval: confidence_metrics
+                        .expected_score_gain_confidence_interval,
                 });
             }
         }
@@ -1366,6 +1375,9 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                 best_score = neuron_error_improvement;
 
                 let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
+                // Issue #194: Compute confidence metrics for this candidate
+                let confidence_metrics =
+                    compute_confidence_metrics(samples, neuron_error_improvement, None);
                 best_candidate = Some(CandidateNeuronJson {
                     source_neuron_uuid: source_uuid.to_string(),
                     target_neuron_uuid: target_uuid.to_string(),
@@ -1382,6 +1394,9 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                     improved_count: final_improved_count,
                     total_count,
                     target_neuron_stats: target_stats,
+                    prediction_confidence: confidence_metrics.prediction_confidence,
+                    expected_score_gain_confidence_interval: confidence_metrics
+                        .expected_score_gain_confidence_interval,
                 });
             }
 
@@ -1390,6 +1405,9 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                 fallback_score = neuron_error_improvement;
 
                 let target_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
+                // Issue #194: Compute confidence metrics for this candidate
+                let fallback_confidence_metrics =
+                    compute_confidence_metrics(samples, neuron_error_improvement, None);
                 fallback_candidate = Some(CandidateNeuronJson {
                     source_neuron_uuid: source_uuid.to_string(),
                     target_neuron_uuid: target_uuid.to_string(),
@@ -1406,6 +1424,9 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                     improved_count: final_improved_count,
                     total_count,
                     target_neuron_stats: target_stats,
+                    prediction_confidence: fallback_confidence_metrics.prediction_confidence,
+                    expected_score_gain_confidence_interval: fallback_confidence_metrics
+                        .expected_score_gain_confidence_interval,
                 });
             }
         }
@@ -1724,6 +1745,8 @@ pub(crate) fn evaluate_all_activation_specs_batched<G: GpuEvaluator>(
         let current_best = &best_candidates[spec_idx];
         if current_best.is_none() || net_improvement > current_best.as_ref().unwrap().1 {
             let target_neuron_stats = NeuronStats::from_samples(samples).map(|s| s.to_json());
+            // Issue #194: Compute confidence metrics for this candidate
+            let confidence_metrics = compute_confidence_metrics(samples, net_improvement, None);
             let candidate = CandidateNeuronJson {
                 source_neuron_uuid: source_uuid.to_string(),
                 target_neuron_uuid: target_uuid.to_string(),
@@ -1740,6 +1763,9 @@ pub(crate) fn evaluate_all_activation_specs_batched<G: GpuEvaluator>(
                 improved_count,
                 total_count,
                 target_neuron_stats,
+                prediction_confidence: confidence_metrics.prediction_confidence,
+                expected_score_gain_confidence_interval: confidence_metrics
+                    .expected_score_gain_confidence_interval,
             };
             best_candidates[spec_idx] = Some((candidate, net_improvement));
         }
