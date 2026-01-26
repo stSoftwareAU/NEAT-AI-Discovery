@@ -105,11 +105,13 @@ mod tests {
     #[test]
     fn test_shader_constants_are_exported() {
         // Verify shader constants are accessible via the gpu module (Issue #277)
-        assert!(!HELPFUL_SHADER.is_empty());
-        assert!(!HARMFUL_SHADER.is_empty());
-        assert!(!RELU_SHADER.is_empty());
-        assert!(!ACTIVATION_SHADER.is_empty());
-        assert!(!BIAS_SHADER.is_empty());
+        // Note: We check for meaningful content rather than just non-empty,
+        // since these are compile-time constants and clippy flags empty checks.
+        assert!(HELPFUL_SHADER.contains("@compute"));
+        assert!(HARMFUL_SHADER.contains("@compute"));
+        assert!(RELU_SHADER.contains("@compute"));
+        assert!(ACTIVATION_SHADER.contains("@compute"));
+        assert!(BIAS_SHADER.contains("@compute"));
 
         // Verify workgroup size matches shaders
         assert_eq!(WORKGROUP_SIZE, 256);
