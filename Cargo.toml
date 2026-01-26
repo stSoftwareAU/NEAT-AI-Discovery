@@ -43,3 +43,15 @@ harness = false
 name = "batched_activation"
 harness = false
 
+[[bench]]
+name = "cache_locality"
+harness = false
+
+[[bench]]
+name = "zero_copy_buffer"
+harness = false
+
+[[bench]]
+name = "sample_locality"
+harness = false
+

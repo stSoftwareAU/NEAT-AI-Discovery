@@ -626,6 +626,8 @@ pub use gpu::GpuAnalyzer;
 pub use gpu::GpuAvailabilityResult;
 pub use neuron::analyze_neurons;
 pub use synapse::analyze_synapses;
+// Re-export benchmark helper function for use in benches/
+pub use synapse::analyze_synapses_with_cache_and_gpu_queue;
 
 // Re-export early termination types (Issue #219)
 pub use early_termination::{

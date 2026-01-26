@@ -2235,6 +2235,31 @@ This will build the library and install it to `~/.cargo/lib/` with version track
 
 ### Testing
 
+#### Unit Tests vs Benchmarks
+
+**Unit tests** verify **correctness** - they check that code produces the right results, not how fast it runs.
+
+- **Location**: `tests/` directory (integration tests) and `src/` with `#[cfg(test)]` (unit tests)
+- **Purpose**: Verify functionality, catch regressions, ensure correctness
+- **Run with**: `cargo test`
+- **Should not**: Measure performance, print timing results, or compare speeds
+- **Example**: `test_low_impact_neurons_are_detected()` verifies that low-impact neurons are correctly identified
+
+**Benchmarks** measure **performance** - they check how fast code runs, not whether it's correct.
+
+- **Location**: `benches/` directory
+- **Purpose**: Measure execution time, compare performance, detect regressions
+- **Run with**: `cargo bench --bench <name>`
+- **Should not**: Be mixed with unit tests (they run in parallel and timing will be unreliable)
+- **Example**: `benchmark_cache_locality` measures analysis time across different input counts
+
+**Why separate them?**
+- Unit tests run in parallel by default, making timing measurements unreliable
+- Benchmarks need isolation and multiple iterations for statistical accuracy
+- Mixing them makes it unclear whether a failure is functional or performance-related
+
+#### Running Tests
+
 ```bash
 # Run all tests (unit + integration)
 cargo test
@@ -2252,6 +2277,17 @@ cargo test --test weights  # All weight-related tests
 
 # Run tests matching a pattern
 cargo test test_hidden_neuron
+```
+
+#### Running Benchmarks
+
+```bash
+# Run all benchmarks
+cargo bench
+
+# Run specific benchmark
+cargo bench --bench cache_locality
+cargo bench --bench batched_activation
 ```
 
 **Note**: GPU-dependent tests include `skip_without_gpu!()` and will be skipped
@@ -2296,10 +2332,11 @@ Small, focused test files make it **obvious when tests change**:
 
 | Directory | Purpose | Example |
 |-----------|---------|---------|
-| `tests/` | Integration tests for public API | `tests/integration.rs` |
+| `tests/` | Integration tests for public API (verify correctness) | `tests/integration.rs` |
 | `tests/regression_*.rs` | Prevent re-introducing fixed bugs | `tests/regression_v0_1_123.rs` |
 | `tests/<feature>.rs` | Tests grouped by feature/concern | `tests/weights.rs`, `tests/impacts.rs` |
-| `src/*.rs` (`#[cfg(test)]`) | Unit tests for private functions | Only when necessary |
+| `src/*.rs` (`#[cfg(test)]`) | Unit tests for private functions (verify correctness) | Only when necessary |
+| `benches/` | Performance benchmarks (measure speed) | `benches/cache_locality.rs`, `benches/batched_activation.rs` |
 
 **Prefer separate test files** in `tests/` over inline unit tests:
 - Easier to see what changed in code review

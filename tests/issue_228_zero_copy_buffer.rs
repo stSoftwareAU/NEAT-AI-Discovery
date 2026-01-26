@@ -23,7 +23,6 @@ use neat_ai_discovery::analysis::{
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
-use std::time::Instant;
 use tempfile::tempdir;
 
 /// Skip test if no GPU available
@@ -250,140 +249,8 @@ fn zero_copy_produces_correct_results() {
 // Benchmark Tests
 // =============================================================================
 
-/// Benchmark test comparing zero-copy vs copying performance.
-///
-/// This test measures the performance difference between zero-copy and
-/// traditional buffer copying. On unified memory architectures, zero-copy
-/// should be faster.
-#[test]
-fn benchmark_zero_copy_vs_copying() {
-    skip_without_gpu!();
-
-    let temp_dir = tempdir().expect("Failed to create temp directory");
-    let parquet_path = temp_dir.path().join("records.parquet");
-    let parquet_file = parquet_path.to_str().unwrap().to_string();
-
-    // Create a large dataset for meaningful benchmarking
-    let sample_count = 100_000;
-    let mut records = Vec::with_capacity(sample_count * 2);
-
-    for obs_index in 0..sample_count as u32 {
-        let input_activation = ((obs_index as f32) % 100.0 - 50.0) / 50.0;
-
-        records.push(DiscoverRecord::new(
-            obs_index,
-            "input-0".to_string(),
-            None,
-            input_activation,
-            Vec::new(),
-        ));
-
-        let error = input_activation * 0.2;
-        records.push(DiscoverRecord::new(
-            obs_index,
-            "output-0".to_string(),
-            Some(0.5),
-            0.5,
-            vec![error],
-        ));
-    }
-
-    write_records_to_parquet(&parquet_file, &records).expect("Failed to write parquet");
-
-    let creature = CreatureJson {
-        input: 1,
-        output: 1,
-        neurons: vec![NeuronJson {
-            uuid: "output-0".to_string(),
-            neuron_type: "output".to_string(),
-            squash: "IDENTITY".to_string(),
-            bias: 0.0,
-        }],
-        synapses: Vec::new(),
-    };
-
-    // Warmup runs
-    for seed in 0..2 {
-        let input = AnalyzeSynapsesInput {
-            parquet_file: parquet_file.clone(),
-            creature: creature.clone(),
-            focus_neurons: vec!["output-0".to_string()],
-            max_candidates: Some(10),
-            analysis_deadline_ms: None,
-            random_seed: Some(seed),
-        };
-        let _ = analyze_synapses(&input);
-    }
-
-    // Benchmark with zero-copy disabled (traditional copying)
-    std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "0");
-    let iterations = 3;
-    let mut copy_times = Vec::with_capacity(iterations);
-
-    for i in 0..iterations {
-        let input = AnalyzeSynapsesInput {
-            parquet_file: parquet_file.clone(),
-            creature: creature.clone(),
-            focus_neurons: vec!["output-0".to_string()],
-            max_candidates: Some(10),
-            analysis_deadline_ms: None,
-            random_seed: Some(100 + i as u64),
-        };
-        let start = Instant::now();
-        let _ = analyze_synapses(&input).expect("Analysis should succeed");
-        copy_times.push(start.elapsed().as_secs_f64() * 1000.0);
-    }
-    std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
-
-    // Benchmark with zero-copy enabled
-    std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
-    let mut zero_copy_times = Vec::with_capacity(iterations);
-
-    for i in 0..iterations {
-        let input = AnalyzeSynapsesInput {
-            parquet_file: parquet_file.clone(),
-            creature: creature.clone(),
-            focus_neurons: vec!["output-0".to_string()],
-            max_candidates: Some(10),
-            analysis_deadline_ms: None,
-            random_seed: Some(200 + i as u64),
-        };
-        let start = Instant::now();
-        let _ = analyze_synapses(&input).expect("Analysis should succeed");
-        zero_copy_times.push(start.elapsed().as_secs_f64() * 1000.0);
-    }
-    std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
-
-    // Calculate statistics
-    let copy_avg: f64 = copy_times.iter().sum::<f64>() / copy_times.len() as f64;
-    let zero_copy_avg: f64 = zero_copy_times.iter().sum::<f64>() / zero_copy_times.len() as f64;
-
-    eprintln!("\n=== Issue #228: Zero-Copy Buffer Benchmark ===");
-    eprintln!("Sample count: {sample_count}");
-    eprintln!("Iterations: {iterations}");
-    eprintln!();
-    eprintln!("With copying:    {copy_avg:.2}ms average");
-    eprintln!("With zero-copy:  {zero_copy_avg:.2}ms average");
-
-    let has_unified = supports_unified_memory();
-    eprintln!("Unified memory:  {has_unified}");
-
-    if has_unified {
-        let improvement = (copy_avg - zero_copy_avg) / copy_avg * 100.0;
-        eprintln!("Improvement:     {improvement:.1}%");
-
-        // On unified memory, zero-copy should provide at least 30% improvement
-        // as specified in the issue's success criteria
-        if improvement < 30.0 {
-            eprintln!(
-                "Note: Improvement ({improvement:.1}%) is less than 30% target. \
-                 This may be acceptable if the workload is GPU-bound rather than transfer-bound."
-            );
-        }
-    } else {
-        eprintln!("Note: Non-unified memory architecture - zero-copy falls back to copying.");
-    }
-}
+// Note: The benchmark has been moved to benches/zero_copy_buffer.rs
+// This test file now only contains correctness tests.
 
 /// Test that metadata includes zero-copy status.
 #[test]
