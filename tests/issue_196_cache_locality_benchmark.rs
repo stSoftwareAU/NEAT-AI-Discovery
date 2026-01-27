@@ -48,7 +48,6 @@ mod common;
 use neat_ai_discovery::analysis::{analyze_synapses, GpuAnalyzer};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
-use std::time::Instant;
 use tempfile::tempdir;
 
 /// Skip test if no GPU available
@@ -76,133 +75,8 @@ fn create_test_creature(input_count: usize) -> CreatureJson {
     }
 }
 
-/// Create test records for a creature with the specified number of inputs.
-/// Records are created with correlated error patterns to ensure candidates are found.
-fn create_test_records(input_count: usize, record_count: usize) -> Vec<DiscoverRecord> {
-    let mut records = Vec::with_capacity((input_count + 1) * record_count);
-
-    for obs_index in 0..record_count as u32 {
-        // Create input neurons with varying activations
-        for input_idx in 0..input_count {
-            let activation = ((obs_index as f32 + input_idx as f32) % 20.0 - 10.0) / 10.0;
-            records.push(DiscoverRecord::new(
-                obs_index,
-                format!("input-{input_idx}"),
-                None,
-                activation,
-                Vec::new(),
-            ));
-        }
-
-        // Output neuron with error correlated to some inputs
-        let error = if obs_index % 2 == 0 { 0.3 } else { -0.3 };
-        records.push(DiscoverRecord::new(
-            obs_index,
-            "output-0".to_string(),
-            Some(0.5),
-            0.5,
-            vec![error],
-        ));
-    }
-
-    records
-}
-
-/// Run a single benchmark iteration and return the elapsed time in milliseconds.
-fn run_benchmark_iteration(parquet_file: &str, creature: &CreatureJson, seed: u64) -> f64 {
-    let input = AnalyzeSynapsesInput {
-        parquet_file: parquet_file.to_string(),
-        creature: creature.clone(),
-        focus_neurons: vec!["output-0".to_string()],
-        max_candidates: Some(10), // Limit candidates to reduce GPU time variance
-        analysis_deadline_ms: None,
-        random_seed: Some(seed),
-    };
-
-    let start = Instant::now();
-    let _result = analyze_synapses(&input).expect("Analysis should succeed");
-    start.elapsed().as_secs_f64() * 1000.0
-}
-
-/// Benchmark analysis performance with different input counts.
-/// This test measures the time to analyze a creature and reports statistics.
-#[test]
-fn benchmark_cache_locality_with_varying_input_counts() {
-    skip_without_gpu!();
-
-    // Test configurations matching the issue requirements
-    let input_counts = [100, 500, 1000, 2000];
-    let record_count = 50; // Enough records for meaningful analysis
-    let warmup_iterations = 2;
-    let benchmark_iterations = 5;
-
-    println!("\n=== Issue #196: Cache Locality Benchmark ===");
-    println!("Record count per input: {record_count}");
-    println!("Warmup iterations: {warmup_iterations}");
-    println!("Benchmark iterations: {benchmark_iterations}");
-    println!();
-
-    let mut results: Vec<(usize, f64, f64)> = Vec::new();
-
-    for &input_count in &input_counts {
-        let temp_dir = tempdir().expect("Failed to create temp directory");
-        let parquet_path = temp_dir.path().join("records.parquet");
-        let parquet_file = parquet_path.to_str().unwrap().to_string();
-
-        // Create and write test data
-        let records = create_test_records(input_count, record_count);
-        neat_ai_discovery::parquet_format::write_records_to_parquet(&parquet_file, &records)
-            .expect("Failed to write parquet");
-
-        let creature = create_test_creature(input_count);
-
-        // Warmup iterations (not counted)
-        for i in 0..warmup_iterations {
-            let _ = run_benchmark_iteration(&parquet_file, &creature, i as u64);
-        }
-
-        // Benchmark iterations
-        let mut times: Vec<f64> = Vec::with_capacity(benchmark_iterations);
-        for i in 0..benchmark_iterations {
-            let time_ms =
-                run_benchmark_iteration(&parquet_file, &creature, (warmup_iterations + i) as u64);
-            times.push(time_ms);
-        }
-
-        // Calculate statistics
-        let avg_time: f64 = times.iter().sum::<f64>() / times.len() as f64;
-        let min_time: f64 = times.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max_time: f64 = times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let variance: f64 =
-            times.iter().map(|t| (t - avg_time).powi(2)).sum::<f64>() / times.len() as f64;
-        let std_dev: f64 = variance.sqrt();
-
-        println!("Inputs: {input_count:>4} | Avg: {avg_time:>8.2}ms | Min: {min_time:>8.2}ms | Max: {max_time:>8.2}ms | StdDev: {std_dev:>6.2}ms");
-        results.push((input_count, avg_time, std_dev));
-    }
-
-    println!();
-    println!("=== Summary ===");
-    println!("| Inputs | Avg Time (ms) | StdDev (ms) |");
-    println!("|--------|---------------|-------------|");
-    for (inputs, avg, std_dev) in &results {
-        println!("| {inputs:>6} | {avg:>13.2} | {std_dev:>11.2} |");
-    }
-    println!();
-
-    // Calculate scaling factor (time per input)
-    if results.len() >= 2 {
-        let (inputs1, time1, _) = results[0];
-        let (inputs2, time2, _) = results[results.len() - 1];
-        let scaling = (time2 / time1) / (inputs2 as f64 / inputs1 as f64);
-        println!("Scaling factor (time ratio / input ratio): {scaling:.2}");
-        println!("A value close to 1.0 indicates linear scaling with input count.");
-        println!("A value > 1.0 indicates super-linear scaling (potential cache issues).");
-    }
-
-    // This test always passes - it's for measurement purposes
-    // The results are printed to help decide whether optimization is needed
-}
+// Note: The benchmark has been moved to benches/cache_locality.rs
+// This file now only contains the correctness test.
 
 /// Test that verifies the optimization doesn't break existing functionality.
 /// This ensures that sorting eligible sources by input index produces the same

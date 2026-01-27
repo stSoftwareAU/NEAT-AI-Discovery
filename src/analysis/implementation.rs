@@ -180,9 +180,13 @@ use super::synapse::{
 
 /// Internal implementation of synapse analysis with cache.
 /// This is called from the synapse module which owns the public API.
+///
+/// The `gpu_queue` parameter is mandatory - callers should create it once and reuse it
+/// across multiple calls for better performance (avoids ~100ms initialization overhead).
 pub(crate) fn analyze_synapses_with_cache_impl(
     input: &AnalyzeSynapsesInput,
     cache: Arc<RecordCache>,
+    gpu_queue: Arc<GpuWorkQueue>,
 ) -> Result<AnalyzeSynapsesResult> {
     let ordered_neurons = build_ordered_neurons(&input.creature);
     let order_map: HashMap<String, usize> = ordered_neurons
@@ -386,11 +390,10 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         .collect();
     let input_neuron_uuids_arc = Arc::new(input_neuron_uuids);
 
-    // Create a shared GPU work queue ONCE before the parallel loop.
+    // Use the provided GPU work queue.
     // This eliminates the overhead of creating multiple GPU devices (one per thread).
     // All GPU operations are processed by a single dedicated thread, improving utilisation.
     // CRITICAL: The GpuAnalyzer is created INSIDE the GPU thread to avoid wgpu deadlocks.
-    let gpu_queue = Arc::new(GpuWorkQueue::new()?);
 
     // Process each focus neuron in parallel
     focus_order_arc

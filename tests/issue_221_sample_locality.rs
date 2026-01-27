@@ -20,7 +20,6 @@ use neat_ai_discovery::analysis::{analyze_synapses, GpuAnalyzer};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
 use std::collections::HashSet;
-use std::time::Instant;
 use tempfile::tempdir;
 
 /// Skip test if no GPU available
@@ -316,9 +315,9 @@ fn group_sources_by_locality_test(
 }
 
 /// Benchmark test to verify that sample locality batching improves performance.
-/// This test measures the time to analyse a creature with correlated inputs.
+/// Test that sample locality batching produces correct results with correlated inputs.
 #[test]
-fn benchmark_sample_locality_batching_improvement() {
+fn sample_locality_batching_produces_results() {
     skip_without_gpu!();
 
     let temp_dir = tempdir().expect("Failed to create temp directory");
@@ -344,49 +343,15 @@ fn benchmark_sample_locality_batching_improvement() {
         random_seed: Some(42),
     };
 
-    // Warmup run
-    let _ = analyze_synapses(&input).expect("Analysis should succeed");
+    // Note: The benchmark has been moved to benches/sample_locality.rs
+    // This test file now only contains correctness tests.
 
-    // Benchmark run
-    let iterations = 3;
-    let mut times: Vec<f64> = Vec::with_capacity(iterations);
-
-    for i in 0..iterations {
-        let input = AnalyzeSynapsesInput {
-            parquet_file: parquet_file.clone(),
-            creature: creature.clone(),
-            focus_neurons: vec!["output-0".to_string()],
-            max_candidates: Some(10),
-            analysis_deadline_ms: None,
-            random_seed: Some(i as u64),
-        };
-
-        let start = Instant::now();
-        let result = analyze_synapses(&input).expect("Analysis should succeed");
-        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-        times.push(elapsed);
-
-        // Verify analysis produced results
-        assert!(
-            !result.helpful_synapses.is_empty()
-                || !result.coordinated_structural_candidates.is_empty(),
-            "Analysis should find candidates"
-        );
-    }
-
-    let avg_time: f64 = times.iter().sum::<f64>() / times.len() as f64;
-    let min_time: f64 = times.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max_time: f64 = times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-
-    println!("\n=== Issue #221: Sample Locality Benchmark ===");
-    println!("Input count: {input_count}");
-    println!("Record count per input: {record_count}");
-    println!("Total samples per source-target pair: {record_count}");
-    println!();
-    println!("Avg time: {avg_time:.2}ms | Min: {min_time:.2}ms | Max: {max_time:.2}ms");
-
-    // The test passes regardless - it's for measurement/verification
-    // The actual improvement is in reduced sample building overhead
+    // Verify analysis produces results (correctness check)
+    let result = analyze_synapses(&input).expect("Analysis should succeed");
+    assert!(
+        !result.helpful_synapses.is_empty() || !result.coordinated_structural_candidates.is_empty(),
+        "Analysis should find candidates"
+    );
 }
 
 /// Test that sample locality optimisation preserves correctness.
@@ -466,8 +431,9 @@ fn sample_locality_preserves_correctness() {
 }
 
 /// Test the specific scenario from the issue: 100 sources with 90% sample overlap.
+/// Verifies that analysis produces correct results with high overlap.
 #[test]
-fn benchmark_source_batching_90_percent_overlap() {
+fn source_batching_90_percent_overlap_produces_results() {
     skip_without_gpu!();
 
     let temp_dir = tempdir().expect("Failed to create temp directory");
@@ -494,21 +460,12 @@ fn benchmark_source_batching_90_percent_overlap() {
         random_seed: Some(42),
     };
 
-    // Warmup
-    let _ = analyze_synapses(&input);
+    // Note: The benchmark has been moved to benches/sample_locality.rs
+    // This test file now only contains correctness tests.
 
-    // Benchmark
-    let start = Instant::now();
+    // Verify the analysis completed and produced results (correctness check)
     let result = analyze_synapses(&input).expect("Analysis should succeed");
-    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-
-    println!("\n=== Issue #221: 90% Overlap Benchmark ===");
-    println!("Input count: {input_count}");
-    println!("Overlap fraction: {overlap_fraction}");
-    println!("Analysis time: {elapsed:.2}ms");
-
-    // Verify the analysis completed and produced results
     let total_candidates =
         result.helpful_synapses.len() + result.coordinated_structural_candidates.len();
-    println!("Candidates found: {total_candidates}");
+    assert!(total_candidates > 0, "Analysis should find candidates");
 }

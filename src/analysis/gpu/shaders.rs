@@ -206,27 +206,36 @@ mod tests {
     #[test]
     fn test_shader_sources_are_not_empty() {
         // Verify all shaders have content
+        // Note: We check for meaningful content rather than just non-empty,
+        // since these are compile-time constants and clippy flags empty checks.
+        // The presence of expected WGSL syntax confirms the shaders are loaded.
         assert!(
-            !HELPFUL_SHADER.is_empty(),
-            "HELPFUL_SHADER should not be empty"
+            HELPFUL_SHADER.contains("@compute"),
+            "HELPFUL_SHADER should contain @compute decorator"
         );
         assert!(
-            !HARMFUL_SHADER.is_empty(),
-            "HARMFUL_SHADER should not be empty"
-        );
-        assert!(!RELU_SHADER.is_empty(), "RELU_SHADER should not be empty");
-        assert!(
-            !ACTIVATION_SHADER.is_empty(),
-            "ACTIVATION_SHADER should not be empty"
-        );
-        assert!(!BIAS_SHADER.is_empty(), "BIAS_SHADER should not be empty");
-        assert!(
-            !HELPFUL_REDUCE_SHADER.is_empty(),
-            "HELPFUL_REDUCE_SHADER should not be empty"
+            HARMFUL_SHADER.contains("@compute"),
+            "HARMFUL_SHADER should contain @compute decorator"
         );
         assert!(
-            !HARMFUL_REDUCE_SHADER.is_empty(),
-            "HARMFUL_REDUCE_SHADER should not be empty"
+            RELU_SHADER.contains("@compute"),
+            "RELU_SHADER should contain @compute decorator"
+        );
+        assert!(
+            ACTIVATION_SHADER.contains("@compute"),
+            "ACTIVATION_SHADER should contain @compute decorator"
+        );
+        assert!(
+            BIAS_SHADER.contains("@compute"),
+            "BIAS_SHADER should contain @compute decorator"
+        );
+        assert!(
+            HELPFUL_REDUCE_SHADER.contains("@compute"),
+            "HELPFUL_REDUCE_SHADER should contain @compute decorator"
+        );
+        assert!(
+            HARMFUL_REDUCE_SHADER.contains("@compute"),
+            "HARMFUL_REDUCE_SHADER should contain @compute decorator"
         );
     }
 

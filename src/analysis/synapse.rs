@@ -62,7 +62,7 @@ use crate::analysis::weights::{
 use crate::analysis::diagnostics::{require_unique_focus, TargetMap};
 
 // Import GPU infrastructure from dedicated modules (Issue #272, #273, #274)
-use crate::analysis::gpu::GpuEvaluator;
+use crate::analysis::gpu::{GpuEvaluator, GpuWorkQueue};
 
 // Import RecordCache from cache module (Issue #185)
 use super::cache::RecordCache;
@@ -1964,9 +1964,23 @@ pub(crate) fn analyze_synapses_with_cache(
     input: &AnalyzeSynapsesInput,
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeSynapsesResult> {
+    // Create GPU queue for this analysis
+    let gpu_queue = Arc::new(GpuWorkQueue::new()?);
     // Delegate to implementation.rs for now - the main function is too large to move in one go
     // This will be fully migrated in a follow-up
-    super::implementation::analyze_synapses_with_cache_impl(input, cache)
+    super::implementation::analyze_synapses_with_cache_impl(input, cache, gpu_queue)
+}
+
+/// Test-only helper for benchmarks that need to reuse GPU queue.
+/// This allows benchmarks to avoid GPU initialization overhead across iterations.
+///
+/// Note: This is public for use in external test files (tests/ directory).
+pub fn analyze_synapses_with_cache_and_gpu_queue(
+    input: &AnalyzeSynapsesInput,
+    cache: Arc<RecordCache>,
+    gpu_queue: Arc<super::gpu::GpuWorkQueue>,
+) -> Result<AnalyzeSynapsesResult> {
+    super::implementation::analyze_synapses_with_cache_impl(input, cache, gpu_queue)
 }
 
 // =============================================================================
