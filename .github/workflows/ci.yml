@@ -9,7 +9,7 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - '**'
+      - Develop
     paths-ignore:
       - '**.md'          # Skip CI for documentation-only changes
       - 'docs/**'
@@ -26,6 +26,7 @@ jobs:
   version-increment:
     name: Auto-increment Versions
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     needs: [auto-format]
     permissions:
       contents: write
@@ -160,6 +161,7 @@ jobs:
     # GPU tests are skipped automatically when no GPU is available.
     # Set NEAT_CI_RUNNER to a GPU-enabled runner label for full test coverage.
     runs-on: 'ubuntu-latest'
+    if: github.event_name == 'pull_request'
     needs: [version-increment, auto-format]
     env:
       RUSTFLAGS: "-D warnings"
@@ -244,12 +246,14 @@ jobs:
 
   security:
     uses: ./.github/workflows/security.yml
+    if: github.event_name == 'pull_request'
     with:
       include-dependency-review: true
 
   validation:
     name: Project Validation
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     
     steps:
     - name: Checkout code
@@ -320,6 +324,7 @@ jobs:
   auto-format:
     name: Auto-format Code
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     permissions:
       contents: write
       pull-requests: write
@@ -382,6 +387,7 @@ jobs:
   shell-checks:
     name: Shell Script Quality
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     
     steps:
     - name: Checkout code
@@ -414,6 +420,7 @@ jobs:
   spell-check:
     name: Spell Check
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     
     steps:
     - name: Checkout code
