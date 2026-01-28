@@ -47,9 +47,10 @@ use crate::analysis::diagnostics::{
     ThresholdContext,
 };
 
-// Import epistatic pair detection module (Issue #202)
+// Import epistatic pair detection module (Issue #202) and synergistic discovery (Issue #189)
 use crate::analysis::epistatic::{
-    build_source_contribution, detect_epistatic_pairs, epistatic_pairs_to_coordinated_candidates,
+    build_source_contribution, detect_epistatic_pairs, detect_synergistic_candidates,
+    epistatic_pairs_to_coordinated_candidates, synergistic_to_coordinated_candidates,
     SourceContribution,
 };
 
@@ -1390,6 +1391,33 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                                 eprintln!(
                                     "[NEAT-AI-Discovery][verbose] Target {target_uuid}: found {} epistatic pair(s)",
                                     epistatic_pairs.len()
+                                );
+                            }
+                        }
+                    }
+
+                    // Issue #189: Detect synergistic candidates via residual analysis
+                    // This detects XOR-like patterns where:
+                    // - Neither source alone provides strong improvement
+                    // - Together they reduce error better than either alone
+                    let synergistic_candidates = detect_synergistic_candidates(
+                        target_uuid.as_str(),
+                        &source_contributions,
+                        target_impact,
+                    );
+
+                    if !synergistic_candidates.is_empty() {
+                        let synergistic_coordinated = synergistic_to_coordinated_candidates(&synergistic_candidates);
+                        if !synergistic_coordinated.is_empty() {
+                            let mut results = coordinated_structural_results
+                                .lock()
+                                .expect("Mutex poisoned: coordinated_structural_results");
+                            results.extend(synergistic_coordinated);
+
+                            if verbose_enabled() {
+                                eprintln!(
+                                    "[NEAT-AI-Discovery][verbose] Target {target_uuid}: found {} synergistic candidate(s)",
+                                    synergistic_candidates.len()
                                 );
                             }
                         }
