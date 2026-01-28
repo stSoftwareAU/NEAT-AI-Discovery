@@ -31,6 +31,9 @@ use crate::analysis::samples::{
     constant_source_effect_threshold_from_env, HelpfulSample, NeuronStats, EPSILON,
 };
 
+// Import confidence interval calculations (Issue #194)
+use crate::analysis::confidence::compute_confidence_metrics;
+
 // Import weight calculation functions from dedicated module (Issue #270)
 use crate::analysis::weights::{
     calculate_optimal_outgoing_weight, clamp_weight_update_delta,
@@ -1261,6 +1264,12 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                         }
 
                         // Issue #128: Use creature-level metrics (impact discounting applied later)
+                        // Issue #194: Compute confidence metrics for this prediction
+                        let confidence_metrics = compute_confidence_metrics(
+                            &work.samples,
+                            neuron_error_improvement,
+                            None, // R² not available for synapse candidates
+                        );
                         candidates_to_add.push(CandidateSynapseJson {
                             from_neuron_uuid: work.source_uuid.clone(),
                             to_neuron_uuid: work.target_uuid.clone(),
@@ -1274,6 +1283,8 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                             total_count,
                             target_neuron_stats: target_stats,
                             outlier_reduction_info: None, // Set during outlier analysis pass if enabled (Issue #192)
+                            prediction_confidence: confidence_metrics.prediction_confidence,
+                            expected_score_gain_confidence_interval: confidence_metrics.expected_score_gain_confidence_interval,
                         });
                     }
                     } // End timing scope for result processing
@@ -1417,6 +1428,12 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                                 / total_count as f32;
 
                             // Issue #128: Use creature-level metrics (impact discounting applied later)
+                            // Issue #194: Compute confidence metrics for this prediction
+                            let confidence_metrics = compute_confidence_metrics(
+                                &work.samples,
+                                neuron_error_improvement,
+                                None, // R² not available for synapse candidates
+                            );
                             harmful_candidates.push(CandidateSynapseJson {
                                 from_neuron_uuid: work.synapse.from_uuid.clone(),
                                 to_neuron_uuid: work.synapse.to_uuid.clone(),
@@ -1430,6 +1447,8 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                                 total_count,
                                 target_neuron_stats: target_stats.clone(),
                                 outlier_reduction_info: None, // Set during outlier analysis pass if enabled (Issue #192)
+                                prediction_confidence: confidence_metrics.prediction_confidence,
+                                expected_score_gain_confidence_interval: confidence_metrics.expected_score_gain_confidence_interval,
                             });
                         }
 
