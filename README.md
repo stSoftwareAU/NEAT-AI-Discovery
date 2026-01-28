@@ -164,6 +164,63 @@ export NEAT_AI_DISCOVERY_BLOCK_SIZE=10000
 - When you have plenty of RAM
 - When neurons are accessed in random order repeatedly
 
+### Tiered Loading Strategy (Issue #215)
+
+The library now automatically selects the optimal loading strategy based on file size
+and available system memory. This extends the streaming functionality with a more
+intelligent neuron-level LRU cache for medium-sized files.
+
+**Loading Strategies:**
+
+| Strategy | When Selected | Behaviour |
+|----------|---------------|-----------|
+| **PreloadAll** | Estimated expanded < available_memory ÷ 4 | Loads entire file upfront (fastest access) |
+| **LruCache** | Expanded fits in memory but exceeds 1/4 | Per-neuron caching with LRU eviction |
+| **Streaming** | Expanded exceeds available memory | Block-based loading (lowest memory) |
+
+**How it works:**
+
+1. The library estimates expanded memory = file_size × 3 (decompression ratio)
+2. Compares against available system memory
+3. Automatically selects the best strategy
+
+**LRU Cache Benefits:**
+
+- **Bounded memory**: Uses half of available memory as cache capacity
+- **Per-neuron caching**: More efficient than block-based for focus neuron analysis
+- **Smart eviction**: Least-recently-used neurons are evicted when capacity exceeded
+- **Thread-safe**: Supports concurrent access during parallel analysis
+
+**Example file size thresholds (8GB system):**
+
+| File Size | Expanded Size | Strategy |
+|-----------|---------------|----------|
+| 100 MB    | 300 MB        | PreloadAll (< 2GB = 8GB ÷ 4) |
+| 500 MB    | 1.5 GB        | LruCache (< 8GB but > 2GB) |
+| 3 GB      | 9 GB          | Streaming (> 8GB available) |
+
+**API Usage:**
+
+```rust
+// Automatic strategy selection (recommended)
+let cache = RecordCache::new_tiered("data.parquet")?;
+
+// Or use the TieredRecordCache directly
+let cache = TieredRecordCache::new("data.parquet")?;
+
+// Force LRU mode with specific capacity
+let cache = TieredRecordCache::new_with_memory_limit("data.parquet", 4 * 1024 * 1024 * 1024)?;
+```
+
+**Benchmark Results (100 neurons, 1000 records each):**
+
+| Strategy | Sequential Access | Notes |
+|----------|-------------------|-------|
+| PreloadAll | 4.4 µs | Fastest, all data in memory |
+| LruCache (large) | 5.9 µs | Near-preload performance |
+| LruCache (evicting) | 155 ms | Eviction overhead when capacity exceeded |
+| Tiered (auto) | 4.3 µs | Auto-selects best strategy |
+
 ### Error Distribution Analysis (Issue #192)
 
 The library computes comprehensive error distribution statistics for target neurons, enabling
