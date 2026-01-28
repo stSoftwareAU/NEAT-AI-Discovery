@@ -55,3 +55,7 @@ harness = false
 name = "sample_locality"
 harness = false
 
+[[bench]]
+name = "tiered_loading"
+harness = false
+
