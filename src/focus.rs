@@ -572,6 +572,16 @@ pub struct RankedNeuron {
     /// - `saturation_ratio`: % of samples in saturated activation region
     /// - `dead_ratio`: % of samples with zero gradient (ReLU dead zones)
     pub gradient_flow: GradientFlowStats,
+    /// Issue #204: Activation frequency (proportion of samples where neuron fires).
+    ///
+    /// Calculated as: count_nonzero_activations / total_samples
+    /// where "fires" means |activation| > small threshold (avoiding floating point issues).
+    ///
+    /// This helps identify neurons with extreme firing patterns:
+    /// - activation_frequency < 0.1: Rarely fires, limited influence on most samples
+    /// - activation_frequency > 0.9: Always fires, behaves like a constant (no discriminative power)
+    /// - 0.1 <= activation_frequency <= 0.9: "Sweet spot" with good discriminative power
+    pub activation_frequency: f32,
 }
 
 /// A neuron with activation-weighted impact below removal savings threshold - candidate for removal.
@@ -755,6 +765,75 @@ fn mean_absolute_activation_from_records(records: &[DiscoverRecord]) -> f32 {
         0.0
     } else {
         sum / count as f32
+    }
+}
+
+/// Issue #204: Compute activation frequency from discovery records.
+///
+/// Activation frequency = count_nonzero_activations / total_samples
+/// where "fires" means |activation| > threshold to avoid floating-point issues.
+///
+/// # Arguments
+/// * `records` - Discovery records for a single neuron
+///
+/// # Returns
+/// A value in [0.0, 1.0] representing the proportion of samples where the neuron fires.
+/// Returns 0.0 if there are no valid (finite) records.
+///
+/// # Rationale
+/// - Neurons that rarely fire (frequency < 0.1) have limited influence on most samples
+/// - Neurons that always fire (frequency > 0.9) behave like constants with no discriminative power
+/// - Neurons with moderate frequency (0.1 to 0.9) are in the "sweet spot" for discovery
+const ACTIVATION_FIRING_THRESHOLD: f32 = 1e-6;
+
+fn activation_frequency_from_records(records: &[DiscoverRecord]) -> f32 {
+    if records.is_empty() {
+        return 0.0;
+    }
+
+    let mut firing_count: u32 = 0;
+    let mut total_count: u32 = 0;
+
+    for record in records {
+        if record.activation.is_finite() {
+            total_count += 1;
+            // A neuron "fires" when its absolute activation exceeds the threshold
+            if record.activation.abs() > ACTIVATION_FIRING_THRESHOLD {
+                firing_count += 1;
+            }
+        }
+    }
+
+    if total_count == 0 {
+        0.0
+    } else {
+        firing_count as f32 / total_count as f32
+    }
+}
+
+/// Issue #204: Compute frequency factor for focus neuron ranking.
+///
+/// Neurons with extreme activation frequencies (rarely or always firing) are
+/// less useful for discovery analysis:
+/// - Rarely-firing neurons (< 10%) have limited influence on most samples
+/// - Always-firing neurons (> 90%) behave like constants with no discriminative power
+///
+/// # Arguments
+/// * `activation_frequency` - The proportion of samples where the neuron fires [0.0, 1.0]
+///
+/// # Returns
+/// * 0.8 if activation_frequency < 0.1 (rarely fires) - 20% penalty
+/// * 0.8 if activation_frequency > 0.9 (always fires) - 20% penalty
+/// * 1.0 otherwise (moderate frequency) - no penalty
+const FREQUENCY_LOW_THRESHOLD: f32 = 0.1;
+const FREQUENCY_HIGH_THRESHOLD: f32 = 0.9;
+const FREQUENCY_PENALTY_FACTOR: f32 = 0.8;
+
+fn compute_frequency_factor(activation_frequency: f32) -> f32 {
+    if (FREQUENCY_LOW_THRESHOLD..=FREQUENCY_HIGH_THRESHOLD).contains(&activation_frequency) {
+        1.0 // No penalty for moderate frequency (10-90%)
+    } else {
+        FREQUENCY_PENALTY_FACTOR // 0.8x penalty for extreme frequencies
     }
 }
 
@@ -2130,6 +2209,9 @@ pub fn rank_focus_neurons(
             let gradient_flow =
                 compute_gradient_flow_for_neuron(&neuron.uuid, &squash_map, &records);
 
+            // Issue #204: Compute activation frequency for focus neuron ranking
+            let activation_frequency = activation_frequency_from_records(&records);
+
             Ok(RankedNeuron {
                 neuron_uuid: neuron.uuid.clone(),
                 total_error,
@@ -2138,11 +2220,12 @@ pub fn rank_focus_neurons(
                 mean_activation,
                 activation_weighted_impact,
                 gradient_flow,
+                activation_frequency,
             })
         })
         .collect::<Result<Vec<_>>>()?;
 
-    // Sort by weighted score (error × impact × gradient_factor) to prioritise neurons that:
+    // Sort by weighted score (error × impact × gradient_factor × frequency_factor) to prioritise neurons that:
     // 1. Have high error (potential for improvement)
     // 2. Have high impact (changes will affect output)
     // 3. Have good gradient flow (can actually learn - Issue #206)
@@ -2155,6 +2238,11 @@ pub fn rank_focus_neurons(
     // - Neurons stuck in saturation (high saturation_ratio) are de-prioritised
     // - Dead ReLU neurons (high dead_ratio) are de-prioritised
     // - Neurons with good gradient flow get higher priority
+    //
+    // Jan 2026 (Issue #204): We also adjust ranking by activation frequency factor:
+    // - Rarely-firing neurons (< 10% activation rate) are de-prioritised (0.8x penalty)
+    // - Always-firing neurons (> 90% activation rate) are de-prioritised (0.8x penalty)
+    // - Moderate-frequency neurons (10-90%) get no penalty
     const IMPACT_EPSILON: f32 = 0.0001;
     const IMPACT_GAMMA: f32 = 0.8;
     neurons.sort_by(|a, b| {
@@ -2171,8 +2259,13 @@ pub fn rank_focus_neurons(
         let a_gradient_factor = compute_gradient_flow_factor(&a.gradient_flow);
         let b_gradient_factor = compute_gradient_flow_factor(&b.gradient_flow);
 
-        let a_weighted = a_base * a_gradient_factor;
-        let b_weighted = b_base * b_gradient_factor;
+        // Issue #204: Apply activation frequency factor
+        // Penalises neurons that rarely fire (< 10%) or always fire (> 90%)
+        let a_frequency_factor = compute_frequency_factor(a.activation_frequency);
+        let b_frequency_factor = compute_frequency_factor(b.activation_frequency);
+
+        let a_weighted = a_base * a_gradient_factor * a_frequency_factor;
+        let b_weighted = b_base * b_gradient_factor * b_frequency_factor;
 
         b_weighted
             .partial_cmp(&a_weighted)
@@ -2635,6 +2728,9 @@ pub fn rank_focus_neurons_with_history(
             let gradient_flow =
                 compute_gradient_flow_for_neuron(&neuron.uuid, &squash_map, &records);
 
+            // Issue #204: Compute activation frequency for focus neuron ranking
+            let activation_frequency = activation_frequency_from_records(&records);
+
             Ok(RankedNeuron {
                 neuron_uuid: neuron.uuid.clone(),
                 total_error,
@@ -2643,11 +2739,12 @@ pub fn rank_focus_neurons_with_history(
                 mean_activation,
                 activation_weighted_impact,
                 gradient_flow,
+                activation_frequency,
             })
         })
         .collect::<Result<Vec<_>>>()?;
 
-    // Sort by weighted score with optional history factor and gradient flow factor
+    // Sort by weighted score with optional history factor, gradient flow factor, and frequency factor
     // Issue #227: Incorporate historical success rate into ranking
     // Issue #206: Incorporate gradient flow analysis into ranking
     const IMPACT_EPSILON: f32 = 0.0001;
@@ -2661,8 +2758,12 @@ pub fn rank_focus_neurons_with_history(
         let a_gradient_factor = compute_gradient_flow_factor(&a.gradient_flow);
         let b_gradient_factor = compute_gradient_flow_factor(&b.gradient_flow);
 
-        let a_with_gradient = a_base * a_gradient_factor;
-        let b_with_gradient = b_base * b_gradient_factor;
+        // Issue #204: Apply activation frequency factor
+        let a_frequency_factor = compute_frequency_factor(a.activation_frequency);
+        let b_frequency_factor = compute_frequency_factor(b.activation_frequency);
+
+        let a_with_gradient = a_base * a_gradient_factor * a_frequency_factor;
+        let b_with_gradient = b_base * b_gradient_factor * b_frequency_factor;
 
         // Apply history factor if available
         // History factor is in [0, 1], where 0.5 is neutral
