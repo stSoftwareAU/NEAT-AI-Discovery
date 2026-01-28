@@ -514,7 +514,28 @@ If two inputs feed the same target with the same starting weight, but one input 
 - remove the trusted synapse
 - add the trusted synapse back with a higher weight
 
-This preserves (or improves) behaviour while reducing variance and redundancy, and avoids the “single edit looks bad” trap during ablation.
+This preserves (or improves) behaviour while reducing variance and redundancy, and avoids the "single edit looks bad" trap during ablation.
+
+#### Redundant Path Pruning with Renormalisation (Issue #164)
+
+When two existing subnetworks (paths) feeding the same output compute effectively the same
+thing, one can be pruned and the other's weight scaled to compensate. This reduces network
+complexity without degrading fitness.
+
+**Detection signals**:
+- **Highly correlated activations** – Pearson correlation ≥ 0.85 between the two sources
+- **Anti-correlated error gradients** – Both paths push error in the same direction
+- **Shared downstream synapses** – Both sources feed the same target neuron
+
+**How it works**:
+1. For each target neuron, collect activation samples from all existing incoming synapses
+2. Compute pairwise activation correlation between sources
+3. If correlation ≥ 0.85, the weaker synapse (by absolute weight) is a prune candidate
+4. The survivor's weight is renormalised to `keep_weight + prune_weight`
+
+**Output**: Redundant path candidates appear in `coordinatedStructuralCandidates` with a
+`removeSynapse` operation (for the pruned path) and a `setWeight` operation (for the
+renormalised survivor). No new operation types are needed.
 
 ### Discrete activation function handling
 
