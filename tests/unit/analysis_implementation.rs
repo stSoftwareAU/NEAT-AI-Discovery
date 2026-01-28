@@ -964,6 +964,8 @@ Pages speculative:                        12345.
                 improved_count: 1,
                 total_count: 1,
                 target_neuron_stats: None,
+                prediction_confidence: 0.0,
+                expected_score_gain_confidence_interval: [0.0, 0.0],
             },
             crate::CandidateSynapseJson {
                 from_neuron_uuid: "b".to_string(),
@@ -977,6 +979,8 @@ Pages speculative:                        12345.
                 improved_count: 1,
                 total_count: 1,
                 target_neuron_stats: None,
+                prediction_confidence: 0.0,
+                expected_score_gain_confidence_interval: [0.0, 0.0],
             },
         ];
 
@@ -992,6 +996,8 @@ Pages speculative:                        12345.
             improved_count: 1,
             total_count: 1,
             target_neuron_stats: None,
+            prediction_confidence: 0.0,
+            expected_score_gain_confidence_interval: [0.0, 0.0],
         }];
 
         // Weight updates are modelled as coordinated setWeight (Issue #180), so include a
@@ -1058,6 +1064,8 @@ Pages speculative:                        12345.
                 improved_count: 1,
                 total_count: 1,
                 target_neuron_stats: None,
+                prediction_confidence: 0.0,
+                expected_score_gain_confidence_interval: [0.0, 0.0],
             },
             crate::CandidateSynapseJson {
                 from_neuron_uuid: "h1".to_string(),
@@ -1071,6 +1079,8 @@ Pages speculative:                        12345.
                 improved_count: 1,
                 total_count: 1,
                 target_neuron_stats: None,
+                prediction_confidence: 0.0,
+                expected_score_gain_confidence_interval: [0.0, 0.0],
             },
         ];
 
@@ -1086,6 +1096,8 @@ Pages speculative:                        12345.
             improved_count: 1,
             total_count: 1,
             target_neuron_stats: None,
+            prediction_confidence: 0.0,
+            expected_score_gain_confidence_interval: [0.0, 0.0],
         }];
 
         let coordinated = vec![crate::CoordinatedStructuralCandidateJson {

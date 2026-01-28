@@ -14,6 +14,9 @@
 use crate::types::DiscoverRecord;
 use bytemuck::{Pod, Zeroable};
 
+// Import confidence interval calculations (Issue #194)
+use crate::analysis::confidence::compute_confidence_metrics;
+
 /// Small epsilon value to prevent division by zero.
 pub const EPSILON: f32 = 1e-8;
 
@@ -576,6 +579,12 @@ impl ReluStats {
 
         // Issue #128: Use creature-level metrics instead of neuron-level percentage.
         // target_neuron_impact will be updated during impact discounting.
+        // Issue #194: Compute confidence metrics for this prediction
+        let confidence_metrics = compute_confidence_metrics(
+            original_samples,
+            expected_improvement,
+            None, // R² not available for neuron candidates
+        );
         Some(crate::CandidateNeuronJson {
             source_neuron_uuid: source_uuid.to_string(),
             target_neuron_uuid: target_uuid.to_string(),
@@ -592,6 +601,9 @@ impl ReluStats {
             improved_count,
             total_count,
             target_neuron_stats: target_stats,
+            prediction_confidence: confidence_metrics.prediction_confidence,
+            expected_score_gain_confidence_interval: confidence_metrics
+                .expected_score_gain_confidence_interval,
         })
     }
 }

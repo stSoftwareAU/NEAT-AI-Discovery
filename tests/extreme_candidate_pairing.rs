@@ -28,6 +28,8 @@ fn extreme_candidate_comment_does_not_claim_pairing_when_limit_prevents_variant(
         improved_count: 10,
         total_count: 20,
         target_neuron_stats: None,
+        prediction_confidence: 0.0,
+        expected_score_gain_confidence_interval: [0.0, 0.0],
     };
 
     // Limit leaves no room for any safety variants.
@@ -66,6 +68,8 @@ fn extreme_candidate_pairing_considers_outgoing_weight_differences() {
         improved_count: 10,
         total_count: 20,
         target_neuron_stats: None,
+        prediction_confidence: 0.0,
+        expected_score_gain_confidence_interval: [0.0, 0.0],
     };
 
     let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], Some(2));
@@ -106,6 +110,8 @@ fn extreme_candidate_includes_gentle_nudge_variant_when_limit_allows() {
         improved_count: 10,
         total_count: 20,
         target_neuron_stats: None,
+        prediction_confidence: 0.0,
+        expected_score_gain_confidence_interval: [0.0, 0.0],
     };
 
     let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], Some(3));
@@ -170,6 +176,8 @@ fn gentle_nudge_variants_are_not_deduped_across_different_neuron_pairs() {
         improved_count: 10,
         total_count: 20,
         target_neuron_stats: None,
+        prediction_confidence: 0.0,
+        expected_score_gain_confidence_interval: [0.0, 0.0],
     };
 
     let candidate_b = CandidateNeuronJson {
@@ -188,6 +196,8 @@ fn gentle_nudge_variants_are_not_deduped_across_different_neuron_pairs() {
         improved_count: 9,
         total_count: 20,
         target_neuron_stats: None,
+        prediction_confidence: 0.0,
+        expected_score_gain_confidence_interval: [0.0, 0.0],
     };
 
     // Limit allows both originals plus both safety variants per candidate.
