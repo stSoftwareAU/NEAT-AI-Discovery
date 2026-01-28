@@ -3,7 +3,7 @@
 This document itemises all the discovery types used by NEAT-AI-Discovery and tracks their
 success/failure rates in production.
 
-> **Last updated**: 3 Jan 2026
+> **Last updated**: 29 Jan 2026
 
 ## Table of Contents
 
@@ -13,6 +13,7 @@ success/failure rates in production.
   - [add-neurons](#add-neurons)
   - [add-synapses](#add-synapses)
   - [coordinated-structural](#coordinated-structural)
+  - [redundant-path-pruning](#redundant-path-pruning)
   - [change-squash](#change-squash)
   - [remove-low-impact](#remove-low-impact)
   - [remove-harmful-synapse](#remove-harmful-synapse)
@@ -52,6 +53,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | **remove-low-impact** | Remove neurons with activation_weighted_impact < costOfGrowth | 65 | 304 | 17.6% | 🟢 Active |
 | **remove-harmful-synapse** | Remove synapses that increase error | — | — | — | 🟠 Not tested |
 | **remove-neuron** | Remove harmful neurons (high error magnitude) | 0 | 2 | 0.0% | 🔴 Not working |
+| **redundant-path-pruning** | Prune redundant paths and renormalise survivor weight (Issue #164) | — | — | — | 🟢 Active |
 | **combo-successful** | Apply multiple successful changes together | 0 | 8 | 0.0% | 🔴 Not working |
 
 **Total**: 624 successes / 9,276 failures (6.3% overall success rate)
@@ -219,6 +221,56 @@ This discovery type exists to escape neutral plateaus and handle interference ca
 **Current status**: 🟢 **Active and tested** – Rust emits ordered groups; NEAT-AI applies the full ordered operation list atomically and re-scores on the full training set. All 7 operation types are implemented in NEAT-AI's `ApplyCoordinatedStructuralCandidate.ts` (verified Issue #337).
 
 **Synergistic discovery** (Issue #189): Cross-neuron interactions (e.g., XOR-like patterns) are detected via residual analysis and emitted as coordinated candidates containing paired `addSynapse` operations. No new operation type is needed — NEAT-AI handles these through the existing coordinated-structural path.
+
+**Redundant path pruning** (Issue #164): Two existing subnetworks feeding the same output that compute effectively the same thing are detected via activation correlation analysis. The weaker path is pruned and the survivor's weight is renormalised to compensate. Emitted as coordinated candidates containing `removeSynapse` + `setWeight` operations. No new operation type is needed.
+
+---
+
+### redundant-path-pruning
+
+✂️ **Purpose**: Detect that two existing paths feeding the same output compute the same thing, prune the redundant path, and renormalise the survivor's weight.
+
+**Discovery type**: `COORDINATED_PRUNE_AND_REWEIGHT`
+
+**Detection signals**:
+1. **Highly correlated activations** – Pearson correlation ≥ 0.85 between the two sources' activation patterns
+2. **Anti-correlated error gradients** – Both paths push the error in the same direction (strengthens redundancy case)
+3. **Shared downstream synapses** – Both sources feed into the same target neuron
+
+**How it works**:
+1. For each target neuron, collect all existing synapse sources with recorded activation samples
+2. For each pair of existing sources, compute the Pearson activation correlation
+3. If correlation ≥ 0.85, the weaker synapse (by absolute weight) is a prune candidate
+4. The survivor's weight is renormalised to `keep_weight + prune_weight` (sum of both weights)
+5. Emitted as a coordinated structural candidate with `removeSynapse` + `setWeight` operations
+
+**Example scenario**:
+```
+input-0 ──(w=0.5)──→ output-0   (activation pattern: linear ramp)
+input-1 ──(w=0.3)──→ output-0   (activation pattern: identical linear ramp)
+
+Detected: correlation = 0.99 → redundant
+Result:   removeSynapse(input-1 → output-0)
+          setWeight(input-0 → output-0, weight=0.8)
+```
+
+**Candidate shape** (Rust JSON output):
+```json
+{
+  "coordinatedStructuralCandidates": [
+    {
+      "expectedCreatureScoreGain": 0.001,
+      "comment": "Redundant path pruning (Issue #164): activation correlation 0.99, prune weaker path (input-1) and scale survivor (input-0) weight 0.5000 → 0.8000",
+      "operations": [
+        { "type": "removeSynapse", "fromNeuronUuid": "input-1", "toNeuronUuid": "output-0" },
+        { "type": "setWeight", "fromNeuronUuid": "input-0", "toNeuronUuid": "output-0", "weight": 0.8 }
+      ]
+    }
+  ]
+}
+```
+
+**Current status**: 🟢 **Active** – Implemented in `src/analysis/redundant_path.rs`. Uses existing `removeSynapse` and `setWeight` operations, so no NEAT-AI changes are required.
 
 ---
 

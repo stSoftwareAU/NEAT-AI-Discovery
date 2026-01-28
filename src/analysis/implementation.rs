@@ -54,6 +54,11 @@ use crate::analysis::epistatic::{
     SourceContribution,
 };
 
+// Import redundant path pruning module (Issue #164)
+use crate::analysis::redundant_path::{
+    detect_redundant_paths, redundant_paths_to_coordinated_candidates, ExistingPathContribution,
+};
+
 // Import GPU infrastructure from dedicated modules (Issue #272, #273, #274)
 use crate::analysis::gpu::{GpuAnalyzer, GpuWorkQueue};
 
@@ -1044,6 +1049,9 @@ pub(crate) fn analyze_synapses_with_cache_impl(
             // Important: we do NOT record these as "candidate attempts" in TargetDiagnostics because
             // `no_candidate_reasons` is reporting add-synapse eligibility (existing edges are not
             // eligible for add-synapse). This preserves the historical semantics and unit tests.
+            //
+            // Issue #164: Also collect ExistingPathContribution for redundant path detection.
+            let mut existing_path_contributions: Vec<ExistingPathContribution> = Vec::new();
             if !existing_sources_to_process.is_empty() {
                 let existing_work: Vec<HelpfulWork> = existing_sources_to_process
                     .par_iter()
@@ -1062,6 +1070,16 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                         })
                     })
                     .collect();
+
+                // Issue #164: Collect existing path contributions for redundant path detection
+                for work in &existing_work {
+                    existing_path_contributions.push(ExistingPathContribution {
+                        source_uuid: work.source_uuid.clone(),
+                        existing_weight: work.existing_weight.unwrap_or(0.0),
+                        samples: work.samples.clone(),
+                    });
+                }
+
                 helpful_work_batch.extend(existing_work);
             }
 
@@ -1418,6 +1436,45 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                                 eprintln!(
                                     "[NEAT-AI-Discovery][verbose] Target {target_uuid}: found {} synergistic candidate(s)",
                                     synergistic_candidates.len()
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Issue #164: Detect redundant paths feeding the same target.
+                // Two existing synapses with highly correlated activations are redundant –
+                // prune the weaker path and renormalise the survivor's weight.
+                if existing_path_contributions.len() >= 2 {
+                    let target_is_output = neuron_type_map_arc
+                        .get(target_uuid.as_str())
+                        .map(|t| t == "output")
+                        .unwrap_or(false);
+                    let target_impact = if target_is_output {
+                        1.0
+                    } else {
+                        0.5
+                    };
+
+                    let redundant_paths = detect_redundant_paths(
+                        target_uuid.as_str(),
+                        &existing_path_contributions,
+                        target_impact,
+                    );
+
+                    if !redundant_paths.is_empty() {
+                        let redundant_coordinated =
+                            redundant_paths_to_coordinated_candidates(&redundant_paths);
+                        if !redundant_coordinated.is_empty() {
+                            let mut results = coordinated_structural_results
+                                .lock()
+                                .expect("Mutex poisoned: coordinated_structural_results");
+                            results.extend(redundant_coordinated);
+
+                            if verbose_enabled() {
+                                eprintln!(
+                                    "[NEAT-AI-Discovery][verbose] Target {target_uuid}: found {} redundant path(s) for pruning",
+                                    redundant_paths.len()
                                 );
                             }
                         }

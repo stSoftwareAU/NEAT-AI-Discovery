@@ -26,6 +26,7 @@ pub mod epistatic;
 pub mod error_distribution;
 pub mod gpu;
 pub mod neuron;
+pub mod redundant_path;
 pub mod samples;
 pub mod shared;
 pub mod streaming;
