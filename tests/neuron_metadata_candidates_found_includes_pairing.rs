@@ -36,6 +36,8 @@ fn candidates_found_includes_paired_variants() {
         improved_count: 10,
         total_count: 20,
         target_neuron_stats: None,
+        prediction_confidence: 0.0,
+        expected_score_gain_confidence_interval: [0.0, 0.0],
     };
 
     // Simulate CORRECT neuron analysis behaviour:
@@ -115,6 +117,8 @@ fn non_extreme_candidates_maintain_count_invariant() {
         improved_count: 5,
         total_count: 20,
         target_neuron_stats: None,
+        prediction_confidence: 0.0,
+        expected_score_gain_confidence_interval: [0.0, 0.0],
     };
 
     // Apply pairing with no limit
@@ -165,6 +169,8 @@ fn truncation_respects_invariant_with_multiple_extreme_candidates() {
             improved_count: 10,
             total_count: 20,
             target_neuron_stats: None,
+            prediction_confidence: 0.0,
+            expected_score_gain_confidence_interval: [0.0, 0.0],
         })
         .collect();
 

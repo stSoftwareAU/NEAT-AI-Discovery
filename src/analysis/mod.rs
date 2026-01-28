@@ -19,6 +19,7 @@
 
 pub mod activation;
 pub mod cache;
+pub mod confidence;
 pub mod diagnostics;
 pub mod early_termination;
 pub mod epistatic;
@@ -59,6 +60,9 @@ pub use shared::{
     TimingScope,
     ZeroCopyBufferConfig,
 };
+
+// Re-export confidence interval types (Issue #194)
+pub use confidence::{compute_confidence_metrics, PredictionConfidenceMetrics};
 
 // Re-export from utils
 pub use utils::{gpu_timing_enabled, verbose_enabled};

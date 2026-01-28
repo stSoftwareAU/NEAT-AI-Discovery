@@ -3053,6 +3053,8 @@ mod tests_synapses {
             improved_count: 30,
             total_count: 50,
             target_neuron_stats: None,
+            prediction_confidence: 0.0,
+            expected_score_gain_confidence_interval: [0.0, 0.0],
         };
 
         // Negative-orientation ReLU candidate
@@ -3072,6 +3074,8 @@ mod tests_synapses {
             improved_count: 25,
             total_count: 50,
             target_neuron_stats: None,
+            prediction_confidence: 0.0,
+            expected_score_gain_confidence_interval: [0.0, 0.0],
         };
 
         // Insert both candidates
@@ -3140,6 +3144,8 @@ mod tests_synapses {
             improved_count: 25,
             total_count: 50,
             target_neuron_stats: None,
+            prediction_confidence: 0.0,
+            expected_score_gain_confidence_interval: [0.0, 0.0],
         };
 
         // Candidate for negative errors: same source/target, negative outgoing_weight
@@ -3160,6 +3166,8 @@ mod tests_synapses {
             improved_count: 20,
             total_count: 50,
             target_neuron_stats: None,
+            prediction_confidence: 0.0,
+            expected_score_gain_confidence_interval: [0.0, 0.0],
         };
 
         // Insert both candidates

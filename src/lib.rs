@@ -250,6 +250,19 @@ pub struct CandidateSynapseJson {
     /// `NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS=1`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outlier_reduction_info: Option<analysis::OutlierReductionInfo>,
+    /// Overall confidence score for this prediction (Issue #194).
+    ///
+    /// A value between 0.0 and 1.0 indicating how reliable the prediction is.
+    /// Higher values mean more reliable predictions. Computed from:
+    /// - Sample size (more samples = higher confidence)
+    /// - Source variance (higher variance = more reliable correlation)
+    /// - Model fit (better fit = higher confidence)
+    pub prediction_confidence: f32,
+    /// 95% confidence interval for expectedCreatureScoreGain (Issue #194).
+    ///
+    /// The first element is the lower bound, the second is the upper bound.
+    /// The point estimate (expectedCreatureScoreGain) should fall within this interval.
+    pub expected_score_gain_confidence_interval: [f32; 2],
 }
 
 /// Candidate to update the weight of an existing synapse (delta-based).
@@ -413,6 +426,19 @@ pub struct CandidateNeuronJson {
     pub total_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_neuron_stats: Option<NeuronStatsJson>,
+    /// Overall confidence score for this prediction (Issue #194).
+    ///
+    /// A value between 0.0 and 1.0 indicating how reliable the prediction is.
+    /// Higher values mean more reliable predictions. Computed from:
+    /// - Sample size (more samples = higher confidence)
+    /// - Source variance (higher variance = more reliable correlation)
+    /// - Model fit (better fit = higher confidence)
+    pub prediction_confidence: f32,
+    /// 95% confidence interval for expectedCreatureScoreGain (Issue #194).
+    ///
+    /// The first element is the lower bound, the second is the upper bound.
+    /// The point estimate (expectedCreatureScoreGain) should fall within this interval.
+    pub expected_score_gain_confidence_interval: [f32; 2],
 }
 
 #[derive(Debug, Deserialize, Clone)]
