@@ -28,7 +28,7 @@ use crate::analysis::utils::{
 // Import sample data structures from dedicated module (Issue #269)
 // Note: compute_source_variance_discount and more moved to neuron.rs (Issue #185)
 use crate::analysis::samples::{
-    constant_source_effect_threshold_from_env, HelpfulSample, NeuronStats, EPSILON,
+    compute_source_std_dev, get_constant_source_threshold, HelpfulSample, NeuronStats, EPSILON,
 };
 
 // Import weight calculation functions from dedicated module (Issue #270)
@@ -361,8 +361,45 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         .collect();
     let neuron_bias_map_arc = Arc::new(neuron_bias_map);
 
-    // Issue #178: threshold for folding constant-ish sources into bias adjustments.
-    let constant_source_effect_threshold = constant_source_effect_threshold_from_env();
+    // Issue #199: Compute source variance profile for dynamic constant-source threshold.
+    // We sample source neurons to compute an average standard deviation, which is used
+    // to scale the threshold for folding constant sources into setBias operations.
+    // This captures more coordinated candidates in creatures where "constant" is relative.
+    let source_std_dev_avg: Option<f32> = {
+        // Sample input neurons to compute average std dev
+        let mut std_dev_sum = 0.0f64;
+        let mut std_dev_count = 0u32;
+        let max_samples = input.creature.input.min(50); // Sample up to 50 input neurons
+
+        for input_idx in 0..max_samples {
+            let input_uuid = format!("input-{input_idx}");
+            if let Ok(records) = cache.get(&input_uuid) {
+                if records.len() >= 2 {
+                    let std_dev = compute_source_std_dev(&records);
+                    if std_dev.is_finite() {
+                        std_dev_sum += std_dev as f64;
+                        std_dev_count += 1;
+                    }
+                }
+            }
+        }
+
+        if std_dev_count > 0 {
+            let avg = (std_dev_sum / std_dev_count as f64) as f32;
+            if verbose_enabled() {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Source variance profile: avg_std_dev={avg:.4} (sampled {std_dev_count} sources)"
+                );
+            }
+            Some(avg)
+        } else {
+            None
+        }
+    };
+
+    // Issue #178, #199: threshold for folding constant-ish sources into bias adjustments.
+    // Now uses dynamic threshold based on source variance profile (Issue #199).
+    let constant_source_effect_threshold = get_constant_source_threshold(source_std_dev_avg);
 
     // Build a comprehensive map of ALL neuron UUIDs to their types
     // This includes: input neurons, and all neurons from creature.neurons (hidden, output, constant)
