@@ -1735,17 +1735,29 @@ whether discovery should be enabled:
   export NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1
   ```
 
-  **Optional folding of constant sources into bias (7-Jan-2026)**: When a source neuron’s
+  **Optional folding of constant sources into bias (7-Jan-2026)**: When a source neuron's
   activation range is ~0, an add-synapse from that source behaves like a constant offset
   on the downstream neuron (equivalent to a bias change). To avoid paying complexity cost
   for a new edge, the library may emit a coordinated-structural candidate containing a
   single `setBias` operation instead of an `addSynapse`.
 
+  **Dynamic threshold (Issue #199, 28-Jan-2026)**: The threshold is now dynamically calculated
+  based on the creature's source variance profile. This captures more coordinated candidates
+  in creatures where "constant" is relative to the overall variance distribution.
+
+  ```
+  dynamic_threshold = 1e-7 × max(1.0, source_std_dev_avg / 0.05)
+  ```
+
+  This means:
+  - For creatures with mostly low-variance sources: threshold stays at 1e-7
+  - For creatures with high-variance sources: threshold scales up proportionally
+
   Control this behaviour with `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD`:
 
-  - unset / empty: enabled with default `1e-7` (matches NEAT-AI’s default cost-of-growth scale)
+  - unset / empty: enabled with **dynamic threshold** based on source variance profile
   - `0`: disable folding (always emit `addSynapse` when otherwise valid)
-  - `> 0`: enable folding with a custom threshold
+  - `> 0`: enable folding with a **fixed custom threshold** (overrides dynamic calculation)
 
   The heuristic compares the predicted contribution range:
 

@@ -731,6 +731,9 @@ pub fn compute_source_variance_discount(samples: &[HelpfulSample]) -> f32 {
 /// - unset / empty: enabled with default (`DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD`)
 /// - `0`: disabled (never fold)
 /// - `> 0`: enabled with the configured threshold
+///
+/// Note: For dynamic threshold based on source variance profile, use
+/// `compute_dynamic_constant_source_threshold()` instead.
 pub fn constant_source_effect_threshold_from_env() -> Option<f32> {
     use crate::analysis::utils::verbose_enabled;
 
@@ -753,6 +756,136 @@ pub fn constant_source_effect_threshold_from_env() -> Option<f32> {
             }
             Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD)
         }
+    }
+}
+
+/// Minimum standard deviation reference for dynamic threshold scaling.
+///
+/// Issue #199: When computing the dynamic threshold, we scale based on the ratio
+/// of the creature's average source std dev to this reference value.
+/// Sources with std dev below 0.05 are considered "low variance" and get the
+/// default threshold. Sources with higher variance scale the threshold proportionally.
+const MIN_SOURCE_STD_DEV_REFERENCE: f32 = 0.05;
+
+/// Compute the dynamic constant-source effect threshold based on source variance profile.
+///
+/// Issue #199: The threshold for folding constant-source synapses into bias operations
+/// should scale based on the overall source variance profile of the creature:
+///
+/// ```text
+/// dynamic_threshold = DEFAULT_THRESHOLD × max(1.0, source_std_dev_avg / 0.05)
+/// ```
+///
+/// This means:
+/// - For creatures with mostly low-variance sources (avg std dev < 0.05): threshold stays at default
+/// - For creatures with high-variance sources: threshold scales up proportionally
+///
+/// This captures more coordinated candidates in creatures where "constant" is relative
+/// to the overall variance profile.
+///
+/// # Arguments
+/// * `source_std_dev_avg` - Average standard deviation across all source activations
+///
+/// # Returns
+/// The dynamic threshold value, always >= `DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD`
+pub fn compute_dynamic_constant_source_threshold(source_std_dev_avg: f32) -> f32 {
+    if !source_std_dev_avg.is_finite() || source_std_dev_avg <= 0.0 {
+        return DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD;
+    }
+
+    let scaling_factor = (source_std_dev_avg / MIN_SOURCE_STD_DEV_REFERENCE).max(1.0);
+    let dynamic_threshold = DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD * scaling_factor;
+
+    if dynamic_threshold.is_finite() {
+        dynamic_threshold
+    } else {
+        DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD
+    }
+}
+
+/// Compute source activation standard deviation from discovery records.
+///
+/// Used to build the source variance profile for dynamic threshold calculation.
+///
+/// # Returns
+/// The standard deviation of the activation values, or 0.0 if insufficient data
+pub fn compute_source_std_dev(records: &[DiscoverRecord]) -> f32 {
+    if records.len() < 2 {
+        return 0.0;
+    }
+
+    let mut activation_sum = 0.0f64;
+    let mut activation_sq_sum = 0.0f64;
+    let mut count = 0u32;
+
+    for record in records {
+        if record.activation.is_finite() {
+            let a = record.activation as f64;
+            activation_sum += a;
+            activation_sq_sum += a * a;
+            count += 1;
+        }
+    }
+
+    if count < 2 {
+        return 0.0;
+    }
+
+    let n = count as f64;
+    let mean = activation_sum / n;
+    let variance = (activation_sq_sum / n) - (mean * mean);
+    variance.max(0.0).sqrt() as f32
+}
+
+/// Get the constant source effect threshold, considering both env var override and dynamic calculation.
+///
+/// Issue #199: This function checks for an explicit env var override first. If no override is set,
+/// it uses the dynamic threshold based on the source variance profile.
+///
+/// # Arguments
+/// * `source_std_dev_avg` - Average standard deviation across all source activations.
+///   Pass `None` to use only env var or default threshold.
+///
+/// # Returns
+/// * `Some(threshold)` - The threshold to use for constant source detection
+/// * `None` - Constant source folding is disabled (env var set to 0)
+pub fn get_constant_source_threshold(source_std_dev_avg: Option<f32>) -> Option<f32> {
+    use crate::analysis::utils::verbose_enabled;
+
+    // First check for env var override
+    let raw = std::env::var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD").ok();
+
+    // If env var is set and valid, use it (explicit override takes precedence)
+    if let Some(raw) = raw {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            match trimmed.parse::<f32>() {
+                Ok(v) if v.is_finite() && v == 0.0 => return None, // Disabled
+                Ok(v) if v.is_finite() && v > 0.0 => return Some(v), // Explicit override
+                _ => {
+                    if verbose_enabled() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Ignoring invalid NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD={trimmed:?} (expected 0 or a finite number > 0)"
+                        );
+                    }
+                    // Fall through to dynamic calculation
+                }
+            }
+        }
+    }
+
+    // No valid env var override - use dynamic threshold if source variance is provided
+    match source_std_dev_avg {
+        Some(avg) if avg.is_finite() && avg > 0.0 => {
+            let threshold = compute_dynamic_constant_source_threshold(avg);
+            if verbose_enabled() {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Using dynamic constant-source threshold: {threshold:.2e} (source_std_dev_avg={avg:.4})"
+                );
+            }
+            Some(threshold)
+        }
+        _ => Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD),
     }
 }
 
@@ -1041,5 +1174,156 @@ mod tests {
             pad0: 0.0,
             pad1: 0.0,
         });
+    }
+
+    // =============================================================================
+    // Issue #199: Dynamic Constant Source Threshold Tests
+    // =============================================================================
+
+    #[test]
+    fn test_compute_dynamic_constant_source_threshold_low_variance() {
+        // With low variance (< 0.05), threshold should stay at default
+        let threshold = compute_dynamic_constant_source_threshold(0.01);
+        assert_eq!(
+            threshold, DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD,
+            "Low variance should use default threshold"
+        );
+
+        let threshold = compute_dynamic_constant_source_threshold(0.04);
+        assert_eq!(
+            threshold, DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD,
+            "Variance just below reference should use default threshold"
+        );
+    }
+
+    #[test]
+    fn test_compute_dynamic_constant_source_threshold_at_reference() {
+        // At exactly the reference value (0.05), threshold should be default
+        let threshold = compute_dynamic_constant_source_threshold(0.05);
+        assert_eq!(
+            threshold, DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD,
+            "At reference variance, threshold should be default"
+        );
+    }
+
+    #[test]
+    fn test_compute_dynamic_constant_source_threshold_high_variance() {
+        // With high variance, threshold should scale up
+        // Formula: threshold = 1e-7 × max(1.0, avg_std_dev / 0.05)
+
+        // std_dev = 0.10, scaling = 0.10 / 0.05 = 2.0
+        let threshold = compute_dynamic_constant_source_threshold(0.10);
+        let expected = DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD * 2.0;
+        assert!(
+            (threshold - expected).abs() < 1e-14,
+            "Threshold should scale by 2x for std_dev=0.10, got {threshold}, expected {expected}"
+        );
+
+        // std_dev = 0.50, scaling = 0.50 / 0.05 = 10.0
+        let threshold = compute_dynamic_constant_source_threshold(0.50);
+        let expected = DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD * 10.0;
+        assert!(
+            (threshold - expected).abs() < 1e-13,
+            "Threshold should scale by 10x for std_dev=0.50, got {threshold}, expected {expected}"
+        );
+
+        // std_dev = 1.0, scaling = 1.0 / 0.05 = 20.0
+        let threshold = compute_dynamic_constant_source_threshold(1.0);
+        let expected = DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD * 20.0;
+        assert!(
+            (threshold - expected).abs() < 1e-12,
+            "Threshold should scale by 20x for std_dev=1.0, got {threshold}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn test_compute_dynamic_constant_source_threshold_edge_cases() {
+        // Zero variance should return default
+        let threshold = compute_dynamic_constant_source_threshold(0.0);
+        assert_eq!(threshold, DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
+
+        // Negative variance (invalid) should return default
+        let threshold = compute_dynamic_constant_source_threshold(-0.1);
+        assert_eq!(threshold, DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
+
+        // NaN should return default
+        let threshold = compute_dynamic_constant_source_threshold(f32::NAN);
+        assert_eq!(threshold, DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
+
+        // Infinity should return default
+        let threshold = compute_dynamic_constant_source_threshold(f32::INFINITY);
+        assert_eq!(threshold, DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
+    }
+
+    #[test]
+    fn test_compute_source_std_dev_from_records() {
+        use crate::types::DiscoverRecord;
+
+        // Empty records
+        let std_dev = compute_source_std_dev(&[]);
+        assert_eq!(std_dev, 0.0);
+
+        // Single record
+        let records = vec![DiscoverRecord::new(
+            0,
+            "test".to_string(),
+            Some(1.0),
+            1.0,
+            Vec::new(),
+        )];
+        let std_dev = compute_source_std_dev(&records);
+        assert_eq!(std_dev, 0.0, "Single record should have zero std dev");
+
+        // Constant records (all same activation)
+        let records: Vec<DiscoverRecord> = (0..10)
+            .map(|i| DiscoverRecord::new(i, "test".to_string(), Some(0.5), 0.5, Vec::new()))
+            .collect();
+        let std_dev = compute_source_std_dev(&records);
+        assert!(
+            std_dev < 0.001,
+            "Constant records should have near-zero std dev"
+        );
+
+        // Variable records (alternating 0 and 1)
+        let records: Vec<DiscoverRecord> = (0..10)
+            .map(|i| {
+                let activation = if i % 2 == 0 { 0.0 } else { 1.0 };
+                DiscoverRecord::new(
+                    i,
+                    "test".to_string(),
+                    Some(activation),
+                    activation,
+                    Vec::new(),
+                )
+            })
+            .collect();
+        let std_dev = compute_source_std_dev(&records);
+        // std dev of [0, 1, 0, 1, ...] = 0.5
+        assert!(
+            (std_dev - 0.5).abs() < 0.01,
+            "Variable records should have std dev ~0.5, got {std_dev}"
+        );
+    }
+
+    #[test]
+    fn test_get_constant_source_threshold_no_env_var() {
+        // Remove env var to test dynamic threshold
+        std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+
+        // With None, should return default
+        let threshold = get_constant_source_threshold(None);
+        assert_eq!(threshold, Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD));
+
+        // With low variance, should return default
+        let threshold = get_constant_source_threshold(Some(0.01));
+        assert_eq!(threshold, Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD));
+
+        // With high variance, should return scaled threshold
+        let threshold = get_constant_source_threshold(Some(0.10));
+        let expected = DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD * 2.0;
+        assert!(
+            (threshold.unwrap() - expected).abs() < 1e-14,
+            "High variance should scale threshold"
+        );
     }
 }

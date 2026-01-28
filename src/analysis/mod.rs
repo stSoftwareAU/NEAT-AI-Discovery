@@ -142,11 +142,12 @@ pub use activation::{
 
 // Re-export sample data structures from samples module (Issue #269)
 pub use samples::{
-    compute_source_variance_discount, constant_source_effect_threshold_from_env, ActivationOutput,
-    ActivationUniforms, BiasResult, BiasUniforms, GpuHelpfulSample, HarmfulContribution,
-    HarmfulStats, HarmfulUniforms, HelpfulContribution, HelpfulSample, HelpfulStats,
-    HelpfulUniforms, NeuronStats, ReluContribution, ReluOrientation, ReluStats, ReluUniforms,
-    DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD, EPSILON,
+    compute_dynamic_constant_source_threshold, compute_source_std_dev,
+    compute_source_variance_discount, constant_source_effect_threshold_from_env,
+    get_constant_source_threshold, ActivationOutput, ActivationUniforms, BiasResult, BiasUniforms,
+    GpuHelpfulSample, HarmfulContribution, HarmfulStats, HarmfulUniforms, HelpfulContribution,
+    HelpfulSample, HelpfulStats, HelpfulUniforms, NeuronStats, ReluContribution, ReluOrientation,
+    ReluStats, ReluUniforms, DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD, EPSILON,
 };
 
 // Re-export focus_unused_observations_from_env for tests (Issue #182)
