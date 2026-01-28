@@ -47,7 +47,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 |----------------|-------------|------------|------------|--------------|--------|
 | **add-neurons** | Add a new hidden neuron between existing neurons | 556 | 8,944 | 5.9% | 🟢 Active |
 | **add-synapses** | Add a new synapse connection | 1 | 9 | 10.0% | ⚠️ Low volume |
-| **coordinated-structural** | Apply a *group* of dependent edits as a single candidate | — | — | — | 🟠 Not tested |
+| **coordinated-structural** | Apply a *group* of dependent edits as a single candidate | — | — | — | 🟢 Active |
 | **change-squash** | Change a neuron's activation function | 2 | 9 | 18.2% | ⚠️ Low volume |
 | **remove-low-impact** | Remove neurons with activation_weighted_impact < costOfGrowth | 65 | 304 | 17.6% | 🟢 Active |
 | **remove-harmful-synapse** | Remove synapses that increase error | — | — | — | 🟠 Not tested |
@@ -167,13 +167,14 @@ This discovery type exists to escape neutral plateaus and handle interference ca
 }
 ```
 
-**Operation vocabulary** (7-Jan-2026):
+**Operation vocabulary** (29-Jan-2026):
 - `removeSynapse(fromNeuronUuid,toNeuronUuid)`
 - `addSynapse(fromNeuronUuid,toNeuronUuid,weight)`
 - `addNeuron(neuronUuid,neuronType,squash,bias,insertBeforeNeuronUuid?)`
 - `removeNeuron(neuronUuid)`
 - `changeSquash(neuronUuid,squash)`
 - `setBias(neuronUuid,bias)`
+- `setWeight(fromNeuronUuid,toNeuronUuid,weight)` — Issue #180: direct weight adjustment replacing the previous `removeSynapse` + `addSynapse` pattern
 
 **Forward-only note**: for forward-only creatures, `addNeuron.insertBeforeNeuronUuid` is used to place the neuron in the `neurons[]` array before the target neuron so subsequent `addSynapse(newNeuron -> target)` respects the forward-only ordering constraint.
 
@@ -215,7 +216,9 @@ This discovery type exists to escape neutral plateaus and handle interference ca
 }
 ```
 
-**Current status**: 🟢 **Active and tested** – Rust emits ordered groups; NEAT-AI applies the full ordered operation list atomically and re-scores on the full training set.
+**Current status**: 🟢 **Active and tested** – Rust emits ordered groups; NEAT-AI applies the full ordered operation list atomically and re-scores on the full training set. All 7 operation types are implemented in NEAT-AI's `ApplyCoordinatedStructuralCandidate.ts` (verified Issue #337).
+
+**Synergistic discovery** (Issue #189): Cross-neuron interactions (e.g., XOR-like patterns) are detected via residual analysis and emitted as coordinated candidates containing paired `addSynapse` operations. No new operation type is needed — NEAT-AI handles these through the existing coordinated-structural path.
 
 ---
 
@@ -412,10 +415,10 @@ review.
 
 ### Not Implemented / Not Tested
 
-1. **coordinated-structural** 🟠 – Produced by Rust, needs TypeScript validation support
-   - Rust returns `coordinatedStructuralCandidates[]`
-   - TypeScript must apply a group of operations to a clone then rescore (single ablation run)
-   - Enables epistatic changes (dependent edits) to be validated as one unit
+1. **coordinated-structural** 🟢 – **Verified** (Issue #337): NEAT-AI implements all 7 operation types
+   (`removeSynapse`, `addSynapse`, `addNeuron`, `removeNeuron`, `changeSquash`, `setBias`, `setWeight`)
+   in `ApplyCoordinatedStructuralCandidate.ts`. Synergistic candidates (Issue #189) use existing
+   `addSynapse` operations and require no additional NEAT-AI changes.
 
 2. **remove-harmful-synapse** 🟠 – Rust produces, no samples recorded
    - Rust returns `harmful_synapses[]` array
@@ -427,7 +430,7 @@ review.
 
 | Priority | Action | Rationale |
 |----------|--------|-----------|
-| 🔴 High | Implement coordinated-structural (grouped candidates) | Needed for epistatic changes where only a set of edits improves fitness |
+| ✅ Done | Verify coordinated-structural implementation (Issue #337) | NEAT-AI implements all 7 operation types; no gaps found |
 | 🔴 High | Investigate why harmful_synapses aren't recorded | Mapping exists but no samples in discovery folder |
 | 🔴 High | Investigate add-synapses prediction inversion | 10 samples show consistent wrong-direction predictions |
 | 🔴 High | Disable or fix remove-neuron | 0% success rate, wasting validation cycles |
