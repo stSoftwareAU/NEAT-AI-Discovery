@@ -1,7 +1,0 @@
-Fixed spelling: changed "re-use" to "reuse" in 3 files (6 occurrences total):
-
-- `README.md` — lines 39, 45
-- `docs/pr-summary-346.md` — line 8
-- `tests/issue_346_readme_project_goal.rs` — removed redundant "re-use" check variants and updated assertion message
-
-All quality checks pass (`./quality.sh` clean).
