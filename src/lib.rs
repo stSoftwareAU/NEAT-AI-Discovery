@@ -485,6 +485,12 @@ pub struct AnalyzeParallelOutput {
     /// Coordinated (grouped) structural candidates (v0.2.18+).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coordinated_structural_candidates: Option<Vec<CoordinatedStructuralCandidateJson>>,
+    /// Candidate clusters for redundancy reduction (Issue #224).
+    ///
+    /// Groups similar candidates by target neuron so the controller can test a
+    /// representative first and skip redundant ablation tests.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_clusters: Option<Vec<analysis::candidate_clustering::CandidateClusterJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neuron_diagnostics: Option<Vec<NeuronDiagnosticJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1224,6 +1230,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 helpful_neurons: None,
                 synapse_weight_updates: None,
                 coordinated_structural_candidates: None,
+                candidate_clusters: None,
                 neuron_diagnostics: None,
                 neuron_gpu_used: None,
                 neuron_metadata: None,
@@ -1255,6 +1262,14 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 }
             });
 
+            let candidate_clusters = synapse.as_ref().and_then(|s| {
+                if s.candidate_clusters.is_empty() {
+                    None
+                } else {
+                    Some(s.candidate_clusters.clone())
+                }
+            });
+
             let output = AnalyzeParallelOutput {
                 success: true,
                 helpful_synapses: synapse.as_ref().map(|s| s.helpful_synapses.clone()),
@@ -1279,6 +1294,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 synapse_weight_updates,
                 coordinated_structural_candidates,
+                candidate_clusters,
                 neuron_diagnostics: neuron
                     .as_ref()
                     .and_then(|n| neuron_diagnostics_json(n.no_candidate_reasons.as_slice())),
@@ -1307,6 +1323,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 helpful_neurons: None,
                 synapse_weight_updates: None,
                 coordinated_structural_candidates: None,
+                candidate_clusters: None,
                 neuron_diagnostics: None,
                 neuron_gpu_used: None,
                 neuron_metadata: None,
@@ -2180,6 +2197,7 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
                     helpful_neurons: None,
                     synapse_weight_updates: None,
                     coordinated_structural_candidates: None,
+                    candidate_clusters: None,
                     neuron_diagnostics: None,
                     neuron_gpu_used: None,
                     neuron_metadata: None,

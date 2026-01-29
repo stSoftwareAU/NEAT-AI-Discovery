@@ -407,6 +407,12 @@ pub struct AnalyzeSynapsesResult {
     pub synapse_weight_updates: Vec<SynapseWeightUpdateCandidateJson>,
     /// Coordinated (grouped) candidates produced from synapse analysis (Issue #165).
     pub coordinated_structural_candidates: Vec<CoordinatedStructuralCandidateJson>,
+    /// Candidate clusters for redundancy reduction (Issue #224).
+    ///
+    /// Groups similar candidates by target neuron, source type, and improvement
+    /// similarity so the controller can test a representative first and skip
+    /// redundant ablation tests.
+    pub candidate_clusters: Vec<super::candidate_clustering::CandidateClusterJson>,
     pub gpu_used: bool,
     pub no_candidate_reasons: Vec<SynapseNoCandidateSummary>,
     /// Metadata about the analysis run for diagnostics (v0.2.17+).

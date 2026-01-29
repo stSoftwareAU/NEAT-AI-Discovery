@@ -19,11 +19,13 @@
 //! - `bottleneck.rs` - Bottleneck neuron detection for information flow widening (Issue #343)
 //! - `dead_neuron.rs` - Dead neuron detection for removal candidates (Issue #341)
 //! - `correlated_error.rs` - Correlated error pattern detection for shared-cause identification (Issue #344)
+//! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests (Issue #224)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 
 pub mod activation;
 pub mod bottleneck;
 pub mod cache;
+pub mod candidate_clustering;
 pub mod confidence;
 pub mod correlated_error;
 pub mod dead_neuron;
@@ -795,6 +797,64 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
 
         crate::watchdog::beat("analysis::analyze_all → correlated error detection finished");
+    }
+
+    // Issue #224: Candidate clustering to reduce redundant ablation tests.
+    // Groups similar candidates by target neuron, source type, and improvement
+    // similarity so the controller can test a representative first and skip
+    // redundant tests if it fails.
+    if let Some(syn) = synapse_result.as_mut() {
+        crate::watchdog::beat("analysis::analyze_all → candidate clustering starting");
+        let _clustering_timer = PhaseTimer::new("candidate_clustering");
+
+        // Collect all helpful and harmful synapse candidates as clusterable candidates
+        let mut clusterable: Vec<candidate_clustering::ClusterableCandidate> = Vec::new();
+
+        for c in &syn.helpful_synapses {
+            clusterable.push(candidate_clustering::ClusterableCandidate {
+                from_neuron_uuid: c.from_neuron_uuid.clone(),
+                to_neuron_uuid: c.to_neuron_uuid.clone(),
+                expected_improvement: c.expected_creature_score_gain,
+                neuron_type: input
+                    .creature
+                    .neurons
+                    .iter()
+                    .find(|n| n.uuid == c.from_neuron_uuid)
+                    .map(|n| n.neuron_type.clone())
+                    .unwrap_or_else(|| "input".to_string()),
+            });
+        }
+
+        for c in &syn.harmful_synapses {
+            clusterable.push(candidate_clustering::ClusterableCandidate {
+                from_neuron_uuid: c.from_neuron_uuid.clone(),
+                to_neuron_uuid: c.to_neuron_uuid.clone(),
+                expected_improvement: c.expected_creature_score_gain,
+                neuron_type: input
+                    .creature
+                    .neurons
+                    .iter()
+                    .find(|n| n.uuid == c.from_neuron_uuid)
+                    .map(|n| n.neuron_type.clone())
+                    .unwrap_or_else(|| "input".to_string()),
+            });
+        }
+
+        let clusters = candidate_clustering::cluster_candidates(&clusterable);
+
+        if !clusters.is_empty() && utils::verbose_enabled() {
+            let total_clustered: usize = clusters.iter().map(|c| c.member_count).sum();
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Candidate clustering: {} cluster(s) covering {} candidate(s) of {} total",
+                clusters.len(),
+                total_clustered,
+                clusterable.len()
+            );
+        }
+
+        syn.candidate_clusters = clusters;
+
+        crate::watchdog::beat("analysis::analyze_all → candidate clustering finished");
     }
 
     // Collect final profile data (Issue #214)

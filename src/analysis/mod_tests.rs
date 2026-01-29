@@ -87,6 +87,7 @@ fn postprocess_reapplies_max_synapse_candidates_after_coordinated_merge() {
         harmful_synapses: Vec::new(),
         synapse_weight_updates: Vec::new(),
         coordinated_structural_candidates: Vec::new(),
+        candidate_clusters: Vec::new(),
         gpu_used: false,
         no_candidate_reasons: Vec::new(),
         metadata: shared::SynapseAnalysisMetadata {
@@ -138,6 +139,7 @@ fn postprocess_truncates_across_all_synapse_buckets_not_just_coordinated() {
         harmful_synapses: Vec::new(),
         synapse_weight_updates: Vec::new(),
         coordinated_structural_candidates: Vec::new(),
+        candidate_clusters: Vec::new(),
         gpu_used: false,
         no_candidate_reasons: Vec::new(),
         metadata: shared::SynapseAnalysisMetadata {
@@ -196,6 +198,7 @@ fn postprocess_updates_candidates_returned_after_merging_neuron_replacements() {
         harmful_synapses: Vec::new(),
         synapse_weight_updates: Vec::new(),
         coordinated_structural_candidates: Vec::new(),
+        candidate_clusters: Vec::new(),
         gpu_used: false,
         no_candidate_reasons: Vec::new(),
         metadata: shared::SynapseAnalysisMetadata {

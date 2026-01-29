@@ -2037,6 +2037,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         // This keeps NEAT-AI's apply/ablate pipeline limited to existing structural ops.
         synapse_weight_updates: Vec::new(),
         coordinated_structural_candidates: coordinated_structural_results,
+        candidate_clusters: Vec::new(), // populated by analyze_all post-processing (Issue #224)
         gpu_used,
         no_candidate_reasons,
         metadata,

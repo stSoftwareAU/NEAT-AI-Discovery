@@ -671,6 +671,54 @@ there is nothing to correlate.
 `addNeuron` and `addSynapse` operations. No new candidate types are needed — this reuses
 the existing coordinated structural change mechanism.
 
+#### Candidate Clustering for Redundancy Reduction (Issue #224)
+
+When discovery returns many similar candidates (e.g., multiple synapses from the same source
+region targeting the same neuron), the controller would otherwise evaluate each independently,
+wasting CPU on redundant ablation tests. Candidate clustering groups these into clusters so
+the controller can test a representative first and skip the rest if it fails.
+
+**Clustering criteria**:
+1. **Same target neuron** (`toNeuronUuid`) — candidates must target the same neuron
+2. **Same source type** (input vs hidden) — different neuron types have different signal
+   characteristics and should not be mixed
+3. **Similar improvement prediction** — candidates with very different expected improvements
+   (>5× ratio) are split into separate sub-clusters
+
+**JSON output**: Clusters appear in `candidateClusters` (optional field, omitted when empty):
+
+```json
+{
+  "candidateClusters": [
+    {
+      "representativeFromUuid": "input-42",
+      "representativeToUuid": "hidden-5",
+      "representativeImprovement": 0.101,
+      "memberCount": 5,
+      "memberFromUuids": ["input-42", "input-43", "input-44", "input-45", "input-46"],
+      "internalCorrelation": 0.92
+    }
+  ]
+}
+```
+
+**TypeScript usage**:
+
+```typescript
+// Test representative first, skip cluster if it fails:
+for (const cluster of candidateClusters) {
+    const result = testCandidate(cluster.representativeFromUuid, cluster.representativeToUuid);
+    if (!result.improved) {
+        // Representative failed — skip remaining members (high correlation)
+        console.log(`Skipping ${cluster.memberCount - 1} similar candidates`);
+    }
+}
+```
+
+**Backward compatible**: The `candidateClusters` field is optional and only present when
+clusters are detected. Existing consumers that do not read this field continue to work
+unchanged.
+
 ### Discrete activation function handling
 
 The standard discovery algorithm uses a **linear error model** to predict improvement:
