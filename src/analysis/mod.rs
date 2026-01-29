@@ -16,9 +16,11 @@
 //! - `cache.rs` - Record caching for parquet files (Issue #185)
 //! - `streaming.rs` - Streaming parquet loading with block-based caching (Issue #193)
 //! - `saturation.rs` - Saturated neuron detection for activation function changes (Issue #342)
+//! - `bottleneck.rs` - Bottleneck neuron detection for information flow widening (Issue #343)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 
 pub mod activation;
+pub mod bottleneck;
 pub mod cache;
 pub mod confidence;
 pub mod diagnostics;
@@ -624,6 +626,56 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
 
         crate::watchdog::beat("analysis::analyze_all → saturation detection finished");
+
+        // Issue #343: Detect bottleneck neurons limiting information flow.
+        // Bottleneck neurons have high fan-in funnelling through a single hidden neuron.
+        // We recommend adding parallel paths or bypass synapses to widen the bottleneck.
+        crate::watchdog::beat("analysis::analyze_all → bottleneck detection starting");
+        let _bottleneck_timer = PhaseTimer::new("bottleneck_detection");
+
+        if !hidden_neurons.is_empty() {
+            // Retrieve recorded activations for each hidden neuron from the cache
+            let bottleneck_neuron_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
+                hidden_neurons
+                    .iter()
+                    .filter_map(|(uuid, _, _)| {
+                        shared_cache
+                            .get(uuid)
+                            .ok()
+                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
+                    })
+                    .collect();
+
+            let bottleneck_candidates =
+                bottleneck::detect_bottleneck_neurons(&input.creature, &bottleneck_neuron_records);
+
+            if !bottleneck_candidates.is_empty() {
+                let coordinated_bottleneck =
+                    bottleneck::bottleneck_neurons_to_coordinated_candidates(
+                        &bottleneck_candidates,
+                        &input.creature,
+                    );
+
+                if !coordinated_bottleneck.is_empty() {
+                    if utils::verbose_enabled() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Bottleneck detection: found {} bottleneck neuron(s), {} candidate(s)",
+                            bottleneck_candidates.len(),
+                            coordinated_bottleneck.len()
+                        );
+                    }
+
+                    merge_coordinated_structural_replacements(
+                        syn,
+                        coordinated_bottleneck,
+                        input.max_synapse_candidates,
+                        input.analysis_deadline_ms.is_some(),
+                    );
+                }
+            }
+        }
+
+        crate::watchdog::beat("analysis::analyze_all → bottleneck detection finished");
     }
 
     // Collect final profile data (Issue #214)

@@ -594,6 +594,33 @@ useful signal propagation and wastes gradient capacity.
 `changeSquash` and/or `setBias` operations. No new candidate types are needed — this
 reuses the existing coordinated structural change mechanism.
 
+#### Bottleneck Neuron Detection (Issue #343)
+
+In evolved NEAT networks, structural mutations can create bottleneck neurons where many
+input signals converge through a single hidden neuron before reaching outputs. This limits
+the network's ability to represent complex input combinations because one neuron's activation
+range must encode all upstream information.
+
+**Detection criteria**:
+- **High fan-in**: At least 3 incoming connections
+- **High fan-in / fan-out ratio**: At least 2× more inputs than outputs
+- **Error concentration**: Disproportionate share of output error traces through this neuron
+- **Hidden neurons only**: Output neurons are natural convergence points and are excluded
+
+**Bottleneck score** combines two components:
+- **Topology score** (60%): Based on the fan-in / fan-out compression ratio
+- **Error score** (40%): Based on the fraction of total error flowing through the neuron
+
+**Recommended actions**:
+1. **Add parallel neuron**: Create a new hidden neuron sharing a subset of inputs/outputs
+   to increase capacity at the bottleneck
+2. **Add bypass synapse**: Add a direct connection from an upstream neuron to a downstream
+   neuron, reducing dependency on the bottleneck
+
+**Output**: Bottleneck candidates appear in `coordinatedStructuralCandidates` with
+`addNeuron` and/or `addSynapse` operations. No new candidate types are needed — this
+reuses the existing coordinated structural change mechanism.
+
 ### Discrete activation function handling
 
 The standard discovery algorithm uses a **linear error model** to predict improvement:
