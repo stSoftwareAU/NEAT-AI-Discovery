@@ -18,12 +18,14 @@
 //! - `saturation.rs` - Saturated neuron detection for activation function changes (Issue #342)
 //! - `bottleneck.rs` - Bottleneck neuron detection for information flow widening (Issue #343)
 //! - `dead_neuron.rs` - Dead neuron detection for removal candidates (Issue #341)
+//! - `correlated_error.rs` - Correlated error pattern detection for shared-cause identification (Issue #344)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 
 pub mod activation;
 pub mod bottleneck;
 pub mod cache;
 pub mod confidence;
+pub mod correlated_error;
 pub mod dead_neuron;
 pub mod diagnostics;
 pub mod early_termination;
@@ -724,6 +726,75 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
 
         crate::watchdog::beat("analysis::analyze_all → dead neuron detection finished");
+
+        // Issue #344: Detect correlated error patterns for shared-cause identification.
+        // When multiple output neurons consistently err in the same direction on the same
+        // samples, it suggests a missing input feature or hidden representation that would
+        // benefit all of them. We recommend adding a shared hidden neuron.
+        crate::watchdog::beat("analysis::analyze_all → correlated error detection starting");
+        let _correlated_timer = PhaseTimer::new("correlated_error_detection");
+
+        // Only run if there are multiple output neurons (nothing to correlate otherwise)
+        let output_count = input
+            .creature
+            .neurons
+            .iter()
+            .filter(|n| n.neuron_type == "output")
+            .count();
+
+        if output_count >= 2 {
+            // Collect records for output and input neurons
+            let correlated_neuron_uuids: Vec<String> = input
+                .creature
+                .neurons
+                .iter()
+                .filter(|n| n.neuron_type == "output" || n.neuron_type == "input")
+                .map(|n| n.uuid.clone())
+                .collect();
+
+            let correlated_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
+                correlated_neuron_uuids
+                    .iter()
+                    .filter_map(|uuid| {
+                        shared_cache
+                            .get(uuid)
+                            .ok()
+                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
+                    })
+                    .collect();
+
+            let correlated_groups = correlated_error::detect_correlated_error_patterns(
+                &input.creature,
+                &correlated_records,
+            );
+
+            if !correlated_groups.is_empty() {
+                let coordinated_correlated =
+                    correlated_error::correlated_errors_to_coordinated_candidates(
+                        &correlated_groups,
+                        &input.creature,
+                    );
+
+                if !coordinated_correlated.is_empty() {
+                    if utils::verbose_enabled() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Correlated error detection: found {} group(s), {} candidate(s)",
+                            correlated_groups.len(),
+                            coordinated_correlated.len()
+                        );
+                    }
+
+                    merge_coordinated_structural_replacements(
+                        syn,
+                        coordinated_correlated,
+                        input.max_synapse_candidates,
+                        input.analysis_deadline_ms.is_some(),
+                    );
+                }
+            }
+        }
+
+        crate::watchdog::beat("analysis::analyze_all → correlated error detection finished");
     }
 
     // Collect final profile data (Issue #214)

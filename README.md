@@ -646,6 +646,31 @@ training and inference without contributing useful information to the network's 
 `removeNeuron` operations. No new candidate types are needed — this reuses the existing
 coordinated structural change mechanism.
 
+#### Correlated Error Pattern Detection (Issue #344)
+
+When multiple output neurons consistently err in the same direction on the same samples,
+it suggests a missing input feature or hidden representation that would benefit all of them.
+Rather than treating each output independently and potentially creating redundant candidates,
+this analysis identifies shared causes and recommends a single structural change.
+
+**Detection method**:
+1. **Error correlation matrix**: Pearson correlation of per-sample errors between all output pairs
+2. **Complete-linkage clustering**: Groups outputs with pairwise correlation > 0.7
+3. **Shared error samples**: Counts samples where all neurons in a group err in the same direction
+4. **Predictive input identification**: Finds input neuron activations that predict the shared error
+
+**Skip optimisation**: This analysis is skipped when there is only one output neuron, since
+there is nothing to correlate.
+
+**Recommended action**:
+- **Add shared hidden neuron**: A single new hidden neuron that connects predictive inputs
+  to all outputs in the correlated group, addressing the shared missing cause as an atomic
+  coordinated structural change
+
+**Output**: Correlated error groups appear in `coordinatedStructuralCandidates` with
+`addNeuron` and `addSynapse` operations. No new candidate types are needed — this reuses
+the existing coordinated structural change mechanism.
+
 ### Discrete activation function handling
 
 The standard discovery algorithm uses a **linear error model** to predict improvement:
