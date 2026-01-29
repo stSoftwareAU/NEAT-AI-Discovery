@@ -17,12 +17,14 @@
 //! - `streaming.rs` - Streaming parquet loading with block-based caching (Issue #193)
 //! - `saturation.rs` - Saturated neuron detection for activation function changes (Issue #342)
 //! - `bottleneck.rs` - Bottleneck neuron detection for information flow widening (Issue #343)
+//! - `dead_neuron.rs` - Dead neuron detection for removal candidates (Issue #341)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 
 pub mod activation;
 pub mod bottleneck;
 pub mod cache;
 pub mod confidence;
+pub mod dead_neuron;
 pub mod diagnostics;
 pub mod early_termination;
 pub mod epistatic;
@@ -676,6 +678,52 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
 
         crate::watchdog::beat("analysis::analyze_all → bottleneck detection finished");
+
+        // Issue #341: Detect dead neurons for removal candidates.
+        // Dead neurons always output zero or near-zero activation, wasting computation.
+        // We recommend removing them via CoordinatedStructuralCandidateJson with RemoveNeuron.
+        crate::watchdog::beat("analysis::analyze_all → dead neuron detection starting");
+        let _dead_neuron_timer = PhaseTimer::new("dead_neuron_detection");
+
+        if !hidden_neurons.is_empty() {
+            let dead_neuron_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
+                hidden_neurons
+                    .iter()
+                    .filter_map(|(uuid, _, _)| {
+                        shared_cache
+                            .get(uuid)
+                            .ok()
+                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
+                    })
+                    .collect();
+
+            let dead_candidates =
+                dead_neuron::detect_dead_neurons(&input.creature, &dead_neuron_records);
+
+            if !dead_candidates.is_empty() {
+                let coordinated_dead =
+                    dead_neuron::dead_neurons_to_coordinated_candidates(&dead_candidates);
+
+                if !coordinated_dead.is_empty() {
+                    if utils::verbose_enabled() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Dead neuron detection: found {} dead neuron(s), {} candidate(s)",
+                            dead_candidates.len(),
+                            coordinated_dead.len()
+                        );
+                    }
+
+                    merge_coordinated_structural_replacements(
+                        syn,
+                        coordinated_dead,
+                        input.max_synapse_candidates,
+                        input.analysis_deadline_ms.is_some(),
+                    );
+                }
+            }
+        }
+
+        crate::watchdog::beat("analysis::analyze_all → dead neuron detection finished");
     }
 
     // Collect final profile data (Issue #214)
