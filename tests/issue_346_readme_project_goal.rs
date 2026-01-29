@@ -55,10 +55,9 @@ fn readme_mission_states_candidates_must_improve_score() {
 #[test]
 fn readme_mission_states_reuse_candidate_types() {
     assert!(
-        README.contains("re-use existing candidate types")
-            || README.contains("reuse existing candidate types")
-            || README.contains("re-use the candidate types"),
-        "README must mention preference to re-use existing NEAT-AI candidate types"
+        README.contains("reuse existing candidate types")
+            || README.contains("reuse the candidate types"),
+        "README must mention preference to reuse existing NEAT-AI candidate types"
     );
 }
 

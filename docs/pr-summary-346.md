@@ -5,7 +5,7 @@ clearly states the project's three guiding principles (issue #346):
 
 1. **Improve the creature's score** — only return candidates expected to improve it.
 2. **Discover improvements as fast as possible** — leverage GPU compute shaders and SIMD.
-3. **Minimise changes to NEAT-AI** — re-use existing candidate types wherever possible.
+3. **Minimise changes to NEAT-AI** — reuse existing candidate types wherever possible.
 
 Also updated the existing **Goal** section (in the reference material) to
 cross-reference the new mission statement and reinforce the speed/score objectives.

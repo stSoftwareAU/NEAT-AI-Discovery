@@ -36,13 +36,13 @@ Everything in this repository serves that objective:
    discovery means more generations per hour and therefore faster evolution.
 
 3. **Minimise changes to the calling programme (NEAT-AI).** New discovery features
-   should re-use existing candidate types (`addNeuron`, `removeSynapse`,
+   should reuse existing candidate types (`addNeuron`, `removeSynapse`,
    `setBias`, `setWeight`, `coordinatedStructural`, etc.) whenever possible. If
    a new candidate type is truly required it must be documented in this README and
    a corresponding handler added to NEAT-AI.
 
 > **In short:** discover score-improving mutations, use GPU/SIMD to do it quickly,
-> and re-use the candidate types that NEAT-AI already understands.
+> and reuse the candidate types that NEAT-AI already understands.
 
 ## TL;DR
 
