@@ -307,6 +307,7 @@ fn analyze_parallel_output_contains_all_candidate_fields() {
         helpful_neurons: Some(vec![]),
         synapse_weight_updates: Some(vec![]),
         coordinated_structural_candidates: Some(vec![]),
+        candidate_clusters: None,
         neuron_diagnostics: None,
         neuron_gpu_used: Some(true),
         neuron_metadata: None,
