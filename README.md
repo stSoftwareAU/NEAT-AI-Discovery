@@ -621,6 +621,31 @@ range must encode all upstream information.
 `addNeuron` and/or `addSynapse` operations. No new candidate types are needed — this
 reuses the existing coordinated structural change mechanism.
 
+#### Dead Neuron Detection (Issue #341)
+
+As NEAT networks evolve, some neurons may become dead through weight changes that push
+their inputs to always land in the zero region of their activation function (e.g., RELU
+neurons that never receive positive input). Dead neurons consume GPU resources during both
+training and inference without contributing useful information to the network's output.
+
+**Detection criteria**:
+- **Near-zero activation**: Mean absolute activation < 1e-6 across all samples
+- **Zero variance**: Activation standard deviation ≈ 0 (always outputs the same value)
+- **No meaningful activity**: Fewer than 1% of samples show activation above 0.01
+- **Hidden neurons only**: Output and input neurons are excluded
+
+**Removal confidence** combines:
+- **Activation factor** (40%): How close mean absolute activation is to zero
+- **Variance factor** (40%): How close standard deviation is to zero
+- **Sample size factor** (20%): More samples increase confidence (plateaus at 1000)
+
+**Recommended action**:
+- **Remove neuron**: Emit a `RemoveNeuron` operation to eliminate wasted computation
+
+**Output**: Dead neuron candidates appear in `coordinatedStructuralCandidates` with
+`removeNeuron` operations. No new candidate types are needed — this reuses the existing
+coordinated structural change mechanism.
+
 ### Discrete activation function handling
 
 The standard discovery algorithm uses a **linear error model** to predict improvement:

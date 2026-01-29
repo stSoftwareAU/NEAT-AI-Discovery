@@ -54,6 +54,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | **remove-harmful-synapse** | Remove synapses that increase error | — | — | — | 🟠 Not tested |
 | **remove-neuron** | Remove harmful neurons (high error magnitude) | 0 | 2 | 0.0% | 🔴 Not working |
 | **redundant-path-pruning** | Prune redundant paths and renormalise survivor weight (Issue #164) | — | — | — | 🟢 Active |
+| **dead-neuron-removal** | Remove dead neurons with near-zero activation (Issue #341) | — | — | — | 🟢 Active |
 | **combo-successful** | Apply multiple successful changes together | 0 | 8 | 0.0% | 🔴 Not working |
 
 **Total**: 624 successes / 9,276 failures (6.3% overall success rate)
@@ -395,6 +396,34 @@ but applies a filter requiring `expectedCreatureScoreGain < 0` (line 1917-1919).
 **Current status**: 🔴 **Not working** – 0 successes from 2 attempts. The massive discrepancy
 between predicted improvement (0.41) and actual result (-0.00003) suggests the error
 magnitude calculation may not translate to actual score improvement.
+
+---
+
+### dead-neuron-removal
+
+🧹 **Purpose**: Remove dead neurons that always output zero or near-zero activation (Issue #341).
+
+**How it works**:
+1. Rust analyses recorded activations for each hidden neuron
+2. Identifies neurons with mean absolute activation < 1e-6 and near-zero standard deviation
+3. Verifies the neuron is not rarely but meaningfully active (< 1% of samples above 0.01)
+4. Emits a `RemoveNeuron` coordinated structural candidate
+
+**Detection criteria**:
+- Mean absolute activation < 1e-6
+- Activation standard deviation < 1e-6
+- Fewer than 1% of samples show activation above 0.01
+- Minimum 20 samples required
+- Hidden neurons only (output/input neurons excluded)
+
+**Removal confidence** combines activation proximity to zero (40%), variance proximity to
+zero (40%), and sample count (20%, plateaus at 1000 samples).
+
+**Output**: Dead neuron candidates appear in `coordinatedStructuralCandidates` with
+`removeNeuron` operations, reusing the existing coordinated structural change mechanism.
+
+**Current status**: 🟢 **Active** – New discovery category. Dead neurons waste computation
+without contributing to the network's output, so removal reduces overhead.
 
 ---
 
