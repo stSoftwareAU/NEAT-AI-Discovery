@@ -18,6 +18,31 @@ larger.
 Controllers call into the library via Deno FFI to power `Creature.discoveryDir()`
 workflows.
 
+## Project Mission
+
+**The sole goal of this library is to discover changes that improve the creature's
+score — as fast as possible.**
+
+Everything in this repository serves that objective:
+
+1. **Improve the creature's score.** Only return candidates which are expected to improve the creature's score.
+   Every candidate proposed by the analysis pipeline
+   must have a positive expected improvement; anything else wastes the controller's
+   evaluation budget.
+
+2. **Discover improvements as fast as possible.** We leverage GPU compute shaders
+   and SIMD where available so that large creatures (thousands of neurons / synapses)
+   can be analysed in seconds rather than minutes. Speed matters because faster
+   discovery means more generations per hour and therefore faster evolution.
+
+3. **Minimise changes to the calling programme (NEAT-AI).** New discovery features
+   should reuse existing candidate types (`addNeuron`, `removeSynapse`,
+   `setBias`, `setWeight`, `coordinatedStructural`, etc.) whenever possible. If
+   a new candidate type is truly required it must be documented in this README and
+   a corresponding handler added to NEAT-AI.
+
+> **In short:** discover score-improving mutations, use GPU/SIMD to do it quickly,
+> and reuse the candidate types that NEAT-AI already understands.
 
 ## TL;DR
 
@@ -2192,10 +2217,13 @@ here for convenience:
 
 ## Goal
 
+> See also the top-level [Project Mission](#project-mission) for the guiding
+> principles that apply to every contribution.
+
 The goal is to record neuron activations and errors during the discovery
 training phase, then scan this recorded data to identify **high-quality
-mutation candidates** (add / remove / modify) that are likely to improve the
-creature's score.
+mutation candidates** (add / remove / modify) that are expected to improve the
+creature's score — and to do so as fast as possible using GPU/SIMD acceleration.
 
 This is a guided alternative to NEAT's purely random structural mutations. As
 creatures grow large, randomly stumbling into beneficial mutations can take a
