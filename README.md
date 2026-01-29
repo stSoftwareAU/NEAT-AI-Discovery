@@ -671,6 +671,32 @@ there is nothing to correlate.
 `addNeuron` and `addSynapse` operations. No new candidate types are needed — this reuses
 the existing coordinated structural change mechanism.
 
+#### Multi-Hop Candidate Analysis (Issue #230)
+
+Current discovery considers single-hop improvements (adding one synapse or neuron). For deep
+networks, multi-hop improvements (adding a path of 2-3 connections) may be more effective.
+This analysis finds neurons whose activations correlate with a target's error but are not
+directly connected, then recommends bypass synapses or relay neurons.
+
+**Detection method**:
+1. **Find correlated intermediates**: For each target neuron with errors, find neurons whose
+   activation correlates (Pearson |r| ≥ 0.3) with the target's error but are not directly
+   connected.
+2. **Build two-hop paths**: intermediate → target bypass candidates.
+3. **Extend to three-hop**: source → intermediate → target relay candidates, where the
+   source's activation correlates with the intermediate's activation.
+4. **Aggressive pruning**: Max 10 intermediates per target, max 50 total candidates,
+   max 3 hops depth.
+
+**Recommended actions**:
+- **Add bypass synapse** (two-hop): Connect the correlated neuron directly to the target.
+- **Add relay neuron** (three-hop): Insert a new hidden neuron along the path to relay
+  information from source through to target.
+
+**Output**: Multi-hop candidates appear in `coordinatedStructuralCandidates` with `addNeuron`
+and/or `addSynapse` operations. No new candidate types are needed — this reuses the existing
+coordinated structural change mechanism.
+
 #### Candidate Clustering for Redundancy Reduction (Issue #224)
 
 When discovery returns many similar candidates (e.g., multiple synapses from the same source

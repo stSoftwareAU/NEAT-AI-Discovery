@@ -20,6 +20,7 @@
 //! - `dead_neuron.rs` - Dead neuron detection for removal candidates (Issue #341)
 //! - `correlated_error.rs` - Correlated error pattern detection for shared-cause identification (Issue #344)
 //! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests (Issue #224)
+//! - `multi_hop.rs` - Multi-hop candidate analysis for deeper network improvements (Issue #230)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 
 pub mod activation;
@@ -34,6 +35,7 @@ pub mod early_termination;
 pub mod epistatic;
 pub mod error_distribution;
 pub mod gpu;
+pub mod multi_hop;
 pub mod neuron;
 pub mod redundant_path;
 pub mod samples;
@@ -797,6 +799,62 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
 
         crate::watchdog::beat("analysis::analyze_all → correlated error detection finished");
+
+        // Issue #230: Multi-hop candidate analysis for deeper network improvements.
+        // Finds neurons whose activations correlate with target errors but are not directly
+        // connected, and recommends bypass synapses or relay neurons to improve information flow.
+        crate::watchdog::beat("analysis::analyze_all → multi-hop analysis starting");
+        let _multi_hop_timer = PhaseTimer::new("multi_hop_analysis");
+
+        if !hidden_neurons.is_empty() {
+            // Collect records for all neurons (input, hidden, output)
+            let multi_hop_neuron_uuids: Vec<String> = input
+                .creature
+                .neurons
+                .iter()
+                .map(|n| n.uuid.clone())
+                .collect();
+
+            let multi_hop_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
+                multi_hop_neuron_uuids
+                    .iter()
+                    .filter_map(|uuid| {
+                        shared_cache
+                            .get(uuid)
+                            .ok()
+                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
+                    })
+                    .collect();
+
+            let multi_hop_candidates =
+                multi_hop::detect_multi_hop_candidates(&input.creature, &multi_hop_records);
+
+            if !multi_hop_candidates.is_empty() {
+                let coordinated_multi_hop = multi_hop::multi_hop_to_coordinated_candidates(
+                    &multi_hop_candidates,
+                    &input.creature,
+                );
+
+                if !coordinated_multi_hop.is_empty() {
+                    if utils::verbose_enabled() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Multi-hop analysis: found {} candidate(s), {} coordinated operation(s)",
+                            multi_hop_candidates.len(),
+                            coordinated_multi_hop.len()
+                        );
+                    }
+
+                    merge_coordinated_structural_replacements(
+                        syn,
+                        coordinated_multi_hop,
+                        input.max_synapse_candidates,
+                        input.analysis_deadline_ms.is_some(),
+                    );
+                }
+            }
+        }
+
+        crate::watchdog::beat("analysis::analyze_all → multi-hop analysis finished");
     }
 
     // Issue #224: Candidate clustering to reduce redundant ablation tests.
