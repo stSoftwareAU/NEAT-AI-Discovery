@@ -562,6 +562,38 @@ complexity without degrading fitness.
 `removeSynapse` operation (for the pruned path) and a `setWeight` operation (for the
 renormalised survivor). No new operation types are needed.
 
+#### Saturated Neuron Detection (Issue #342)
+
+Neurons using bounded activation functions (e.g., TANH, LOGISTIC) can become saturated when
+their input is consistently very large or very small. A TANH neuron with input always > 5
+outputs ≈ 1.0 regardless of input variation, effectively becoming a constant. This blocks
+useful signal propagation and wastes gradient capacity.
+
+**Detection criteria**:
+- **Activation near bounds**: For TANH, mean activation > 0.95 or < -0.95 across samples
+- **Low relative variance**: Activation standard deviation < 0.05 (output doesn't vary)
+- **Bounded activation**: Only bounded functions (TANH, LOGISTIC, HARD_TANH, etc.) can saturate
+- **RELU dead-zone**: RELU neurons with all-zero output are also detected
+
+**Supported activation functions**:
+
+| Squash | Saturation Type | Threshold |
+|--------|----------------|-----------|
+| TANH | Ceiling/floor | \|mean\| > 0.95 |
+| LOGISTIC | Ceiling/floor | mean > 0.95 or < 0.05 |
+| HARD_TANH | Clamped | \|mean\| > 0.99 |
+| RELU | Dead zone | mean ≈ 0, std ≈ 0 |
+| SOFTSIGN, ISRU, ARCTAN | Ceiling/floor | \|mean\| > 0.95 |
+| RELU6 | Ceiling/dead | mean > 5.9 or ≈ 0 |
+
+**Recommended actions**:
+1. **Change activation function**: Switch to IDENTITY to restore signal flow
+2. **Adjust bias**: Shift bias to move the neuron's operating point away from saturation
+
+**Output**: Saturation candidates appear in `coordinatedStructuralCandidates` with
+`changeSquash` and/or `setBias` operations. No new candidate types are needed — this
+reuses the existing coordinated structural change mechanism.
+
 ### Discrete activation function handling
 
 The standard discovery algorithm uses a **linear error model** to predict improvement:

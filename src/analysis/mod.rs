@@ -15,6 +15,7 @@
 //! - `diagnostics.rs` - Diagnostic tracking and rejection reasons (Issue #271)
 //! - `cache.rs` - Record caching for parquet files (Issue #185)
 //! - `streaming.rs` - Streaming parquet loading with block-based caching (Issue #193)
+//! - `saturation.rs` - Saturated neuron detection for activation function changes (Issue #342)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 
 pub mod activation;
@@ -28,6 +29,7 @@ pub mod gpu;
 pub mod neuron;
 pub mod redundant_path;
 pub mod samples;
+pub mod saturation;
 pub mod shared;
 pub mod streaming;
 pub mod synapse;
@@ -565,6 +567,63 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             input.max_synapse_candidates,
             input.analysis_deadline_ms.is_some(),
         );
+    }
+
+    // Issue #342: Detect saturated neurons and recommend activation function changes.
+    // This runs as a post-processing pass over all hidden neurons in the creature,
+    // using recorded activations from the shared cache to identify neurons that are
+    // stuck at their activation ceiling or floor.
+    if let Some(syn) = synapse_result.as_mut() {
+        crate::watchdog::beat("analysis::analyze_all → saturation detection starting");
+        let _timer = PhaseTimer::new("saturation_detection");
+
+        // Collect hidden neurons with their squash and bias
+        let hidden_neurons: Vec<(String, String, f32)> = input
+            .creature
+            .neurons
+            .iter()
+            .filter(|n| n.neuron_type == "hidden")
+            .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
+            .collect();
+
+        if !hidden_neurons.is_empty() {
+            // Retrieve recorded activations for each hidden neuron from the cache
+            let neuron_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden_neurons
+                .iter()
+                .filter_map(|(uuid, _, _)| {
+                    shared_cache
+                        .get(uuid)
+                        .ok()
+                        .map(|records| (uuid.clone(), records.as_ref().to_vec()))
+                })
+                .collect();
+
+            let saturated = saturation::detect_saturated_neurons(&hidden_neurons, &neuron_records);
+
+            if !saturated.is_empty() {
+                let saturation_candidates =
+                    saturation::saturated_neurons_to_coordinated_candidates(&saturated);
+
+                if !saturation_candidates.is_empty() {
+                    if utils::verbose_enabled() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Saturation detection: found {} saturated neuron(s), {} candidate(s)",
+                            saturated.len(),
+                            saturation_candidates.len()
+                        );
+                    }
+
+                    merge_coordinated_structural_replacements(
+                        syn,
+                        saturation_candidates,
+                        input.max_synapse_candidates,
+                        input.analysis_deadline_ms.is_some(),
+                    );
+                }
+            }
+        }
+
+        crate::watchdog::beat("analysis::analyze_all → saturation detection finished");
     }
 
     // Collect final profile data (Issue #214)
