@@ -22,6 +22,10 @@
 //! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests (Issue #224)
 //! - `multi_hop.rs` - Multi-hop candidate analysis for deeper network improvements (Issue #230)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
+//! - `oscillating_neuron.rs` - Oscillating neuron detection for stabilisation candidates (Issue #356)
+//! - `dormant_synapse.rs` - Dormant synapse detection for removal candidates (Issue #356)
+//! - `opposing_synapse.rs` - Opposing synapse detection for removal or weight flip candidates (Issue #356)
+//! - `output_bias_drift.rs` - Output bias drift detection for bias adjustment candidates (Issue #356)
 
 pub mod activation;
 pub mod bottleneck;
@@ -31,12 +35,16 @@ pub mod confidence;
 pub mod correlated_error;
 pub mod dead_neuron;
 pub mod diagnostics;
+pub mod dormant_synapse;
 pub mod early_termination;
 pub mod epistatic;
 pub mod error_distribution;
 pub mod gpu;
 pub mod multi_hop;
 pub mod neuron;
+pub mod opposing_synapse;
+pub mod oscillating_neuron;
+pub mod output_bias_drift;
 pub mod redundant_path;
 pub mod samples;
 pub mod saturation;
@@ -855,6 +863,226 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
 
         crate::watchdog::beat("analysis::analyze_all → multi-hop analysis finished");
+
+        // Issue #356: Detect oscillating neurons for stabilisation candidates.
+        // Oscillating neurons have activations that frequently change sign across samples,
+        // indicating the neuron is fighting between contradictory functions. We recommend
+        // changing the activation function to stabilise the output.
+        crate::watchdog::beat("analysis::analyze_all → oscillating neuron detection starting");
+        let _oscillating_timer = PhaseTimer::new("oscillating_neuron_detection");
+
+        if !hidden_neurons.is_empty() {
+            let oscillating_neuron_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
+                hidden_neurons
+                    .iter()
+                    .filter_map(|(uuid, _, _)| {
+                        shared_cache
+                            .get(uuid)
+                            .ok()
+                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
+                    })
+                    .collect();
+
+            let oscillating_candidates = oscillating_neuron::detect_oscillating_neurons(
+                &hidden_neurons,
+                &oscillating_neuron_records,
+            );
+
+            if !oscillating_candidates.is_empty() {
+                let coordinated_oscillating =
+                    oscillating_neuron::oscillating_neurons_to_coordinated_candidates(
+                        &oscillating_candidates,
+                    );
+
+                if !coordinated_oscillating.is_empty() {
+                    if utils::verbose_enabled() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Oscillating neuron detection: found {} oscillating neuron(s), {} candidate(s)",
+                            oscillating_candidates.len(),
+                            coordinated_oscillating.len()
+                        );
+                    }
+
+                    merge_coordinated_structural_replacements(
+                        syn,
+                        coordinated_oscillating,
+                        input.max_synapse_candidates,
+                        input.analysis_deadline_ms.is_some(),
+                    );
+                }
+            }
+        }
+
+        crate::watchdog::beat("analysis::analyze_all → oscillating neuron detection finished");
+
+        // Issue #356: Detect dormant synapses for removal candidates.
+        // Dormant synapses have near-zero weights that contribute negligible signal.
+        // We recommend removing them to reduce network complexity.
+        crate::watchdog::beat("analysis::analyze_all → dormant synapse detection starting");
+        let _dormant_timer = PhaseTimer::new("dormant_synapse_detection");
+
+        {
+            // Collect records for all source neurons referenced by synapses
+            let source_uuids: Vec<String> = input
+                .creature
+                .synapses
+                .iter()
+                .map(|s| s.from_uuid.clone())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+
+            let dormant_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = source_uuids
+                .iter()
+                .filter_map(|uuid| {
+                    shared_cache
+                        .get(uuid)
+                        .ok()
+                        .map(|records| (uuid.clone(), records.as_ref().to_vec()))
+                })
+                .collect();
+
+            let dormant_candidates =
+                dormant_synapse::detect_dormant_synapses(&input.creature, &dormant_records);
+
+            if !dormant_candidates.is_empty() {
+                let coordinated_dormant =
+                    dormant_synapse::dormant_synapses_to_coordinated_candidates(
+                        &dormant_candidates,
+                    );
+
+                if !coordinated_dormant.is_empty() {
+                    if utils::verbose_enabled() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Dormant synapse detection: found {} dormant synapse(s), {} candidate(s)",
+                            dormant_candidates.len(),
+                            coordinated_dormant.len()
+                        );
+                    }
+
+                    merge_coordinated_structural_replacements(
+                        syn,
+                        coordinated_dormant,
+                        input.max_synapse_candidates,
+                        input.analysis_deadline_ms.is_some(),
+                    );
+                }
+            }
+        }
+
+        crate::watchdog::beat("analysis::analyze_all → dormant synapse detection finished");
+
+        // Issue #356: Detect opposing synapses for removal or weight flip candidates.
+        // Opposing synapses have contributions that correlate positively with target error,
+        // meaning they actively make predictions worse.
+        crate::watchdog::beat("analysis::analyze_all → opposing synapse detection starting");
+        let _opposing_timer = PhaseTimer::new("opposing_synapse_detection");
+
+        {
+            // Collect records for all neurons (sources + output targets)
+            let all_neuron_uuids: Vec<String> = input
+                .creature
+                .neurons
+                .iter()
+                .map(|n| n.uuid.clone())
+                .collect();
+
+            let opposing_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
+                all_neuron_uuids
+                    .iter()
+                    .filter_map(|uuid| {
+                        shared_cache
+                            .get(uuid)
+                            .ok()
+                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
+                    })
+                    .collect();
+
+            let opposing_candidates =
+                opposing_synapse::detect_opposing_synapses(&input.creature, &opposing_records);
+
+            if !opposing_candidates.is_empty() {
+                let coordinated_opposing =
+                    opposing_synapse::opposing_synapses_to_coordinated_candidates(
+                        &opposing_candidates,
+                    );
+
+                if !coordinated_opposing.is_empty() {
+                    if utils::verbose_enabled() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Opposing synapse detection: found {} opposing synapse(s), {} candidate(s)",
+                            opposing_candidates.len(),
+                            coordinated_opposing.len()
+                        );
+                    }
+
+                    merge_coordinated_structural_replacements(
+                        syn,
+                        coordinated_opposing,
+                        input.max_synapse_candidates,
+                        input.analysis_deadline_ms.is_some(),
+                    );
+                }
+            }
+        }
+
+        crate::watchdog::beat("analysis::analyze_all → opposing synapse detection finished");
+
+        // Issue #356: Detect output bias drift for bias adjustment candidates.
+        // Output neurons with consistent error sign bias indicate a systematic prediction
+        // offset that can be corrected by adjusting the neuron's bias parameter.
+        crate::watchdog::beat("analysis::analyze_all → output bias drift detection starting");
+        let _bias_drift_timer = PhaseTimer::new("output_bias_drift_detection");
+
+        {
+            let output_neuron_uuids: Vec<String> = input
+                .creature
+                .neurons
+                .iter()
+                .filter(|n| n.neuron_type == "output")
+                .map(|n| n.uuid.clone())
+                .collect();
+
+            let bias_drift_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
+                output_neuron_uuids
+                    .iter()
+                    .filter_map(|uuid| {
+                        shared_cache
+                            .get(uuid)
+                            .ok()
+                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
+                    })
+                    .collect();
+
+            let bias_drift_candidates =
+                output_bias_drift::detect_output_bias_drift(&input.creature, &bias_drift_records);
+
+            if !bias_drift_candidates.is_empty() {
+                let coordinated_bias_drift =
+                    output_bias_drift::output_bias_drift_to_coordinated_candidates(
+                        &bias_drift_candidates,
+                    );
+
+                if !coordinated_bias_drift.is_empty() {
+                    if utils::verbose_enabled() {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Output bias drift detection: found {} biased output(s), {} candidate(s)",
+                            bias_drift_candidates.len(),
+                            coordinated_bias_drift.len()
+                        );
+                    }
+
+                    merge_coordinated_structural_replacements(
+                        syn,
+                        coordinated_bias_drift,
+                        input.max_synapse_candidates,
+                        input.analysis_deadline_ms.is_some(),
+                    );
+                }
+            }
+        }
+
+        crate::watchdog::beat("analysis::analyze_all → output bias drift detection finished");
     }
 
     // Issue #224: Candidate clustering to reduce redundant ablation tests.

@@ -697,6 +697,93 @@ directly connected, then recommends bypass synapses or relay neurons.
 and/or `addSynapse` operations. No new candidate types are needed — this reuses the existing
 coordinated structural change mechanism.
 
+#### Oscillating Neuron Detection (Issue #356)
+
+Identifies hidden neurons whose activations frequently change sign across training samples.
+An oscillating neuron is fighting between two contradictory functions — it activates
+positively for some samples and negatively for others, with frequent sign changes. This
+wastes representational capacity and can be stabilised by changing the activation function.
+
+**Detection criteria**:
+1. **Sign change fraction ≥ 0.3**: At least 30% of consecutive sample pairs show a sign change.
+2. **Balanced signs**: Both positive and negative activations appear in substantial proportions
+   (minority sign ≥ 20%).
+3. **Meaningful magnitude**: Mean absolute activation ≥ 0.01 (distinguishes from dead neurons).
+4. **Hidden neurons only**: Input and output neurons are excluded.
+
+**Recommended actions**:
+- **Change activation function**: Switch to ABSOLUTE (for symmetric activations like TANH) or
+  RELU (for other functions) to stabilise the output sign.
+- **Adjust bias**: Shift the operating point to favour the dominant sign direction.
+
+**Output**: Oscillating neuron candidates appear in `coordinatedStructuralCandidates` with
+`changeSquash` and optionally `setBias` operations. This reuses the existing coordinated
+structural change mechanism.
+
+#### Dormant Synapse Detection (Issue #356)
+
+Identifies synapses with near-zero weights that contribute negligible signal to their
+target neuron. Dormant synapses waste computation during both forward pass and discovery
+analysis without providing meaningful information flow.
+
+**Detection criteria**:
+1. **Near-zero weight**: Absolute weight < 1e-4.
+2. **Low contribution**: Mean absolute contribution (|weight × source_activation|) < 1e-4.
+3. **Not the sole connection**: The target neuron has other incoming synapses (removing the
+   only input would be destructive).
+4. **Sufficient samples**: At least 20 samples for statistical reliability.
+
+**Recommended actions**:
+- **Remove the synapse**: Emit a `removeSynapse` operation to reduce network complexity.
+
+**Output**: Dormant synapse candidates appear in `coordinatedStructuralCandidates` with
+`removeSynapse` operations. This reuses the existing coordinated structural change mechanism.
+
+#### Opposing Synapse Detection (Issue #356)
+
+Identifies synapses whose contribution consistently works against error reduction. When a
+synapse's contribution (weight × source_activation) correlates positively with the target
+neuron's error, the synapse is actively hindering performance by pushing the output in the
+wrong direction.
+
+**Detection criteria**:
+1. **Positive contribution–error correlation**: Pearson correlation ≥ 0.3 between the
+   synapse's contribution and target error.
+2. **Meaningful contribution**: Mean absolute contribution ≥ 0.01 (distinguishes from
+   dormant synapses).
+3. **Output targets only**: Only synapses targeting output neurons are analysed (where
+   error is directly measured).
+4. **Sufficient samples**: At least 20 matched sample pairs.
+
+**Recommended actions**:
+- **Remove the synapse** (correlation > 0.5): Eliminate the harmful connection entirely.
+- **Flip the weight sign** (correlation 0.3–0.5): Negate the weight to reverse the
+  harmful contribution direction.
+
+**Output**: Opposing synapse candidates appear in `coordinatedStructuralCandidates` with
+`removeSynapse` or `setWeight` operations. This reuses the existing coordinated structural
+change mechanism.
+
+#### Output Bias Drift Detection (Issue #356)
+
+Identifies output neurons with a consistent error sign bias — neurons whose errors are
+predominantly positive (predicting too low) or predominantly negative (predicting too
+high) across training samples. This systematic bias indicates the neuron's bias parameter
+needs adjustment.
+
+**Detection criteria**:
+1. **Consistent error sign**: More than 70% of errors share the same sign.
+2. **Meaningful mean error**: Absolute mean error ≥ 0.01 (not just noise).
+3. **Output neurons only**: Hidden and input neurons are excluded.
+4. **Sufficient samples**: At least 20 samples for statistical reliability.
+
+**Recommended actions**:
+- **Set bias**: Adjust the output neuron's bias by the negative of the mean error to
+  centre the predictions.
+
+**Output**: Bias drift candidates appear in `coordinatedStructuralCandidates` with
+`setBias` operations. This reuses the existing coordinated structural change mechanism.
+
 #### Candidate Clustering for Redundancy Reduction (Issue #224)
 
 When discovery returns many similar candidates (e.g., multiple synapses from the same source
