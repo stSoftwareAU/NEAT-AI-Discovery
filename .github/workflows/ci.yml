@@ -14,6 +14,7 @@ on:
       - '**.md'          # Skip CI for documentation-only changes
       - 'docs/**'
   pull_request:
+    types: [opened, synchronize, reopened]
     branches:
       - Develop
   workflow_dispatch: # Allow manual trigger if needed
