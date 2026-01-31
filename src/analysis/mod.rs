@@ -25,7 +25,7 @@
 //! - `oscillating_neuron.rs` - Oscillating neuron detection for stabilisation candidates (Issue #358)
 //! - `dormant_synapse.rs` - Dormant synapse detection for removal candidates (Issue #359)
 //! - `opposing_synapse.rs` - Opposing synapse detection for removal or weight flip candidates (Issue #360)
-//! - `output_bias_drift.rs` - Output bias drift detection for bias adjustment candidates (Issue #356)
+//! - `output_bias_drift.rs` - Output bias drift detection for bias adjustment candidates (Issue #361)
 
 pub mod activation;
 pub mod bottleneck;
@@ -1028,7 +1028,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
         crate::watchdog::beat("analysis::analyze_all → opposing synapse detection finished");
 
-        // Issue #356: Detect output bias drift for bias adjustment candidates.
+        // Issue #361: Detect output bias drift for bias adjustment candidates.
         // Output neurons with consistent error sign bias indicate a systematic prediction
         // offset that can be corrected by adjusting the neuron's bias parameter.
         crate::watchdog::beat("analysis::analyze_all → output bias drift detection starting");

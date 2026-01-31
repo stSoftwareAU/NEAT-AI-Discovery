@@ -764,7 +764,7 @@ wrong direction.
 `removeSynapse` or `setWeight` operations. This reuses the existing coordinated structural
 change mechanism.
 
-#### Output Bias Drift Detection (Issue #356)
+#### Output Bias Drift Detection (Issue #361)
 
 Identifies output neurons with a consistent error sign bias — neurons whose errors are
 predominantly positive (predicting too low) or predominantly negative (predicting too
