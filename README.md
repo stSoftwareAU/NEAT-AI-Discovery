@@ -720,7 +720,7 @@ wastes representational capacity and can be stabilised by changing the activatio
 `changeSquash` and optionally `setBias` operations. This reuses the existing coordinated
 structural change mechanism.
 
-#### Dormant Synapse Detection (Issue #356)
+#### Dormant Synapse Detection (Issue #359)
 
 Identifies synapses with near-zero weights that contribute negligible signal to their
 target neuron. Dormant synapses waste computation during both forward pass and discovery
