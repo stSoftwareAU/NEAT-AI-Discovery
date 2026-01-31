@@ -1,4 +1,4 @@
-//! Output bias drift detection module (Issue #356).
+//! Output bias drift detection module (Issue #361).
 //!
 //! Identifies output neurons with a consistent error sign bias — that is, neurons
 //! whose errors are predominantly positive (predicting too low) or predominantly
