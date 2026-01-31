@@ -22,7 +22,7 @@
 //! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests (Issue #224)
 //! - `multi_hop.rs` - Multi-hop candidate analysis for deeper network improvements (Issue #230)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
-//! - `oscillating_neuron.rs` - Oscillating neuron detection for stabilisation candidates (Issue #356)
+//! - `oscillating_neuron.rs` - Oscillating neuron detection for stabilisation candidates (Issue #358)
 //! - `dormant_synapse.rs` - Dormant synapse detection for removal candidates (Issue #356)
 //! - `opposing_synapse.rs` - Opposing synapse detection for removal or weight flip candidates (Issue #356)
 //! - `output_bias_drift.rs` - Output bias drift detection for bias adjustment candidates (Issue #356)

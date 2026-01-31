@@ -1,4 +1,4 @@
-//! Oscillating neuron detection module (Issue #356).
+//! Oscillating neuron detection module (Issue #358).
 //!
 //! Identifies hidden neurons whose activations oscillate between positive and negative
 //! values across training samples, indicating the neuron is fighting between two

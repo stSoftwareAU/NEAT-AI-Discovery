@@ -697,7 +697,7 @@ directly connected, then recommends bypass synapses or relay neurons.
 and/or `addSynapse` operations. No new candidate types are needed — this reuses the existing
 coordinated structural change mechanism.
 
-#### Oscillating Neuron Detection (Issue #356)
+#### Oscillating Neuron Detection (Issue #358)
 
 Identifies hidden neurons whose activations frequently change sign across training samples.
 An oscillating neuron is fighting between two contradictory functions — it activates
