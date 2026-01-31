@@ -739,7 +739,7 @@ analysis without providing meaningful information flow.
 **Output**: Dormant synapse candidates appear in `coordinatedStructuralCandidates` with
 `removeSynapse` operations. This reuses the existing coordinated structural change mechanism.
 
-#### Opposing Synapse Detection (Issue #356)
+#### Opposing Synapse Detection (Issue #360)
 
 Identifies synapses whose contribution consistently works against error reduction. When a
 synapse's contribution (weight × source_activation) correlates positively with the target

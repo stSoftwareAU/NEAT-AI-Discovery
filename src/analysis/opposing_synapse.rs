@@ -1,4 +1,4 @@
-//! Opposing synapse detection module (Issue #356).
+//! Opposing synapse detection module (Issue #360).
 //!
 //! Identifies synapses whose contribution consistently works against error reduction.
 //! When a synapse's activation–error correlation is strongly positive (meaning the
