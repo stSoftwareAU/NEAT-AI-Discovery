@@ -24,7 +24,7 @@
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 //! - `oscillating_neuron.rs` - Oscillating neuron detection for stabilisation candidates (Issue #358)
 //! - `dormant_synapse.rs` - Dormant synapse detection for removal candidates (Issue #359)
-//! - `opposing_synapse.rs` - Opposing synapse detection for removal or weight flip candidates (Issue #356)
+//! - `opposing_synapse.rs` - Opposing synapse detection for removal or weight flip candidates (Issue #360)
 //! - `output_bias_drift.rs` - Output bias drift detection for bias adjustment candidates (Issue #356)
 
 pub mod activation;
@@ -972,7 +972,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
         crate::watchdog::beat("analysis::analyze_all → dormant synapse detection finished");
 
-        // Issue #356: Detect opposing synapses for removal or weight flip candidates.
+        // Issue #360: Detect opposing synapses for removal or weight flip candidates.
         // Opposing synapses have contributions that correlate positively with target error,
         // meaning they actively make predictions worse.
         crate::watchdog::beat("analysis::analyze_all → opposing synapse detection starting");
