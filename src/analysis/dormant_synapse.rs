@@ -1,4 +1,4 @@
-//! Dormant synapse detection module (Issue #356).
+//! Dormant synapse detection module (Issue #359).
 //!
 //! Identifies synapses with near-zero weights that contribute negligible signal
 //! to their target neuron. Dormant synapses waste computation during both forward

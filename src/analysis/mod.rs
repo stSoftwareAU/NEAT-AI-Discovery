@@ -23,7 +23,7 @@
 //! - `multi_hop.rs` - Multi-hop candidate analysis for deeper network improvements (Issue #230)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 //! - `oscillating_neuron.rs` - Oscillating neuron detection for stabilisation candidates (Issue #358)
-//! - `dormant_synapse.rs` - Dormant synapse detection for removal candidates (Issue #356)
+//! - `dormant_synapse.rs` - Dormant synapse detection for removal candidates (Issue #359)
 //! - `opposing_synapse.rs` - Opposing synapse detection for removal or weight flip candidates (Issue #356)
 //! - `output_bias_drift.rs` - Output bias drift detection for bias adjustment candidates (Issue #356)
 
@@ -915,7 +915,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
         crate::watchdog::beat("analysis::analyze_all → oscillating neuron detection finished");
 
-        // Issue #356: Detect dormant synapses for removal candidates.
+        // Issue #359: Detect dormant synapses for removal candidates.
         // Dormant synapses have near-zero weights that contribute negligible signal.
         // We recommend removing them to reduce network complexity.
         crate::watchdog::beat("analysis::analyze_all → dormant synapse detection starting");
