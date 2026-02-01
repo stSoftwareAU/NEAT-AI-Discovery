@@ -260,97 +260,27 @@ If the script reports that discovery is enabled, you are ready to schedule
 
 ## Development
 
-> **For AI agents**: Detailed coding conventions, testing philosophy, and
-> development guidelines live in [AGENTS.md](AGENTS.md). The sections below
-> cover user-facing build and test instructions.
+For prerequisites, building, testing, code style, and the full development
+workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### Development Guidelines
+> **For AI agents**: Machine-readable coding conventions and invariants live in
+> [AGENTS.md](AGENTS.md).
 
-**Always run `./quality.sh` before committing.** This script runs formatting,
-linting, type checking, and all tests. CI treats warnings as errors.
-
-See [AGENTS.md](AGENTS.md) for the full set of mandatory development practices
-including TDD workflow, code organisation rules, testing philosophy, and
-dependency licence requirements.
-
-### Prerequisites
-
-**User-installable (automatically handled by `runlib.sh`):**
-- Rust (latest stable version)
-- Cargo
-
-**System packages (must be installed by administrator):**
-- **jq** — must be installed system-wide (required for build scripts)
-- **Build tools (gcc/cc)** — required on Linux systems:
-  - **Ubuntu/Debian**: `sudo apt-get install -y build-essential`
-  - **RHEL/CentOS/Amazon Linux**: `sudo yum groupinstall -y "Development Tools" && sudo yum install -y gcc`
-  - **Fedora**: `sudo dnf groupinstall -y "Development Tools" && sudo dnf install -y gcc`
-- **macOS**: Xcode Command Line Tools (`xcode-select --install`)
-
-### Building
+**Quick reference:**
 
 ```bash
+# Build and install
 ./scripts/runlib.sh
-```
 
-This builds the library and installs it to `~/.cargo/lib/` with version tracking.
-The script automatically installs Rust and Cargo if missing (no sudo required).
+# Quality gate (run before every commit)
+./quality.sh
 
-### Testing
-
-Unit tests verify correctness; benchmarks measure performance. See
-[AGENTS.md — Unit Tests vs Benchmarks](AGENTS.md#unit-tests-vs-benchmarks).
-
-```bash
-# Run all tests (unit + integration)
-cargo test
-
-# Run unit tests only (in src/)
-cargo test --lib
-
-# Run integration tests only (in tests/)
-cargo test --test '*'
-
-# Run specific test file
-cargo test --test integration
-
-# Run tests matching a pattern
-cargo test test_hidden_neuron
+# Run all tests
+cargo test --lib --tests --all-features -- --test-threads=1
 
 # Run benchmarks
-cargo bench
+cargo bench --bench <bench_name>
 ```
-
-**Note**: GPU-dependent tests include `skip_without_gpu!()` and will be skipped
-automatically on machines without a GPU. Run `./quality.sh` locally with a GPU
-for full test coverage.
-
-### Deployment Checklist
-
-1. **Run quality checks in both repositories:**
-   ```bash
-   # In NEAT-AI-Discovery
-   ./quality.sh
-
-   # In NEAT-AI
-   cd ../NEAT-AI
-   ./quality.sh
-   ```
-2. **Verify all tests pass** in both repositories before committing.
-
-**Note on versions**: Do not manually bump versions. CI increments `Cargo.toml`
-patch versions when `src/` changes are detected. Call `get_library_version()` to
-confirm what a worker has loaded.
-
-### Continuous Integration
-
-GitHub Actions runs quality checks on every pull request to `Develop`. See
-[AGENTS.md — Quality Gate](AGENTS.md#5-quality-gate) for the full list of CI jobs.
-
-**GPU tests are skipped in CI** (no GPU available). For full coverage, run
-`./quality.sh` locally before pushing.
-
-**Do NOT modify `.github/workflows/ci.yml` without explicit approval.**
 
 ## Why Use This Library?
 
@@ -422,6 +352,7 @@ All dependencies build automatically on remote, unattended machines.
 
 | Document | Description |
 |----------|-------------|
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development guidelines for contributors |
 | [CHANGELOG.md](CHANGELOG.md) | Version-by-version history of changes |
 | [AGENTS.md](AGENTS.md) | Coding guidelines for AI agents |
 | [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md) | All discovery types with success/failure rates |
