@@ -134,19 +134,31 @@ fn readme_retains_project_mission() {
     );
 }
 
+// Issue #369: Deep-dive sections moved from README.md to docs/ANALYSIS_DEEP_DIVE.md.
+// Tests updated to check the new location and verify README links to the docs file.
+const ANALYSIS_DEEP_DIVE: &str = include_str!("../docs/ANALYSIS_DEEP_DIVE.md");
+
 #[test]
-fn readme_retains_coordinated_structural_discovery() {
+fn analysis_deep_dive_contains_coordinated_structural_discovery() {
     assert!(
-        README.contains("### Coordinated Structural Discovery"),
-        "README.md must still contain the Coordinated Structural Discovery section"
+        ANALYSIS_DEEP_DIVE.contains("## Coordinated Structural Discovery"),
+        "docs/ANALYSIS_DEEP_DIVE.md must contain the Coordinated Structural Discovery section"
     );
 }
 
 #[test]
-fn readme_retains_discrete_activation_handling() {
+fn analysis_deep_dive_contains_discrete_activation_handling() {
     assert!(
-        README.contains("### Discrete activation function handling"),
-        "README.md must still contain the Discrete activation function handling section"
+        ANALYSIS_DEEP_DIVE.contains("## Discrete Activation Function Handling"),
+        "docs/ANALYSIS_DEEP_DIVE.md must contain the Discrete Activation Function Handling section"
+    );
+}
+
+#[test]
+fn readme_links_to_analysis_deep_dive() {
+    assert!(
+        README.contains("docs/ANALYSIS_DEEP_DIVE.md"),
+        "README.md must link to docs/ANALYSIS_DEEP_DIVE.md for detailed analysis documentation"
     );
 }
 
