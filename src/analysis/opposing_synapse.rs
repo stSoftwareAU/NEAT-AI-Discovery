@@ -5,6 +5,8 @@
 //! synapse increases the output when the error is already positive, or decreases it
 //! when the error is already negative), the synapse is actively hindering performance.
 //!
+//! See `docs/DISCOVERY_TYPES.md` § "Opposing Synapse Detection" for full documentation.
+//!
 //! ## Detection Criteria
 //!
 //! A synapse is "opposing" if:

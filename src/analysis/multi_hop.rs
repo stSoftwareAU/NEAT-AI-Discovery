@@ -4,6 +4,8 @@
 //! For deep networks, multi-hop improvements (adding a path of 2-3 connections) may be more
 //! effective. This module analyses intermediate neurons to find deeper structural improvements.
 //!
+//! See `docs/DISCOVERY_TYPES.md` § "Multi-Hop Candidate Analysis" for full documentation.
+//!
 //! ## Detection Method
 //!
 //! 1. **Identify target neurons with errors**: Focus on output and hidden neurons that have

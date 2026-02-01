@@ -4,6 +4,8 @@
 //! and recommends activation function changes or bias adjustments. Saturated neurons pass
 //! no gradient information and block learning in their region of the network.
 //!
+//! See `docs/DISCOVERY_TYPES.md` § "Saturated Neuron Detection" for full documentation.
+//!
 //! ## Detection Criteria
 //!
 //! A neuron is "saturated" if:

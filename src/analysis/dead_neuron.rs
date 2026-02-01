@@ -4,6 +4,8 @@
 //! near-zero activation) and recommends their removal. Dead neurons waste computation
 //! without contributing to the network's output.
 //!
+//! See `docs/DISCOVERY_TYPES.md` § "Dead Neuron Detection" for full documentation.
+//!
 //! ## Detection Criteria
 //!
 //! A neuron is "dead" if:
