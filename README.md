@@ -1708,54 +1708,18 @@ the same functional behavior.
 
 ## Development
 
+> **For AI agents**: Detailed coding conventions, testing philosophy, and
+> development guidelines live in [AGENTS.md](AGENTS.md). The sections below
+> cover user-facing build and test instructions.
+
 ### Development Guidelines
 
-**IMPORTANT: All development must follow these mandatory practices:**
+**Always run `./quality.sh` before committing.** This script runs formatting,
+linting, type checking, and all tests. CI treats warnings as errors.
 
-1. **Test-Driven Development (TDD)**: Always write tests first before implementing features
-   - Write a failing test for the new feature
-   - Implement the feature to make the test pass
-   - Refactor if needed while keeping tests green
-   - All new tests should pass after implementation
-   - **Always read this README before making any changes**
-   - See [Testing Philosophy](#testing-philosophy) below for test organisation guidelines
-
-2. **Code Quality Enforcement**: **MUST run quality checks after EVERY code change**
-   - **CRITICAL**: Execute `./quality.sh` after making ANY code modifications
-   - This script runs formatting, linting, type checking, and all tests
-   - Fix all linting issues automatically before committing
-   - Ensure code formatting and quality standards are maintained
-   - **Never commit code without running `./quality.sh` first**
-
-3. **Code Organisation**: Maintain reasonable file sizes for readability
-   - **Target**: Individual source files should be under ~1,500 lines where practical
-   - **Split large files**: When a file exceeds ~2,000 lines, consider splitting into modules
-   - **Separate concerns**: GPU infrastructure, business logic, and types should be in separate files
-   - **Tests live in `tests/` when possible**: Prefer putting new tests in the `tests/` directory
-     (integration tests) whenever the behaviour can be exercised through the public API.
-   - **Unit tests stay private**: Only keep tests under `src/` (`#[cfg(test)]`) when you genuinely
-     need access to private helpers and it would be unreasonable to expose that surface area.
-   - **Keep source files readable**: If a source file’s unit tests start to dominate the file,
-     extract them into a separate unit test module file (still under `src/`, e.g.
-     `src/<module>/tests.rs`) rather than leaving a large inline block in the implementation.
-   - **Rationale**: Large files (10,000+ lines) are difficult to navigate, review, and maintain
-
-4. **Dependency License Requirements**: All dependencies must be Apache-2.0 compatible
-   - **Allowed licenses**: Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, Unlicense
-   - **Not allowed**: GPL, LGPL, AGPL, MPL (copyleft licenses)
-   - **Prefer built-in**: Use Rust standard library features over external crates when possible
-   - **Check before adding**: Run `cargo license` to verify new dependencies
-   - **CI enforcement**: Pull requests are checked by dependency review workflow
-   
-   Current dependencies and their licenses:
-   | Crate | License | Purpose |
-   |-------|---------|---------|
-   | serde | MIT/Apache-2.0 | JSON serialisation |
-   | parquet/arrow | Apache-2.0 | Data storage |
-   | wgpu | MIT/Apache-2.0 | GPU compute |
-   | rayon | MIT/Apache-2.0 | Parallelism |
-   | parking_lot | MIT/Apache-2.0 | Deadlock detection |
-   | signal-hook | MIT/Apache-2.0 | Signal handling |
+See [AGENTS.md](AGENTS.md) for the full set of mandatory development practices
+including TDD workflow, code organisation rules, testing philosophy, and
+dependency licence requirements.
 
 ### Prerequisites
 
@@ -1788,28 +1752,9 @@ This will build the library and install it to `~/.cargo/lib/` with version track
 
 ### Testing
 
-#### Unit Tests vs Benchmarks
-
-**Unit tests** verify **correctness** - they check that code produces the right results, not how fast it runs.
-
-- **Location**: `tests/` directory (integration tests) and `src/` with `#[cfg(test)]` (unit tests)
-- **Purpose**: Verify functionality, catch regressions, ensure correctness
-- **Run with**: `cargo test`
-- **Should not**: Measure performance, print timing results, or compare speeds
-- **Example**: `test_low_impact_neurons_are_detected()` verifies that low-impact neurons are correctly identified
-
-**Benchmarks** measure **performance** - they check how fast code runs, not whether it's correct.
-
-- **Location**: `benches/` directory
-- **Purpose**: Measure execution time, compare performance, detect regressions
-- **Run with**: `cargo bench --bench <name>`
-- **Should not**: Be mixed with unit tests (they run in parallel and timing will be unreliable)
-- **Example**: `benchmark_cache_locality` measures analysis time across different input counts
-
-**Why separate them?**
-- Unit tests run in parallel by default, making timing measurements unreliable
-- Benchmarks need isolation and multiple iterations for statistical accuracy
-- Mixing them makes it unclear whether a failure is functional or performance-related
+Unit tests verify correctness; benchmarks measure performance. See
+[AGENTS.md — Unit Tests vs Benchmarks](AGENTS.md#unit-tests-vs-benchmarks) for
+the full distinction.
 
 #### Running Tests
 
@@ -1849,119 +1794,21 @@ for full test coverage.
 
 ### Testing Philosophy
 
-**The quality of tests is what makes a good system.** This project follows these
-testing principles:
-
-#### 1. Test OUTCOMES, not implementation
-
-Tests should verify **what** the system does, not **how** it does it. The same
-test should pass regardless of whether we use GPU, CPU, or TPU internally.
-
-```rust
-// GOOD: Tests the outcome
-#[test]
-fn test_low_impact_neurons_are_detected() {
-    let creature = create_test_creature();
-    let impacts = compute_impacts(&creature);
-    
-    // Verify we detected the expected low-impact neurons
-    assert!(impacts["far-from-output"] < 0.1);
-    assert!(impacts["close-to-output"] > 0.9);
-}
-
-// BAD: Tests implementation details
-#[test]
-fn test_gpu_kernel_computes_impacts() {
-    // Don't test HOW we compute, test WHAT we compute
-}
-```
-
-#### 2. Separate test files organised by feature
-
-Small, focused test files make it **obvious when tests change**:
-- Adding a new test file = good (new coverage)
-- Modifying existing tests = raises questions (why?)
-- Removing tests = requires justification
-
-| Directory | Purpose | Example |
-|-----------|---------|---------|
-| `tests/` | Integration tests for public API (verify correctness) | `tests/integration.rs` |
-| `tests/regression_*.rs` | Prevent re-introducing fixed bugs | `tests/regression_v0_1_123.rs` |
-| `tests/<feature>.rs` | Tests grouped by feature/concern | `tests/weights.rs`, `tests/impacts.rs` |
-| `src/*.rs` (`#[cfg(test)]`) | Unit tests for private functions (verify correctness) | Only when necessary |
-| `benches/` | Performance benchmarks (measure speed) | `benches/cache_locality.rs`, `benches/batched_activation.rs` |
-
-**Prefer separate test files** in `tests/` over inline unit tests:
-- Easier to see what changed in code review
-- Clear separation of concerns
-- Don't need to make APIs public just for testing
-
-**Rule of thumb**: Put new tests under `tests/` whenever practical. Only place tests under
-`src/` (`#[cfg(test)]`) when the behaviour cannot be exercised cleanly via the public API
-without making implementation details public. If unit tests under `src/` grow large, extract
-them into a dedicated `tests.rs` module file instead of keeping a huge inline `mod tests { ... }`
-in the implementation file.
-
-#### 3. Don't make APIs public just for testing
-
-If a function is internal, keep it internal. Use integration tests to verify
-behaviour through the public API. Only use inline unit tests (`#[cfg(test)]`
-in `src/`) when you genuinely need to test private implementation details.
-
-#### 4. Group related tests by concern
-
-When investigating an issue (e.g., "something's wrong with weight calculations"),
-you should be able to find all relevant tests in one place:
-
-```
-tests/
-├── common/mod.rs           # Shared test utilities
-├── integration.rs          # General integration tests
-├── regression_v0_1_123.rs  # Regression tests for v0.1.123 fixes
-├── weights.rs              # All weight calculation tests (future)
-├── impacts.rs              # All impact score tests (future)
-└── activations.rs          # All activation function tests (future)
-```
-
-#### 5. Test changes are significant
-
-In code review:
-- **New test file**: Generally good - more coverage
-- **Modified test**: Why? Did requirements change? Was it wrong?
-- **Removed/skipped test**: Red flag - must be justified
-
-Tests are the specification. Changing them changes what the system promises to do.
+See [AGENTS.md — Testing Philosophy](AGENTS.md#4-testing-philosophy) for the
+full testing guidelines including TDD workflow, test organisation, and the
+distinction between unit tests and benchmarks.
 
 ### Continuous Integration
 
-GitHub Actions runs quality checks on every pull request to `Develop`:
+GitHub Actions runs quality checks on every pull request to `Develop`. See
+[AGENTS.md — Quality Gate](AGENTS.md#5-quality-gate) for the full list of CI
+jobs.
 
-```yaml
-# .github/workflows/ci.yml jobs:
-- auto-format          # Applies rustfmt and commits fixes
-- version-increment    # Auto-bumps patch version when src/ changes  
-- quality              # fmt check, clippy, cargo check, tests, build
-- shell-checks         # Validates bash script syntax
-- spell-check          # Runs codespell on codebase
-- validation           # Checks required files and Cargo.toml
-- security             # Runs security audit workflow
-```
+**GPU tests are skipped in CI** (no GPU available). For full GPU test coverage,
+run `./quality.sh` locally before pushing.
 
-**Test coverage**: The quality job runs `cargo test --all-targets --all-features`
-which includes:
-- Unit tests in `src/` (lib target)
-- Integration tests in `tests/` directory
-- All feature-gated tests
-
-**GPU tests are skipped in CI** (no GPU available). The CI ensures:
-- Code compiles and passes linting
-- Non-GPU unit tests pass
-- Public API contract is maintained (integration tests)
-
-For full GPU test coverage, run `./quality.sh` locally before pushing.
-
-**⚠️ CRITICAL: Do NOT modify `.github/workflows/ci.yml` without explicit approval.**
-This workflow is essential for PR checks. If accidentally modified, restore from Develop:
+**Do NOT modify `.github/workflows/ci.yml` without explicit approval.** If
+accidentally modified, restore from Develop:
 ```bash
 git checkout Develop -- .github/workflows/ci.yml
 ```
