@@ -332,6 +332,30 @@ This captures that a neuron with:
 ```
 ❌ **NOT A REMOVAL CANDIDATE** (⚡ active neuron)
 
+### Removal Threshold (`costOfGrowth`)
+
+Neurons with `activation_weighted_impact < costOfGrowth` are flagged as removal
+candidates. The `costOfGrowth` parameter is configurable (default: `1e-7`) and
+matches NEAT-AI's `Score.ts` complexity penalty per neuron.
+
+| `costOfGrowth` Value | Purpose |
+|----------------------|---------|
+| `1e-7` | Default — standard complexity penalty per neuron |
+| `1e-9` or lower | Encourages creature expansion for evolution on new neurons |
+| Higher values | More aggressive pruning (use with caution) |
+
+Removal candidates are sorted by `activation_weighted_impact` ascending (lowest
+first = safest to remove). Each candidate also includes `removalSavings`
+calculated from NEAT-AI's complexity formula:
+
+```
+savings = costOfGrowth × (1 + (incomingSynapses + outgoingSynapses) / 10)
+```
+
+> **Note**: Non-finite activation values (NaN, Infinity) are filtered out when
+> computing `mean_absolute_activation` to prevent corruption of the removal
+> candidate ranking.
+
 ---
 
 ## 📋 Implementation Status (v0.2.1+)
