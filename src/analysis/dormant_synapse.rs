@@ -4,6 +4,8 @@
 //! to their target neuron. Dormant synapses waste computation during both forward
 //! pass and discovery analysis without providing meaningful information flow.
 //!
+//! See `docs/DISCOVERY_TYPES.md` § "Dormant Synapse Detection" for full documentation.
+//!
 //! ## Detection Criteria
 //!
 //! A synapse is "dormant" if:

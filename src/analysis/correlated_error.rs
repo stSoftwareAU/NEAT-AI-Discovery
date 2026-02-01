@@ -4,6 +4,8 @@
 //! samples, suggesting they share a common missing cause. Recommends structural changes
 //! that address the shared cause rather than treating each output independently.
 //!
+//! See `docs/DISCOVERY_TYPES.md` § "Correlated Error Pattern Detection" for full documentation.
+//!
 //! ## Detection Method
 //!
 //! 1. **Compute error correlation matrix**: For each pair of output neurons, compute the

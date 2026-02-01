@@ -5,6 +5,8 @@
 //! negative (predicting too high) across training samples. This systematic bias
 //! indicates the neuron's bias parameter needs adjustment.
 //!
+//! See `docs/DISCOVERY_TYPES.md` § "Output Bias Drift Detection" for full documentation.
+//!
 //! ## Detection Criteria
 //!
 //! An output neuron has "bias drift" if:

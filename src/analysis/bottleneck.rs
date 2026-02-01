@@ -1,5 +1,7 @@
 //! Bottleneck neuron detection module (Issue #343).
 //!
+//! See `docs/DISCOVERY_TYPES.md` § "Bottleneck Neuron Detection" for full documentation.
+//!
 //! Identifies hidden neurons that form information bottlenecks — single points where
 //! many input signals converge through one neuron before reaching outputs. A bottleneck
 //! limits the network's ability to represent complex input combinations because one

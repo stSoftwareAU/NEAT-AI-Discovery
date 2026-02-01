@@ -5,6 +5,8 @@
 //! contradictory functions. Oscillating neurons may benefit from an activation function
 //! change or bias adjustment to stabilise their output.
 //!
+//! See `docs/DISCOVERY_TYPES.md` § "Oscillating Neuron Detection" for full documentation.
+//!
 //! ## Detection Criteria
 //!
 //! A neuron is "oscillating" if:

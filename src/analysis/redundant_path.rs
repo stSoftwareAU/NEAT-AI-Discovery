@@ -4,6 +4,8 @@
 //! effectively the same thing, so one can be pruned and the other's weight scaled
 //! to compensate.
 //!
+//! See `docs/DISCOVERY_TYPES.md` § "Redundant Path Pruning" for full documentation.
+//!
 //! ## Detection signals
 //!
 //! 1. **Highly correlated activations** – Two sources feeding the same target have

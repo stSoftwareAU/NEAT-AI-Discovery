@@ -167,16 +167,27 @@ activation function handling, and detection algorithms, see
 
 ## Discovery Types
 
-The library proposes several categories of mutation candidate:
+The library analyses recorded neuron activations and errors to propose mutation
+candidates. Each discovery type targets a specific network pathology:
 
-| Category | Examples |
-|----------|---------|
-| **Synapse candidates** | `addSynapse`, `removeSynapse`, `setWeight` |
-| **Neuron candidates** | `addNeuron`, `removeNeuron`, `setBias`, `changeSquash` |
-| **Coordinated structural** | Grouped atomic edits (epistatic pairs, redundant path pruning, saturated/bottleneck/dead neuron fixes, multi-hop candidates) |
+| Discovery Type | What It Detects | Candidate Operations |
+|----------------|----------------|---------------------|
+| [Saturated Neuron](docs/DISCOVERY_TYPES.md#saturated-neuron-detection) | Neurons stuck at activation bounds | `changeSquash`, `setBias` |
+| [Bottleneck Neuron](docs/DISCOVERY_TYPES.md#bottleneck-neuron-detection) | Information bottlenecks (high fan-in) | `addNeuron`, `addSynapse` |
+| [Dead Neuron](docs/DISCOVERY_TYPES.md#dead-neuron-detection) | Neurons with near-zero activation | `removeNeuron` |
+| [Dormant Synapse](docs/DISCOVERY_TYPES.md#dormant-synapse-detection) | Synapses with near-zero weight | `removeSynapse` |
+| [Opposing Synapse](docs/DISCOVERY_TYPES.md#opposing-synapse-detection) | Synapses increasing error | `removeSynapse`, `setWeight` |
+| [Output Bias Drift](docs/DISCOVERY_TYPES.md#output-bias-drift-detection) | Output neurons with systematic bias | `setBias` |
+| [Oscillating Neuron](docs/DISCOVERY_TYPES.md#oscillating-neuron-detection) | Neurons oscillating between ± values | `changeSquash`, `setBias` |
+| [Correlated Error](docs/DISCOVERY_TYPES.md#correlated-error-pattern-detection) | Outputs with shared error patterns | `addNeuron`, `addSynapse` |
+| [Multi-Hop](docs/DISCOVERY_TYPES.md#multi-hop-candidate-analysis) | Deeper structural improvements | `addNeuron`, `addSynapse` |
+| [Redundant Path](docs/DISCOVERY_TYPES.md#redundant-path-pruning) | Duplicate paths to same target | `removeSynapse`, `setWeight` |
+| [Add Neurons](docs/DISCOVERY_TYPES.md#add-neurons) | Beneficial intermediate neurons | `addNeuron` |
+| [Add Synapses](docs/DISCOVERY_TYPES.md#add-synapses) | Beneficial direct connections | `addSynapse` |
+| [Remove Low-Impact](docs/DISCOVERY_TYPES.md#remove-low-impact-neurons) | Neurons below cost of growth | `removeNeuron` |
 
-For the full list with success/failure rates and recommendations, see
-[docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md).
+For detection criteria, recommended actions, output format, and production
+success rates, see [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md).
 
 For impact calculation details, see
 [docs/IMPACT_CALCULATION.md](docs/IMPACT_CALCULATION.md).
