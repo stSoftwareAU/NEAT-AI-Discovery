@@ -28,6 +28,7 @@
 //! - `opposing_synapse.rs` - Opposing synapse detection for removal or weight flip candidates (Issue #360)
 //! - `output_bias_drift.rs` - Output bias drift detection for bias adjustment candidates (Issue #361)
 //! - `bounded_range.rs` - Bounded range detection for sentinel/null value gating (Issue #395)
+//! - `observation_range.rs` - Observation effective range detection from recorded samples (Issue #398)
 
 pub mod activation;
 pub mod bottleneck;
@@ -46,6 +47,7 @@ pub mod error_distribution;
 pub mod gpu;
 pub mod multi_hop;
 pub mod neuron;
+pub mod observation_range;
 pub mod opposing_synapse;
 pub mod oscillating_neuron;
 pub mod output_bias_drift;
