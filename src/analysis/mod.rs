@@ -27,9 +27,11 @@
 //! - `dormant_synapse.rs` - Dormant synapse detection for removal candidates (Issue #359)
 //! - `opposing_synapse.rs` - Opposing synapse detection for removal or weight flip candidates (Issue #360)
 //! - `output_bias_drift.rs` - Output bias drift detection for bias adjustment candidates (Issue #361)
+//! - `bounded_range.rs` - Bounded range detection for sentinel-value patterns (Issue #395)
 
 pub mod activation;
 pub mod bottleneck;
+pub mod bounded_range;
 pub mod cache;
 pub mod candidate_clustering;
 pub mod confidence;
@@ -888,6 +890,31 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 }
                 let candidates =
                     output_bias_drift::output_bias_drift_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #395: Bounded range detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "bounded range detection",
+            "bounded_range_detection",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
+                }
+                let records = collect_hidden_records();
+                let detected =
+                    bounded_range::detect_bounded_range_neurons(&hidden_neurons, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = bounded_range::bounded_range_to_coordinated_candidates(&detected);
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
