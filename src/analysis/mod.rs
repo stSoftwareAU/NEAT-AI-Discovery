@@ -19,6 +19,7 @@
 //! - `bottleneck.rs` - Bottleneck neuron detection for information flow widening (Issue #343)
 //! - `dead_neuron.rs` - Dead neuron detection for removal candidates (Issue #341)
 //! - `correlated_error.rs` - Correlated error pattern detection for shared-cause identification (Issue #344)
+//! - `discovery_dispatch.rs` - Generic discovery module dispatch pattern (Issue #375)
 //! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests (Issue #224)
 //! - `multi_hop.rs` - Multi-hop candidate analysis for deeper network improvements (Issue #230)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
@@ -35,6 +36,7 @@ pub mod confidence;
 pub mod correlated_error;
 pub mod dead_neuron;
 pub mod diagnostics;
+pub mod discovery_dispatch;
 pub mod dormant_synapse;
 pub mod early_termination;
 pub mod epistatic;
@@ -587,15 +589,14 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
     }
 
-    // Issue #342: Detect saturated neurons and recommend activation function changes.
-    // This runs as a post-processing pass over all hidden neurons in the creature,
-    // using recorded activations from the shared cache to identify neurons that are
-    // stuck at their activation ceiling or floor.
+    // Issue #375: Discovery module dispatch using the generic pattern.
+    // Each detection module is dispatched via `run_discovery_module` which handles
+    // watchdog beats, phase timing, verbose logging, and merging into the synapse result.
     if let Some(syn) = synapse_result.as_mut() {
-        crate::watchdog::beat("analysis::analyze_all → saturation detection starting");
-        let _timer = PhaseTimer::new("saturation_detection");
+        let max_candidates = input.max_synapse_candidates;
+        let diversify = input.analysis_deadline_ms.is_some();
 
-        // Collect hidden neurons with their squash and bias
+        // Collect hidden neurons with their squash and bias (shared by several modules)
         let hidden_neurons: Vec<(String, String, f32)> = input
             .creature
             .neurons
@@ -604,9 +605,23 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
             .collect();
 
-        if !hidden_neurons.is_empty() {
-            // Retrieve recorded activations for each hidden neuron from the cache
-            let neuron_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden_neurons
+        // Helper: collect records from cache for a set of UUIDs
+        let collect_records =
+            |uuids: &[String]| -> Vec<(String, Vec<crate::types::DiscoverRecord>)> {
+                uuids
+                    .iter()
+                    .filter_map(|uuid| {
+                        shared_cache
+                            .get(uuid)
+                            .ok()
+                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
+                    })
+                    .collect()
+            };
+
+        // Helper: collect records for hidden neurons specifically
+        let collect_hidden_records = || -> Vec<(String, Vec<crate::types::DiscoverRecord>)> {
+            hidden_neurons
                 .iter()
                 .filter_map(|(uuid, _, _)| {
                     shared_cache
@@ -614,475 +629,271 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                         .ok()
                         .map(|records| (uuid.clone(), records.as_ref().to_vec()))
                 })
-                .collect();
+                .collect()
+        };
 
-            let saturated = saturation::detect_saturated_neurons(&hidden_neurons, &neuron_records);
-
-            if !saturated.is_empty() {
-                let saturation_candidates =
-                    saturation::saturated_neurons_to_coordinated_candidates(&saturated);
-
-                if !saturation_candidates.is_empty() {
-                    if utils::verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Saturation detection: found {} saturated neuron(s), {} candidate(s)",
-                            saturated.len(),
-                            saturation_candidates.len()
-                        );
-                    }
-
-                    merge_coordinated_structural_replacements(
-                        syn,
-                        saturation_candidates,
-                        input.max_synapse_candidates,
-                        input.analysis_deadline_ms.is_some(),
-                    );
+        // Issue #342: Saturated neuron detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "saturation detection",
+            "saturation_detection",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
                 }
-            }
-        }
-
-        crate::watchdog::beat("analysis::analyze_all → saturation detection finished");
-
-        // Issue #343: Detect bottleneck neurons limiting information flow.
-        // Bottleneck neurons have high fan-in funnelling through a single hidden neuron.
-        // We recommend adding parallel paths or bypass synapses to widen the bottleneck.
-        crate::watchdog::beat("analysis::analyze_all → bottleneck detection starting");
-        let _bottleneck_timer = PhaseTimer::new("bottleneck_detection");
-
-        if !hidden_neurons.is_empty() {
-            // Retrieve recorded activations for each hidden neuron from the cache
-            let bottleneck_neuron_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
-                hidden_neurons
-                    .iter()
-                    .filter_map(|(uuid, _, _)| {
-                        shared_cache
-                            .get(uuid)
-                            .ok()
-                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
-                    })
-                    .collect();
-
-            let bottleneck_candidates =
-                bottleneck::detect_bottleneck_neurons(&input.creature, &bottleneck_neuron_records);
-
-            if !bottleneck_candidates.is_empty() {
-                let coordinated_bottleneck =
-                    bottleneck::bottleneck_neurons_to_coordinated_candidates(
-                        &bottleneck_candidates,
-                        &input.creature,
-                    );
-
-                if !coordinated_bottleneck.is_empty() {
-                    if utils::verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Bottleneck detection: found {} bottleneck neuron(s), {} candidate(s)",
-                            bottleneck_candidates.len(),
-                            coordinated_bottleneck.len()
-                        );
-                    }
-
-                    merge_coordinated_structural_replacements(
-                        syn,
-                        coordinated_bottleneck,
-                        input.max_synapse_candidates,
-                        input.analysis_deadline_ms.is_some(),
-                    );
+                let records = collect_hidden_records();
+                let detected = saturation::detect_saturated_neurons(&hidden_neurons, &records);
+                if detected.is_empty() {
+                    return None;
                 }
-            }
-        }
+                let candidates = saturation::saturated_neurons_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
 
-        crate::watchdog::beat("analysis::analyze_all → bottleneck detection finished");
-
-        // Issue #341: Detect dead neurons for removal candidates.
-        // Dead neurons always output zero or near-zero activation, wasting computation.
-        // We recommend removing them via CoordinatedStructuralCandidateJson with RemoveNeuron.
-        crate::watchdog::beat("analysis::analyze_all → dead neuron detection starting");
-        let _dead_neuron_timer = PhaseTimer::new("dead_neuron_detection");
-
-        if !hidden_neurons.is_empty() {
-            let dead_neuron_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
-                hidden_neurons
-                    .iter()
-                    .filter_map(|(uuid, _, _)| {
-                        shared_cache
-                            .get(uuid)
-                            .ok()
-                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
-                    })
-                    .collect();
-
-            let dead_candidates =
-                dead_neuron::detect_dead_neurons(&input.creature, &dead_neuron_records);
-
-            if !dead_candidates.is_empty() {
-                let coordinated_dead =
-                    dead_neuron::dead_neurons_to_coordinated_candidates(&dead_candidates);
-
-                if !coordinated_dead.is_empty() {
-                    if utils::verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Dead neuron detection: found {} dead neuron(s), {} candidate(s)",
-                            dead_candidates.len(),
-                            coordinated_dead.len()
-                        );
-                    }
-
-                    merge_coordinated_structural_replacements(
-                        syn,
-                        coordinated_dead,
-                        input.max_synapse_candidates,
-                        input.analysis_deadline_ms.is_some(),
-                    );
+        // Issue #343: Bottleneck neuron detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "bottleneck detection",
+            "bottleneck_detection",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
                 }
-            }
-        }
-
-        crate::watchdog::beat("analysis::analyze_all → dead neuron detection finished");
-
-        // Issue #344: Detect correlated error patterns for shared-cause identification.
-        // When multiple output neurons consistently err in the same direction on the same
-        // samples, it suggests a missing input feature or hidden representation that would
-        // benefit all of them. We recommend adding a shared hidden neuron.
-        crate::watchdog::beat("analysis::analyze_all → correlated error detection starting");
-        let _correlated_timer = PhaseTimer::new("correlated_error_detection");
-
-        // Only run if there are multiple output neurons (nothing to correlate otherwise)
-        let output_count = input
-            .creature
-            .neurons
-            .iter()
-            .filter(|n| n.neuron_type == "output")
-            .count();
-
-        if output_count >= 2 {
-            // Collect records for output and input neurons
-            let correlated_neuron_uuids: Vec<String> = input
-                .creature
-                .neurons
-                .iter()
-                .filter(|n| n.neuron_type == "output" || n.neuron_type == "input")
-                .map(|n| n.uuid.clone())
-                .collect();
-
-            let correlated_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
-                correlated_neuron_uuids
-                    .iter()
-                    .filter_map(|uuid| {
-                        shared_cache
-                            .get(uuid)
-                            .ok()
-                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
-                    })
-                    .collect();
-
-            let correlated_groups = correlated_error::detect_correlated_error_patterns(
-                &input.creature,
-                &correlated_records,
-            );
-
-            if !correlated_groups.is_empty() {
-                let coordinated_correlated =
-                    correlated_error::correlated_errors_to_coordinated_candidates(
-                        &correlated_groups,
-                        &input.creature,
-                    );
-
-                if !coordinated_correlated.is_empty() {
-                    if utils::verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Correlated error detection: found {} group(s), {} candidate(s)",
-                            correlated_groups.len(),
-                            coordinated_correlated.len()
-                        );
-                    }
-
-                    merge_coordinated_structural_replacements(
-                        syn,
-                        coordinated_correlated,
-                        input.max_synapse_candidates,
-                        input.analysis_deadline_ms.is_some(),
-                    );
+                let records = collect_hidden_records();
+                let detected = bottleneck::detect_bottleneck_neurons(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
                 }
-            }
-        }
-
-        crate::watchdog::beat("analysis::analyze_all → correlated error detection finished");
-
-        // Issue #230: Multi-hop candidate analysis for deeper network improvements.
-        // Finds neurons whose activations correlate with target errors but are not directly
-        // connected, and recommends bypass synapses or relay neurons to improve information flow.
-        crate::watchdog::beat("analysis::analyze_all → multi-hop analysis starting");
-        let _multi_hop_timer = PhaseTimer::new("multi_hop_analysis");
-
-        if !hidden_neurons.is_empty() {
-            // Collect records for all neurons (input, hidden, output)
-            let multi_hop_neuron_uuids: Vec<String> = input
-                .creature
-                .neurons
-                .iter()
-                .map(|n| n.uuid.clone())
-                .collect();
-
-            let multi_hop_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
-                multi_hop_neuron_uuids
-                    .iter()
-                    .filter_map(|uuid| {
-                        shared_cache
-                            .get(uuid)
-                            .ok()
-                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
-                    })
-                    .collect();
-
-            let multi_hop_candidates =
-                multi_hop::detect_multi_hop_candidates(&input.creature, &multi_hop_records);
-
-            if !multi_hop_candidates.is_empty() {
-                let coordinated_multi_hop = multi_hop::multi_hop_to_coordinated_candidates(
-                    &multi_hop_candidates,
+                let candidates = bottleneck::bottleneck_neurons_to_coordinated_candidates(
+                    &detected,
                     &input.creature,
                 );
-
-                if !coordinated_multi_hop.is_empty() {
-                    if utils::verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Multi-hop analysis: found {} candidate(s), {} coordinated operation(s)",
-                            multi_hop_candidates.len(),
-                            coordinated_multi_hop.len()
-                        );
-                    }
-
-                    merge_coordinated_structural_replacements(
-                        syn,
-                        coordinated_multi_hop,
-                        input.max_synapse_candidates,
-                        input.analysis_deadline_ms.is_some(),
-                    );
-                }
-            }
-        }
-
-        crate::watchdog::beat("analysis::analyze_all → multi-hop analysis finished");
-
-        // Issue #356: Detect oscillating neurons for stabilisation candidates.
-        // Oscillating neurons have activations that frequently change sign across samples,
-        // indicating the neuron is fighting between contradictory functions. We recommend
-        // changing the activation function to stabilise the output.
-        crate::watchdog::beat("analysis::analyze_all → oscillating neuron detection starting");
-        let _oscillating_timer = PhaseTimer::new("oscillating_neuron_detection");
-
-        if !hidden_neurons.is_empty() {
-            let oscillating_neuron_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
-                hidden_neurons
-                    .iter()
-                    .filter_map(|(uuid, _, _)| {
-                        shared_cache
-                            .get(uuid)
-                            .ok()
-                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
-                    })
-                    .collect();
-
-            let oscillating_candidates = oscillating_neuron::detect_oscillating_neurons(
-                &hidden_neurons,
-                &oscillating_neuron_records,
-            );
-
-            if !oscillating_candidates.is_empty() {
-                let coordinated_oscillating =
-                    oscillating_neuron::oscillating_neurons_to_coordinated_candidates(
-                        &oscillating_candidates,
-                    );
-
-                if !coordinated_oscillating.is_empty() {
-                    if utils::verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Oscillating neuron detection: found {} oscillating neuron(s), {} candidate(s)",
-                            oscillating_candidates.len(),
-                            coordinated_oscillating.len()
-                        );
-                    }
-
-                    merge_coordinated_structural_replacements(
-                        syn,
-                        coordinated_oscillating,
-                        input.max_synapse_candidates,
-                        input.analysis_deadline_ms.is_some(),
-                    );
-                }
-            }
-        }
-
-        crate::watchdog::beat("analysis::analyze_all → oscillating neuron detection finished");
-
-        // Issue #359: Detect dormant synapses for removal candidates.
-        // Dormant synapses have near-zero weights that contribute negligible signal.
-        // We recommend removing them to reduce network complexity.
-        crate::watchdog::beat("analysis::analyze_all → dormant synapse detection starting");
-        let _dormant_timer = PhaseTimer::new("dormant_synapse_detection");
-
-        {
-            // Collect records for all source neurons referenced by synapses
-            let source_uuids: Vec<String> = input
-                .creature
-                .synapses
-                .iter()
-                .map(|s| s.from_uuid.clone())
-                .collect::<std::collections::HashSet<_>>()
-                .into_iter()
-                .collect();
-
-            let dormant_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = source_uuids
-                .iter()
-                .filter_map(|uuid| {
-                    shared_cache
-                        .get(uuid)
-                        .ok()
-                        .map(|records| (uuid.clone(), records.as_ref().to_vec()))
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
                 })
-                .collect();
+            },
+        );
 
-            let dormant_candidates =
-                dormant_synapse::detect_dormant_synapses(&input.creature, &dormant_records);
-
-            if !dormant_candidates.is_empty() {
-                let coordinated_dormant =
-                    dormant_synapse::dormant_synapses_to_coordinated_candidates(
-                        &dormant_candidates,
-                    );
-
-                if !coordinated_dormant.is_empty() {
-                    if utils::verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Dormant synapse detection: found {} dormant synapse(s), {} candidate(s)",
-                            dormant_candidates.len(),
-                            coordinated_dormant.len()
-                        );
-                    }
-
-                    merge_coordinated_structural_replacements(
-                        syn,
-                        coordinated_dormant,
-                        input.max_synapse_candidates,
-                        input.analysis_deadline_ms.is_some(),
-                    );
+        // Issue #341: Dead neuron detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "dead neuron detection",
+            "dead_neuron_detection",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
                 }
-            }
-        }
+                let records = collect_hidden_records();
+                let detected = dead_neuron::detect_dead_neurons(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = dead_neuron::dead_neurons_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
 
-        crate::watchdog::beat("analysis::analyze_all → dormant synapse detection finished");
-
-        // Issue #360: Detect opposing synapses for removal or weight flip candidates.
-        // Opposing synapses have contributions that correlate positively with target error,
-        // meaning they actively make predictions worse.
-        crate::watchdog::beat("analysis::analyze_all → opposing synapse detection starting");
-        let _opposing_timer = PhaseTimer::new("opposing_synapse_detection");
-
-        {
-            // Collect records for all neurons (sources + output targets)
-            let all_neuron_uuids: Vec<String> = input
-                .creature
-                .neurons
-                .iter()
-                .map(|n| n.uuid.clone())
-                .collect();
-
-            let opposing_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
-                all_neuron_uuids
+        // Issue #344: Correlated error detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "correlated error detection",
+            "correlated_error_detection",
+            max_candidates,
+            diversify,
+            || {
+                let output_count = input
+                    .creature
+                    .neurons
                     .iter()
-                    .filter_map(|uuid| {
-                        shared_cache
-                            .get(uuid)
-                            .ok()
-                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
-                    })
-                    .collect();
-
-            let opposing_candidates =
-                opposing_synapse::detect_opposing_synapses(&input.creature, &opposing_records);
-
-            if !opposing_candidates.is_empty() {
-                let coordinated_opposing =
-                    opposing_synapse::opposing_synapses_to_coordinated_candidates(
-                        &opposing_candidates,
-                    );
-
-                if !coordinated_opposing.is_empty() {
-                    if utils::verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Opposing synapse detection: found {} opposing synapse(s), {} candidate(s)",
-                            opposing_candidates.len(),
-                            coordinated_opposing.len()
-                        );
-                    }
-
-                    merge_coordinated_structural_replacements(
-                        syn,
-                        coordinated_opposing,
-                        input.max_synapse_candidates,
-                        input.analysis_deadline_ms.is_some(),
-                    );
+                    .filter(|n| n.neuron_type == "output")
+                    .count();
+                if output_count < 2 {
+                    return None;
                 }
-            }
-        }
 
-        crate::watchdog::beat("analysis::analyze_all → opposing synapse detection finished");
-
-        // Issue #361: Detect output bias drift for bias adjustment candidates.
-        // Output neurons with consistent error sign bias indicate a systematic prediction
-        // offset that can be corrected by adjusting the neuron's bias parameter.
-        crate::watchdog::beat("analysis::analyze_all → output bias drift detection starting");
-        let _bias_drift_timer = PhaseTimer::new("output_bias_drift_detection");
-
-        {
-            let output_neuron_uuids: Vec<String> = input
-                .creature
-                .neurons
-                .iter()
-                .filter(|n| n.neuron_type == "output")
-                .map(|n| n.uuid.clone())
-                .collect();
-
-            let bias_drift_records: Vec<(String, Vec<crate::types::DiscoverRecord>)> =
-                output_neuron_uuids
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
                     .iter()
-                    .filter_map(|uuid| {
-                        shared_cache
-                            .get(uuid)
-                            .ok()
-                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
-                    })
+                    .filter(|n| n.neuron_type == "output" || n.neuron_type == "input")
+                    .map(|n| n.uuid.clone())
                     .collect();
-
-            let bias_drift_candidates =
-                output_bias_drift::detect_output_bias_drift(&input.creature, &bias_drift_records);
-
-            if !bias_drift_candidates.is_empty() {
-                let coordinated_bias_drift =
-                    output_bias_drift::output_bias_drift_to_coordinated_candidates(
-                        &bias_drift_candidates,
-                    );
-
-                if !coordinated_bias_drift.is_empty() {
-                    if utils::verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Output bias drift detection: found {} biased output(s), {} candidate(s)",
-                            bias_drift_candidates.len(),
-                            coordinated_bias_drift.len()
-                        );
-                    }
-
-                    merge_coordinated_structural_replacements(
-                        syn,
-                        coordinated_bias_drift,
-                        input.max_synapse_candidates,
-                        input.analysis_deadline_ms.is_some(),
-                    );
+                let records = collect_records(&uuids);
+                let detected =
+                    correlated_error::detect_correlated_error_patterns(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
                 }
-            }
-        }
+                let candidates = correlated_error::correlated_errors_to_coordinated_candidates(
+                    &detected,
+                    &input.creature,
+                );
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
 
-        crate::watchdog::beat("analysis::analyze_all → output bias drift detection finished");
+        // Issue #230: Multi-hop candidate analysis
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "multi-hop analysis",
+            "multi_hop_analysis",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
+                }
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                let records = collect_records(&uuids);
+                let detected = multi_hop::detect_multi_hop_candidates(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    multi_hop::multi_hop_to_coordinated_candidates(&detected, &input.creature);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #358: Oscillating neuron detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "oscillating neuron detection",
+            "oscillating_neuron_detection",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
+                }
+                let records = collect_hidden_records();
+                let detected =
+                    oscillating_neuron::detect_oscillating_neurons(&hidden_neurons, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    oscillating_neuron::oscillating_neurons_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #359: Dormant synapse detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "dormant synapse detection",
+            "dormant_synapse_detection",
+            max_candidates,
+            diversify,
+            || {
+                let source_uuids: Vec<String> = input
+                    .creature
+                    .synapses
+                    .iter()
+                    .map(|s| s.from_uuid.clone())
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                let records = collect_records(&source_uuids);
+                let detected = dormant_synapse::detect_dormant_synapses(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    dormant_synapse::dormant_synapses_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #360: Opposing synapse detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "opposing synapse detection",
+            "opposing_synapse_detection",
+            max_candidates,
+            diversify,
+            || {
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                let records = collect_records(&uuids);
+                let detected =
+                    opposing_synapse::detect_opposing_synapses(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    opposing_synapse::opposing_synapses_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #361: Output bias drift detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "output bias drift detection",
+            "output_bias_drift_detection",
+            max_candidates,
+            diversify,
+            || {
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .filter(|n| n.neuron_type == "output")
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                let records = collect_records(&uuids);
+                let detected =
+                    output_bias_drift::detect_output_bias_drift(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    output_bias_drift::output_bias_drift_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
     }
 
     // Issue #224: Candidate clustering to reduce redundant ablation tests.
