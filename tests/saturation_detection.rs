@@ -33,35 +33,11 @@
 //! | HARD_TANH | [-1, 1] | |input| > 1 → clamped |
 //! | ArcTan | [-π/2, π/2] | |input| > 10 → ~saturated |
 
+mod common;
+
+use common::{hidden, hidden_with_bias, output, synapse};
 use neat_ai_discovery::focus::compute_impacts_public;
-use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
-
-fn hidden(uuid: &str, squash: &str, bias: f32) -> NeuronJson {
-    NeuronJson {
-        uuid: uuid.to_string(),
-        neuron_type: "hidden".to_string(),
-        squash: squash.to_string(),
-        bias,
-    }
-}
-
-fn output(uuid: &str, squash: &str) -> NeuronJson {
-    NeuronJson {
-        uuid: uuid.to_string(),
-        neuron_type: "output".to_string(),
-        squash: squash.to_string(),
-        bias: 0.0,
-    }
-}
-
-fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
-    SynapseJson {
-        from_uuid: from.to_string(),
-        to_uuid: to.to_string(),
-        weight,
-        synapse_type: None,
-    }
-}
+use neat_ai_discovery::CreatureJson;
 
 /// Test: Production scenario - target through saturated intermediate
 ///
@@ -79,8 +55,8 @@ fn test_production_scenario_saturated_intermediate() {
         input: 100,
         output: 1,
         neurons: vec![
-            hidden("target", "Swish", 1.15),         // Like d28eb8a4
-            hidden("intermediate", "LOGISTIC", 0.0), // Like insider-volume-check
+            hidden_with_bias("target", "Swish", 1.15), // Like d28eb8a4
+            hidden("intermediate", "LOGISTIC"),        // Like insider-volume-check
             output("output-0", "HARD_TANH"),
         ],
         synapses: {
@@ -147,8 +123,8 @@ fn test_logistic_saturation_levels() {
             input: 1,
             output: 1,
             neurons: vec![
-                hidden("upstream", "IDENTITY", 0.0),
-                hidden("logistic", "LOGISTIC", 0.0),
+                hidden("upstream", "IDENTITY"),
+                hidden("logistic", "LOGISTIC"),
                 output("output-0", "IDENTITY"),
             ],
             synapses: vec![
@@ -208,9 +184,9 @@ fn test_chain_saturation_blocks_propagation() {
         input: 1,
         output: 1,
         neurons: vec![
-            hidden("upstream", "IDENTITY", 0.0),
-            hidden("tanh1", "TANH", 0.0),
-            hidden("tanh2", "TANH", 0.0),
+            hidden("upstream", "IDENTITY"),
+            hidden("tanh1", "TANH"),
+            hidden("tanh2", "TANH"),
             output("output-0", "IDENTITY"),
         ],
         synapses: vec![
@@ -249,8 +225,8 @@ fn test_many_inputs_cause_saturation() {
         input: 100,
         output: 1,
         neurons: vec![
-            hidden("focus", "IDENTITY", 0.0),
-            hidden("hub", "TANH", 0.0), // Hub with many inputs
+            hidden("focus", "IDENTITY"),
+            hidden("hub", "TANH"), // Hub with many inputs
             output("output-0", "IDENTITY"),
         ],
         synapses: {
