@@ -65,6 +65,7 @@ src/
 │   ├── saturation.rs         # Saturated neuron detection
 │   ├── bottleneck.rs         # Bottleneck detection
 │   ├── dead_neuron.rs        # Dead neuron detection
+│   ├── discovery_dispatch.rs  # Generic discovery module dispatch (Issue #375)
 │   ├── dormant_synapse.rs    # Dormant synapse detection
 │   ├── opposing_synapse.rs   # Opposing synapse detection
 │   ├── output_bias_drift.rs  # Output bias drift detection
