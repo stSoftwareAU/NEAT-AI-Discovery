@@ -11,57 +11,13 @@
 //! 4. Test edge cases: rarely active neurons, tiny but nonzero activation
 //! 5. Test coordinated structural candidate conversion
 
+mod common;
+
+use common::{make_creature, neuron, record, synapse};
 use neat_ai_discovery::analysis::dead_neuron::{
     dead_neurons_to_coordinated_candidates, detect_dead_neurons, DeadNeuronCandidate,
 };
 use neat_ai_discovery::types::DiscoverRecord;
-use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
-
-/// Helper: create a DiscoverRecord for a neuron with given activation.
-fn record(
-    neuron_uuid: &str,
-    obs_index: u32,
-    activation: f32,
-    value: Option<f32>,
-) -> DiscoverRecord {
-    DiscoverRecord {
-        obs_index,
-        neuron_uuid: neuron_uuid.to_string(),
-        value,
-        activation,
-        errors: vec![0.01],
-    }
-}
-
-/// Helper: build a minimal creature with neurons and synapses.
-fn make_creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>) -> CreatureJson {
-    CreatureJson {
-        neurons,
-        synapses,
-        input: 2,
-        output: 1,
-    }
-}
-
-/// Helper: build a NeuronJson.
-fn neuron(uuid: &str, neuron_type: &str, squash: &str) -> NeuronJson {
-    NeuronJson {
-        uuid: uuid.to_string(),
-        neuron_type: neuron_type.to_string(),
-        squash: squash.to_string(),
-        bias: 0.0,
-    }
-}
-
-/// Helper: build a SynapseJson.
-fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
-    SynapseJson {
-        from_uuid: from.to_string(),
-        to_uuid: to.to_string(),
-        weight,
-        synapse_type: None,
-    }
-}
 
 /// Test 1: Neuron with all-zero activations is detected as dead.
 #[test]

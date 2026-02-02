@@ -23,41 +23,12 @@
 
 mod common;
 
+use common::{hidden, output, synapse};
 use neat_ai_discovery::focus::{compute_impacts_public, rank_focus_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
-use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use neat_ai_discovery::CreatureJson;
 use tempfile::NamedTempFile;
-
-/// Create a synapse helper for cleaner test setup
-fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
-    SynapseJson {
-        from_uuid: from.to_string(),
-        to_uuid: to.to_string(),
-        weight,
-        synapse_type: None,
-    }
-}
-
-/// Create a hidden neuron helper
-fn hidden(uuid: &str, squash: &str) -> NeuronJson {
-    NeuronJson {
-        uuid: uuid.to_string(),
-        neuron_type: "hidden".to_string(),
-        squash: squash.to_string(),
-        bias: 0.0,
-    }
-}
-
-/// Create an output neuron helper
-fn output(uuid: &str, squash: &str) -> NeuronJson {
-    NeuronJson {
-        uuid: uuid.to_string(),
-        neuron_type: "output".to_string(),
-        squash: squash.to_string(),
-        bias: 0.0,
-    }
-}
 
 /// Production pattern: STEP neuron gets full impact (no normalisation)
 ///
