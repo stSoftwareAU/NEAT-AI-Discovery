@@ -19,6 +19,7 @@
 //! - `bottleneck.rs` - Bottleneck neuron detection for information flow widening (Issue #343)
 //! - `dead_neuron.rs` - Dead neuron detection for removal candidates (Issue #341)
 //! - `correlated_error.rs` - Correlated error pattern detection for shared-cause identification (Issue #344)
+//! - `bounded_range.rs` - Bounded range neuron detection for restricted activation ranges (Issue #395)
 //! - `discovery_dispatch.rs` - Generic discovery module dispatch pattern (Issue #375)
 //! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests (Issue #224)
 //! - `multi_hop.rs` - Multi-hop candidate analysis for deeper network improvements (Issue #230)
@@ -30,6 +31,7 @@
 
 pub mod activation;
 pub mod bottleneck;
+pub mod bounded_range;
 pub mod cache;
 pub mod candidate_clustering;
 pub mod confidence;
@@ -888,6 +890,35 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 }
                 let candidates =
                     output_bias_drift::output_bias_drift_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #395: Bounded range neuron detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "bounded range detection",
+            "bounded_range_detection",
+            max_candidates,
+            diversify,
+            || {
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .filter(|n| n.neuron_type == "hidden")
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                let records = collect_records(&uuids);
+                let detected =
+                    bounded_range::detect_bounded_range_neurons(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = bounded_range::bounded_range_to_coordinated_candidates(&detected);
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
