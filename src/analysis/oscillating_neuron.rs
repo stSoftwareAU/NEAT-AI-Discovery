@@ -246,3 +246,182 @@ pub fn oscillating_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+
+    fn rec(uuid: &str, obs: u32, activation: f32) -> DiscoverRecord {
+        DiscoverRecord {
+            obs_index: obs,
+            neuron_uuid: uuid.to_string(),
+            value: None,
+            activation,
+            errors: vec![0.01],
+        }
+    }
+
+    /// Build records that alternate positive/negative activation every sample.
+    fn alternating_records(uuid: &str, count: usize, magnitude: f32) -> Vec<DiscoverRecord> {
+        (0..count)
+            .map(|i| {
+                let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+                rec(uuid, i as u32, sign * magnitude)
+            })
+            .collect()
+    }
+
+    /// Build records that are all positive.
+    fn stable_positive_records(uuid: &str, count: usize) -> Vec<DiscoverRecord> {
+        (0..count).map(|i| rec(uuid, i as u32, 0.5)).collect()
+    }
+
+    // -----------------------------------------------------------------------
+    // Detection criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn perfect_alternation_detected() {
+        let neurons = vec![("h1".to_string(), "TANH".to_string(), 0.0)];
+        let records = vec![("h1".to_string(), alternating_records("h1", 30, 0.5))];
+        let candidates = detect_oscillating_neurons(&neurons, &records);
+        assert_eq!(
+            candidates.len(),
+            1,
+            "perfectly alternating neuron should be detected"
+        );
+        assert_eq!(candidates[0].neuron_uuid, "h1");
+        assert!(candidates[0].sign_change_fraction > MIN_SIGN_CHANGE_FRACTION);
+    }
+
+    #[test]
+    fn tanh_recommends_absolute() {
+        let neurons = vec![("h1".to_string(), "TANH".to_string(), 0.0)];
+        let records = vec![("h1".to_string(), alternating_records("h1", 30, 0.5))];
+        let candidates = detect_oscillating_neurons(&neurons, &records);
+        assert_eq!(candidates[0].recommended_squash, "ABSOLUTE");
+    }
+
+    #[test]
+    fn logistic_recommends_relu() {
+        let neurons = vec![("h1".to_string(), "LOGISTIC".to_string(), 0.0)];
+        let records = vec![("h1".to_string(), alternating_records("h1", 30, 0.5))];
+        let candidates = detect_oscillating_neurons(&neurons, &records);
+        assert_eq!(candidates[0].recommended_squash, "RELU");
+    }
+
+    // -----------------------------------------------------------------------
+    // Exclusion criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn stable_positive_not_detected() {
+        let neurons = vec![("h1".to_string(), "TANH".to_string(), 0.0)];
+        let records = vec![("h1".to_string(), stable_positive_records("h1", 30))];
+        let candidates = detect_oscillating_neurons(&neurons, &records);
+        assert!(
+            candidates.is_empty(),
+            "consistently positive should not oscillate"
+        );
+    }
+
+    #[test]
+    fn dead_neuron_excluded() {
+        // Near-zero activation — should be caught by dead neuron detector, not oscillation
+        let neurons = vec![("h1".to_string(), "TANH".to_string(), 0.0)];
+        let records = vec![("h1".to_string(), alternating_records("h1", 30, 0.001))];
+        let candidates = detect_oscillating_neurons(&neurons, &records);
+        assert!(
+            candidates.is_empty(),
+            "near-zero activation should be excluded"
+        );
+    }
+
+    #[test]
+    fn unbalanced_sign_distribution_excluded() {
+        // 90% positive, 10% negative — not truly oscillating
+        let neurons = vec![("h1".to_string(), "TANH".to_string(), 0.0)];
+        let mut recs = Vec::new();
+        for i in 0..30 {
+            let act = if i < 27 { 0.5 } else { -0.5 };
+            recs.push(rec("h1", i as u32, act));
+        }
+        let records = vec![("h1".to_string(), recs)];
+        let candidates = detect_oscillating_neurons(&neurons, &records);
+        assert!(
+            candidates.is_empty(),
+            "unbalanced sign distribution should be excluded"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn insufficient_samples_excluded() {
+        let neurons = vec![("h1".to_string(), "TANH".to_string(), 0.0)];
+        let records = vec![("h1".to_string(), alternating_records("h1", 5, 0.5))];
+        let candidates = detect_oscillating_neurons(&neurons, &records);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn empty_records_no_candidates() {
+        let neurons = vec![("h1".to_string(), "TANH".to_string(), 0.0)];
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![];
+        let candidates = detect_oscillating_neurons(&neurons, &records);
+        assert!(candidates.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coordinated_candidate_has_change_squash() {
+        let candidates = vec![OscillatingNeuronCandidate {
+            neuron_uuid: "h1".to_string(),
+            current_squash: "TANH".to_string(),
+            sign_change_fraction: 0.9,
+            positive_fraction: 0.5,
+            mean_abs_activation: 0.5,
+            sample_count: 30,
+            recommended_squash: "ABSOLUTE".to_string(),
+            recommended_bias_delta: None,
+            estimated_improvement: 0.005,
+        }];
+        let coordinated = oscillating_neurons_to_coordinated_candidates(&candidates);
+        assert_eq!(coordinated.len(), 1);
+        assert!(matches!(
+            &coordinated[0].operations[0],
+            CoordinatedStructuralOpJson::ChangeSquash { neuron_uuid, squash }
+            if neuron_uuid == "h1" && squash == "ABSOLUTE"
+        ));
+    }
+
+    #[test]
+    fn imbalanced_oscillation_includes_set_bias() {
+        let candidates = vec![OscillatingNeuronCandidate {
+            neuron_uuid: "h1".to_string(),
+            current_squash: "TANH".to_string(),
+            sign_change_fraction: 0.9,
+            positive_fraction: 0.7,
+            mean_abs_activation: 0.5,
+            sample_count: 30,
+            recommended_squash: "ABSOLUTE".to_string(),
+            recommended_bias_delta: Some(-0.1),
+            estimated_improvement: 0.005,
+        }];
+        let coordinated = oscillating_neurons_to_coordinated_candidates(&candidates);
+        let has_set_bias = coordinated[0]
+            .operations
+            .iter()
+            .any(|op| matches!(op, CoordinatedStructuralOpJson::SetBias { .. }));
+        assert!(
+            has_set_bias,
+            "imbalanced oscillation should include SetBias"
+        );
+    }
+}

@@ -402,3 +402,237 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
+
+    fn neuron(uuid: &str, ntype: &str, squash: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: ntype.to_string(),
+            squash: squash.to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn syn(from: &str, to: &str, weight: f32) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight,
+            synapse_type: None,
+        }
+    }
+
+    fn rec(uuid: &str, obs: u32, activation: f32) -> DiscoverRecord {
+        DiscoverRecord {
+            obs_index: obs,
+            neuron_uuid: uuid.to_string(),
+            value: None,
+            activation,
+            errors: vec![0.5],
+        }
+    }
+
+    fn records_for(uuid: &str, count: usize) -> (String, Vec<DiscoverRecord>) {
+        let recs = (0..count).map(|i| rec(uuid, i as u32, 0.5)).collect();
+        (uuid.to_string(), recs)
+    }
+
+    /// Build a creature with a clear bottleneck: 4 inputs → h1 → 1 output.
+    fn bottleneck_creature() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+        let neurons = vec![
+            neuron("i0", "input", "IDENTITY"),
+            neuron("i1", "input", "IDENTITY"),
+            neuron("i2", "input", "IDENTITY"),
+            neuron("i3", "input", "IDENTITY"),
+            neuron("h1", "hidden", "TANH"),
+            neuron("o0", "output", "IDENTITY"),
+        ];
+        let synapses = vec![
+            syn("i0", "h1", 1.0),
+            syn("i1", "h1", 1.0),
+            syn("i2", "h1", 1.0),
+            syn("i3", "h1", 1.0),
+            syn("h1", "o0", 1.0),
+        ];
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: 4,
+            output: 1,
+        };
+        let records = vec![records_for("h1", 30), records_for("o0", 30)];
+        (creature, records)
+    }
+
+    // -----------------------------------------------------------------------
+    // Detection criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn high_fan_in_low_fan_out_detected_as_bottleneck() {
+        let (creature, records) = bottleneck_creature();
+        let candidates = detect_bottleneck_neurons(&creature, &records);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].neuron_uuid, "h1");
+        assert_eq!(candidates[0].fan_in, 4);
+        assert_eq!(candidates[0].fan_out, 1);
+    }
+
+    #[test]
+    fn bottleneck_recommends_add_parallel_neuron() {
+        let (creature, records) = bottleneck_creature();
+        let candidates = detect_bottleneck_neurons(&creature, &records);
+        assert!(candidates[0]
+            .recommended_actions
+            .contains(&"addParallelNeuron".to_string()));
+    }
+
+    #[test]
+    fn higher_fan_in_scores_higher() {
+        // 5 inputs → h1 → 1 output should score higher than 3 inputs → h2 → 1 output
+        let neurons = vec![
+            neuron("i0", "input", "IDENTITY"),
+            neuron("i1", "input", "IDENTITY"),
+            neuron("i2", "input", "IDENTITY"),
+            neuron("i3", "input", "IDENTITY"),
+            neuron("i4", "input", "IDENTITY"),
+            neuron("h1", "hidden", "TANH"),
+            neuron("h2", "hidden", "TANH"),
+            neuron("o0", "output", "IDENTITY"),
+        ];
+        let synapses = vec![
+            syn("i0", "h1", 1.0),
+            syn("i1", "h1", 1.0),
+            syn("i2", "h1", 1.0),
+            syn("i3", "h1", 1.0),
+            syn("i4", "h1", 1.0),
+            syn("h1", "o0", 1.0),
+            syn("i0", "h2", 1.0),
+            syn("i1", "h2", 1.0),
+            syn("i2", "h2", 1.0),
+            syn("h2", "o0", 1.0),
+        ];
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: 5,
+            output: 1,
+        };
+        let records = vec![
+            records_for("h1", 30),
+            records_for("h2", 30),
+            records_for("o0", 30),
+        ];
+        let candidates = detect_bottleneck_neurons(&creature, &records);
+        assert!(candidates.len() >= 2);
+        // First candidate (best) should be h1 with fan-in=5
+        assert_eq!(candidates[0].neuron_uuid, "h1");
+    }
+
+    // -----------------------------------------------------------------------
+    // Exclusion criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn output_neurons_excluded() {
+        let neurons = vec![
+            neuron("i0", "input", "IDENTITY"),
+            neuron("i1", "input", "IDENTITY"),
+            neuron("i2", "input", "IDENTITY"),
+            neuron("o0", "output", "IDENTITY"),
+        ];
+        let synapses = vec![
+            syn("i0", "o0", 1.0),
+            syn("i1", "o0", 1.0),
+            syn("i2", "o0", 1.0),
+        ];
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: 3,
+            output: 1,
+        };
+        let records = vec![records_for("o0", 30)];
+        let candidates = detect_bottleneck_neurons(&creature, &records);
+        assert!(candidates.is_empty(), "output neurons should be excluded");
+    }
+
+    #[test]
+    fn low_fan_in_excluded() {
+        // fan-in=2, fan-out=1 — below MIN_FAN_IN_FOR_BOTTLENECK (3)
+        let neurons = vec![
+            neuron("i0", "input", "IDENTITY"),
+            neuron("i1", "input", "IDENTITY"),
+            neuron("h1", "hidden", "TANH"),
+            neuron("o0", "output", "IDENTITY"),
+        ];
+        let synapses = vec![
+            syn("i0", "h1", 1.0),
+            syn("i1", "h1", 1.0),
+            syn("h1", "o0", 1.0),
+        ];
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: 2,
+            output: 1,
+        };
+        let records = vec![records_for("h1", 30)];
+        let candidates = detect_bottleneck_neurons(&creature, &records);
+        assert!(candidates.is_empty(), "fan-in < 3 should be excluded");
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn insufficient_samples_returns_empty() {
+        let (creature, _) = bottleneck_creature();
+        let records = vec![records_for("h1", 5)];
+        let candidates = detect_bottleneck_neurons(&creature, &records);
+        assert!(
+            candidates.is_empty(),
+            "fewer than MIN_SAMPLES should return empty"
+        );
+    }
+
+    #[test]
+    fn no_synapses_returns_empty() {
+        let creature = CreatureJson {
+            neurons: vec![neuron("h1", "hidden", "TANH")],
+            synapses: vec![],
+            input: 0,
+            output: 0,
+        };
+        let records = vec![records_for("h1", 30)];
+        let candidates = detect_bottleneck_neurons(&creature, &records);
+        assert!(candidates.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coordinated_candidates_contain_add_neuron_operations() {
+        let (creature, records) = bottleneck_creature();
+        let candidates = detect_bottleneck_neurons(&creature, &records);
+        let coordinated = bottleneck_neurons_to_coordinated_candidates(&candidates, &creature);
+        assert!(
+            !coordinated.is_empty(),
+            "should produce coordinated candidates"
+        );
+        let has_add_neuron = coordinated.iter().any(|c| {
+            c.operations
+                .iter()
+                .any(|op| matches!(op, CoordinatedStructuralOpJson::AddNeuron { .. }))
+        });
+        assert!(has_add_neuron, "should contain AddNeuron operation");
+    }
+}

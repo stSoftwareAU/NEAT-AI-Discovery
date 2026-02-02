@@ -627,3 +627,181 @@ pub fn correlated_errors_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
+
+    fn neuron(uuid: &str, ntype: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: ntype.to_string(),
+            squash: "TANH".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn syn(from: &str, to: &str) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight: 1.0,
+            synapse_type: None,
+        }
+    }
+
+    /// Build records where error = base + scale * obs_index (linearly correlated).
+    fn correlated_error_records(
+        uuid: &str,
+        base: f32,
+        scale: f32,
+        count: usize,
+    ) -> (String, Vec<DiscoverRecord>) {
+        let recs = (0..count)
+            .map(|i| DiscoverRecord {
+                obs_index: i as u32,
+                neuron_uuid: uuid.to_string(),
+                value: None,
+                activation: 0.5,
+                errors: vec![base + scale * (i as f32)],
+            })
+            .collect();
+        (uuid.to_string(), recs)
+    }
+
+    /// Build a creature with 2 inputs and 2 outputs.
+    fn two_output_creature() -> CreatureJson {
+        CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("i1", "input"),
+                neuron("o0", "output"),
+                neuron("o1", "output"),
+            ],
+            synapses: vec![
+                syn("i0", "o0"),
+                syn("i0", "o1"),
+                syn("i1", "o0"),
+                syn("i1", "o1"),
+            ],
+            input: 2,
+            output: 2,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Detection criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn strongly_correlated_errors_detected() {
+        let creature = two_output_creature();
+        // Both outputs have linearly increasing errors → perfect correlation
+        let records = vec![
+            correlated_error_records("o0", 0.0, 0.1, 30),
+            correlated_error_records("o1", 0.0, 0.1, 30),
+            correlated_error_records("i0", 0.0, 0.05, 30),
+        ];
+        let groups = detect_correlated_error_patterns(&creature, &records);
+        assert_eq!(
+            groups.len(),
+            1,
+            "perfectly correlated outputs should form one group"
+        );
+        assert_eq!(groups[0].output_neuron_uuids.len(), 2);
+    }
+
+    #[test]
+    fn estimated_improvement_is_positive() {
+        let creature = two_output_creature();
+        let records = vec![
+            correlated_error_records("o0", 0.0, 0.1, 30),
+            correlated_error_records("o1", 0.0, 0.1, 30),
+        ];
+        let groups = detect_correlated_error_patterns(&creature, &records);
+        if !groups.is_empty() {
+            assert!(groups[0].estimated_improvement > 0.0);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Exclusion criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn independent_errors_produce_no_groups() {
+        let creature = two_output_creature();
+        // o0 has increasing errors, o1 has decreasing — negative correlation
+        let records = vec![
+            correlated_error_records("o0", 0.0, 0.1, 30),
+            correlated_error_records("o1", 3.0, -0.1, 30),
+        ];
+        let groups = detect_correlated_error_patterns(&creature, &records);
+        assert!(
+            groups.is_empty(),
+            "negatively correlated should not form a group"
+        );
+    }
+
+    #[test]
+    fn single_output_neuron_skips() {
+        let creature = CreatureJson {
+            neurons: vec![neuron("i0", "input"), neuron("o0", "output")],
+            synapses: vec![syn("i0", "o0")],
+            input: 1,
+            output: 1,
+        };
+        let records = vec![correlated_error_records("o0", 0.0, 0.1, 30)];
+        let groups = detect_correlated_error_patterns(&creature, &records);
+        assert!(groups.is_empty(), "cannot correlate with single output");
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn insufficient_samples_no_detection() {
+        let creature = two_output_creature();
+        let records = vec![
+            correlated_error_records("o0", 0.0, 0.1, 5),
+            correlated_error_records("o1", 0.0, 0.1, 5),
+        ];
+        let groups = detect_correlated_error_patterns(&creature, &records);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn empty_records_returns_empty() {
+        let creature = two_output_creature();
+        let groups = detect_correlated_error_patterns(&creature, &[]);
+        assert!(groups.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coordinated_candidates_contain_add_neuron_and_synapses() {
+        let creature = two_output_creature();
+        let records = vec![
+            correlated_error_records("o0", 0.0, 0.1, 30),
+            correlated_error_records("o1", 0.0, 0.1, 30),
+            correlated_error_records("i0", 0.0, 0.05, 30),
+        ];
+        let groups = detect_correlated_error_patterns(&creature, &records);
+        if !groups.is_empty() {
+            let coordinated = correlated_errors_to_coordinated_candidates(&groups, &creature);
+            assert!(!coordinated.is_empty());
+            let has_add_neuron = coordinated.iter().any(|c| {
+                c.operations
+                    .iter()
+                    .any(|op| matches!(op, CoordinatedStructuralOpJson::AddNeuron { .. }))
+            });
+            assert!(has_add_neuron, "should contain AddNeuron operation");
+        }
+    }
+}

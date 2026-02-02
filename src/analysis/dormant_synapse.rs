@@ -179,3 +179,160 @@ pub fn dormant_synapses_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
+
+    fn neuron(uuid: &str, ntype: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: ntype.to_string(),
+            squash: "TANH".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn syn(from: &str, to: &str, weight: f32) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight,
+            synapse_type: None,
+        }
+    }
+
+    fn records_for(uuid: &str, count: usize, activation: f32) -> (String, Vec<DiscoverRecord>) {
+        let recs = (0..count)
+            .map(|i| DiscoverRecord {
+                obs_index: i as u32,
+                neuron_uuid: uuid.to_string(),
+                value: None,
+                activation,
+                errors: vec![0.01],
+            })
+            .collect();
+        (uuid.to_string(), recs)
+    }
+
+    /// Creature: i0 → h1 → o0, with two synapses targeting h1.
+    fn dormant_creature(dormant_weight: f32, active_weight: f32) -> CreatureJson {
+        CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("i1", "input"),
+                neuron("h1", "hidden"),
+                neuron("o0", "output"),
+            ],
+            synapses: vec![
+                syn("i0", "h1", dormant_weight),
+                syn("i1", "h1", active_weight),
+                syn("h1", "o0", 1.0),
+            ],
+            input: 2,
+            output: 1,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Detection criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn near_zero_weight_synapse_detected() {
+        let creature = dormant_creature(1e-5, 1.0);
+        let records = vec![records_for("i0", 30, 0.5), records_for("i1", 30, 0.5)];
+        let candidates = detect_dormant_synapses(&creature, &records);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].from_neuron_uuid, "i0");
+        assert_eq!(candidates[0].to_neuron_uuid, "h1");
+    }
+
+    #[test]
+    fn estimated_improvement_positive() {
+        let creature = dormant_creature(1e-5, 1.0);
+        let records = vec![records_for("i0", 30, 0.5), records_for("i1", 30, 0.5)];
+        let candidates = detect_dormant_synapses(&creature, &records);
+        assert!(candidates[0].estimated_improvement > 0.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Exclusion criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn active_synapse_not_flagged() {
+        let creature = dormant_creature(1.0, 1.0);
+        let records = vec![records_for("i0", 30, 0.5), records_for("i1", 30, 0.5)];
+        let candidates = detect_dormant_synapses(&creature, &records);
+        assert!(candidates.is_empty(), "active weight should not be flagged");
+    }
+
+    #[test]
+    fn sole_connection_not_flagged() {
+        // h1 has only one incoming synapse — removing it would be destructive
+        let creature = CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h1", "hidden"),
+                neuron("o0", "output"),
+            ],
+            synapses: vec![syn("i0", "h1", 1e-5), syn("h1", "o0", 1.0)],
+            input: 1,
+            output: 1,
+        };
+        let records = vec![records_for("i0", 30, 0.5)];
+        let candidates = detect_dormant_synapses(&creature, &records);
+        assert!(candidates.is_empty(), "sole connection should be protected");
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn insufficient_samples_not_flagged() {
+        let creature = dormant_creature(1e-5, 1.0);
+        let records = vec![records_for("i0", 5, 0.5)];
+        let candidates = detect_dormant_synapses(&creature, &records);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn empty_synapses_no_candidates() {
+        let creature = CreatureJson {
+            neurons: vec![neuron("i0", "input")],
+            synapses: vec![],
+            input: 1,
+            output: 0,
+        };
+        let candidates = detect_dormant_synapses(&creature, &[]);
+        assert!(candidates.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coordinated_candidate_uses_remove_synapse() {
+        let candidates = vec![DormantSynapseCandidate {
+            from_neuron_uuid: "i0".to_string(),
+            to_neuron_uuid: "h1".to_string(),
+            weight: 1e-5,
+            mean_abs_contribution: 1e-6,
+            other_fan_in: 1,
+            sample_count: 30,
+            estimated_improvement: 0.001,
+        }];
+        let coordinated = dormant_synapses_to_coordinated_candidates(&candidates);
+        assert_eq!(coordinated.len(), 1);
+        assert!(matches!(
+            &coordinated[0].operations[0],
+            CoordinatedStructuralOpJson::RemoveSynapse { from_neuron_uuid, to_neuron_uuid }
+            if from_neuron_uuid == "i0" && to_neuron_uuid == "h1"
+        ));
+    }
+}

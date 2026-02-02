@@ -548,3 +548,241 @@ pub fn multi_hop_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
+
+    fn neuron(uuid: &str, ntype: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: ntype.to_string(),
+            squash: "TANH".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn syn(from: &str, to: &str) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight: 1.0,
+            synapse_type: None,
+        }
+    }
+
+    /// Build records with correlated activation and error patterns.
+    /// Source activation linearly increases; target error linearly increases.
+    fn correlated_records(
+        uuid: &str,
+        count: usize,
+        activation_base: f32,
+        activation_scale: f32,
+        error_base: f32,
+        error_scale: f32,
+    ) -> (String, Vec<DiscoverRecord>) {
+        let recs = (0..count)
+            .map(|i| DiscoverRecord {
+                obs_index: i as u32,
+                neuron_uuid: uuid.to_string(),
+                value: None,
+                activation: activation_base + activation_scale * (i as f32),
+                errors: if error_scale.abs() > 0.0 || error_base.abs() > 0.0 {
+                    vec![error_base + error_scale * (i as f32)]
+                } else {
+                    vec![]
+                },
+            })
+            .collect();
+        (uuid.to_string(), recs)
+    }
+
+    // -----------------------------------------------------------------------
+    // Detection criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn detects_two_hop_candidate_via_correlation() {
+        // h1 is NOT connected to o0 but h1's activation correlates with o0's error
+        let creature = CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h1", "hidden"),
+                neuron("o0", "output"),
+            ],
+            synapses: vec![
+                syn("i0", "h1"),
+                syn("i0", "o0"), // i0 → o0 exists, but h1 → o0 does not
+            ],
+            input: 1,
+            output: 1,
+        };
+        let records = vec![
+            // h1 activation increases linearly
+            correlated_records("h1", 30, 0.0, 0.1, 0.0, 0.0),
+            // o0 error also increases linearly → correlated
+            correlated_records("o0", 30, 0.5, 0.0, 0.0, 0.1),
+        ];
+        let candidates = detect_multi_hop_candidates(&creature, &records);
+        assert!(
+            !candidates.is_empty(),
+            "should detect multi-hop opportunity"
+        );
+        // Path should go from h1 → o0
+        let has_h1_to_o0 = candidates
+            .iter()
+            .any(|c| c.path.contains(&"h1".to_string()) && c.path.contains(&"o0".to_string()));
+        assert!(has_h1_to_o0, "should include h1 → o0 path");
+    }
+
+    #[test]
+    fn candidates_sorted_by_improvement() {
+        let creature = CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h1", "hidden"),
+                neuron("h2", "hidden"),
+                neuron("o0", "output"),
+            ],
+            synapses: vec![syn("i0", "h1"), syn("i0", "h2"), syn("i0", "o0")],
+            input: 1,
+            output: 1,
+        };
+        let records = vec![
+            correlated_records("h1", 30, 0.0, 0.1, 0.0, 0.0),
+            correlated_records("h2", 30, 0.0, 0.05, 0.0, 0.0),
+            correlated_records("o0", 30, 0.5, 0.0, 0.0, 0.1),
+        ];
+        let candidates = detect_multi_hop_candidates(&creature, &records);
+        // Should be sorted by estimated_improvement descending
+        for w in candidates.windows(2) {
+            assert!(w[0].estimated_improvement >= w[1].estimated_improvement);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Exclusion criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fully_connected_produces_no_candidates() {
+        // When all neurons are already connected, no bypass is needed
+        let creature = CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h1", "hidden"),
+                neuron("o0", "output"),
+            ],
+            synapses: vec![syn("i0", "h1"), syn("i0", "o0"), syn("h1", "o0")],
+            input: 1,
+            output: 1,
+        };
+        let records = vec![
+            correlated_records("h1", 30, 0.0, 0.1, 0.0, 0.0),
+            correlated_records("o0", 30, 0.5, 0.0, 0.0, 0.1),
+        ];
+        let candidates = detect_multi_hop_candidates(&creature, &records);
+        // h1 → o0 already exists, so no bypass candidate for that pair
+        let h1_to_o0 = candidates
+            .iter()
+            .any(|c| c.path.len() == 2 && c.path[0] == "h1" && c.path[1] == "o0");
+        assert!(
+            !h1_to_o0,
+            "already-connected pair should not produce a candidate"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn empty_records_returns_empty() {
+        let creature = CreatureJson {
+            neurons: vec![neuron("i0", "input"), neuron("o0", "output")],
+            synapses: vec![syn("i0", "o0")],
+            input: 1,
+            output: 1,
+        };
+        let candidates = detect_multi_hop_candidates(&creature, &[]);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn insufficient_samples_returns_empty() {
+        let creature = CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h1", "hidden"),
+                neuron("o0", "output"),
+            ],
+            synapses: vec![syn("i0", "h1"), syn("i0", "o0")],
+            input: 1,
+            output: 1,
+        };
+        let records = vec![
+            correlated_records("h1", 5, 0.0, 0.1, 0.0, 0.0),
+            correlated_records("o0", 5, 0.5, 0.0, 0.0, 0.1),
+        ];
+        let candidates = detect_multi_hop_candidates(&creature, &records);
+        assert!(candidates.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn two_hop_produces_add_synapse_candidate() {
+        let creature = CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h1", "hidden"),
+                neuron("o0", "output"),
+            ],
+            synapses: vec![syn("i0", "h1"), syn("i0", "o0")],
+            input: 1,
+            output: 1,
+        };
+        let multi_hop_candidates = vec![MultiHopCandidate {
+            path: vec!["h1".to_string(), "o0".to_string()],
+            estimated_improvement: 0.01,
+            correlation_strength: 0.5,
+        }];
+        let coordinated = multi_hop_to_coordinated_candidates(&multi_hop_candidates, &creature);
+        assert_eq!(coordinated.len(), 1);
+        assert!(matches!(
+            &coordinated[0].operations[0],
+            CoordinatedStructuralOpJson::AddSynapse { from_neuron_uuid, to_neuron_uuid, .. }
+            if from_neuron_uuid == "h1" && to_neuron_uuid == "o0"
+        ));
+    }
+
+    #[test]
+    fn three_hop_produces_add_neuron_candidate() {
+        let creature = CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h1", "hidden"),
+                neuron("o0", "output"),
+            ],
+            synapses: vec![syn("i0", "h1"), syn("i0", "o0")],
+            input: 1,
+            output: 1,
+        };
+        let multi_hop_candidates = vec![MultiHopCandidate {
+            path: vec!["i0".to_string(), "h1".to_string(), "o0".to_string()],
+            estimated_improvement: 0.01,
+            correlation_strength: 0.5,
+        }];
+        let coordinated = multi_hop_to_coordinated_candidates(&multi_hop_candidates, &creature);
+        assert_eq!(coordinated.len(), 1);
+        let has_add_neuron = coordinated[0]
+            .operations
+            .iter()
+            .any(|op| matches!(op, CoordinatedStructuralOpJson::AddNeuron { .. }));
+        assert!(has_add_neuron, "three-hop should produce AddNeuron relay");
+    }
+}

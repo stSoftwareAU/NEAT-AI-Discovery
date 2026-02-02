@@ -281,3 +281,178 @@ pub fn dead_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
+
+    fn neuron(uuid: &str, ntype: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: ntype.to_string(),
+            squash: "TANH".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn syn(from: &str, to: &str) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight: 1.0,
+            synapse_type: None,
+        }
+    }
+
+    fn dead_records(uuid: &str, count: usize) -> (String, Vec<DiscoverRecord>) {
+        let recs = (0..count)
+            .map(|i| DiscoverRecord {
+                obs_index: i as u32,
+                neuron_uuid: uuid.to_string(),
+                value: None,
+                activation: 0.0,
+                errors: vec![0.01],
+            })
+            .collect();
+        (uuid.to_string(), recs)
+    }
+
+    fn active_records(uuid: &str, count: usize) -> (String, Vec<DiscoverRecord>) {
+        let recs = (0..count)
+            .map(|i| DiscoverRecord {
+                obs_index: i as u32,
+                neuron_uuid: uuid.to_string(),
+                value: None,
+                activation: 0.5 + (i as f32) * 0.01,
+                errors: vec![0.01],
+            })
+            .collect();
+        (uuid.to_string(), recs)
+    }
+
+    fn simple_creature() -> CreatureJson {
+        CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h1", "hidden"),
+                neuron("o0", "output"),
+            ],
+            synapses: vec![syn("i0", "h1"), syn("h1", "o0")],
+            input: 1,
+            output: 1,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Detection criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_zero_activation_neuron_detected_as_dead() {
+        let creature = simple_creature();
+        let records = vec![dead_records("h1", 30)];
+        let candidates = detect_dead_neurons(&creature, &records);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].neuron_uuid, "h1");
+        assert!(candidates[0].mean_abs_activation < DEAD_ACTIVATION_THRESHOLD);
+    }
+
+    #[test]
+    fn connected_outputs_identified_for_dead_neuron() {
+        let creature = simple_creature();
+        let records = vec![dead_records("h1", 30)];
+        let candidates = detect_dead_neurons(&creature, &records);
+        assert_eq!(candidates[0].connected_outputs, vec!["o0"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Exclusion criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn active_neuron_not_flagged() {
+        let creature = simple_creature();
+        let records = vec![active_records("h1", 30)];
+        let candidates = detect_dead_neurons(&creature, &records);
+        assert!(
+            candidates.is_empty(),
+            "active neuron should not be flagged as dead"
+        );
+    }
+
+    #[test]
+    fn output_neurons_excluded() {
+        let creature = CreatureJson {
+            neurons: vec![neuron("i0", "input"), neuron("o0", "output")],
+            synapses: vec![syn("i0", "o0")],
+            input: 1,
+            output: 1,
+        };
+        let records = vec![dead_records("o0", 30)];
+        let candidates = detect_dead_neurons(&creature, &records);
+        assert!(
+            candidates.is_empty(),
+            "output neurons should never be flagged"
+        );
+    }
+
+    #[test]
+    fn input_neurons_excluded() {
+        let creature = CreatureJson {
+            neurons: vec![neuron("i0", "input"), neuron("o0", "output")],
+            synapses: vec![syn("i0", "o0")],
+            input: 1,
+            output: 1,
+        };
+        let records = vec![dead_records("i0", 30)];
+        let candidates = detect_dead_neurons(&creature, &records);
+        assert!(
+            candidates.is_empty(),
+            "input neurons should never be flagged"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn insufficient_samples_returns_empty() {
+        let creature = simple_creature();
+        let records = vec![dead_records("h1", 5)];
+        let candidates = detect_dead_neurons(&creature, &records);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn empty_records_returns_empty() {
+        let creature = simple_creature();
+        let candidates = detect_dead_neurons(&creature, &[]);
+        assert!(candidates.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Conversion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coordinated_candidates_use_remove_neuron() {
+        let candidates = vec![DeadNeuronCandidate {
+            neuron_uuid: "h1".to_string(),
+            mean_abs_activation: 0.0,
+            activation_std_dev: 0.0,
+            sample_count: 30,
+            connected_outputs: vec!["o0".to_string()],
+            removal_confidence: 0.9,
+            estimated_improvement: 0.001,
+        }];
+        let coordinated = dead_neurons_to_coordinated_candidates(&candidates);
+        assert_eq!(coordinated.len(), 1);
+        assert!(matches!(
+            &coordinated[0].operations[0],
+            CoordinatedStructuralOpJson::RemoveNeuron { neuron_uuid } if neuron_uuid == "h1"
+        ));
+    }
+}
