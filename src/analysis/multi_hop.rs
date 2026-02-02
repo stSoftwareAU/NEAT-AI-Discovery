@@ -548,3 +548,96 @@ pub fn multi_hop_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── compute_activation_error_correlation ────────────────────────────
+
+    #[test]
+    fn perfect_activation_error_correlation() {
+        let activations: HashMap<u32, f32> = (0..30).map(|i| (i, i as f32)).collect();
+        let errors: HashMap<u32, f32> = (0..30).map(|i| (i, i as f32 * 3.0)).collect();
+        let corr = compute_activation_error_correlation(&activations, &errors);
+        assert!(
+            (corr - 1.0).abs() < 0.01,
+            "Linearly related values should have r ≈ 1.0, got {corr}"
+        );
+    }
+
+    #[test]
+    fn zero_variance_activation_returns_zero() {
+        let activations: HashMap<u32, f32> = (0..30).map(|i| (i, 5.0)).collect();
+        let errors: HashMap<u32, f32> = (0..30).map(|i| (i, i as f32)).collect();
+        let corr = compute_activation_error_correlation(&activations, &errors);
+        assert_eq!(
+            corr, 0.0,
+            "Zero-variance activation should produce 0.0 correlation"
+        );
+    }
+
+    #[test]
+    fn insufficient_shared_returns_zero() {
+        let activations: HashMap<u32, f32> = (0..5).map(|i| (i, i as f32)).collect();
+        let errors: HashMap<u32, f32> = (0..5).map(|i| (i, i as f32)).collect();
+        let corr = compute_activation_error_correlation(&activations, &errors);
+        assert_eq!(corr, 0.0);
+    }
+
+    // ── compute_activation_activation_correlation ───────────────────────
+
+    #[test]
+    fn identical_activations_have_perfect_correlation() {
+        let a: HashMap<u32, f32> = (0..30).map(|i| (i, i as f32 * 0.1)).collect();
+        let b: HashMap<u32, f32> = (0..30).map(|i| (i, i as f32 * 0.1)).collect();
+        let corr = compute_activation_activation_correlation(&a, &b);
+        assert!(
+            (corr - 1.0).abs() < 0.01,
+            "Identical activations should have r ≈ 1.0, got {corr}"
+        );
+    }
+
+    // ── compute_mean_abs_error ──────────────────────────────────────────
+
+    #[test]
+    fn mean_abs_error_of_empty_map_is_zero() {
+        let errors: HashMap<u32, f32> = HashMap::new();
+        assert_eq!(compute_mean_abs_error(&errors), 0.0);
+    }
+
+    #[test]
+    fn mean_abs_error_uses_absolute_values() {
+        let errors: HashMap<u32, f32> = [(0, -1.0), (1, 1.0)].into_iter().collect();
+        let mae = compute_mean_abs_error(&errors);
+        assert!(
+            (mae - 1.0).abs() < 0.01,
+            "Mean absolute error of [-1, 1] should be 1.0, got {mae}"
+        );
+    }
+
+    // ── multi_hop_relay_uuid ───────────────────────────────────────────
+
+    #[test]
+    fn relay_uuid_is_deterministic() {
+        let path = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let id1 = multi_hop_relay_uuid(&path, 0);
+        let id2 = multi_hop_relay_uuid(&path, 0);
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn relay_uuid_has_mh_prefix() {
+        let path = vec!["a".to_string()];
+        let id = multi_hop_relay_uuid(&path, 0);
+        assert!(id.starts_with("mh-"), "Should start with 'mh-' prefix");
+    }
+
+    #[test]
+    fn relay_uuid_differs_by_index() {
+        let path = vec!["a".to_string(), "b".to_string()];
+        let id1 = multi_hop_relay_uuid(&path, 0);
+        let id2 = multi_hop_relay_uuid(&path, 1);
+        assert_ne!(id1, id2);
+    }
+}

@@ -627,3 +627,128 @@ pub fn correlated_errors_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── compute_pearson_correlation ─────────────────────────────────────
+
+    #[test]
+    fn perfect_positive_correlation() {
+        let a: HashMap<u32, f32> = (0..30).map(|i| (i, i as f32)).collect();
+        let b: HashMap<u32, f32> = (0..30).map(|i| (i, i as f32 * 2.0)).collect();
+        let corr = compute_pearson_correlation(&a, &b);
+        assert!(
+            (corr - 1.0).abs() < 0.01,
+            "Perfectly correlated vectors should have r ≈ 1.0, got {corr}"
+        );
+    }
+
+    #[test]
+    fn perfect_negative_correlation() {
+        let a: HashMap<u32, f32> = (0..30).map(|i| (i, i as f32)).collect();
+        let b: HashMap<u32, f32> = (0..30).map(|i| (i, -(i as f32))).collect();
+        let corr = compute_pearson_correlation(&a, &b);
+        assert!(
+            (corr + 1.0).abs() < 0.01,
+            "Perfectly anti-correlated vectors should have r ≈ -1.0, got {corr}"
+        );
+    }
+
+    #[test]
+    fn insufficient_shared_samples_returns_zero() {
+        let a: HashMap<u32, f32> = (0..5).map(|i| (i, i as f32)).collect();
+        let b: HashMap<u32, f32> = (0..5).map(|i| (i, i as f32)).collect();
+        let corr = compute_pearson_correlation(&a, &b);
+        assert_eq!(corr, 0.0, "Should return 0.0 with insufficient samples");
+    }
+
+    #[test]
+    fn no_overlap_returns_zero() {
+        let a: HashMap<u32, f32> = (0..30).map(|i| (i, i as f32)).collect();
+        let b: HashMap<u32, f32> = (100..130).map(|i| (i, i as f32)).collect();
+        let corr = compute_pearson_correlation(&a, &b);
+        assert_eq!(corr, 0.0, "No overlapping obs indices should return 0.0");
+    }
+
+    #[test]
+    fn zero_variance_returns_zero() {
+        let a: HashMap<u32, f32> = (0..30).map(|i| (i, 5.0)).collect();
+        let b: HashMap<u32, f32> = (0..30).map(|i| (i, 5.0)).collect();
+        let corr = compute_pearson_correlation(&a, &b);
+        assert_eq!(
+            corr, 0.0,
+            "Zero variance should return 0.0 (undefined correlation)"
+        );
+    }
+
+    // ── cluster_correlated_outputs ─────────────────────────────────────
+
+    #[test]
+    fn two_highly_correlated_outputs_form_one_group() {
+        let output_uuids = vec!["out-1", "out-2"];
+        let corr_matrix = vec![vec![1.0, 0.9], vec![0.9, 1.0]];
+        let groups = cluster_correlated_outputs(&output_uuids, &corr_matrix, 0.7);
+        assert_eq!(groups.len(), 1, "Should form one group");
+        assert_eq!(groups[0].len(), 2, "Group should contain both outputs");
+    }
+
+    #[test]
+    fn independent_outputs_form_no_group() {
+        let output_uuids = vec!["out-1", "out-2"];
+        let corr_matrix = vec![vec![1.0, 0.1], vec![0.1, 1.0]];
+        let groups = cluster_correlated_outputs(&output_uuids, &corr_matrix, 0.7);
+        assert!(
+            groups.is_empty(),
+            "Independent outputs should form no groups"
+        );
+    }
+
+    // ── count_shared_error_samples ─────────────────────────────────────
+
+    #[test]
+    fn all_same_sign_errors_counted() {
+        let group_uuids = vec!["out-1", "out-2"];
+        let error_by_obs: HashMap<&str, HashMap<u32, f32>> = [
+            ("out-1", [(0_u32, 1.0), (1, 2.0)].into_iter().collect()),
+            ("out-2", [(0_u32, 0.5), (1, 1.5)].into_iter().collect()),
+        ]
+        .into_iter()
+        .collect();
+        let shared_obs = vec![0, 1];
+        let count = count_shared_error_samples(&group_uuids, &error_by_obs, &shared_obs);
+        assert_eq!(count, 2, "Both samples have all-positive errors");
+    }
+
+    #[test]
+    fn mixed_sign_errors_not_counted() {
+        let group_uuids = vec!["out-1", "out-2"];
+        let error_by_obs: HashMap<&str, HashMap<u32, f32>> = [
+            ("out-1", [(0_u32, 1.0)].into_iter().collect()),
+            ("out-2", [(0_u32, -0.5)].into_iter().collect()),
+        ]
+        .into_iter()
+        .collect();
+        let shared_obs = vec![0];
+        let count = count_shared_error_samples(&group_uuids, &error_by_obs, &shared_obs);
+        assert_eq!(count, 0, "Mixed-sign errors should not be counted");
+    }
+
+    // ── shared_neuron_uuid ─────────────────────────────────────────────
+
+    #[test]
+    fn shared_neuron_uuid_is_deterministic() {
+        let uuids = vec!["out-1".to_string(), "out-2".to_string()];
+        let id1 = shared_neuron_uuid(&uuids, 0);
+        let id2 = shared_neuron_uuid(&uuids, 0);
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn shared_neuron_uuid_has_cs_prefix() {
+        let uuids = vec!["out-1".to_string()];
+        let id = shared_neuron_uuid(&uuids, 0);
+        assert!(id.starts_with("cs-"), "Should start with 'cs-' prefix");
+    }
+}

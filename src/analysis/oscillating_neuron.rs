@@ -246,3 +246,137 @@ pub fn oscillating_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+
+    fn make_record(obs_index: u32, activation: f32) -> DiscoverRecord {
+        DiscoverRecord::new(
+            obs_index,
+            "test-neuron".to_string(),
+            None,
+            activation,
+            vec![],
+        )
+    }
+
+    // ── recommend_squash_for_oscillation ────────────────────────────────
+
+    #[test]
+    fn tanh_recommends_absolute() {
+        assert_eq!(recommend_squash_for_oscillation("TANH"), "ABSOLUTE");
+    }
+
+    #[test]
+    fn identity_recommends_absolute() {
+        assert_eq!(recommend_squash_for_oscillation("IDENTITY"), "ABSOLUTE");
+    }
+
+    #[test]
+    fn logistic_recommends_relu() {
+        assert_eq!(recommend_squash_for_oscillation("LOGISTIC"), "RELU");
+    }
+
+    #[test]
+    fn softsign_recommends_absolute() {
+        assert_eq!(recommend_squash_for_oscillation("SOFTSIGN"), "ABSOLUTE");
+    }
+
+    #[test]
+    fn recommendation_is_case_insensitive() {
+        assert_eq!(recommend_squash_for_oscillation("tanh"), "ABSOLUTE");
+    }
+
+    // ── recommend_bias_for_oscillation ──────────────────────────────────
+
+    #[test]
+    fn majority_positive_recommends_negative_bias() {
+        let delta = recommend_bias_for_oscillation(0.7, 0.0);
+        assert!(
+            delta.is_some() && delta.unwrap() < 0.0,
+            "Should recommend negative bias when mostly positive"
+        );
+    }
+
+    #[test]
+    fn majority_negative_recommends_positive_bias() {
+        let delta = recommend_bias_for_oscillation(0.3, 0.0);
+        assert!(
+            delta.is_some() && delta.unwrap() > 0.0,
+            "Should recommend positive bias when mostly negative"
+        );
+    }
+
+    #[test]
+    fn balanced_oscillation_no_bias_change() {
+        let delta = recommend_bias_for_oscillation(0.5, 0.0);
+        assert!(
+            delta.is_none(),
+            "Balanced oscillation should not adjust bias"
+        );
+    }
+
+    // ── detect_oscillating_neurons ─────────────────────────────────────
+
+    #[test]
+    fn stable_positive_neuron_not_detected() {
+        let neurons = vec![("n1".to_string(), "TANH".to_string(), 0.0)];
+        let records: Vec<DiscoverRecord> = (0..30).map(|i| make_record(i, 0.5)).collect();
+        let result = detect_oscillating_neurons(&neurons, &[("n1".to_string(), records)]);
+        assert!(
+            result.is_empty(),
+            "Stable positive neuron should not be detected as oscillating"
+        );
+    }
+
+    #[test]
+    fn dead_neuron_not_detected_as_oscillating() {
+        let neurons = vec![("n1".to_string(), "TANH".to_string(), 0.0)];
+        let records: Vec<DiscoverRecord> = (0..30).map(|i| make_record(i, 0.0)).collect();
+        let result = detect_oscillating_neurons(&neurons, &[("n1".to_string(), records)]);
+        assert!(
+            result.is_empty(),
+            "Dead neuron (zero activation) should not be flagged as oscillating"
+        );
+    }
+
+    #[test]
+    fn insufficient_samples_not_detected() {
+        let neurons = vec![("n1".to_string(), "TANH".to_string(), 0.0)];
+        // Alternating sign but only 10 samples
+        let records: Vec<DiscoverRecord> = (0..10)
+            .map(|i| {
+                let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+                make_record(i, 0.5 * sign)
+            })
+            .collect();
+        let result = detect_oscillating_neurons(&neurons, &[("n1".to_string(), records)]);
+        assert!(result.is_empty(), "Should require minimum sample count");
+    }
+
+    // ── oscillating_neurons_to_coordinated_candidates ──────────────────
+
+    #[test]
+    fn conversion_includes_change_squash_op() {
+        let candidate = OscillatingNeuronCandidate {
+            neuron_uuid: "osc-1".to_string(),
+            current_squash: "TANH".to_string(),
+            sign_change_fraction: 0.5,
+            positive_fraction: 0.5,
+            mean_abs_activation: 0.3,
+            sample_count: 100,
+            recommended_squash: "ABSOLUTE".to_string(),
+            recommended_bias_delta: None,
+            estimated_improvement: 0.005,
+        };
+
+        let coordinated = oscillating_neurons_to_coordinated_candidates(&[candidate]);
+        assert_eq!(coordinated.len(), 1);
+        let has_change_squash = coordinated[0].operations.iter().any(|op| {
+            matches!(op, CoordinatedStructuralOpJson::ChangeSquash { squash, .. } if squash == "ABSOLUTE")
+        });
+        assert!(has_change_squash, "Should include ChangeSquash to ABSOLUTE");
+    }
+}

@@ -263,3 +263,144 @@ pub fn opposing_synapses_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── pearson_correlation ─────────────────────────────────────────────
+
+    #[test]
+    fn pearson_perfect_positive() {
+        let x: Vec<f32> = (0..30).map(|i| i as f32).collect();
+        let y: Vec<f32> = (0..30).map(|i| i as f32 * 2.0 + 1.0).collect();
+        let corr = pearson_correlation(&x, &y);
+        assert!(
+            (corr - 1.0).abs() < 0.01,
+            "Perfectly correlated should give r ≈ 1.0, got {corr}"
+        );
+    }
+
+    #[test]
+    fn pearson_perfect_negative() {
+        let x: Vec<f32> = (0..30).map(|i| i as f32).collect();
+        let y: Vec<f32> = (0..30).map(|i| -(i as f32)).collect();
+        let corr = pearson_correlation(&x, &y);
+        assert!(
+            (corr + 1.0).abs() < 0.01,
+            "Perfectly anti-correlated should give r ≈ -1.0, got {corr}"
+        );
+    }
+
+    #[test]
+    fn pearson_single_element_returns_zero() {
+        let corr = pearson_correlation(&[1.0], &[2.0]);
+        assert_eq!(corr, 0.0, "Single element should return 0.0");
+    }
+
+    #[test]
+    fn pearson_zero_variance_returns_zero() {
+        let x: Vec<f32> = vec![5.0; 30];
+        let y: Vec<f32> = (0..30).map(|i| i as f32).collect();
+        let corr = pearson_correlation(&x, &y);
+        assert_eq!(corr, 0.0, "Zero variance in x should return 0.0");
+    }
+
+    // ── detect_opposing_synapses ───────────────────────────────────────
+
+    #[test]
+    fn non_output_target_synapses_excluded() {
+        use crate::types::DiscoverRecord;
+        use crate::{CreatureJson, NeuronJson, SynapseJson};
+
+        let creature = CreatureJson {
+            neurons: vec![
+                NeuronJson {
+                    uuid: "in-1".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "h-1".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "TANH".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![SynapseJson {
+                from_uuid: "in-1".to_string(),
+                to_uuid: "h-1".to_string(),
+                weight: 1.0,
+                synapse_type: None,
+            }],
+            input: 1,
+            output: 0,
+        };
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![
+            (
+                "in-1".to_string(),
+                (0..30)
+                    .map(|i| DiscoverRecord::new(i, "in-1".to_string(), None, i as f32, vec![]))
+                    .collect(),
+            ),
+            (
+                "h-1".to_string(),
+                (0..30)
+                    .map(|i| DiscoverRecord::new(i, "h-1".to_string(), None, 0.0, vec![i as f32]))
+                    .collect(),
+            ),
+        ];
+
+        let result = detect_opposing_synapses(&creature, &records);
+        assert!(
+            result.is_empty(),
+            "Synapses targeting hidden neurons should be excluded"
+        );
+    }
+
+    // ── opposing_synapses_to_coordinated_candidates ────────────────────
+
+    #[test]
+    fn strong_opposition_produces_remove_synapse() {
+        let candidate = OpposingSynapseCandidate {
+            from_neuron_uuid: "in-1".to_string(),
+            to_neuron_uuid: "out-1".to_string(),
+            weight: 0.5,
+            contribution_error_correlation: 0.8,
+            mean_abs_contribution: 0.1,
+            sample_count: 100,
+            recommend_removal: true,
+            estimated_improvement: 0.004,
+        };
+
+        let coordinated = opposing_synapses_to_coordinated_candidates(&[candidate]);
+        assert_eq!(coordinated.len(), 1);
+        assert!(matches!(
+            &coordinated[0].operations[0],
+            CoordinatedStructuralOpJson::RemoveSynapse { .. }
+        ));
+    }
+
+    #[test]
+    fn moderate_opposition_produces_set_weight() {
+        let candidate = OpposingSynapseCandidate {
+            from_neuron_uuid: "in-1".to_string(),
+            to_neuron_uuid: "out-1".to_string(),
+            weight: 0.5,
+            contribution_error_correlation: 0.35,
+            mean_abs_contribution: 0.1,
+            sample_count: 100,
+            recommend_removal: false,
+            estimated_improvement: 0.002,
+        };
+
+        let coordinated = opposing_synapses_to_coordinated_candidates(&[candidate]);
+        assert_eq!(coordinated.len(), 1);
+        assert!(matches!(
+            &coordinated[0].operations[0],
+            CoordinatedStructuralOpJson::SetWeight { weight, .. } if (*weight + 0.5_f32).abs() < 0.01
+        ));
+    }
+}

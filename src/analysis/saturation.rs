@@ -384,3 +384,213 @@ pub fn saturated_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+
+    fn make_record(obs_index: u32, activation: f32, value: Option<f32>) -> DiscoverRecord {
+        DiscoverRecord::new(
+            obs_index,
+            "test-neuron".to_string(),
+            value,
+            activation,
+            vec![],
+        )
+    }
+
+    // ── is_bounded_squash ──────────────────────────────────────────────
+
+    #[test]
+    fn bounded_squash_includes_tanh_and_logistic() {
+        assert!(is_bounded_squash("TANH"));
+        assert!(is_bounded_squash("LOGISTIC"));
+        assert!(is_bounded_squash("HARD_TANH"));
+        assert!(is_bounded_squash("CLIPPED"));
+        assert!(is_bounded_squash("SOFTSIGN"));
+        assert!(is_bounded_squash("RELU6"));
+    }
+
+    #[test]
+    fn bounded_squash_is_case_insensitive() {
+        assert!(is_bounded_squash("tanh"));
+        assert!(is_bounded_squash("Logistic"));
+    }
+
+    #[test]
+    fn unbounded_squash_excluded() {
+        assert!(!is_bounded_squash("RELU"));
+        assert!(!is_bounded_squash("IDENTITY"));
+        assert!(!is_bounded_squash("ELU"));
+    }
+
+    // ── can_have_dead_zone ─────────────────────────────────────────────
+
+    #[test]
+    fn relu_family_can_have_dead_zone() {
+        assert!(can_have_dead_zone("RELU"));
+        assert!(can_have_dead_zone("LEAKYRELU"));
+        assert!(can_have_dead_zone("ELU"));
+        assert!(can_have_dead_zone("SELU"));
+    }
+
+    #[test]
+    fn tanh_cannot_have_dead_zone() {
+        assert!(!can_have_dead_zone("TANH"));
+        assert!(!can_have_dead_zone("IDENTITY"));
+    }
+
+    // ── check_bounded_saturation ───────────────────────────────────────
+
+    #[test]
+    fn tanh_above_threshold_is_saturated() {
+        assert!(check_bounded_saturation("TANH", 0.96, 0.01));
+        assert!(check_bounded_saturation("TANH", -0.96, 0.01));
+    }
+
+    #[test]
+    fn tanh_below_threshold_is_not_saturated() {
+        assert!(!check_bounded_saturation("TANH", 0.5, 0.01));
+        assert!(!check_bounded_saturation("TANH", 0.0, 0.01));
+    }
+
+    #[test]
+    fn high_std_dev_prevents_saturation_detection() {
+        // Even with high mean activation, high variance means not truly saturated
+        assert!(!check_bounded_saturation("TANH", 0.99, 0.10));
+    }
+
+    #[test]
+    fn logistic_near_one_is_saturated() {
+        assert!(check_bounded_saturation("LOGISTIC", 0.98, 0.01));
+    }
+
+    #[test]
+    fn logistic_near_zero_is_saturated() {
+        assert!(check_bounded_saturation("LOGISTIC", 0.02, 0.01));
+    }
+
+    #[test]
+    fn logistic_mid_range_is_not_saturated() {
+        assert!(!check_bounded_saturation("LOGISTIC", 0.5, 0.01));
+    }
+
+    // ── compute_saturation_severity ────────────────────────────────────
+
+    #[test]
+    fn severity_at_threshold_is_zero() {
+        let severity = compute_saturation_severity("TANH", 0.95);
+        assert!(
+            severity < 0.01,
+            "Severity at threshold should be near zero, got {severity}"
+        );
+    }
+
+    #[test]
+    fn severity_at_max_is_one() {
+        let severity = compute_saturation_severity("TANH", 1.0);
+        assert!(
+            (severity - 1.0).abs() < 0.01,
+            "Severity at max should be 1.0, got {severity}"
+        );
+    }
+
+    #[test]
+    fn severity_between_threshold_and_max_is_proportional() {
+        let s1 = compute_saturation_severity("TANH", 0.96);
+        let s2 = compute_saturation_severity("TANH", 0.99);
+        assert!(s2 > s1, "Higher activation should produce higher severity");
+    }
+
+    // ── compute_input_std_dev ──────────────────────────────────────────
+
+    #[test]
+    fn input_std_dev_with_no_values_returns_zero() {
+        let records: Vec<DiscoverRecord> = (0..5).map(|i| make_record(i, 0.5, None)).collect();
+        assert_eq!(compute_input_std_dev(&records), 0.0);
+    }
+
+    #[test]
+    fn input_std_dev_with_constant_values_returns_zero() {
+        let records: Vec<DiscoverRecord> =
+            (0..10).map(|i| make_record(i, 0.5, Some(1.0))).collect();
+        assert!(
+            compute_input_std_dev(&records) < 1e-6,
+            "Constant inputs should have zero std dev"
+        );
+    }
+
+    // ── recommend_fix ──────────────────────────────────────────────────
+
+    #[test]
+    fn recommend_fix_suggests_identity_for_tanh() {
+        let (squash, _bias) = recommend_fix("TANH", 0.99, 0.5);
+        assert_eq!(squash, Some("IDENTITY".to_string()));
+    }
+
+    #[test]
+    fn recommend_fix_bias_direction_matches_saturation_side() {
+        // Positive saturation: bias delta should be negative
+        let (_, bias_delta) = recommend_fix("TANH", 0.99, 0.5);
+        assert!(
+            bias_delta.unwrap() < 0.0,
+            "Positive saturation should recommend negative bias delta"
+        );
+        // Negative saturation: bias delta should be positive
+        let (_, bias_delta) = recommend_fix("TANH", -0.99, 0.5);
+        assert!(
+            bias_delta.unwrap() > 0.0,
+            "Negative saturation should recommend positive bias delta"
+        );
+    }
+
+    // ── detect_saturated_neurons (integration within unit scope) ──────
+
+    #[test]
+    fn insufficient_samples_returns_empty() {
+        let neurons = vec![("n1".to_string(), "TANH".to_string(), 0.0)];
+        let records: Vec<DiscoverRecord> = (0..5).map(|i| make_record(i, 0.99, None)).collect();
+        let result = detect_saturated_neurons(&neurons, &[("n1".to_string(), records)]);
+        assert!(result.is_empty(), "Should require at least 20 samples");
+    }
+
+    #[test]
+    fn identity_neuron_not_flagged() {
+        let neurons = vec![("n1".to_string(), "IDENTITY".to_string(), 0.0)];
+        let records: Vec<DiscoverRecord> = (0..30).map(|i| make_record(i, 100.0, None)).collect();
+        let result = detect_saturated_neurons(&neurons, &[("n1".to_string(), records)]);
+        assert!(result.is_empty(), "IDENTITY neurons cannot saturate");
+    }
+
+    // ── saturated_neurons_to_coordinated_candidates ────────────────────
+
+    #[test]
+    fn conversion_produces_change_squash_and_set_bias_ops() {
+        let candidate = SaturatedNeuronCandidate {
+            neuron_uuid: "sat-1".to_string(),
+            current_squash: "TANH".to_string(),
+            mean_activation: 0.99,
+            activation_std_dev: 0.01,
+            input_std_dev: 0.5,
+            recommended_squash: Some("IDENTITY".to_string()),
+            recommended_bias_delta: Some(-1.0),
+            estimated_improvement: 0.005,
+        };
+        let coordinated = saturated_neurons_to_coordinated_candidates(&[candidate]);
+        assert!(
+            coordinated.len() >= 2,
+            "Should produce both a squash+bias candidate and a bias-only candidate"
+        );
+        // First candidate should contain ChangeSquash
+        let first = &coordinated[0];
+        let has_change_squash = first
+            .operations
+            .iter()
+            .any(|op| matches!(op, CoordinatedStructuralOpJson::ChangeSquash { .. }));
+        assert!(
+            has_change_squash,
+            "First candidate should include ChangeSquash operation"
+        );
+    }
+}

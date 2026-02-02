@@ -281,3 +281,162 @@ pub fn dead_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+    use crate::{NeuronJson, SynapseJson};
+
+    fn make_neuron(uuid: &str, ntype: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: ntype.to_string(),
+            squash: "TANH".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn make_synapse(from: &str, to: &str) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight: 1.0,
+            synapse_type: None,
+        }
+    }
+
+    fn make_creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>) -> CreatureJson {
+        CreatureJson {
+            neurons,
+            synapses,
+            input: 1,
+            output: 1,
+        }
+    }
+
+    fn make_record(uuid: &str, obs_index: u32, activation: f32) -> DiscoverRecord {
+        DiscoverRecord::new(obs_index, uuid.to_string(), None, activation, vec![0.01])
+    }
+
+    // ── compute_removal_confidence ─────────────────────────────────────
+
+    #[test]
+    fn perfect_dead_neuron_has_high_confidence() {
+        // Zero activation, zero std dev, many samples → high confidence
+        let confidence = compute_removal_confidence(0.0, 0.0, 1000.0);
+        assert!(
+            confidence > 0.8,
+            "Perfectly dead neuron should have high confidence, got {confidence}"
+        );
+    }
+
+    #[test]
+    fn more_samples_increase_confidence() {
+        let c_few = compute_removal_confidence(0.0, 0.0, 20.0);
+        let c_many = compute_removal_confidence(0.0, 0.0, 500.0);
+        assert!(
+            c_many > c_few,
+            "More samples should increase confidence: {c_many} vs {c_few}"
+        );
+    }
+
+    #[test]
+    fn confidence_never_exceeds_one() {
+        let confidence = compute_removal_confidence(0.0, 0.0, 100_000.0);
+        assert!(
+            confidence <= 1.0,
+            "Confidence should not exceed 1.0, got {confidence}"
+        );
+    }
+
+    // ── find_connected_outputs ─────────────────────────────────────────
+
+    #[test]
+    fn finds_directly_connected_output() {
+        let fan_out_map: HashMap<&str, Vec<&str>> = [("h-1", vec!["out-1"])].into_iter().collect();
+        let output_uuids: HashSet<&str> = ["out-1"].into_iter().collect();
+
+        let connected = find_connected_outputs("h-1", &fan_out_map, &output_uuids);
+        assert_eq!(connected, vec!["out-1".to_string()]);
+    }
+
+    #[test]
+    fn finds_transitively_connected_output() {
+        let fan_out_map: HashMap<&str, Vec<&str>> = [("h-1", vec!["h-2"]), ("h-2", vec!["out-1"])]
+            .into_iter()
+            .collect();
+        let output_uuids: HashSet<&str> = ["out-1"].into_iter().collect();
+
+        let connected = find_connected_outputs("h-1", &fan_out_map, &output_uuids);
+        assert_eq!(connected, vec!["out-1".to_string()]);
+    }
+
+    #[test]
+    fn no_connected_outputs_returns_empty() {
+        let fan_out_map: HashMap<&str, Vec<&str>> = HashMap::new();
+        let output_uuids: HashSet<&str> = ["out-1"].into_iter().collect();
+
+        let connected = find_connected_outputs("h-1", &fan_out_map, &output_uuids);
+        assert!(connected.is_empty());
+    }
+
+    // ── detect_dead_neurons ────────────────────────────────────────────
+
+    #[test]
+    fn active_neuron_not_flagged_as_dead() {
+        let creature = make_creature(
+            vec![make_neuron("h-1", "hidden"), make_neuron("out-1", "output")],
+            vec![make_synapse("h-1", "out-1")],
+        );
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "h-1".to_string(),
+            (0..30).map(|i| make_record("h-1", i, 0.5)).collect(),
+        )];
+
+        let result = detect_dead_neurons(&creature, &records);
+        assert!(
+            result.is_empty(),
+            "Active neuron should not be flagged as dead"
+        );
+    }
+
+    #[test]
+    fn output_neuron_never_flagged() {
+        let creature = make_creature(vec![make_neuron("out-1", "output")], vec![]);
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "out-1".to_string(),
+            (0..30).map(|i| make_record("out-1", i, 0.0)).collect(),
+        )];
+
+        let result = detect_dead_neurons(&creature, &records);
+        assert!(
+            result.is_empty(),
+            "Output neurons should never be flagged as dead"
+        );
+    }
+
+    // ── dead_neurons_to_coordinated_candidates ─────────────────────────
+
+    #[test]
+    fn conversion_produces_remove_neuron_op() {
+        let candidate = DeadNeuronCandidate {
+            neuron_uuid: "dead-1".to_string(),
+            mean_abs_activation: 0.0,
+            activation_std_dev: 0.0,
+            sample_count: 100,
+            connected_outputs: vec!["out-1".to_string()],
+            removal_confidence: 0.95,
+            estimated_improvement: 0.001,
+        };
+
+        let coordinated = dead_neurons_to_coordinated_candidates(&[candidate]);
+        assert_eq!(coordinated.len(), 1);
+        assert!(matches!(
+            &coordinated[0].operations[0],
+            CoordinatedStructuralOpJson::RemoveNeuron { neuron_uuid } if neuron_uuid == "dead-1"
+        ));
+    }
+}

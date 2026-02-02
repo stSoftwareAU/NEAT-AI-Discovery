@@ -192,3 +192,151 @@ pub fn output_bias_drift_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+    use crate::NeuronJson;
+
+    fn make_output_neuron(uuid: &str, bias: f32) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: "output".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias,
+        }
+    }
+
+    fn make_creature(neurons: Vec<NeuronJson>) -> CreatureJson {
+        CreatureJson {
+            neurons,
+            synapses: vec![],
+            input: 0,
+            output: 1,
+        }
+    }
+
+    fn make_record(uuid: &str, obs_index: u32, error: f32) -> DiscoverRecord {
+        DiscoverRecord::new(obs_index, uuid.to_string(), None, 0.0, vec![error])
+    }
+
+    // ── detect_output_bias_drift ───────────────────────────────────────
+
+    #[test]
+    fn consistent_positive_errors_detected() {
+        let creature = make_creature(vec![make_output_neuron("out-1", 0.0)]);
+        // 80% positive errors with meaningful magnitude
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "out-1".to_string(),
+            (0..100)
+                .map(|i| {
+                    let err = if i < 80 { 0.5 } else { -0.2 };
+                    make_record("out-1", i, err)
+                })
+                .collect(),
+        )];
+
+        let result = detect_output_bias_drift(&creature, &records);
+        assert_eq!(result.len(), 1, "Should detect bias drift");
+        assert!(
+            result[0].recommended_bias_delta < 0.0,
+            "Should recommend negative delta for positive error bias"
+        );
+    }
+
+    #[test]
+    fn balanced_errors_not_flagged() {
+        let creature = make_creature(vec![make_output_neuron("out-1", 0.0)]);
+        // 50/50 positive/negative errors
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "out-1".to_string(),
+            (0..100)
+                .map(|i| {
+                    let err = if i % 2 == 0 { 0.5 } else { -0.5 };
+                    make_record("out-1", i, err)
+                })
+                .collect(),
+        )];
+
+        let result = detect_output_bias_drift(&creature, &records);
+        assert!(
+            result.is_empty(),
+            "Balanced errors should not trigger bias drift"
+        );
+    }
+
+    #[test]
+    fn hidden_neurons_excluded() {
+        let creature = CreatureJson {
+            neurons: vec![NeuronJson {
+                uuid: "h-1".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "TANH".to_string(),
+                bias: 0.0,
+            }],
+            synapses: vec![],
+            input: 0,
+            output: 0,
+        };
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "h-1".to_string(),
+            (0..100).map(|i| make_record("h-1", i, 0.5)).collect(),
+        )];
+
+        let result = detect_output_bias_drift(&creature, &records);
+        assert!(result.is_empty(), "Hidden neurons should be excluded");
+    }
+
+    #[test]
+    fn noise_level_errors_not_flagged() {
+        let creature = make_creature(vec![make_output_neuron("out-1", 0.0)]);
+        // All positive but very small magnitude (below MIN_MEAN_ERROR_MAGNITUDE)
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "out-1".to_string(),
+            (0..100).map(|i| make_record("out-1", i, 0.001)).collect(),
+        )];
+
+        let result = detect_output_bias_drift(&creature, &records);
+        assert!(
+            result.is_empty(),
+            "Tiny errors should not trigger bias drift"
+        );
+    }
+
+    #[test]
+    fn insufficient_samples_not_detected() {
+        let creature = make_creature(vec![make_output_neuron("out-1", 0.0)]);
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "out-1".to_string(),
+            (0..10).map(|i| make_record("out-1", i, 0.5)).collect(),
+        )];
+
+        let result = detect_output_bias_drift(&creature, &records);
+        assert!(result.is_empty(), "Should require minimum sample count");
+    }
+
+    // ── output_bias_drift_to_coordinated_candidates ────────────────────
+
+    #[test]
+    fn conversion_produces_set_bias_with_correct_value() {
+        let candidate = OutputBiasDriftCandidate {
+            neuron_uuid: "out-1".to_string(),
+            current_bias: 0.5,
+            mean_error: 0.3,
+            positive_error_fraction: 0.8,
+            sample_count: 100,
+            recommended_bias_delta: -0.3,
+            estimated_improvement: 0.006,
+        };
+
+        let coordinated = output_bias_drift_to_coordinated_candidates(&[candidate]);
+        assert_eq!(coordinated.len(), 1);
+        assert!(matches!(
+            &coordinated[0].operations[0],
+            CoordinatedStructuralOpJson::SetBias { neuron_uuid, bias }
+                if neuron_uuid == "out-1" && (*bias - 0.2).abs() < 0.01
+        ));
+    }
+}

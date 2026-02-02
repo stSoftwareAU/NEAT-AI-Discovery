@@ -402,3 +402,233 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+    use crate::{NeuronJson, SynapseJson};
+
+    fn make_neuron(uuid: &str, ntype: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: ntype.to_string(),
+            squash: "TANH".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn make_synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight,
+            synapse_type: None,
+        }
+    }
+
+    fn make_creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>) -> CreatureJson {
+        CreatureJson {
+            neurons,
+            synapses,
+            input: 1,
+            output: 1,
+        }
+    }
+
+    fn make_record(uuid: &str, obs_index: u32, activation: f32) -> DiscoverRecord {
+        DiscoverRecord::new(obs_index, uuid.to_string(), None, activation, vec![0.1])
+    }
+
+    // ── bottleneck_parallel_neuron_uuid ─────────────────────────────────
+
+    #[test]
+    fn parallel_neuron_uuid_is_deterministic() {
+        let uuid1 = bottleneck_parallel_neuron_uuid("bottleneck-1", 0);
+        let uuid2 = bottleneck_parallel_neuron_uuid("bottleneck-1", 0);
+        assert_eq!(uuid1, uuid2, "Same inputs should produce the same UUID");
+    }
+
+    #[test]
+    fn parallel_neuron_uuid_differs_by_index() {
+        let uuid1 = bottleneck_parallel_neuron_uuid("bottleneck-1", 0);
+        let uuid2 = bottleneck_parallel_neuron_uuid("bottleneck-1", 1);
+        assert_ne!(
+            uuid1, uuid2,
+            "Different indices should produce different UUIDs"
+        );
+    }
+
+    #[test]
+    fn parallel_neuron_uuid_has_bp_prefix() {
+        let uuid = bottleneck_parallel_neuron_uuid("test", 0);
+        assert!(
+            uuid.starts_with("bp-"),
+            "UUID should start with 'bp-' prefix"
+        );
+    }
+
+    // ── detect_bottleneck_neurons ──────────────────────────────────────
+
+    #[test]
+    fn low_fan_in_neuron_not_flagged() {
+        // Fan-in 2, fan-out 1: ratio is 2.0 but fan-in < MIN_FAN_IN_FOR_BOTTLENECK (3)
+        let creature = make_creature(
+            vec![
+                make_neuron("in-1", "input"),
+                make_neuron("in-2", "input"),
+                make_neuron("h-1", "hidden"),
+                make_neuron("out-1", "output"),
+            ],
+            vec![
+                make_synapse("in-1", "h-1", 1.0),
+                make_synapse("in-2", "h-1", 1.0),
+                make_synapse("h-1", "out-1", 1.0),
+            ],
+        );
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "h-1".to_string(),
+            (0..30).map(|i| make_record("h-1", i, 0.5)).collect(),
+        )];
+
+        let result = detect_bottleneck_neurons(&creature, &records);
+        assert!(
+            result.is_empty(),
+            "Fan-in 2 should not trigger bottleneck detection"
+        );
+    }
+
+    #[test]
+    fn balanced_fan_in_fan_out_not_flagged() {
+        // Fan-in 3, fan-out 3: ratio is 1.0 < MIN_FAN_IN_FAN_OUT_RATIO (2.0)
+        let creature = make_creature(
+            vec![
+                make_neuron("in-1", "input"),
+                make_neuron("in-2", "input"),
+                make_neuron("in-3", "input"),
+                make_neuron("h-1", "hidden"),
+                make_neuron("out-1", "output"),
+                make_neuron("out-2", "output"),
+                make_neuron("out-3", "output"),
+            ],
+            vec![
+                make_synapse("in-1", "h-1", 1.0),
+                make_synapse("in-2", "h-1", 1.0),
+                make_synapse("in-3", "h-1", 1.0),
+                make_synapse("h-1", "out-1", 1.0),
+                make_synapse("h-1", "out-2", 1.0),
+                make_synapse("h-1", "out-3", 1.0),
+            ],
+        );
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "h-1".to_string(),
+            (0..30).map(|i| make_record("h-1", i, 0.5)).collect(),
+        )];
+
+        let result = detect_bottleneck_neurons(&creature, &records);
+        assert!(
+            result.is_empty(),
+            "Balanced fan-in/fan-out should not trigger bottleneck detection"
+        );
+    }
+
+    #[test]
+    fn high_fan_in_to_single_output_detected() {
+        // Fan-in 4, fan-out 1: ratio is 4.0 >= MIN_FAN_IN_FAN_OUT_RATIO
+        let creature = make_creature(
+            vec![
+                make_neuron("in-1", "input"),
+                make_neuron("in-2", "input"),
+                make_neuron("in-3", "input"),
+                make_neuron("in-4", "input"),
+                make_neuron("h-1", "hidden"),
+                make_neuron("out-1", "output"),
+            ],
+            vec![
+                make_synapse("in-1", "h-1", 1.0),
+                make_synapse("in-2", "h-1", 1.0),
+                make_synapse("in-3", "h-1", 1.0),
+                make_synapse("in-4", "h-1", 1.0),
+                make_synapse("h-1", "out-1", 1.0),
+            ],
+        );
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "h-1".to_string(),
+            (0..30).map(|i| make_record("h-1", i, 0.5)).collect(),
+        )];
+
+        let result = detect_bottleneck_neurons(&creature, &records);
+        assert_eq!(result.len(), 1, "Should detect one bottleneck neuron");
+        assert_eq!(result[0].fan_in, 4);
+        assert_eq!(result[0].fan_out, 1);
+    }
+
+    #[test]
+    fn output_neurons_excluded_from_bottleneck_detection() {
+        // Even if output neuron has high fan-in, it should not be flagged
+        let creature = make_creature(
+            vec![
+                make_neuron("in-1", "input"),
+                make_neuron("in-2", "input"),
+                make_neuron("in-3", "input"),
+                make_neuron("in-4", "input"),
+                make_neuron("out-1", "output"),
+            ],
+            vec![
+                make_synapse("in-1", "out-1", 1.0),
+                make_synapse("in-2", "out-1", 1.0),
+                make_synapse("in-3", "out-1", 1.0),
+                make_synapse("in-4", "out-1", 1.0),
+            ],
+        );
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "out-1".to_string(),
+            (0..30).map(|i| make_record("out-1", i, 0.5)).collect(),
+        )];
+
+        let result = detect_bottleneck_neurons(&creature, &records);
+        assert!(result.is_empty(), "Output neurons should be excluded");
+    }
+
+    // ── bottleneck_neurons_to_coordinated_candidates ───────────────────
+
+    #[test]
+    fn conversion_includes_add_neuron_and_add_synapse_ops() {
+        let candidate = BottleneckNeuronCandidate {
+            neuron_uuid: "h-1".to_string(),
+            fan_in: 4,
+            fan_out: 1,
+            error_contribution_ratio: 0.5,
+            bottleneck_score: 0.3,
+            estimated_improvement: 0.003,
+            recommended_actions: vec!["addParallelNeuron".to_string()],
+            upstream_uuids: vec!["in-1".to_string(), "in-2".to_string()],
+            downstream_uuids: vec!["out-1".to_string()],
+        };
+
+        let creature = make_creature(
+            vec![make_neuron("h-1", "hidden"), make_neuron("out-1", "output")],
+            vec![
+                make_synapse("in-1", "h-1", 0.5),
+                make_synapse("in-2", "h-1", 0.8),
+                make_synapse("h-1", "out-1", 1.0),
+            ],
+        );
+
+        let coordinated = bottleneck_neurons_to_coordinated_candidates(&[candidate], &creature);
+        assert!(
+            !coordinated.is_empty(),
+            "Should produce at least one candidate"
+        );
+
+        let ops = &coordinated[0].operations;
+        let has_add_neuron = ops
+            .iter()
+            .any(|op| matches!(op, CoordinatedStructuralOpJson::AddNeuron { .. }));
+        assert!(has_add_neuron, "Should include AddNeuron operation");
+    }
+}

@@ -179,3 +179,161 @@ pub fn dormant_synapses_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+    use crate::{NeuronJson, SynapseJson};
+
+    fn make_neuron(uuid: &str, ntype: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: ntype.to_string(),
+            squash: "TANH".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn make_synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight,
+            synapse_type: None,
+        }
+    }
+
+    fn make_creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>) -> CreatureJson {
+        CreatureJson {
+            neurons,
+            synapses,
+            input: 1,
+            output: 1,
+        }
+    }
+
+    fn make_record(uuid: &str, obs_index: u32, activation: f32) -> DiscoverRecord {
+        DiscoverRecord::new(obs_index, uuid.to_string(), None, activation, vec![])
+    }
+
+    // ── detect_dormant_synapses ────────────────────────────────────────
+
+    #[test]
+    fn near_zero_weight_synapse_detected() {
+        let creature = make_creature(
+            vec![
+                make_neuron("in-1", "input"),
+                make_neuron("in-2", "input"),
+                make_neuron("out-1", "output"),
+            ],
+            vec![
+                make_synapse("in-1", "out-1", 1e-5), // dormant
+                make_synapse("in-2", "out-1", 1.0),  // active (ensures fan-in > 1)
+            ],
+        );
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![
+            (
+                "in-1".to_string(),
+                (0..30).map(|i| make_record("in-1", i, 0.5)).collect(),
+            ),
+            (
+                "in-2".to_string(),
+                (0..30).map(|i| make_record("in-2", i, 0.5)).collect(),
+            ),
+        ];
+
+        let result = detect_dormant_synapses(&creature, &records);
+        assert_eq!(result.len(), 1, "Should detect one dormant synapse");
+        assert_eq!(result[0].from_neuron_uuid, "in-1");
+    }
+
+    #[test]
+    fn active_weight_synapse_not_flagged() {
+        let creature = make_creature(
+            vec![
+                make_neuron("in-1", "input"),
+                make_neuron("in-2", "input"),
+                make_neuron("out-1", "output"),
+            ],
+            vec![
+                make_synapse("in-1", "out-1", 0.5),
+                make_synapse("in-2", "out-1", 0.8),
+            ],
+        );
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "in-1".to_string(),
+            (0..30).map(|i| make_record("in-1", i, 0.5)).collect(),
+        )];
+
+        let result = detect_dormant_synapses(&creature, &records);
+        assert!(result.is_empty(), "Active synapse should not be flagged");
+    }
+
+    #[test]
+    fn sole_connection_not_flagged() {
+        // Only one synapse to target — removal would be destructive
+        let creature = make_creature(
+            vec![make_neuron("in-1", "input"), make_neuron("out-1", "output")],
+            vec![make_synapse("in-1", "out-1", 1e-5)],
+        );
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "in-1".to_string(),
+            (0..30).map(|i| make_record("in-1", i, 0.5)).collect(),
+        )];
+
+        let result = detect_dormant_synapses(&creature, &records);
+        assert!(result.is_empty(), "Sole connection should not be flagged");
+    }
+
+    #[test]
+    fn insufficient_samples_not_flagged() {
+        let creature = make_creature(
+            vec![
+                make_neuron("in-1", "input"),
+                make_neuron("in-2", "input"),
+                make_neuron("out-1", "output"),
+            ],
+            vec![
+                make_synapse("in-1", "out-1", 1e-5),
+                make_synapse("in-2", "out-1", 1.0),
+            ],
+        );
+
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+            "in-1".to_string(),
+            (0..5).map(|i| make_record("in-1", i, 0.5)).collect(),
+        )];
+
+        let result = detect_dormant_synapses(&creature, &records);
+        assert!(result.is_empty(), "Should require minimum sample count");
+    }
+
+    // ── dormant_synapses_to_coordinated_candidates ─────────────────────
+
+    #[test]
+    fn conversion_produces_remove_synapse_op() {
+        let candidate = DormantSynapseCandidate {
+            from_neuron_uuid: "in-1".to_string(),
+            to_neuron_uuid: "out-1".to_string(),
+            weight: 1e-5,
+            mean_abs_contribution: 1e-6,
+            other_fan_in: 2,
+            sample_count: 100,
+            estimated_improvement: 0.001,
+        };
+
+        let coordinated = dormant_synapses_to_coordinated_candidates(&[candidate]);
+        assert_eq!(coordinated.len(), 1);
+        assert!(matches!(
+            &coordinated[0].operations[0],
+            CoordinatedStructuralOpJson::RemoveSynapse {
+                from_neuron_uuid,
+                to_neuron_uuid,
+            } if from_neuron_uuid == "in-1" && to_neuron_uuid == "out-1"
+        ));
+    }
+}
