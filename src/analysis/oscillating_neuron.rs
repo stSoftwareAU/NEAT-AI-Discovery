@@ -246,3 +246,7 @@ pub fn oscillating_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "oscillating_neuron_tests.rs"]
+mod tests;

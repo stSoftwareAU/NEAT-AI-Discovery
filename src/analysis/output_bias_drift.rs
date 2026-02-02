@@ -192,3 +192,7 @@ pub fn output_bias_drift_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "output_bias_drift_tests.rs"]
+mod tests;

@@ -548,3 +548,7 @@ pub fn multi_hop_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "multi_hop_tests.rs"]
+mod tests;

@@ -179,3 +179,7 @@ pub fn dormant_synapses_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "dormant_synapse_tests.rs"]
+mod tests;

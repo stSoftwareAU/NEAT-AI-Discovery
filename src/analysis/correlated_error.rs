@@ -627,3 +627,7 @@ pub fn correlated_errors_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "correlated_error_tests.rs"]
+mod tests;

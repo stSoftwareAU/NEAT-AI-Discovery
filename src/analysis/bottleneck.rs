@@ -402,3 +402,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "bottleneck_tests.rs"]
+mod tests;

@@ -281,3 +281,7 @@ pub fn dead_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "dead_neuron_tests.rs"]
+mod tests;

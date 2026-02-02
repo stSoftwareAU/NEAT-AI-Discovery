@@ -263,3 +263,7 @@ pub fn opposing_synapses_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "opposing_synapse_tests.rs"]
+mod tests;

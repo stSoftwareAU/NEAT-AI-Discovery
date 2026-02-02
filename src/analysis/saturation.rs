@@ -384,3 +384,7 @@ pub fn saturated_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "saturation_tests.rs"]
+mod tests;
