@@ -69,6 +69,19 @@ pub struct RecordCache {
 }
 
 impl RecordCache {
+    /// Create an empty cache for use in unit tests.
+    ///
+    /// Returns an empty cache with no records and a no-op loader.
+    /// All `get()` calls will return empty vectors.
+    #[cfg(test)]
+    pub fn new_empty_for_test() -> Self {
+        Self {
+            parquet_file: String::new(),
+            cache: RwLock::new(HashMap::new()),
+            loader: Arc::new(|_, _| Ok(Vec::new())),
+        }
+    }
+
     /// Create a cache that automatically chooses the best loading strategy based on
     /// available system memory:
     ///
