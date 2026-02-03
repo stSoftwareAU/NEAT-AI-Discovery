@@ -165,6 +165,12 @@ For detailed analysis workflow, coordinated structural discovery, discrete
 activation function handling, and detection algorithms, see
 [docs/ANALYSIS_DEEP_DIVE.md](docs/ANALYSIS_DEEP_DIVE.md).
 
+## Discovery Scenarios
+
+For a **visual, beginner-friendly overview** of every discovery scenario — with
+diagrams, worked examples, and links to research papers — see the
+[Discovery Scenarios Guide](docs/discoveries/README.md).
+
 ## Discovery Types
 
 The library analyses recorded neuron activations and errors to propose mutation
@@ -352,6 +358,7 @@ All dependencies build automatically on remote, unattended machines.
 
 | Document | Description |
 |----------|-------------|
+| [docs/discoveries/](docs/discoveries/README.md) | Visual discovery scenario guides with diagrams and examples |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development guidelines for contributors |
 | [CHANGELOG.md](CHANGELOG.md) | Version-by-version history of changes |
 | [AGENTS.md](AGENTS.md) | Coding guidelines for AI agents |
