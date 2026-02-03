@@ -1,12 +1,23 @@
-//! Exploratory ablation candidates (high error).
+//! Exploratory ablation candidates (high error) — DISABLED (Issue #414).
 //!
-//! We already return "safe prune" removal candidates based on low activation-weighted
-//! impact (activation_weighted_impact < costOfGrowth). This test verifies we ALSO return
-//! an *extra* removal candidate when a hidden neuron has extremely high error, even when
-//! it is NOT low impact.
+//! Previously, we returned "exploratory ablation" removal candidates for hidden neurons
+//! with extremely high error (≥10× max output error), even when they were NOT low impact.
 //!
-//! This supports the controller-side ablation test workflow: try removing a suspicious
-//! high-error neuron and keep the mutation only if full-dataset score improves.
+//! This was based on the assumption that high error means the neuron is harmful.
+//! Production data showed this had a 0% success rate (0/2 attempts) because:
+//!
+//! **High error ≠ harmful neuron**
+//!
+//! A neuron with high recorded error is often:
+//! 1. Handling the most difficult samples (it's the only path for hard cases)
+//! 2. Receiving bad inputs from upstream (the error is a symptom, not a cause)
+//! 3. Fighting against incorrect biases elsewhere in the network
+//!
+//! Removing such neurons typically makes performance WORSE.
+//!
+//! This test verifies that high-error neurons are NO LONGER returned as exploratory
+//! ablation candidates (Issue #414 fix). The legitimate "safe prune" removal candidates
+//! (based on activation_weighted_impact < costOfGrowth) remain active with a 17.6% success rate.
 
 mod common;
 
@@ -16,14 +27,20 @@ use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use tempfile::NamedTempFile;
 
+/// Issue #414: High-error neurons should NOT be returned as removal candidates.
+///
+/// Previously, a hidden neuron with high error (≥10× max output error) would be returned
+/// as an "exploratory ablation candidate". This test verifies that behaviour is now disabled.
 #[test]
-fn high_error_hidden_neuron_is_returned_as_exploratory_ablation_candidate() {
+fn high_error_hidden_neuron_is_not_returned_as_exploratory_ablation_candidate() {
     // Simple creature:
     // input-0 -> bad (hidden) -> output-0
     //
     // The "bad" neuron has high structural impact and high activation, so it is NOT a safe
-    // prune candidate. However, it has extreme recorded error, so we want it returned as an
-    // exploratory ablation candidate (with a warning-style reason).
+    // prune candidate. It also has extreme recorded error.
+    //
+    // BEFORE Issue #414: This would be returned as an exploratory ablation candidate.
+    // AFTER Issue #414: This should NOT be returned as a removal candidate at all.
     let creature = CreatureJson {
         neurons: vec![
             NeuronJson {
@@ -87,23 +104,18 @@ fn high_error_hidden_neuron_is_returned_as_exploratory_ablation_candidate() {
         bad_rank.activation_weighted_impact
     );
 
-    // New behaviour: "bad" is still returned as a removal candidate, but marked as exploratory.
+    // Issue #414: "bad" should NOT be returned as a removal candidate.
+    // High-error exploratory ablation has been disabled because error magnitude
+    // does not correlate with whether removing a neuron improves the network.
     let bad_candidate = result
         .removal_candidates
         .iter()
-        .find(|c| c.neuron_uuid == "bad")
-        .expect("bad neuron should be returned as an exploratory ablation candidate");
+        .find(|c| c.neuron_uuid == "bad");
 
-    assert_eq!(
-        bad_candidate.expected_error_reduction, 0.0,
-        "exploratory candidates should not claim an expected error reduction"
-    );
     assert!(
-        bad_candidate
-            .reason
-            .to_lowercase()
-            .contains("exploratory ablation"),
-        "expected reason to mention exploratory ablation, got: {}",
-        bad_candidate.reason
+        bad_candidate.is_none(),
+        "High-error neurons should NOT be returned as removal candidates. \
+         Found: {:?}",
+        bad_candidate.map(|c| &c.reason)
     );
 }

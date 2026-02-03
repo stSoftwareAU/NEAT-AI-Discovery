@@ -2352,83 +2352,32 @@ pub fn rank_focus_neurons(
         })
         .collect();
 
-    // Extra candidates: high-error exploratory ablations
+    // Issue #414: High-error exploratory ablation DISABLED
     //
-    // Rationale: A neuron can have very high recorded error yet still be high-impact. Removing
-    // such a neuron is NOT a "safe prune", but it can be a worthwhile ablation test: clone the
-    // creature, remove/disable the neuron, then re-score on the full training set. Keep only
-    // if the score improves.
+    // Previously, neurons with raw_error >= 10× max_output_error were returned as
+    // "exploratory ablation candidates". This discovery type had a 0% success rate
+    // (0 successes from 2 attempts) because the fundamental assumption was flawed:
     //
-    // We intentionally keep these candidates limited in count and clearly labelled so callers
-    // can treat them as exploratory.
-    const EXPLORATORY_ABLATION_MAX: usize = 5;
-    const EXPLORATORY_ERROR_MULTIPLIER: f32 = 10.0;
-
-    if max_output_error > 0.0 {
-        let neuron_types: HashMap<&str, &str> = creature
-            .neurons
-            .iter()
-            .map(|n: &NeuronJson| (n.uuid.as_str(), n.neuron_type.as_str()))
-            .collect();
-
-        let already_selected: HashSet<&str> = removal_candidates
-            .iter()
-            .map(|c| c.neuron_uuid.as_str())
-            .collect();
-
-        let mut high_error_neurons: Vec<&RankedNeuron> = neurons
-            .iter()
-            .filter(|n| !already_selected.contains(n.neuron_uuid.as_str()))
-            // Only propose exploratory removals for hidden neurons.
-            .filter(|n| neuron_types.get(n.neuron_uuid.as_str()) == Some(&"hidden"))
-            // Only when error is meaningfully larger than output error scale.
-            .filter(|n| n.raw_error >= max_output_error * EXPLORATORY_ERROR_MULTIPLIER)
-            .collect();
-
-        high_error_neurons.sort_by(|a, b| {
-            b.raw_error
-                .partial_cmp(&a.raw_error)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| b.impact.partial_cmp(&a.impact).unwrap_or(Ordering::Equal))
-                .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
-        });
-
-        high_error_neurons.truncate(EXPLORATORY_ABLATION_MAX);
-
-        for n in high_error_neurons {
-            // Issue #208: Use pre-computed synapse counts for O(1) lookup
-            let (incoming, outgoing) = synapse_counts.get(&n.neuron_uuid);
-            let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
-
-            removal_candidates.push(RemovalCandidate {
-                neuron_uuid: n.neuron_uuid.clone(),
-                total_error: n.total_error,
-                impact: n.impact,
-                mean_activation: n.mean_activation,
-                activation_weighted_impact: n.activation_weighted_impact,
-                incoming_synapses: incoming,
-                outgoing_synapses: outgoing,
-                removal_savings: savings,
-                // Exploratory candidates must not claim a predicted improvement. The controller
-                // will run an ablation test on the full training set to validate.
-                expected_error_reduction: 0.0,
-                reason: format!(
-                    "Exploratory ablation candidate (high error): raw_error {:.2e} (clamped {:.2e}), \
-                     activation_weighted_impact {:.2e} >= costOfGrowth ({:.2e}). \
-                     This is NOT a safe prune - validate by full-dataset ablation test.",
-                    n.raw_error,
-                    n.total_error,
-                    n.activation_weighted_impact,
-                    cost_of_growth_threshold
-                ),
-            });
-        }
-    }
+    // **High error ≠ harmful neuron**
+    //
+    // A neuron with high recorded error is often:
+    // 1. Handling the most difficult samples (it's the only path for hard cases)
+    // 2. Receiving bad inputs from upstream (the error is a symptom, not a cause)
+    // 3. Fighting against incorrect biases elsewhere in the network
+    //
+    // Removing such neurons typically makes performance WORSE because:
+    // - The difficult samples lose their only computation path
+    // - The network loses the only neuron attempting to handle a specific pattern
+    //
+    // Error magnitude measures how WRONG the neuron's output is, not how HARMFUL
+    // the neuron is to the network's overall score. This is why predicted
+    // improvements (based on error magnitude) did not match actual outcomes.
+    //
+    // The legitimate removal candidate detection (based on activation_weighted_impact
+    // < costOfGrowth) remains active and has a 17.6% success rate.
 
     // Issue #235: Sort by net improvement (removal_savings - activation_weighted_impact).
     // Higher net improvement = better candidate (removing it saves more than its contribution).
-    // Exploratory candidates (from high-error section) have expected_error_reduction = 0.0,
-    // so they sort last (their net improvement calculation uses impact directly).
     removal_candidates.sort_by(|a, b| {
         // Calculate net improvement for each candidate
         let a_net = a.removal_savings - a.activation_weighted_impact;
@@ -2831,65 +2780,7 @@ pub fn rank_focus_neurons_with_history(
         })
         .collect();
 
-    // Extra candidates: high-error exploratory ablations (same as rank_focus_neurons)
-    const EXPLORATORY_ABLATION_MAX: usize = 5;
-    const EXPLORATORY_ERROR_MULTIPLIER: f32 = 10.0;
-
-    if max_output_error > 0.0 {
-        let neuron_types: HashMap<&str, &str> = creature
-            .neurons
-            .iter()
-            .map(|n: &NeuronJson| (n.uuid.as_str(), n.neuron_type.as_str()))
-            .collect();
-
-        let already_selected: HashSet<&str> = removal_candidates
-            .iter()
-            .map(|c| c.neuron_uuid.as_str())
-            .collect();
-
-        let mut high_error_neurons: Vec<&RankedNeuron> = neurons
-            .iter()
-            .filter(|n| !already_selected.contains(n.neuron_uuid.as_str()))
-            .filter(|n| neuron_types.get(n.neuron_uuid.as_str()) == Some(&"hidden"))
-            .filter(|n| n.raw_error >= max_output_error * EXPLORATORY_ERROR_MULTIPLIER)
-            .collect();
-
-        high_error_neurons.sort_by(|a, b| {
-            b.raw_error
-                .partial_cmp(&a.raw_error)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| b.impact.partial_cmp(&a.impact).unwrap_or(Ordering::Equal))
-                .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
-        });
-
-        high_error_neurons.truncate(EXPLORATORY_ABLATION_MAX);
-
-        for n in high_error_neurons {
-            let (incoming, outgoing) = synapse_counts.get(&n.neuron_uuid);
-            let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
-
-            removal_candidates.push(RemovalCandidate {
-                neuron_uuid: n.neuron_uuid.clone(),
-                total_error: n.total_error,
-                impact: n.impact,
-                mean_activation: n.mean_activation,
-                activation_weighted_impact: n.activation_weighted_impact,
-                incoming_synapses: incoming,
-                outgoing_synapses: outgoing,
-                removal_savings: savings,
-                expected_error_reduction: 0.0,
-                reason: format!(
-                    "Exploratory ablation candidate (high error): raw_error {:.2e} (clamped {:.2e}), \
-                     activation_weighted_impact {:.2e} >= costOfGrowth ({:.2e}). \
-                     This is NOT a safe prune - validate by full-dataset ablation test.",
-                    n.raw_error,
-                    n.total_error,
-                    n.activation_weighted_impact,
-                    cost_of_growth_threshold
-                ),
-            });
-        }
-    }
+    // Issue #414: High-error exploratory ablation DISABLED (see rank_focus_neurons for rationale)
 
     // Sort removal candidates by net improvement
     removal_candidates.sort_by(|a, b| {
