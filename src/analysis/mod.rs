@@ -186,11 +186,12 @@ pub use samples::{
 // Moved to utils/deadline module in Issue #268
 pub use utils::focus_unused_observations_from_env;
 
-// Re-export weight calculation functions from weights module (Issue #270)
+// Re-export weight calculation functions from weights module (Issue #270, #402)
 pub use weights::{
     calculate_optimal_bias, calculate_optimal_identity_outgoing_and_bias,
-    calculate_optimal_outgoing_weight, clamp_weight_update_delta,
-    coordinated_structural_activation_delta, MAX_OUTGOING_WEIGHT,
+    calculate_optimal_outgoing_weight, calculate_range_aware_weight, clamp_weight_update_delta,
+    compute_range_aware_sums, coordinated_structural_activation_delta, DEFAULT_SENTINEL_TOLERANCE,
+    MAX_OUTGOING_WEIGHT,
 };
 
 // Re-export error distribution types (Issue #192)
