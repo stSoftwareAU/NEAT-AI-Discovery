@@ -29,6 +29,7 @@
 //! - `output_bias_drift.rs` - Output bias drift detection for bias adjustment candidates (Issue #361)
 //! - `bounded_range.rs` - Bounded range detection for sentinel/null value gating (Issue #395)
 //! - `observation_range.rs` - Observation effective range detection from recorded samples (Issue #398)
+//! - `restricted_range.rs` - Restricted activation range detection for underutilised neurons (Issue #399)
 
 pub mod activation;
 pub mod bottleneck;
@@ -52,6 +53,7 @@ pub mod opposing_synapse;
 pub mod oscillating_neuron;
 pub mod output_bias_drift;
 pub mod redundant_path;
+pub mod restricted_range;
 pub mod samples;
 pub mod saturation;
 pub mod shared;
@@ -924,6 +926,38 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     return None;
                 }
                 let candidates = bounded_range::bounded_range_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #399: Restricted activation range detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "restricted range detection",
+            "restricted_range_detection",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
+                }
+                let records = collect_hidden_records();
+                let config = restricted_range::RestrictedRangeConfig::default();
+                let detected = restricted_range::detect_restricted_range_neurons(
+                    &input.creature,
+                    &records,
+                    &config,
+                );
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = restricted_range::restricted_range_to_coordinated_candidates(
+                    &detected,
+                    &input.creature,
+                );
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
