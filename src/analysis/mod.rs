@@ -29,6 +29,7 @@
 //! - `output_bias_drift.rs` - Output bias drift detection for bias adjustment candidates (Issue #361)
 //! - `bounded_range.rs` - Bounded range detection for sentinel/null value gating (Issue #395)
 //! - `observation_range.rs` - Observation effective range detection from recorded samples (Issue #398)
+//! - `sentinel_gating.rs` - Sentinel value gating for null/sentinel observation suppression (Issue #400)
 //! - `restricted_range.rs` - Restricted activation range detection for underutilised neurons (Issue #399)
 
 pub mod activation;
@@ -56,6 +57,7 @@ pub mod redundant_path;
 pub mod restricted_range;
 pub mod samples;
 pub mod saturation;
+pub mod sentinel_gating;
 pub mod shared;
 pub mod streaming;
 pub mod synapse;
@@ -926,6 +928,41 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     return None;
                 }
                 let candidates = bounded_range::bounded_range_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #400: Sentinel value gating
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "sentinel value gating",
+            "sentinel_value_gating",
+            max_candidates,
+            diversify,
+            || {
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .filter(|n| n.neuron_type == "input")
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                if uuids.is_empty() {
+                    return None;
+                }
+                let records = collect_records(&uuids);
+                let detected =
+                    sentinel_gating::detect_sentinel_gating_candidates(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = sentinel_gating::sentinel_gating_to_coordinated_candidates(
+                    &detected,
+                    &input.creature,
+                );
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
