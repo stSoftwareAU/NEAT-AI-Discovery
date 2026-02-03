@@ -72,7 +72,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Add Synapses](#add-synapses) | `synapse.rs` | — | `addSynapse` | ⚠️ Low volume |
 | [Remove Low-Impact](#remove-low-impact-neurons) | `neuron.rs` | — | `removeNeuron` | 🟢 Active |
 | [Remove Harmful Synapse](#remove-harmful-synapse) | `synapse.rs` | — | `removeSynapse` | 🟠 Not tested |
-| [Remove Neuron (Error)](#remove-neuron-high-error) | `neuron.rs` | — | `removeNeuron` | 🔴 Not working |
+| [Remove Neuron (Error)](#remove-neuron-high-error) | `focus.rs` | #414 | `removeNeuron` | ⛔ Disabled |
 | [Combo Successful](#combo-successful) | — | — | Multiple | 🔴 Not working |
 
 ### Status Legend
@@ -83,6 +83,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | 🟠 Not tested | Rust produces candidates but NEAT-AI does not test them yet |
 | ⚠️ Low volume | Working but rarely suggested |
 | 🔴 Not working | Being tested but 0% success rate |
+| ⛔ Disabled | Permanently disabled due to fundamental flaw |
 
 ---
 
@@ -522,23 +523,42 @@ the NEAT-AI score gain check.
 
 ### Remove Neuron (High Error)
 
-**Source**: `src/analysis/neuron.rs`
+**Source**: `src/focus.rs` (previously active, now disabled)
 
 **Purpose**: Remove neurons with extremely high error magnitude (harmful
 neurons).
 
-**How it works**:
+**How it worked**:
 
-1. Rust identifies neurons with abnormally high error (e.g., 5.8e+17).
-2. These neurons are presumed to be destabilising the network.
-3. Removing them is predicted to improve the overall score.
+1. Rust identified neurons with raw_error ≥ 10× max_output_error.
+2. These neurons were presumed to be destabilising the network.
+3. Removing them was predicted to improve the overall score.
 
-**Current status**: 🔴 Not working — 0 successes from 2 attempts. The massive
-discrepancy between predicted improvement and actual result suggests the error
-magnitude calculation may not translate to actual score improvement.
+**Current status**: 🔴 **DISABLED** (Issue #414)
 
-**Output**: Emitted as `removalCandidates` in the analysis result with
-`removeNeuron` operations.
+Production data showed a 0% success rate (0 successes from 2 attempts). The
+fundamental assumption was flawed:
+
+**Root cause: High error ≠ harmful neuron**
+
+A neuron with high recorded error is often:
+1. **Handling difficult samples**: It's the only computation path for hard cases
+2. **Receiving bad inputs**: The error is a symptom, not a cause
+3. **Fighting incorrect biases**: It's compensating for problems elsewhere
+
+Removing such neurons typically makes performance **worse** because:
+- Difficult samples lose their only computation path
+- The network loses the only neuron attempting to handle a specific pattern
+
+Error magnitude measures how **wrong** the neuron's output is, not how
+**harmful** the neuron is to the network's overall score. This is why predicted
+improvements (based on error magnitude) did not match actual outcomes.
+
+**Resolution**: This discovery type has been disabled. The legitimate
+"remove-low-impact" discovery (based on activation_weighted_impact < costOfGrowth)
+remains active with a 17.6% success rate.
+
+**Output**: No longer emitted (disabled).
 
 ---
 
@@ -612,7 +632,7 @@ All 7 operation types are implemented in NEAT-AI's
 | **change-squash** | 2 | 9 | 18.2% | ⚠️ Low volume |
 | **remove-low-impact** | 65 | 304 | 17.6% | 🟢 Active |
 | **remove-harmful-synapse** | — | — | — | 🟠 Not tested |
-| **remove-neuron** | 0 | 2 | 0.0% | 🔴 Not working |
+| **remove-neuron (high error)** | 0 | 2 | 0.0% | ⛔ Disabled (#414) |
 | **dead-neuron-removal** | — | — | — | 🟢 Active |
 | **redundant-path-pruning** | — | — | — | 🟢 Active |
 | **combo-successful** | 0 | 8 | 0.0% | 🔴 Not working |
@@ -647,8 +667,9 @@ All 7 operation types are implemented in NEAT-AI's
 
 ### What is Not Working
 
-1. **remove-neuron** — Massive prediction errors. Error magnitude (5.8e+17)
-   does not translate to score impact.
+1. **remove-neuron (high error)** — ⛔ **DISABLED (Issue #414)**. High error
+   neurons are often handling difficult samples, not causing harm. Error
+   magnitude does not translate to score impact.
 
 2. **combo-successful** — Interference between changes. Individual successes
    do not combine well.
@@ -658,9 +679,9 @@ All 7 operation types are implemented in NEAT-AI's
 | Priority | Action | Rationale |
 |----------|--------|-----------|
 | Done | Verify coordinated-structural implementation (Issue #337) | NEAT-AI implements all 7 operation types |
+| Done | Disable remove-neuron (high error) (Issue #414) | 0% success rate; fundamental assumption flawed |
 | High | Investigate why harmful_synapses are not recorded | Mapping exists but no samples in discovery folder |
 | High | Investigate add-synapses prediction inversion | 10 samples show consistent wrong-direction predictions |
-| High | Disable or fix remove-neuron | 0% success rate, wasting validation cycles |
 | Medium | Review combo-successful strategy | 0% success rate, may be attempting incompatible combinations |
 | Medium | Investigate change-squash suggestion rate | 18.2% success rate but only 11 samples |
 | Low | Optimise add-neurons variants | Already working, but room for improvement |
