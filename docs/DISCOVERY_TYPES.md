@@ -73,13 +73,14 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Remove Low-Impact](#remove-low-impact-neurons) | `neuron.rs` | — | `removeNeuron` | 🟢 Active |
 | [Remove Harmful Synapse](#remove-harmful-synapse) | `synapse.rs` | — | `removeSynapse` | 🟠 Not tested |
 | [Remove Neuron (Error)](#remove-neuron-high-error) | `focus.rs` | #414 | `removeNeuron` | ⛔ Disabled |
-| [Combo Successful](#combo-successful) | — | — | Multiple | 🔴 Not working |
+| [Combo Successful](#combo-successful) | `epistatic.rs` | #415 | Multiple | 🟡 Fixed |
 
 ### Status Legend
 
 | Status | Meaning |
 |--------|---------|
 | 🟢 Active | Working and producing results |
+| 🟡 Fixed | Issue addressed, awaiting production validation |
 | 🟠 Not tested | Rust produces candidates but NEAT-AI does not test them yet |
 | ⚠️ Low volume | Working but rarely suggested |
 | 🔴 Not working | Being tested but 0% success rate |
@@ -573,8 +574,35 @@ compounding gains.
 2. The combined mutation is applied and re-scored.
 3. If synergistic, the combo should improve score more than individual changes.
 
-**Current status**: 🔴 Not working — 0 successes from 8 attempts. Individual
-successes may be interfering with each other when combined.
+**Issue #415 Fix**: Interference detection was added to filter out incompatible
+candidate pairs before they're proposed as coordinated candidates. The following
+interference patterns are now detected and filtered:
+
+1. **Conflicting Weights**: Two candidates targeting the same synapse with
+   opposite sign weights (cancelling each other out).
+
+2. **Saturation Risk**: Combined contributions that would push a target neuron
+   into activation saturation, making the combined effect sub-additive.
+
+3. **Redundant Contribution**: Two candidates with highly correlated activation
+   patterns (≥90% correlation). These are redundant — adding both is no better
+   than adding one with adjusted weight.
+
+**Interference Detection Algorithm**:
+- For each pair of candidate sources, compute Pearson correlation of activations
+- If correlation ≥ 0.9, mark as redundant and filter out
+- For saturating activation functions, check if combined contribution exceeds
+  the saturation threshold (1.5×)
+- Filter conflicting weight candidates (same source, opposite signs)
+
+**Current status**: 🟡 Fixed — Interference filtering now prevents incompatible
+combinations. The combo-successful discovery should only propose pairs that have
+a reasonable chance of success (complementary activation patterns, no redundancy,
+no saturation risk).
+
+**Note**: The fix is in the Rust library's epistatic detection module. NEAT-AI
+(TypeScript) may still need to be updated to take advantage of the improved
+candidate filtering.
 
 ---
 
@@ -635,7 +663,7 @@ All 7 operation types are implemented in NEAT-AI's
 | **remove-neuron (high error)** | 0 | 2 | 0.0% | ⛔ Disabled (#414) |
 | **dead-neuron-removal** | — | — | — | 🟢 Active |
 | **redundant-path-pruning** | — | — | — | 🟢 Active |
-| **combo-successful** | 0 | 8 | 0.0% | 🔴 Not working |
+| **combo-successful** | 0 | 8 | 0.0% | 🟡 Fixed (#415) |
 
 **Total**: 624 successes / 9,276 failures (6.3% overall success rate)
 
@@ -671,8 +699,14 @@ All 7 operation types are implemented in NEAT-AI's
    neurons are often handling difficult samples, not causing harm. Error
    magnitude does not translate to score impact.
 
-2. **combo-successful** — Interference between changes. Individual successes
-   do not combine well.
+### What Was Fixed
+
+1. **combo-successful** — 🟡 **FIXED (Issue #415)**. Interference detection was
+   added to filter out incompatible candidate pairs before proposing them as
+   coordinated candidates. The fix detects three interference patterns:
+   - Conflicting weights (opposite sign weights on same synapse)
+   - Saturation risk (combined contributions exceeding activation bounds)
+   - Redundant contribution (≥90% activation correlation)
 
 ### Recommended Actions
 
@@ -680,9 +714,9 @@ All 7 operation types are implemented in NEAT-AI's
 |----------|--------|-----------|
 | Done | Verify coordinated-structural implementation (Issue #337) | NEAT-AI implements all 7 operation types |
 | Done | Disable remove-neuron (high error) (Issue #414) | 0% success rate; fundamental assumption flawed |
+| Done | Add interference detection (Issue #415) | Filter incompatible pairs before combo-successful |
 | High | Investigate why harmful_synapses are not recorded | Mapping exists but no samples in discovery folder |
 | High | Investigate add-synapses prediction inversion | 10 samples show consistent wrong-direction predictions |
-| Medium | Review combo-successful strategy | 0% success rate, may be attempting incompatible combinations |
 | Medium | Investigate change-squash suggestion rate | 18.2% success rate but only 11 samples |
 | Low | Optimise add-neurons variants | Already working, but room for improvement |
 
