@@ -50,6 +50,7 @@ pub mod gpu;
 pub mod multi_hop;
 pub mod neuron;
 pub mod observation_range;
+pub mod operating_point;
 pub mod opposing_synapse;
 pub mod oscillating_neuron;
 pub mod output_bias_drift;
@@ -992,6 +993,38 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     return None;
                 }
                 let candidates = restricted_range::restricted_range_to_coordinated_candidates(
+                    &detected,
+                    &input.creature,
+                );
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #401: Hidden neuron operating-point analysis
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "operating point analysis",
+            "operating_point_analysis",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
+                }
+                let records = collect_hidden_records();
+                let config = operating_point::OperatingPointConfig::default();
+                let detected = operating_point::detect_operating_point_issues(
+                    &input.creature,
+                    &records,
+                    &config,
+                );
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = operating_point::operating_point_to_coordinated_candidates(
                     &detected,
                     &input.creature,
                 );
