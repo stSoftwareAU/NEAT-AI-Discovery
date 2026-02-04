@@ -31,6 +31,7 @@
 //! - `observation_range.rs` - Observation effective range detection from recorded samples (Issue #398)
 //! - `sentinel_gating.rs` - Sentinel value gating for null/sentinel observation suppression (Issue #400)
 //! - `restricted_range.rs` - Restricted activation range detection for underutilised neurons (Issue #399)
+//! - `unbounded_capping.rs` - Unbounded activation capping detection for noise reduction (Issue #441)
 
 pub mod activation;
 pub mod bottleneck;
@@ -63,6 +64,7 @@ pub mod shared;
 pub mod streaming;
 pub mod synapse;
 pub mod system;
+pub mod unbounded_capping;
 pub mod utils;
 pub mod weights;
 
@@ -1029,6 +1031,34 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     &detected,
                     &input.creature,
                 );
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #441: Unbounded activation capping detection
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "unbounded capping detection",
+            "unbounded_capping_detection",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
+                }
+                let records = collect_hidden_records();
+                let detected = unbounded_capping::detect_unbounded_capping_candidates(
+                    &hidden_neurons,
+                    &records,
+                );
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    unbounded_capping::unbounded_capping_to_coordinated_candidates(&detected);
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
