@@ -18,6 +18,7 @@ output format, and production success/failure rates.
   - [Opposing Synapse Detection](#opposing-synapse-detection)
   - [Output Bias Drift Detection](#output-bias-drift-detection)
   - [Oscillating Neuron Detection](#oscillating-neuron-detection)
+  - [Unbounded Capping Detection](#unbounded-capping-detection)
   - [Correlated Error Pattern Detection](#correlated-error-pattern-detection)
   - [Multi-Hop Candidate Analysis](#multi-hop-candidate-analysis)
   - [Redundant Path Pruning](#redundant-path-pruning)
@@ -65,6 +66,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Opposing Synapse](#opposing-synapse-detection) | `opposing_synapse.rs` | #360 | `removeSynapse`, `setWeight` | 🟢 Active |
 | [Output Bias Drift](#output-bias-drift-detection) | `output_bias_drift.rs` | #361 | `setBias` | 🟢 Active |
 | [Oscillating Neuron](#oscillating-neuron-detection) | `oscillating_neuron.rs` | #358 | `changeSquash`, `setBias` | 🟢 Active |
+| [Unbounded Capping](#unbounded-capping-detection) | `unbounded_capping.rs` | #441 | `changeSquash` | 🟢 Active |
 | [Correlated Error](#correlated-error-pattern-detection) | `correlated_error.rs` | #344 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Multi-Hop](#multi-hop-candidate-analysis) | `multi_hop.rs` | #230 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Redundant Path](#redundant-path-pruning) | `redundant_path.rs` | #164 | `removeSynapse`, `setWeight` | 🟢 Active |
@@ -300,6 +302,39 @@ their output.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`
 and/or `setBias` operations.
+
+---
+
+### Unbounded Capping Detection
+
+**Source**: `src/analysis/unbounded_capping.rs` (Issue #441)
+
+**Purpose**: Identifies neurons with unbounded activation functions (RELU,
+IDENTITY, LEAKYRELU, etc.) that are producing high activations ("spiking")
+and recommends capping them with a bounded version (e.g., RELU → RELU6).
+High activations from unbounded functions can introduce noise into the
+network.
+
+**Detection criteria**:
+
+1. **Uses an unbounded activation**: RELU, IDENTITY, LEAKYRELU, SOFTPLUS,
+   ELU, SELU, SWISH, MISH, GELU, EXPONENTIAL, SQUARE, CUBE.
+2. **High activations**: Maximum activation exceeds the capping threshold
+   (e.g., > 6.0 for RELU → RELU6).
+3. **Consistent spiking**: At least 30% of samples exceed the threshold
+   (not just occasional spikes).
+4. **Hidden neurons only**: Output neurons are excluded.
+
+**Recommended actions**:
+
+1. **Change RELU → RELU6**: Cap activations at 6.0 to reduce noise.
+2. **Change LEAKYRELU → RELU6**: Cap positive activations (loses negative
+   leak, but caps the positive side).
+3. **Change IDENTITY → HARD_TANH or RELU6**: For high positive activations,
+   use RELU6; for mixed activations, use HARD_TANH.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`
+operations.
 
 ---
 
