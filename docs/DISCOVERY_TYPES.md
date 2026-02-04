@@ -4,7 +4,7 @@ This document is the **single source of truth** for all discovery types used by
 NEAT-AI-Discovery. It covers detection criteria, recommended actions, candidate
 output format, and production success/failure rates.
 
-> **Last updated**: 1 Feb 2026
+> **Last updated**: 5 Feb 2026
 
 ## Table of Contents
 
@@ -19,6 +19,7 @@ output format, and production success/failure rates.
   - [Output Bias Drift Detection](#output-bias-drift-detection)
   - [Oscillating Neuron Detection](#oscillating-neuron-detection)
   - [Unbounded Capping Detection](#unbounded-capping-detection)
+  - [Noise-to-Signal Ratio Detection](#noise-to-signal-ratio-detection)
   - [Correlated Error Pattern Detection](#correlated-error-pattern-detection)
   - [Multi-Hop Candidate Analysis](#multi-hop-candidate-analysis)
   - [Redundant Path Pruning](#redundant-path-pruning)
@@ -67,6 +68,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Output Bias Drift](#output-bias-drift-detection) | `output_bias_drift.rs` | #361 | `setBias` | 🟢 Active |
 | [Oscillating Neuron](#oscillating-neuron-detection) | `oscillating_neuron.rs` | #358 | `changeSquash`, `setBias` | 🟢 Active |
 | [Unbounded Capping](#unbounded-capping-detection) | `unbounded_capping.rs` | #441 | `changeSquash` | 🟢 Active |
+| [Noise-to-Signal](#noise-to-signal-ratio-detection) | `noise_signal.rs` | #434 | `removeNeuron`, `removeSynapse`, `setWeight` | 🟢 Active |
 | [Correlated Error](#correlated-error-pattern-detection) | `correlated_error.rs` | #344 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Multi-Hop](#multi-hop-candidate-analysis) | `multi_hop.rs` | #230 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Redundant Path](#redundant-path-pruning) | `redundant_path.rs` | #164 | `removeSynapse`, `setWeight` | 🟢 Active |
@@ -335,6 +337,57 @@ network.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`
 operations.
+
+---
+
+### Noise-to-Signal Ratio Detection
+
+**Source**: `src/analysis/noise_signal.rs` (Issue #434)
+
+**Purpose**: Part of the "Brilliant but Brittle" initiative (Issue #432). This
+module identifies neurons and synapses with high noise-to-signal ratios that
+contribute to brittle predictions when bad or missing observations wildly
+affect outputs.
+
+**Detection criteria for noisy neurons**:
+
+1. **Low activation variance**: The neuron's activation varies little across
+   samples, indicating it doesn't respond to meaningful input patterns.
+2. **High error variance**: The neuron's error varies significantly, indicating
+   unpredictable contribution to network output.
+3. **Poor correlation**: Activation changes don't correlate with error reduction.
+4. **Noise-to-signal ratio > threshold**: The ratio of error variance to
+   activation variance exceeds the configurable threshold (default: 2.0).
+5. **Hidden neurons only**: Input and output neurons are excluded.
+6. **Minimum 20 samples**: Required for statistical reliability.
+
+**Detection criteria for noisy synapses**:
+
+1. **Large weight**: Amplifies variance from upstream neurons (≥ 0.1).
+2. **Noisy source**: Source neuron has high variance but poor error correlation
+   with the target.
+3. **Low signal contribution**: The synapse contributes more noise (variance)
+   than signal (error reduction).
+4. **Noise exceeds signal by 2×**: Noise contribution is at least twice the
+   signal contribution.
+
+**Environment variable**:
+
+- `NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD`: Configure the noise-to-signal
+  ratio threshold for neuron detection (default: 2.0).
+
+**Recommended actions**:
+
+1. **Remove noisy neurons**: Hidden neurons with poor signal-to-noise are
+   candidates for removal via `removeNeuron`.
+2. **Remove noisy synapses**: Synapses that amplify noise without signal benefit
+   can be removed via `removeSynapse`.
+3. **Reduce synapse weight**: For synapses with some signal contribution,
+   `setWeight` reduces the weight by 50% to dampen noise while preserving
+   some signal.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `removeNeuron`,
+`removeSynapse`, or `setWeight` operations.
 
 ---
 

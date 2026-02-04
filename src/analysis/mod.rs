@@ -32,6 +32,7 @@
 //! - `sentinel_gating.rs` - Sentinel value gating for null/sentinel observation suppression (Issue #400)
 //! - `restricted_range.rs` - Restricted activation range detection for underutilised neurons (Issue #399)
 //! - `unbounded_capping.rs` - Unbounded activation capping detection for noise reduction (Issue #441)
+//! - `noise_signal.rs` - High noise-to-signal ratio detection for brittle predictions (Issue #434)
 
 pub mod activation;
 pub mod bottleneck;
@@ -50,6 +51,7 @@ pub mod error_distribution;
 pub mod gpu;
 pub mod multi_hop;
 pub mod neuron;
+pub mod noise_signal;
 pub mod observation_range;
 pub mod operating_point;
 pub mod opposing_synapse;
@@ -1059,6 +1061,57 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 }
                 let candidates =
                     unbounded_capping::unbounded_capping_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #434: Noise-to-signal ratio detection for neurons
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "noisy neuron detection",
+            "noisy_neuron_detection",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
+                }
+                let records = collect_hidden_records();
+                let detected = noise_signal::detect_noisy_neurons(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = noise_signal::noisy_neurons_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #434: Noise-to-signal ratio detection for synapses
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "noisy synapse detection",
+            "noisy_synapse_detection",
+            max_candidates,
+            diversify,
+            || {
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                let records = collect_records(&uuids);
+                let detected = noise_signal::detect_noisy_synapses(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = noise_signal::noisy_synapses_to_coordinated_candidates(&detected);
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
