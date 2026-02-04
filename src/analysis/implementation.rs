@@ -1567,6 +1567,14 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                                 - stats.helpful_count as f32)
                                 / total_count as f32;
 
+                            // Issue #416: Only include candidates where removing the synapse
+                            // would improve the score (positive expected_creature_score_gain).
+                            // Candidates with non-positive gain are synapses that are actually
+                            // helpful - they should NOT be in harmful_synapses.
+                            if neuron_error_improvement <= 0.0 {
+                                continue;
+                            }
+
                             // Issue #128: Use creature-level metrics (impact discounting applied later)
                             // Issue #194: Compute confidence metrics for this prediction
                             let confidence_metrics = compute_confidence_metrics(

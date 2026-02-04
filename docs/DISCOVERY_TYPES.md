@@ -73,7 +73,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Add Neurons](#add-neurons) | `neuron.rs` | — | `addNeuron` | 🟢 Active |
 | [Add Synapses](#add-synapses) | `synapse.rs` | — | `addSynapse` | ⚠️ Low volume |
 | [Remove Low-Impact](#remove-low-impact-neurons) | `neuron.rs` | — | `removeNeuron` | 🟢 Active |
-| [Remove Harmful Synapse](#remove-harmful-synapse) | `synapse.rs` | — | `removeSynapse` | 🟠 Not tested |
+| [Remove Harmful Synapse](#remove-harmful-synapse) | `implementation.rs` | #416 | `removeSynapse` | 🟢 Active |
 | [Remove Neuron (Error)](#remove-neuron-high-error) | `focus.rs` | #414 | `removeNeuron` | ⛔ Disabled |
 | [Combo Successful](#combo-successful) | `epistatic.rs` | #415 | Multiple | 🟡 Fixed |
 
@@ -536,21 +536,40 @@ complexity.
 
 ### Remove Harmful Synapse
 
-**Source**: `src/analysis/synapse.rs`
+**Source**: `src/analysis/implementation.rs`
 
 **Purpose**: Remove existing synapses that are actively increasing creature
 error.
 
 **How it works**:
 
-1. Rust analyses the correlation between synapse contributions and output
-   error.
-2. Identifies synapses where removing the connection would reduce error.
-3. Returns `harmful_synapses` in the analysis result.
+1. For each existing synapse targeting a focus neuron, Rust evaluates the
+   synapse using GPU-accelerated batch processing.
+2. The GPU shader (`harmful.wgsl`) counts samples where the synapse contribution
+   (activation × weight) has the **same sign** as the error (harmful) versus
+   **opposite sign** (helpful).
+3. A synapse is considered harmful when removing it would improve the score:
+   `expected_improvement = (harmful_count - helpful_count) / total_count > 0`
+4. Only synapses with positive expected improvement are returned in
+   `harmful_synapses`.
 
-**Current status**: 🟠 Rust produces candidates but no samples are recorded in
-production. Investigation needed into whether candidates are filtered out by
-the NEAT-AI score gain check.
+**Detection criteria**:
+
+1. **Same-sign contribution**: The synapse's contribution (source_activation ×
+   weight) has the same sign as the target neuron's error on a significant
+   fraction of samples.
+2. **Positive expected improvement**: The proportion of harmful samples exceeds
+   the proportion of helpful samples.
+3. **Minimum samples**: At least one sample must exist for evaluation.
+
+**Issue #416 Fix**: Previously, all existing synapses were returned in
+`harmful_synapses` regardless of whether they were actually harmful. This
+resulted in candidates with negative `expected_creature_score_gain` being
+included, which NEAT-AI correctly filtered out on its side. The fix adds a
+threshold check (`neuron_error_improvement > 0.0`) to only include truly
+harmful synapses.
+
+**Current status**: 🟢 Active (Issue #416 fixed)
 
 **Output**: Emitted as `harmfulSynapses` in the analysis result with
 `removeSynapse` operations.
@@ -694,7 +713,7 @@ All 7 operation types are implemented in NEAT-AI's
 | **coordinated-structural** | — | — | — | 🟢 Active |
 | **change-squash** | 2 | 9 | 18.2% | ⚠️ Low volume |
 | **remove-low-impact** | 65 | 304 | 17.6% | 🟢 Active |
-| **remove-harmful-synapse** | — | — | — | 🟠 Not tested |
+| **remove-harmful-synapse** | — | — | — | 🟢 Active (#416) |
 | **remove-neuron (high error)** | 0 | 2 | 0.0% | ⛔ Disabled (#414) |
 | **dead-neuron-removal** | — | — | — | 🟢 Active |
 | **redundant-path-pruning** | — | — | — | 🟢 Active |
@@ -743,6 +762,19 @@ All 7 operation types are implemented in NEAT-AI's
    - Saturation risk (combined contributions exceeding activation bounds)
    - Redundant contribution (≥90% activation correlation)
 
+2. **remove-harmful-synapse** — 🟢 **FIXED (Issue #416)**. The harmful synapse
+   detection was including ALL existing synapses without filtering, resulting
+   in candidates with negative `expected_creature_score_gain`. NEAT-AI correctly
+   filtered these out, but no candidates with positive expected gain were being
+   generated because truly harmful synapses are relatively rare.
+
+   **Root cause**: Missing threshold check in `src/analysis/implementation.rs`.
+   The code was creating candidates for every synapse without checking if
+   `neuron_error_improvement > 0.0`.
+
+   **Fix**: Added a threshold check to only include candidates where removing
+   the synapse would actually improve the score (positive expected gain).
+
 ### Recommended Actions
 
 | Priority | Action | Rationale |
@@ -750,7 +782,7 @@ All 7 operation types are implemented in NEAT-AI's
 | Done | Verify coordinated-structural implementation (Issue #337) | NEAT-AI implements all 7 operation types |
 | Done | Disable remove-neuron (high error) (Issue #414) | 0% success rate; fundamental assumption flawed |
 | Done | Add interference detection (Issue #415) | Filter incompatible pairs before combo-successful |
-| High | Investigate why harmful_synapses are not recorded | Mapping exists but no samples in discovery folder |
+| Done | Fix harmful synapse threshold filtering (Issue #416) | Candidates with non-positive expected gain were included |
 | High | Investigate add-synapses prediction inversion | 10 samples show consistent wrong-direction predictions |
 | Medium | Investigate change-squash suggestion rate | 18.2% success rate but only 11 samples |
 | Low | Optimise add-neurons variants | Already working, but room for improvement |
