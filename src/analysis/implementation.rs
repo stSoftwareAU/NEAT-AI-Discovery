@@ -8,7 +8,7 @@ use crate::analysis::shared::{AnalyzeSynapsesResult, TimingScope};
 
 // Import activation functions from the dedicated activation module (Issue #266, #238)
 // Note: Activation functions and specs moved to neuron.rs for neuron analysis (Issue #185)
-use crate::analysis::activation::get_target_simulation_fn;
+use crate::analysis::activation::{get_target_simulation_fn, is_saturating_target};
 
 // Import memory and platform utilities from dedicated modules (Issue #267)
 // Note: cap_gpu_batch_size_by_bytes, check_system_memory_requirements, detect_memory_tier,
@@ -37,7 +37,7 @@ use crate::analysis::confidence::compute_confidence_metrics;
 // Import weight calculation functions from dedicated module (Issue #270)
 use crate::analysis::weights::{
     calculate_optimal_outgoing_weight, clamp_weight_update_delta,
-    coordinated_structural_activation_delta,
+    coordinated_structural_activation_delta, MAX_OUTGOING_WEIGHT,
 };
 
 // Import diagnostics and rejection tracking from dedicated module (Issue #271)
@@ -1196,6 +1196,50 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                                     target_squash,
                                 );
                             (delta_weight, improvement, improved, worsened)
+                        } else if is_saturating_target(&work.samples, target_squash) {
+                            // Issue #413: For saturating target activations (HARD_TANH, TANH,
+                            // LOGISTIC, etc.), the linear-model weight can overshoot into
+                            // saturation, causing inverted predictions. Search over scaled
+                            // weights to find the best candidate, matching the approach used
+                            // by add-neuron candidates (synapse.rs evaluate_activation_candidate).
+                            let weight_candidates: [f32; 9] = [
+                                weight * 0.1,
+                                weight * 0.25,
+                                weight * 0.5,
+                                weight * 0.75,
+                                weight,
+                                weight * 1.5,
+                                weight * 2.0,
+                                -weight * 0.5,
+                                -weight,
+                            ];
+
+                            let mut best_weight = weight;
+                            let mut best_improvement = f32::NEG_INFINITY;
+                            let mut best_improved = 0u32;
+                            let mut best_worsened = 0u32;
+
+                            for &w in &weight_candidates {
+                                let clamped =
+                                    w.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+                                if clamped.abs() <= EPSILON {
+                                    continue;
+                                }
+                                let (imp, improved, worsened, _) =
+                                    compute_synapse_improvement_and_count(
+                                        &work.samples,
+                                        clamped,
+                                        baseline_error_sq,
+                                        target_squash,
+                                    );
+                                if imp > best_improvement {
+                                    best_improvement = imp;
+                                    best_weight = clamped;
+                                    best_improved = improved;
+                                    best_worsened = worsened;
+                                }
+                            }
+                            (best_weight, best_improvement, best_improved, best_worsened)
                         } else {
                             let (improvement, improved, worsened, _) =
                                 compute_synapse_improvement_and_count(
@@ -1292,7 +1336,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                             if act_count > 0 {
                                 let mean_activation = (act_sum / act_count as f64) as f32;
                                 let activation_range = (act_max - act_min).abs();
-                                let effect_range = weight.abs() * activation_range;
+                                let effect_range = applied_weight.abs() * activation_range;
 
                                 if mean_activation.is_finite()
                                     && activation_range.is_finite()
@@ -1303,7 +1347,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                                         .get(&work.target_uuid)
                                         .copied()
                                         .unwrap_or(0.0);
-                                    let new_bias = old_bias + (weight * mean_activation);
+                                    let new_bias = old_bias + (applied_weight * mean_activation);
                                     if new_bias.is_finite() {
                                         coordinated_to_add.push(crate::CoordinatedStructuralCandidateJson {
                                             operations: vec![crate::CoordinatedStructuralOpJson::SetBias {
@@ -1312,7 +1356,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                                             }],
                                             expected_creature_score_gain: neuron_error_improvement,
                                             comment: Some(format!(
-                                                "Fold constant source into setBias: old_bias={old_bias:.6}, new_bias={new_bias:.6}, weight={weight:.6}, mean_act={mean_activation:.6}, act_range={activation_range:.6e}, effect_range={effect_range:.6e}"
+                                                "Fold constant source into setBias: old_bias={old_bias:.6}, new_bias={new_bias:.6}, weight={applied_weight:.6}, mean_act={mean_activation:.6}, act_range={activation_range:.6e}, effect_range={effect_range:.6e}"
                                             )),
                                         });
                                         continue;
@@ -1333,7 +1377,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                             to_neuron_uuid: work.target_uuid.clone(),
                             from_neuron_index: None,
                             to_neuron_index: None,
-                            weight,
+                            weight: applied_weight,
                             target_neuron_impact: 1.0,
                             expected_creature_error_reduction: neuron_error_improvement,
                             expected_creature_score_gain: neuron_error_improvement,

@@ -2072,4 +2072,274 @@ mod tests {
             TargetSimulationMode::ApproximateValueFromActivation(_)
         ));
     }
+
+    // =========================================================================
+    // Issue #413: Add-synapse prediction accuracy tests
+    // =========================================================================
+
+    /// Helper: compute optimal weight using least-squares formula (same as production).
+    fn compute_linear_optimal_weight(samples: &[HelpfulSample]) -> f32 {
+        let sum_ea: f32 = samples.iter().map(|s| s.avg_error * s.activation).sum();
+        let sum_aa: f32 = samples.iter().map(|s| s.activation * s.activation).sum();
+        let raw = sum_ea / (sum_aa + EPSILON);
+        raw.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT)
+    }
+
+    /// Issue #413: Positive correlation should produce positive improvement.
+    #[test]
+    fn test_issue_413_positive_correlation_gives_positive_improvement() {
+        let samples: Vec<HelpfulSample> = (0..100)
+            .map(|i| {
+                let x = (i as f32 - 50.0) / 50.0;
+                HelpfulSample {
+                    activation: x,
+                    avg_error: 0.05 * x + 0.001 * (i as f32 * 0.1).sin(),
+                    target_value: None,
+                    target_activation: None,
+                }
+            })
+            .collect();
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        let weight = compute_linear_optimal_weight(&samples);
+
+        let (improvement, improved, _worsened, total) =
+            compute_synapse_improvement_and_count(&samples, weight, baseline_sq, None);
+
+        assert!(
+            improvement > 0.0,
+            "Positive correlation should give positive improvement, got {improvement}"
+        );
+        assert!(
+            improved > total / 2,
+            "More than half of samples should be improved: {improved}/{total}"
+        );
+    }
+
+    /// Issue #413: Negative correlation should produce positive improvement
+    /// with negative weight.
+    #[test]
+    fn test_issue_413_negative_correlation_gives_positive_improvement() {
+        let samples: Vec<HelpfulSample> = (0..100)
+            .map(|i| {
+                let x = (i as f32 - 50.0) / 50.0;
+                HelpfulSample {
+                    activation: x,
+                    avg_error: -0.05 * x + 0.001 * (i as f32 * 0.1).sin(),
+                    target_value: None,
+                    target_activation: None,
+                }
+            })
+            .collect();
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        let weight = compute_linear_optimal_weight(&samples);
+        assert!(
+            weight < 0.0,
+            "Anti-correlated source should have negative weight"
+        );
+
+        let (improvement, improved, _worsened, total) =
+            compute_synapse_improvement_and_count(&samples, weight, baseline_sq, None);
+
+        assert!(
+            improvement > 0.0,
+            "Anti-correlated source with negative weight should give positive improvement, got {improvement}"
+        );
+        assert!(improved > total / 2);
+    }
+
+    /// Issue #413: HARD_TANH target near saturation should NOT produce inverted
+    /// predictions. This is the core bug.
+    #[test]
+    fn test_issue_413_hard_tanh_saturated_no_inversion() {
+        let samples: Vec<HelpfulSample> = (0..100)
+            .map(|i| {
+                let x = (i as f32) / 100.0; // 0 to 1
+                let target_value = 0.9 + 0.05 * x;
+                let target_activation = target_value.clamp(-1.0, 1.0);
+                HelpfulSample {
+                    activation: x,
+                    avg_error: 0.05,
+                    target_value: Some(target_value),
+                    target_activation: Some(target_activation),
+                }
+            })
+            .collect();
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        let weight = compute_linear_optimal_weight(&samples);
+
+        // With saturation-aware simulation, prediction should NOT be inverted
+        let (improvement, _improved, _worsened, _total) =
+            compute_synapse_improvement_and_count(&samples, weight, baseline_sq, Some("HARD_TANH"));
+
+        assert!(
+            improvement >= -EPSILON,
+            "Issue #413: Saturated HARD_TANH target should NOT produce inverted prediction. \
+             Got improvement={improvement}, weight={weight}"
+        );
+    }
+
+    /// Issue #413: Deeply saturated target should not produce inverted predictions.
+    #[test]
+    fn test_issue_413_deeply_saturated_not_inverted() {
+        let samples: Vec<HelpfulSample> = (0..100)
+            .map(|i| {
+                let x = (i as f32 - 50.0) / 50.0;
+                HelpfulSample {
+                    activation: x,
+                    avg_error: -0.5,
+                    target_value: Some(2.0),      // Way beyond HARD_TANH
+                    target_activation: Some(1.0), // Clamped
+                }
+            })
+            .collect();
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        let weight = compute_linear_optimal_weight(&samples);
+
+        let (improvement, _improved, _worsened, _total) =
+            compute_synapse_improvement_and_count(&samples, weight, baseline_sq, Some("HARD_TANH"));
+
+        assert!(
+            improvement >= -EPSILON,
+            "Issue #413: Deeply saturated target should not invert. Got {improvement}"
+        );
+    }
+
+    /// Issue #413: Prediction signs should be consistent between linear and
+    /// saturation-aware models when target is in the linear region.
+    #[test]
+    fn test_issue_413_prediction_sign_consistency_in_linear_region() {
+        let samples: Vec<HelpfulSample> = (0..100)
+            .map(|i| {
+                let x = (i as f32 - 50.0) / 50.0;
+                let target_value = 0.3 * x; // Well within [-1, 1]
+                HelpfulSample {
+                    activation: x,
+                    avg_error: 0.05 * x,
+                    target_value: Some(target_value),
+                    target_activation: Some(target_value.clamp(-1.0, 1.0)),
+                }
+            })
+            .collect();
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        let weight = compute_linear_optimal_weight(&samples);
+
+        let (linear_imp, _, _, _) =
+            compute_synapse_improvement_and_count(&samples, weight, baseline_sq, None);
+        let (sat_imp, _, _, _) =
+            compute_synapse_improvement_and_count(&samples, weight, baseline_sq, Some("HARD_TANH"));
+
+        assert!(
+            linear_imp > 0.0,
+            "Linear model should be positive: {linear_imp}"
+        );
+        assert!(
+            sat_imp > 0.0,
+            "Saturation model should agree in linear region: {sat_imp}"
+        );
+    }
+
+    /// Issue #413: Weight search over multiple candidates should find non-negative
+    /// improvement for saturating targets, even when the linear-model weight fails.
+    #[test]
+    fn test_issue_413_weight_search_finds_non_negative_for_saturated_target() {
+        let samples: Vec<HelpfulSample> = (0..100)
+            .map(|i| {
+                let x = (i as f32) / 100.0;
+                let target_value = 0.95 + 0.04 * x;
+                HelpfulSample {
+                    activation: x,
+                    avg_error: 0.02 * x,
+                    target_value: Some(target_value),
+                    target_activation: Some(target_value.clamp(-1.0, 1.0)),
+                }
+            })
+            .collect();
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        let base_weight = compute_linear_optimal_weight(&samples);
+
+        // Search over scaled weights (same approach as add-neuron path)
+        let scales: [f32; 9] = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, -0.5, -1.0];
+        let mut best_improvement = f32::NEG_INFINITY;
+
+        for &scale in &scales {
+            let w = (base_weight * scale).clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+            if w.abs() <= EPSILON {
+                continue;
+            }
+            let (imp, _, _, _) =
+                compute_synapse_improvement_and_count(&samples, w, baseline_sq, Some("HARD_TANH"));
+            if imp > best_improvement {
+                best_improvement = imp;
+            }
+        }
+
+        assert!(
+            best_improvement >= -EPSILON,
+            "Issue #413: Weight search should find non-negative improvement. Best={best_improvement}"
+        );
+    }
+
+    /// Issue #413: TANH target saturation should not produce inverted predictions.
+    #[test]
+    fn test_issue_413_tanh_saturation_not_inverted() {
+        let samples: Vec<HelpfulSample> = (0..100)
+            .map(|i| {
+                let x = (i as f32 - 50.0) / 50.0;
+                let target_value = 2.0 * x;
+                HelpfulSample {
+                    activation: x,
+                    avg_error: 0.03 * x,
+                    target_value: Some(target_value),
+                    target_activation: Some(target_value.tanh()),
+                }
+            })
+            .collect();
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        let improvement = compute_synapse_improvement_with_target_squash(
+            &samples,
+            0.03,
+            baseline_sq,
+            Some("TANH"),
+        );
+
+        assert!(
+            improvement >= -EPSILON,
+            "Issue #413: TANH saturation should not invert prediction. Got {improvement}"
+        );
+    }
+
+    /// Issue #413: Uncorrelated source should give near-zero improvement.
+    #[test]
+    fn test_issue_413_uncorrelated_source_near_zero_improvement() {
+        let samples: Vec<HelpfulSample> = (0..100)
+            .map(|i| {
+                let x = (i as f32 - 50.0) / 50.0;
+                let error = 0.1 * ((i as f32 * 7.3).sin());
+                HelpfulSample {
+                    activation: x,
+                    avg_error: error,
+                    target_value: None,
+                    target_activation: None,
+                }
+            })
+            .collect();
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        let weight = compute_linear_optimal_weight(&samples);
+
+        let (improvement, _, _, _) =
+            compute_synapse_improvement_and_count(&samples, weight, baseline_sq, None);
+
+        assert!(
+            improvement.abs() < 0.05,
+            "Uncorrelated source should give near-zero improvement, got {improvement}"
+        );
+    }
 }
