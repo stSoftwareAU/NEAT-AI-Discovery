@@ -4,7 +4,7 @@ This document is the **single source of truth** for all discovery types used by
 NEAT-AI-Discovery. It covers detection criteria, recommended actions, candidate
 output format, and production success/failure rates.
 
-> **Last updated**: 5 Feb 2026
+> **Last updated**: 6 Feb 2026
 
 ## Table of Contents
 
@@ -74,7 +74,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Multi-Hop](#multi-hop-candidate-analysis) | `multi_hop.rs` | #230 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Redundant Path](#redundant-path-pruning) | `redundant_path.rs` | #164 | `removeSynapse`, `setWeight` | 🟢 Active |
 | [Add Neurons](#add-neurons) | `neuron.rs` | — | `addNeuron` | 🟢 Active |
-| [Add Synapses](#add-synapses) | `synapse.rs` | — | `addSynapse` | ⚠️ Low volume |
+| [Add Synapses](#add-synapses) | `synapse.rs` | #413 | `addSynapse` | 🟡 Fixed |
 | [Remove Low-Impact](#remove-low-impact-neurons) | `neuron.rs` | — | `removeNeuron` | 🟢 Active |
 | [Remove Harmful Synapse](#remove-harmful-synapse) | `implementation.rs` | #416 | `removeSynapse` | 🟢 Active |
 | [Remove Neuron (Error)](#remove-neuron-high-error) | `focus.rs` | #414 | `removeNeuron` | ⛔ Disabled |
@@ -597,7 +597,7 @@ target neuron.
 
 ### Add Synapses
 
-**Source**: `src/analysis/synapse.rs`
+**Source**: `src/analysis/synapse.rs` (Issue #413)
 
 **Purpose**: Add a new synapse connection between existing neurons.
 
@@ -606,6 +606,25 @@ target neuron.
 1. Rust analyses which neuron pairs would benefit from a direct connection.
 2. Suggests a weight for the new synapse based on correlation analysis.
 3. Target neurons get signals from the source that can reduce their error.
+
+**Issue #413 Fix**: Predictions were inverting for targets with saturating
+activation functions (HARD_TANH, TANH, LOGISTIC, etc.). The synapse weight was
+computed using a linear least-squares model but evaluated against a
+saturation-aware model. When the target neuron operates near saturation, the
+linear-model weight overshoots into the saturated region, causing inverted
+predictions (expected +0.00016, actual −0.00015).
+
+**Root cause**: Linear vs saturation model mismatch. The add-neuron path already
+handled this by searching over multiple weight candidates, but the add-synapse
+path used only the single linear-model weight.
+
+**Fix**: For saturating target activations, the add-synapse path now searches
+over 9 weight candidates (scaled versions of the linear-model weight), matching
+the approach used by add-neuron candidates. The candidate with the best
+predicted improvement is selected.
+
+**Current status**: 🟡 Fixed (Issue #413) — awaiting production validation.
+Target: 15–20% success rate (up from 10%).
 
 **Output**: Emitted as `helpfulSynapses` in the analysis result with
 `addSynapse` operations.
@@ -819,7 +838,7 @@ All 7 operation types are implemented in NEAT-AI's
 | Discovery Type | Successes | Failures | Success Rate | Status |
 |----------------|-----------|----------|--------------|--------|
 | **add-neurons** | 556 | 8,944 | 5.9% | 🟢 Active |
-| **add-synapses** | 1 | 9 | 10.0% | ⚠️ Low volume |
+| **add-synapses** | 1 | 9 | 10.0% | 🟡 Fixed (#413) |
 | **coordinated-structural** | — | — | — | 🟢 Active |
 | **change-squash** | 2 | 9 | 18.2% | ⚠️ Low volume |
 | **remove-low-impact** | 65 | 304 | 17.6% | 🟢 Active |
@@ -850,11 +869,7 @@ All 7 operation types are implemented in NEAT-AI's
 
 ### What Needs Investigation
 
-1. **add-synapses** — Predictions are inverting (expected +0.00016, actual
-   −0.00015). The correlation analysis may be flawed or missing saturation
-   effects.
-
-2. **change-squash** — Low suggestion rate. Only 11 total samples across all
+1. **change-squash** — Low suggestion rate. Only 11 total samples across all
    experiments.
 
 ### What is Not Working
@@ -872,7 +887,14 @@ All 7 operation types are implemented in NEAT-AI's
    - Saturation risk (combined contributions exceeding activation bounds)
    - Redundant contribution (≥90% activation correlation)
 
-2. **remove-harmful-synapse** — 🟢 **FIXED (Issue #416)**. The harmful synapse
+2. **add-synapses** — 🟡 **FIXED (Issue #413)**. Predictions were inverting for
+   targets with saturating activations. The weight was computed using a linear
+   model but evaluated against a saturation-aware model, causing overshoot into
+   the saturated region. The fix searches over multiple weight candidates for
+   saturating targets, matching the approach already used by add-neuron
+   candidates.
+
+3. **remove-harmful-synapse** — 🟢 **FIXED (Issue #416)**. The harmful synapse
    detection was including ALL existing synapses without filtering, resulting
    in candidates with negative `expected_creature_score_gain`. NEAT-AI correctly
    filtered these out, but no candidates with positive expected gain were being
@@ -893,7 +915,7 @@ All 7 operation types are implemented in NEAT-AI's
 | Done | Disable remove-neuron (high error) (Issue #414) | 0% success rate; fundamental assumption flawed |
 | Done | Add interference detection (Issue #415) | Filter incompatible pairs before combo-successful |
 | Done | Fix harmful synapse threshold filtering (Issue #416) | Candidates with non-positive expected gain were included |
-| High | Investigate add-synapses prediction inversion | 10 samples show consistent wrong-direction predictions |
+| Done | Fix add-synapses prediction inversion (Issue #413) | Saturation-aware weight search for bounded targets |
 | Medium | Investigate change-squash suggestion rate | 18.2% success rate but only 11 samples |
 | Low | Optimise add-neurons variants | Already working, but room for improvement |
 
