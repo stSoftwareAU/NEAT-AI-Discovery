@@ -40,9 +40,12 @@ Created `benches/early_termination.rs` to measure performance across different c
 
 | Creature Size | Input Count | Hidden | Synapses | Mean Analysis Time |
 |--------------|-------------|--------|----------|-------------------|
-| Small        | 50          | 10     | 100      | 148.4ms ± 12.6ms  |
-| Medium       | 200         | 50     | 500      | 366.6ms ± 22.9ms  |
-| Large        | 500         | 100    | 1500     | 1280.7ms ± 25.7ms |
+| Small        | 50          | 10     | 100      | 147.8ms ± 9.1ms   |
+| Medium       | 200         | 50     | 500      | 380.0ms ± 2.9ms   |
+| Large        | 500         | 100    | 1500     | 1332ms ± 30ms     |
+
+**Low-Value Filtering Test** (300 inputs, 90% low-value):
+- Analysis with early termination: 452ms ± 3.9ms
 
 **Note**: This PR provides the infrastructure for early termination in candidate generation.
 The filtering primitives are now available for integration into the main analysis pipeline.
