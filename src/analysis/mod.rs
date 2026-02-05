@@ -35,8 +35,10 @@
 //! - `noise_signal.rs` - High noise-to-signal ratio detection for brittle predictions (Issue #434)
 //! - `input_sensitivity.rs` - Input sensitivity analysis for brittleness detection (Issue #435)
 //! - `cross_validation.rs` - Cross-validation consistency scoring for brittleness detection (Issue #436)
+//! - `activation_recommendation.rs` - Proactive activation function recommendation engine (Issue #431)
 
 pub mod activation;
+pub mod activation_recommendation;
 pub mod bottleneck;
 pub mod bounded_range;
 pub mod cache;
