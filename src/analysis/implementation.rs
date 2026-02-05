@@ -2073,5 +2073,5 @@ pub(crate) fn analyze_synapses_with_cache_impl(
 // analyze_synapses has been moved to src/analysis/synapse.rs (Issue #275)
 
 #[cfg(test)]
-#[path = "implementation_tests.rs"]
+#[path = "implementation_tests/mod.rs"]
 mod tests;
