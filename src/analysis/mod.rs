@@ -33,6 +33,7 @@
 //! - `restricted_range.rs` - Restricted activation range detection for underutilised neurons (Issue #399)
 //! - `unbounded_capping.rs` - Unbounded activation capping detection for noise reduction (Issue #441)
 //! - `noise_signal.rs` - High noise-to-signal ratio detection for brittle predictions (Issue #434)
+//! - `input_sensitivity.rs` - Input sensitivity analysis for brittleness detection (Issue #435)
 
 pub mod activation;
 pub mod bottleneck;
@@ -49,6 +50,7 @@ pub mod early_termination;
 pub mod epistatic;
 pub mod error_distribution;
 pub mod gpu;
+pub mod input_sensitivity;
 pub mod multi_hop;
 pub mod neuron;
 pub mod noise_signal;
@@ -1112,6 +1114,70 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     return None;
                 }
                 let candidates = noise_signal::noisy_synapses_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #435: Input sensitivity analysis for dominant inputs
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "dominant input detection",
+            "dominant_input_detection",
+            max_candidates,
+            diversify,
+            || {
+                let input_uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .filter(|n| n.neuron_type == "input" || n.neuron_type == "output")
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                if input_uuids.is_empty() {
+                    return None;
+                }
+                let records = collect_records(&input_uuids);
+                let config = input_sensitivity::InputSensitivityConfig::default();
+                let detected =
+                    input_sensitivity::detect_dominant_inputs(&input.creature, &records, &config);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    input_sensitivity::dominant_inputs_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #435: Input sensitivity analysis for threshold effects
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "threshold effect detection",
+            "threshold_effect_detection",
+            max_candidates,
+            diversify,
+            || {
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                let records = collect_records(&uuids);
+                let config = input_sensitivity::InputSensitivityConfig::default();
+                let detected =
+                    input_sensitivity::detect_threshold_effects(&input.creature, &records, &config);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    input_sensitivity::threshold_effects_to_coordinated_candidates(&detected);
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
