@@ -36,6 +36,7 @@
 //! - `input_sensitivity.rs` - Input sensitivity analysis for brittleness detection (Issue #435)
 //! - `cross_validation.rs` - Cross-validation consistency scoring for brittleness detection (Issue #436)
 //! - `activation_recommendation.rs` - Proactive activation function recommendation engine (Issue #431)
+//! - `weight_coherence.rs` - Weight coherence validation for brittleness detection (Issue #437)
 
 pub mod activation;
 pub mod activation_recommendation;
@@ -74,6 +75,7 @@ pub mod synapse;
 pub mod system;
 pub mod unbounded_capping;
 pub mod utils;
+pub mod weight_coherence;
 pub mod weights;
 
 // Implementation module - helper functions for neuron/synapse analysis
@@ -1182,6 +1184,99 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 }
                 let candidates =
                     input_sensitivity::threshold_effects_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #437: Weight coherence validation - incoherent weight ratios
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "weight coherence ratio detection",
+            "weight_coherence_ratio_detection",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
+                }
+                let records = collect_hidden_records();
+                let config = weight_coherence::WeightCoherenceConfig::default();
+                let detected = weight_coherence::detect_incoherent_weight_ratios(
+                    &input.creature,
+                    &records,
+                    &config,
+                );
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    weight_coherence::incoherent_ratios_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #437: Weight coherence validation - near-constant output paths
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "near-constant path detection",
+            "near_constant_path_detection",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
+                }
+                let records = collect_hidden_records();
+                let config = weight_coherence::WeightCoherenceConfig::default();
+                let detected = weight_coherence::detect_near_constant_paths(
+                    &input.creature,
+                    &records,
+                    &config,
+                );
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    weight_coherence::near_constant_paths_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #437: Weight coherence validation - symmetric weight cancellation
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "symmetric cancellation detection",
+            "symmetric_cancellation_detection",
+            max_candidates,
+            diversify,
+            || {
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                let records = collect_records(&uuids);
+                let config = weight_coherence::WeightCoherenceConfig::default();
+                let detected = weight_coherence::detect_symmetric_cancellation(
+                    &input.creature,
+                    &records,
+                    &config,
+                );
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    weight_coherence::symmetric_cancellation_to_coordinated_candidates(&detected);
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
