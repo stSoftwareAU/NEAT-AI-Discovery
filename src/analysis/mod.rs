@@ -34,6 +34,7 @@
 //! - `unbounded_capping.rs` - Unbounded activation capping detection for noise reduction (Issue #441)
 //! - `noise_signal.rs` - High noise-to-signal ratio detection for brittle predictions (Issue #434)
 //! - `input_sensitivity.rs` - Input sensitivity analysis for brittleness detection (Issue #435)
+//! - `cross_validation.rs` - Cross-validation consistency scoring for brittleness detection (Issue #436)
 
 pub mod activation;
 pub mod bottleneck;
@@ -42,6 +43,7 @@ pub mod cache;
 pub mod candidate_clustering;
 pub mod confidence;
 pub mod correlated_error;
+pub mod cross_validation;
 pub mod dead_neuron;
 pub mod diagnostics;
 pub mod discovery_dispatch;
@@ -1316,6 +1318,12 @@ pub use synapse::analyze_synapses_with_cache_and_gpu_queue;
 pub use early_termination::{
     check_batch_early_termination, EarlyTerminationConfig, EarlyTerminationDecision,
     EarlyTerminationResult, SequentialEvaluator,
+};
+
+// Re-export cross-validation types (Issue #436)
+pub use cross_validation::{
+    apply_brittleness_penalty, compute_cross_validation_score, CrossValidationConfig,
+    CrossValidationResult, FoldResult, PerformanceVariance,
 };
 
 #[cfg(test)]
