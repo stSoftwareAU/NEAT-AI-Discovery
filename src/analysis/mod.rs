@@ -1314,10 +1314,12 @@ pub use synapse::analyze_synapses;
 // Re-export benchmark helper function for use in benches/
 pub use synapse::analyze_synapses_with_cache_and_gpu_queue;
 
-// Re-export early termination types (Issue #219)
+// Re-export early termination types (Issue #219, #429)
 pub use early_termination::{
-    check_batch_early_termination, EarlyTerminationConfig, EarlyTerminationDecision,
-    EarlyTerminationResult, SequentialEvaluator,
+    check_batch_early_termination, prefilter_candidates, CandidateDeduplicator,
+    CandidatePreFilterResult, CandidateSignature, EarlyTerminationConfig, EarlyTerminationDecision,
+    EarlyTerminationResult, IncrementalConfidenceTracker, PreFilterConfig, PreFilterSkipReason,
+    PreFilterStats, SequentialEvaluator,
 };
 
 // Re-export cross-validation types (Issue #436)
