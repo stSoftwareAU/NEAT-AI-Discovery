@@ -106,10 +106,14 @@ in their region of the network.
 
 **Detection criteria**:
 
-1. **Activation near bounds**: For TANH, mean activation > 0.95 or < −0.95
-   across samples.
+1. **Activation near bounds**: For TANH, mean activation > 0.85 or < −0.85
+   across samples (Issue #417: lowered from 0.95 to catch near-saturated
+   neurons earlier). For LOGISTIC, mean activation > 0.90 or < 0.10
+   (lowered from 0.95/0.05). For HARD_TANH, mean activation > 0.95
+   (lowered from 0.99).
 2. **Low relative variance**: Input varies but output does not (activation
-   function is squashing all variation).
+   function is squashing all variation). Maximum std dev: 0.08 (Issue #417:
+   raised from 0.05 to accommodate near-saturated neurons).
 3. **Uses a bounded activation**: Only bounded activations (TANH, LOGISTIC,
    HARD_TANH, etc.) can saturate. Unbounded activations (RELU, IDENTITY) are
    excluded, except RELU dead-zone detection (all activations at zero).
@@ -289,10 +293,12 @@ their output.
 
 **Detection criteria**:
 
-1. **Sign changes**: The activation crosses zero frequently (more than a
-   minimum fraction of samples show sign changes).
+1. **Sign changes**: The activation crosses zero frequently (more than 15%
+   of consecutive sample pairs show sign changes; Issue #417: lowered from
+   30% to catch mildly oscillating neurons).
 2. **Balanced signs**: Both positive and negative activations appear in
-   substantial proportions (neither dominates overwhelmingly).
+   at least 10% of samples (Issue #417: lowered from 20% to catch more
+   oscillating neurons).
 3. **Meaningful magnitude**: The mean absolute activation is above a minimum
    threshold (distinguishing from dead neurons).
 4. **Hidden neurons only**: Input and output neurons are excluded.
@@ -840,7 +846,7 @@ All 7 operation types are implemented in NEAT-AI's
 | **add-neurons** | 556 | 8,944 | 5.9% | 🟢 Active |
 | **add-synapses** | 1 | 9 | 10.0% | 🟡 Fixed (#413) |
 | **coordinated-structural** | — | — | — | 🟢 Active |
-| **change-squash** | 2 | 9 | 18.2% | ⚠️ Low volume |
+| **change-squash** | 2 | 9 | 18.2% | 🟡 Fixed (#417) |
 | **remove-low-impact** | 65 | 304 | 17.6% | 🟢 Active |
 | **remove-harmful-synapse** | — | — | — | 🟢 Active (#416) |
 | **remove-neuron (high error)** | 0 | 2 | 0.0% | ⛔ Disabled (#414) |
@@ -864,13 +870,12 @@ All 7 operation types are implemented in NEAT-AI's
    reduce complexity. Impact-weighted predictions are reasonably accurate.
 
 3. **change-squash** (18.2% success rate when suggested) — High success rate
-   but very rarely suggested. Investigation needed: why are more squash changes
-   not being proposed?
+   but previously very rarely suggested. Issue #417 addressed this by lowering
+   detection thresholds and integrating proactive activation recommendations.
 
 ### What Needs Investigation
 
-1. **change-squash** — Low suggestion rate. Only 11 total samples across all
-   experiments.
+1. *(None currently — previous items addressed by Issues #413–#417.)*
 
 ### What is Not Working
 
@@ -907,6 +912,23 @@ All 7 operation types are implemented in NEAT-AI's
    **Fix**: Added a threshold check to only include candidates where removing
    the synapse would actually improve the score (positive expected gain).
 
+4. **change-squash** — 🟡 **FIXED (Issue #417)**. The change-squash discovery
+   type had an 18.2% success rate (highest among active types) but very low
+   volume — only 11 total samples across all experiments.
+
+   **Root cause**: Detection thresholds were too conservative. Saturation
+   threshold (TANH) was 0.95, oscillation sign-change threshold was 0.30,
+   and the proactive activation recommendation engine was not integrated.
+
+   **Fix**: Three changes to increase candidate volume:
+   - Lowered saturation thresholds (TANH: 0.95→0.85, LOGISTIC: 0.95/0.05→0.90/0.10,
+     HARD_TANH: 0.99→0.95) to catch neurons approaching saturation
+   - Lowered oscillation thresholds (sign change fraction: 0.30→0.15,
+     minority sign fraction: 0.20→0.10) to catch milder oscillation
+   - Integrated proactive activation recommendation engine (Issue #431) into
+     the analysis pipeline to recommend activation changes based on input
+     distribution analysis before problems occur
+
 ### Recommended Actions
 
 | Priority | Action | Rationale |
@@ -916,7 +938,7 @@ All 7 operation types are implemented in NEAT-AI's
 | Done | Add interference detection (Issue #415) | Filter incompatible pairs before combo-successful |
 | Done | Fix harmful synapse threshold filtering (Issue #416) | Candidates with non-positive expected gain were included |
 | Done | Fix add-synapses prediction inversion (Issue #413) | Saturation-aware weight search for bounded targets |
-| Medium | Investigate change-squash suggestion rate | 18.2% success rate but only 11 samples |
+| Done | Increase change-squash suggestion rate (Issue #417) | Lowered thresholds, integrated proactive recommendations |
 | Low | Optimise add-neurons variants | Already working, but room for improvement |
 
 ---
