@@ -39,6 +39,7 @@
 //! - `weight_coherence.rs` - Weight coherence validation for brittleness detection (Issue #437)
 //! - `topology.rs` - Topology-aware network structure analysis (Issue #422)
 //! - `sample_weighted.rs` - Sample-weighted discovery prioritising high-error samples (Issue #423)
+//! - `gradient_discovery.rs` - Gradient-based synapse adjustment for directional improvement hints (Issue #421)
 
 pub mod activation;
 pub mod activation_recommendation;
@@ -57,6 +58,7 @@ pub mod early_termination;
 pub mod epistatic;
 pub mod error_distribution;
 pub mod gpu;
+pub mod gradient_discovery;
 pub mod input_sensitivity;
 pub mod multi_hop;
 pub mod neuron;
@@ -1381,6 +1383,37 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 }
                 let candidates =
                     sample_weighted::high_error_neurons_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #421: Gradient-based synapse adjustment — directional improvement hints
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "gradient-based discovery",
+            "gradient_based_discovery",
+            max_candidates,
+            diversify,
+            || {
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                let records = collect_records(&uuids);
+                if records.is_empty() {
+                    return None;
+                }
+                let detected =
+                    gradient_discovery::detect_gradient_candidates(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = gradient_discovery::gradient_candidates_to_coordinated(&detected);
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
