@@ -24,6 +24,7 @@ output format, and production success/failure rates.
   - [Multi-Hop Candidate Analysis](#multi-hop-candidate-analysis)
   - [Redundant Path Pruning](#redundant-path-pruning)
   - [Topology-Aware Structure Analysis](#topology-aware-structure-analysis)
+  - [Gradient-Based Synapse Adjustment](#gradient-based-synapse-adjustment)
   - [Add Neurons](#add-neurons)
   - [Add Synapses](#add-synapses)
   - [Remove Low-Impact Neurons](#remove-low-impact-neurons)
@@ -604,6 +605,52 @@ operations.
 
 **Expected improvement**: 10–15% success rate for topology-based suggestions,
 complementing existing activation-based discovery.
+
+---
+
+### Gradient-Based Synapse Adjustment
+
+**Source**: `src/analysis/gradient_discovery.rs` (Issue #421)
+
+**Purpose**: Computes local gradients (∂error/∂weight) for each synapse and
+proposes weight adjustments in the error-reducing direction. Unlike
+correlation-based methods that measure association strength, gradient-based
+discovery provides directional information about which way to adjust weights
+for maximum error reduction.
+
+**Detection criteria**:
+
+1. **High gradient magnitude**: The absolute mean gradient exceeds a minimum
+   threshold (0.01), indicating the synapse has significant error-reduction
+   potential through weight adjustment.
+2. **Sufficient samples**: At least 10 recorded samples for statistical
+   reliability.
+3. **Gradient consistency**: The ratio of mean gradient magnitude to standard
+   deviation exceeds 0.3, ensuring the gradient direction is reliable rather
+   than noise-driven.
+
+**Gradient computation**:
+
+For each synapse (source → target), the local gradient is computed as:
+
+```
+∂error/∂weight ≈ mean(source_activation × target_error)
+```
+
+This approximates how much the target error would change for a small weight
+perturbation, using the chain rule of differentiation.
+
+**Recommended actions**:
+
+- **SetWeight**: Adjust the weight by a small step in the gradient descent
+  direction: `new_weight = old_weight - learning_rate × gradient`.
+  The learning rate is conservative (0.1) since NEAT-AI validates via ablation.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `setWeight`
+operations.
+
+**Expected improvement**: 25–30% success rate for weight adjustment candidates,
+more accurate than correlation-based methods for predicting improvement direction.
 
 ---
 
