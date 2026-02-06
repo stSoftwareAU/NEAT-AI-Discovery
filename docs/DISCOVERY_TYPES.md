@@ -23,6 +23,7 @@ output format, and production success/failure rates.
   - [Correlated Error Pattern Detection](#correlated-error-pattern-detection)
   - [Multi-Hop Candidate Analysis](#multi-hop-candidate-analysis)
   - [Redundant Path Pruning](#redundant-path-pruning)
+  - [Topology-Aware Structure Analysis](#topology-aware-structure-analysis)
   - [Add Neurons](#add-neurons)
   - [Add Synapses](#add-synapses)
   - [Remove Low-Impact Neurons](#remove-low-impact-neurons)
@@ -73,6 +74,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Correlated Error](#correlated-error-pattern-detection) | `correlated_error.rs` | #344 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Multi-Hop](#multi-hop-candidate-analysis) | `multi_hop.rs` | #230 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Redundant Path](#redundant-path-pruning) | `redundant_path.rs` | #164 | `removeSynapse`, `setWeight` | 🟢 Active |
+| [Topology-Aware Structure](#topology-aware-structure-analysis) | `topology.rs` | #422 | `addSynapse` | 🟢 Active |
 | [Add Neurons](#add-neurons) | `neuron.rs` | — | `addNeuron` | 🟢 Active |
 | [Add Synapses](#add-synapses) | `synapse.rs` | #413 | `addSynapse` | 🟡 Fixed |
 | [Remove Low-Impact](#remove-low-impact-neurons) | `neuron.rs` | — | `removeNeuron` | 🟢 Active |
@@ -559,6 +561,49 @@ Result:   removeSynapse(input-1 → output-0)
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `removeSynapse`
 and `setWeight` operations.
+
+---
+
+### Topology-Aware Structure Analysis
+
+**Source**: `src/analysis/topology.rs` (Issue #422)
+
+**Purpose**: Analyses overall network structure to identify topology-based
+improvements. Unlike per-neuron detectors (saturation, dead neuron), this
+module takes a holistic view of path lengths and connectivity balance to
+suggest structural changes that improve information flow.
+
+**Detection criteria — Long path**:
+
+1. **Shortest path to output > 3 hops**: Uses reverse BFS from all outputs
+   to compute shortest path length for each hidden neuron.
+2. **Sufficient samples**: At least 20 recorded samples for the neuron.
+3. **Positive error**: The neuron carries meaningful error (no improvement
+   expected if error is zero).
+4. **No existing shortcut**: Only suggests skip connections where one does
+   not already exist.
+
+**Detection criteria — Connectivity imbalance**:
+
+1. **Fan-in ratio ≥ 3.0**: The most-connected hidden neuron has at least
+   3× the fan-in of the least-connected hidden neuron.
+2. **Starved neurons flagged**: Neurons with fan-in below the imbalance
+   threshold are candidates for additional connections.
+3. **Sufficient samples**: At least 20 recorded samples.
+
+**Recommended actions**:
+
+1. **Add skip connection** (long path): Connect a distant hidden neuron
+   directly to an output, shortening the effective path and reducing
+   gradient attenuation.
+2. **Add input connection** (connectivity imbalance): Connect an unused
+   input to a starved hidden neuron to balance information flow.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `addSynapse`
+operations.
+
+**Expected improvement**: 10–15% success rate for topology-based suggestions,
+complementing existing activation-based discovery.
 
 ---
 
