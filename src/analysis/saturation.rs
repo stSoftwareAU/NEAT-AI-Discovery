@@ -32,19 +32,31 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 const MIN_SAMPLES_FOR_SATURATION: usize = 20;
 
 /// Activation threshold for bounded functions to consider the neuron saturated.
-/// For TANH: |mean_activation| > 0.95 is saturated.
-const TANH_SATURATION_THRESHOLD: f32 = 0.95;
+///
+/// Issue #417: Lowered from 0.95 to 0.85 to catch "near-saturated" neurons earlier.
+/// The change-squash discovery type has an 18.2% success rate but very low volume.
+/// Neurons approaching saturation (0.85–0.95) still have reduced gradient flow and
+/// benefit from activation function changes before they become fully saturated.
+const TANH_SATURATION_THRESHOLD: f32 = 0.85;
 
 /// LOGISTIC saturation thresholds: output near 0 or 1.
-const LOGISTIC_UPPER_THRESHOLD: f32 = 0.95;
-const LOGISTIC_LOWER_THRESHOLD: f32 = 0.05;
+///
+/// Issue #417: Lowered upper from 0.95 to 0.90, raised lower from 0.05 to 0.10
+/// to catch neurons approaching logistic saturation earlier.
+const LOGISTIC_UPPER_THRESHOLD: f32 = 0.90;
+const LOGISTIC_LOWER_THRESHOLD: f32 = 0.10;
 
 /// HARD_TANH / CLIPPED saturation threshold (clamped at exactly ±1.0).
-const HARD_TANH_SATURATION_THRESHOLD: f32 = 0.99;
+///
+/// Issue #417: Lowered from 0.99 to 0.95 to detect near-saturation.
+const HARD_TANH_SATURATION_THRESHOLD: f32 = 0.95;
 
 /// Maximum activation standard deviation to confirm saturation.
 /// If output varies significantly, the neuron is not truly saturated.
-const MAX_ACTIVATION_STD_DEV: f32 = 0.05;
+///
+/// Issue #417: Raised from 0.05 to 0.08 to accommodate near-saturated neurons
+/// which may have slightly more output variance than fully saturated neurons.
+const MAX_ACTIVATION_STD_DEV: f32 = 0.08;
 
 /// RELU dead-zone: mean activation is 0.0 (or very close).
 const RELU_DEAD_THRESHOLD: f32 = 1e-6;

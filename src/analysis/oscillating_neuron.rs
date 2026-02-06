@@ -35,11 +35,18 @@ const MIN_SAMPLES_FOR_OSCILLATION: usize = 20;
 
 /// Minimum fraction of consecutive sample pairs that must show a sign change
 /// to consider the neuron oscillating.
-const MIN_SIGN_CHANGE_FRACTION: f32 = 0.3;
+///
+/// Issue #417: Lowered from 0.3 to 0.15 to catch mildly oscillating neurons.
+/// Even moderate oscillation (15%+ sign changes) indicates the neuron is
+/// fighting between two functions and may benefit from an activation change.
+const MIN_SIGN_CHANGE_FRACTION: f32 = 0.15;
 
 /// Minimum fraction of samples on the minority sign side.
 /// If 90%+ are one sign, it is not truly oscillating — it is biased.
-const MIN_MINORITY_SIGN_FRACTION: f32 = 0.2;
+///
+/// Issue #417: Lowered from 0.2 to 0.1 to catch more oscillating neurons.
+/// Even 10% minority sign presence indicates meaningful sign conflict.
+const MIN_MINORITY_SIGN_FRACTION: f32 = 0.1;
 
 /// Minimum mean absolute activation to distinguish from dead neurons.
 const MIN_MEAN_ABS_ACTIVATION: f32 = 0.01;

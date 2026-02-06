@@ -1283,6 +1283,43 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 })
             },
         );
+
+        // Issue #417: Proactive activation function recommendation
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "activation recommendation",
+            "activation_recommendation",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
+                }
+                let records = collect_hidden_records();
+                let mut recommendations = Vec::new();
+                for (uuid, squash, _bias) in &hidden_neurons {
+                    if let Some(neuron_records) = records.iter().find(|(u, _)| u == uuid) {
+                        if let Some(rec) = activation_recommendation::recommend_activation_function(
+                            &neuron_records.1,
+                            squash,
+                        ) {
+                            recommendations.push(rec);
+                        }
+                    }
+                }
+                if recommendations.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    activation_recommendation::recommendations_to_coordinated_candidates(
+                        &recommendations,
+                    );
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: recommendations.len(),
+                    candidates,
+                })
+            },
+        );
     }
 
     // Issue #224: Candidate clustering to reduce redundant ablation tests.
