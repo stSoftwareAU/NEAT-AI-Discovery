@@ -38,6 +38,7 @@
 //! - `activation_recommendation.rs` - Proactive activation function recommendation engine (Issue #431)
 //! - `weight_coherence.rs` - Weight coherence validation for brittleness detection (Issue #437)
 //! - `topology.rs` - Topology-aware network structure analysis (Issue #422)
+//! - `sample_weighted.rs` - Sample-weighted discovery prioritising high-error samples (Issue #423)
 
 pub mod activation;
 pub mod activation_recommendation;
@@ -67,6 +68,7 @@ pub mod oscillating_neuron;
 pub mod output_bias_drift;
 pub mod redundant_path;
 pub mod restricted_range;
+pub mod sample_weighted;
 pub mod samples;
 pub mod saturation;
 pub mod sentinel_gating;
@@ -1347,6 +1349,38 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 }
                 let candidates =
                     topology::topology_issues_to_coordinated_candidates(&detected, &input.creature);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #423: Sample-weighted discovery — prioritise high-error samples
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "sample-weighted discovery",
+            "sample_weighted_discovery",
+            max_candidates,
+            diversify,
+            || {
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                let records = collect_records(&uuids);
+                if records.is_empty() {
+                    return None;
+                }
+                let config = sample_weighted::SampleWeightedConfig::default();
+                let detected = sample_weighted::detect_high_error_neurons(&records, &config);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    sample_weighted::high_error_neurons_to_coordinated_candidates(&detected);
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
