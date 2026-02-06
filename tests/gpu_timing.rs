@@ -246,48 +246,50 @@ fn timing_in_json_output() {
     );
 }
 
-/// Test that the timing collector's overhead is minimal.
+/// Test that the disabled TimingCollector discards recordings and the enabled
+/// collector accumulates them into a finalised timing summary.
 ///
-/// This tests the TimingCollector directly rather than through the analysis API,
-/// since the env var check is cached and we can't toggle it at runtime.
+/// Issue #454: Converted from timing-based benchmark to functional test.
+/// Performance measurement belongs in `benches/`, not unit tests.
 #[test]
-fn timing_collector_overhead_minimal() {
+fn timing_collector_disabled_vs_enabled_behaviour() {
     use neat_ai_discovery::analysis::TimingCollector;
 
-    // Benchmark disabled collector (should be essentially no-ops)
+    // Disabled collector: recordings are no-ops, finalize returns None.
     let disabled_collector = TimingCollector::new(false);
-    let start = std::time::Instant::now();
-    for _ in 0..10000 {
+    for _ in 0..100 {
         disabled_collector.record_shader("helpful", 1000);
         disabled_collector.record_buffer_transfer(1000);
         disabled_collector.record_sample_building(1000);
     }
-    let disabled_duration = start.elapsed();
+    assert!(
+        disabled_collector.finalize().is_none(),
+        "Disabled collector should produce no timing data"
+    );
 
-    // Benchmark enabled collector
+    // Enabled collector: recordings are accumulated, finalize returns Some.
     let enabled_collector = TimingCollector::new(true);
-    let start = std::time::Instant::now();
-    for _ in 0..10000 {
+    for _ in 0..100 {
         enabled_collector.record_shader("helpful", 1000);
         enabled_collector.record_buffer_transfer(1000);
         enabled_collector.record_sample_building(1000);
     }
-    let enabled_duration = start.elapsed();
+    let timing = enabled_collector
+        .finalize()
+        .expect("Enabled collector should produce timing data");
 
-    eprintln!(
-        "TimingCollector overhead: disabled={disabled_duration:?}, enabled={enabled_duration:?}"
-    );
-
-    // Disabled collector should be very fast (early return)
+    // Verify the timing summary contains non-negative values
     assert!(
-        disabled_duration.as_micros() < 1000,
-        "Disabled collector should complete 10000 iterations in under 1ms"
+        timing.gpu.shader_execution_ms >= 0.0,
+        "Shader execution time should be non-negative"
     );
-
-    // Enabled collector should still be reasonably fast (under 100ms for 10000 iterations)
     assert!(
-        enabled_duration.as_millis() < 100,
-        "Enabled collector should complete 10000 iterations in under 100ms"
+        timing.gpu.buffer_transfer_ms >= 0.0,
+        "Buffer transfer time should be non-negative"
+    );
+    assert!(
+        timing.cpu.sample_building_ms >= 0.0,
+        "Sample building time should be non-negative"
     );
 }
 

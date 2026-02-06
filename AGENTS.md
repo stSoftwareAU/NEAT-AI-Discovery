@@ -171,13 +171,34 @@ integration). See `Cargo.toml` for the full dependency list.
 2. Implement the feature to make the test pass.
 3. Refactor if needed while keeping tests green.
 
-### Test Outcomes, Not Implementation
+### Test Outcomes, Not Implementation ("What" vs "How")
 
 Tests verify **what** the system does, not **how** it does it. The same test
 should pass regardless of whether we use GPU, CPU, or TPU internally.
 
+**"What" tests (GOOD)** — test observable outcomes:
+- Call a function with test data, assert on the result.
+- Verify the system produces correct candidates, detects patterns, returns
+  expected JSON structure, etc.
+- Will still pass if we switch quick sort to bubble sort, HashMap to BTreeMap,
+  or GPU to CPU.
+
+**"How" tests (BAD)** — test implementation details:
+- Assert that a specific internal function is called.
+- Check that a particular data structure is used internally.
+- Verify iteration order, internal cache state, or call counts for
+  non-observable behaviour.
+- Break on any refactor even when behaviour is unchanged.
+
+**Benchmarks disguised as tests (BAD)** — measure performance in unit tests:
+- Loop N times and assert on elapsed time.
+- Compare durations between two code paths.
+- Use `Instant::now()` / `.elapsed()` to validate speed.
+- These always produce unreliable results because tests run in parallel with
+  other system activity.
+
 ```rust
-// GOOD: Tests the outcome
+// GOOD: Tests the outcome ("what")
 #[test]
 fn test_low_impact_neurons_are_detected() {
     let creature = create_test_creature();
@@ -186,10 +207,18 @@ fn test_low_impact_neurons_are_detected() {
     assert!(impacts["close-to-output"] > 0.9);
 }
 
-// BAD: Tests implementation details
+// BAD: Tests implementation details ("how")
 #[test]
 fn test_gpu_kernel_computes_impacts() {
     // Don't test HOW we compute, test WHAT we compute
+}
+
+// BAD: Benchmark disguised as a test
+#[test]
+fn test_cache_is_fast() {
+    let start = Instant::now();
+    for _ in 0..10000 { cache.get("key"); }
+    assert!(start.elapsed().as_millis() < 50); // Unreliable!
 }
 ```
 
@@ -200,7 +229,13 @@ fn test_gpu_kernel_computes_impacts() {
 | **Purpose** | Verify correctness | Measure performance |
 | **Location** | `tests/` (integration) or `src/` with `#[cfg(test)]` | `benches/` |
 | **Run with** | `cargo test` | `cargo bench --bench <name>` |
-| **Should not** | Measure performance or print timing | Verify correctness |
+| **Asserts on** | Results, structure, correctness | Timing, throughput |
+| **Must not** | Use `Instant`/`elapsed` for pass/fail | Verify correctness |
+
+**Why this matters**: Unit tests run in parallel with other tests and system
+activity, making timing measurements unreliable. If you switch quick sort to
+bubble sort, unit tests should still pass — but a benchmark would correctly
+show the regression. Put timing assertions in `benches/`, not `tests/`.
 
 **Never reduce iteration counts to make "performance tests" faster in unit
 tests.** If you need to confirm performance, create proper benchmarks.

@@ -263,20 +263,25 @@ fn cache_is_empty_works_correctly() {
     assert_eq!(cache.len(), 1, "Cache len() should be 1 after one get()");
 }
 
-/// Test that the read-path optimisation works correctly.
+/// Test that the loader is invoked only once for a given UUID.
 ///
-/// When a neuron is already in the cache, we should use the read lock path
-/// (fast path) instead of acquiring a write lock (slow path).
+/// When a neuron is already in the cache, subsequent gets should return the
+/// cached data without invoking the loader again.
+///
+/// Issue #454: Converted from timing-based comparison to functional test.
+/// Performance measurement belongs in `benches/`, not unit tests.
 #[test]
-fn cache_uses_read_lock_for_existing_entries() {
+fn cache_invokes_loader_only_once_for_same_uuid() {
     use neat_ai_discovery::analysis::cache::RecordCache;
-    use std::time::Instant;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let load_count = Arc::new(AtomicUsize::new(0));
+    let load_count_clone = Arc::clone(&load_count);
 
     let cache = Arc::new(RecordCache::with_loader(
         "test.parquet",
-        Arc::new(|_file, uuid| {
-            // Add a small delay to make the difference measurable
-            thread::sleep(Duration::from_millis(5));
+        Arc::new(move |_file, uuid| {
+            load_count_clone.fetch_add(1, Ordering::SeqCst);
             let records = vec![DiscoverRecord {
                 obs_index: 0,
                 neuron_uuid: uuid.to_string(),
@@ -288,20 +293,27 @@ fn cache_uses_read_lock_for_existing_entries() {
         }),
     ));
 
-    // First get - will trigger the loader (slow path with write lock)
-    let start_first = Instant::now();
+    // First get — triggers the loader
     let _ = cache.get("neuron-0").unwrap();
-    let first_duration = start_first.elapsed();
+    assert_eq!(
+        load_count.load(Ordering::SeqCst),
+        1,
+        "Loader should be invoked on first get"
+    );
 
-    // Second get - should use the fast path (read lock, no loader)
-    let start_second = Instant::now();
+    // Second get — should use cached data, not the loader
     let _ = cache.get("neuron-0").unwrap();
-    let second_duration = start_second.elapsed();
+    assert_eq!(
+        load_count.load(Ordering::SeqCst),
+        1,
+        "Loader should NOT be invoked again for the same UUID"
+    );
 
-    // The second get should be significantly faster since it doesn't trigger the loader
-    // We use a generous threshold since CI environments can be variable
-    assert!(
-        second_duration < first_duration,
-        "Second get ({second_duration:?}) should be faster than first get ({first_duration:?})"
+    // Different UUID — should invoke the loader
+    let _ = cache.get("neuron-1").unwrap();
+    assert_eq!(
+        load_count.load(Ordering::SeqCst),
+        2,
+        "Loader should be invoked for a different UUID"
     );
 }
