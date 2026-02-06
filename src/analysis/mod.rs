@@ -37,6 +37,7 @@
 //! - `cross_validation.rs` - Cross-validation consistency scoring for brittleness detection (Issue #436)
 //! - `activation_recommendation.rs` - Proactive activation function recommendation engine (Issue #431)
 //! - `weight_coherence.rs` - Weight coherence validation for brittleness detection (Issue #437)
+//! - `topology.rs` - Topology-aware network structure analysis (Issue #422)
 
 pub mod activation;
 pub mod activation_recommendation;
@@ -73,6 +74,7 @@ pub mod shared;
 pub mod streaming;
 pub mod synapse;
 pub mod system;
+pub mod topology;
 pub mod unbounded_capping;
 pub mod utils;
 pub mod weight_coherence;
@@ -1316,6 +1318,37 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     );
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: recommendations.len(),
+                    candidates,
+                })
+            },
+        );
+
+        // Issue #422: Topology-aware network structure analysis
+        discovery_dispatch::run_discovery_module(
+            syn,
+            "topology structure analysis",
+            "topology_structure_analysis",
+            max_candidates,
+            diversify,
+            || {
+                if hidden_neurons.is_empty() {
+                    return None;
+                }
+                let uuids: Vec<String> = input
+                    .creature
+                    .neurons
+                    .iter()
+                    .map(|n| n.uuid.clone())
+                    .collect();
+                let records = collect_records(&uuids);
+                let detected = topology::detect_topology_issues(&input.creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    topology::topology_issues_to_coordinated_candidates(&detected, &input.creature);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
                     candidates,
                 })
             },
