@@ -450,65 +450,52 @@ fn integration_gpu_metrics() {
 // Overhead Verification Tests
 // =============================================================================
 
-/// Test that PhaseTimer has minimal overhead when timing is disabled.
+/// Test that PhaseTimer can be created and dropped many times without error.
+///
+/// Issue #454: Converted from timing-based benchmark to functional test.
+/// Performance measurement belongs in `benches/`, not unit tests.
 #[test]
-fn phase_timer_overhead_disabled() {
-    // PhaseTimer should have minimal overhead even when timing is disabled
-    let start = std::time::Instant::now();
-
-    for _ in 0..10000 {
+fn phase_timer_repeated_creation_and_drop() {
+    for _ in 0..100 {
         let _timer = PhaseTimer::new("test_phase");
-        // Timer drops immediately
+        // Timer drops immediately — verify no panic or resource leak
     }
-
-    let elapsed = start.elapsed();
-
-    // 10000 iterations should complete in under 10ms when disabled
-    assert!(
-        elapsed.as_millis() < 10,
-        "PhaseTimer should have < 0.1% overhead when disabled, took {}ms for 10000 iterations",
-        elapsed.as_millis()
-    );
 }
 
-/// Test that GpuMetrics has minimal overhead.
+/// Test that GpuMetrics accumulates correctly after many recordings.
+///
+/// Issue #454: Converted from timing-based benchmark to functional test.
+/// Performance measurement belongs in `benches/`, not unit tests.
 #[test]
-fn gpu_metrics_overhead() {
+fn gpu_metrics_accumulates_many_recordings() {
     let metrics = GpuMetrics::new();
-    let start = std::time::Instant::now();
 
-    for _ in 0..10000 {
+    let iterations = 100;
+    for _ in 0..iterations {
         metrics.record_batch(100);
         metrics.record_queue_wait_us(1000);
         metrics.record_gpu_busy_us(5000);
     }
 
-    let elapsed = start.elapsed();
-
-    // 10000 iterations of atomic operations should complete quickly
-    assert!(
-        elapsed.as_millis() < 50,
-        "GpuMetrics should have < 0.5% overhead, took {}ms for 10000 iterations",
-        elapsed.as_millis()
-    );
+    assert_eq!(metrics.batch_count(), iterations);
+    assert_eq!(metrics.total_samples_processed(), iterations * 100);
+    assert_eq!(metrics.total_queue_wait_us(), iterations as u64 * 1000);
+    assert_eq!(metrics.total_gpu_busy_us(), iterations as u64 * 5000);
 }
 
-/// Test that ProfileData has minimal overhead.
+/// Test that ProfileData retains the last recorded phase value.
+///
+/// Issue #454: Converted from timing-based benchmark to functional test.
+/// Performance measurement belongs in `benches/`, not unit tests.
 #[test]
-fn profile_data_overhead() {
+fn profile_data_records_many_phases() {
     let mut profile = ProfileData::new();
-    let start = std::time::Instant::now();
 
-    for i in 0..10000 {
+    for i in 0..100 {
         profile.record_phase("test", i as u64);
     }
 
-    let elapsed = start.elapsed();
-
-    // 10000 phase recordings should complete quickly
-    assert!(
-        elapsed.as_millis() < 100,
-        "ProfileData should have < 1% overhead, took {}ms for 10000 iterations",
-        elapsed.as_millis()
-    );
+    let json = profile.to_json();
+    // The last recorded value for "test" should be 99
+    assert_eq!(json["timing"]["phases"]["test"], 99);
 }
