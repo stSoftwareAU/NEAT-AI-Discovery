@@ -35,8 +35,8 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 /// A path of 4 nodes = 3 hops. Deeper paths have diminishing returns and exponential cost.
 const MAX_PATH_LENGTH: usize = 4;
 
-/// Minimum samples required for reliable correlation estimation.
-const MIN_SAMPLES_FOR_CORRELATION: usize = 20;
+// MIN_SAMPLES_FOR_CORRELATION moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_CORRELATION;
 
 /// Minimum absolute Pearson correlation between a neuron's activation and a target's
 /// error to consider the neuron as a useful intermediate.

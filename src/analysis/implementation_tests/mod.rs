@@ -31,6 +31,7 @@ pub(super) mod common {
     pub(crate) use crate::analysis::analyze_neurons;
     pub(crate) use crate::analysis::analyze_synapses;
     pub(crate) use crate::analysis::cache::RecordCache;
+    pub(crate) use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT;
     pub(crate) use crate::analysis::diagnostics::{
         filter_focus_targets_for_neuron_analysis, NeuronDiagnostics, RejectionReason,
         TargetDiagnostics, ThresholdContext,
@@ -45,7 +46,6 @@ pub(super) mod common {
     pub(crate) use crate::analysis::utils::deadline_override;
     pub(crate) use crate::analysis::weights::{
         calculate_optimal_bias, calculate_optimal_outgoing_weight, MAX_OUTGOING_WEIGHT,
-        MIN_NEURON_SAMPLE_COUNT,
     };
     pub(crate) use crate::parquet_format::write_records_to_parquet;
     pub(crate) use crate::types::DiscoverRecord;

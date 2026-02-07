@@ -30,8 +30,8 @@ use crate::CoordinatedStructuralOpJson;
 
 use std::collections::HashSet;
 
-/// Minimum samples required for reliable epistatic detection.
-const MIN_SAMPLES_FOR_EPISTATIC_DETECTION: usize = 20;
+// MIN_SAMPLES_FOR_EPISTATIC_DETECTION moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_EPISTATIC_DETECTION;
 
 /// Minimum activation threshold to consider a neuron "firing" for pattern detection.
 const ACTIVATION_FIRING_THRESHOLD: f32 = 0.5;

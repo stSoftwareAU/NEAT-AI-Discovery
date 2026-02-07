@@ -31,8 +31,8 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 use std::collections::HashMap;
 
-/// Minimum samples required for reliable distribution analysis.
-const MIN_SAMPLES_FOR_ANALYSIS: usize = 20;
+// MIN_SAMPLES_FOR_ANALYSIS moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_ANALYSIS;
 
 /// Threshold for sparsity classification (fraction of zeros).
 const SPARSITY_THRESHOLD: f32 = 0.5;

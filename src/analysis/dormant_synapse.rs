@@ -29,8 +29,8 @@ use std::collections::HashMap;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-/// Minimum samples required for reliable dormant synapse detection.
-const MIN_SAMPLES_FOR_DORMANT: usize = 20;
+// MIN_SAMPLES_FOR_DORMANT moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DORMANT;
 
 /// Maximum absolute weight to consider a synapse dormant.
 const DORMANT_WEIGHT_THRESHOLD: f32 = 1e-4;

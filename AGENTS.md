@@ -53,6 +53,7 @@ src/
 │
 ├── analysis/                 # Core analysis engine
 │   ├── mod.rs                # Module organisation
+│   ├── constants.rs          # Central discovery thresholds (Issue #424)
 │   ├── shared.rs             # Common types, results, diagnostics
 │   ├── synapse.rs            # Synapse analysis
 │   ├── neuron.rs             # Neuron analysis

@@ -27,8 +27,8 @@ use std::collections::{HashMap, HashSet};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-/// Minimum samples required for reliable dead neuron detection.
-const MIN_SAMPLES_FOR_DEAD_DETECTION: usize = 20;
+// MIN_SAMPLES_FOR_DEAD_DETECTION moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DEAD_DETECTION;
 
 /// Threshold for mean absolute activation to consider a neuron dead.
 /// Activations below this are effectively zero.

@@ -34,8 +34,8 @@ use std::env;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-/// Minimum samples required for reliable noise-to-signal detection.
-const MIN_SAMPLES_FOR_DETECTION: usize = 20;
+// MIN_SAMPLES_FOR_DETECTION moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DETECTION;
 
 /// Default threshold for noise-to-signal ratio to flag a neuron.
 /// A ratio > 1.0 means noise dominates signal.

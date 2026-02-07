@@ -31,20 +31,11 @@ use std::collections::HashSet;
 use crate::types::DiscoverRecord;
 use crate::CreatureJson;
 
-/// Minimum samples required for reliable observation range detection.
-const MIN_SAMPLES_FOR_RANGE: usize = 20;
-
-/// Minimum fraction of samples at a candidate sentinel to consider it a cluster.
-const MIN_SENTINEL_FRACTION: f32 = 0.15;
-
-/// Tolerance for grouping values into a sentinel cluster.
-const SENTINEL_TOLERANCE: f32 = 0.02;
-
-/// Candidate sentinel values to check for clusters.
-const CANDIDATE_SENTINELS: [f32; 3] = [-1.0, 0.0, 1.0];
-
-/// Minimum gap between sentinel cluster and the effective range.
-const MIN_GAP: f32 = 0.05;
+// Constants moved to constants.rs (Issue #424)
+use super::constants::{
+    CANDIDATE_SENTINELS, MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_RANGE,
+    MIN_SENTINEL_FRACTION, MIN_SENTINEL_GAP as MIN_GAP, SENTINEL_TOLERANCE,
+};
 
 /// Result of observation range analysis for a single input neuron.
 #[derive(Debug, Clone)]

@@ -13,6 +13,7 @@
 //! - `activation.rs` - Activation function related code (Issue #266)
 //! - `samples.rs` - Sample data structures and GPU formats (Issue #269)
 //! - `diagnostics.rs` - Diagnostic tracking and rejection reasons (Issue #271)
+//! - `constants.rs` - Central discovery thresholds and constants (Issue #424)
 //! - `cache.rs` - Record caching for parquet files (Issue #185)
 //! - `streaming.rs` - Streaming parquet loading with block-based caching (Issue #193)
 //! - `saturation.rs` - Saturated neuron detection for activation function changes (Issue #342)
@@ -48,6 +49,7 @@ pub mod bounded_range;
 pub mod cache;
 pub mod candidate_clustering;
 pub mod confidence;
+pub mod constants;
 pub mod correlated_error;
 pub mod cross_validation;
 pub mod dead_neuron;
