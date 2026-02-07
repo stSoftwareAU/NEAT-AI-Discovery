@@ -86,9 +86,6 @@ pub mod utils;
 pub mod weight_coherence;
 pub mod weights;
 
-// Implementation module - helper functions for neuron/synapse analysis
-mod implementation;
-
 // Re-export shared types
 pub use shared::{
     // GPU timing types (Issue #195)
