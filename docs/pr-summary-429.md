@@ -33,11 +33,11 @@ Pre-filter operates in microseconds, adding negligible overhead while enabling m
 
 | Scenario | Time |
 |----------|------|
-| 50 candidates | 5.66 us |
-| 200 candidates | 22.6 us |
-| 500 candidates | 50.7 us |
-| 1000 candidates | 79.8 us |
-| 10 modules x 50 candidates | 42.1 us |
+| 50 candidates | 5.58 us |
+| 200 candidates | 22.3 us |
+| 500 candidates | 50.5 us |
+| 1000 candidates | 76.0 us |
+| 10 modules x 50 candidates | 41.1 us |
 
 The pre-filter itself is fast (sub-100us even for 1000 candidates). The real performance benefit comes from **skipping entire discovery modules** when the budget is exhausted — each module involves record collection, pattern detection, and candidate conversion that can take milliseconds to seconds.
 
