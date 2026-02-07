@@ -1,7 +1,8 @@
-//! Tests for implementation.rs synapse analysis functions (Issue #278).
+//! Tests for synapse analysis core implementation (Issue #278, #425).
 //!
-//! These tests were extracted from implementation.rs and split into focused
-//! modules as part of Issue #426 to improve maintainability.
+//! These tests cover the core synapse analysis pipeline including GPU batch
+//! evaluation, diagnostics, and prediction accuracy. Originally in implementation.rs,
+//! moved to synapse.rs as part of Issue #425.
 //!
 //! Test modules:
 //! - `cache_tests` — Record cache contention handling

@@ -79,7 +79,7 @@ src/
 │   ├── confidence.rs         # Confidence metrics
 │   ├── candidate_clustering.rs # Redundancy reduction
 │   ├── multi_hop.rs          # Multi-hop analysis
-│   ├── implementation.rs     # Helper functions
+│   ├── implementation_tests/  # Synapse analysis pipeline tests
 │   │
 │   ├── gpu/                  # GPU infrastructure
 │   │   ├── mod.rs
