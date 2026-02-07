@@ -76,7 +76,8 @@ use std::sync::{Arc, Mutex};
 
 // WORKGROUP_SIZE moved to gpu/analyzer.rs (Issue #273)
 
-const MIN_NEURON_SAMPLE_COUNT: usize = 10;
+// MIN_NEURON_SAMPLE_COUNT moved to constants.rs (Issue #424)
+use super::constants::MIN_NEURON_SAMPLE_COUNT;
 
 // MIN_NEURON_OUTPUT_STD_DEV moved to crate::analysis::activation module (Issue #238)
 // MAX_OUTGOING_WEIGHT moved to crate::analysis::weights module (Issue #270)
@@ -2022,7 +2023,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     // Deadline coverage (Jan 2026): diversify within the top-K so repeated runs explore different
     // high-quality candidates over time (helps with failure caches and avoids category starvation).
     if input.analysis_deadline_ms.is_some() {
-        const DIVERSIFY_TOP_K: usize = 64;
+        use super::constants::DIVERSIFY_TOP_K;
         shuffle_within_top_k(
             helpful_results.as_mut_slice(),
             input.random_seed,

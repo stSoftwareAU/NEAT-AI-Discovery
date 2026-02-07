@@ -825,7 +825,7 @@ pub(crate) fn analyze_neurons_with_cache(
     // Deadline coverage (Jan 2026): when deadline-constrained, diversify within the top-K so
     // repeated runs explore different high-quality candidates over time (helps with failure caches).
     if input.analysis_deadline_ms.is_some() {
-        const DIVERSIFY_TOP_K: usize = 64;
+        use super::constants::DIVERSIFY_TOP_K;
         shuffle_within_top_k(
             helpful_results.as_mut_slice(),
             input.random_seed,

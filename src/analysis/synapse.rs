@@ -74,7 +74,8 @@ use std::sync::Arc;
 // Constants
 // =============================================================================
 
-const MIN_NEURON_SAMPLE_COUNT: usize = 10;
+// MIN_NEURON_SAMPLE_COUNT moved to constants.rs (Issue #424)
+use super::constants::MIN_NEURON_SAMPLE_COUNT;
 
 // Note: MIN_NEURON_OUTPUT_STD_DEV has been moved to the activation module
 // as part of Issue #238. It is used by has_sufficient_output_variance.

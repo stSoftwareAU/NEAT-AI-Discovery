@@ -37,8 +37,8 @@
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-/// Minimum samples with pre-activation values required for detection.
-const MIN_SAMPLES: usize = 20;
+// MIN_SAMPLES moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 
 /// Configuration for operating-point analysis.
 #[derive(Debug, Clone)]

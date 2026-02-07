@@ -31,8 +31,8 @@ use std::collections::HashMap;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-/// Minimum samples required for reliable bias drift detection.
-const MIN_SAMPLES_FOR_BIAS_DRIFT: usize = 20;
+// MIN_SAMPLES_FOR_BIAS_DRIFT moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_BIAS_DRIFT;
 
 /// Minimum fraction of errors that must share the same sign to consider
 /// the output biased. 0.7 means 70%+ must be positive or negative.

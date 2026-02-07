@@ -33,8 +33,8 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 
 use super::weights::MAX_OUTGOING_WEIGHT;
 
-/// Minimum samples required for reliable gradient computation.
-const MIN_SAMPLES_FOR_GRADIENT: usize = 10;
+// MIN_SAMPLES_FOR_GRADIENT uses MIN_NEURON_SAMPLE_COUNT (Issue #424)
+use super::constants::MIN_NEURON_SAMPLE_COUNT as MIN_SAMPLES_FOR_GRADIENT;
 
 /// Minimum absolute gradient to consider a synapse as a candidate.
 /// Below this, the weight change would have negligible error impact.

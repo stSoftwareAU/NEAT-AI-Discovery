@@ -31,23 +31,16 @@ use std::collections::HashSet;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-/// Minimum samples required for reliable bounded range detection.
-const MIN_SAMPLES_FOR_BOUNDED_RANGE: usize = 20;
+// Constants moved to constants.rs (Issue #424)
+use super::constants::{
+    CANDIDATE_SENTINELS, MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_BOUNDED_RANGE,
+    MIN_SENTINEL_GAP as MIN_GAP, SENTINEL_TOLERANCE as BOUNDARY_TOLERANCE,
+};
 
 /// Minimum fraction of samples at a boundary value to consider it a sentinel cluster.
+/// Bounded range uses a higher threshold (0.20) than sentinel detection (0.15)
+/// because boundary clustering requires stronger evidence.
 const MIN_BOUNDARY_FRACTION: f32 = 0.20;
-
-/// Tolerance for grouping values into a boundary cluster.
-/// Values within this distance of the sentinel are considered part of the cluster.
-const BOUNDARY_TOLERANCE: f32 = 0.02;
-
-/// Minimum gap between the sentinel cluster and the useful range.
-/// If the gap is smaller than this, the values are too interleaved to separate.
-const MIN_GAP: f32 = 0.05;
-
-/// Candidate boundary values to check for sentinel clusters.
-/// These are the most common sentinel values in normalised data.
-const CANDIDATE_SENTINELS: [f32; 3] = [-1.0, 0.0, 1.0];
 
 /// Result of detecting a bounded range issue on a neuron.
 #[derive(Debug, Clone)]

@@ -28,8 +28,8 @@
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
-/// Minimum samples required for reliable saturation detection.
-const MIN_SAMPLES_FOR_SATURATION: usize = 20;
+// MIN_SAMPLES_FOR_SATURATION moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_SATURATION;
 
 /// Activation threshold for bounded functions to consider the neuron saturated.
 ///

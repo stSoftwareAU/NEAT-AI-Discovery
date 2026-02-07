@@ -30,8 +30,8 @@
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
-/// Minimum samples required for reliable oscillation detection.
-const MIN_SAMPLES_FOR_OSCILLATION: usize = 20;
+// MIN_SAMPLES_FOR_OSCILLATION moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_OSCILLATION;
 
 /// Minimum fraction of consecutive sample pairs that must show a sign change
 /// to consider the neuron oscillating.

@@ -33,8 +33,8 @@ use std::collections::HashMap;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-/// Minimum samples required for reliable opposing synapse detection.
-const MIN_SAMPLES_FOR_OPPOSING: usize = 20;
+// MIN_SAMPLES_FOR_OPPOSING moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_OPPOSING;
 
 /// Minimum Pearson correlation between synapse contribution and error
 /// to consider the synapse opposing.

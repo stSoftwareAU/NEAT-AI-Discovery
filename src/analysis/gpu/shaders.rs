@@ -143,25 +143,8 @@ pub const GPU_SHUTDOWN_TIMEOUT_SECS: u64 = 10;
 // Analysis Threshold Constants
 // =============================================================================
 
-/// Minimum number of samples required for valid neuron analysis.
-///
-/// Statistical analysis requires sufficient samples to produce reliable results.
-/// With fewer samples, variance estimates become unreliable and candidates
-/// may be based on noise rather than signal.
-///
-/// ## Valid Range
-///
-/// - Minimum: 5 (absolute minimum for any statistics)
-/// - Maximum: 100 (too high excludes valid neurons)
-/// - Default: 10 (balance between reliability and coverage)
-///
-/// ## Usage
-///
-/// This constant is used in:
-/// - GPU shader validation (bias shader minimum sample count)
-/// - Synapse candidate filtering
-/// - Add-neuron candidate filtering
-pub const MIN_NEURON_SAMPLE_COUNT: usize = 10;
+// MIN_NEURON_SAMPLE_COUNT moved to constants.rs (Issue #424)
+pub use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT;
 
 // =============================================================================
 // GPU Reduction Configuration (Issue #218)

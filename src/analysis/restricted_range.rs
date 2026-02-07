@@ -36,8 +36,8 @@
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-/// Minimum samples required for reliable restricted range detection.
-const MIN_SAMPLES: usize = 20;
+// MIN_SAMPLES moved to constants.rs (Issue #424)
+use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 
 /// Minimum observed range (activation_max - activation_min) to distinguish
 /// from dead neurons. Below this, the neuron is considered dead, not restricted.

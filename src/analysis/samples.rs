@@ -516,9 +516,8 @@ impl ReluStats {
         total_baseline_error_sq: f32,
         original_samples: &[HelpfulSample],
     ) -> Option<crate::CandidateNeuronJson> {
+        use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT;
         use crate::analysis::weights::MAX_OUTGOING_WEIGHT;
-
-        const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 
         let sample_count = self.samples.len();
         if sample_count < MIN_NEURON_SAMPLE_COUNT || self.activation_sq_sum <= EPSILON {
@@ -692,11 +691,8 @@ pub fn compute_source_variance_discount(samples: &[HelpfulSample]) -> f32 {
         return 0.0;
     }
 
-    // Minimum source standard deviation for full credit.
-    // Sources with std dev below this are progressively discounted.
-    // Value chosen based on production analysis: input-1064 had std dev 0.01 and caused
-    // massive over-prediction. Sources should have at least 0.05 std dev for reliable correlation.
-    const MIN_SOURCE_STD_DEV: f32 = 0.05;
+    // MIN_SOURCE_STD_DEV moved to constants.rs (Issue #424)
+    use crate::analysis::constants::MIN_SOURCE_STD_DEV;
 
     let mut activation_sum = 0.0f64;
     let mut activation_sq_sum = 0.0f64;
@@ -759,13 +755,8 @@ pub fn constant_source_effect_threshold_from_env() -> Option<f32> {
     }
 }
 
-/// Minimum standard deviation reference for dynamic threshold scaling.
-///
-/// Issue #199: When computing the dynamic threshold, we scale based on the ratio
-/// of the creature's average source std dev to this reference value.
-/// Sources with std dev below 0.05 are considered "low variance" and get the
-/// default threshold. Sources with higher variance scale the threshold proportionally.
-const MIN_SOURCE_STD_DEV_REFERENCE: f32 = 0.05;
+// MIN_SOURCE_STD_DEV_REFERENCE moved to constants.rs as MIN_SOURCE_STD_DEV (Issue #424)
+use crate::analysis::constants::MIN_SOURCE_STD_DEV as MIN_SOURCE_STD_DEV_REFERENCE;
 
 /// Compute the dynamic constant-source effect threshold based on source variance profile.
 ///
