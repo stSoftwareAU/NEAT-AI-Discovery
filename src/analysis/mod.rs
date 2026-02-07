@@ -22,6 +22,7 @@
 //! - `correlated_error.rs` - Correlated error pattern detection for shared-cause identification (Issue #344)
 //! - `discovery_dispatch.rs` - Generic discovery module dispatch pattern (Issue #375)
 //! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests (Issue #224)
+//! - `candidate_prefilter.rs` - Hierarchical pre-filtering and cross-module deduplication (Issue #429)
 //! - `multi_hop.rs` - Multi-hop candidate analysis for deeper network improvements (Issue #230)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 //! - `oscillating_neuron.rs` - Oscillating neuron detection for stabilisation candidates (Issue #358)
@@ -48,6 +49,7 @@ pub mod bottleneck;
 pub mod bounded_range;
 pub mod cache;
 pub mod candidate_clustering;
+pub mod candidate_prefilter;
 pub mod confidence;
 pub mod constants;
 pub mod correlated_error;
@@ -617,11 +619,22 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     }
 
     // Issue #375: Discovery module dispatch using the generic pattern.
-    // Each detection module is dispatched via `run_discovery_module` which handles
-    // watchdog beats, phase timing, verbose logging, and merging into the synapse result.
+    // Each detection module is dispatched via `run_discovery_module_filtered` which handles
+    // watchdog beats, phase timing, verbose logging, pre-filtering, and merging into the
+    // synapse result.
+    //
+    // Issue #429: A shared CandidatePreFilter tracks accepted candidates across modules,
+    // enabling budget-aware prioritisation, low-gain filtering, and cross-module deduplication.
     if let Some(syn) = synapse_result.as_mut() {
         let max_candidates = input.max_synapse_candidates;
         let diversify = input.analysis_deadline_ms.is_some();
+
+        // Issue #429: Create a shared pre-filter for all discovery modules.
+        let prefilter_config = candidate_prefilter::PreFilterConfig {
+            candidate_budget: max_candidates.unwrap_or(256),
+            ..candidate_prefilter::PreFilterConfig::default()
+        };
+        let mut pre_filter = candidate_prefilter::CandidatePreFilter::new(prefilter_config);
 
         // Collect hidden neurons with their squash and bias (shared by several modules)
         let hidden_neurons: Vec<(String, String, f32)> = input
@@ -660,12 +673,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         };
 
         // Issue #342: Saturated neuron detection
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "saturation detection",
             "saturation_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -684,12 +698,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #343: Bottleneck neuron detection
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "bottleneck detection",
             "bottleneck_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -711,12 +726,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #341: Dead neuron detection
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "dead neuron detection",
             "dead_neuron_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -735,12 +751,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #344: Correlated error detection
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "correlated error detection",
             "correlated_error_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let output_count = input
                     .creature
@@ -777,12 +794,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #230: Multi-hop candidate analysis
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "multi-hop analysis",
             "multi_hop_analysis",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -808,12 +826,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #358: Oscillating neuron detection
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "oscillating neuron detection",
             "oscillating_neuron_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -834,12 +853,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #359: Dormant synapse detection
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "dormant synapse detection",
             "dormant_synapse_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let source_uuids: Vec<String> = input
                     .creature
@@ -864,12 +884,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #360: Opposing synapse detection
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "opposing synapse detection",
             "opposing_synapse_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let uuids: Vec<String> = input
                     .creature
@@ -893,12 +914,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #361: Output bias drift detection
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "output bias drift detection",
             "output_bias_drift_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let uuids: Vec<String> = input
                     .creature
@@ -923,12 +945,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #395: Bounded range detection
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "bounded range detection",
             "bounded_range_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let uuids: Vec<String> = input
                     .creature
@@ -955,12 +978,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #400: Sentinel value gating
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "sentinel value gating",
             "sentinel_value_gating",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let uuids: Vec<String> = input
                     .creature
@@ -990,12 +1014,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #399: Restricted activation range detection
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "restricted range detection",
             "restricted_range_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -1022,12 +1047,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #401: Hidden neuron operating-point analysis
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "operating point analysis",
             "operating_point_analysis",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -1054,12 +1080,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #441: Unbounded activation capping detection
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "unbounded capping detection",
             "unbounded_capping_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -1082,12 +1109,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #434: Noise-to-signal ratio detection for neurons
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "noisy neuron detection",
             "noisy_neuron_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -1106,12 +1134,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #434: Noise-to-signal ratio detection for synapses
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "noisy synapse detection",
             "noisy_synapse_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let uuids: Vec<String> = input
                     .creature
@@ -1133,12 +1162,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #435: Input sensitivity analysis for dominant inputs
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "dominant input detection",
             "dominant_input_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let input_uuids: Vec<String> = input
                     .creature
@@ -1167,12 +1197,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #435: Input sensitivity analysis for threshold effects
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "threshold effect detection",
             "threshold_effect_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let uuids: Vec<String> = input
                     .creature
@@ -1197,12 +1228,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #437: Weight coherence validation - incoherent weight ratios
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "weight coherence ratio detection",
             "weight_coherence_ratio_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -1227,12 +1259,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #437: Weight coherence validation - near-constant output paths
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "near-constant path detection",
             "near_constant_path_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -1257,12 +1290,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #437: Weight coherence validation - symmetric weight cancellation
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "symmetric cancellation detection",
             "symmetric_cancellation_detection",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let uuids: Vec<String> = input
                     .creature
@@ -1290,12 +1324,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #417: Proactive activation function recommendation
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "activation recommendation",
             "activation_recommendation",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -1327,12 +1362,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #422: Topology-aware network structure analysis
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "topology structure analysis",
             "topology_structure_analysis",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 if hidden_neurons.is_empty() {
                     return None;
@@ -1358,12 +1394,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #423: Sample-weighted discovery — prioritise high-error samples
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "sample-weighted discovery",
             "sample_weighted_discovery",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let uuids: Vec<String> = input
                     .creature
@@ -1390,12 +1427,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
 
         // Issue #421: Gradient-based synapse adjustment — directional improvement hints
-        discovery_dispatch::run_discovery_module(
+        discovery_dispatch::run_discovery_module_filtered(
             syn,
             "gradient-based discovery",
             "gradient_based_discovery",
             max_candidates,
             diversify,
+            &mut pre_filter,
             || {
                 let uuids: Vec<String> = input
                     .creature
@@ -1419,6 +1457,21 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 })
             },
         );
+
+        // Issue #429: Log pre-filter statistics
+        if utils::verbose_enabled() {
+            let stats = pre_filter.stats();
+            if stats.total_rejected() > 0 || stats.modules_skipped > 0 {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Pre-filter: accepted={}, rejected(low_gain={}, budget={}, dedup={}), modules_skipped={}",
+                    stats.accepted,
+                    stats.rejected_low_gain,
+                    stats.rejected_budget,
+                    stats.rejected_dedup,
+                    stats.modules_skipped
+                );
+            }
+        }
     }
 
     // Issue #224: Candidate clustering to reduce redundant ablation tests.
@@ -1552,6 +1605,9 @@ pub use early_termination::{
     check_batch_early_termination, EarlyTerminationConfig, EarlyTerminationDecision,
     EarlyTerminationResult, SequentialEvaluator,
 };
+
+// Re-export candidate pre-filter types (Issue #429)
+pub use candidate_prefilter::{CandidatePreFilter, PreFilterConfig, PreFilterStats};
 
 // Re-export cross-validation types (Issue #436)
 pub use cross_validation::{

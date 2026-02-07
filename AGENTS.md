@@ -78,6 +78,7 @@ src/
 │   ├── epistatic.rs          # Epistatic interaction analysis
 │   ├── confidence.rs         # Confidence metrics
 │   ├── candidate_clustering.rs # Redundancy reduction
+│   ├── candidate_prefilter.rs # Hierarchical pre-filtering (Issue #429)
 │   ├── multi_hop.rs          # Multi-hop analysis
 │   ├── implementation_tests/  # Synapse analysis pipeline tests
 │   │
