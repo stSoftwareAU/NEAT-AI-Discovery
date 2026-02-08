@@ -108,3 +108,28 @@ pub const MIN_SOURCE_STD_DEV: f32 = 0.05;
 /// Must be >= 1. Values above 128 may reduce the benefit of sorting by
 /// expected improvement.
 pub const DIVERSIFY_TOP_K: usize = 64;
+
+// =============================================================================
+// Source-Type Scoring (Issue #465)
+// =============================================================================
+
+/// Scoring boost multiplier for candidates from input-neuron sources.
+///
+/// GRQ-sampler analysis shows input neurons as synapse sources have a 36.2%
+/// success rate compared to 2.8–3.3% for hidden neurons. This boost is applied
+/// as a static multiplier to `expected_creature_score_gain` when the source
+/// neuron is an input neuron and no historical data is available yet.
+///
+/// ## Valid Range
+/// Must be > 1.0 (boost) and <= 3.0 (avoid over-biasing).
+pub const INPUT_SOURCE_BOOST: f64 = 1.5;
+
+/// Minimum number of recorded outcomes before applying source-type boost.
+///
+/// Below this threshold, the Bayesian estimate is too noisy to use for
+/// boosting. The cache returns a neutral boost (1.0) until enough samples
+/// have been collected.
+///
+/// ## Valid Range
+/// Must be >= 5 to avoid noise and <= 50 to be responsive.
+pub const MIN_BOOST_SAMPLES: usize = 10;
