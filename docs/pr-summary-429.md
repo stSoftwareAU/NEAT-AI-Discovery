@@ -23,8 +23,8 @@ This is a backend performance change with no UI. Benchmark results from `benches
 
 | Operation | 50 candidates | 200 candidates | 500 candidates | 1000 candidates |
 |-----------|--------------|----------------|----------------|-----------------|
-| filter_low_value | 1.4 us | 5.3 us | 14.0 us | 28.0 us |
-| deduplicate | 2.5 us | 8.4 us | 20.1 us | 40.2 us |
+| filter_low_value | 1.34 µs | 5.26 µs | 14.08 µs | 28.13 µs |
+| deduplicate | 2.42 µs | 8.24 µs | 19.82 µs | 39.57 µs |
 
 The pre-filter overhead is negligible (microseconds) compared to the GPU analysis it saves. In the `coordinated_structural_replace_synapse_with_relu` integration test, cross-module deduplication reduced coordinated candidates from 31 to a focused subset, demonstrating significant downstream savings in controller ablation time.
 
