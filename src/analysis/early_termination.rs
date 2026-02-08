@@ -433,6 +433,319 @@ pub fn check_batch_early_termination(
     result
 }
 
+// =============================================================================
+// Issue #429: Early termination improvements for low-value candidates
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// 1. Hierarchical candidate pre-filtering
+// ---------------------------------------------------------------------------
+
+/// Result of the quick pre-filter classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreFilterResult {
+    /// Candidate is clearly beneficial — skip full SPRT evaluation.
+    Accept,
+    /// Candidate is clearly poor — skip full SPRT evaluation.
+    Reject,
+    /// Candidate is marginal — requires full SPRT evaluation.
+    NeedsFullEvaluation,
+}
+
+/// Result of pre-filtering a batch of candidates.
+#[derive(Debug, Clone)]
+pub struct PreFilterBatchResult {
+    /// Indices of candidates that pass the quick accept threshold.
+    pub accept_indices: Vec<usize>,
+    /// Indices of candidates that fail the quick reject threshold.
+    pub reject_indices: Vec<usize>,
+    /// Indices of candidates that need full SPRT evaluation.
+    pub needs_eval_indices: Vec<usize>,
+}
+
+/// Quick pre-filter for candidate evaluation (Issue #429).
+///
+/// Performs a cheap ratio-based check before running the full SPRT analysis.
+/// Candidates with extreme positive/negative ratios are classified immediately,
+/// saving the cost of creating and running a `SequentialEvaluator`.
+///
+/// Thresholds are deliberately conservative to avoid filtering out good candidates:
+/// - Accept: > 75% positive (well above the 60% SPRT H1 threshold)
+/// - Reject: < 25% positive (well below the 50% SPRT H0 threshold)
+/// - Between: needs full evaluation
+#[derive(Debug, Clone)]
+pub struct CandidatePreFilter {
+    /// Minimum positive ratio to immediately accept (default: 0.75).
+    accept_threshold: f64,
+    /// Maximum positive ratio to immediately reject (default: 0.25).
+    reject_threshold: f64,
+    /// Minimum samples before pre-filter decisions are made (default: 30).
+    min_samples: u32,
+}
+
+impl Default for CandidatePreFilter {
+    fn default() -> Self {
+        Self {
+            accept_threshold: 0.75,
+            reject_threshold: 0.25,
+            min_samples: 30,
+        }
+    }
+}
+
+impl CandidatePreFilter {
+    /// Classify a single candidate based on its current statistics.
+    ///
+    /// This is a quick heuristic — candidates classified as `NeedsFullEvaluation`
+    /// should be passed to the full SPRT evaluator for a rigorous decision.
+    #[must_use]
+    pub fn classify(&self, stats: &crate::analysis::samples::HelpfulStats) -> PreFilterResult {
+        let total = stats.positive_count + stats.negative_count;
+        if total < self.min_samples {
+            return PreFilterResult::NeedsFullEvaluation;
+        }
+
+        let ratio = f64::from(stats.positive_count) / f64::from(total);
+
+        if ratio >= self.accept_threshold {
+            PreFilterResult::Accept
+        } else if ratio <= self.reject_threshold {
+            PreFilterResult::Reject
+        } else {
+            PreFilterResult::NeedsFullEvaluation
+        }
+    }
+
+    /// Pre-filter a batch of candidates, returning indices grouped by classification.
+    #[must_use]
+    pub fn filter_batch(
+        &self,
+        stats: &[crate::analysis::samples::HelpfulStats],
+    ) -> PreFilterBatchResult {
+        let mut result = PreFilterBatchResult {
+            accept_indices: Vec::new(),
+            reject_indices: Vec::new(),
+            needs_eval_indices: Vec::new(),
+        };
+
+        for (i, stat) in stats.iter().enumerate() {
+            match self.classify(stat) {
+                PreFilterResult::Accept => result.accept_indices.push(i),
+                PreFilterResult::Reject => result.reject_indices.push(i),
+                PreFilterResult::NeedsFullEvaluation => result.needs_eval_indices.push(i),
+            }
+        }
+
+        result
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 2. Budget-aware prioritisation
+// ---------------------------------------------------------------------------
+
+/// Tracks candidate generation budget to avoid wasting analysis time on
+/// low-priority candidates when the budget is already full (Issue #429).
+///
+/// When the maximum number of candidates has been generated, further candidates
+/// are rejected unless they have higher expected improvement than the current
+/// worst candidate in the budget.
+#[derive(Debug, Clone)]
+pub struct BudgetTracker {
+    /// Maximum number of candidates to keep.
+    budget: usize,
+    /// Currently tracked candidates: (id, expected_improvement).
+    candidates: Vec<(String, f32)>,
+}
+
+impl BudgetTracker {
+    /// Create a new budget tracker with the given capacity.
+    #[must_use]
+    pub fn new(budget: usize) -> Self {
+        Self {
+            budget,
+            candidates: Vec::with_capacity(budget),
+        }
+    }
+
+    /// Try to add a candidate. Returns `true` if accepted (within budget).
+    pub fn try_add(&mut self, id: String, expected_improvement: f32) -> bool {
+        if self.candidates.len() < self.budget {
+            self.candidates.push((id, expected_improvement));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Try to add a candidate, displacing the worst existing candidate if the
+    /// new one has higher expected improvement.
+    ///
+    /// Returns `true` if the candidate was added (either within budget or by
+    /// displacing a lower-value candidate).
+    pub fn try_add_with_displacement(&mut self, id: String, expected_improvement: f32) -> bool {
+        if self.candidates.len() < self.budget {
+            self.candidates.push((id, expected_improvement));
+            return true;
+        }
+
+        // Find the worst candidate (lowest improvement)
+        let worst_idx = self
+            .candidates
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i);
+
+        if let Some(idx) = worst_idx {
+            if expected_improvement > self.candidates[idx].1 {
+                self.candidates[idx] = (id, expected_improvement);
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Get the number of candidates currently tracked.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.candidates.len()
+    }
+
+    /// Get the remaining capacity before the budget is exhausted.
+    #[must_use]
+    pub fn remaining(&self) -> usize {
+        self.budget.saturating_sub(self.candidates.len())
+    }
+
+    /// Check if the budget is fully exhausted.
+    #[must_use]
+    pub fn is_exhausted(&self) -> bool {
+        self.candidates.len() >= self.budget
+    }
+
+    /// Check if a candidate with the given ID is currently tracked.
+    #[must_use]
+    pub fn contains(&self, id: &str) -> bool {
+        self.candidates.iter().any(|(cid, _)| cid == id)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Incremental confidence (added to SequentialEvaluator)
+// ---------------------------------------------------------------------------
+
+impl SequentialEvaluator {
+    /// Compute a confidence score (0.0 to 1.0) for the current observation.
+    ///
+    /// Issue #429: This provides a quick confidence measure that can be used
+    /// for early exit decisions even before the full SPRT reaches a conclusion.
+    ///
+    /// The score is based on:
+    /// - How far the observed ratio deviates from 0.5 (neutral)
+    /// - How many samples have been observed (more samples = higher confidence)
+    ///
+    /// Returns 0.0 when the ratio is near 0.5 or sample count is low,
+    /// and approaches 1.0 when the ratio is extreme with many samples.
+    #[must_use]
+    pub fn confidence_score(&self) -> f64 {
+        let total = self.sample_count();
+        if total == 0 {
+            return 0.0;
+        }
+
+        let ratio = self.improvement_ratio();
+
+        // How far from neutral (0.5)? Range: 0.0 (neutral) to 0.5 (extreme)
+        let deviation = (ratio - 0.5).abs();
+
+        // Scale deviation to 0.0–1.0 range (deviation of 0.5 → 1.0)
+        let deviation_factor = (deviation * 2.0).min(1.0);
+
+        // Sample count factor: confidence increases with sqrt(n)
+        // Full confidence at ~500 samples
+        let sample_factor = ((total as f64).sqrt() / 500.0_f64.sqrt()).min(1.0);
+
+        // Combined: both factors must be high for high confidence
+        deviation_factor * sample_factor
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Cross-module deduplication
+// ---------------------------------------------------------------------------
+
+/// Tracks candidates across discovery modules to avoid generating duplicates
+/// that target the same (source, target, operation) combination (Issue #429).
+///
+/// In large creatures, multiple discovery modules may independently identify
+/// the same candidate. This deduplicator lets modules check whether a candidate
+/// has already been registered before spending computation on it.
+#[derive(Debug, Clone)]
+pub struct CrossModuleDeduplicator {
+    /// Set of registered (source_uuid, target_uuid, op_type) tuples.
+    seen: std::collections::HashSet<(String, String, String)>,
+    /// Count of duplicate registrations.
+    duplicates: usize,
+}
+
+impl CrossModuleDeduplicator {
+    /// Create a new empty deduplicator.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            seen: std::collections::HashSet::new(),
+            duplicates: 0,
+        }
+    }
+
+    /// Register a candidate and return whether it is new (not a duplicate).
+    ///
+    /// # Arguments
+    /// * `source_uuid` - UUID of the source neuron
+    /// * `target_uuid` - UUID of the target neuron
+    /// * `op_type` - Operation type (e.g., "addSynapse", "removeSynapse")
+    /// * `_expected_improvement` - Expected improvement (reserved for future ranking)
+    pub fn register_candidate(
+        &mut self,
+        source_uuid: &str,
+        target_uuid: &str,
+        op_type: &str,
+        _expected_improvement: f32,
+    ) -> bool {
+        let key = (
+            source_uuid.to_string(),
+            target_uuid.to_string(),
+            op_type.to_string(),
+        );
+        if self.seen.insert(key) {
+            true // new
+        } else {
+            self.duplicates += 1;
+            false // duplicate
+        }
+    }
+
+    /// Get the count of unique candidates registered.
+    #[must_use]
+    pub fn unique_count(&self) -> usize {
+        self.seen.len()
+    }
+
+    /// Get the count of duplicate registrations.
+    #[must_use]
+    pub fn duplicate_count(&self) -> usize {
+        self.duplicates
+    }
+}
+
+impl Default for CrossModuleDeduplicator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
