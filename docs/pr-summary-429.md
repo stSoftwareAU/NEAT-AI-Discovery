@@ -49,6 +49,8 @@ The actual performance improvement depends on the creature size and cannot be me
   - Incremental confidence: basic, threshold met, minimum candidates, best confidence (4 tests)
   - Cross-module deduplication: unique candidates, exact duplicate, similar gain, different target, different gain, statistics, register_if_unique (8 tests)
 - All 12 existing `tests/early_termination.rs` tests continue to pass unchanged
-- All existing unit tests in `early_termination.rs` (11 tests) continue to pass unchanged
-- Created `benches/early_termination.rs` with Criterion benchmarks for all components
+- All 11 existing unit tests in `src/analysis/early_termination.rs` continue to pass unchanged
+- Created `benches/early_termination.rs` with Criterion benchmarks for all five components
 - `quality.sh` passes cleanly (fmt, clippy, check, test, release build)
+
+Closes #429
