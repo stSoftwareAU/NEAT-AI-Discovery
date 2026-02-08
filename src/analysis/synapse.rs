@@ -96,8 +96,31 @@ use std::sync::{Arc, Mutex};
 // MIN_NEURON_SAMPLE_COUNT moved to constants.rs (Issue #424)
 use super::constants::MIN_NEURON_SAMPLE_COUNT;
 
+// INPUT_SOURCE_BOOST for source-type prioritisation (Issue #467)
+use super::constants::INPUT_SOURCE_BOOST;
+
 // Note: MIN_NEURON_OUTPUT_STD_DEV has been moved to the activation module
 // as part of Issue #238. It is used by has_sufficient_output_variance.
+
+// =============================================================================
+// Source-Type Prioritisation (Issue #467)
+// =============================================================================
+
+/// Applies source-type boost to a candidate's expected score gain.
+///
+/// Input neurons as synapse sources have a 36.2% success rate compared to
+/// 2.8–3.3% for hidden neurons (GRQ-sampler data). This function applies
+/// [`INPUT_SOURCE_BOOST`] as a multiplier when the source neuron is an input
+/// neuron (UUID matches `input-N` pattern).
+///
+/// Hidden and output neurons receive no boost (multiplier = 1.0).
+pub fn apply_source_type_boost(gain: f32, source_uuid: &str) -> f32 {
+    if parse_input_index(source_uuid).is_some() {
+        gain * INPUT_SOURCE_BOOST as f32
+    } else {
+        gain
+    }
+}
 
 // =============================================================================
 // Sample Locality Grouping (Issue #221)
@@ -3700,6 +3723,13 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         let original = candidate.expected_creature_error_reduction;
         candidate.expected_creature_error_reduction *= impact;
         candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
+
+        // Issue #467: Apply source-type prioritisation boost for input-neuron sources.
+        // Input neurons have a 36.2% success rate vs 2.8–3.3% for hidden neurons.
+        candidate.expected_creature_score_gain = apply_source_type_boost(
+            candidate.expected_creature_score_gain,
+            &candidate.from_neuron_uuid,
+        );
 
         if verbose_enabled() && is_hidden {
             eprintln!(

@@ -389,9 +389,12 @@ pub struct OrderedNeuron {
 /// Order eligible sources for evaluation.
 ///
 /// - Always respects forward-only candidate constraints (caller must filter by index).
-/// - Default behaviour is a pure random shuffle (no special casing for input indices).
-/// - If `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` is set, input sources are ordered
-///   by a weighted random permutation favouring higher input indices.
+/// - **Issue #467**: Input neurons are always evaluated before hidden neurons. Within
+///   each group, neurons are randomly shuffled. This ensures that under deadline
+///   constraints, input-neuron sources (36.2% success rate) are tried before hidden
+///   neurons (2.8–3.3% success rate).
+/// - If `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` is set, input sources are further
+///   ordered by a weighted random permutation favouring higher input indices.
 /// - If `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1` is set, input neurons with NO
 ///   existing outgoing synapses are prioritised (moved to the front) before any other
 ///   ordering is applied (Issue #182).
@@ -411,44 +414,61 @@ pub fn order_eligible_sources(
     // These "unused observations" are moved to the front of the list.
     if focus_unused_observations_from_env() {
         if let Some(used) = used_inputs {
-            // Partition: unused inputs first, then others
-            // An input is "unused" if it's an input neuron AND not in the used_inputs set
+            // Partition: unused inputs first, then used inputs, then non-inputs
             let (mut unused_inputs, mut others): (Vec<_>, Vec<_>) = eligible_sources
                 .drain(..)
                 .partition(|n| parse_input_index(&n.uuid).is_some() && !used.contains(&n.uuid));
 
+            // Issue #467: Within "others", still put used inputs before hidden neurons
+            let (mut used_inputs_vec, mut non_inputs): (Vec<_>, Vec<_>) = others
+                .drain(..)
+                .partition(|n| parse_input_index(&n.uuid).is_some());
+
             // Log when focusing on unused observations
             if verbose_enabled() && !unused_inputs.is_empty() {
-                let unused_count = unused_inputs.len();
-                let used_count = others
-                    .iter()
-                    .filter(|n| parse_input_index(&n.uuid).is_some())
-                    .count();
                 eprintln!(
                     "[NEAT-AI-Discovery][verbose] Focus unused observations: prioritising {} unused inputs over {} used inputs and {} other sources",
-                    unused_count,
-                    used_count,
-                    others.len() - used_count
+                    unused_inputs.len(),
+                    used_inputs_vec.len(),
+                    non_inputs.len()
                 );
             }
 
             // Shuffle each partition separately, then concatenate
             shuffle_slice(&mut unused_inputs, seed, &format!("{context}:unused"));
-            shuffle_slice(&mut others, seed, &format!("{context}:others"));
+            shuffle_slice(
+                &mut used_inputs_vec,
+                seed,
+                &format!("{context}:used_inputs"),
+            );
+            shuffle_slice(&mut non_inputs, seed, &format!("{context}:non_inputs"));
 
             eligible_sources.extend(unused_inputs);
-            eligible_sources.extend(others);
+            eligible_sources.extend(used_inputs_vec);
+            eligible_sources.extend(non_inputs);
             return;
         }
     }
 
+    // Issue #467: Partition into input neurons and non-input neurons.
+    // Input neurons go first so they are evaluated before hidden neurons
+    // under deadline constraints.
+    let (mut inputs, mut non_inputs): (Vec<_>, Vec<_>) = eligible_sources
+        .drain(..)
+        .partition(|n| parse_input_index(&n.uuid).is_some());
+
     let Some(bias) = source_input_index_bias_from_env() else {
-        shuffle_slice(eligible_sources, seed, context);
+        // No index bias: shuffle each partition independently, inputs first
+        shuffle_slice(&mut inputs, seed, &format!("{context}:inputs"));
+        shuffle_slice(&mut non_inputs, seed, &format!("{context}:non_inputs"));
+        eligible_sources.extend(inputs);
+        eligible_sources.extend(non_inputs);
         return;
     };
 
-    // Weighted permutation via exponential race:
+    // Weighted permutation via exponential race (for input neurons only):
     // t = -ln(U) / w, smaller t comes first.
+    // Issue #467: Apply weighted permutation to input neurons, then append non-inputs.
     let max_input_index = creature_input_count.saturating_sub(1) as f64;
     let denom = (max_input_index + 1.0).max(1.0);
 
@@ -465,8 +485,8 @@ pub fn order_eligible_sources(
         }
     };
 
-    let mut keyed: Vec<(f64, &OrderedNeuron)> = Vec::with_capacity(eligible_sources.len());
-    for &n in eligible_sources.iter() {
+    let mut keyed: Vec<(f64, &OrderedNeuron)> = Vec::with_capacity(inputs.len());
+    for &n in inputs.iter() {
         let weight = if let Some(i) = parse_input_index(&n.uuid) {
             // Normalise to (0, 1] based on input index, then apply power bias.
             // Epsilon keeps weight > 0 even for i=0 with high bias.
@@ -482,8 +502,11 @@ pub fn order_eligible_sources(
     }
 
     keyed.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
-    eligible_sources.clear();
     eligible_sources.extend(keyed.into_iter().map(|(_, n)| n));
+
+    // Append non-input neurons after all input neurons
+    shuffle_slice(&mut non_inputs, seed, &format!("{context}:non_inputs"));
+    eligible_sources.extend(non_inputs);
 }
 
 // ============================================================================
