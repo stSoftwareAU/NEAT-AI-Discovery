@@ -15,6 +15,7 @@
 //! - `diagnostics.rs` - Diagnostic tracking and rejection reasons (Issue #271)
 //! - `constants.rs` - Central discovery thresholds and constants (Issue #424)
 //! - `cache.rs` - Record caching for parquet files (Issue #185)
+//! - `candidate_cache.rs` - Candidate outcome cache for success/failure tracking (Issue #465)
 //! - `streaming.rs` - Streaming parquet loading with block-based caching (Issue #193)
 //! - `saturation.rs` - Saturated neuron detection for activation function changes (Issue #342)
 //! - `bottleneck.rs` - Bottleneck neuron detection for information flow widening (Issue #343)
@@ -47,6 +48,7 @@ pub mod activation_recommendation;
 pub mod bottleneck;
 pub mod bounded_range;
 pub mod cache;
+pub mod candidate_cache;
 pub mod candidate_clustering;
 pub mod confidence;
 pub mod constants;
