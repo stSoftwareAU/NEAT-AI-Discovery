@@ -68,6 +68,59 @@ pub fn run_discovery_module(
     crate::watchdog::beat(&finished);
 }
 
+/// Run a discovery module with cross-module deduplication (Issue #429).
+///
+/// Same as [`run_discovery_module`] but filters out near-duplicate candidates
+/// before merging, using the shared deduplicator across all discovery modules.
+pub fn run_discovery_module_dedup(
+    syn: &mut shared::AnalyzeSynapsesResult,
+    module_name: &str,
+    phase_name: &'static str,
+    max_synapse_candidates: Option<usize>,
+    diversify: bool,
+    dedup: &mut super::early_termination::CrossModuleDeduplicator,
+    detect_fn: impl FnOnce() -> Option<DiscoveryDetectionResult>,
+) {
+    let starting = format!("analysis::analyze_all → {module_name} starting");
+    let finished = format!("analysis::analyze_all → {module_name} finished");
+
+    crate::watchdog::beat(&starting);
+    let _timer = PhaseTimer::new(phase_name);
+
+    if let Some(result) = detect_fn() {
+        if !result.candidates.is_empty() {
+            // Deduplicate against previously seen candidates
+            let unique_candidates: Vec<CoordinatedStructuralCandidateJson> = result
+                .candidates
+                .into_iter()
+                .filter(|c| {
+                    let key = c.comment.as_deref().unwrap_or("unknown");
+                    dedup.register_if_unique(key, module_name, c.expected_creature_score_gain)
+                })
+                .collect();
+
+            if !unique_candidates.is_empty() {
+                if utils::verbose_enabled() {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] {module_name}: found {} detection(s), {} unique candidate(s) (after dedup)",
+                        result.detected_count,
+                        unique_candidates.len()
+                    );
+                }
+
+                super::merge_coordinated_structural_replacements(
+                    syn,
+                    unique_candidates,
+                    max_synapse_candidates,
+                    diversify,
+                );
+            }
+        }
+    }
+
+    crate::watchdog::beat(&finished);
+}
+
 #[cfg(test)]
 #[path = "discovery_dispatch_tests.rs"]
 mod tests;

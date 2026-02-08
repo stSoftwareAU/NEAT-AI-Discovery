@@ -433,6 +433,407 @@ pub fn check_batch_early_termination(
     result
 }
 
+// =============================================================================
+// Issue #429: Hierarchical Candidate Pre-Filtering
+// =============================================================================
+
+/// Configuration for candidate pre-filtering.
+///
+/// Controls thresholds for the quick statistical pre-filter that runs
+/// before detailed GPU analysis.
+#[derive(Debug, Clone)]
+pub struct CandidatePreFilterConfig {
+    /// Minimum source activation standard deviation to consider a source useful.
+    /// Sources below this are constant-ish and unlikely to yield good candidates.
+    pub min_source_std_dev: f32,
+    /// Minimum sample count required for reliable analysis.
+    pub min_sample_count: usize,
+    /// Minimum absolute Pearson correlation between source activation and target error.
+    /// Below this, the source has no predictive relationship with the error.
+    pub min_error_correlation: f32,
+}
+
+impl Default for CandidatePreFilterConfig {
+    fn default() -> Self {
+        Self {
+            min_source_std_dev: crate::analysis::constants::MIN_SOURCE_STD_DEV,
+            min_sample_count: crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT,
+            min_error_correlation: 0.05,
+        }
+    }
+}
+
+/// Statistics tracked by the pre-filter for observability.
+#[derive(Debug, Clone, Default)]
+pub struct PreFilterStatistics {
+    /// Total candidates checked.
+    pub total_checked: usize,
+    /// Candidates that passed the pre-filter.
+    pub total_passed: usize,
+    /// Candidates filtered out.
+    pub total_filtered: usize,
+}
+
+/// Quick hierarchical pre-filter for candidate generation (Issue #429).
+///
+/// Applies cheap statistical checks before expensive GPU analysis to skip
+/// candidates that are unlikely to be beneficial. Checks are ordered from
+/// cheapest to most expensive:
+///
+/// 1. **Sample count** — skip if too few samples for reliable statistics
+/// 2. **Source variance** — skip constant-ish sources (near-zero std dev)
+/// 3. **Error correlation** — skip sources with no predictive relationship
+#[derive(Debug, Clone)]
+pub struct CandidatePreFilter {
+    config: CandidatePreFilterConfig,
+    stats: PreFilterStatistics,
+}
+
+impl CandidatePreFilter {
+    /// Create a new pre-filter with the given configuration.
+    #[must_use]
+    pub fn new(config: CandidatePreFilterConfig) -> Self {
+        Self {
+            config,
+            stats: PreFilterStatistics::default(),
+        }
+    }
+
+    /// Check if the sample count is sufficient for analysis.
+    #[must_use]
+    pub fn passes_sample_count_check(&self, sample_count: usize) -> bool {
+        sample_count >= self.config.min_sample_count
+    }
+
+    /// Check if the source activation variance is sufficient.
+    ///
+    /// Constant or near-constant sources cannot predict error changes.
+    #[must_use]
+    pub fn passes_variance_check(&self, activations: &[f32]) -> bool {
+        if activations.len() < 2 {
+            return false;
+        }
+        let n = activations.len() as f32;
+        let mean = activations.iter().sum::<f32>() / n;
+        let variance = activations.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / n;
+        let std_dev = variance.sqrt();
+        std_dev >= self.config.min_source_std_dev
+    }
+
+    /// Check if source activations correlate with target errors.
+    ///
+    /// Uses Pearson correlation coefficient. Sources with near-zero correlation
+    /// cannot predict error reduction.
+    #[must_use]
+    pub fn passes_error_correlation_check(&self, activations: &[f32], errors: &[f32]) -> bool {
+        let n = activations.len().min(errors.len());
+        if n < 2 {
+            return false;
+        }
+
+        let n_f = n as f32;
+        let mean_a = activations[..n].iter().sum::<f32>() / n_f;
+        let mean_e = errors[..n].iter().sum::<f32>() / n_f;
+
+        let mut cov = 0.0_f32;
+        let mut var_a = 0.0_f32;
+        let mut var_e = 0.0_f32;
+        for i in 0..n {
+            let da = activations[i] - mean_a;
+            let de = errors[i] - mean_e;
+            cov += da * de;
+            var_a += da * da;
+            var_e += de * de;
+        }
+
+        let denom = (var_a * var_e).sqrt();
+        if denom < f32::EPSILON {
+            return false;
+        }
+
+        let correlation = (cov / denom).abs();
+        correlation >= self.config.min_error_correlation
+    }
+
+    /// Run all pre-filter checks in order (cheapest to most expensive).
+    ///
+    /// Returns `true` if the candidate should proceed to detailed analysis.
+    #[must_use]
+    pub fn should_analyse(&self, activations: &[f32], errors: &[f32]) -> bool {
+        if !self.passes_sample_count_check(activations.len()) {
+            return false;
+        }
+        if !self.passes_variance_check(activations) {
+            return false;
+        }
+        if !self.passes_error_correlation_check(activations, errors) {
+            return false;
+        }
+        true
+    }
+
+    /// Record the result of a check for statistics tracking.
+    pub fn record_check(&mut self, passed: bool) {
+        self.stats.total_checked += 1;
+        if passed {
+            self.stats.total_passed += 1;
+        } else {
+            self.stats.total_filtered += 1;
+        }
+    }
+
+    /// Get current pre-filter statistics.
+    #[must_use]
+    pub fn statistics(&self) -> &PreFilterStatistics {
+        &self.stats
+    }
+}
+
+// =============================================================================
+// Issue #429: Budget-Aware Prioritisation
+// =============================================================================
+
+/// Tracks candidate generation budget to stop producing low-priority
+/// candidates when the budget is exhausted (Issue #429).
+///
+/// The budget represents the maximum number of candidates to generate.
+/// As the budget is consumed, low-priority candidates are progressively
+/// skipped to focus computation on high-value candidates.
+#[derive(Debug, Clone)]
+pub struct BudgetTracker {
+    /// Total budget (max candidates).
+    total: usize,
+    /// Amount consumed so far.
+    consumed: usize,
+}
+
+impl BudgetTracker {
+    /// Create a new budget tracker with the given total budget.
+    #[must_use]
+    pub fn new(total: usize) -> Self {
+        Self { total, consumed: 0 }
+    }
+
+    /// Check if any budget remains.
+    #[must_use]
+    pub fn has_budget(&self) -> bool {
+        self.consumed < self.total
+    }
+
+    /// Get the remaining budget.
+    #[must_use]
+    pub fn remaining(&self) -> usize {
+        self.total.saturating_sub(self.consumed)
+    }
+
+    /// Consume some of the budget.
+    pub fn consume(&mut self, amount: usize) {
+        self.consumed = self.consumed.saturating_add(amount).min(self.total);
+    }
+
+    /// Check if a low-priority candidate should be skipped based on
+    /// current budget utilisation.
+    ///
+    /// As budget fills up, the priority threshold for accepting new
+    /// candidates increases. When > 80% consumed, only candidates with
+    /// expected gain above the dynamic threshold are accepted.
+    ///
+    /// # Arguments
+    /// * `expected_gain` - The expected score improvement from this candidate.
+    #[must_use]
+    pub fn should_skip_low_priority(&self, expected_gain: f32) -> bool {
+        if self.total == 0 {
+            return true;
+        }
+        let utilisation = self.consumed as f32 / self.total as f32;
+
+        // Below 80% utilisation, accept everything
+        if utilisation < 0.8 {
+            return false;
+        }
+
+        // Above 80%, apply a rising threshold: at 80% require gain > 0.01,
+        // at 100% require gain > 0.1. Linear interpolation between.
+        let threshold = 0.01 + (utilisation - 0.8) * (0.09 / 0.2);
+        expected_gain < threshold
+    }
+}
+
+// =============================================================================
+// Issue #429: Incremental Confidence Checking
+// =============================================================================
+
+/// Checks whether enough high-confidence candidates have been generated
+/// to justify stopping early (Issue #429).
+///
+/// When the top candidates already exceed the confidence threshold,
+/// continuing to generate more candidates yields diminishing returns.
+#[derive(Debug, Clone)]
+pub struct IncrementalConfidenceChecker {
+    /// Confidence threshold — once the top-K candidates are all above this,
+    /// we can stop generating.
+    threshold: f32,
+    /// Confidence values of candidates generated so far (sorted desc on query).
+    confidences: Vec<f32>,
+    /// Minimum number of candidates before we consider stopping.
+    min_candidates: usize,
+}
+
+impl IncrementalConfidenceChecker {
+    /// Create a new checker with the given confidence threshold.
+    ///
+    /// # Arguments
+    /// * `threshold` - Confidence level (0.0–1.0) at which candidates are considered sufficient.
+    #[must_use]
+    pub fn new(threshold: f32) -> Self {
+        Self {
+            threshold,
+            confidences: Vec::new(),
+            min_candidates: 3,
+        }
+    }
+
+    /// Record a newly generated candidate's confidence.
+    pub fn add_candidate(&mut self, confidence: f32) {
+        self.confidences.push(confidence);
+    }
+
+    /// Check if we should stop generating more candidates.
+    ///
+    /// Returns `true` when at least `min_candidates` have been generated
+    /// and the median confidence exceeds the threshold.
+    #[must_use]
+    pub fn should_stop_generating(&self) -> bool {
+        if self.confidences.len() < self.min_candidates {
+            return false;
+        }
+
+        let mut sorted = self.confidences.clone();
+        sorted.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Check the median of the top-K candidates
+        let mid = sorted.len() / 2;
+        sorted[mid] >= self.threshold
+    }
+
+    /// Get the highest confidence seen so far.
+    #[must_use]
+    pub fn best_confidence(&self) -> f32 {
+        self.confidences
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max)
+    }
+}
+
+// =============================================================================
+// Issue #429: Cross-Module Deduplication
+// =============================================================================
+
+/// Statistics for deduplication observability.
+#[derive(Debug, Clone, Default)]
+pub struct DeduplicationStatistics {
+    /// Total candidates registered.
+    pub total_registered: usize,
+    /// Total duplicate checks performed.
+    pub total_duplicate_checks: usize,
+}
+
+/// Deduplicates candidates across multiple discovery modules (Issue #429).
+///
+/// Discovery modules run independently and may produce overlapping candidates
+/// for the same source-target pair with similar expected gains. This deduplicator
+/// tracks generated candidates and allows checking for near-duplicates before
+/// adding them to the result set.
+///
+/// Two candidates are considered duplicates when they share the same source
+/// and target neuron UUIDs and their expected gains are within a similarity
+/// tolerance.
+#[derive(Debug, Clone)]
+pub struct CrossModuleDeduplicator {
+    /// Registered candidates: (source_uuid, target_uuid) -> list of gains.
+    registered: std::collections::HashMap<(String, String), Vec<f32>>,
+    /// Tolerance for gain similarity (relative).
+    gain_tolerance: f32,
+    stats: DeduplicationStatistics,
+}
+
+impl CrossModuleDeduplicator {
+    /// Create a new deduplicator with default gain tolerance.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            registered: std::collections::HashMap::new(),
+            gain_tolerance: 0.1, // 10% relative tolerance
+            stats: DeduplicationStatistics::default(),
+        }
+    }
+
+    /// Register a candidate as generated.
+    pub fn register(&mut self, source_uuid: &str, target_uuid: &str, expected_gain: f32) {
+        self.registered
+            .entry((source_uuid.to_string(), target_uuid.to_string()))
+            .or_default()
+            .push(expected_gain);
+        self.stats.total_registered += 1;
+    }
+
+    /// Check if a candidate is a near-duplicate of an already registered one.
+    ///
+    /// Returns `true` if a similar candidate (same source/target, similar gain)
+    /// has already been registered.
+    #[must_use]
+    pub fn is_duplicate(
+        &mut self,
+        source_uuid: &str,
+        target_uuid: &str,
+        expected_gain: f32,
+    ) -> bool {
+        self.stats.total_duplicate_checks += 1;
+
+        let key = (source_uuid.to_string(), target_uuid.to_string());
+        let Some(gains) = self.registered.get(&key) else {
+            return false;
+        };
+
+        let abs_gain = expected_gain.abs().max(f32::EPSILON);
+        gains.iter().any(|&existing| {
+            let abs_existing = existing.abs().max(f32::EPSILON);
+            let diff = (abs_gain - abs_existing).abs();
+            let max_val = abs_gain.max(abs_existing);
+            diff / max_val <= self.gain_tolerance
+        })
+    }
+
+    /// Register if unique, returning whether the candidate was new.
+    ///
+    /// Combines `is_duplicate` and `register` — registers only if not a duplicate.
+    pub fn register_if_unique(
+        &mut self,
+        source_uuid: &str,
+        target_uuid: &str,
+        expected_gain: f32,
+    ) -> bool {
+        if self.is_duplicate(source_uuid, target_uuid, expected_gain) {
+            return false;
+        }
+        self.register(source_uuid, target_uuid, expected_gain);
+        true
+    }
+
+    /// Get current deduplication statistics.
+    #[must_use]
+    pub fn statistics(&self) -> &DeduplicationStatistics {
+        &self.stats
+    }
+}
+
+impl Default for CrossModuleDeduplicator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
