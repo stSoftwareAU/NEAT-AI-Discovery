@@ -16,17 +16,20 @@ This is a performance change. Benchmark results from `cargo bench --bench early_
 
 | Benchmark | Batch Size | Time |
 |-----------|-----------|------|
-| `check_batch` (full SPRT) | 100 | 420 ns |
-| `check_batch` (full SPRT) | 1,000 | 1.61 µs |
-| `check_batch` (full SPRT) | 5,000 | 5.85 µs |
-| `pre_filter_mixed` | 100 | 415 ns |
-| `pre_filter_mixed` | 1,000 | 1.60 µs |
-| `pre_filter_mixed` | 5,000 | 5.82 µs |
-| `pre_filter_mostly_poor` | 100 | 233 ns |
-| `pre_filter_mostly_poor` | 1,000 | 1.19 µs |
-| `pre_filter_mostly_poor` | 5,000 | 7.94 µs |
+| `check_batch` (full SPRT) | 100 | 432 ns |
+| `check_batch` (full SPRT) | 500 | 1.03 µs |
+| `check_batch` (full SPRT) | 1,000 | 1.63 µs |
+| `check_batch` (full SPRT) | 5,000 | 5.86 µs |
+| `pre_filter_mixed` | 100 | 411 ns |
+| `pre_filter_mixed` | 500 | 1.01 µs |
+| `pre_filter_mixed` | 1,000 | 1.59 µs |
+| `pre_filter_mixed` | 5,000 | 5.85 µs |
+| `pre_filter_mostly_poor` | 100 | 229 ns |
+| `pre_filter_mostly_poor` | 500 | 671 ns |
+| `pre_filter_mostly_poor` | 1,000 | 1.17 µs |
+| `pre_filter_mostly_poor` | 5,000 | 7.99 µs |
 
-The pre-filter itself runs at comparable speed to the full SPRT batch check for mixed candidates, and **44% faster** for the common case of mostly poor candidates (100-batch: 233ns vs 420ns). The real gain is that candidates classified by the pre-filter skip the expensive GPU evaluation entirely — the pre-filter acts as a gate before the SPRT, not a replacement.
+The pre-filter itself runs at comparable speed to the full SPRT batch check for mixed candidates, and **47% faster** for the common case of mostly poor candidates (100-batch: 229ns vs 432ns). The real gain is that candidates classified by the pre-filter skip the expensive GPU evaluation entirely — the pre-filter acts as a gate before the SPRT, not a replacement.
 
 The `BudgetTracker` and `CrossModuleDeduplicator` provide O(1) amortised operations per candidate, adding negligible overhead while preventing redundant analysis across the 22+ discovery modules.
 
