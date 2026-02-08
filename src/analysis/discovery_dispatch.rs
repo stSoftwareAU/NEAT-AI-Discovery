@@ -5,10 +5,14 @@
 //! supplies its detection and conversion logic via closures, while this
 //! module handles watchdog beats, phase timing, verbose logging, and
 //! merging into the synapse result.
+//!
+//! Issue #429: Per-module pre-filtering removes low-value candidates before
+//! merging, reducing downstream processing for clearly poor candidates.
 
 use crate::observability::PhaseTimer;
 use crate::CoordinatedStructuralCandidateJson;
 
+use super::candidate_prefilter::{filter_low_value_candidates, CandidatePrefilterConfig};
 use super::shared;
 use super::utils;
 
@@ -26,9 +30,10 @@ pub struct DiscoveryDetectionResult {
 /// 1. Watchdog beat (starting)
 /// 2. `PhaseTimer` creation
 /// 3. Call `detect_fn` which runs module-specific detection and conversion
-/// 4. Verbose logging if results are non-empty
-/// 5. Merge into synapse result via `merge_coordinated_structural_replacements`
-/// 6. Watchdog beat (finished)
+/// 4. Pre-filter: remove low-value candidates (Issue #429)
+/// 5. Verbose logging if results are non-empty
+/// 6. Merge into synapse result via `merge_coordinated_structural_replacements`
+/// 7. Watchdog beat (finished)
 ///
 /// The `detect_fn` closure encapsulates all module-specific logic (record
 /// collection, detection, and conversion to coordinated candidates).
@@ -48,20 +53,37 @@ pub fn run_discovery_module(
 
     if let Some(result) = detect_fn() {
         if !result.candidates.is_empty() {
+            // Issue #429: Pre-filter low-value candidates before merging.
+            let prefilter_config = CandidatePrefilterConfig::default();
+            let candidates = filter_low_value_candidates(&result.candidates, &prefilter_config);
+
+            let filtered_count = result.candidates.len() - candidates.len();
+
             if utils::verbose_enabled() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] {module_name}: found {} detection(s), {} candidate(s)",
-                    result.detected_count,
-                    result.candidates.len()
-                );
+                if filtered_count > 0 {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] {module_name}: found {} detection(s), {} candidate(s), {} pre-filtered",
+                        result.detected_count,
+                        candidates.len(),
+                        filtered_count
+                    );
+                } else {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] {module_name}: found {} detection(s), {} candidate(s)",
+                        result.detected_count,
+                        candidates.len()
+                    );
+                }
             }
 
-            super::merge_coordinated_structural_replacements(
-                syn,
-                result.candidates,
-                max_synapse_candidates,
-                diversify,
-            );
+            if !candidates.is_empty() {
+                super::merge_coordinated_structural_replacements(
+                    syn,
+                    candidates,
+                    max_synapse_candidates,
+                    diversify,
+                );
+            }
         }
     }
 

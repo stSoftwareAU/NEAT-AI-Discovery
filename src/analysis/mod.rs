@@ -22,6 +22,7 @@
 //! - `correlated_error.rs` - Correlated error pattern detection for shared-cause identification (Issue #344)
 //! - `discovery_dispatch.rs` - Generic discovery module dispatch pattern (Issue #375)
 //! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests (Issue #224)
+//! - `candidate_prefilter.rs` - Candidate pre-filtering for low-value and duplicate candidates (Issue #429)
 //! - `multi_hop.rs` - Multi-hop candidate analysis for deeper network improvements (Issue #230)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 //! - `oscillating_neuron.rs` - Oscillating neuron detection for stabilisation candidates (Issue #358)
@@ -48,6 +49,7 @@ pub mod bottleneck;
 pub mod bounded_range;
 pub mod cache;
 pub mod candidate_clustering;
+pub mod candidate_prefilter;
 pub mod confidence;
 pub mod constants;
 pub mod correlated_error;
@@ -1419,6 +1421,40 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 })
             },
         );
+    }
+
+    // Issue #429: Cross-module deduplication of coordinated structural candidates.
+    // After all discovery modules have contributed candidates, deduplicate across
+    // modules so the controller does not waste ablation budget on redundant tests.
+    if let Some(syn) = synapse_result.as_mut() {
+        let before_dedup = syn.coordinated_structural_candidates.len();
+        if before_dedup > 1 {
+            crate::watchdog::beat("analysis::analyze_all → cross-module deduplication starting");
+            let _dedup_timer = PhaseTimer::new("cross_module_deduplication");
+
+            let dedup_config = candidate_prefilter::CandidatePrefilterConfig {
+                max_candidates: input.max_synapse_candidates,
+                ..candidate_prefilter::CandidatePrefilterConfig::default()
+            };
+            syn.coordinated_structural_candidates = candidate_prefilter::prefilter_candidates(
+                &syn.coordinated_structural_candidates,
+                &dedup_config,
+            );
+
+            let after_dedup = syn.coordinated_structural_candidates.len();
+            if utils::verbose_enabled() && before_dedup != after_dedup {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Cross-module deduplication: {before_dedup} → {after_dedup} coordinated candidates"
+                );
+            }
+
+            // Update metadata to reflect deduplication
+            syn.metadata.candidates_returned = syn.helpful_synapses.len()
+                + syn.harmful_synapses.len()
+                + syn.coordinated_structural_candidates.len();
+
+            crate::watchdog::beat("analysis::analyze_all → cross-module deduplication finished");
+        }
     }
 
     // Issue #224: Candidate clustering to reduce redundant ablation tests.
