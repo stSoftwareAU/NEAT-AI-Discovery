@@ -133,3 +133,18 @@ pub const INPUT_SOURCE_BOOST: f64 = 1.5;
 /// ## Valid Range
 /// Must be >= 5 to avoid noise and <= 50 to be responsive.
 pub const MIN_BOOST_SAMPLES: usize = 10;
+
+// =============================================================================
+// Target-Type Scoring (Issue #468)
+// =============================================================================
+
+/// Scoring boost multiplier for candidates targeting existing hidden neurons.
+///
+/// GRQ-sampler analysis shows existing hidden neurons as targets have a 31.4%
+/// success rate compared to 5.3–5.4% for output or discovery-hidden neurons.
+/// This boost is applied as a static multiplier to `expected_creature_score_gain`
+/// when the target neuron is an existing hidden neuron.
+///
+/// ## Valid Range
+/// Must be > 1.0 (boost) and <= 3.0 (avoid over-biasing).
+pub const EXISTING_HIDDEN_TARGET_BOOST: f64 = 1.5;

@@ -28,8 +28,8 @@ pub use platform::{ensure_xdg_runtime_dir, suppress_mesa_warnings_if_requested};
 pub use deadline::{
     build_deadline, calculate_effective_timeout_ms, calculate_gpu_batch_timeout, deadline_passed,
     derive_seed, focus_unused_observations_from_env, log_analysis_start, log_analysis_timeout,
-    order_eligible_sources, parse_input_index, shuffle_slice, shuffle_within_top_k,
-    source_input_index_bias_from_env, OrderedNeuron, DEFAULT_DURATION_MS,
+    order_eligible_sources, order_focus_targets, parse_input_index, shuffle_slice,
+    shuffle_within_top_k, source_input_index_bias_from_env, OrderedNeuron, DEFAULT_DURATION_MS,
     GPU_QUEUE_TIMEOUT_MAX_SECS, GPU_QUEUE_TIMEOUT_MIN_SECS, MAX_DURATION_MS, MIN_DURATION_MS,
     YEAR_2000_MS,
 };

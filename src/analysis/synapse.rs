@@ -39,7 +39,7 @@ use crate::analysis::activation::{
 // Import deadline handling and logging utilities from dedicated module (Issue #268)
 use crate::analysis::utils::{
     build_deadline, deadline_passed, log_analysis_start, log_analysis_timeout,
-    order_eligible_sources, parse_input_index, shuffle_slice, shuffle_within_top_k,
+    order_eligible_sources, order_focus_targets, parse_input_index, shuffle_within_top_k,
     verbose_enabled, OrderedNeuron,
 };
 
@@ -99,6 +99,9 @@ use super::constants::MIN_NEURON_SAMPLE_COUNT;
 // INPUT_SOURCE_BOOST for source-type prioritisation (Issue #467)
 use super::constants::INPUT_SOURCE_BOOST;
 
+// EXISTING_HIDDEN_TARGET_BOOST for target-type prioritisation (Issue #468)
+use super::constants::EXISTING_HIDDEN_TARGET_BOOST;
+
 // Note: MIN_NEURON_OUTPUT_STD_DEV has been moved to the activation module
 // as part of Issue #238. It is used by has_sufficient_output_variance.
 
@@ -117,6 +120,34 @@ use super::constants::INPUT_SOURCE_BOOST;
 pub fn apply_source_type_boost(gain: f32, source_uuid: &str) -> f32 {
     if parse_input_index(source_uuid).is_some() {
         gain * INPUT_SOURCE_BOOST as f32
+    } else {
+        gain
+    }
+}
+
+// =============================================================================
+// Target-Type Prioritisation (Issue #468)
+// =============================================================================
+
+/// Applies target-type boost to a candidate's expected score gain.
+///
+/// Existing hidden neurons as targets have a 31.4% success rate compared to
+/// 5.3–5.4% for output or discovery-hidden neurons (GRQ-sampler data). This
+/// function applies [`EXISTING_HIDDEN_TARGET_BOOST`] as a multiplier when the
+/// target neuron is an existing hidden neuron.
+///
+/// Output, input, constant, and unknown neurons receive no boost (multiplier = 1.0).
+pub fn apply_target_type_boost(
+    gain: f32,
+    target_uuid: &str,
+    neuron_type_map: &HashMap<String, String>,
+) -> f32 {
+    if neuron_type_map
+        .get(target_uuid)
+        .map(|t| t == "hidden")
+        .unwrap_or(false)
+    {
+        gain * EXISTING_HIDDEN_TARGET_BOOST as f32
     } else {
         gain
     }
@@ -2101,7 +2132,19 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     // that accurately predict output flips when synapse contributions cross the threshold.
     let mut focus_order: Vec<String> = unique_focus.iter().map(|s| (*s).clone()).collect();
 
-    shuffle_slice(&mut focus_order, input.random_seed, "synapse:focus_order");
+    // Issue #468: Build a neuron type map for target-type prioritisation.
+    // Existing hidden neurons as targets have a 31.4% success rate vs 5.3–5.4%
+    // for output neurons, so we evaluate hidden targets first under deadline pressure.
+    let focus_neuron_type_map: HashMap<String, String> = input
+        .creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.clone(), n.neuron_type.clone()))
+        .collect();
+
+    // Issue #468: Order focus targets so existing hidden neurons are evaluated first.
+    // Each partition is shuffled independently for exploration diversity.
+    order_focus_targets(&mut focus_order, input.random_seed, &focus_neuron_type_map);
 
     // Log analysis start with timeout duration and randomised order
     log_analysis_start(
@@ -3729,6 +3772,15 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         candidate.expected_creature_score_gain = apply_source_type_boost(
             candidate.expected_creature_score_gain,
             &candidate.from_neuron_uuid,
+        );
+
+        // Issue #468: Apply target-type prioritisation boost for existing hidden targets.
+        // Existing hidden neurons as targets have a 31.4% success rate vs 5.3–5.4%
+        // for output or discovery-hidden neurons.
+        candidate.expected_creature_score_gain = apply_target_type_boost(
+            candidate.expected_creature_score_gain,
+            &candidate.to_neuron_uuid,
+            &neuron_type_map,
         );
 
         if verbose_enabled() && is_hidden {

@@ -509,6 +509,46 @@ pub fn order_eligible_sources(
     eligible_sources.extend(non_inputs);
 }
 
+// =============================================================================
+// Target-Type Prioritisation (Issue #468)
+// =============================================================================
+
+/// Orders focus targets so that existing hidden neurons are evaluated before
+/// output neurons during deadline-constrained analysis.
+///
+/// GRQ-sampler data shows existing hidden neurons as targets have a 31.4%
+/// success rate compared to 5.3–5.4% for output neurons. Under deadline
+/// pressure, evaluating hidden targets first maximises the chance of finding
+/// successful candidates before time runs out.
+///
+/// Each partition (hidden, non-hidden) is shuffled independently so that
+/// repeated runs still explore different neurons within each group.
+pub fn order_focus_targets(
+    targets: &mut Vec<String>,
+    seed: Option<u64>,
+    neuron_type_map: &std::collections::HashMap<String, String>,
+) {
+    if targets.len() <= 1 {
+        return;
+    }
+
+    // Partition into existing hidden neurons and everything else
+    let (mut hidden, mut others): (Vec<_>, Vec<_>) = targets.drain(..).partition(|uuid| {
+        neuron_type_map
+            .get(uuid)
+            .map(|t| t == "hidden")
+            .unwrap_or(false)
+    });
+
+    // Shuffle each partition independently
+    shuffle_slice(&mut hidden, seed, "focus_targets:hidden");
+    shuffle_slice(&mut others, seed, "focus_targets:others");
+
+    // Hidden neurons first, then everything else
+    targets.extend(hidden);
+    targets.extend(others);
+}
+
 // ============================================================================
 // Test Override Mechanism
 // ============================================================================
