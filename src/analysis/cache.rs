@@ -553,6 +553,280 @@ impl LruRecordCache {
 }
 
 // =============================================================================
+// Compressed LRU Record Cache (Issue #420)
+// =============================================================================
+
+/// A compressed entry in the LRU cache.
+///
+/// Records are serialised and LZ4-compressed when stored, then decompressed
+/// on access. This trades CPU time for memory, allowing more neurons to fit
+/// in the cache before eviction is needed.
+struct CompressedCacheEntry {
+    /// LZ4-compressed serialised record data.
+    compressed_data: Vec<u8>,
+    /// Number of records (for quick stats without decompression).
+    #[allow(dead_code)]
+    record_count: usize,
+    /// Size of the compressed data in bytes (what we actually store).
+    compressed_size: usize,
+    /// Last access time for LRU ordering.
+    last_access: Instant,
+}
+
+impl CompressedCacheEntry {
+    fn new(records: &[DiscoverRecord]) -> Self {
+        let serialised = serialise_records(records);
+        let compressed = lz4_flex::compress_prepend_size(&serialised);
+        let compressed_size = compressed.len();
+        Self {
+            compressed_data: compressed,
+            record_count: records.len(),
+            compressed_size,
+            last_access: Instant::now(),
+        }
+    }
+
+    fn decompress(&self) -> Vec<DiscoverRecord> {
+        let decompressed = lz4_flex::decompress_size_prepended(&self.compressed_data)
+            .expect("LZ4 decompression failed — data corruption");
+        deserialise_records(&decompressed)
+    }
+
+    fn touch(&mut self) {
+        self.last_access = Instant::now();
+    }
+}
+
+/// Serialise records to a compact binary format for LZ4 compression.
+///
+/// Format per record:
+/// - obs_index: u32 (4 bytes)
+/// - uuid_len: u16 (2 bytes)
+/// - uuid: [u8; uuid_len]
+/// - has_value: u8 (1 byte)
+/// - value: f32 (4 bytes, only if has_value)
+/// - activation: f32 (4 bytes)
+/// - errors_len: u16 (2 bytes)
+/// - errors: [f32; errors_len]
+fn serialise_records(records: &[DiscoverRecord]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(records.len() * 32);
+    for r in records {
+        buf.extend_from_slice(&r.obs_index.to_le_bytes());
+        let uuid_bytes = r.neuron_uuid.as_bytes();
+        buf.extend_from_slice(&(uuid_bytes.len() as u16).to_le_bytes());
+        buf.extend_from_slice(uuid_bytes);
+        match r.value {
+            Some(v) => {
+                buf.push(1);
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+            None => {
+                buf.push(0);
+            }
+        }
+        buf.extend_from_slice(&r.activation.to_le_bytes());
+        buf.extend_from_slice(&(r.errors.len() as u16).to_le_bytes());
+        for &e in &r.errors {
+            buf.extend_from_slice(&e.to_le_bytes());
+        }
+    }
+    buf
+}
+
+/// Deserialise records from the compact binary format.
+fn deserialise_records(data: &[u8]) -> Vec<DiscoverRecord> {
+    let mut records = Vec::new();
+    let mut pos = 0;
+    while pos + 6 <= data.len() {
+        let obs_index = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap());
+        pos += 4;
+        let uuid_len = u16::from_le_bytes(data[pos..pos + 2].try_into().unwrap()) as usize;
+        pos += 2;
+        if pos + uuid_len > data.len() {
+            break;
+        }
+        let neuron_uuid = String::from_utf8_lossy(&data[pos..pos + uuid_len]).to_string();
+        pos += uuid_len;
+        if pos >= data.len() {
+            break;
+        }
+        let has_value = data[pos];
+        pos += 1;
+        let value = if has_value == 1 {
+            if pos + 4 > data.len() {
+                break;
+            }
+            let v = f32::from_le_bytes(data[pos..pos + 4].try_into().unwrap());
+            pos += 4;
+            Some(v)
+        } else {
+            None
+        };
+        if pos + 4 > data.len() {
+            break;
+        }
+        let activation = f32::from_le_bytes(data[pos..pos + 4].try_into().unwrap());
+        pos += 4;
+        if pos + 2 > data.len() {
+            break;
+        }
+        let errors_len = u16::from_le_bytes(data[pos..pos + 2].try_into().unwrap()) as usize;
+        pos += 2;
+        if pos + errors_len * 4 > data.len() {
+            break;
+        }
+        let mut errors = Vec::with_capacity(errors_len);
+        for _ in 0..errors_len {
+            errors.push(f32::from_le_bytes(data[pos..pos + 4].try_into().unwrap()));
+            pos += 4;
+        }
+        records.push(DiscoverRecord::new(
+            obs_index,
+            neuron_uuid,
+            value,
+            activation,
+            errors,
+        ));
+    }
+    records
+}
+
+/// An LZ4-compressed LRU cache for neuron discovery records (Issue #420).
+///
+/// This cache compresses records using LZ4 before storing them, trading CPU
+/// time for reduced memory usage. This is particularly beneficial for
+/// memory-constrained systems where the uncompressed cache would exhaust
+/// available memory and trigger excessive evictions.
+///
+/// ## Memory Savings
+///
+/// Discovery records contain repetitive floating-point data (activations,
+/// errors) that compresses well with LZ4. Typical compression ratios are
+/// 2-4x, meaning the cache can hold 2-4x more neurons in the same memory.
+///
+/// ## Performance Trade-off
+///
+/// LZ4 decompression is fast (~4 GB/s on modern hardware), so the CPU
+/// overhead is minimal compared to the I/O savings from fewer cache misses.
+pub struct CompressedLruRecordCache {
+    parquet_file: String,
+    capacity_bytes: usize,
+    cache: RwLock<HashMap<String, CompressedCacheEntry>>,
+    current_bytes: AtomicUsize,
+    cache_hits: AtomicU64,
+    cache_misses: AtomicU64,
+    eviction_count: AtomicU64,
+}
+
+impl CompressedLruRecordCache {
+    /// Create a new compressed LRU record cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `parquet_file` - Path to the parquet file
+    /// * `capacity_bytes` - Maximum compressed memory to use for caching
+    pub fn new(parquet_file: &str, capacity_bytes: usize) -> Result<Self> {
+        std::fs::metadata(parquet_file)
+            .with_context(|| format!("Parquet file not found: {parquet_file}"))?;
+
+        if verbose_enabled() {
+            let capacity_mb = capacity_bytes as f64 / (1024.0 * 1024.0);
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Creating compressed LRU cache with capacity {capacity_mb:.1}MB"
+            );
+        }
+
+        Ok(Self {
+            parquet_file: parquet_file.to_string(),
+            capacity_bytes,
+            cache: RwLock::new(HashMap::new()),
+            current_bytes: AtomicUsize::new(0),
+            cache_hits: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
+            eviction_count: AtomicU64::new(0),
+        })
+    }
+
+    /// Get records for a specific neuron UUID.
+    ///
+    /// Returns decompressed records. On cache hit, the compressed data is
+    /// decompressed before returning. On cache miss, records are loaded from
+    /// parquet, compressed, and stored in the cache.
+    pub fn get(&self, neuron_uuid: &str) -> Result<Arc<Vec<DiscoverRecord>>> {
+        // Check cache with write lock (need to update last_access)
+        {
+            let mut cache = self.cache.write();
+            if let Some(entry) = cache.get_mut(neuron_uuid) {
+                entry.touch();
+                self.cache_hits.fetch_add(1, Ordering::Relaxed);
+                return Ok(Arc::new(entry.decompress()));
+            }
+        }
+
+        // Cache miss — load from parquet
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+        let records = self.load_neuron_records(neuron_uuid)?;
+        let entry = CompressedCacheEntry::new(&records);
+        let size = entry.compressed_size;
+        let result = Arc::new(records);
+
+        // Evict if necessary and insert
+        {
+            let mut cache = self.cache.write();
+            while self.current_bytes.load(Ordering::Relaxed) + size > self.capacity_bytes {
+                if let Some(lru_key) = self.find_lru_key(&cache) {
+                    if let Some(evicted) = cache.remove(&lru_key) {
+                        self.current_bytes
+                            .fetch_sub(evicted.compressed_size, Ordering::Relaxed);
+                        self.eviction_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                } else {
+                    break;
+                }
+            }
+            self.current_bytes.fetch_add(size, Ordering::Relaxed);
+            cache.insert(neuron_uuid.to_string(), entry);
+        }
+
+        Ok(result)
+    }
+
+    fn find_lru_key(&self, cache: &HashMap<String, CompressedCacheEntry>) -> Option<String> {
+        cache
+            .iter()
+            .min_by_key(|(_, entry)| entry.last_access)
+            .map(|(key, _)| key.clone())
+    }
+
+    fn load_neuron_records(&self, neuron_uuid: &str) -> Result<Vec<DiscoverRecord>> {
+        use crate::parquet_format::read_records_from_parquet;
+        read_records_from_parquet(&self.parquet_file, neuron_uuid)
+    }
+
+    /// Get current cache statistics.
+    pub fn stats(&self) -> LruCacheStats {
+        let cache = self.cache.read();
+        LruCacheStats {
+            cached_neurons: cache.len(),
+            current_bytes: self.current_bytes.load(Ordering::Relaxed),
+            cache_hits: self.cache_hits.load(Ordering::Relaxed),
+            cache_misses: self.cache_misses.load(Ordering::Relaxed),
+            eviction_count: self.eviction_count.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Check if the cache is empty.
+    pub fn is_empty(&self) -> bool {
+        self.cache.read().is_empty()
+    }
+
+    /// Get the number of cached neurons.
+    pub fn len(&self) -> usize {
+        self.cache.read().len()
+    }
+}
+
+// =============================================================================
 // Tiered Record Cache (Issue #215)
 // =============================================================================
 

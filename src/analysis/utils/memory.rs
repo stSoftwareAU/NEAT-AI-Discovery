@@ -408,6 +408,53 @@ pub fn check_system_memory_requirements(available_bytes: u64, total_bytes: u64) 
 }
 
 // =============================================================================
+// Memory Pressure Detection (Issue #420)
+// =============================================================================
+
+/// Memory pressure level for adaptive behaviour under constrained systems.
+///
+/// Unlike `MemoryTier` which categorises total available memory, `MemoryPressure`
+/// measures how constrained the system is *right now* based on the ratio of
+/// available to total memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryPressure {
+    /// More than 30% of total memory available — no special action needed.
+    None,
+    /// 15-30% of total memory available — reduce cache sizes, use compression.
+    Moderate,
+    /// 5-15% of total memory available — aggressive eviction, smaller blocks.
+    High,
+    /// Less than 5% of total memory available — minimal caching, streaming only.
+    Critical,
+}
+
+/// Categorise current memory pressure based on available and total memory.
+///
+/// This is a pure function for testability. For production use, call
+/// `detect_memory_pressure()` which queries live system memory.
+pub fn categorise_memory_pressure(available_bytes: u64, total_bytes: u64) -> MemoryPressure {
+    if total_bytes == 0 {
+        return MemoryPressure::Critical;
+    }
+    let ratio = available_bytes as f64 / total_bytes as f64;
+    if ratio > 0.30 {
+        MemoryPressure::None
+    } else if ratio > 0.15 {
+        MemoryPressure::Moderate
+    } else if ratio > 0.05 {
+        MemoryPressure::High
+    } else {
+        MemoryPressure::Critical
+    }
+}
+
+/// Detect current memory pressure from live system memory.
+pub fn detect_memory_pressure() -> MemoryPressure {
+    let (available, total) = get_memory_info();
+    categorise_memory_pressure(available, total)
+}
+
+// =============================================================================
 // GPU Batch Size Management
 // =============================================================================
 
