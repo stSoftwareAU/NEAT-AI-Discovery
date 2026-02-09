@@ -17,8 +17,8 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::samples::{HarmfulContribution, HelpfulContribution};
 use neat_ai_discovery::analysis::GpuAnalyzer;
+use neat_ai_discovery::analysis::samples::{HarmfulContribution, HelpfulContribution};
 
 /// Skip test if no GPU available
 macro_rules! skip_without_gpu {

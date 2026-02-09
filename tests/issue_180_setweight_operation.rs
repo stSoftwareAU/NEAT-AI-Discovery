@@ -71,7 +71,7 @@ fn issue_180_setweight_replaces_remove_add_pattern() {
         let input_activation = (obs_index as f32 / sample_count as f32) * 2.0 - 1.0; // [-1, 1]
         let output_activation = input_activation * -0.001; // Current output (with suboptimal weight)
         let output_value = output_activation; // IDENTITY squash
-                                              // Error correlates with input: positive input should give positive output
+        // Error correlates with input: positive input should give positive output
         let error = input_activation * 0.1 - output_activation;
 
         records.push(DiscoverRecord::new(

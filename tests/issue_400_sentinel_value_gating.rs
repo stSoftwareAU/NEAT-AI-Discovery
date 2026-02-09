@@ -21,11 +21,11 @@
 mod common;
 
 use common::{make_creature, neuron, output, synapse};
+use neat_ai_discovery::CoordinatedStructuralOpJson;
 use neat_ai_discovery::analysis::sentinel_gating::{
     detect_sentinel_gating_candidates, sentinel_gating_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
-use neat_ai_discovery::CoordinatedStructuralOpJson;
 
 /// Helper to create a record with a specific error value.
 fn record_with_error(

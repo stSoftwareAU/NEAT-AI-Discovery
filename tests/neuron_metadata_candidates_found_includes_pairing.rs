@@ -9,7 +9,7 @@
 //! This ensures "found" always implies "at least as many as returned."
 
 use neat_ai_discovery::{
-    analysis::utils::pair_extreme_candidates_with_conservative_variants, CandidateNeuronJson,
+    CandidateNeuronJson, analysis::utils::pair_extreme_candidates_with_conservative_variants,
 };
 
 /// Test that `candidates_found` includes paired variants.

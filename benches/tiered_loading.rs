@@ -11,7 +11,7 @@
 //! 3. **Access time**: Compares time to access neurons across strategies
 //! 4. **Eviction overhead**: Measures cost of LRU eviction
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::cache::{LruRecordCache, RecordCache, TieredRecordCache};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

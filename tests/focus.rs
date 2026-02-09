@@ -1507,7 +1507,9 @@ fn test_issue_235_neuron_above_threshold_but_removal_improves_score() {
         .filter(|s| s.from_uuid == "above-threshold")
         .count();
     let total_synapses = incoming + outgoing;
-    println!("above-threshold: {incoming} incoming, {outgoing} outgoing, {total_synapses} total synapses");
+    println!(
+        "above-threshold: {incoming} incoming, {outgoing} outgoing, {total_synapses} total synapses"
+    );
 
     // Calculate removal_savings
     let removal_savings = cost_of_growth * (1.0 + total_synapses as f32 / 10.0);

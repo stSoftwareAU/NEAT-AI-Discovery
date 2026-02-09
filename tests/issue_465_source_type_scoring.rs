@@ -14,7 +14,7 @@
 mod common;
 
 use neat_ai_discovery::analysis::candidate_cache::{
-    CandidateOutcomeCache, SourceTypeStats, DEFAULT_STALENESS_WINDOW,
+    CandidateOutcomeCache, DEFAULT_STALENESS_WINDOW, SourceTypeStats,
 };
 use neat_ai_discovery::analysis::constants::{INPUT_SOURCE_BOOST, MIN_BOOST_SAMPLES};
 

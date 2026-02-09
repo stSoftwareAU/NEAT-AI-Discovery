@@ -18,10 +18,11 @@ mod common;
 
 use common::{make_creature, neuron, synapse};
 use neat_ai_discovery::analysis::weight_coherence::{
-    detect_incoherent_weight_ratios, detect_near_constant_paths, detect_symmetric_cancellation,
-    incoherent_ratios_to_coordinated_candidates, near_constant_paths_to_coordinated_candidates,
-    symmetric_cancellation_to_coordinated_candidates, IncoherentWeightRatioCandidate,
-    NearConstantPathCandidate, SymmetricCancellationCandidate, WeightCoherenceConfig,
+    IncoherentWeightRatioCandidate, NearConstantPathCandidate, SymmetricCancellationCandidate,
+    WeightCoherenceConfig, detect_incoherent_weight_ratios, detect_near_constant_paths,
+    detect_symmetric_cancellation, incoherent_ratios_to_coordinated_candidates,
+    near_constant_paths_to_coordinated_candidates,
+    symmetric_cancellation_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 

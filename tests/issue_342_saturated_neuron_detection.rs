@@ -13,7 +13,7 @@
 //! 5. Test bias adjustment calculation
 
 use neat_ai_discovery::analysis::saturation::{
-    detect_saturated_neurons, saturated_neurons_to_coordinated_candidates, SaturatedNeuronCandidate,
+    SaturatedNeuronCandidate, detect_saturated_neurons, saturated_neurons_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 

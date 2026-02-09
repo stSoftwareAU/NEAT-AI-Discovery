@@ -13,7 +13,7 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::{analyze_neurons, GpuAnalyzer};
+use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson, SynapseJson};
@@ -446,8 +446,8 @@ fn test_synapse_candidates_no_bias_optimisation() {
     write_records_to_parquet(file_path, &all_records).unwrap();
 
     // Analyse synapses (not neurons)
-    use neat_ai_discovery::analysis::analyze_synapses;
     use neat_ai_discovery::AnalyzeSynapsesInput;
+    use neat_ai_discovery::analysis::analyze_synapses;
 
     let input = AnalyzeSynapsesInput {
         parquet_file: file_path.to_string(),
@@ -506,8 +506,8 @@ fn test_synapse_weight_distribution() {
         let records = generate_sample_subset_data(seed, 100, 0.01);
         write_records_to_parquet(temp_file.path().to_str().unwrap(), &records).unwrap();
 
-        use neat_ai_discovery::analysis::analyze_synapses;
         use neat_ai_discovery::AnalyzeSynapsesInput;
+        use neat_ai_discovery::analysis::analyze_synapses;
 
         let input = AnalyzeSynapsesInput {
             parquet_file: temp_file.path().to_str().unwrap().to_string(),

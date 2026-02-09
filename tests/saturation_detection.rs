@@ -36,8 +36,8 @@
 mod common;
 
 use common::{hidden, hidden_with_bias, output, synapse};
-use neat_ai_discovery::focus::compute_impacts_public;
 use neat_ai_discovery::CreatureJson;
+use neat_ai_discovery::focus::compute_impacts_public;
 
 /// Test: Production scenario - target through saturated intermediate
 ///

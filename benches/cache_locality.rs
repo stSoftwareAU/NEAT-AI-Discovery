@@ -17,7 +17,7 @@
 //!    time per input *decreases* as input count increases. This is because fixed overhead
 //!    (GPU init, parquet loading) is amortized across more inputs.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::{
     analyze_synapses_with_cache_and_gpu_queue,
     cache::RecordCache,

@@ -363,10 +363,12 @@ mod tests {
     fn test_streaming_session_not_found() {
         let result = append_records("nonexistent-session", vec![]);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Session not found"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Session not found")
+        );
     }
 
     #[test]
@@ -386,10 +388,12 @@ mod tests {
 
         let result = start_session(creature, temp_dir.path().to_str().unwrap().to_string());
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("no non-input neurons"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no non-input neurons")
+        );
     }
 
     #[test]
@@ -403,10 +407,12 @@ mod tests {
         // Try to finish without writing any records
         let result = finish_session(&session_id);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("No records were written"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No records were written")
+        );
     }
 
     #[test]

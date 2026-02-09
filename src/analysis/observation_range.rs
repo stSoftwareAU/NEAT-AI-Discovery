@@ -28,8 +28,8 @@
 
 use std::collections::HashSet;
 
-use crate::types::DiscoverRecord;
 use crate::CreatureJson;
+use crate::types::DiscoverRecord;
 
 // Constants moved to constants.rs (Issue #424)
 use super::constants::{
@@ -143,7 +143,7 @@ fn analyse_observation_range(
         let cluster_indices: Vec<usize> = activations
             .iter()
             .enumerate()
-            .filter(|(_, &a)| (a - sentinel).abs() <= SENTINEL_TOLERANCE)
+            .filter(|&(_, &a)| (a - sentinel).abs() <= SENTINEL_TOLERANCE)
             .map(|(i, _)| i)
             .collect();
 

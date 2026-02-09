@@ -43,7 +43,8 @@ fn readme_mission_states_speed_goal() {
 #[test]
 fn readme_mission_states_candidates_must_improve_score() {
     assert!(
-        README.contains("Only return candidates which are expected to improve the creature's score"),
+        README
+            .contains("Only return candidates which are expected to improve the creature's score"),
         "README must state that only candidates expected to improve the creature's score should be returned"
     );
 }

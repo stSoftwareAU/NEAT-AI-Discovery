@@ -12,7 +12,7 @@
 mod common;
 
 use neat_ai_discovery::focus::{
-    compute_network_layers, hierarchical_focus_selection, AllocationStrategy,
+    AllocationStrategy, compute_network_layers, hierarchical_focus_selection,
 };
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use std::collections::{HashMap, HashSet};

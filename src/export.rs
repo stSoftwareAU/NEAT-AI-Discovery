@@ -11,10 +11,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufWriter;
 
+use crate::CreatureJson;
 use crate::focus::compute_impacts_public;
 use crate::parquet_format::read_records_from_parquet_with_limit;
 use crate::types::DiscoverRecord;
-use crate::CreatureJson;
 
 /// Snapshot metadata
 #[derive(Debug, Serialize, Deserialize)]

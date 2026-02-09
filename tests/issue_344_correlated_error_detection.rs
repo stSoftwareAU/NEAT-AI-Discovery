@@ -13,8 +13,8 @@
 //! 6. Test single output neuron (should skip — nothing to correlate)
 
 use neat_ai_discovery::analysis::correlated_error::{
-    correlated_errors_to_coordinated_candidates, detect_correlated_error_patterns,
-    CorrelatedErrorGroup,
+    CorrelatedErrorGroup, correlated_errors_to_coordinated_candidates,
+    detect_correlated_error_patterns,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};

@@ -585,8 +585,11 @@ mod tests {
 
     #[test]
     fn test_env_var_defaults() {
-        std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS");
-        std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE");
+        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS");
+            std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE");
+        }
 
         assert!(!outlier_analysis_enabled());
         assert_eq!(outlier_percentile_from_env(), 90);

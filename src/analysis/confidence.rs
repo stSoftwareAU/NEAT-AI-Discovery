@@ -22,7 +22,7 @@
 
 use serde::Serialize;
 
-use super::samples::{HelpfulSample, EPSILON};
+use super::samples::{EPSILON, HelpfulSample};
 
 /// Minimum sample count for full confidence credit.
 /// Below this, sample confidence is linearly scaled.

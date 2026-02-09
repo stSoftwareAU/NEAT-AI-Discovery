@@ -3,8 +3,8 @@
 //! This benchmark compares the performance of zero-copy vs traditional copying
 //! on unified memory architectures (Apple Silicon).
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use neat_ai_discovery::analysis::{analyze_synapses, supports_unified_memory, GpuAnalyzer};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses, supports_unified_memory};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
@@ -64,7 +64,8 @@ fn benchmark_zero_copy_vs_copying(c: &mut Criterion) {
 
     // Benchmark with zero-copy disabled (traditional copying)
     group.bench_function("with_copying", |b| {
-        std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "0");
+        // SAFETY: Benchmarks run single-threaded, no concurrent env access.
+        unsafe { std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "0") };
         b.iter(|| {
             let input = AnalyzeSynapsesInput {
                 parquet_file: parquet_file.clone(),
@@ -77,13 +78,14 @@ fn benchmark_zero_copy_vs_copying(c: &mut Criterion) {
             let result = analyze_synapses(&input).expect("Analysis should succeed");
             black_box(result);
         });
-        std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+        unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY") };
     });
 
     // Benchmark with zero-copy enabled
     if supports_unified_memory() {
         group.bench_function("with_zero_copy", |b| {
-            std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
+            // SAFETY: Benchmarks run single-threaded, no concurrent env access.
+            unsafe { std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1") };
             b.iter(|| {
                 let input = AnalyzeSynapsesInput {
                     parquet_file: parquet_file.clone(),
@@ -96,7 +98,7 @@ fn benchmark_zero_copy_vs_copying(c: &mut Criterion) {
                 let result = analyze_synapses(&input).expect("Analysis should succeed");
                 black_box(result);
             });
-            std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+            unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY") };
         });
     }
 

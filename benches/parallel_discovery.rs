@@ -7,7 +7,7 @@
 //!
 //! Run with: `cargo bench --bench parallel_discovery`
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::analyze_all;
 use neat_ai_discovery::analysis::gpu::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;

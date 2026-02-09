@@ -16,7 +16,7 @@
 //! 8. Existing calculate_optimal_outgoing_weight unchanged (DRY wrapper)
 
 use neat_ai_discovery::analysis::observation_range::ObservationRangeResult;
-use neat_ai_discovery::analysis::samples::{HelpfulSample, EPSILON};
+use neat_ai_discovery::analysis::samples::{EPSILON, HelpfulSample};
 use neat_ai_discovery::analysis::weights::{
     calculate_optimal_outgoing_weight, calculate_range_aware_weight, compute_range_aware_sums,
 };

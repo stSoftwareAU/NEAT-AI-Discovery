@@ -13,7 +13,7 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::{analyze_neurons, analyze_synapses, GpuAnalyzer};
+use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, AnalyzeSynapsesInput, CreatureJson, NeuronJson};
@@ -108,7 +108,8 @@ fn timing_enabled_via_env_var() {
     skip_without_gpu!();
 
     // Set the environment variable to enable timing
-    env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe { env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1") };
 
     let (parquet_file, creature) = create_test_data();
 
@@ -124,7 +125,7 @@ fn timing_enabled_via_env_var() {
     let result = analyze_synapses(&input).expect("Analysis should succeed");
 
     // Clean up
-    env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING");
+    unsafe { env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING") };
 
     // When timing is enabled, metadata should contain timing data
     let timing = result
@@ -166,7 +167,8 @@ fn timing_enabled_via_env_var() {
 fn per_shader_timing_collected() {
     skip_without_gpu!();
 
-    env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe { env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1") };
 
     let (parquet_file, creature) = create_test_data();
 
@@ -181,7 +183,7 @@ fn per_shader_timing_collected() {
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
 
-    env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING");
+    unsafe { env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING") };
 
     let timing = result.metadata.timing.expect("Timing should be present");
 
@@ -201,7 +203,8 @@ fn per_shader_timing_collected() {
 fn timing_in_json_output() {
     skip_without_gpu!();
 
-    env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe { env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1") };
 
     let (parquet_file, creature) = create_test_data();
 
@@ -216,7 +219,7 @@ fn timing_in_json_output() {
     let result_json = neat_ai_discovery::analyze_parallel_internal(&input_json.to_string())
         .expect("Analysis should succeed");
 
-    env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING");
+    unsafe { env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING") };
 
     // Parse the JSON response
     let result: serde_json::Value = serde_json::from_str(&result_json).expect("Should parse JSON");
@@ -301,7 +304,8 @@ fn timing_collector_disabled_vs_enabled_behaviour() {
 fn neuron_analysis_timing_collected() {
     skip_without_gpu!();
 
-    env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe { env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1") };
 
     let (parquet_file, creature) = create_test_data();
 
@@ -316,7 +320,7 @@ fn neuron_analysis_timing_collected() {
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
 
-    env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING");
+    unsafe { env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING") };
 
     // When timing is enabled, metadata should contain timing data
     let timing = result

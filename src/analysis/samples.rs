@@ -547,11 +547,7 @@ impl ReluStats {
         // Normalise by total baseline error of ALL samples (not just active ones)
         let expected_improvement = if total_baseline_error_sq > EPSILON {
             let result = improvement_magnitude / total_baseline_error_sq;
-            if result.is_finite() {
-                result
-            } else {
-                0.0
-            }
+            if result.is_finite() { result } else { 0.0 }
         } else {
             0.0
         };
@@ -1299,7 +1295,10 @@ mod tests {
     #[test]
     fn test_get_constant_source_threshold_no_env_var() {
         // Remove env var to test dynamic threshold
-        std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+        }
 
         // With None, should return default
         let threshold = get_constant_source_threshold(None);

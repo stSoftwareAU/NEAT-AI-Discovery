@@ -21,19 +21,25 @@ mod common;
 
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
 
 /// Set up small block size for testing (10 records per block).
 /// This ensures multiple blocks are created from small test datasets.
 fn setup_test_block_size() {
-    std::env::set_var("NEAT_AI_DISCOVERY_BLOCK_SIZE", "10");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_BLOCK_SIZE", "10");
+    }
 }
 
 /// Restore default block size after tests.
 fn teardown_test_block_size() {
-    std::env::remove_var("NEAT_AI_DISCOVERY_BLOCK_SIZE");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_BLOCK_SIZE");
+    }
 }
 
 /// Helper to create test parquet files with multiple row groups.

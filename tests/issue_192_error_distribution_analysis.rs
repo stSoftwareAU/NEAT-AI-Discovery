@@ -12,10 +12,10 @@
 mod common;
 
 use neat_ai_discovery::analysis::error_distribution::{
-    detect_error_modes, outlier_analysis_enabled, outlier_percentile_from_env, ErrorDistribution,
+    ErrorDistribution, detect_error_modes, outlier_analysis_enabled, outlier_percentile_from_env,
 };
 use neat_ai_discovery::analysis::samples::HelpfulSample;
-use neat_ai_discovery::analysis::{analyze_synapses, GpuAnalyzer};
+use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};
@@ -373,7 +373,8 @@ fn test_detect_error_modes_unimodal() {
 #[test]
 fn test_outlier_analysis_disabled_by_default() {
     // Ensure env var is not set
-    std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS") };
 
     let enabled = outlier_analysis_enabled();
     assert!(!enabled, "Outlier analysis should be disabled by default");
@@ -382,7 +383,8 @@ fn test_outlier_analysis_disabled_by_default() {
 /// Test: outlier_percentile_from_env returns 90 by default.
 #[test]
 fn test_outlier_percentile_default() {
-    std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE") };
 
     let percentile = outlier_percentile_from_env();
     assert_eq!(percentile, 90, "Default outlier percentile should be 90");
@@ -502,7 +504,8 @@ fn test_candidate_includes_outlier_info_when_enabled() {
     skip_without_gpu!();
 
     // Enable outlier analysis
-    std::env::set_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS", "1");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe { std::env::set_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS", "1") };
 
     let creature = create_test_creature(
         vec![
@@ -567,7 +570,7 @@ fn test_candidate_includes_outlier_info_when_enabled() {
     let result = analyze_synapses(&input).expect("Analysis should succeed");
 
     // Clean up env var
-    std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS");
+    unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS") };
 
     // Check that we have candidates
     eprintln!("Helpful synapses found: {}", result.helpful_synapses.len());

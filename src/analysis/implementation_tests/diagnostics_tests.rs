@@ -62,7 +62,7 @@ fn neuron_diagnostics_tracks_load_failures() {
     let diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
     diagnostics.set_target_record_count("output-0", 100);
     diagnostics.set_total_eligible_sources("output-0", 10); // 10 eligible sources exist
-                                                            // All 10 sources fail to load
+    // All 10 sources fail to load
     for _ in 0..10 {
         diagnostics.record_load_failure("output-0");
     }

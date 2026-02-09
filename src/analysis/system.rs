@@ -51,6 +51,11 @@
 // =============================================================================
 
 pub use crate::analysis::utils::memory::{
+    // GPU batch size constants
+    DEFAULT_GPU_BATCH_SIZE,
+    HIGH_PERF_GPU_BATCH_SIZE,
+    LOW_MEMORY_GPU_BATCH_SIZE,
+    MemoryTier,
     // GPU batch size utilities
     cap_gpu_batch_size_by_bytes,
     // Memory tier classification
@@ -65,11 +70,6 @@ pub use crate::analysis::utils::memory::{
     get_work_queue_capacity,
     get_work_queue_capacity_for_tier,
     validate_parquet_memory_requirements,
-    MemoryTier,
-    // GPU batch size constants
-    DEFAULT_GPU_BATCH_SIZE,
-    HIGH_PERF_GPU_BATCH_SIZE,
-    LOW_MEMORY_GPU_BATCH_SIZE,
 };
 
 // Platform-specific parsing functions (for testing)
@@ -92,11 +92,11 @@ pub use crate::analysis::utils::platform::{
 // =============================================================================
 
 pub use crate::analysis::gpu::device::{
+    GpuPerformanceTier,
     // GPU performance tier
     detect_gpu_tier,
     // Unified memory detection
     detect_unified_memory,
-    GpuPerformanceTier,
 };
 
 // =============================================================================

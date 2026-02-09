@@ -18,18 +18,18 @@ use crate::analysis::activation::is_threshold_activation;
 
 // Import utilities
 use crate::analysis::utils::{
-    build_deadline, deadline_passed, log_analysis_start, log_analysis_timeout,
+    OrderedNeuron, build_deadline, deadline_passed, log_analysis_start, log_analysis_timeout,
     order_eligible_sources, parse_input_index, shuffle_slice, shuffle_within_top_k,
-    verbose_enabled, OrderedNeuron,
+    verbose_enabled,
 };
 
 // Import sample data structures (Issue #269)
-use crate::analysis::samples::{compute_source_variance_discount, HelpfulSample, EPSILON};
+use crate::analysis::samples::{EPSILON, HelpfulSample, compute_source_variance_discount};
 
 // Import diagnostics and rejection tracking (Issue #271)
 use crate::analysis::diagnostics::{
-    compute_impact_scores_for_discounting, filter_focus_targets_for_neuron_analysis,
-    require_unique_focus, FocusTargetFilterResult, NeuronDiagnostics, TargetMap,
+    FocusTargetFilterResult, NeuronDiagnostics, TargetMap, compute_impact_scores_for_discounting,
+    filter_focus_targets_for_neuron_analysis, require_unique_focus,
 };
 
 // Import GPU infrastructure (Issue #272, #273, #274)
@@ -45,9 +45,9 @@ use super::cache::RecordCache;
 // These functions are used by both synapse and neuron analysis
 // Issue #201: evaluate_all_activation_specs_batched replaces the loop over evaluate_activation_candidate
 use super::synapse::{
-    build_ordered_neurons, build_samples_for_locality_group, evaluate_all_activation_specs_batched,
-    evaluate_relu_candidates_split, group_sources_by_locality, upsert_candidate,
-    MIN_GROUP_SIZE_FOR_LOCALITY,
+    MIN_GROUP_SIZE_FOR_LOCALITY, build_ordered_neurons, build_samples_for_locality_group,
+    evaluate_all_activation_specs_batched, evaluate_relu_candidates_split,
+    group_sources_by_locality, upsert_candidate,
 };
 
 use rayon::prelude::*;
@@ -133,9 +133,7 @@ pub(crate) fn analyze_neurons_with_cache(
                         let last = &records[records.len() - 1];
                         eprintln!(
                             "[NEAT-AI-Discovery][verbose] Parquet data check: input-0 obs_index range [{}, {}], first activation={:.4}",
-                            first.obs_index,
-                            last.obs_index,
-                            first.activation
+                            first.obs_index, last.obs_index, first.activation
                         );
                     }
                 }

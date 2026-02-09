@@ -20,12 +20,12 @@
 mod common;
 
 use common::{hidden, hidden_with_bias, make_creature, neuron, output, synapse};
+use neat_ai_discovery::CoordinatedStructuralOpJson;
 use neat_ai_discovery::analysis::restricted_range::{
-    detect_restricted_range_neurons, restricted_range_to_coordinated_candidates,
-    RestrictedRangeConfig,
+    RestrictedRangeConfig, detect_restricted_range_neurons,
+    restricted_range_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
-use neat_ai_discovery::CoordinatedStructuralOpJson;
 
 /// Helper to create records for a neuron with activations in a specific range.
 fn make_records_in_range(

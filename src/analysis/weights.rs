@@ -28,7 +28,7 @@
 use crate::analysis::activation::{activation_name_to_gpu_id, get_bias_range, get_bias_values};
 use crate::analysis::gpu::GpuAnalyzer;
 use crate::analysis::observation_range::ObservationRangeResult;
-use crate::analysis::samples::{HelpfulSample, EPSILON};
+use crate::analysis::samples::{EPSILON, HelpfulSample};
 
 // =============================================================================
 // Constants
@@ -255,24 +255,24 @@ pub fn calculate_optimal_bias(
     let bias_range = get_bias_range(squash);
 
     // Try GPU-accelerated search first if analyzer available
-    if let Some(gpu_analyzer) = analyzer {
-        if gpu_analyzer.has_gpu() {
-            let activation_type = activation_name_to_gpu_id(squash);
-            if let Ok(optimal_bias) = gpu_analyzer.evaluate_bias_gpu(
-                samples,
-                incoming_weight,
-                outgoing_weight,
-                activation_type,
-                bias_range,
-            ) {
-                // Guard rail: only accept biases within sensible ranges.
-                let bias_abs_max = crate::analysis::utils::sensible_bias_abs_max_for_squash(squash);
-                if optimal_bias.is_finite() && optimal_bias.abs() <= bias_abs_max {
-                    return optimal_bias;
-                }
+    if let Some(gpu_analyzer) = analyzer
+        && gpu_analyzer.has_gpu()
+    {
+        let activation_type = activation_name_to_gpu_id(squash);
+        if let Ok(optimal_bias) = gpu_analyzer.evaluate_bias_gpu(
+            samples,
+            incoming_weight,
+            outgoing_weight,
+            activation_type,
+            bias_range,
+        ) {
+            // Guard rail: only accept biases within sensible ranges.
+            let bias_abs_max = crate::analysis::utils::sensible_bias_abs_max_for_squash(squash);
+            if optimal_bias.is_finite() && optimal_bias.abs() <= bias_abs_max {
+                return optimal_bias;
             }
-            // If GPU fails, fall through to CPU
         }
+        // If GPU fails, fall through to CPU
     }
 
     // Use log-spaced bias values for efficient search

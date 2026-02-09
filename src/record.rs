@@ -4,9 +4,9 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
+use crate::RecordDiscoveryInput;
 use crate::parquet_format::ParquetRecordWriter;
 use crate::types::DiscoverRecord;
-use crate::RecordDiscoveryInput;
 
 /// Result of recording discovery data
 #[derive(Debug)]

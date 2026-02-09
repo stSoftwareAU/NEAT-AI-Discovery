@@ -26,21 +26,13 @@ pub fn gelu_activation(x: f32) -> f32 {
 /// ELU activation function.
 /// ELU(x) = x if x >= 0, else exp(x) - 1
 pub fn elu_activation(x: f32) -> f32 {
-    if x >= 0.0 {
-        x
-    } else {
-        x.exp() - 1.0
-    }
+    if x >= 0.0 { x } else { x.exp() - 1.0 }
 }
 
 /// Softplus activation function.
 /// Softplus(x) = ln(1 + exp(x)), linearised for x > 20 to avoid overflow.
 pub fn softplus_activation(x: f32) -> f32 {
-    if x > 20.0 {
-        x
-    } else {
-        (1.0 + x.exp()).ln()
-    }
+    if x > 20.0 { x } else { (1.0 + x.exp()).ln() }
 }
 
 /// Logistic (sigmoid) activation function.
@@ -67,11 +59,7 @@ pub fn identity_activation(x: f32) -> f32 {
 /// Bipolar activation function.
 /// BIPOLAR(x) = 1 if x > 0, else -1
 pub fn bipolar_activation(x: f32) -> f32 {
-    if x > 0.0 {
-        1.0
-    } else {
-        -1.0
-    }
+    if x > 0.0 { 1.0 } else { -1.0 }
 }
 
 /// Clipped activation function.

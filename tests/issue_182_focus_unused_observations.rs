@@ -11,7 +11,7 @@
 mod common;
 
 use neat_ai_discovery::analysis::{
-    analyze_synapses, focus_unused_observations_from_env, GpuAnalyzer,
+    GpuAnalyzer, analyze_synapses, focus_unused_observations_from_env,
 };
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -38,16 +38,18 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
+        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        unsafe { std::env::set_var(key, value) };
         Self { key, previous }
     }
 }
 
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
+        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
         match &self.previous {
-            Some(v) => std::env::set_var(self.key, v),
-            None => std::env::remove_var(self.key),
+            Some(v) => unsafe { std::env::set_var(self.key, v) },
+            None => unsafe { std::env::remove_var(self.key) },
         }
     }
 }
@@ -230,7 +232,10 @@ fn issue_182_focus_unused_observations_prioritises_inputs_without_synapses() {
         !unused_input_candidates.is_empty(),
         "Should find candidates from unused inputs (input-2, input-3). Got {} helpful synapses: {:?}",
         helpful.len(),
-        helpful.iter().map(|c| &c.from_neuron_uuid).collect::<Vec<_>>()
+        helpful
+            .iter()
+            .map(|c| &c.from_neuron_uuid)
+            .collect::<Vec<_>>()
     );
 
     // With short deadline and prioritisation, the unused inputs should be evaluated first.
@@ -262,7 +267,8 @@ fn issue_182_without_env_var_no_prioritisation() {
     skip_without_gpu!();
 
     // Ensure env var is NOT set
-    std::env::remove_var("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS") };
 
     let creature = create_test_creature();
 

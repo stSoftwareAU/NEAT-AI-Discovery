@@ -12,8 +12,8 @@
 //! via `rayon::into_par_iter()`, then merges results sequentially. This
 //! preserves deterministic ordering while utilising multiple CPU cores.
 
-use crate::observability::PhaseTimer;
 use crate::CoordinatedStructuralCandidateJson;
+use crate::observability::PhaseTimer;
 use rayon::prelude::*;
 
 use super::shared;
@@ -53,23 +53,23 @@ pub fn run_discovery_module(
     crate::watchdog::beat(&starting);
     let _timer = PhaseTimer::new(phase_name);
 
-    if let Some(result) = detect_fn() {
-        if !result.candidates.is_empty() {
-            if utils::verbose_enabled() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] {module_name}: found {} detection(s), {} candidate(s)",
-                    result.detected_count,
-                    result.candidates.len()
-                );
-            }
-
-            super::merge_coordinated_structural_replacements(
-                syn,
-                result.candidates,
-                max_synapse_candidates,
-                diversify,
+    if let Some(result) = detect_fn()
+        && !result.candidates.is_empty()
+    {
+        if utils::verbose_enabled() {
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] {module_name}: found {} detection(s), {} candidate(s)",
+                result.detected_count,
+                result.candidates.len()
             );
         }
+
+        super::merge_coordinated_structural_replacements(
+            syn,
+            result.candidates,
+            max_synapse_candidates,
+            diversify,
+        );
     }
 
     crate::watchdog::beat(&finished);
@@ -121,23 +121,23 @@ pub fn run_discovery_modules_parallel(
 
     // Sequential merge phase: iterate in original order and merge non-empty results.
     for (module_name, _phase_name, result) in results {
-        if let Some(result) = result {
-            if !result.candidates.is_empty() {
-                if utils::verbose_enabled() {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] {module_name}: found {} detection(s), {} candidate(s)",
-                        result.detected_count,
-                        result.candidates.len()
-                    );
-                }
-
-                super::merge_coordinated_structural_replacements(
-                    syn,
-                    result.candidates,
-                    max_synapse_candidates,
-                    diversify,
+        if let Some(result) = result
+            && !result.candidates.is_empty()
+        {
+            if utils::verbose_enabled() {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] {module_name}: found {} detection(s), {} candidate(s)",
+                    result.detected_count,
+                    result.candidates.len()
                 );
             }
+
+            super::merge_coordinated_structural_replacements(
+                syn,
+                result.candidates,
+                max_synapse_candidates,
+                diversify,
+            );
         }
 
         let finished = format!("analysis::analyze_all → {module_name} finished");

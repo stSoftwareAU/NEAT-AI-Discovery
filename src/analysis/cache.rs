@@ -38,16 +38,16 @@ use anyhow::{Context, Result};
 use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use crate::analysis::utils::{check_memory_for_parquet, get_memory_info, verbose_enabled};
 
 // Re-export streaming module types (Issue #193)
 pub use super::streaming::{
-    get_streaming_config_from_env, is_streaming_enabled, StreamingCacheStats, StreamingConfig,
-    StreamingRecordCache,
+    StreamingCacheStats, StreamingConfig, StreamingRecordCache, get_streaming_config_from_env,
+    is_streaming_enabled,
 };
 
 type RecordCacheLoader = dyn Fn(&str, &str) -> Result<Vec<DiscoverRecord>> + Send + Sync + 'static;

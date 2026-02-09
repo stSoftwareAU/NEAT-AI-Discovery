@@ -113,7 +113,7 @@ pub use shared::{
 };
 
 // Re-export confidence interval types (Issue #194)
-pub use confidence::{compute_confidence_metrics, PredictionConfidenceMetrics};
+pub use confidence::{PredictionConfidenceMetrics, compute_confidence_metrics};
 
 // Re-export from utils
 pub use utils::{gpu_timing_enabled, verbose_enabled};
@@ -124,6 +124,12 @@ pub use utils::check_memory_for_parquet;
 // Re-export system utilities for backward compatibility (Issue #239)
 // These are the primary types and functions for memory detection and GPU performance
 pub use system::{
+    // GPU batch size constants
+    DEFAULT_GPU_BATCH_SIZE,
+    GpuPerformanceTier,
+    HIGH_PERF_GPU_BATCH_SIZE,
+    LOW_MEMORY_GPU_BATCH_SIZE,
+    MemoryTier,
     // GPU batch size utilities
     cap_gpu_batch_size_by_bytes,
     // Memory tier classification
@@ -140,12 +146,6 @@ pub use system::{
     get_work_queue_capacity_for_tier,
     // Parquet memory validation
     validate_parquet_memory_requirements,
-    GpuPerformanceTier,
-    MemoryTier,
-    // GPU batch size constants
-    DEFAULT_GPU_BATCH_SIZE,
-    HIGH_PERF_GPU_BATCH_SIZE,
-    LOW_MEMORY_GPU_BATCH_SIZE,
 };
 
 // Re-export Detail types from shared
@@ -153,6 +153,13 @@ pub use shared::{NeuronNoCandidateDetail, SynapseNoCandidateDetail};
 
 // Re-export activation-related items from activation module (Issue #266, #238)
 pub use activation::{
+    ACTIVATION_SPECS,
+    // Activation candidate spec
+    ActivationCandidateSpec,
+    ORIENTATIONS_BIDIRECTIONAL,
+    SCALES_SMOOTH,
+    SCALES_WIDE,
+    TargetSimulationMode,
     // Activation functions
     absolute_activation,
     // GPU ID mapping
@@ -182,23 +189,17 @@ pub use activation::{
     softplus_activation,
     softsign_activation,
     tanh_activation,
-    // Activation candidate spec
-    ActivationCandidateSpec,
-    TargetSimulationMode,
-    ACTIVATION_SPECS,
-    ORIENTATIONS_BIDIRECTIONAL,
-    SCALES_SMOOTH,
-    SCALES_WIDE,
 };
 
 // Re-export sample data structures from samples module (Issue #269)
 pub use samples::{
+    ActivationOutput, ActivationUniforms, BiasResult, BiasUniforms,
+    DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD, EPSILON, GpuHelpfulSample, HarmfulContribution,
+    HarmfulStats, HarmfulUniforms, HelpfulContribution, HelpfulSample, HelpfulStats,
+    HelpfulUniforms, NeuronStats, ReluContribution, ReluOrientation, ReluStats, ReluUniforms,
     compute_dynamic_constant_source_threshold, compute_source_std_dev,
     compute_source_variance_discount, constant_source_effect_threshold_from_env,
-    get_constant_source_threshold, ActivationOutput, ActivationUniforms, BiasResult, BiasUniforms,
-    GpuHelpfulSample, HarmfulContribution, HarmfulStats, HarmfulUniforms, HelpfulContribution,
-    HelpfulSample, HelpfulStats, HelpfulUniforms, NeuronStats, ReluContribution, ReluOrientation,
-    ReluStats, ReluUniforms, DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD, EPSILON,
+    get_constant_source_threshold,
 };
 
 // Re-export focus_unused_observations_from_env for tests (Issue #182)
@@ -207,22 +208,22 @@ pub use utils::focus_unused_observations_from_env;
 
 // Re-export weight calculation functions from weights module (Issue #270, #402)
 pub use weights::{
-    calculate_optimal_bias, calculate_optimal_identity_outgoing_and_bias,
-    calculate_optimal_outgoing_weight, calculate_range_aware_weight, clamp_weight_update_delta,
-    compute_range_aware_sums, coordinated_structural_activation_delta, DEFAULT_SENTINEL_TOLERANCE,
-    MAX_OUTGOING_WEIGHT,
+    DEFAULT_SENTINEL_TOLERANCE, MAX_OUTGOING_WEIGHT, calculate_optimal_bias,
+    calculate_optimal_identity_outgoing_and_bias, calculate_optimal_outgoing_weight,
+    calculate_range_aware_weight, clamp_weight_update_delta, compute_range_aware_sums,
+    coordinated_structural_activation_delta,
 };
 
 // Re-export error distribution types (Issue #192)
 pub use error_distribution::{
-    detect_error_modes, outlier_analysis_enabled, outlier_percentile_from_env, ErrorDistribution,
-    ErrorMode, OutlierReductionInfo,
+    ErrorDistribution, ErrorMode, OutlierReductionInfo, detect_error_modes,
+    outlier_analysis_enabled, outlier_percentile_from_env,
 };
 
 // Implement analyze_all using the module functions
 use crate::observability::{
-    global_gpu_metrics, profile_mode, report_global_gpu_metrics, PhaseTimer, ProfileData,
-    ProfileMode,
+    PhaseTimer, ProfileData, ProfileMode, global_gpu_metrics, profile_mode,
+    report_global_gpu_metrics,
 };
 use crate::{
     AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput, CandidateNeuronJson,
@@ -1447,15 +1448,14 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                         .collect();
                     let mut recommendations = Vec::new();
                     for (uuid, squash, _bias) in hidden.iter() {
-                        if let Some(neuron_records) = records.iter().find(|(u, _)| u == uuid) {
-                            if let Some(rec) =
+                        if let Some(neuron_records) = records.iter().find(|(u, _)| u == uuid)
+                            && let Some(rec) =
                                 activation_recommendation::recommend_activation_function(
                                     &neuron_records.1,
                                     squash,
                                 )
-                            {
-                                recommendations.push(rec);
-                            }
+                        {
+                            recommendations.push(rec);
                         }
                     }
                     if recommendations.is_empty() {
@@ -1706,9 +1706,9 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 }
 
 // Re-export from modules
-pub use gpu::supports_unified_memory;
 pub use gpu::GpuAnalyzer;
 pub use gpu::GpuAvailabilityResult;
+pub use gpu::supports_unified_memory;
 pub use neuron::analyze_neurons;
 pub use synapse::analyze_synapses;
 // Re-export benchmark helper function for use in benches/
@@ -1716,14 +1716,14 @@ pub use synapse::analyze_synapses_with_cache_and_gpu_queue;
 
 // Re-export early termination types (Issue #219)
 pub use early_termination::{
-    check_batch_early_termination, EarlyTerminationConfig, EarlyTerminationDecision,
-    EarlyTerminationResult, SequentialEvaluator,
+    EarlyTerminationConfig, EarlyTerminationDecision, EarlyTerminationResult, SequentialEvaluator,
+    check_batch_early_termination,
 };
 
 // Re-export cross-validation types (Issue #436)
 pub use cross_validation::{
-    apply_brittleness_penalty, compute_cross_validation_score, CrossValidationConfig,
-    CrossValidationResult, FoldResult, PerformanceVariance,
+    CrossValidationConfig, CrossValidationResult, FoldResult, PerformanceVariance,
+    apply_brittleness_penalty, compute_cross_validation_score,
 };
 
 #[cfg(test)]

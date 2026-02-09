@@ -20,9 +20,9 @@
 //! `COORDINATED_PRUNE_AND_REWEIGHT` – a coordinated structural candidate that
 //! removes one synapse and adjusts the weight of the surviving synapse.
 
-use crate::analysis::samples::HelpfulSample;
 use crate::CoordinatedStructuralCandidateJson;
 use crate::CoordinatedStructuralOpJson;
+use crate::analysis::samples::HelpfulSample;
 
 /// Minimum Pearson correlation between activation patterns to consider two paths redundant.
 const MIN_ACTIVATION_CORRELATION: f64 = 0.85;

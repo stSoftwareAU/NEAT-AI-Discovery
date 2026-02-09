@@ -10,7 +10,7 @@
 //!
 //! **Extracted from implementation.rs as part of Issue #271**
 
-use crate::focus::{compute_impacts_public, compute_impacts_with_activations, RecordProvider};
+use crate::focus::{RecordProvider, compute_impacts_public, compute_impacts_with_activations};
 use crate::types::DiscoverRecord;
 use anyhow::Result;
 use dashmap::DashMap;
@@ -374,7 +374,10 @@ impl TargetDiagnostics {
             if entry.evaluated_candidates == 0 {
                 eprintln!(
                     "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream neurons but none were evaluated ({} already connected, {} record load failures).",
-                    entry.target_uuid, entry.total_eligible_sources, entry.already_connected_count, entry.record_load_failures
+                    entry.target_uuid,
+                    entry.total_eligible_sources,
+                    entry.already_connected_count,
+                    entry.record_load_failures
                 );
                 continue;
             }
@@ -984,15 +987,16 @@ impl TargetMap {
 
         let mut samples = Vec::with_capacity(from_records.len().min(self.map.len()));
         for record in from_records {
-            if let Some(target) = self.map.get(&record.obs_index) {
-                if record.activation.is_finite() && target.avg_error.is_finite() {
-                    samples.push(HelpfulSample {
-                        activation: record.activation,
-                        avg_error: target.avg_error,
-                        target_value: target.value,
-                        target_activation: Some(target.activation),
-                    });
-                }
+            if let Some(target) = self.map.get(&record.obs_index)
+                && record.activation.is_finite()
+                && target.avg_error.is_finite()
+            {
+                samples.push(HelpfulSample {
+                    activation: record.activation,
+                    avg_error: target.avg_error,
+                    target_value: target.value,
+                    target_activation: Some(target.activation),
+                });
             }
         }
 
@@ -1097,10 +1101,10 @@ pub(crate) fn filter_focus_targets_for_neuron_analysis(
 
     // Helper: record STEP/BIPOLAR targets consistently across output/hidden/unknown.
     let mut record_threshold_target = |uuid: &String| {
-        if let Some(squash) = neuron_squash_map.get(uuid) {
-            if is_threshold_activation(squash) {
-                result.threshold_targets.push(uuid.clone());
-            }
+        if let Some(squash) = neuron_squash_map.get(uuid)
+            && is_threshold_activation(squash)
+        {
+            result.threshold_targets.push(uuid.clone());
         }
     };
 
@@ -1276,10 +1280,12 @@ mod tests {
     fn test_require_unique_focus_empty() {
         let result = require_unique_focus(&[], "test");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("at least one focus neuron"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("at least one focus neuron")
+        );
     }
 
     #[test]

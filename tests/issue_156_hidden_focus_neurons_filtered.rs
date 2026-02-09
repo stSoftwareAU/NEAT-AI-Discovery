@@ -7,7 +7,7 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::{analyze_neurons, GpuAnalyzer, NeuronNoCandidateReason};
+use neat_ai_discovery::analysis::{GpuAnalyzer, NeuronNoCandidateReason, analyze_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson, SynapseJson};
@@ -32,16 +32,20 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
+        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        unsafe {
+            std::env::set_var(key, value);
+        }
         Self { key, previous }
     }
 }
 
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
+        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
         match &self.previous {
-            Some(v) => std::env::set_var(self.key, v),
-            None => std::env::remove_var(self.key),
+            Some(v) => unsafe { std::env::set_var(self.key, v) },
+            None => unsafe { std::env::remove_var(self.key) },
         }
     }
 }

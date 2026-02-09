@@ -23,7 +23,7 @@
 //! - Memory utilities (tier detection)
 //! - Constants (timeouts)
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::thread;
 use std::time::Duration;
 

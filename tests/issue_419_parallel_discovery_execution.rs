@@ -9,10 +9,10 @@
 mod common;
 
 use common::{hidden, hidden_with_bias, make_creature, neuron, output, record, synapse};
+use neat_ai_discovery::AnalyzeAllInput;
 use neat_ai_discovery::analysis::analyze_all;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
-use neat_ai_discovery::AnalyzeAllInput;
 use tempfile::tempdir;
 
 /// Create a test creature with enough structure to trigger multiple discovery

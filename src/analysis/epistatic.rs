@@ -24,9 +24,9 @@
 //! - `compute_pair_correlation` - Compute correlation between neuron pair improvements
 //! - `detect_complementary_patterns` - Find neurons with complementary activation patterns
 
-use crate::analysis::samples::{HelpfulSample, HelpfulStats};
 use crate::CoordinatedStructuralCandidateJson;
 use crate::CoordinatedStructuralOpJson;
+use crate::analysis::samples::{HelpfulSample, HelpfulStats};
 
 use std::collections::HashSet;
 

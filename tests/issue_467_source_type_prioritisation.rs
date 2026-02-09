@@ -13,7 +13,7 @@ mod common;
 
 use neat_ai_discovery::analysis::constants::INPUT_SOURCE_BOOST;
 use neat_ai_discovery::analysis::utils::{
-    order_eligible_sources, parse_input_index, OrderedNeuron,
+    OrderedNeuron, order_eligible_sources, parse_input_index,
 };
 use std::collections::HashSet;
 

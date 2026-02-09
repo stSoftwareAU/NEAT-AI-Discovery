@@ -13,7 +13,7 @@
 //! 6. Empty input produces no clusters
 //! 7. Cluster JSON output has the expected structure
 
-use neat_ai_discovery::analysis::candidate_clustering::{cluster_candidates, ClusterableCandidate};
+use neat_ai_discovery::analysis::candidate_clustering::{ClusterableCandidate, cluster_candidates};
 
 /// Helper: create a ClusterableCandidate for testing.
 fn candidate(from: &str, to: &str, improvement: f32) -> ClusterableCandidate {

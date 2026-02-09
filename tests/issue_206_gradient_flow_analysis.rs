@@ -22,7 +22,7 @@
 mod common;
 
 use neat_ai_discovery::focus::{
-    compute_gradient_flow_stats, rank_focus_neurons, GradientFlowStats,
+    GradientFlowStats, compute_gradient_flow_stats, rank_focus_neurons,
 };
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

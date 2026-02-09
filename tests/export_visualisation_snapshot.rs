@@ -8,7 +8,7 @@
 //! - Writes a valid JSON snapshot
 
 use neat_ai_discovery::export::{
-    export_visualisation_snapshot, ExportOptions, VisualisationSnapshot,
+    ExportOptions, VisualisationSnapshot, export_visualisation_snapshot,
 };
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

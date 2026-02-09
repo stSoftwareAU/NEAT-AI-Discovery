@@ -34,11 +34,11 @@ pub(super) mod common {
     pub(crate) use crate::analysis::cache::RecordCache;
     pub(crate) use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT;
     pub(crate) use crate::analysis::diagnostics::{
-        filter_focus_targets_for_neuron_analysis, NeuronDiagnostics, RejectionReason,
-        TargetDiagnostics, ThresholdContext,
+        NeuronDiagnostics, RejectionReason, TargetDiagnostics, ThresholdContext,
+        filter_focus_targets_for_neuron_analysis,
     };
     pub(crate) use crate::analysis::gpu::GpuAnalyzer;
-    pub(crate) use crate::analysis::samples::{HelpfulSample, HelpfulStats, EPSILON};
+    pub(crate) use crate::analysis::samples::{EPSILON, HelpfulSample, HelpfulStats};
     pub(crate) use crate::analysis::shared::{NeuronNoCandidateReason, SynapseNoCandidateReason};
     pub(crate) use crate::analysis::synapse::{
         build_samples, compute_net_improvement_with_squash, count_improved_samples,
@@ -46,7 +46,7 @@ pub(super) mod common {
     };
     pub(crate) use crate::analysis::utils::deadline_override;
     pub(crate) use crate::analysis::weights::{
-        calculate_optimal_bias, calculate_optimal_outgoing_weight, MAX_OUTGOING_WEIGHT,
+        MAX_OUTGOING_WEIGHT, calculate_optimal_bias, calculate_optimal_outgoing_weight,
     };
     pub(crate) use crate::parquet_format::write_records_to_parquet;
     pub(crate) use crate::types::DiscoverRecord;

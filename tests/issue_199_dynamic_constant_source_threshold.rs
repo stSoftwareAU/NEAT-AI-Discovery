@@ -27,7 +27,10 @@ fn issue_199_low_variance_sources_use_default_threshold() {
     skip_without_gpu!();
 
     // Clear any env override to use dynamic threshold
-    std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+    }
 
     // Creature with two input neurons, both with low variance
     let creature = CreatureJson {
@@ -124,7 +127,10 @@ fn issue_199_high_variance_sources_scale_threshold() {
     skip_without_gpu!();
 
     // Clear any env override to use dynamic threshold
-    std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+    }
 
     // Creature with two input neurons:
     // - input-0: relatively low variance compared to the profile average
@@ -235,7 +241,10 @@ fn issue_199_env_var_override_takes_precedence() {
     skip_without_gpu!();
 
     // Set explicit threshold via env var - should override dynamic calculation
-    std::env::set_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD", "1e-3");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD", "1e-3");
+    }
 
     // Creature with high variance source
     let creature = CreatureJson {
@@ -297,7 +306,9 @@ fn issue_199_env_var_override_takes_precedence() {
         .expect("Synapse analysis should succeed");
 
     // Clean up env var
-    std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+    }
 
     // With explicit 1e-3 threshold, sources with effect_range < 1e-3 should be
     // folded into setBias. The analysis should still complete successfully.
@@ -314,7 +325,10 @@ fn issue_199_env_var_zero_disables_folding() {
     skip_without_gpu!();
 
     // Set threshold to 0 to disable folding entirely
-    std::env::set_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD", "0");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD", "0");
+    }
 
     // Creature with constant source
     let creature = CreatureJson {
@@ -372,7 +386,9 @@ fn issue_199_env_var_zero_disables_folding() {
         .expect("Synapse analysis should succeed");
 
     // Clean up env var
-    std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+    }
 
     // With threshold=0, no sources should be folded into setBias via the constant-source
     // effect threshold check. However, setBias candidates can still be created from other

@@ -138,7 +138,7 @@ fn analyse_observation_for_sentinel(
         let sentinel_indices: Vec<usize> = activations
             .iter()
             .enumerate()
-            .filter(|(_, &a)| (a - sentinel).abs() <= SENTINEL_TOLERANCE)
+            .filter(|&(_, &a)| (a - sentinel).abs() <= SENTINEL_TOLERANCE)
             .map(|(i, _)| i)
             .collect();
 

@@ -186,11 +186,7 @@ fn test_unbalanced_sign_distribution_excluded() {
     let records: Vec<DiscoverRecord> = (0..100)
         .map(|i| {
             let activation = if i < 85 {
-                if i % 3 == 0 {
-                    0.3
-                } else {
-                    0.6
-                }
+                if i % 3 == 0 { 0.3 } else { 0.6 }
             } else {
                 -0.4
             };
