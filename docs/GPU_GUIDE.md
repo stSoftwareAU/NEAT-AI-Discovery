@@ -397,3 +397,47 @@ export NEAT_AI_DISCOVERY_PRELOAD_ALL=1
 # Block size in records (default: 10000, minimum: 10)
 export NEAT_AI_DISCOVERY_BLOCK_SIZE=10000
 ```
+
+### Memory-Constrained Streaming (Issue #420)
+
+For systems with limited memory, the library provides additional adaptive behaviour:
+
+#### Memory Pressure Detection
+
+The library detects memory pressure at runtime and adapts accordingly:
+
+| Available/Total Ratio | Pressure Level | Behaviour |
+|----------------------|----------------|-----------|
+| > 30% | None | Normal operation |
+| 15-30% | Moderate | Reduced cache sizes, prefer compression |
+| 5-15% | High | Aggressive eviction, smaller blocks |
+| < 5% | Critical | Minimal caching, streaming only |
+
+#### Adaptive Block Sizing
+
+Block size is automatically tuned based on available memory when
+`NEAT_AI_DISCOVERY_BLOCK_SIZE` is not explicitly set:
+
+| Available Memory | Block Size |
+|-----------------|------------|
+| < 2GB | 1,000 records |
+| 2-4GB | 2,500 records |
+| 4-8GB | 5,000 records |
+| 8-16GB | 10,000 records (default) |
+| 16-32GB | 25,000 records |
+| > 32GB | 50,000 records |
+
+Smaller blocks reduce peak memory per cached block, allowing more blocks to be
+held simultaneously.
+
+#### Compressed In-Memory Cache (LZ4)
+
+The library includes an LZ4-compressed LRU cache that trades CPU time for memory:
+
+- Discovery records contain repetitive floating-point data that compresses well
+- Typical compression ratios are 2-4x
+- LZ4 decompression is fast (~4 GB/s on modern hardware)
+- The compressed cache is selected automatically under memory pressure
+
+This allows the library to handle 2x larger creatures within the same memory
+budget by storing more neurons in cache before eviction.

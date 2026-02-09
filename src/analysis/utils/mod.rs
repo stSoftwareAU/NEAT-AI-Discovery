@@ -15,10 +15,11 @@ pub mod platform;
 
 // Re-export key memory functions for convenience
 pub use memory::{
-    DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE, LOW_MEMORY_GPU_BATCH_SIZE, MemoryTier,
-    cap_gpu_batch_size_by_bytes, categorise_memory_tier, check_memory_for_parquet,
-    check_system_memory_requirements, detect_memory_tier, get_memory_info, get_work_queue_capacity,
-    get_work_queue_capacity_for_tier, validate_parquet_memory_requirements,
+    DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE, LOW_MEMORY_GPU_BATCH_SIZE, MemoryPressure,
+    MemoryTier, cap_gpu_batch_size_by_bytes, categorise_memory_pressure, categorise_memory_tier,
+    check_memory_for_parquet, check_system_memory_requirements, detect_memory_pressure,
+    detect_memory_tier, get_memory_info, get_work_queue_capacity, get_work_queue_capacity_for_tier,
+    validate_parquet_memory_requirements,
 };
 
 // Re-export platform setup functions

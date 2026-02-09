@@ -36,6 +36,9 @@ const DEFAULT_BLOCK_SIZE: usize = 10000;
 /// Minimum records per block (for testing with small datasets).
 const MIN_BLOCK_SIZE: usize = 10;
 
+/// Maximum records per block (prevents excessively large blocks).
+const MAX_BLOCK_SIZE: usize = 100_000;
+
 // =============================================================================
 // Configuration
 // =============================================================================
@@ -92,6 +95,44 @@ fn get_block_size() -> usize {
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_BLOCK_SIZE)
         .max(MIN_BLOCK_SIZE)
+}
+
+/// Calculate an adaptive block size based on available memory (Issue #420).
+///
+/// Smaller blocks use less memory per cached block, allowing more blocks to fit
+/// in memory and reducing peak memory usage. Larger blocks are more efficient
+/// for sequential access.
+///
+/// # Arguments
+/// * `available_memory_bytes` - Available system memory in bytes
+///
+/// # Returns
+/// Block size in records, clamped between `MIN_BLOCK_SIZE` and `MAX_BLOCK_SIZE`.
+pub fn adaptive_block_size(available_memory_bytes: u64) -> usize {
+    let available_gb = available_memory_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+
+    // Scale block size with available memory:
+    // < 2GB:   1,000 records (small blocks for tight memory)
+    // 2-4GB:   2,500 records
+    // 4-8GB:   5,000 records
+    // 8-16GB:  10,000 records (default)
+    // 16-32GB: 25,000 records
+    // > 32GB:  50,000 records
+    let block_size = if available_gb < 2.0 {
+        1_000
+    } else if available_gb < 4.0 {
+        2_500
+    } else if available_gb < 8.0 {
+        5_000
+    } else if available_gb < 16.0 {
+        10_000
+    } else if available_gb < 32.0 {
+        25_000
+    } else {
+        50_000
+    };
+
+    block_size.clamp(MIN_BLOCK_SIZE, MAX_BLOCK_SIZE)
 }
 
 // =============================================================================
