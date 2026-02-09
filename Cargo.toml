@@ -59,3 +59,7 @@ harness = false
 name = "tiered_loading"
 harness = false
 
+[[bench]]
+name = "parallel_discovery"
+harness = false
+

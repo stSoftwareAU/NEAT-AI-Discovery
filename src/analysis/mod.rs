@@ -618,809 +618,974 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
     }
 
-    // Issue #375: Discovery module dispatch using the generic pattern.
-    // Each detection module is dispatched via `run_discovery_module` which handles
-    // watchdog beats, phase timing, verbose logging, and merging into the synapse result.
+    // Issue #375 / Issue #419: Discovery module dispatch using parallel pattern.
+    // Each detection module is dispatched via `run_discovery_modules_parallel` which
+    // runs all detection phases concurrently, then merges results sequentially.
     if let Some(syn) = synapse_result.as_mut() {
         let max_candidates = input.max_synapse_candidates;
         let diversify = input.analysis_deadline_ms.is_some();
 
-        // Collect hidden neurons with their squash and bias (shared by several modules)
-        let hidden_neurons: Vec<(String, String, f32)> = input
-            .creature
-            .neurons
-            .iter()
-            .filter(|n| n.neuron_type == "hidden")
-            .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
-            .collect();
-
-        // Helper: collect records from cache for a set of UUIDs
-        let collect_records =
-            |uuids: &[String]| -> Vec<(String, Vec<crate::types::DiscoverRecord>)> {
-                uuids
-                    .iter()
-                    .filter_map(|uuid| {
-                        shared_cache
-                            .get(uuid)
-                            .ok()
-                            .map(|records| (uuid.clone(), records.as_ref().to_vec()))
-                    })
-                    .collect()
-            };
-
-        // Helper: collect records for hidden neurons specifically
-        let collect_hidden_records = || -> Vec<(String, Vec<crate::types::DiscoverRecord>)> {
-            hidden_neurons
+        // Wrap shared data in Arc for Send closures (Issue #419)
+        let creature = Arc::new(input.creature.clone());
+        let hidden_neurons: Arc<Vec<(String, String, f32)>> = Arc::new(
+            input
+                .creature
+                .neurons
                 .iter()
-                .filter_map(|(uuid, _, _)| {
-                    shared_cache
-                        .get(uuid)
-                        .ok()
-                        .map(|records| (uuid.clone(), records.as_ref().to_vec()))
-                })
-                .collect()
-        };
+                .filter(|n| n.neuron_type == "hidden")
+                .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
+                .collect(),
+        );
+
+        let mut modules: Vec<discovery_dispatch::DiscoveryModuleSpec> = Vec::with_capacity(25);
 
         // Issue #342: Saturated neuron detection
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "saturation detection",
-            "saturation_detection",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let records = collect_hidden_records();
-                let detected = saturation::detect_saturated_neurons(&hidden_neurons, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = saturation::saturated_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "saturation detection".to_string(),
+                phase_name: "saturation_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
+                        .iter()
+                        .filter_map(|(uuid, _, _)| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected = saturation::detect_saturated_neurons(&hidden, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        saturation::saturated_neurons_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #343: Bottleneck neuron detection
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "bottleneck detection",
-            "bottleneck_detection",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let records = collect_hidden_records();
-                let detected = bottleneck::detect_bottleneck_neurons(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = bottleneck::bottleneck_neurons_to_coordinated_candidates(
-                    &detected,
-                    &input.creature,
-                );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "bottleneck detection".to_string(),
+                phase_name: "bottleneck_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
+                        .iter()
+                        .filter_map(|(uuid, _, _)| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected = bottleneck::detect_bottleneck_neurons(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates = bottleneck::bottleneck_neurons_to_coordinated_candidates(
+                        &detected, &creature,
+                    );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #341: Dead neuron detection
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "dead neuron detection",
-            "dead_neuron_detection",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let records = collect_hidden_records();
-                let detected = dead_neuron::detect_dead_neurons(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = dead_neuron::dead_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "dead neuron detection".to_string(),
+                phase_name: "dead_neuron_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
+                        .iter()
+                        .filter_map(|(uuid, _, _)| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected = dead_neuron::detect_dead_neurons(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates = dead_neuron::dead_neurons_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #344: Correlated error detection
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "correlated error detection",
-            "correlated_error_detection",
-            max_candidates,
-            diversify,
-            || {
-                let output_count = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .filter(|n| n.neuron_type == "output")
-                    .count();
-                if output_count < 2 {
-                    return None;
-                }
-
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .filter(|n| n.neuron_type == "output" || n.neuron_type == "input")
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                let records = collect_records(&uuids);
-                let detected =
-                    correlated_error::detect_correlated_error_patterns(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = correlated_error::correlated_errors_to_coordinated_candidates(
-                    &detected,
-                    &input.creature,
-                );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "correlated error detection".to_string(),
+                phase_name: "correlated_error_detection",
+                detect_fn: Box::new(move || {
+                    let output_count = creature
+                        .neurons
+                        .iter()
+                        .filter(|n| n.neuron_type == "output")
+                        .count();
+                    if output_count < 2 {
+                        return None;
+                    }
+                    let uuids: Vec<String> = creature
+                        .neurons
+                        .iter()
+                        .filter(|n| n.neuron_type == "output" || n.neuron_type == "input")
+                        .map(|n| n.uuid.clone())
+                        .collect();
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected =
+                        correlated_error::detect_correlated_error_patterns(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates = correlated_error::correlated_errors_to_coordinated_candidates(
+                        &detected, &creature,
+                    );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #230: Multi-hop candidate analysis
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "multi-hop analysis",
-            "multi_hop_analysis",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                let records = collect_records(&uuids);
-                let detected = multi_hop::detect_multi_hop_candidates(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    multi_hop::multi_hop_to_coordinated_candidates(&detected, &input.creature);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "multi-hop analysis".to_string(),
+                phase_name: "multi_hop_analysis",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let uuids: Vec<String> =
+                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected = multi_hop::detect_multi_hop_candidates(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        multi_hop::multi_hop_to_coordinated_candidates(&detected, &creature);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #358: Oscillating neuron detection
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "oscillating neuron detection",
-            "oscillating_neuron_detection",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let records = collect_hidden_records();
-                let detected =
-                    oscillating_neuron::detect_oscillating_neurons(&hidden_neurons, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    oscillating_neuron::oscillating_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "oscillating neuron detection".to_string(),
+                phase_name: "oscillating_neuron_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
+                        .iter()
+                        .filter_map(|(uuid, _, _)| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected =
+                        oscillating_neuron::detect_oscillating_neurons(&hidden, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        oscillating_neuron::oscillating_neurons_to_coordinated_candidates(
+                            &detected,
+                        );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #359: Dormant synapse detection
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "dormant synapse detection",
-            "dormant_synapse_detection",
-            max_candidates,
-            diversify,
-            || {
-                let source_uuids: Vec<String> = input
-                    .creature
-                    .synapses
-                    .iter()
-                    .map(|s| s.from_uuid.clone())
-                    .collect::<std::collections::HashSet<_>>()
-                    .into_iter()
-                    .collect();
-                let records = collect_records(&source_uuids);
-                let detected = dormant_synapse::detect_dormant_synapses(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    dormant_synapse::dormant_synapses_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "dormant synapse detection".to_string(),
+                phase_name: "dormant_synapse_detection",
+                detect_fn: Box::new(move || {
+                    let source_uuids: Vec<String> = creature
+                        .synapses
+                        .iter()
+                        .map(|s| s.from_uuid.clone())
+                        .collect::<std::collections::HashSet<_>>()
+                        .into_iter()
+                        .collect();
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = source_uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected = dormant_synapse::detect_dormant_synapses(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        dormant_synapse::dormant_synapses_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #360: Opposing synapse detection
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "opposing synapse detection",
-            "opposing_synapse_detection",
-            max_candidates,
-            diversify,
-            || {
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                let records = collect_records(&uuids);
-                let detected =
-                    opposing_synapse::detect_opposing_synapses(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    opposing_synapse::opposing_synapses_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "opposing synapse detection".to_string(),
+                phase_name: "opposing_synapse_detection",
+                detect_fn: Box::new(move || {
+                    let uuids: Vec<String> =
+                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected = opposing_synapse::detect_opposing_synapses(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        opposing_synapse::opposing_synapses_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #361: Output bias drift detection
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "output bias drift detection",
-            "output_bias_drift_detection",
-            max_candidates,
-            diversify,
-            || {
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .filter(|n| n.neuron_type == "output")
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                let records = collect_records(&uuids);
-                let detected =
-                    output_bias_drift::detect_output_bias_drift(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    output_bias_drift::output_bias_drift_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "output bias drift detection".to_string(),
+                phase_name: "output_bias_drift_detection",
+                detect_fn: Box::new(move || {
+                    let uuids: Vec<String> = creature
+                        .neurons
+                        .iter()
+                        .filter(|n| n.neuron_type == "output")
+                        .map(|n| n.uuid.clone())
+                        .collect();
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected = output_bias_drift::detect_output_bias_drift(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        output_bias_drift::output_bias_drift_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #395: Bounded range detection
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "bounded range detection",
-            "bounded_range_detection",
-            max_candidates,
-            diversify,
-            || {
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .filter(|n| n.neuron_type == "input" || n.neuron_type == "hidden")
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                if uuids.is_empty() {
-                    return None;
-                }
-                let records = collect_records(&uuids);
-                let detected =
-                    bounded_range::detect_bounded_range_neurons(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = bounded_range::bounded_range_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "bounded range detection".to_string(),
+                phase_name: "bounded_range_detection",
+                detect_fn: Box::new(move || {
+                    let uuids: Vec<String> = creature
+                        .neurons
+                        .iter()
+                        .filter(|n| n.neuron_type == "input" || n.neuron_type == "hidden")
+                        .map(|n| n.uuid.clone())
+                        .collect();
+                    if uuids.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected = bounded_range::detect_bounded_range_neurons(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        bounded_range::bounded_range_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #400: Sentinel value gating
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "sentinel value gating",
-            "sentinel_value_gating",
-            max_candidates,
-            diversify,
-            || {
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .filter(|n| n.neuron_type == "input")
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                if uuids.is_empty() {
-                    return None;
-                }
-                let records = collect_records(&uuids);
-                let detected =
-                    sentinel_gating::detect_sentinel_gating_candidates(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = sentinel_gating::sentinel_gating_to_coordinated_candidates(
-                    &detected,
-                    &input.creature,
-                );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "sentinel value gating".to_string(),
+                phase_name: "sentinel_value_gating",
+                detect_fn: Box::new(move || {
+                    let uuids: Vec<String> = creature
+                        .neurons
+                        .iter()
+                        .filter(|n| n.neuron_type == "input")
+                        .map(|n| n.uuid.clone())
+                        .collect();
+                    if uuids.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected =
+                        sentinel_gating::detect_sentinel_gating_candidates(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates = sentinel_gating::sentinel_gating_to_coordinated_candidates(
+                        &detected, &creature,
+                    );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #399: Restricted activation range detection
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "restricted range detection",
-            "restricted_range_detection",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let records = collect_hidden_records();
-                let config = restricted_range::RestrictedRangeConfig::default();
-                let detected = restricted_range::detect_restricted_range_neurons(
-                    &input.creature,
-                    &records,
-                    &config,
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = restricted_range::restricted_range_to_coordinated_candidates(
-                    &detected,
-                    &input.creature,
-                );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "restricted range detection".to_string(),
+                phase_name: "restricted_range_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
+                        .iter()
+                        .filter_map(|(uuid, _, _)| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let config = restricted_range::RestrictedRangeConfig::default();
+                    let detected = restricted_range::detect_restricted_range_neurons(
+                        &creature, &records, &config,
+                    );
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates = restricted_range::restricted_range_to_coordinated_candidates(
+                        &detected, &creature,
+                    );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #401: Hidden neuron operating-point analysis
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "operating point analysis",
-            "operating_point_analysis",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let records = collect_hidden_records();
-                let config = operating_point::OperatingPointConfig::default();
-                let detected = operating_point::detect_operating_point_issues(
-                    &input.creature,
-                    &records,
-                    &config,
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = operating_point::operating_point_to_coordinated_candidates(
-                    &detected,
-                    &input.creature,
-                );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "operating point analysis".to_string(),
+                phase_name: "operating_point_analysis",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
+                        .iter()
+                        .filter_map(|(uuid, _, _)| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let config = operating_point::OperatingPointConfig::default();
+                    let detected = operating_point::detect_operating_point_issues(
+                        &creature, &records, &config,
+                    );
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates = operating_point::operating_point_to_coordinated_candidates(
+                        &detected, &creature,
+                    );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #441: Unbounded activation capping detection
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "unbounded capping detection",
-            "unbounded_capping_detection",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let records = collect_hidden_records();
-                let detected = unbounded_capping::detect_unbounded_capping_candidates(
-                    &hidden_neurons,
-                    &records,
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    unbounded_capping::unbounded_capping_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "unbounded capping detection".to_string(),
+                phase_name: "unbounded_capping_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
+                        .iter()
+                        .filter_map(|(uuid, _, _)| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected =
+                        unbounded_capping::detect_unbounded_capping_candidates(&hidden, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        unbounded_capping::unbounded_capping_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #434: Noise-to-signal ratio detection for neurons
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "noisy neuron detection",
-            "noisy_neuron_detection",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let records = collect_hidden_records();
-                let detected = noise_signal::detect_noisy_neurons(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = noise_signal::noisy_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "noisy neuron detection".to_string(),
+                phase_name: "noisy_neuron_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
+                        .iter()
+                        .filter_map(|(uuid, _, _)| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected = noise_signal::detect_noisy_neurons(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        noise_signal::noisy_neurons_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #434: Noise-to-signal ratio detection for synapses
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "noisy synapse detection",
-            "noisy_synapse_detection",
-            max_candidates,
-            diversify,
-            || {
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                let records = collect_records(&uuids);
-                let detected = noise_signal::detect_noisy_synapses(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = noise_signal::noisy_synapses_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "noisy synapse detection".to_string(),
+                phase_name: "noisy_synapse_detection",
+                detect_fn: Box::new(move || {
+                    let uuids: Vec<String> =
+                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected = noise_signal::detect_noisy_synapses(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        noise_signal::noisy_synapses_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #435: Input sensitivity analysis for dominant inputs
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "dominant input detection",
-            "dominant_input_detection",
-            max_candidates,
-            diversify,
-            || {
-                let input_uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .filter(|n| n.neuron_type == "input" || n.neuron_type == "output")
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                if input_uuids.is_empty() {
-                    return None;
-                }
-                let records = collect_records(&input_uuids);
-                let config = input_sensitivity::InputSensitivityConfig::default();
-                let detected =
-                    input_sensitivity::detect_dominant_inputs(&input.creature, &records, &config);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    input_sensitivity::dominant_inputs_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "dominant input detection".to_string(),
+                phase_name: "dominant_input_detection",
+                detect_fn: Box::new(move || {
+                    let input_uuids: Vec<String> = creature
+                        .neurons
+                        .iter()
+                        .filter(|n| n.neuron_type == "input" || n.neuron_type == "output")
+                        .map(|n| n.uuid.clone())
+                        .collect();
+                    if input_uuids.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = input_uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let config = input_sensitivity::InputSensitivityConfig::default();
+                    let detected =
+                        input_sensitivity::detect_dominant_inputs(&creature, &records, &config);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        input_sensitivity::dominant_inputs_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #435: Input sensitivity analysis for threshold effects
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "threshold effect detection",
-            "threshold_effect_detection",
-            max_candidates,
-            diversify,
-            || {
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                let records = collect_records(&uuids);
-                let config = input_sensitivity::InputSensitivityConfig::default();
-                let detected =
-                    input_sensitivity::detect_threshold_effects(&input.creature, &records, &config);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    input_sensitivity::threshold_effects_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "threshold effect detection".to_string(),
+                phase_name: "threshold_effect_detection",
+                detect_fn: Box::new(move || {
+                    let uuids: Vec<String> =
+                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let config = input_sensitivity::InputSensitivityConfig::default();
+                    let detected =
+                        input_sensitivity::detect_threshold_effects(&creature, &records, &config);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        input_sensitivity::threshold_effects_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #437: Weight coherence validation - incoherent weight ratios
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "weight coherence ratio detection",
-            "weight_coherence_ratio_detection",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let records = collect_hidden_records();
-                let config = weight_coherence::WeightCoherenceConfig::default();
-                let detected = weight_coherence::detect_incoherent_weight_ratios(
-                    &input.creature,
-                    &records,
-                    &config,
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    weight_coherence::incoherent_ratios_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "weight coherence ratio detection".to_string(),
+                phase_name: "weight_coherence_ratio_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
+                        .iter()
+                        .filter_map(|(uuid, _, _)| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let config = weight_coherence::WeightCoherenceConfig::default();
+                    let detected = weight_coherence::detect_incoherent_weight_ratios(
+                        &creature, &records, &config,
+                    );
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        weight_coherence::incoherent_ratios_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #437: Weight coherence validation - near-constant output paths
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "near-constant path detection",
-            "near_constant_path_detection",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let records = collect_hidden_records();
-                let config = weight_coherence::WeightCoherenceConfig::default();
-                let detected = weight_coherence::detect_near_constant_paths(
-                    &input.creature,
-                    &records,
-                    &config,
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    weight_coherence::near_constant_paths_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "near-constant path detection".to_string(),
+                phase_name: "near_constant_path_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
+                        .iter()
+                        .filter_map(|(uuid, _, _)| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let config = weight_coherence::WeightCoherenceConfig::default();
+                    let detected =
+                        weight_coherence::detect_near_constant_paths(&creature, &records, &config);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        weight_coherence::near_constant_paths_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #437: Weight coherence validation - symmetric weight cancellation
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "symmetric cancellation detection",
-            "symmetric_cancellation_detection",
-            max_candidates,
-            diversify,
-            || {
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                let records = collect_records(&uuids);
-                let config = weight_coherence::WeightCoherenceConfig::default();
-                let detected = weight_coherence::detect_symmetric_cancellation(
-                    &input.creature,
-                    &records,
-                    &config,
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    weight_coherence::symmetric_cancellation_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "symmetric cancellation detection".to_string(),
+                phase_name: "symmetric_cancellation_detection",
+                detect_fn: Box::new(move || {
+                    let uuids: Vec<String> =
+                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let config = weight_coherence::WeightCoherenceConfig::default();
+                    let detected = weight_coherence::detect_symmetric_cancellation(
+                        &creature, &records, &config,
+                    );
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        weight_coherence::symmetric_cancellation_to_coordinated_candidates(
+                            &detected,
+                        );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #417: Proactive activation function recommendation
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "activation recommendation",
-            "activation_recommendation",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let records = collect_hidden_records();
-                let mut recommendations = Vec::new();
-                for (uuid, squash, _bias) in &hidden_neurons {
-                    if let Some(neuron_records) = records.iter().find(|(u, _)| u == uuid) {
-                        if let Some(rec) = activation_recommendation::recommend_activation_function(
-                            &neuron_records.1,
-                            squash,
-                        ) {
-                            recommendations.push(rec);
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "activation recommendation".to_string(),
+                phase_name: "activation_recommendation",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
+                        .iter()
+                        .filter_map(|(uuid, _, _)| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let mut recommendations = Vec::new();
+                    for (uuid, squash, _bias) in hidden.iter() {
+                        if let Some(neuron_records) = records.iter().find(|(u, _)| u == uuid) {
+                            if let Some(rec) =
+                                activation_recommendation::recommend_activation_function(
+                                    &neuron_records.1,
+                                    squash,
+                                )
+                            {
+                                recommendations.push(rec);
+                            }
                         }
                     }
-                }
-                if recommendations.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    activation_recommendation::recommendations_to_coordinated_candidates(
-                        &recommendations,
-                    );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: recommendations.len(),
-                    candidates,
-                })
-            },
-        );
+                    if recommendations.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        activation_recommendation::recommendations_to_coordinated_candidates(
+                            &recommendations,
+                        );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: recommendations.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #422: Topology-aware network structure analysis
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "topology structure analysis",
-            "topology_structure_analysis",
-            max_candidates,
-            diversify,
-            || {
-                if hidden_neurons.is_empty() {
-                    return None;
-                }
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                let records = collect_records(&uuids);
-                let detected = topology::detect_topology_issues(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    topology::topology_issues_to_coordinated_candidates(&detected, &input.creature);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "topology structure analysis".to_string(),
+                phase_name: "topology_structure_analysis",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let uuids: Vec<String> =
+                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    let detected = topology::detect_topology_issues(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        topology::topology_issues_to_coordinated_candidates(&detected, &creature);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #423: Sample-weighted discovery — prioritise high-error samples
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "sample-weighted discovery",
-            "sample_weighted_discovery",
-            max_candidates,
-            diversify,
-            || {
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                let records = collect_records(&uuids);
-                if records.is_empty() {
-                    return None;
-                }
-                let config = sample_weighted::SampleWeightedConfig::default();
-                let detected = sample_weighted::detect_high_error_neurons(&records, &config);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    sample_weighted::high_error_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "sample-weighted discovery".to_string(),
+                phase_name: "sample_weighted_discovery",
+                detect_fn: Box::new(move || {
+                    let uuids: Vec<String> =
+                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    if records.is_empty() {
+                        return None;
+                    }
+                    let config = sample_weighted::SampleWeightedConfig::default();
+                    let detected = sample_weighted::detect_high_error_neurons(&records, &config);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        sample_weighted::high_error_neurons_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
 
         // Issue #421: Gradient-based synapse adjustment — directional improvement hints
-        discovery_dispatch::run_discovery_module(
-            syn,
-            "gradient-based discovery",
-            "gradient_based_discovery",
-            max_candidates,
-            diversify,
-            || {
-                let uuids: Vec<String> = input
-                    .creature
-                    .neurons
-                    .iter()
-                    .map(|n| n.uuid.clone())
-                    .collect();
-                let records = collect_records(&uuids);
-                if records.is_empty() {
-                    return None;
-                }
-                let detected =
-                    gradient_discovery::detect_gradient_candidates(&input.creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = gradient_discovery::gradient_candidates_to_coordinated(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            },
-        );
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "gradient-based discovery".to_string(),
+                phase_name: "gradient_based_discovery",
+                detect_fn: Box::new(move || {
+                    let uuids: Vec<String> =
+                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
+                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
+                        .iter()
+                        .filter_map(|uuid| {
+                            cache
+                                .get(uuid)
+                                .ok()
+                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                        })
+                        .collect();
+                    if records.is_empty() {
+                        return None;
+                    }
+                    let detected =
+                        gradient_discovery::detect_gradient_candidates(&creature, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        gradient_discovery::gradient_candidates_to_coordinated(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
+
+        // Issue #419: Dispatch all detection modules in parallel, merge sequentially.
+        discovery_dispatch::run_discovery_modules_parallel(syn, modules, max_candidates, diversify);
     }
 
     // Issue #224: Candidate clustering to reduce redundant ablation tests.
