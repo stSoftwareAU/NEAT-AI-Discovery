@@ -1538,7 +1538,7 @@ pub fn export_visualisation_snapshot_internal(input_json: &str) -> Result<String
 /// - input_json is a valid null-terminated C string
 /// - The returned pointer is freed using free_discovery_result
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
     use std::panic;
@@ -1649,7 +1649,7 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
 /// }
 /// ```
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn start_discovery_session(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
@@ -1747,7 +1747,7 @@ pub extern "C" fn start_discovery_session(
 /// }
 /// ```
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn append_discovery_records(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
@@ -1845,7 +1845,7 @@ pub extern "C" fn append_discovery_records(
 /// }
 /// ```
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn finish_discovery_session(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
@@ -1941,7 +1941,7 @@ pub extern "C" fn finish_discovery_session(
 /// }
 /// ```
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn cancel_discovery_session(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
@@ -2011,7 +2011,7 @@ pub extern "C" fn cancel_discovery_session(
 }
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn merge_discovery_parquet(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
@@ -2083,7 +2083,7 @@ pub extern "C" fn merge_discovery_parquet(
 }
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
     use std::panic;
@@ -2159,7 +2159,7 @@ pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mu
 }
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
     use std::panic;
@@ -2241,7 +2241,7 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
     use std::ffi::CString;
     use std::panic;
@@ -2306,7 +2306,7 @@ pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
 ///
 /// # Safety
 /// The returned pointer must be freed using free_discovery_result
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn get_library_version() -> *mut std::ffi::c_char {
     use std::ffi::CString;
     use std::panic;
@@ -2457,7 +2457,7 @@ pub fn read_discovery_records(input_json: &str) -> Result<String> {
 /// - input_json is a valid null-terminated C string
 /// - The returned pointer is freed using free_discovery_result
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn read_discovery_records_ffi(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
@@ -2557,7 +2557,7 @@ pub extern "C" fn read_discovery_records_ffi(
 /// }
 /// ```
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn export_visualisation_snapshot(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
@@ -2626,7 +2626,7 @@ pub extern "C" fn export_visualisation_snapshot(
 }
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn free_discovery_result(ptr: *mut std::ffi::c_char) {
     use std::ffi::CString;
     use std::panic;

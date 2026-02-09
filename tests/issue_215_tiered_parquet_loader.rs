@@ -59,7 +59,7 @@ fn create_test_parquet(
 /// Test that LoadingStrategy can be determined based on file size and available memory.
 #[test]
 fn loading_strategy_selection_preload_all_for_small_files() {
-    use neat_ai_discovery::analysis::cache::{select_loading_strategy, LoadingStrategy};
+    use neat_ai_discovery::analysis::cache::{LoadingStrategy, select_loading_strategy};
 
     // Small file: 10MB file, 8GB available memory
     // Estimated expanded = 10MB * 3 = 30MB, which is < 2GB (available_memory / 4)
@@ -77,7 +77,7 @@ fn loading_strategy_selection_preload_all_for_small_files() {
 /// Test that LruCache strategy is selected for medium-sized files.
 #[test]
 fn loading_strategy_selection_lru_cache_for_medium_files() {
-    use neat_ai_discovery::analysis::cache::{select_loading_strategy, LoadingStrategy};
+    use neat_ai_discovery::analysis::cache::{LoadingStrategy, select_loading_strategy};
 
     // Medium file: 1GB file, 8GB available memory
     // Estimated expanded = 1GB * 3 = 3GB
@@ -96,7 +96,7 @@ fn loading_strategy_selection_lru_cache_for_medium_files() {
 /// Test that Streaming strategy is selected for very large files.
 #[test]
 fn loading_strategy_selection_streaming_for_large_files() {
-    use neat_ai_discovery::analysis::cache::{select_loading_strategy, LoadingStrategy};
+    use neat_ai_discovery::analysis::cache::{LoadingStrategy, select_loading_strategy};
 
     // Large file: 4GB file, 8GB available memory
     // Estimated expanded = 4GB * 3 = 12GB, which is > 8GB available
@@ -114,7 +114,7 @@ fn loading_strategy_selection_streaming_for_large_files() {
 /// Test that LruCache capacity is set appropriately based on available memory.
 #[test]
 fn lru_cache_capacity_scales_with_memory() {
-    use neat_ai_discovery::analysis::cache::{select_loading_strategy, LoadingStrategy};
+    use neat_ai_discovery::analysis::cache::{LoadingStrategy, select_loading_strategy};
 
     // 2GB file with 16GB available memory
     // Estimated expanded = 2GB * 3 = 6GB

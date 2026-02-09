@@ -358,7 +358,7 @@ fn test_count_improved_samples_uses_linear_for_other_activations() {
 
     let incoming_weight = 1.0;
     let outgoing_weight = 0.5; // contribution = 0.25
-                               // Linear: new_error = 0.3 - 0.25 = 0.05, |new_error| < |old_error| = 0.3, IMPROVED
+    // Linear: new_error = 0.3 - 0.25 = 0.05, |new_error| < |old_error| = 0.3, IMPROVED
 
     // With TANH (not HARD_TANH), should use linear model (bias=0)
     let (improved_count, _) = count_improved_samples(

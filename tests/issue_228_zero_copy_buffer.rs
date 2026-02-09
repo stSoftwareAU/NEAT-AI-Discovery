@@ -18,7 +18,7 @@
 mod common;
 
 use neat_ai_discovery::analysis::{
-    analyze_synapses, supports_unified_memory, GpuAnalyzer, ZeroCopyBufferConfig,
+    GpuAnalyzer, ZeroCopyBufferConfig, analyze_synapses, supports_unified_memory,
 };
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -110,10 +110,15 @@ fn zero_copy_config_default() {
 fn zero_copy_config_env_override() {
     skip_without_gpu!();
 
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
     // Test enabling via env var
-    std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
+    }
     let config = ZeroCopyBufferConfig::from_env();
-    std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+    }
 
     assert!(
         config.force_enabled().is_some(),
@@ -121,9 +126,13 @@ fn zero_copy_config_env_override() {
     );
 
     // Test disabling via env var
-    std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "0");
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "0");
+    }
     let config = ZeroCopyBufferConfig::from_env();
-    std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+    }
 
     assert!(
         config.force_enabled() == Some(false),
@@ -183,8 +192,11 @@ fn zero_copy_produces_correct_results() {
         synapses: Vec::new(),
     };
 
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
     // Run analysis with zero-copy enabled (if supported)
-    std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
+    }
     let input = AnalyzeSynapsesInput {
         parquet_file: parquet_file.clone(),
         creature: creature.clone(),
@@ -195,10 +207,14 @@ fn zero_copy_produces_correct_results() {
     };
     let result_zero_copy =
         analyze_synapses(&input).expect("Analysis with zero-copy should succeed");
-    std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+    }
 
     // Run analysis with zero-copy disabled
-    std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "0");
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "0");
+    }
     let input = AnalyzeSynapsesInput {
         parquet_file,
         creature,
@@ -208,7 +224,9 @@ fn zero_copy_produces_correct_results() {
         random_seed: Some(42),
     };
     let result_copy = analyze_synapses(&input).expect("Analysis with copy should succeed");
-    std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+    }
 
     // Results should be equivalent
     assert_eq!(
@@ -371,8 +389,11 @@ fn zero_copy_no_data_corruption() {
         synapses: Vec::new(),
     };
 
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
     // Enable zero-copy
-    std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
+    }
 
     // Run multiple iterations with different seeds
     let mut all_results = Vec::new();
@@ -390,7 +411,9 @@ fn zero_copy_no_data_corruption() {
         all_results.push(result);
     }
 
-    std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
+    }
 
     // Verify results are consistent and sensible
     for (i, result) in all_results.iter().enumerate() {

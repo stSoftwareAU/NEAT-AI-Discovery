@@ -5,7 +5,7 @@
 //! 2. Focus neurons are randomised for repeated runs with timeouts
 //! 3. Visible logging is provided when timeout occurs
 
-use neat_ai_discovery::analysis::{analyze_neurons, analyze_synapses, GpuAnalyzer};
+use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{

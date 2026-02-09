@@ -13,8 +13,8 @@
 //! 5. Verify with network that has natural fan-in (should not flag)
 
 use neat_ai_discovery::analysis::bottleneck::{
-    bottleneck_neurons_to_coordinated_candidates, detect_bottleneck_neurons,
-    BottleneckNeuronCandidate,
+    BottleneckNeuronCandidate, bottleneck_neurons_to_coordinated_candidates,
+    detect_bottleneck_neurons,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};

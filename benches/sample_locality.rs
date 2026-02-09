@@ -3,8 +3,8 @@
 //! This benchmark measures the performance improvement from batching sources
 //! that share the same observation indices.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use neat_ai_discovery::analysis::{analyze_synapses, GpuAnalyzer};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
 use tempfile::tempdir;

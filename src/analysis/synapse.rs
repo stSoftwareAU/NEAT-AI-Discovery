@@ -21,31 +21,31 @@
 use crate::intern::NeuronIndex;
 use crate::types::DiscoverRecord;
 use crate::{AnalyzeSynapsesInput, CandidateNeuronJson, CandidateSynapseJson, SynapseJson};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 // Import shared types from the new module structure
 use crate::analysis::shared::{AnalyzeSynapsesResult, TimingScope};
 
 // Import activation functions from the dedicated activation module (Issue #266, #238)
 use crate::analysis::activation::{
-    absolute_activation, activation_name_to_gpu_id, arctan_activation, bent_identity_activation,
-    bipolar_activation, clipped_activation, elu_activation, gelu_activation,
-    get_target_simulation_fn, get_target_simulation_mode, hard_tanh_activation,
-    has_sufficient_output_variance, identity_activation, is_saturating_target, logistic_activation,
-    mish_activation, relu6_activation, softplus_activation, softsign_activation, tanh_activation,
-    ActivationCandidateSpec, TargetSimulationMode,
+    ActivationCandidateSpec, TargetSimulationMode, absolute_activation, activation_name_to_gpu_id,
+    arctan_activation, bent_identity_activation, bipolar_activation, clipped_activation,
+    elu_activation, gelu_activation, get_target_simulation_fn, get_target_simulation_mode,
+    hard_tanh_activation, has_sufficient_output_variance, identity_activation,
+    is_saturating_target, logistic_activation, mish_activation, relu6_activation,
+    softplus_activation, softsign_activation, tanh_activation,
 };
 
 // Import deadline handling and logging utilities from dedicated module (Issue #268)
 use crate::analysis::utils::{
-    build_deadline, deadline_passed, log_analysis_start, log_analysis_timeout,
+    OrderedNeuron, build_deadline, deadline_passed, log_analysis_start, log_analysis_timeout,
     order_eligible_sources, order_focus_targets, parse_input_index, shuffle_within_top_k,
-    verbose_enabled, OrderedNeuron,
+    verbose_enabled,
 };
 
 // Import sample data structures from dedicated module (Issue #269)
 use crate::analysis::samples::{
-    compute_source_std_dev, get_constant_source_threshold, HelpfulSample, NeuronStats, EPSILON,
+    EPSILON, HelpfulSample, NeuronStats, compute_source_std_dev, get_constant_source_threshold,
 };
 
 // Import confidence interval calculations (Issue #194)
@@ -53,29 +53,29 @@ use crate::analysis::confidence::compute_confidence_metrics;
 
 // Import weight calculation functions from dedicated module (Issue #270)
 use crate::analysis::weights::{
-    calculate_optimal_bias, calculate_optimal_identity_outgoing_and_bias,
+    MAX_OUTGOING_WEIGHT, calculate_optimal_bias, calculate_optimal_identity_outgoing_and_bias,
     calculate_optimal_outgoing_weight, clamp_weight_update_delta,
-    coordinated_structural_activation_delta, MAX_OUTGOING_WEIGHT,
+    coordinated_structural_activation_delta,
 };
 
 // Import diagnostics and rejection tracking from dedicated module (Issue #271)
 use crate::analysis::diagnostics::{
-    compute_impact_scores_for_discounting, require_unique_focus, TargetDiagnostics, TargetMap,
-    ThresholdContext,
+    TargetDiagnostics, TargetMap, ThresholdContext, compute_impact_scores_for_discounting,
+    require_unique_focus,
 };
 
 // Import epistatic pair detection module (Issue #202), synergistic discovery (Issue #189),
 // and interference filtering (Issue #415)
 use crate::analysis::epistatic::{
-    build_source_contribution, detect_epistatic_pairs, detect_synergistic_candidates,
-    epistatic_pairs_to_coordinated_candidates, filter_interfering_epistatic_pairs,
-    filter_interfering_synergistic_candidates, synergistic_to_coordinated_candidates,
-    SourceContribution,
+    SourceContribution, build_source_contribution, detect_epistatic_pairs,
+    detect_synergistic_candidates, epistatic_pairs_to_coordinated_candidates,
+    filter_interfering_epistatic_pairs, filter_interfering_synergistic_candidates,
+    synergistic_to_coordinated_candidates,
 };
 
 // Import redundant path pruning module (Issue #164)
 use crate::analysis::redundant_path::{
-    detect_redundant_paths, redundant_paths_to_coordinated_candidates, ExistingPathContribution,
+    ExistingPathContribution, detect_redundant_paths, redundant_paths_to_coordinated_candidates,
 };
 
 // Import GPU infrastructure from dedicated modules (Issue #272, #273, #274)
@@ -2244,13 +2244,13 @@ pub(crate) fn analyze_synapses_with_cache_impl(
 
         for input_idx in 0..max_samples {
             let input_uuid = format!("input-{input_idx}");
-            if let Ok(records) = cache.get(&input_uuid) {
-                if records.len() >= 2 {
-                    let std_dev = compute_source_std_dev(&records);
-                    if std_dev.is_finite() {
-                        std_dev_sum += std_dev as f64;
-                        std_dev_count += 1;
-                    }
+            if let Ok(records) = cache.get(&input_uuid)
+                && records.len() >= 2
+            {
+                let std_dev = compute_source_std_dev(&records);
+                if std_dev.is_finite() {
+                    std_dev_sum += std_dev as f64;
+                    std_dev_count += 1;
                 }
             }
         }
@@ -3539,12 +3539,12 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         log_analysis_timeout("synapse", completed, total_focus_count);
     }
 
-    if helpful_results.is_empty() {
-        if let Some(candidate) = helpful_fallback.take() {
-            // Issue #216: Direct method call - no lock needed with DashMap-based diagnostics
-            diagnostics.mark_candidate_selected(&candidate.to_neuron_uuid);
-            helpful_results.push(candidate);
-        }
+    if helpful_results.is_empty()
+        && let Some(candidate) = helpful_fallback.take()
+    {
+        // Issue #216: Direct method call - no lock needed with DashMap-based diagnostics
+        diagnostics.mark_candidate_selected(&candidate.to_neuron_uuid);
+        helpful_results.push(candidate);
     }
 
     // Coordinated structural discovery (7-Jan-2026): collapse a simple hidden neuron into a single synapse.

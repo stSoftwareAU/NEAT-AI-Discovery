@@ -1102,15 +1102,15 @@ fn analyze_synapses_accepts_positive_improvements_below_threshold() {
 
         if let Some(summary) = no_candidate {
             // If there's a detail, check that it's not a positive improvement below threshold
-            if let Some(detail) = &summary.detail {
-                if let Some(improvement) = detail.expected_improvement {
-                    if improvement > 0.0 && improvement <= 0.1 {
-                        panic!(
-                            "Positive improvement {:.4} below threshold 0.1 should be accepted as candidate, but was rejected with reason: {:?}",
-                            improvement, summary.reason
-                        );
-                    }
-                }
+            if let Some(detail) = &summary.detail
+                && let Some(improvement) = detail.expected_improvement
+                && improvement > 0.0
+                && improvement <= 0.1
+            {
+                panic!(
+                    "Positive improvement {:.4} below threshold 0.1 should be accepted as candidate, but was rejected with reason: {:?}",
+                    improvement, summary.reason
+                );
             }
         }
     } else {

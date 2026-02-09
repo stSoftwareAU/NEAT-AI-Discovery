@@ -13,7 +13,7 @@
 
 use super::verbose_enabled;
 use rand::seq::SliceRandom;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::time::{Duration, SystemTime};
@@ -190,27 +190,26 @@ pub fn log_analysis_start(
     let deadline_secs = deadline_duration_ms as f64 / 1000.0;
 
     // Debug: Log the raw deadline_ms value if verbose to help diagnose timeout issues
-    if verbose_enabled() {
-        if let Some(raw_ms) = deadline_ms {
-            let now_ms = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            if raw_ms >= YEAR_2000_MS {
-                // Absolute timestamp
-                let elapsed_secs =
-                    now_ms.saturating_sub(raw_ms.saturating_sub(deadline_duration_ms)) as f64
-                        / 1000.0;
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] {analysis_type} deadline_ms={raw_ms} (absolute timestamp), \
-                     {elapsed_secs:.1}s elapsed since timeout was set, {deadline_secs:.1}s remaining"
-                );
-            } else {
-                // Relative duration
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] {analysis_type} deadline_ms={raw_ms} (relative duration)"
-                );
-            }
+    if verbose_enabled()
+        && let Some(raw_ms) = deadline_ms
+    {
+        let now_ms = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        if raw_ms >= YEAR_2000_MS {
+            // Absolute timestamp
+            let elapsed_secs =
+                now_ms.saturating_sub(raw_ms.saturating_sub(deadline_duration_ms)) as f64 / 1000.0;
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] {analysis_type} deadline_ms={raw_ms} (absolute timestamp), \
+                 {elapsed_secs:.1}s elapsed since timeout was set, {deadline_secs:.1}s remaining"
+            );
+        } else {
+            // Relative duration
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] {analysis_type} deadline_ms={raw_ms} (relative duration)"
+            );
         }
     }
 
@@ -412,42 +411,42 @@ pub fn order_eligible_sources(
     // Issue #182: When NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1 is set,
     // prioritise input neurons that have NO existing outgoing synapses.
     // These "unused observations" are moved to the front of the list.
-    if focus_unused_observations_from_env() {
-        if let Some(used) = used_inputs {
-            // Partition: unused inputs first, then used inputs, then non-inputs
-            let (mut unused_inputs, mut others): (Vec<_>, Vec<_>) = eligible_sources
-                .drain(..)
-                .partition(|n| parse_input_index(&n.uuid).is_some() && !used.contains(&n.uuid));
+    if focus_unused_observations_from_env()
+        && let Some(used) = used_inputs
+    {
+        // Partition: unused inputs first, then used inputs, then non-inputs
+        let (mut unused_inputs, mut others): (Vec<_>, Vec<_>) = eligible_sources
+            .drain(..)
+            .partition(|n| parse_input_index(&n.uuid).is_some() && !used.contains(&n.uuid));
 
-            // Issue #467: Within "others", still put used inputs before hidden neurons
-            let (mut used_inputs_vec, mut non_inputs): (Vec<_>, Vec<_>) = others
-                .drain(..)
-                .partition(|n| parse_input_index(&n.uuid).is_some());
+        // Issue #467: Within "others", still put used inputs before hidden neurons
+        let (mut used_inputs_vec, mut non_inputs): (Vec<_>, Vec<_>) = others
+            .drain(..)
+            .partition(|n| parse_input_index(&n.uuid).is_some());
 
-            // Log when focusing on unused observations
-            if verbose_enabled() && !unused_inputs.is_empty() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Focus unused observations: prioritising {} unused inputs over {} used inputs and {} other sources",
-                    unused_inputs.len(),
-                    used_inputs_vec.len(),
-                    non_inputs.len()
-                );
-            }
-
-            // Shuffle each partition separately, then concatenate
-            shuffle_slice(&mut unused_inputs, seed, &format!("{context}:unused"));
-            shuffle_slice(
-                &mut used_inputs_vec,
-                seed,
-                &format!("{context}:used_inputs"),
+        // Log when focusing on unused observations
+        if verbose_enabled() && !unused_inputs.is_empty() {
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Focus unused observations: prioritising {} unused inputs over {} used inputs and {} other sources",
+                unused_inputs.len(),
+                used_inputs_vec.len(),
+                non_inputs.len()
             );
-            shuffle_slice(&mut non_inputs, seed, &format!("{context}:non_inputs"));
-
-            eligible_sources.extend(unused_inputs);
-            eligible_sources.extend(used_inputs_vec);
-            eligible_sources.extend(non_inputs);
-            return;
         }
+
+        // Shuffle each partition separately, then concatenate
+        shuffle_slice(&mut unused_inputs, seed, &format!("{context}:unused"));
+        shuffle_slice(
+            &mut used_inputs_vec,
+            seed,
+            &format!("{context}:used_inputs"),
+        );
+        shuffle_slice(&mut non_inputs, seed, &format!("{context}:non_inputs"));
+
+        eligible_sources.extend(unused_inputs);
+        eligible_sources.extend(used_inputs_vec);
+        eligible_sources.extend(non_inputs);
+        return;
     }
 
     // Issue #467: Partition into input neurons and non-input neurons.
@@ -480,7 +479,7 @@ pub fn order_eligible_sources(
         None => {
             // Use a random seed then a deterministic RNG instance so we can reuse the same
             // code path without fighting trait object ergonomics.
-            let seed: u64 = rand::thread_rng().gen();
+            let seed: u64 = rand::thread_rng().r#gen();
             StdRng::seed_from_u64(seed)
         }
     };
@@ -496,7 +495,7 @@ pub fn order_eligible_sources(
             1.0
         };
 
-        let u: f64 = rng.gen::<f64>().max(f64::MIN_POSITIVE);
+        let u: f64 = rng.r#gen::<f64>().max(f64::MIN_POSITIVE);
         let t = -u.ln() / weight.max(1e-12);
         keyed.push((t, n));
     }

@@ -25,7 +25,7 @@ mod common;
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
-use neat_ai_discovery::{analyze_parallel_internal, CreatureJson, NeuronJson, SynapseJson};
+use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson, analyze_parallel_internal};
 use tempfile::NamedTempFile;
 
 /// Skip test if no GPU available
@@ -460,20 +460,20 @@ fn test_candidates_sorted_by_expected_creature_score_gain() {
         serde_json::from_str(&output_json).expect("output should be valid JSON");
 
     // Check that synapse candidates are sorted by expectedCreatureScoreGain descending
-    if let Some(synapses) = output["helpfulSynapses"].as_array() {
-        if synapses.len() > 1 {
-            let mut prev_score_gain = f64::INFINITY;
-            for synapse in synapses {
-                let score_gain = synapse["expectedCreatureScoreGain"]
-                    .as_f64()
-                    .expect("expectedCreatureScoreGain should be a number");
-                assert!(
-                    score_gain <= prev_score_gain,
-                    "Candidates should be sorted by expectedCreatureScoreGain descending. \
-                     Got {score_gain} after {prev_score_gain}"
-                );
-                prev_score_gain = score_gain;
-            }
+    if let Some(synapses) = output["helpfulSynapses"].as_array()
+        && synapses.len() > 1
+    {
+        let mut prev_score_gain = f64::INFINITY;
+        for synapse in synapses {
+            let score_gain = synapse["expectedCreatureScoreGain"]
+                .as_f64()
+                .expect("expectedCreatureScoreGain should be a number");
+            assert!(
+                score_gain <= prev_score_gain,
+                "Candidates should be sorted by expectedCreatureScoreGain descending. \
+                 Got {score_gain} after {prev_score_gain}"
+            );
+            prev_score_gain = score_gain;
         }
     }
 }

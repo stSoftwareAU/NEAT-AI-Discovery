@@ -15,10 +15,10 @@ pub mod platform;
 
 // Re-export key memory functions for convenience
 pub use memory::{
+    DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE, LOW_MEMORY_GPU_BATCH_SIZE, MemoryTier,
     cap_gpu_batch_size_by_bytes, categorise_memory_tier, check_memory_for_parquet,
     check_system_memory_requirements, detect_memory_tier, get_memory_info, get_work_queue_capacity,
-    get_work_queue_capacity_for_tier, validate_parquet_memory_requirements, MemoryTier,
-    DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE, LOW_MEMORY_GPU_BATCH_SIZE,
+    get_work_queue_capacity_for_tier, validate_parquet_memory_requirements,
 };
 
 // Re-export platform setup functions
@@ -26,12 +26,11 @@ pub use platform::{ensure_xdg_runtime_dir, suppress_mesa_warnings_if_requested};
 
 // Re-export deadline handling functions (Issue #268)
 pub use deadline::{
-    build_deadline, calculate_effective_timeout_ms, calculate_gpu_batch_timeout, deadline_passed,
-    derive_seed, focus_unused_observations_from_env, log_analysis_start, log_analysis_timeout,
-    order_eligible_sources, order_focus_targets, parse_input_index, shuffle_slice,
-    shuffle_within_top_k, source_input_index_bias_from_env, OrderedNeuron, DEFAULT_DURATION_MS,
-    GPU_QUEUE_TIMEOUT_MAX_SECS, GPU_QUEUE_TIMEOUT_MIN_SECS, MAX_DURATION_MS, MIN_DURATION_MS,
-    YEAR_2000_MS,
+    DEFAULT_DURATION_MS, GPU_QUEUE_TIMEOUT_MAX_SECS, GPU_QUEUE_TIMEOUT_MIN_SECS, MAX_DURATION_MS,
+    MIN_DURATION_MS, OrderedNeuron, YEAR_2000_MS, build_deadline, calculate_effective_timeout_ms,
+    calculate_gpu_batch_timeout, deadline_passed, derive_seed, focus_unused_observations_from_env,
+    log_analysis_start, log_analysis_timeout, order_eligible_sources, order_focus_targets,
+    parse_input_index, shuffle_slice, shuffle_within_top_k, source_input_index_bias_from_env,
 };
 
 // Re-export deadline override for tests

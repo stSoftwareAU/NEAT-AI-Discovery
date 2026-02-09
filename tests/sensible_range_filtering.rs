@@ -4,10 +4,10 @@
 //! candidates with absurd weights/biases up front. These tests ensure we never
 //! return out-of-range add-neuron candidates.
 
+use neat_ai_discovery::CandidateNeuronJson;
 use neat_ai_discovery::analysis::utils::{
     filter_candidates_to_sensible_ranges, pair_extreme_candidates_with_conservative_variants,
 };
-use neat_ai_discovery::CandidateNeuronJson;
 
 #[test]
 fn extreme_candidate_is_not_returned_after_sensible_range_filtering() {

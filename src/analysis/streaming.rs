@@ -22,8 +22,8 @@ use crate::types::DiscoverRecord;
 use anyhow::{Context, Result};
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
 // =============================================================================
@@ -534,11 +534,11 @@ impl StreamingRecordCache {
             // Check if this block is already cached
             {
                 let blocks = self.inner.blocks.read();
-                if let Some(block) = blocks.get(&block_id) {
-                    if let Some(records) = block.records.get(neuron_uuid) {
-                        all_records.extend(records.iter().cloned());
-                        continue;
-                    }
+                if let Some(block) = blocks.get(&block_id)
+                    && let Some(records) = block.records.get(neuron_uuid)
+                {
+                    all_records.extend(records.iter().cloned());
+                    continue;
                 }
             }
 
@@ -663,7 +663,10 @@ mod tests {
     #[test]
     fn is_streaming_enabled_default() {
         // When env var is not set, streaming should be enabled
-        std::env::remove_var("NEAT_AI_DISCOVERY_PRELOAD_ALL");
+        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_PRELOAD_ALL");
+        }
         assert!(is_streaming_enabled());
     }
 
@@ -678,8 +681,14 @@ mod tests {
     #[test]
     fn block_size_respects_minimum() {
         // Even with small values, block size should be at least MIN_BLOCK_SIZE
-        std::env::set_var("NEAT_AI_DISCOVERY_BLOCK_SIZE", "1");
+        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_BLOCK_SIZE", "1");
+        }
         assert!(get_block_size() >= MIN_BLOCK_SIZE);
-        std::env::remove_var("NEAT_AI_DISCOVERY_BLOCK_SIZE");
+        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_BLOCK_SIZE");
+        }
     }
 }

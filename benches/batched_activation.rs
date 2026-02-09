@@ -9,10 +9,10 @@
 //! - Reduced CPU-GPU synchronisation overhead
 //! - Better GPU utilisation (larger, fewer batches)
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::gpu::{GpuAnalyzer, GpuEvaluator};
 use neat_ai_discovery::analysis::samples::HelpfulSample;
-use neat_ai_discovery::analysis::{activation_name_to_gpu_id, ACTIVATION_SPECS};
+use neat_ai_discovery::analysis::{ACTIVATION_SPECS, activation_name_to_gpu_id};
 
 /// Create test samples with variance.
 fn create_test_samples(count: usize) -> Vec<HelpfulSample> {

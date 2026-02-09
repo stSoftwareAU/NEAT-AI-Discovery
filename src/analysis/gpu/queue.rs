@@ -37,8 +37,8 @@
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 
-use anyhow::{anyhow, Result};
-use crossbeam_channel::{bounded, Receiver, Sender};
+use anyhow::{Result, anyhow};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 

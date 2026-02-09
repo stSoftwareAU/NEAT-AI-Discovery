@@ -63,11 +63,7 @@ fn neat_ai_relu6(x: f32) -> f32 {
 }
 
 fn neat_ai_leaky_relu(x: f32) -> f32 {
-    if x >= 0.0 {
-        x
-    } else {
-        LEAKY_RELU_ALPHA * x
-    }
+    if x >= 0.0 { x } else { LEAKY_RELU_ALPHA * x }
 }
 
 fn neat_ai_selu(x: f32) -> f32 {
@@ -85,11 +81,7 @@ fn neat_ai_selu(x: f32) -> f32 {
 
 fn neat_ai_elu(x: f32) -> f32 {
     // Note: NEAT-AI WASM uses `x > 0.0` not `x >= 0.0`
-    if x > 0.0 {
-        x
-    } else {
-        x.exp() - 1.0
-    }
+    if x > 0.0 { x } else { x.exp() - 1.0 }
 }
 
 fn neat_ai_logistic(x: f32) -> f32 {
@@ -159,19 +151,11 @@ fn neat_ai_bipolar_sigmoid(x: f32) -> f32 {
 }
 
 fn neat_ai_bipolar(x: f32) -> f32 {
-    if x > 0.0 {
-        1.0
-    } else {
-        -1.0
-    }
+    if x > 0.0 { 1.0 } else { -1.0 }
 }
 
 fn neat_ai_step(x: f32) -> f32 {
-    if x > 0.0 {
-        1.0
-    } else {
-        0.0
-    }
+    if x > 0.0 { 1.0 } else { 0.0 }
 }
 
 fn neat_ai_complement(x: f32) -> f32 {
@@ -193,20 +177,12 @@ fn neat_ai_cube(x: f32) -> f32 {
 }
 
 fn neat_ai_sqrt(x: f32) -> f32 {
-    if x >= 0.0 {
-        x.sqrt()
-    } else {
-        0.0
-    }
+    if x >= 0.0 { x.sqrt() } else { 0.0 }
 }
 
 fn neat_ai_std_inverse(x: f32) -> f32 {
     if x.abs() < 1e-10 {
-        if x >= 0.0 {
-            1e10
-        } else {
-            -1e10
-        }
+        if x >= 0.0 { 1e10 } else { -1e10 }
     } else {
         1.0 / x
     }

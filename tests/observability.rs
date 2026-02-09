@@ -14,7 +14,7 @@ mod common;
 
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::observability::{
-    gpu_metrics_enabled, timing_enabled, GpuMetrics, PhaseTimer, ProfileData, ProfileMode,
+    GpuMetrics, PhaseTimer, ProfileData, ProfileMode, gpu_metrics_enabled, timing_enabled,
 };
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -361,7 +361,8 @@ fn integration_timing_output() {
     skip_without_gpu!();
 
     // Set environment variable
-    env::set_var("NEAT_AI_DISCOVERY_TIMING", "1");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe { env::set_var("NEAT_AI_DISCOVERY_TIMING", "1") };
 
     let (parquet_file, creature) = create_test_data();
 
@@ -377,7 +378,7 @@ fn integration_timing_output() {
     let result =
         neat_ai_discovery::analysis::analyze_synapses(&input).expect("Analysis should succeed");
 
-    env::remove_var("NEAT_AI_DISCOVERY_TIMING");
+    unsafe { env::remove_var("NEAT_AI_DISCOVERY_TIMING") };
 
     // Analysis should complete successfully
     // Timing output goes to stderr which is hard to capture in tests,
@@ -390,7 +391,8 @@ fn integration_timing_output() {
 fn integration_json_profile() {
     skip_without_gpu!();
 
-    env::set_var("NEAT_AI_DISCOVERY_PROFILE", "json");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe { env::set_var("NEAT_AI_DISCOVERY_PROFILE", "json") };
 
     let (parquet_file, creature) = create_test_data();
 
@@ -404,7 +406,7 @@ fn integration_json_profile() {
     let result_json = neat_ai_discovery::analyze_parallel_internal(&input_json.to_string())
         .expect("Analysis should succeed");
 
-    env::remove_var("NEAT_AI_DISCOVERY_PROFILE");
+    unsafe { env::remove_var("NEAT_AI_DISCOVERY_PROFILE") };
 
     // Parse the JSON response
     let result: serde_json::Value = serde_json::from_str(&result_json).expect("Should parse JSON");
@@ -424,7 +426,8 @@ fn integration_json_profile() {
 fn integration_gpu_metrics() {
     skip_without_gpu!();
 
-    env::set_var("NEAT_AI_DISCOVERY_GPU_METRICS", "1");
+    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    unsafe { env::set_var("NEAT_AI_DISCOVERY_GPU_METRICS", "1") };
 
     let (parquet_file, creature) = create_test_data();
 
@@ -440,7 +443,7 @@ fn integration_gpu_metrics() {
     let result =
         neat_ai_discovery::analysis::analyze_synapses(&input).expect("Analysis should succeed");
 
-    env::remove_var("NEAT_AI_DISCOVERY_GPU_METRICS");
+    unsafe { env::remove_var("NEAT_AI_DISCOVERY_GPU_METRICS") };
 
     // Analysis should complete successfully
     assert!(result.metadata.total_focus_neurons > 0);

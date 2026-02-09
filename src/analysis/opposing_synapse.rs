@@ -129,11 +129,11 @@ pub fn detect_opposing_synapses(
         for source_record in source_records.iter() {
             let contribution = synapse.weight * source_record.activation;
 
-            if let Some(target_record) = target_obs_map.get(&source_record.obs_index) {
-                if let Some(&error) = target_record.errors.first() {
-                    contributions.push(contribution);
-                    errors.push(error);
-                }
+            if let Some(target_record) = target_obs_map.get(&source_record.obs_index)
+                && let Some(&error) = target_record.errors.first()
+            {
+                contributions.push(contribution);
+                errors.push(error);
             }
         }
 

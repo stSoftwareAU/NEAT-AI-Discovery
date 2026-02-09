@@ -24,10 +24,10 @@
 mod common;
 
 use common::{hidden, output, synapse};
+use neat_ai_discovery::CreatureJson;
 use neat_ai_discovery::focus::{compute_impacts_public, rank_focus_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
-use neat_ai_discovery::CreatureJson;
 use tempfile::NamedTempFile;
 
 /// Production pattern: STEP neuron gets full impact (no normalisation)

@@ -5,8 +5,8 @@
 //! Such candidates are "brilliant but brittle" - overfitting to the discovery sample.
 
 use neat_ai_discovery::analysis::cross_validation::{
-    apply_brittleness_penalty, compute_cross_validation_score, CrossValidationConfig,
-    CrossValidationResult, FoldResult, PerformanceVariance,
+    CrossValidationConfig, CrossValidationResult, FoldResult, PerformanceVariance,
+    apply_brittleness_penalty, compute_cross_validation_score,
 };
 use neat_ai_discovery::analysis::samples::HelpfulSample;
 

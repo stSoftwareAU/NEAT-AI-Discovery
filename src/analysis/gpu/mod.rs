@@ -30,17 +30,17 @@ pub mod shaders;
 
 // Re-export device module contents for backwards compatibility
 pub use device::{
-    create_wgpu_instance_safely, detect_gpu_tier, detect_unified_memory, get_adapter_info_internal,
-    no_gpu_result, poll_device_until_idle, wait_for_buffer_map, wait_for_buffer_maps_batch,
-    GpuAvailabilityResult, GpuPerformanceTier, GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS,
-    GPU_BUFFER_MAP_TIMEOUT_SECS, GPU_INIT_TIMEOUT_SECS,
+    GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS, GPU_BUFFER_MAP_TIMEOUT_SECS, GPU_INIT_TIMEOUT_SECS,
+    GpuAvailabilityResult, GpuPerformanceTier, create_wgpu_instance_safely, detect_gpu_tier,
+    detect_unified_memory, get_adapter_info_internal, no_gpu_result, poll_device_until_idle,
+    wait_for_buffer_map, wait_for_buffer_maps_batch,
 };
 
 // Re-export GPU_QUEUE_TIMEOUT_MAX_SECS from device (which gets it from utils)
 pub use device::GPU_QUEUE_TIMEOUT_MAX_SECS;
 
 // Re-export analyzer module contents
-pub use analyzer::{GpuAnalyzer, GpuEvaluator, GPU_MAX_BATCH_ALLOC_BYTES};
+pub use analyzer::{GPU_MAX_BATCH_ALLOC_BYTES, GpuAnalyzer, GpuEvaluator};
 
 // Re-export queue module contents (Issue #274)
 pub use queue::GpuWorkQueue;

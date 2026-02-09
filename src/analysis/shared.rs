@@ -70,8 +70,8 @@ pub struct AnalysisTiming {
 // Timing Collector (Issue #195)
 // =============================================================================
 
-use std::sync::atomic::Ordering;
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 /// Thread-safe timing collector for GPU kernel profiling.

@@ -8,7 +8,7 @@ mod common;
 
 use common::{hidden, hidden_with_bias, make_creature, neuron, output, synapse};
 use neat_ai_discovery::analysis::operating_point::{
-    detect_operating_point_issues, operating_point_to_coordinated_candidates, OperatingPointConfig,
+    OperatingPointConfig, detect_operating_point_issues, operating_point_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 

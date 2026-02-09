@@ -31,9 +31,9 @@ use wgpu::util::DeviceExt;
 
 // Import device management functions
 use crate::analysis::gpu::device::{
+    GPU_BUFFER_MAP_TIMEOUT_SECS, GpuAvailabilityResult, GpuPerformanceTier,
     create_wgpu_instance_safely, detect_gpu_tier, detect_unified_memory, get_adapter_info_internal,
     no_gpu_result, poll_device_until_idle, wait_for_buffer_map, wait_for_buffer_maps_batch,
-    GpuAvailabilityResult, GpuPerformanceTier, GPU_BUFFER_MAP_TIMEOUT_SECS,
 };
 
 // Import shader constants (Issue #277)
@@ -45,17 +45,17 @@ use crate::analysis::gpu::shaders::{
 
 // Import sample data structures
 use crate::analysis::samples::{
-    ActivationOutput, ActivationUniforms, BiasResult, BiasUniforms, GpuHelpfulSample,
+    ActivationOutput, ActivationUniforms, BiasResult, BiasUniforms, EPSILON, GpuHelpfulSample,
     HarmfulContribution, HarmfulStats, HarmfulUniforms, HelpfulContribution, HelpfulSample,
     HelpfulStats, HelpfulUniforms, ReductionUniforms, ReluContribution, ReluOrientation, ReluStats,
-    ReluUniforms, EPSILON,
+    ReluUniforms,
 };
 
 // Import utility functions
 use crate::analysis::utils::{
+    DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE, LOW_MEMORY_GPU_BATCH_SIZE, MemoryTier,
     cap_gpu_batch_size_by_bytes, check_system_memory_requirements, detect_memory_tier,
     ensure_xdg_runtime_dir, get_memory_info, suppress_mesa_warnings_if_requested, verbose_enabled,
-    MemoryTier, DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE, LOW_MEMORY_GPU_BATCH_SIZE,
 };
 
 // =============================================================================
@@ -1365,7 +1365,7 @@ impl GpuAnalyzer {
             let non_empty_reduction_flags: Vec<bool> = uses_reduction_flags
                 .iter()
                 .zip(empty_flags.iter())
-                .filter(|(_, &empty)| !empty)
+                .filter(|&(_, &empty)| !empty)
                 .map(|(&reduce, _)| reduce)
                 .collect();
 
@@ -2455,7 +2455,7 @@ impl GpuAnalyzer {
             let non_empty_reduction_flags: Vec<bool> = uses_reduction_flags
                 .iter()
                 .zip(empty_flags.iter())
-                .filter(|(_, &empty)| !empty)
+                .filter(|&(_, &empty)| !empty)
                 .map(|(&reduce, _)| reduce)
                 .collect();
 

@@ -7,7 +7,7 @@ use crate::{
     CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson, NeuronJson,
     SynapseJson,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -734,11 +734,7 @@ fn average_absolute_error_from_records(records: &[DiscoverRecord]) -> f32 {
         }
     }
 
-    if count == 0 {
-        0.0
-    } else {
-        sum / count as f32
-    }
+    if count == 0 { 0.0 } else { sum / count as f32 }
 }
 
 /// Compute mean absolute activation from discovery records.
@@ -761,11 +757,7 @@ fn mean_absolute_activation_from_records(records: &[DiscoverRecord]) -> f32 {
         }
     }
 
-    if count == 0 {
-        0.0
-    } else {
-        sum / count as f32
-    }
+    if count == 0 { 0.0 } else { sum / count as f32 }
 }
 
 /// Issue #204: Compute activation frequency from discovery records.
@@ -2396,10 +2388,10 @@ pub fn rank_focus_neurons(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    if let Some(limit) = max_results {
-        if neurons.len() > limit {
-            neurons.truncate(limit);
-        }
+    if let Some(limit) = max_results
+        && neurons.len() > limit
+    {
+        neurons.truncate(limit);
     }
 
     // Issue #306: Detect constant-value neurons and create coordinated structural candidates
@@ -2798,10 +2790,10 @@ pub fn rank_focus_neurons_with_history(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    if let Some(limit) = max_results {
-        if neurons.len() > limit {
-            neurons.truncate(limit);
-        }
+    if let Some(limit) = max_results
+        && neurons.len() > limit
+    {
+        neurons.truncate(limit);
     }
 
     // Constant neuron removals (same as rank_focus_neurons)

@@ -13,9 +13,9 @@
 //! 6. Test that recommendations differ from current reactive approach
 
 use neat_ai_discovery::analysis::activation_recommendation::{
+    ActivationRecommendation, InputDistribution, InputDistributionClass, OutputRangeRequirement,
     analyse_input_distribution, classify_activation_suitability, detect_output_range_requirements,
-    recommend_activation_function, ActivationRecommendation, InputDistribution,
-    InputDistributionClass, OutputRangeRequirement,
+    recommend_activation_function,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 
@@ -50,7 +50,7 @@ fn test_classifies_gaussian_input_distribution() {
             // Simulate Gaussian with more density near centre
             // Use a simple approximation: values cluster around 0
             let t = (i as f32 - 50.0) / 50.0; // -1 to 1
-                                              // Apply a transformation that clusters values near 0
+            // Apply a transformation that clusters values near 0
             let x = t * t.abs().sqrt() * 2.0; // More values near 0
             record("hidden-1", i, x, Some(x))
         })

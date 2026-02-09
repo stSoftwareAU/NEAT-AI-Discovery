@@ -433,28 +433,28 @@ pub fn detect_symmetric_cancellation(
                 // Calculate correlation between source activations
                 let correlation = calculate_correlation(records1, records2, config.min_samples);
 
-                if let Some(corr) = correlation {
-                    if corr.abs() >= config.min_correlation_for_cancellation {
-                        // Calculate cancellation ratio
-                        let cancellation_ratio = mag_ratio * corr.abs();
+                if let Some(corr) = correlation
+                    && corr.abs() >= config.min_correlation_for_cancellation
+                {
+                    // Calculate cancellation ratio
+                    let cancellation_ratio = mag_ratio * corr.abs();
 
-                        if cancellation_ratio > 0.5 {
-                            // Significant cancellation detected
-                            let estimated_improvement = 0.01 * cancellation_ratio;
+                    if cancellation_ratio > 0.5 {
+                        // Significant cancellation detected
+                        let estimated_improvement = 0.01 * cancellation_ratio;
 
-                            candidates.push(SymmetricCancellationCandidate {
-                                source1_neuron_uuid: source1_uuid.to_string(),
-                                source2_neuron_uuid: source2_uuid.to_string(),
-                                target_neuron_uuid: target_uuid.clone(),
-                                weight1: *weight1,
-                                weight2: *weight2,
-                                correlation: corr,
-                                cancellation_ratio,
-                                recommended_action: "setWeight".to_string(),
-                                sample_count: records1.len().min(records2.len()),
-                                estimated_improvement,
-                            });
-                        }
+                        candidates.push(SymmetricCancellationCandidate {
+                            source1_neuron_uuid: source1_uuid.to_string(),
+                            source2_neuron_uuid: source2_uuid.to_string(),
+                            target_neuron_uuid: target_uuid.clone(),
+                            weight1: *weight1,
+                            weight2: *weight2,
+                            correlation: corr,
+                            cancellation_ratio,
+                            recommended_action: "setWeight".to_string(),
+                            sample_count: records1.len().min(records2.len()),
+                            estimated_improvement,
+                        });
                     }
                 }
             }

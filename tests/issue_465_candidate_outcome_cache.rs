@@ -249,12 +249,16 @@ fn prune_removes_stale_entries() {
     cache.prune_before_epoch(300);
 
     assert_eq!(cache.len(), 1);
-    assert!(cache
-        .get_outcome("source-1", "target-1", "addSynapse")
-        .is_none());
-    assert!(cache
-        .get_outcome("source-2", "target-1", "addSynapse")
-        .is_some());
+    assert!(
+        cache
+            .get_outcome("source-1", "target-1", "addSynapse")
+            .is_none()
+    );
+    assert!(
+        cache
+            .get_outcome("source-2", "target-1", "addSynapse")
+            .is_some()
+    );
 }
 
 // =============================================================================

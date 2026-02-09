@@ -105,12 +105,11 @@ pub fn detect_correlated_error_patterns(
     // Collect output neurons that have sufficient records with errors
     let mut output_neurons_with_errors: Vec<&str> = Vec::new();
     for uuid in &output_uuids {
-        if let Some(records) = records_map.get(uuid) {
-            if records.len() >= MIN_SAMPLES_FOR_CORRELATION
-                && records.iter().any(|r| !r.errors.is_empty())
-            {
-                output_neurons_with_errors.push(uuid);
-            }
+        if let Some(records) = records_map.get(uuid)
+            && records.len() >= MIN_SAMPLES_FOR_CORRELATION
+            && records.iter().any(|r| !r.errors.is_empty())
+        {
+            output_neurons_with_errors.push(uuid);
         }
     }
     output_neurons_with_errors.sort(); // deterministic ordering
@@ -507,11 +506,7 @@ fn compute_mean_abs_error(
         }
     }
 
-    if count > 0 {
-        sum / count as f32
-    } else {
-        0.0
-    }
+    if count > 0 { sum / count as f32 } else { 0.0 }
 }
 
 /// Generate a deterministic UUID for a shared hidden neuron.
@@ -582,14 +577,14 @@ pub fn correlated_errors_to_coordinated_candidates(
         }
 
         // If no predictive inputs, connect from a generic input
-        if input_sources.is_empty() {
-            if let Some(first_input) = creature.neurons.iter().find(|n| n.neuron_type == "input") {
-                operations.push(CoordinatedStructuralOpJson::AddSynapse {
-                    from_neuron_uuid: first_input.uuid.clone(),
-                    to_neuron_uuid: new_uuid.clone(),
-                    weight: 0.5,
-                });
-            }
+        if input_sources.is_empty()
+            && let Some(first_input) = creature.neurons.iter().find(|n| n.neuron_type == "input")
+        {
+            operations.push(CoordinatedStructuralOpJson::AddSynapse {
+                from_neuron_uuid: first_input.uuid.clone(),
+                to_neuron_uuid: new_uuid.clone(),
+                weight: 0.5,
+            });
         }
 
         // Connect the shared neuron to all correlated outputs

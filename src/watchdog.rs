@@ -20,8 +20,8 @@
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -166,10 +166,10 @@ impl Drop for Watchdog {
         // and other threads calling `beat()` should not be blocked for that duration.
         {
             let mut active = ACTIVE.lock();
-            if let Some(current) = active.as_ref() {
-                if Arc::ptr_eq(current, &self.state) {
-                    *active = None;
-                }
+            if let Some(current) = active.as_ref()
+                && Arc::ptr_eq(current, &self.state)
+            {
+                *active = None;
             }
         }
         if let Some(handle) = self._thread.take() {
@@ -248,7 +248,10 @@ mod tests {
     #[test]
     fn watchdog_config_disabled_by_default() {
         let _lock = lock_for_test_serialisation();
-        std::env::remove_var("NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS");
+        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS");
+        }
         assert!(WatchdogConfig::from_env().is_none());
     }
 

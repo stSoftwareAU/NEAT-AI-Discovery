@@ -7,7 +7,7 @@
 //! overly-narrow duplicate check.
 
 use neat_ai_discovery::{
-    analysis::utils::pair_extreme_candidates_with_conservative_variants, CandidateNeuronJson,
+    CandidateNeuronJson, analysis::utils::pair_extreme_candidates_with_conservative_variants,
 };
 
 #[test]

@@ -18,7 +18,7 @@ mod common;
 
 use common::{hidden, make_creature, neuron, output, record, synapse};
 use neat_ai_discovery::analysis::bounded_range::{
-    bounded_range_to_coordinated_candidates, detect_bounded_range_neurons, BoundedRangeCandidate,
+    BoundedRangeCandidate, bounded_range_to_coordinated_candidates, detect_bounded_range_neurons,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 

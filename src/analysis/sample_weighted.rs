@@ -155,11 +155,7 @@ pub fn stratify_samples(records: &[DiscoverRecord]) -> StratifiedAnalysis {
                 0.0
             } else {
                 let avg = r.errors.iter().sum::<f32>() / r.errors.len() as f32;
-                if avg.is_finite() {
-                    avg.abs()
-                } else {
-                    0.0
-                }
+                if avg.is_finite() { avg.abs() } else { 0.0 }
             }
         })
         .collect();
@@ -260,11 +256,7 @@ pub fn detect_high_error_neurons(
                     0.0
                 } else {
                     let avg = r.errors.iter().sum::<f32>() / r.errors.len() as f32;
-                    if avg.is_finite() {
-                        avg.abs()
-                    } else {
-                        0.0
-                    }
+                    if avg.is_finite() { avg.abs() } else { 0.0 }
                 }
             })
             .collect();

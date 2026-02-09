@@ -45,7 +45,7 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::{analyze_synapses, GpuAnalyzer};
+use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
 use tempfile::tempdir;

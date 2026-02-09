@@ -1,7 +1,7 @@
 use crate::analysis::shared;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
-use super::{run_discovery_modules_parallel, DiscoveryDetectionResult, DiscoveryModuleSpec};
+use super::{DiscoveryDetectionResult, DiscoveryModuleSpec, run_discovery_modules_parallel};
 
 fn empty_synapse_result() -> shared::AnalyzeSynapsesResult {
     shared::AnalyzeSynapsesResult {

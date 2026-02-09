@@ -19,8 +19,8 @@
 mod common;
 
 use neat_ai_discovery::analysis::sample_weighted::{
-    compute_sample_weights, detect_high_error_neurons,
-    high_error_neurons_to_coordinated_candidates, stratify_samples, SampleWeightedConfig,
+    SampleWeightedConfig, compute_sample_weights, detect_high_error_neurons,
+    high_error_neurons_to_coordinated_candidates, stratify_samples,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 

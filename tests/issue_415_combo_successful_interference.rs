@@ -18,12 +18,12 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::epistatic::{detect_interfering_pairs, InterferenceType};
-use neat_ai_discovery::analysis::samples::HelpfulSample;
 use neat_ai_discovery::analysis::GpuAnalyzer;
+use neat_ai_discovery::analysis::epistatic::{InterferenceType, detect_interfering_pairs};
+use neat_ai_discovery::analysis::samples::HelpfulSample;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
-use neat_ai_discovery::{analyze_parallel_internal, CreatureJson, NeuronJson};
+use neat_ai_discovery::{CreatureJson, NeuronJson, analyze_parallel_internal};
 use tempfile::tempdir;
 
 /// Test: Detect interference when two candidates target the same neuron with conflicting weights.

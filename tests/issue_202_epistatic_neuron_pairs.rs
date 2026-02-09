@@ -15,7 +15,7 @@ mod common;
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
-use neat_ai_discovery::{analyze_parallel_internal, CreatureJson, NeuronJson, SynapseJson};
+use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson, analyze_parallel_internal};
 use tempfile::tempdir;
 
 /// Test: Epistatic pair detection with complementary error patterns.

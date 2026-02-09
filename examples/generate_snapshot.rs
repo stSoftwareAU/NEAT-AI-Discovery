@@ -10,8 +10,8 @@
 //!     ~/Develop/NEAT-AI-Explore/snapshot.json \
 //!     1000
 
-use neat_ai_discovery::export::{export_visualisation_snapshot, ExportOptions};
 use neat_ai_discovery::CreatureJson;
+use neat_ai_discovery::export::{ExportOptions, export_visualisation_snapshot};
 use std::env;
 use std::fs;
 
