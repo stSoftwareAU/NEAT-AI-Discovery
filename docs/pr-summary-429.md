@@ -16,12 +16,12 @@ Implements four early termination improvements for low-value candidates (Issue #
 
 | Benchmark | 100 candidates | 500 candidates | 1,000 candidates | 5,000 candidates |
 |-----------|---------------|----------------|-------------------|-------------------|
-| `prefilter_candidates` | 361 ns | 951 ns | 1.53 µs | 5.24 µs |
-| `budget_aware_evaluate` | 382 ns | 1.01 µs | 1.59 µs | 6.58 µs |
-| `evaluate_with_confidence` | 1.27 µs | 6.32 µs | 12.66 µs | 63.29 µs |
-| `cross_module_dedup` | 9.76 µs | 62.06 µs | 123.18 µs | 561.22 µs |
-| `full_sprt_baseline` | 401 ns | 1.04 µs | 1.67 µs | 6.50 µs |
-| `combined_pipeline` | 687 ns | 1.85 µs | 3.02 µs | 13.82 µs |
+| `prefilter_candidates` | 353 ns | 946 ns | 1.52 µs | 5.19 µs |
+| `budget_aware_evaluate` | 376 ns | 1.02 µs | 1.63 µs | 6.65 µs |
+| `evaluate_with_confidence` | 1.28 µs | 6.35 µs | 12.65 µs | 63.36 µs |
+| `cross_module_dedup` | 9.50 µs | 61.12 µs | 121.65 µs | 561.14 µs |
+| `full_sprt_baseline` | 411 ns | 1.08 µs | 1.77 µs | 7.17 µs |
+| `combined_pipeline` | 683 ns | 1.84 µs | 2.99 µs | 13.76 µs |
 
 **Key findings:**
 - The prefilter is ~20% faster than full SPRT and eliminates ~40% of candidates (20% clearly poor + 20% clearly good) before SPRT runs
