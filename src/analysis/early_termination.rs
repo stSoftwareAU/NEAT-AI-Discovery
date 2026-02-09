@@ -433,6 +433,244 @@ pub fn check_batch_early_termination(
     result
 }
 
+// =============================================================================
+// Issue #429: Early termination improvements for low-value candidates
+// =============================================================================
+
+/// Minimum samples required for prefilter decisions.
+///
+/// Below this threshold, the improvement ratio is too noisy for reliable
+/// pre-filtering. Candidates with fewer samples pass through to full SPRT.
+const PREFILTER_MIN_SAMPLES: u32 = 20;
+
+/// Improvement ratio below which a candidate is clearly poor.
+///
+/// Candidates with an improvement ratio below this threshold are rejected
+/// by the prefilter without needing full SPRT evaluation.
+const PREFILTER_REJECT_RATIO: f64 = 0.25;
+
+/// Improvement ratio above which a candidate is clearly good.
+///
+/// Candidates with an improvement ratio above this threshold are accepted
+/// by the prefilter without needing full SPRT evaluation.
+const PREFILTER_ACCEPT_RATIO: f64 = 0.75;
+
+/// Hierarchical candidate pre-filter (Issue #429).
+///
+/// Performs a quick pass over candidate statistics to identify clearly
+/// poor or clearly good candidates before running the more expensive
+/// SPRT evaluation. This reduces computation for large candidate sets
+/// by filtering out obvious cases early.
+///
+/// Candidates with fewer than [`PREFILTER_MIN_SAMPLES`] samples are
+/// always passed through to SPRT (they need more data).
+///
+/// # Arguments
+/// * `stats` - Slice of candidate statistics to pre-filter.
+///
+/// # Returns
+/// An [`EarlyTerminationResult`] with pre-filtered decisions.
+pub fn prefilter_candidates(
+    stats: &[crate::analysis::samples::HelpfulStats],
+) -> EarlyTerminationResult {
+    let mut result = EarlyTerminationResult {
+        accept_indices: Vec::new(),
+        reject_indices: Vec::new(),
+        continue_indices: Vec::new(),
+    };
+
+    for (i, stat) in stats.iter().enumerate() {
+        let total = stat.positive_count + stat.negative_count;
+        if total < PREFILTER_MIN_SAMPLES {
+            result.continue_indices.push(i);
+            continue;
+        }
+
+        let ratio = f64::from(stat.positive_count) / f64::from(total);
+        if ratio <= PREFILTER_REJECT_RATIO {
+            result.reject_indices.push(i);
+        } else if ratio >= PREFILTER_ACCEPT_RATIO {
+            result.accept_indices.push(i);
+        } else {
+            result.continue_indices.push(i);
+        }
+    }
+
+    result
+}
+
+/// Budget-aware candidate evaluation (Issue #429).
+///
+/// Evaluates candidates using SPRT but stops accepting new candidates once
+/// the budget is exhausted. Candidates beyond the budget are rejected to
+/// focus computational resources on high-value candidates.
+///
+/// The budget represents the maximum number of candidates that can be
+/// accepted or left undecided (i.e., worth further evaluation).
+///
+/// # Arguments
+/// * `stats` - Slice of candidate statistics to evaluate.
+/// * `config` - Early termination configuration.
+/// * `budget` - Maximum number of candidates to accept or continue evaluating.
+///
+/// # Returns
+/// An [`EarlyTerminationResult`] with budget-constrained decisions.
+pub fn budget_aware_evaluate(
+    stats: &[crate::analysis::samples::HelpfulStats],
+    config: &EarlyTerminationConfig,
+    budget: usize,
+) -> EarlyTerminationResult {
+    let mut result = EarlyTerminationResult {
+        accept_indices: Vec::new(),
+        reject_indices: Vec::new(),
+        continue_indices: Vec::new(),
+    };
+
+    let mut remaining_budget = budget;
+
+    for (i, stat) in stats.iter().enumerate() {
+        // Budget exhausted — reject remaining candidates
+        if remaining_budget == 0 {
+            result.reject_indices.push(i);
+            continue;
+        }
+
+        if !config.enabled {
+            result.continue_indices.push(i);
+            remaining_budget = remaining_budget.saturating_sub(1);
+            continue;
+        }
+
+        let mut evaluator = config.create_evaluator();
+        evaluator.add_batch(stat.positive_count, stat.negative_count);
+
+        match evaluator.should_stop() {
+            EarlyTerminationDecision::Accept => {
+                result.accept_indices.push(i);
+                remaining_budget = remaining_budget.saturating_sub(1);
+            }
+            EarlyTerminationDecision::Reject => {
+                result.reject_indices.push(i);
+                // Rejected candidates don't consume budget
+            }
+            EarlyTerminationDecision::Continue => {
+                result.continue_indices.push(i);
+                remaining_budget = remaining_budget.saturating_sub(1);
+            }
+        }
+    }
+
+    result
+}
+
+/// Evaluate a single candidate with confidence scoring (Issue #429).
+///
+/// Combines SPRT evaluation with a confidence metric based on the
+/// improvement ratio and sample count. This allows callers to prioritise
+/// high-confidence decisions and skip candidates where the signal is weak.
+///
+/// # Arguments
+/// * `stat` - Candidate statistics.
+/// * `config` - Early termination configuration.
+///
+/// # Returns
+/// A tuple of `(decision, confidence)` where confidence is in [0.0, 1.0].
+pub fn evaluate_with_confidence(
+    stat: &crate::analysis::samples::HelpfulStats,
+    config: &EarlyTerminationConfig,
+) -> (EarlyTerminationDecision, f64) {
+    let mut evaluator = config.create_evaluator();
+    evaluator.add_batch(stat.positive_count, stat.negative_count);
+
+    let decision = if config.enabled {
+        evaluator.should_stop()
+    } else {
+        EarlyTerminationDecision::Continue
+    };
+
+    // Compute confidence as a function of sample count and signal strength.
+    // Confidence increases with more samples and with stronger deviation from 50%.
+    let total = evaluator.sample_count();
+    if total == 0 {
+        return (decision, 0.0);
+    }
+
+    let ratio = evaluator.improvement_ratio();
+    // Signal strength: how far from 50/50 (0.0 = no signal, 0.5 = max signal)
+    let signal_strength = (ratio - 0.5).abs() * 2.0;
+    // Sample factor: asymptotic approach to 1.0 with more samples
+    let sample_factor = 1.0 - (-0.01 * total as f64).exp();
+    let confidence = (signal_strength * sample_factor).clamp(0.0, 1.0);
+
+    (decision, confidence)
+}
+
+// =============================================================================
+// Cross-Module Deduplication (Issue #429)
+// =============================================================================
+
+/// Signature for identifying duplicate candidates across modules.
+///
+/// Two candidates are considered duplicates if they share the same
+/// source neuron, target neuron, and candidate type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CandidateSignature {
+    /// UUID of the source neuron.
+    pub source_uuid: String,
+    /// UUID of the target neuron.
+    pub target_uuid: String,
+    /// Type of candidate (e.g., "addSynapse", "removeSynapse").
+    pub candidate_type: String,
+}
+
+/// Cross-module deduplicator for candidate discovery (Issue #429).
+///
+/// Tracks previously generated candidates by signature so that multiple
+/// discovery modules can avoid producing redundant candidates. When a
+/// module generates a candidate with a signature already registered,
+/// it can skip or deprioritise that candidate.
+pub struct CrossModuleDeduplicator {
+    seen: std::collections::HashSet<CandidateSignature>,
+}
+
+impl CrossModuleDeduplicator {
+    /// Create a new empty deduplicator.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            seen: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Check whether a candidate signature has been seen before.
+    ///
+    /// Returns `true` if the candidate is novel (not seen), `false` if duplicate.
+    #[must_use]
+    pub fn is_novel(&self, sig: &CandidateSignature) -> bool {
+        !self.seen.contains(sig)
+    }
+
+    /// Register a candidate signature as seen.
+    ///
+    /// Future calls to [`is_novel`](Self::is_novel) with the same signature
+    /// will return `false`.
+    pub fn register(&mut self, sig: &CandidateSignature) {
+        self.seen.insert(sig.clone());
+    }
+
+    /// Get the number of unique registered signatures.
+    #[must_use]
+    pub fn registered_count(&self) -> usize {
+        self.seen.len()
+    }
+}
+
+impl Default for CrossModuleDeduplicator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
