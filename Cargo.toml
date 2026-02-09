@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.11.4"
+version = "0.12.0"
 edition = "2021"
 
 [lib]
@@ -57,5 +57,9 @@ harness = false
 
 [[bench]]
 name = "tiered_loading"
+harness = false
+
+[[bench]]
+name = "parallel_discovery"
 harness = false
 
