@@ -123,7 +123,7 @@ fn run_analysis(parquet_file: &str) -> Vec<f32> {
 
     // Sort for stable comparison (module ordering is preserved but gain sorting
     // depends on merge order which should be deterministic).
-    gains.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    gains.sort_by(|a, b| a.total_cmp(b));
     gains
 }
 
