@@ -524,7 +524,7 @@ pub fn order_eligible_sources(
 pub fn order_focus_targets(
     targets: &mut Vec<String>,
     seed: Option<u64>,
-    neuron_type_map: &std::collections::HashMap<String, String>,
+    neuron_type_map: &std::collections::HashMap<&str, &str>,
 ) {
     if targets.len() <= 1 {
         return;
@@ -533,8 +533,8 @@ pub fn order_focus_targets(
     // Partition into existing hidden neurons and everything else
     let (mut hidden, mut others): (Vec<_>, Vec<_>) = targets.drain(..).partition(|uuid| {
         neuron_type_map
-            .get(uuid)
-            .map(|t| t == "hidden")
+            .get(uuid.as_str())
+            .map(|t| *t == "hidden")
             .unwrap_or(false)
     });
 

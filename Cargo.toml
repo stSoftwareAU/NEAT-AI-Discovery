@@ -68,3 +68,7 @@ harness = false
 name = "memory_streaming"
 harness = false
 
+[[bench]]
+name = "clone_reduction"
+harness = false
+

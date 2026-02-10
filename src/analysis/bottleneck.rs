@@ -263,13 +263,22 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
         {
             let new_uuid = bottleneck_parallel_neuron_uuid(&c.neuron_uuid, 0);
 
-            // Find the bottleneck neuron's squash function
-            let squash = creature
+            // Find the bottleneck neuron's squash function (borrow, not clone)
+            let squash_ref = creature
                 .neurons
                 .iter()
                 .find(|n| n.uuid == c.neuron_uuid)
-                .map(|n| n.squash.clone())
-                .unwrap_or_else(|| "TANH".to_string());
+                .map(|n| n.squash.as_str())
+                .unwrap_or("TANH");
+
+            // Build comment before moving squash into operations
+            let comment = format!(
+                "Bottleneck neuron {}: fan-in={}, fan-out={} (ratio {:.1}) → add parallel {squash_ref} neuron to widen information flow",
+                c.neuron_uuid,
+                c.fan_in,
+                c.fan_out,
+                c.fan_in as f32 / c.fan_out as f32,
+            );
 
             let mut operations = Vec::new();
 
@@ -277,7 +286,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
             operations.push(CoordinatedStructuralOpJson::AddNeuron {
                 neuron_uuid: new_uuid.clone(),
                 neuron_type: "hidden".to_string(),
-                squash: squash.clone(),
+                squash: squash_ref.to_string(),
                 bias: 0.0,
                 insert_before_neuron_uuid: Some(c.neuron_uuid.clone()),
             });
@@ -315,7 +324,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
                     .unwrap_or(0.1);
                 operations.push(CoordinatedStructuralOpJson::AddSynapse {
                     from_neuron_uuid: new_uuid.clone(),
-                    to_neuron_uuid: downstream_uuid.clone(),
+                    to_neuron_uuid: downstream_uuid.to_string(),
                     weight: existing_weight * 0.5, // Start with scaled-down weight
                 });
             }
@@ -323,10 +332,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
             results.push(CoordinatedStructuralCandidateJson {
                 operations,
                 expected_creature_score_gain: c.estimated_improvement,
-                comment: Some(format!(
-                    "Bottleneck neuron {}: fan-in={}, fan-out={} (ratio {:.1}) → add parallel {} neuron to widen information flow",
-                    c.neuron_uuid, c.fan_in, c.fan_out, c.fan_in as f32 / c.fan_out as f32, squash
-                )),
+                comment: Some(comment),
             });
         }
 

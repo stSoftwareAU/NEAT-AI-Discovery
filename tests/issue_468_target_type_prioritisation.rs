@@ -148,11 +148,11 @@ fn order_focus_targets_places_existing_hidden_before_output() {
     use neat_ai_discovery::analysis::utils::order_focus_targets;
 
     let mut neuron_type_map = HashMap::new();
-    neuron_type_map.insert("output-uuid-1".to_string(), "output".to_string());
-    neuron_type_map.insert("hidden-uuid-a".to_string(), "hidden".to_string());
-    neuron_type_map.insert("output-uuid-2".to_string(), "output".to_string());
-    neuron_type_map.insert("hidden-uuid-b".to_string(), "hidden".to_string());
-    neuron_type_map.insert("hidden-uuid-c".to_string(), "hidden".to_string());
+    neuron_type_map.insert("output-uuid-1", "output");
+    neuron_type_map.insert("hidden-uuid-a", "hidden");
+    neuron_type_map.insert("output-uuid-2", "output");
+    neuron_type_map.insert("hidden-uuid-b", "hidden");
+    neuron_type_map.insert("hidden-uuid-c", "hidden");
 
     let mut targets = vec![
         "output-uuid-1".to_string(),
@@ -169,8 +169,8 @@ fn order_focus_targets_places_existing_hidden_before_output() {
         .iter()
         .position(|uuid| {
             neuron_type_map
-                .get(uuid)
-                .map(|t| t == "output")
+                .get(uuid.as_str())
+                .map(|t| *t == "output")
                 .unwrap_or(false)
         })
         .expect("Should have at least one output neuron");
@@ -179,8 +179,8 @@ fn order_focus_targets_places_existing_hidden_before_output() {
         .iter()
         .rposition(|uuid| {
             neuron_type_map
-                .get(uuid)
-                .map(|t| t == "hidden")
+                .get(uuid.as_str())
+                .map(|t| *t == "hidden")
                 .unwrap_or(false)
         })
         .expect("Should have at least one hidden neuron");
@@ -198,9 +198,9 @@ fn order_focus_targets_consistent_across_seeds() {
     use neat_ai_discovery::analysis::utils::order_focus_targets;
 
     let mut neuron_type_map = HashMap::new();
-    neuron_type_map.insert("output-uuid-1".to_string(), "output".to_string());
-    neuron_type_map.insert("hidden-uuid-a".to_string(), "hidden".to_string());
-    neuron_type_map.insert("hidden-uuid-b".to_string(), "hidden".to_string());
+    neuron_type_map.insert("output-uuid-1", "output");
+    neuron_type_map.insert("hidden-uuid-a", "hidden");
+    neuron_type_map.insert("hidden-uuid-b", "hidden");
 
     for seed in [0u64, 1, 42, 100, 999] {
         let mut targets = vec![
@@ -216,16 +216,16 @@ fn order_focus_targets_consistent_across_seeds() {
             .iter()
             .filter(|uuid| {
                 neuron_type_map
-                    .get(*uuid)
-                    .map(|t| t == "hidden")
+                    .get(uuid.as_str())
+                    .map(|t| *t == "hidden")
                     .unwrap_or(false)
             })
             .count();
 
         for (i, uuid) in targets.iter().enumerate() {
             let is_hidden = neuron_type_map
-                .get(uuid)
-                .map(|t| t == "hidden")
+                .get(uuid.as_str())
+                .map(|t| *t == "hidden")
                 .unwrap_or(false);
             if i < hidden_count {
                 assert!(
@@ -242,8 +242,8 @@ fn order_focus_targets_preserves_all_targets() {
     use neat_ai_discovery::analysis::utils::order_focus_targets;
 
     let mut neuron_type_map = HashMap::new();
-    neuron_type_map.insert("output-uuid-1".to_string(), "output".to_string());
-    neuron_type_map.insert("hidden-uuid-a".to_string(), "hidden".to_string());
+    neuron_type_map.insert("output-uuid-1", "output");
+    neuron_type_map.insert("hidden-uuid-a", "hidden");
 
     let mut targets = vec!["output-uuid-1".to_string(), "hidden-uuid-a".to_string()];
 
@@ -266,7 +266,7 @@ fn order_focus_targets_handles_single_target() {
     use neat_ai_discovery::analysis::utils::order_focus_targets;
 
     let mut neuron_type_map = HashMap::new();
-    neuron_type_map.insert("hidden-uuid-a".to_string(), "hidden".to_string());
+    neuron_type_map.insert("hidden-uuid-a", "hidden");
 
     let mut targets = vec!["hidden-uuid-a".to_string()];
     order_focus_targets(&mut targets, Some(42), &neuron_type_map);
@@ -280,7 +280,7 @@ fn order_focus_targets_handles_unknown_types_as_non_hidden() {
     use neat_ai_discovery::analysis::utils::order_focus_targets;
 
     let mut neuron_type_map = HashMap::new();
-    neuron_type_map.insert("hidden-uuid-a".to_string(), "hidden".to_string());
+    neuron_type_map.insert("hidden-uuid-a", "hidden");
     // "unknown-uuid" is not in the map
 
     let mut targets = vec!["unknown-uuid".to_string(), "hidden-uuid-a".to_string()];

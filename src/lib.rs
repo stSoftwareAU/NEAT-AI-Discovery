@@ -375,7 +375,7 @@ pub struct CoordinatedStructuralCandidateJson {
     pub comment: Option<String>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub struct NeuronStatsJson {
     pub mean_error: f32,

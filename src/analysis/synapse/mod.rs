@@ -186,11 +186,11 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     let mut focus_order: Vec<String> = unique_focus.iter().map(|s| (*s).clone()).collect();
 
     // Issue #468: Order focus targets by neuron type (hidden first)
-    let focus_neuron_type_map: HashMap<String, String> = input
+    let focus_neuron_type_map: HashMap<&str, &str> = input
         .creature
         .neurons
         .iter()
-        .map(|n| (n.uuid.clone(), n.neuron_type.clone()))
+        .map(|n| (n.uuid.as_str(), n.neuron_type.as_str()))
         .collect();
     order_focus_targets(&mut focus_order, input.random_seed, &focus_neuron_type_map);
 
@@ -382,12 +382,13 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         })?;
 
     let analysis_timed_out = *analysis_timed_out.lock().expect("Mutex poisoned");
-    let mut helpful_results = helpful_results.lock().expect("Mutex poisoned").clone();
-    let mut harmful_results = harmful_results.lock().expect("Mutex poisoned").clone();
-    let mut coordinated_structural_results = coordinated_structural_results
-        .lock()
-        .expect("Mutex poisoned")
-        .clone();
+    let mut helpful_results = std::mem::take(&mut *helpful_results.lock().expect("Mutex poisoned"));
+    let mut harmful_results = std::mem::take(&mut *harmful_results.lock().expect("Mutex poisoned"));
+    let mut coordinated_structural_results = std::mem::take(
+        &mut *coordinated_structural_results
+            .lock()
+            .expect("Mutex poisoned"),
+    );
     let mut helpful_fallback = helpful_fallback.lock().expect("Mutex poisoned").take();
 
     if analysis_timed_out {
@@ -426,10 +427,11 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     let input_min = metadata_input_min_with_records.load(std::sync::atomic::Ordering::Relaxed);
     let input_max = metadata_input_max_with_records.load(std::sync::atomic::Ordering::Relaxed);
 
-    let error_vec = error_values_for_distribution
-        .lock()
-        .expect("Mutex poisoned")
-        .clone();
+    let error_vec = std::mem::take(
+        &mut *error_values_for_distribution
+            .lock()
+            .expect("Mutex poisoned"),
+    );
 
     let metadata = post_processing::build_metadata(&post_processing::MetadataParams {
         target_value_seen: metadata_target_value_seen.load(std::sync::atomic::Ordering::Relaxed),

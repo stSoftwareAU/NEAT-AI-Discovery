@@ -1001,7 +1001,7 @@ fn process_harmful_batch(
             expected_creature_score_gain: neuron_error_improvement,
             improved_count: stats.harmful_count,
             total_count,
-            target_neuron_stats: target_stats.clone(),
+            target_neuron_stats: target_stats,
             outlier_reduction_info: None,
             prediction_confidence: confidence_metrics.prediction_confidence,
             expected_score_gain_confidence_interval: confidence_metrics

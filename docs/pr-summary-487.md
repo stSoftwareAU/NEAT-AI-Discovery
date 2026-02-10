@@ -1,45 +1,88 @@
-## Summary
+# PR Summary — Issue #487: Reduce Unnecessary Clone Allocations in Hot Analysis Paths
 
-Reduce unnecessary `clone()` allocations in hot analysis paths (Issue #487). The changes replace avoidable clones with borrows, references, and moves across 7 source files, achieving a **22-33% performance improvement** on medium-to-large creatures.
+## Problem
 
-### Changes by file
+The analysis pipeline contained ~59 `clone()` calls across hot paths, many executing
+per-focus-neuron or per-sample. Key offenders:
 
-| File | Change | Clones removed |
-|------|--------|---------------|
-| `samples.rs` | `HelpfulStats` now derives `Copy` (all fields are scalar) | Eliminates `.clone()` calls on stats throughout the pipeline |
-| `structural_patterns.rs` | Use `&incoming_inputs[i]` instead of `.clone()` in nested loop; use `HashMap<&str, Vec<&SynapseJson>>` instead of owned keys/values; use `HashSet<(&str, &str)>` for edge lookup | 8 clones removed |
-| `target_analysis.rs` | Use `&str` references for diagnostic tuples; borrow `SynapseJson` in `HarmfulWork`; restructure `ExistingPathContribution` building to avoid double-clone | 6 clones removed |
-| `candidate_generation.rs` | Remove unused `_representative_indices: HashSet<u32>` field from `SampleLocalityGroup` | 3 `HashSet::clone()` removed |
-| `gpu_evaluation.rs` | Eliminate `candidate.clone()` by assigning to single slot | 1 clone removed |
-| `bottleneck.rs` | Borrow fan-in/fan-out lists instead of `.cloned()`; use `.iter().any()` instead of `.contains(&String)` | 4 clones + 2 allocations removed |
+1. **Mutex drains** — `helpful_results.lock().clone()` deep-copies entire `Vec` of results
+   after parallel analysis completes (4 sites in `synapse/mod.rs`)
+2. **HashMap key construction** — `focus_neuron_type_map` cloned every neuron UUID and type
+   string into owned `HashMap<String, String>` (1 site)
+3. **NeuronStatsJson** — `.clone()` on an all-scalar struct that should be `Copy` (1 site
+   in `target_analysis.rs`)
+4. **String clones for squash lookup** — `n.squash.clone()` in bottleneck conversion when
+   a `&str` borrow suffices (2 sites)
+5. **Owned struct copies** — `IncomingInput { from_uuid: String }` cloned repeatedly in
+   noisy-vs-trusted detection inner loop (3 sites in `structural_patterns.rs`)
 
-### What was NOT changed
+## Changes
 
-- **Public API**: No signature changes to exported functions (`apply_target_type_boost`, `apply_source_type_boost`, etc.)
-- **GPU queue interfaces**: Sample clones for GPU ownership transfer are marked as necessary and retained
-- **Result construction**: String allocations for output structs (`neuron_uuid`, `from_neuron_uuid`) are retained as they require owned data
-- **Post-processing neuron_type_map**: Retained as `HashMap<String, String>` to match public API of `apply_target_type_boost`
+### 1. Mutex drain via `std::mem::take` (`synapse/mod.rs`)
+Replaced 4 `Mutex::lock().clone()` calls with `std::mem::take()`, which swaps the
+Vec/HashMap out in O(1) without allocation:
+- `helpful_results`, `harmful_results`, `coordinated_structural_results`
+- `error_values_for_distribution`
 
-## Evidence
+### 2. Borrow-based HashMap for `focus_neuron_type_map` (`synapse/mod.rs`, `deadline.rs`)
+Changed from `HashMap<String, String>` (clones UUID+type per neuron) to
+`HashMap<&str, &str>` (borrows from `input.creature.neurons`). Updated
+`order_focus_targets` parameter to match.
 
-### Benchmark results (Criterion, `cargo bench --bench parallel_discovery`)
+### 3. `Copy` derive on `NeuronStatsJson` (`lib.rs`, `target_analysis.rs`)
+All fields are scalar (`f32`/`u32`/`Option<f32>`), so `Copy` is appropriate. Eliminates
+the `.clone()` call in the harmful-synapse loop.
 
-| Creature size | Before (ms) | After (ms) | Change | Significance |
-|--------------|-------------|------------|--------|-------------|
-| 5 hidden, 100 records | 159.59 | 164.73 | +3.2% | Within noise (p=0.04) |
-| 20 hidden, 200 records | 173.42 | 116.18 | **-33.0%** | Improved (p=0.00) |
-| 50 hidden, 200 records | 126.72 | 97.98 | **-22.7%** | Improved (p=0.00) |
+### 4. Borrow squash in bottleneck conversion (`bottleneck.rs`)
+Changed squash lookup from `.map(|n| n.squash.clone())` to `.map(|n| n.squash.as_str())`.
+Pre-built the comment string before constructing operations, eliminating a second clone.
 
-The improvement scales with creature complexity (more neurons = more clone sites hit per analysis pass). Small creatures show no significant change because GPU overhead dominates.
+### 5. Lifetime-parameterised `IncomingInput` (`structural_patterns.rs`)
+Changed `IncomingInput { from_uuid: String }` to `IncomingInput<'a> { from_uuid: &'a str }`
+with `Copy` derive. Eliminates String allocation per incoming synapse and avoids
+`noisy.clone()` / `trusted.clone()` in the inner loop.
 
-This is a backend/CLI performance change with no visual output. No screenshots applicable.
+### 6. Clippy fixes
+- Removed `&` on `&str` arguments to `cache.get()` (needless borrow)
+- Replaced `.clone()` on `Copy` type with direct assignment
 
-## Test Plan
+## Files Changed
 
-- Added `tests/issue_487_reduce_clone_allocations.rs` with 4 tests:
-  - `helpful_stats_is_copy` — verifies `HelpfulStats` implements `Copy` (assign without clone, original still usable)
-  - `helpful_stats_copy_through_function` — verifies `HelpfulStats` passes through functions by value
-  - `bottleneck_detection_with_borrowed_lists` — exercises bottleneck detection end-to-end with the refactored borrowed lists
-  - `helpful_sample_is_copy` — confirms pre-existing `Copy` trait on `HelpfulSample` still works
-- All 97 existing integration tests pass unchanged
-- `./quality.sh` passes cleanly (fmt, clippy, check, test, release build)
+| File | Change |
+|------|--------|
+| `src/analysis/synapse/mod.rs` | Mutex drain, borrow-based type map |
+| `src/analysis/synapse/structural_patterns.rs` | Lifetime-parameterised IncomingInput |
+| `src/analysis/synapse/target_analysis.rs` | Remove `.clone()` on Copy type |
+| `src/analysis/bottleneck.rs` | Borrow squash instead of clone |
+| `src/analysis/utils/deadline.rs` | `order_focus_targets` accepts `HashMap<&str, &str>` |
+| `src/lib.rs` | Derive `Copy` on `NeuronStatsJson` |
+| `Cargo.toml` | New benchmark entry |
+| `benches/clone_reduction.rs` | Criterion benchmark for regression tracking |
+| `tests/issue_487_reduce_clone_allocations.rs` | 7 correctness tests |
+| `tests/issue_468_target_type_prioritisation.rs` | Updated for `HashMap<&str, &str>` |
+
+## Benchmark Results
+
+### Bottleneck path (directly affected)
+| Benchmark | Before | After | Change |
+|-----------|--------|-------|--------|
+| convert_5_bottlenecks | 9.19 µs | 8.89 µs | **-3.1%** |
+| detect_20_bottlenecks | 23.26 µs | 22.47 µs | **-2.6%** |
+| convert_20_bottlenecks | 37.65 µs | 36.86 µs | **-2.8%** |
+
+### Restricted range / bounded range (no direct changes — control group)
+Within noise threshold, confirming no regressions from shared-code changes.
+
+## What Was NOT Changed (Intentional)
+
+- **`apply_target_type_boost` signature** — public API, kept as `HashMap<String, String>`
+- **`upsert_candidate` in `scoring.rs`** — the 3 String clones build the HashMap key tuple;
+  eliminating them would require changing the key type (breaking internal API for minimal gain)
+- **`restricted_range_to_coordinated_candidates`** — String clones construct owned
+  `CoordinatedStructuralOpJson` fields; inherent to the data model
+- **GPU ownership transfers** in `target_analysis.rs` — `Arc::clone()` and `input.clone()`
+  are necessary for thread-safe GPU batch evaluation
+
+## Test Results
+
+All 608 tests pass (463 unit + 145 integration). `quality.sh` passes clean.
