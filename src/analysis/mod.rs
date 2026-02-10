@@ -293,8 +293,7 @@ fn merge_coordinated_structural_replacements(
     if !diversify {
         synapse.coordinated_structural_candidates.sort_by(|a, b| {
             b.expected_creature_score_gain
-                .partial_cmp(&a.expected_creature_score_gain)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .total_cmp(&a.expected_creature_score_gain)
         });
     }
 
@@ -651,15 +650,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
-                        .iter()
-                        .filter_map(|(uuid, _, _)| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_hidden(&hidden);
                     let detected = saturation::detect_saturated_neurons(&hidden, &records);
                     if detected.is_empty() {
                         return None;
@@ -686,15 +677,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
-                        .iter()
-                        .filter_map(|(uuid, _, _)| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_hidden(&hidden);
                     let detected = bottleneck::detect_bottleneck_neurons(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -722,15 +705,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
-                        .iter()
-                        .filter_map(|(uuid, _, _)| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_hidden(&hidden);
                     let detected = dead_neuron::detect_dead_neurons(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -766,15 +741,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                         .filter(|n| n.neuron_type == "output" || n.neuron_type == "input")
                         .map(|n| n.uuid.clone())
                         .collect();
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     let detected =
                         correlated_error::detect_correlated_error_patterns(&creature, &records);
                     if detected.is_empty() {
@@ -805,15 +772,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     }
                     let uuids: Vec<String> =
                         creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     let detected = multi_hop::detect_multi_hop_candidates(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -839,15 +798,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
-                        .iter()
-                        .filter_map(|(uuid, _, _)| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_hidden(&hidden);
                     let detected =
                         oscillating_neuron::detect_oscillating_neurons(&hidden, &records);
                     if detected.is_empty() {
@@ -880,15 +831,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                         .collect::<std::collections::HashSet<_>>()
                         .into_iter()
                         .collect();
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = source_uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&source_uuids);
                     let detected = dormant_synapse::detect_dormant_synapses(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -913,15 +856,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 detect_fn: Box::new(move || {
                     let uuids: Vec<String> =
                         creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     let detected = opposing_synapse::detect_opposing_synapses(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -950,15 +885,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                         .filter(|n| n.neuron_type == "output")
                         .map(|n| n.uuid.clone())
                         .collect();
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     let detected = output_bias_drift::detect_output_bias_drift(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -990,15 +917,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if uuids.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     let detected = bounded_range::detect_bounded_range_neurons(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -1030,15 +949,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if uuids.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     let detected =
                         sentinel_gating::detect_sentinel_gating_candidates(&creature, &records);
                     if detected.is_empty() {
@@ -1067,15 +978,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
-                        .iter()
-                        .filter_map(|(uuid, _, _)| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_hidden(&hidden);
                     let config = restricted_range::RestrictedRangeConfig::default();
                     let detected = restricted_range::detect_restricted_range_neurons(
                         &creature, &records, &config,
@@ -1106,15 +1009,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
-                        .iter()
-                        .filter_map(|(uuid, _, _)| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_hidden(&hidden);
                     let config = operating_point::OperatingPointConfig::default();
                     let detected = operating_point::detect_operating_point_issues(
                         &creature, &records, &config,
@@ -1144,15 +1039,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
-                        .iter()
-                        .filter_map(|(uuid, _, _)| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_hidden(&hidden);
                     let detected =
                         unbounded_capping::detect_unbounded_capping_candidates(&hidden, &records);
                     if detected.is_empty() {
@@ -1180,15 +1067,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
-                        .iter()
-                        .filter_map(|(uuid, _, _)| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_hidden(&hidden);
                     let detected = noise_signal::detect_noisy_neurons(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -1213,15 +1092,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 detect_fn: Box::new(move || {
                     let uuids: Vec<String> =
                         creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     let detected = noise_signal::detect_noisy_synapses(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -1253,15 +1124,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if input_uuids.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = input_uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&input_uuids);
                     let config = input_sensitivity::InputSensitivityConfig::default();
                     let detected =
                         input_sensitivity::detect_dominant_inputs(&creature, &records, &config);
@@ -1288,15 +1151,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 detect_fn: Box::new(move || {
                     let uuids: Vec<String> =
                         creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     let config = input_sensitivity::InputSensitivityConfig::default();
                     let detected =
                         input_sensitivity::detect_threshold_effects(&creature, &records, &config);
@@ -1325,15 +1180,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
-                        .iter()
-                        .filter_map(|(uuid, _, _)| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_hidden(&hidden);
                     let config = weight_coherence::WeightCoherenceConfig::default();
                     let detected = weight_coherence::detect_incoherent_weight_ratios(
                         &creature, &records, &config,
@@ -1363,15 +1210,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
-                        .iter()
-                        .filter_map(|(uuid, _, _)| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_hidden(&hidden);
                     let config = weight_coherence::WeightCoherenceConfig::default();
                     let detected =
                         weight_coherence::detect_near_constant_paths(&creature, &records, &config);
@@ -1398,15 +1237,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 detect_fn: Box::new(move || {
                     let uuids: Vec<String> =
                         creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     let config = weight_coherence::WeightCoherenceConfig::default();
                     let detected = weight_coherence::detect_symmetric_cancellation(
                         &creature, &records, &config,
@@ -1437,15 +1268,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = hidden
-                        .iter()
-                        .filter_map(|(uuid, _, _)| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_hidden(&hidden);
                     let mut recommendations = Vec::new();
                     for (uuid, squash, _bias) in hidden.iter() {
                         if let Some(neuron_records) = records.iter().find(|(u, _)| u == uuid)
@@ -1487,15 +1310,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     }
                     let uuids: Vec<String> =
                         creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     let detected = topology::detect_topology_issues(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -1520,15 +1335,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 detect_fn: Box::new(move || {
                     let uuids: Vec<String> =
                         creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     if records.is_empty() {
                         return None;
                     }
@@ -1557,15 +1364,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 detect_fn: Box::new(move || {
                     let uuids: Vec<String> =
                         creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records: Vec<(String, Vec<crate::types::DiscoverRecord>)> = uuids
-                        .iter()
-                        .filter_map(|uuid| {
-                            cache
-                                .get(uuid)
-                                .ok()
-                                .map(|r| (uuid.clone(), r.as_ref().to_vec()))
-                        })
-                        .collect();
+                    let records = cache.load_records_for_uuids(&uuids);
                     if records.is_empty() {
                         return None;
                     }

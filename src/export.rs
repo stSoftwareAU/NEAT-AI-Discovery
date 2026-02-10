@@ -561,11 +561,7 @@ pub fn export_visualisation_snapshot(
             }
 
             // Sort by activation_delta descending and keep top-K
-            worst_samples.sort_by(|a, b| {
-                b.activation_delta
-                    .partial_cmp(&a.activation_delta)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            worst_samples.sort_by(|a, b| b.activation_delta.total_cmp(&a.activation_delta));
             worst_samples.truncate(options.top_k_worst_samples);
 
             let mean_value_delta = if count > 0 {

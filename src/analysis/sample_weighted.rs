@@ -162,7 +162,7 @@ pub fn stratify_samples(records: &[DiscoverRecord]) -> StratifiedAnalysis {
 
     // Compute median
     let mut sorted_errors: Vec<f32> = abs_errors.clone();
-    sorted_errors.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    sorted_errors.sort_by(|a, b| a.total_cmp(b));
     let median = sorted_errors[sorted_errors.len() / 2];
 
     // Split into easy (≤ median) and hard (> median)
@@ -293,11 +293,7 @@ pub fn detect_high_error_neurons(
     }
 
     // Sort by estimated improvement (best first)
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }
@@ -340,8 +336,7 @@ pub fn high_error_neurons_to_coordinated_candidates(
     // Sort by improvement (best first)
     result.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     result

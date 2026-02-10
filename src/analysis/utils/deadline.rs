@@ -14,7 +14,6 @@
 use super::verbose_enabled;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::time::{Duration, SystemTime};
 
@@ -500,7 +499,7 @@ pub fn order_eligible_sources(
         keyed.push((t, n));
     }
 
-    keyed.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+    keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
     eligible_sources.extend(keyed.into_iter().map(|(_, n)| n));
 
     // Append non-input neurons after all input neurons

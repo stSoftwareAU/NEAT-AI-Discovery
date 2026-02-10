@@ -176,11 +176,7 @@ pub fn detect_opposing_synapses(
     }
 
     // Sort by estimated improvement (best first)
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }
@@ -257,8 +253,7 @@ pub fn opposing_synapses_to_coordinated_candidates(
     // Sort by expected improvement (best first)
     results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     results

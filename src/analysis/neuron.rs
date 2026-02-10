@@ -51,7 +51,6 @@ use super::synapse::{
 };
 
 use rayon::prelude::*;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -804,8 +803,7 @@ pub(crate) fn analyze_neurons_with_cache(
     // Sort by expected creature score gain (highest first) - Issue #128
     helpful_results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     // Production experiment: pair "extreme" candidates with a conservative variant.

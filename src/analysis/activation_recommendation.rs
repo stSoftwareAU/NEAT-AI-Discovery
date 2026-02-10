@@ -521,9 +521,7 @@ pub fn recommend_activation_function(
     let current_score = get_activation_score(&suitability, current_squash);
 
     // Find the best activation
-    let (best_squash, best_score) = suitability
-        .iter()
-        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))?;
+    let (best_squash, best_score) = suitability.iter().max_by(|a, b| a.1.total_cmp(b.1))?;
 
     // Calculate improvement
     let improvement = best_score - current_score;

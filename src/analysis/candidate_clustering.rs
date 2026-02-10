@@ -109,11 +109,7 @@ pub fn cluster_candidates(candidates: &[ClusterableCandidate]) -> Vec<CandidateC
 
         // Step 2: Sort by improvement (best first) within each group
         let mut sorted: Vec<&ClusterableCandidate> = group.clone();
-        sorted.sort_by(|a, b| {
-            b.expected_improvement
-                .partial_cmp(&a.expected_improvement)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        sorted.sort_by(|a, b| b.expected_improvement.total_cmp(&a.expected_improvement));
 
         // Step 3: Sub-cluster by improvement similarity.
         // Walk through sorted candidates and split when the ratio between the
@@ -142,8 +138,7 @@ pub fn cluster_candidates(candidates: &[ClusterableCandidate]) -> Vec<CandidateC
     // Sort clusters by representative improvement (best first)
     clusters.sort_by(|a, b| {
         b.representative_improvement
-            .partial_cmp(&a.representative_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.representative_improvement)
     });
 
     clusters

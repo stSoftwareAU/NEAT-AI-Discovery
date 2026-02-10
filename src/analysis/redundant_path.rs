@@ -120,11 +120,7 @@ pub fn detect_redundant_paths(
     }
 
     // Sort by estimated improvement (descending)
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }
