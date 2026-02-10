@@ -174,11 +174,7 @@ pub fn detect_epistatic_pairs(
     }
 
     // Sort by combined improvement (descending)
-    candidates.sort_by(|a, b| {
-        b.combined_improvement
-            .partial_cmp(&a.combined_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.combined_improvement.total_cmp(&a.combined_improvement));
 
     candidates
 }
@@ -437,8 +433,7 @@ pub fn detect_synergistic_candidates(
     // Step 1: Find the best single-source candidate
     let best_primary = valid_sources.iter().max_by(|a, b| {
         a.individual_improvement
-            .partial_cmp(&b.individual_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&b.individual_improvement)
     });
 
     let Some(primary) = best_primary else {
@@ -467,11 +462,7 @@ pub fn detect_synergistic_candidates(
     }
 
     // Sort by combined improvement (descending)
-    candidates.sort_by(|a, b| {
-        b.combined_improvement
-            .partial_cmp(&a.combined_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.combined_improvement.total_cmp(&a.combined_improvement));
 
     candidates
 }

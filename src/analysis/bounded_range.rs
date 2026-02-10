@@ -104,11 +104,7 @@ pub fn detect_bounded_range_neurons(
     }
 
     // Sort by detection confidence (highest first)
-    candidates.sort_by(|a, b| {
-        b.detection_confidence
-            .partial_cmp(&a.detection_confidence)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.detection_confidence.total_cmp(&a.detection_confidence));
 
     candidates
 }
@@ -272,8 +268,7 @@ pub fn bounded_range_to_coordinated_candidates(
     // Sort by expected improvement (best first)
     results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     results

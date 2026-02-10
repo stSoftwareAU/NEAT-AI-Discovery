@@ -190,11 +190,7 @@ pub fn detect_multi_hop_candidates(
         }
 
         // Sort by absolute correlation (strongest first) and limit
-        intermediates.sort_by(|a, b| {
-            b.1.abs()
-                .partial_cmp(&a.1.abs())
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        intermediates.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
         intermediates.truncate(MAX_INTERMEDIATES_PER_TARGET);
 
         // Build two-hop candidates: source → intermediate → target
@@ -232,11 +228,7 @@ pub fn detect_multi_hop_candidates(
     }
 
     // Sort by estimated improvement (best first)
-    all_candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    all_candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     // Limit total candidates
     all_candidates.truncate(MAX_TOTAL_CANDIDATES);
@@ -542,8 +534,7 @@ pub fn multi_hop_to_coordinated_candidates(
     // Sort by expected improvement (best first)
     results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     results

@@ -85,7 +85,6 @@ use crate::analysis::gpu::{GpuAnalyzer, GpuEvaluator, GpuWorkQueue};
 use super::cache::RecordCache;
 
 use rayon::prelude::*;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -2009,11 +2008,7 @@ pub(crate) fn truncate_combined_synapse_candidate_sets(
     combined.extend(harmful.into_iter().map(Any::Harmful));
     combined.extend(coordinated.into_iter().map(Any::Coordinated));
 
-    combined.sort_by(|a, b| {
-        score(b)
-            .partial_cmp(&score(a))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    combined.sort_by(|a, b| score(b).total_cmp(&score(a)));
     combined.truncate(limit);
 
     let mut helpful_out = Vec::new();
@@ -3881,18 +3876,15 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     helpful_results.sort_by(|a, b| {
         // Issue #128: Sort by expected creature score gain (highest first)
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
     harmful_results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
     coordinated_structural_results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     // Deadline coverage (Jan 2026): diversify within the top-K so repeated runs explore different

@@ -201,11 +201,7 @@ pub fn detect_restricted_range_neurons(
     }
 
     // Sort by range utilisation (lowest first — worst offenders first)
-    results.sort_by(|a, b| {
-        a.range_utilisation
-            .partial_cmp(&b.range_utilisation)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    results.sort_by(|a, b| a.range_utilisation.total_cmp(&b.range_utilisation));
 
     results
 }
@@ -317,8 +313,7 @@ pub fn restricted_range_to_coordinated_candidates(
     // Sort by expected improvement (best first)
     results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     results

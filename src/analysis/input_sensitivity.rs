@@ -331,11 +331,7 @@ pub fn detect_dominant_inputs(
     }
 
     // Sort by estimated improvement (best first)
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }
@@ -461,7 +457,7 @@ pub fn detect_threshold_effects(
                 .zip(matched_activations.iter())
                 .map(|(&v, &a)| (v, a))
                 .collect();
-            pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
 
             // Compute maximum gradient in the data
             let mut max_gradient: f32 = 0.0;
@@ -537,11 +533,7 @@ pub fn detect_threshold_effects(
     }
 
     // Sort by estimated improvement (best first)
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }
@@ -574,8 +566,7 @@ pub fn dominant_inputs_to_coordinated_candidates(
     // Sort by expected improvement (best first)
     results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     results
@@ -647,8 +638,7 @@ pub fn threshold_effects_to_coordinated_candidates(
     // Sort by expected improvement (best first)
     results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     results

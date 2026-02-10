@@ -204,11 +204,7 @@ pub fn detect_bottleneck_neurons(
     }
 
     // Sort by estimated improvement (best first)
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }
@@ -297,11 +293,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
                     (u.as_str(), w)
                 })
                 .collect();
-            upstream_with_weights.sort_by(|a, b| {
-                b.1.abs()
-                    .partial_cmp(&a.1.abs())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            upstream_with_weights.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
 
             // Take the top half of upstream connections
             let half = (upstream_with_weights.len() / 2).max(1);
@@ -354,7 +346,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
                     .copied()
                     .unwrap_or(0.0)
                     .abs();
-                wa.partial_cmp(&wb).unwrap_or(std::cmp::Ordering::Equal)
+                wa.total_cmp(&wb)
             });
 
             if let Some(upstream_uuid) = best_upstream {
@@ -396,8 +388,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
     // Sort by expected improvement (best first)
     results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     results

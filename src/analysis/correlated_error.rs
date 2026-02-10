@@ -230,11 +230,7 @@ pub fn detect_correlated_error_patterns(
     }
 
     // Sort by estimated improvement (best first)
-    results.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    results.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     results
 }
@@ -441,7 +437,7 @@ fn find_predictive_inputs(
     }
 
     // Sort by correlation strength (strongest first)
-    predictive.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    predictive.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     predictive.into_iter().map(|(uuid, _)| uuid).collect()
 }
@@ -616,8 +612,7 @@ pub fn correlated_errors_to_coordinated_candidates(
     // Sort by expected improvement (best first)
     results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     results

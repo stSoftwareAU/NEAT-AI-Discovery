@@ -230,7 +230,7 @@ fn compute_percentiles(values: &[f32]) -> [f32; 5] {
     }
 
     let mut sorted: Vec<f32> = values.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| a.total_cmp(b));
 
     let n = sorted.len();
 

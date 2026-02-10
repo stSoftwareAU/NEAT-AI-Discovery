@@ -219,8 +219,7 @@ pub fn detect_operating_point_issues(
     // Sort by utilisation (lowest first — worst offenders first)
     results.sort_by(|a, b| {
         a.dynamic_range_utilisation
-            .partial_cmp(&b.dynamic_range_utilisation)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&b.dynamic_range_utilisation)
     });
 
     results
@@ -328,8 +327,7 @@ pub fn operating_point_to_coordinated_candidates(
     // Sort by expected improvement (best first)
     results.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     results

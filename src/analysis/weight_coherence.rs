@@ -242,11 +242,7 @@ pub fn detect_incoherent_weight_ratios(
     }
 
     // Sort by estimated improvement (best first)
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }
@@ -325,7 +321,7 @@ pub fn detect_near_constant_paths(
                     weights
                         .iter()
                         .map(|w| w.abs())
-                        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                        .max_by(|a, b| a.total_cmp(b))
                         .unwrap_or(0.0)
                 })
                 .unwrap_or(0.0);
@@ -354,11 +350,7 @@ pub fn detect_near_constant_paths(
     }
 
     // Sort by estimated improvement (best first)
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }
@@ -462,11 +454,7 @@ pub fn detect_symmetric_cancellation(
     }
 
     // Sort by estimated improvement (best first)
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }
@@ -500,8 +488,7 @@ pub fn incoherent_ratios_to_coordinated_candidates(
     // Sort by improvement (best first)
     result.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     result
@@ -540,8 +527,7 @@ pub fn near_constant_paths_to_coordinated_candidates(
 
     result.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     result
@@ -578,8 +564,7 @@ pub fn symmetric_cancellation_to_coordinated_candidates(
 
     result.sort_by(|a, b| {
         b.expected_creature_score_gain
-            .partial_cmp(&a.expected_creature_score_gain)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.expected_creature_score_gain)
     });
 
     result

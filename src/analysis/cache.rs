@@ -219,6 +219,40 @@ impl RecordCache {
         self.cache.read().is_empty()
     }
 
+    /// Load records for a slice of neuron UUIDs in one call (Issue #493).
+    ///
+    /// Returns `(uuid, records)` pairs for each UUID.
+    /// UUIDs where the cache lookup fails are silently skipped.
+    ///
+    /// This eliminates the repeated `filter_map(|uuid| cache.get(uuid)...)` boilerplate
+    /// that previously appeared 25 times in `analyze_all()`.
+    pub fn load_records_for_uuids(&self, uuids: &[String]) -> Vec<(String, Vec<DiscoverRecord>)> {
+        uuids
+            .iter()
+            .filter_map(|uuid| {
+                self.get(uuid)
+                    .ok()
+                    .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+            })
+            .collect()
+    }
+
+    /// Load records for hidden neurons from the standard `(uuid, squash, bias)` tuple
+    /// format used throughout the discovery dispatch (Issue #493).
+    pub fn load_records_for_hidden(
+        &self,
+        hidden_neurons: &[(String, String, f32)],
+    ) -> Vec<(String, Vec<DiscoverRecord>)> {
+        hidden_neurons
+            .iter()
+            .filter_map(|(uuid, _, _)| {
+                self.get(uuid)
+                    .ok()
+                    .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+            })
+            .collect()
+    }
+
     /// Create a cache with a custom loader function.
     /// Used primarily for testing. Available in both unit tests and integration tests.
     pub fn with_loader(parquet_file: &str, loader: Arc<RecordCacheLoader>) -> Self {

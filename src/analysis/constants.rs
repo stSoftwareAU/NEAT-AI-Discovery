@@ -148,3 +148,36 @@ pub const MIN_BOOST_SAMPLES: usize = 10;
 /// ## Valid Range
 /// Must be > 1.0 (boost) and <= 3.0 (avoid over-biasing).
 pub const EXISTING_HIDDEN_TARGET_BOOST: f64 = 1.5;
+
+// =============================================================================
+// NaN-safe Floating-Point Comparison Helpers (Issue #483)
+// =============================================================================
+
+/// NaN-safe descending comparison for `f32` values.
+///
+/// Uses `f32::total_cmp()` which provides a total ordering including NaN.
+/// NaN values sort after all finite values (to the end of a descending sort).
+///
+/// Replaces the error-prone `partial_cmp().unwrap_or(Ordering::Equal)` pattern
+/// which silently treats NaN as equal to any value, corrupting sort order.
+#[inline]
+pub fn cmp_f32_desc(a: &f32, b: &f32) -> std::cmp::Ordering {
+    b.total_cmp(a)
+}
+
+/// NaN-safe ascending comparison for `f32` values.
+///
+/// Uses `f32::total_cmp()` which provides a total ordering including NaN.
+/// NaN values sort after all finite values (to the end of an ascending sort).
+#[inline]
+pub fn cmp_f32_asc(a: &f32, b: &f32) -> std::cmp::Ordering {
+    a.total_cmp(b)
+}
+
+/// NaN-safe descending comparison for `f64` values.
+///
+/// Uses `f64::total_cmp()` which provides a total ordering including NaN.
+#[inline]
+pub fn cmp_f64_desc(a: &f64, b: &f64) -> std::cmp::Ordering {
+    b.total_cmp(a)
+}

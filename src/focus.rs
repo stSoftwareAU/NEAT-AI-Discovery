@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use rayon::prelude::*;
-use std::cmp::Ordering;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -342,11 +342,7 @@ pub fn hierarchical_focus_selection(
             .map(|n| (n, scores.get(&n.uuid).copied().unwrap_or(0.0)))
             .collect();
 
-        layer_neurons.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| a.0.uuid.cmp(&b.0.uuid))
-        });
+        layer_neurons.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.uuid.cmp(&b.0.uuid)));
 
         // Select top neurons from this layer
         let to_select = allocation.min(layer_neurons.len());
@@ -376,11 +372,7 @@ pub fn hierarchical_focus_selection(
                 .map(|n| (n, scores.get(&n.uuid).copied().unwrap_or(0.0)))
                 .collect();
 
-            remaining.sort_by(|a, b| {
-                b.1.partial_cmp(&a.1)
-                    .unwrap_or(Ordering::Equal)
-                    .then_with(|| a.0.uuid.cmp(&b.0.uuid))
-            });
+            remaining.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.uuid.cmp(&b.0.uuid)));
 
             for (neuron, _score) in remaining {
                 if unused_slots == 0 {
@@ -2260,9 +2252,8 @@ pub fn rank_focus_neurons(
         let b_weighted = b_base * b_gradient_factor * b_frequency_factor;
 
         b_weighted
-            .partial_cmp(&a_weighted)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| b.impact.partial_cmp(&a.impact).unwrap_or(Ordering::Equal))
+            .total_cmp(&a_weighted)
+            .then_with(|| b.impact.total_cmp(&a.impact))
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
@@ -2377,13 +2368,11 @@ pub fn rank_focus_neurons(
 
         // Sort by descending net improvement (best candidates first)
         b_net
-            .partial_cmp(&a_net)
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&a_net)
             .then_with(|| {
                 // For ties, prefer lower impact (safer removal)
                 a.activation_weighted_impact
-                    .partial_cmp(&b.activation_weighted_impact)
-                    .unwrap_or(Ordering::Equal)
+                    .total_cmp(&b.activation_weighted_impact)
             })
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
@@ -2727,9 +2716,8 @@ pub fn rank_focus_neurons_with_history(
         };
 
         b_weighted
-            .partial_cmp(&a_weighted)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| b.impact.partial_cmp(&a.impact).unwrap_or(Ordering::Equal))
+            .total_cmp(&a_weighted)
+            .then_with(|| b.impact.total_cmp(&a.impact))
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
@@ -2780,12 +2768,10 @@ pub fn rank_focus_neurons_with_history(
         let b_net = b.removal_savings - b.activation_weighted_impact;
 
         b_net
-            .partial_cmp(&a_net)
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&a_net)
             .then_with(|| {
                 a.activation_weighted_impact
-                    .partial_cmp(&b.activation_weighted_impact)
-                    .unwrap_or(Ordering::Equal)
+                    .total_cmp(&b.activation_weighted_impact)
             })
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
