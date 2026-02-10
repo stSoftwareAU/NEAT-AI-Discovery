@@ -358,7 +358,7 @@ pub fn get_bias_values(squash: &str) -> Vec<f32> {
 
     let mut values: Vec<f32> = base_negative.to_vec();
     values.extend_from_slice(base_positive);
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    values.sort_by(|a, b| a.total_cmp(b));
     values
 }
 
