@@ -1,38 +1,50 @@
 ## Summary
 
-Split the monolithic `src/analysis/synapse.rs` (4,375 lines) into focused submodules under `src/analysis/synapse/` (Issue #482). This is a pure structural refactoring — no logic changes, no public API changes.
+Further split the synapse analysis submodules to bring all files under the ~1,500-line target (Issue #482). The previous PR (#495) split the monolithic `synapse.rs` into submodules but left `mod.rs` at 2,485 lines. This PR extracts three new focused modules, reducing `mod.rs` from 2,485 to 860 lines — a 65% reduction.
 
 ### New Module Structure
 
 | File | Lines | Responsibility |
 |------|------:|----------------|
-| `synapse/mod.rs` | 2,485 | Core pipeline (`analyze_synapses_with_cache_impl`), public API, re-exports, tests |
+| `synapse/mod.rs` | 860 | Orchestration, public API, re-exports, tests |
+| `synapse/target_analysis.rs` | 1,020 | Per-target analysis loop (helpful, harmful, coordinated) |
 | `synapse/gpu_evaluation.rs` | 975 | ReLU/activation candidate evaluation, batched GPU processing |
-| `synapse/scoring.rs` | 532 | Improvement calculation, saturation-aware simulation, source/target boosting |
-| `synapse/filtering.rs` | 243 | Candidate truncation, deduplication, deterministic UUID generation |
-| `synapse/candidate_generation.rs` | 220 | Sample locality grouping (Issue #221), ordered neuron building |
-| **Total** | **4,455** | |
+| `synapse/scoring.rs` | 532 | Improvement calculation, saturation-aware simulation, boosting |
+| `synapse/structural_patterns.rs` | 411 | Noisy vs trusted input folding, collapse hidden neurons |
+| `synapse/post_processing.rs` | 315 | Impact discounting, sorting, diversification, metadata |
+| `synapse/filtering.rs` | 243 | Candidate truncation, deduplication |
+| `synapse/candidate_generation.rs` | 220 | Sample locality grouping, ordered neuron building |
+| **Total** | **4,576** | All files under 1,500-line target |
+
+### Extractions in this PR
+
+1. **`target_analysis.rs`** — Extracted the 1,200-line per-target parallel loop body into `analyse_single_target()`. Uses a `TargetAnalysisContext` struct to share pre-computed data across targets, and returns `TargetAnalysisResults` for the orchestrator to merge.
+
+2. **`structural_patterns.rs`** — Extracted coordinated structural discovery:
+   - Noisy vs trusted input folding (Issue #165)
+   - Collapse 1-in/1-out hidden neurons into direct synapses (Issue #425)
+
+3. **`post_processing.rs`** — Extracted all post-analysis processing:
+   - Impact-based discounting for helpful, harmful, and coordinated candidates
+   - Source-type and target-type boosting (Issues #467, #468)
+   - Sorting, diversification, truncation
+   - Metadata assembly via `MetadataParams` struct
 
 ### Design Constraints
 
-- NEAT-AI does not need to change — all public API functions (`analyze_synapses`, `analyze_synapses_with_cache_and_gpu_queue`) remain at the same path
+- No changes to the public API — NEAT-AI does not need to change
 - All `pub(crate)` items used by `analysis/mod.rs` and `neuron.rs` are re-exported from `synapse/mod.rs`
 - All existing candidate types are reused unchanged
-- All 463+ existing tests continue to pass without modification
-
-### Key Decisions
-
-- **`mod.rs` retains the core pipeline**: The 1,946-line `analyze_synapses_with_cache_impl` function stays in `mod.rs` because it is deeply intertwined with parallel iteration, closures, and local struct definitions that make further extraction impractical without major refactoring
-- **`#[path]` directive updated**: The `implementation_tests` path attribute changed from `"implementation_tests/mod.rs"` to `"../implementation_tests/mod.rs"` to reflect the new directory depth
-- **`#[cfg(test)]` imports isolated**: Test-only functions (`get_target_simulation_fn`, `build_samples`, etc.) use conditional `#[cfg(test)]` imports and re-exports to avoid unused-import warnings in non-test builds
+- All existing tests continue to pass without modification
+- Updated AGENTS.md source layout to reflect new module structure
 
 ## Evidence
 
 This is a backend/CLI change with no visual UI. Evidence is provided via:
-- All 463+ existing unit and integration tests continue to pass
+- All existing unit and integration tests continue to pass
 - `quality.sh` passes cleanly (fmt, clippy, check, test, release build)
 - Zero compilation warnings
-- No logic changes — byte-for-byte equivalent behaviour
+- No logic changes — behaviour is preserved
 
 ## Test Plan
 
