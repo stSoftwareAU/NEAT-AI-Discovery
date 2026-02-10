@@ -110,8 +110,8 @@ pub(crate) fn detect_noisy_vs_trusted(
 
     for i in 0..incoming_inputs.len() {
         for j in (i + 1)..incoming_inputs.len() {
-            let a = incoming_inputs[i].clone();
-            let b = incoming_inputs[j].clone();
+            let a = &incoming_inputs[i];
+            let b = &incoming_inputs[j];
 
             if (a.weight - b.weight).abs() > WEIGHT_EPS {
                 continue;
@@ -190,7 +190,7 @@ pub(crate) fn detect_noisy_vs_trusted(
 
             match &best {
                 Some((_, _, best_gain)) if *best_gain >= improvement => {}
-                _ => best = Some((noisy, trusted, improvement)),
+                _ => best = Some((noisy.clone(), trusted.clone(), improvement)),
             }
         }
     }
@@ -240,32 +240,26 @@ pub(crate) fn detect_collapsible_hidden_neurons(
 ) -> Vec<CoordinatedStructuralCandidateJson> {
     let mut results = Vec::new();
 
-    // Build incoming/outgoing synapse lists per neuron.
-    let mut incoming: HashMap<String, Vec<SynapseJson>> = HashMap::new();
-    let mut outgoing: HashMap<String, Vec<SynapseJson>> = HashMap::new();
+    // Build incoming/outgoing synapse lists per neuron (using references to avoid cloning).
+    let mut incoming: HashMap<&str, Vec<&SynapseJson>> = HashMap::new();
+    let mut outgoing: HashMap<&str, Vec<&SynapseJson>> = HashMap::new();
     for s in &input.creature.synapses {
-        incoming
-            .entry(s.to_uuid.clone())
-            .or_default()
-            .push(s.clone());
-        outgoing
-            .entry(s.from_uuid.clone())
-            .or_default()
-            .push(s.clone());
+        incoming.entry(s.to_uuid.as_str()).or_default().push(s);
+        outgoing.entry(s.from_uuid.as_str()).or_default().push(s);
     }
 
     // Quick neuron-type lookup (only creature.neurons; inputs are not here).
-    let neuron_type_map_local: HashMap<String, String> = input
+    let neuron_type_map_local: HashMap<&str, &str> = input
         .creature
         .neurons
         .iter()
-        .map(|n| (n.uuid.clone(), n.neuron_type.clone()))
+        .map(|n| (n.uuid.as_str(), n.neuron_type.as_str()))
         .collect();
 
     // Precompute existing direct synapses so we don't propose duplicates.
-    let mut existing_edges: HashSet<(String, String)> = HashSet::new();
+    let mut existing_edges: HashSet<(&str, &str)> = HashSet::new();
     for s in &input.creature.synapses {
-        existing_edges.insert((s.from_uuid.clone(), s.to_uuid.clone()));
+        existing_edges.insert((s.from_uuid.as_str(), s.to_uuid.as_str()));
     }
 
     for neuron in &input.creature.neurons {
@@ -290,7 +284,7 @@ pub(crate) fn detect_collapsible_hidden_neurons(
         if a == b || a == h || b == h {
             continue;
         }
-        if existing_edges.contains(&(a.to_string(), b.to_string())) {
+        if existing_edges.contains(&(a, b)) {
             // A direct synapse already exists; collapsing would need additional ops (future work).
             continue;
         }

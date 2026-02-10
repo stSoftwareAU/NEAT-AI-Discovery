@@ -477,33 +477,30 @@ pub(crate) fn analyse_single_target(
     // Append existing edges for weight-update evaluation
     let mut existing_path_contributions: Vec<ExistingPathContribution> = Vec::new();
     if !existing_sources_to_process.is_empty() {
-        let existing_work: Vec<HelpfulWork> = existing_sources_to_process
+        // Build contributions first (owns the samples), then create work items from them.
+        existing_path_contributions = existing_sources_to_process
             .par_iter()
             .filter_map(|item| {
-                let source_uuid = item.source.uuid.as_str();
                 let from_records = item.records.as_ref();
                 let samples = target_map_ref.build_samples_from(from_records);
                 if samples.is_empty() {
                     return None;
                 }
-                Some(HelpfulWork {
-                    source_uuid: source_uuid.to_string(),
-                    target_uuid: target_uuid.to_string(),
+                Some(ExistingPathContribution {
+                    source_uuid: item.source.uuid.clone(),
+                    existing_weight: item.old_weight,
                     samples,
-                    existing_weight: Some(item.old_weight),
                 })
             })
             .collect();
 
-        for work in &existing_work {
-            existing_path_contributions.push(ExistingPathContribution {
-                source_uuid: work.source_uuid.clone(),
-                existing_weight: work.existing_weight.unwrap_or(0.0),
-                samples: work.samples.clone(),
-            });
-        }
-
-        helpful_work_batch.extend(existing_work);
+        // Create work items by cloning samples from contributions (single clone instead of double).
+        helpful_work_batch.extend(existing_path_contributions.iter().map(|c| HelpfulWork {
+            source_uuid: c.source_uuid.clone(),
+            target_uuid: target_uuid.to_string(),
+            samples: c.samples.clone(), // Clone required: GPU queue takes ownership
+            existing_weight: Some(c.existing_weight),
+        }));
     }
 
     // Process helpful synapse candidates via GPU batching
@@ -552,7 +549,7 @@ fn process_helpful_batch(
 ) -> Result<()> {
     let helpful_samples: Vec<Vec<HelpfulSample>> = helpful_work_batch
         .iter()
-        .map(|w| w.samples.clone())
+        .map(|w| w.samples.clone()) // Clone required: GPU queue takes ownership of sample data
         .collect();
 
     // Track metadata
@@ -570,9 +567,9 @@ fn process_helpful_batch(
 
     let mut candidates_to_add = Vec::new();
     let mut coordinated_to_add = Vec::new();
-    let mut diagnostics_zero_improvements = Vec::new();
-    let mut diagnostics_below_threshold = Vec::new();
-    let mut diagnostics_selected = Vec::new();
+    let mut diagnostics_zero_improvements: Vec<(&str, &str, usize, u32, u32)> = Vec::new();
+    let mut diagnostics_below_threshold: Vec<(&str, &str, ThresholdContext)> = Vec::new();
+    let mut diagnostics_selected: Vec<&str> = Vec::new();
     let mut source_contributions: Vec<SourceContribution> = Vec::new();
 
     {
@@ -586,8 +583,8 @@ fn process_helpful_batch(
             };
             if gpu_improved_count == 0 {
                 diagnostics_zero_improvements.push((
-                    work.target_uuid.clone(),
-                    work.source_uuid.clone(),
+                    work.target_uuid.as_str(),
+                    work.source_uuid.as_str(),
                     work.samples.len(),
                     stats.positive_count,
                     stats.negative_count,
@@ -688,8 +685,8 @@ fn process_helpful_batch(
             if work.existing_weight.is_none() {
                 source_contributions.push(build_source_contribution(
                     &work.source_uuid,
-                    work.samples.clone(),
-                    stats.clone(),
+                    work.samples.clone(), // Clone required: SourceContribution takes ownership
+                    *stats,
                     applied_weight,
                     neuron_error_improvement,
                 ));
@@ -701,8 +698,8 @@ fn process_helpful_batch(
 
             if neuron_error_improvement <= ctx.threshold {
                 diagnostics_below_threshold.push((
-                    work.target_uuid.clone(),
-                    work.source_uuid.clone(),
+                    work.target_uuid.as_str(),
+                    work.source_uuid.as_str(),
                     ThresholdContext {
                         sample_count: work.samples.len(),
                         expected_improvement: neuron_error_improvement,
@@ -737,7 +734,7 @@ fn process_helpful_batch(
                     )),
                 });
             } else {
-                diagnostics_selected.push(work.target_uuid.clone());
+                diagnostics_selected.push(work.target_uuid.as_str());
                 // Issue #178: constant source folding into setBias
                 if let Some(threshold) = ctx.constant_source_effect_threshold {
                     let mut act_min = f32::INFINITY;
@@ -816,14 +813,14 @@ fn process_helpful_batch(
     // Apply diagnostics updates
     for (target, source, sample_count, pos, neg) in diagnostics_zero_improvements {
         ctx.diagnostics
-            .record_zero_improvement(&target, &source, sample_count, pos, neg);
+            .record_zero_improvement(target, source, sample_count, pos, neg);
     }
     for (target, source, context) in diagnostics_below_threshold {
         ctx.diagnostics
-            .record_below_threshold(&target, &source, context);
+            .record_below_threshold(target, source, context);
     }
     for target in diagnostics_selected {
-        ctx.diagnostics.mark_candidate_selected(&target);
+        ctx.diagnostics.mark_candidate_selected(target);
     }
 
     results.helpful.extend(candidates_to_add);
@@ -934,11 +931,11 @@ fn process_harmful_batch(
     target_map_ref: &TargetMap,
     results: &mut TargetAnalysisResults,
 ) -> Result<()> {
-    struct HarmfulWork {
-        synapse: SynapseJson,
+    struct HarmfulWork<'a> {
+        synapse: &'a SynapseJson,
         samples: Vec<HelpfulSample>,
     }
-    let mut harmful_work: Vec<HarmfulWork> = Vec::with_capacity(existing_synapses.len());
+    let mut harmful_work: Vec<HarmfulWork<'_>> = Vec::with_capacity(existing_synapses.len());
 
     for synapse in existing_synapses {
         let from_records_arc = match cache.get(&synapse.from_uuid) {
@@ -954,10 +951,7 @@ fn process_harmful_batch(
             continue;
         }
 
-        harmful_work.push(HarmfulWork {
-            synapse: synapse.clone(),
-            samples,
-        });
+        harmful_work.push(HarmfulWork { synapse, samples });
     }
 
     if harmful_work.is_empty() {
@@ -966,7 +960,7 @@ fn process_harmful_batch(
 
     let batch_input: Vec<(Vec<HelpfulSample>, f32)> = harmful_work
         .iter()
-        .map(|w| (w.samples.clone(), w.synapse.weight))
+        .map(|w| (w.samples.clone(), w.synapse.weight)) // Clone required: GPU queue takes ownership
         .collect();
 
     let batch_stats = {
