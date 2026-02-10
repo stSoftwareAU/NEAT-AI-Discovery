@@ -1,0 +1,315 @@
+//! Post-processing for synapse analysis results
+//!
+//! This module handles impact-based discounting, sorting, diversification,
+//! truncation, and metadata assembly for synapse analysis candidates.
+//! Extracted from mod.rs as part of Issue #482.
+
+use crate::CandidateSynapseJson;
+use crate::analysis::diagnostics::compute_impact_scores_for_discounting;
+use crate::analysis::utils::{shuffle_within_top_k, verbose_enabled};
+use std::collections::HashMap;
+
+use super::filtering::truncate_combined_synapse_candidate_sets;
+use super::scoring::{apply_source_type_boost, apply_target_type_boost};
+use crate::analysis::cache::RecordCache;
+
+/// Apply impact-based discounting to a single helpful synapse candidate.
+///
+/// Updates `target_neuron_impact`, `expected_creature_error_reduction`,
+/// and `expected_creature_score_gain` based on the target neuron's distance
+/// from outputs. Also applies source-type and target-type boosts (Issues #467, #468).
+fn apply_impact_to_helpful(
+    candidate: &mut CandidateSynapseJson,
+    impact_scores: &HashMap<String, f32>,
+    neuron_type_map: &HashMap<String, String>,
+    order_map: &HashMap<String, usize>,
+) {
+    // Populate indices for debugging/analysis (consistent with CandidateNeuronJson).
+    candidate.from_neuron_index = order_map.get(&candidate.from_neuron_uuid).copied();
+    candidate.to_neuron_index = order_map.get(&candidate.to_neuron_uuid).copied();
+
+    let is_hidden = neuron_type_map
+        .get(&candidate.to_neuron_uuid)
+        .map(|t| t != "output")
+        .unwrap_or(true); // Default to hidden if type unknown
+
+    let impact = if is_hidden {
+        if let Some(&impact) = impact_scores.get(&candidate.to_neuron_uuid) {
+            impact.clamp(0.0, 1.0)
+        } else {
+            // No impact score means disconnected from outputs - heavy discount
+            0.1
+        }
+    } else {
+        // Output neuron - full impact
+        1.0
+    };
+
+    // Update creature-level metrics
+    candidate.target_neuron_impact = impact;
+    let original = candidate.expected_creature_error_reduction;
+    candidate.expected_creature_error_reduction *= impact;
+    candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
+
+    // Issue #467: Apply source-type prioritisation boost for input-neuron sources.
+    candidate.expected_creature_score_gain = apply_source_type_boost(
+        candidate.expected_creature_score_gain,
+        &candidate.from_neuron_uuid,
+    );
+
+    // Issue #468: Apply target-type prioritisation boost for existing hidden targets.
+    candidate.expected_creature_score_gain = apply_target_type_boost(
+        candidate.expected_creature_score_gain,
+        &candidate.to_neuron_uuid,
+        neuron_type_map,
+    );
+
+    if verbose_enabled() && is_hidden {
+        eprintln!(
+            "[NEAT-AI-Discovery][verbose] Synapse candidate → {} impact {:.3}: \
+            {:.4}% → {:.4}%",
+            &candidate.to_neuron_uuid[..12.min(candidate.to_neuron_uuid.len())],
+            impact,
+            original * 100.0,
+            candidate.expected_creature_score_gain * 100.0
+        );
+    }
+}
+
+/// Apply impact-based discounting to a single harmful synapse candidate.
+fn apply_impact_to_harmful(
+    candidate: &mut CandidateSynapseJson,
+    impact_scores: &HashMap<String, f32>,
+    neuron_type_map: &HashMap<String, String>,
+    order_map: &HashMap<String, usize>,
+) {
+    candidate.from_neuron_index = order_map.get(&candidate.from_neuron_uuid).copied();
+    candidate.to_neuron_index = order_map.get(&candidate.to_neuron_uuid).copied();
+
+    let is_hidden = neuron_type_map
+        .get(&candidate.to_neuron_uuid)
+        .map(|t| t != "output")
+        .unwrap_or(true);
+
+    let impact = if is_hidden {
+        if let Some(&impact) = impact_scores.get(&candidate.to_neuron_uuid) {
+            impact.clamp(0.0, 1.0)
+        } else {
+            0.1
+        }
+    } else {
+        1.0
+    };
+
+    candidate.target_neuron_impact = impact;
+    candidate.expected_creature_error_reduction *= impact;
+    candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
+}
+
+/// Apply impact-based discounting to a coordinated structural candidate.
+///
+/// Uses the last operation's target neuron UUID to determine impact, since multi-op
+/// groups ultimately adjust the inputs of a target neuron.
+fn apply_impact_to_coordinated(
+    candidate: &mut crate::CoordinatedStructuralCandidateJson,
+    impact_scores: &HashMap<String, f32>,
+    neuron_type_map: &HashMap<String, String>,
+) {
+    let target_uuid = candidate
+        .operations
+        .iter()
+        .rev()
+        .map(|op| match op {
+            crate::CoordinatedStructuralOpJson::AddSynapse { to_neuron_uuid, .. } => {
+                to_neuron_uuid.as_str()
+            }
+            crate::CoordinatedStructuralOpJson::RemoveSynapse { to_neuron_uuid, .. } => {
+                to_neuron_uuid.as_str()
+            }
+            crate::CoordinatedStructuralOpJson::SetWeight { to_neuron_uuid, .. } => {
+                to_neuron_uuid.as_str()
+            }
+            crate::CoordinatedStructuralOpJson::ChangeSquash { neuron_uuid, .. } => {
+                neuron_uuid.as_str()
+            }
+            crate::CoordinatedStructuralOpJson::SetBias { neuron_uuid, .. } => neuron_uuid.as_str(),
+            crate::CoordinatedStructuralOpJson::AddNeuron { neuron_uuid, .. } => {
+                neuron_uuid.as_str()
+            }
+            crate::CoordinatedStructuralOpJson::RemoveNeuron { neuron_uuid } => {
+                neuron_uuid.as_str()
+            }
+        })
+        .next()
+        .unwrap_or("");
+
+    let is_hidden = neuron_type_map
+        .get(target_uuid)
+        .map(|t| t != "output")
+        .unwrap_or(true);
+    let impact = if is_hidden {
+        impact_scores
+            .get(target_uuid)
+            .copied()
+            .unwrap_or(0.1)
+            .clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+
+    candidate.expected_creature_score_gain *= impact;
+}
+
+/// Apply impact discounting, sorting, diversification, and truncation to all candidate sets.
+///
+/// This is the main post-processing entry point, called after the parallel analysis loop
+/// completes and after structural pattern discovery (collapse hidden neurons).
+pub(crate) fn apply_post_processing(
+    helpful_results: &mut Vec<CandidateSynapseJson>,
+    harmful_results: &mut Vec<CandidateSynapseJson>,
+    coordinated_structural_results: &mut Vec<crate::CoordinatedStructuralCandidateJson>,
+    input: &crate::AnalyzeSynapsesInput,
+    cache: &RecordCache,
+    order_map: &HashMap<String, usize>,
+) -> PostProcessingMetrics {
+    // Issue #128: Apply impact-based discounting and set creature-level metrics.
+    let impact_scores = compute_impact_scores_for_discounting(&input.creature, cache);
+    let neuron_type_map: HashMap<String, String> = input
+        .creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.clone(), n.neuron_type.clone()))
+        .collect();
+
+    // Apply impact discounting to helpful synapse candidates
+    for candidate in helpful_results.iter_mut() {
+        apply_impact_to_helpful(candidate, &impact_scores, &neuron_type_map, order_map);
+    }
+
+    // Apply impact discounting to harmful synapse candidates
+    for candidate in harmful_results.iter_mut() {
+        apply_impact_to_harmful(candidate, &impact_scores, &neuron_type_map, order_map);
+    }
+
+    // Apply impact discounting to coordinated candidates
+    for candidate in coordinated_structural_results.iter_mut() {
+        apply_impact_to_coordinated(candidate, &impact_scores, &neuron_type_map);
+    }
+
+    // Sort all candidate lists by expected_creature_score_gain (highest first)
+    helpful_results.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+    harmful_results.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+    coordinated_structural_results.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+
+    // Deadline coverage: diversify within the top-K for exploration diversity
+    if input.analysis_deadline_ms.is_some() {
+        use crate::analysis::constants::DIVERSIFY_TOP_K;
+        shuffle_within_top_k(
+            helpful_results.as_mut_slice(),
+            input.random_seed,
+            "synapse:helpful_candidates:top_k",
+            DIVERSIFY_TOP_K,
+        );
+        shuffle_within_top_k(
+            harmful_results.as_mut_slice(),
+            input.random_seed,
+            "synapse:harmful_candidates:top_k",
+            DIVERSIFY_TOP_K,
+        );
+        shuffle_within_top_k(
+            coordinated_structural_results.as_mut_slice(),
+            input.random_seed,
+            "synapse:coordinated_structural_candidates:top_k",
+            DIVERSIFY_TOP_K,
+        );
+    }
+
+    // Track candidates_found before truncation
+    let candidates_found =
+        helpful_results.len() + harmful_results.len() + coordinated_structural_results.len();
+
+    if let Some(limit) = input.max_candidates {
+        let (h1, h2, c) = truncate_combined_synapse_candidate_sets(
+            std::mem::take(helpful_results),
+            std::mem::take(harmful_results),
+            std::mem::take(coordinated_structural_results),
+            limit,
+            input.analysis_deadline_ms.is_some(),
+        );
+        *helpful_results = h1;
+        *harmful_results = h2;
+        *coordinated_structural_results = c;
+    }
+
+    let candidates_returned =
+        helpful_results.len() + harmful_results.len() + coordinated_structural_results.len();
+
+    PostProcessingMetrics {
+        candidates_found,
+        candidates_returned,
+    }
+}
+
+/// Metrics returned from post-processing for inclusion in analysis metadata.
+pub(crate) struct PostProcessingMetrics {
+    pub candidates_found: usize,
+    pub candidates_returned: usize,
+}
+
+/// Parameters for building analysis metadata.
+pub(crate) struct MetadataParams<'a> {
+    pub target_value_seen: bool,
+    pub saturation_aware_used: bool,
+    pub candidates_found: usize,
+    pub candidates_returned: usize,
+    pub analysis_timed_out: bool,
+    pub completed_focus_neurons: usize,
+    pub total_focus_neurons: usize,
+    pub saw_any_input: bool,
+    pub input_min: usize,
+    pub input_max: usize,
+    pub error_values: &'a [f32],
+    pub timing_collector: &'a crate::analysis::shared::TimingCollector,
+}
+
+/// Build the analysis metadata from collected atomic flags and timing data.
+pub(crate) fn build_metadata(
+    params: &MetadataParams<'_>,
+) -> crate::analysis::shared::SynapseAnalysisMetadata {
+    use crate::analysis::gpu::GpuAnalyzer;
+
+    let error_distribution =
+        crate::analysis::error_distribution::ErrorDistribution::from_errors(params.error_values);
+
+    crate::analysis::shared::SynapseAnalysisMetadata {
+        target_value_available: params.target_value_seen,
+        saturation_aware_simulation_used: params.saturation_aware_used,
+        candidates_found: params.candidates_found,
+        candidates_returned: params.candidates_returned,
+        timed_out: params.analysis_timed_out,
+        completed_focus_neurons: params.completed_focus_neurons,
+        total_focus_neurons: params.total_focus_neurons,
+        input_index_min_seen_with_records: if params.saw_any_input {
+            Some(params.input_min)
+        } else {
+            None
+        },
+        input_index_max_seen_with_records: if params.saw_any_input {
+            Some(params.input_max)
+        } else {
+            None
+        },
+        timing: params.timing_collector.finalize(),
+        gpu_info: GpuAnalyzer::get_adapter_info(),
+        error_distribution,
+    }
+}

@@ -55,7 +55,15 @@ src/
 │   ├── mod.rs                # Module organisation
 │   ├── constants.rs          # Central discovery thresholds (Issue #424)
 │   ├── shared.rs             # Common types, results, diagnostics
-│   ├── synapse.rs            # Synapse analysis
+│   ├── synapse/              # Synapse analysis (Issue #482)
+│   │   ├── mod.rs            # Public API, entry points, orchestration
+│   │   ├── target_analysis.rs # Per-target analysis loop
+│   │   ├── scoring.rs        # Improvement calculation, boosting
+│   │   ├── gpu_evaluation.rs # GPU batch orchestration
+│   │   ├── candidate_generation.rs # Sample building, locality grouping
+│   │   ├── filtering.rs      # Candidate filtering, deduplication
+│   │   ├── structural_patterns.rs # Coordinated structural discovery
+│   │   └── post_processing.rs # Impact discounting, sorting, metadata
 │   ├── neuron.rs             # Neuron analysis
 │   ├── activation.rs         # Activation function analysis
 │   ├── samples.rs            # Sample data structures
