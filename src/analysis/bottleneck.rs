@@ -118,8 +118,9 @@ pub fn detect_bottleneck_neurons(
     let mut candidates = Vec::new();
 
     for uuid in &hidden_uuids {
-        let fan_in_list = fan_in_map.get(uuid).cloned().unwrap_or_default();
-        let fan_out_list = fan_out_map.get(uuid).cloned().unwrap_or_default();
+        let empty_list: Vec<&str> = Vec::new();
+        let fan_in_list = fan_in_map.get(uuid).unwrap_or(&empty_list);
+        let fan_out_list = fan_out_map.get(uuid).unwrap_or(&empty_list);
 
         let fan_in = fan_in_list.len();
         let fan_out = fan_out_list.len();
@@ -257,7 +258,8 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
         // Create a new hidden neuron that receives a subset of the bottleneck's inputs
         // and feeds the same outputs. This widens the information channel.
         if c.recommended_actions
-            .contains(&"addParallelNeuron".to_string())
+            .iter()
+            .any(|a| a == "addParallelNeuron")
         {
             let new_uuid = bottleneck_parallel_neuron_uuid(&c.neuron_uuid, 0);
 
@@ -332,7 +334,8 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
         // Connect upstream neurons directly to downstream neurons to reduce bottleneck dependency.
         // Only add bypasses that don't already exist.
         if c.recommended_actions
-            .contains(&"addBypassSynapse".to_string())
+            .iter()
+            .any(|a| a == "addBypassSynapse")
         {
             // Pick the upstream neuron with highest weighted connection to the bottleneck
             let best_upstream = c.upstream_uuids.iter().max_by(|a, b| {

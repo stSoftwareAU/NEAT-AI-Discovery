@@ -390,7 +390,7 @@ pub struct ReductionUniforms {
 // =============================================================================
 
 /// Computed statistics for helpful synapse evaluation.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct HelpfulStats {
     pub positive_count: u32,
     pub negative_count: u32,

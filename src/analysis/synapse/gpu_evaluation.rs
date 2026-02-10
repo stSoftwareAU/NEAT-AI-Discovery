@@ -437,15 +437,13 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
             total_baseline_error_sq,
             target_activation_fn,
         )? {
-            // Track best and fallback candidates from split evaluation
-            if candidate.expected_creature_score_gain > best_score {
-                best_score = candidate.expected_creature_score_gain;
-                best_candidate = Some(candidate.clone());
-            }
-            if candidate.expected_creature_score_gain > fallback_score
-                && candidate.expected_creature_score_gain > 0.0
-            {
-                fallback_score = candidate.expected_creature_score_gain;
+            let gain = candidate.expected_creature_score_gain;
+            // Track best (above threshold) and fallback (above 0) candidates.
+            if gain > best_score {
+                best_score = gain;
+                best_candidate = Some(candidate);
+            } else if gain > fallback_score && gain > 0.0 {
+                fallback_score = gain;
                 fallback_candidate = Some(candidate);
             }
         }

@@ -27,8 +27,6 @@ const MIN_LOCALITY_OVERLAP: f32 = 0.8;
 pub(crate) struct SampleLocalityGroup<'a> {
     /// The source neurons in this group
     pub(crate) sources: Vec<(&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)>,
-    /// Representative obs_indices for this group (from the first source)
-    pub(crate) _representative_indices: HashSet<u32>,
 }
 
 /// Extract obs_indices from source records.
@@ -71,12 +69,8 @@ pub(crate) fn group_sources_by_locality<'a>(
         // Not enough sources to benefit from grouping
         return sources
             .iter()
-            .map(|(neuron, records)| {
-                let indices = extract_obs_indices(records);
-                SampleLocalityGroup {
-                    sources: vec![(neuron, Arc::clone(records))],
-                    _representative_indices: indices,
-                }
+            .map(|(neuron, records)| SampleLocalityGroup {
+                sources: vec![(neuron, Arc::clone(records))],
             })
             .collect();
     }
@@ -101,7 +95,6 @@ pub(crate) fn group_sources_by_locality<'a>(
             assigned[i] = true;
             groups.push(SampleLocalityGroup {
                 sources: vec![(sources[i].0, Arc::clone(&sources[i].1))],
-                _representative_indices: my_indices.clone(),
             });
             continue;
         }
@@ -127,7 +120,6 @@ pub(crate) fn group_sources_by_locality<'a>(
 
         groups.push(SampleLocalityGroup {
             sources: group_sources,
-            _representative_indices: my_indices.clone(),
         });
     }
 
