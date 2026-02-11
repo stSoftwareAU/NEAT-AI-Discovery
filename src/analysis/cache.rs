@@ -33,6 +33,7 @@
 //! - **LruCache**: For medium files (keeps frequently-accessed neurons in memory)
 //! - **Streaming**: For very large files (block-based loading with LRU eviction)
 
+use crate::CreatureJson;
 use crate::types::DiscoverRecord;
 use anyhow::{Context, Result};
 use once_cell::sync::OnceCell;
@@ -251,6 +252,54 @@ impl RecordCache {
                     .map(|r| (uuid.clone(), r.as_ref().to_vec()))
             })
             .collect()
+    }
+
+    /// Load records for every neuron in the creature (Issue #493).
+    ///
+    /// Extracts all neuron UUIDs from the creature and loads their records in one call.
+    pub fn load_records_for_all_neurons(
+        &self,
+        creature: &CreatureJson,
+    ) -> Vec<(String, Vec<DiscoverRecord>)> {
+        let uuids: Vec<String> = creature.neurons.iter().map(|n| n.uuid.clone()).collect();
+        self.load_records_for_uuids(&uuids)
+    }
+
+    /// Load records for neurons matching any of the given type names (Issue #493).
+    ///
+    /// Filters the creature's neurons by `neuron_type` then loads their records.
+    /// Common usage: `&["output"]`, `&["input"]`, `&["input", "output"]`,
+    /// `&["input", "hidden"]`.
+    pub fn load_records_for_neuron_types(
+        &self,
+        creature: &CreatureJson,
+        types: &[&str],
+    ) -> Vec<(String, Vec<DiscoverRecord>)> {
+        let uuids: Vec<String> = creature
+            .neurons
+            .iter()
+            .filter(|n| types.contains(&n.neuron_type.as_str()))
+            .map(|n| n.uuid.clone())
+            .collect();
+        self.load_records_for_uuids(&uuids)
+    }
+
+    /// Load records for the unique set of synapse source neuron UUIDs (Issue #493).
+    ///
+    /// Collects the deduplicated `from_uuid` values from all creature synapses,
+    /// then loads their records.
+    pub fn load_records_for_synapse_sources(
+        &self,
+        creature: &CreatureJson,
+    ) -> Vec<(String, Vec<DiscoverRecord>)> {
+        let source_uuids: Vec<String> = creature
+            .synapses
+            .iter()
+            .map(|s| s.from_uuid.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        self.load_records_for_uuids(&source_uuids)
     }
 
     /// Create a cache with a custom loader function.

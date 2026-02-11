@@ -735,13 +735,8 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if output_count < 2 {
                         return None;
                     }
-                    let uuids: Vec<String> = creature
-                        .neurons
-                        .iter()
-                        .filter(|n| n.neuron_type == "output" || n.neuron_type == "input")
-                        .map(|n| n.uuid.clone())
-                        .collect();
-                    let records = cache.load_records_for_uuids(&uuids);
+                    let records =
+                        cache.load_records_for_neuron_types(&creature, &["output", "input"]);
                     let detected =
                         correlated_error::detect_correlated_error_patterns(&creature, &records);
                     if detected.is_empty() {
@@ -770,9 +765,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let uuids: Vec<String> =
-                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records = cache.load_records_for_uuids(&uuids);
+                    let records = cache.load_records_for_all_neurons(&creature);
                     let detected = multi_hop::detect_multi_hop_candidates(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -824,14 +817,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_name: "dormant synapse detection".to_string(),
                 phase_name: "dormant_synapse_detection",
                 detect_fn: Box::new(move || {
-                    let source_uuids: Vec<String> = creature
-                        .synapses
-                        .iter()
-                        .map(|s| s.from_uuid.clone())
-                        .collect::<std::collections::HashSet<_>>()
-                        .into_iter()
-                        .collect();
-                    let records = cache.load_records_for_uuids(&source_uuids);
+                    let records = cache.load_records_for_synapse_sources(&creature);
                     let detected = dormant_synapse::detect_dormant_synapses(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -854,9 +840,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_name: "opposing synapse detection".to_string(),
                 phase_name: "opposing_synapse_detection",
                 detect_fn: Box::new(move || {
-                    let uuids: Vec<String> =
-                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records = cache.load_records_for_uuids(&uuids);
+                    let records = cache.load_records_for_all_neurons(&creature);
                     let detected = opposing_synapse::detect_opposing_synapses(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -879,13 +863,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_name: "output bias drift detection".to_string(),
                 phase_name: "output_bias_drift_detection",
                 detect_fn: Box::new(move || {
-                    let uuids: Vec<String> = creature
-                        .neurons
-                        .iter()
-                        .filter(|n| n.neuron_type == "output")
-                        .map(|n| n.uuid.clone())
-                        .collect();
-                    let records = cache.load_records_for_uuids(&uuids);
+                    let records = cache.load_records_for_neuron_types(&creature, &["output"]);
                     let detected = output_bias_drift::detect_output_bias_drift(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -908,16 +886,11 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_name: "bounded range detection".to_string(),
                 phase_name: "bounded_range_detection",
                 detect_fn: Box::new(move || {
-                    let uuids: Vec<String> = creature
-                        .neurons
-                        .iter()
-                        .filter(|n| n.neuron_type == "input" || n.neuron_type == "hidden")
-                        .map(|n| n.uuid.clone())
-                        .collect();
-                    if uuids.is_empty() {
+                    let records =
+                        cache.load_records_for_neuron_types(&creature, &["input", "hidden"]);
+                    if records.is_empty() {
                         return None;
                     }
-                    let records = cache.load_records_for_uuids(&uuids);
                     let detected = bounded_range::detect_bounded_range_neurons(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -940,16 +913,10 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_name: "sentinel value gating".to_string(),
                 phase_name: "sentinel_value_gating",
                 detect_fn: Box::new(move || {
-                    let uuids: Vec<String> = creature
-                        .neurons
-                        .iter()
-                        .filter(|n| n.neuron_type == "input")
-                        .map(|n| n.uuid.clone())
-                        .collect();
-                    if uuids.is_empty() {
+                    let records = cache.load_records_for_neuron_types(&creature, &["input"]);
+                    if records.is_empty() {
                         return None;
                     }
-                    let records = cache.load_records_for_uuids(&uuids);
                     let detected =
                         sentinel_gating::detect_sentinel_gating_candidates(&creature, &records);
                     if detected.is_empty() {
@@ -1090,9 +1057,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_name: "noisy synapse detection".to_string(),
                 phase_name: "noisy_synapse_detection",
                 detect_fn: Box::new(move || {
-                    let uuids: Vec<String> =
-                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records = cache.load_records_for_uuids(&uuids);
+                    let records = cache.load_records_for_all_neurons(&creature);
                     let detected = noise_signal::detect_noisy_synapses(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -1115,16 +1080,11 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_name: "dominant input detection".to_string(),
                 phase_name: "dominant_input_detection",
                 detect_fn: Box::new(move || {
-                    let input_uuids: Vec<String> = creature
-                        .neurons
-                        .iter()
-                        .filter(|n| n.neuron_type == "input" || n.neuron_type == "output")
-                        .map(|n| n.uuid.clone())
-                        .collect();
-                    if input_uuids.is_empty() {
+                    let records =
+                        cache.load_records_for_neuron_types(&creature, &["input", "output"]);
+                    if records.is_empty() {
                         return None;
                     }
-                    let records = cache.load_records_for_uuids(&input_uuids);
                     let config = input_sensitivity::InputSensitivityConfig::default();
                     let detected =
                         input_sensitivity::detect_dominant_inputs(&creature, &records, &config);
@@ -1149,9 +1109,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_name: "threshold effect detection".to_string(),
                 phase_name: "threshold_effect_detection",
                 detect_fn: Box::new(move || {
-                    let uuids: Vec<String> =
-                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records = cache.load_records_for_uuids(&uuids);
+                    let records = cache.load_records_for_all_neurons(&creature);
                     let config = input_sensitivity::InputSensitivityConfig::default();
                     let detected =
                         input_sensitivity::detect_threshold_effects(&creature, &records, &config);
@@ -1235,9 +1193,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_name: "symmetric cancellation detection".to_string(),
                 phase_name: "symmetric_cancellation_detection",
                 detect_fn: Box::new(move || {
-                    let uuids: Vec<String> =
-                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records = cache.load_records_for_uuids(&uuids);
+                    let records = cache.load_records_for_all_neurons(&creature);
                     let config = weight_coherence::WeightCoherenceConfig::default();
                     let detected = weight_coherence::detect_symmetric_cancellation(
                         &creature, &records, &config,
@@ -1308,9 +1264,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     if hidden.is_empty() {
                         return None;
                     }
-                    let uuids: Vec<String> =
-                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records = cache.load_records_for_uuids(&uuids);
+                    let records = cache.load_records_for_all_neurons(&creature);
                     let detected = topology::detect_topology_issues(&creature, &records);
                     if detected.is_empty() {
                         return None;
@@ -1333,9 +1287,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_name: "sample-weighted discovery".to_string(),
                 phase_name: "sample_weighted_discovery",
                 detect_fn: Box::new(move || {
-                    let uuids: Vec<String> =
-                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records = cache.load_records_for_uuids(&uuids);
+                    let records = cache.load_records_for_all_neurons(&creature);
                     if records.is_empty() {
                         return None;
                     }
@@ -1362,9 +1314,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_name: "gradient-based discovery".to_string(),
                 phase_name: "gradient_based_discovery",
                 detect_fn: Box::new(move || {
-                    let uuids: Vec<String> =
-                        creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-                    let records = cache.load_records_for_uuids(&uuids);
+                    let records = cache.load_records_for_all_neurons(&creature);
                     if records.is_empty() {
                         return None;
                     }
