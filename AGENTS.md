@@ -49,7 +49,14 @@ src/
 ├── observability.rs          # Observability / logging
 ├── intern.rs                 # Neuron UUID interning
 ├── watchdog.rs               # Signal handling (SIGUSR1)
-├── focus.rs                  # Focus neuron selection
+├── focus/                    # Focus neuron selection (Issue #491)
+│   ├── mod.rs                # Public API, re-exports, module declarations
+│   ├── layers.rs             # Network layer computation via BFS
+│   ├── allocation.rs         # Budget allocation strategies
+│   ├── gradient.rs           # Gradient flow analysis
+│   ├── impact.rs             # Impact calculation (squash-aware)
+│   ├── ranking.rs            # Neuron ranking, record providers, removal candidates
+│   └── tests.rs              # Unit tests for internal components
 │
 ├── analysis/                 # Core analysis engine
 │   ├── mod.rs                # Module organisation
