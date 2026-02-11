@@ -200,14 +200,15 @@ fn gentle_nudge_variants_are_not_deduped_across_different_neuron_pairs() {
         expected_score_gain_confidence_interval: [0.0, 0.0],
     };
 
-    // Limit allows both originals plus both safety variants per candidate.
+    // Limit allows both originals plus all safety variants per candidate.
+    // Issue #507: 4 variants per extreme candidate (original + conservative + gentle nudge + micro-nudge).
     let paired =
-        pair_extreme_candidates_with_conservative_variants(vec![candidate_a, candidate_b], Some(6));
+        pair_extreme_candidates_with_conservative_variants(vec![candidate_a, candidate_b], Some(8));
 
     assert_eq!(
         paired.len(),
-        6,
-        "expected two originals + two conservative + two Gentle Nudge variants"
+        8,
+        "expected two originals + two conservative + two Gentle Nudge + two Micro-Nudge variants"
     );
 
     // Expect a Gentle Nudge variant for each distinct neuron pair.
