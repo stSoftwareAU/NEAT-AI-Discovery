@@ -1,11 +1,13 @@
-//! Candidate clustering module (Issue #224).
+//! Candidate clustering module (Issue #224) and cross-module deduplication (Issue #489).
+//!
+//! ## Within-module clustering (Issue #224)
 //!
 //! Groups similar discovery candidates to reduce redundant ablation tests. When
 //! discovery returns many candidates targeting the same neuron from similar source
 //! regions, clustering identifies these groups so the TypeScript controller can test
 //! a representative candidate first and skip the rest if it fails.
 //!
-//! ## Clustering Criteria
+//! ### Clustering Criteria
 //!
 //! Candidates are grouped by:
 //! 1. **Same target neuron** (`to_neuron_uuid`) — candidates must target the same neuron.
@@ -14,7 +16,7 @@
 //! 3. **Similar improvement prediction** — candidates with very different expected
 //!    improvements are unlikely to be truly redundant.
 //!
-//! ## Output
+//! ### Output
 //!
 //! Each cluster contains:
 //! - A **representative** (the highest-improvement candidate in the cluster).
@@ -25,7 +27,15 @@
 //! The controller tests the representative first. If it fails, all members are
 //! skipped (high correlation implies they would also fail). If it succeeds, the
 //! controller may test additional members with lower priority.
+//!
+//! ## Cross-module deduplication (Issue #489)
+//!
+//! When 25+ discovery modules run in parallel, different modules can independently
+//! propose coordinated structural candidates targeting the same neuron with the same
+//! operation. Cross-module deduplication removes these redundancies after all modules
+//! have contributed their candidates.
 
+use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -215,6 +225,228 @@ fn compute_internal_correlation(candidates: &[&ClusterableCandidate]) -> f32 {
 
     // Map CV to correlation: CV=0 → 1.0, CV≥1 → 0.0
     (1.0 - cv.min(1.0)).max(0.0)
+}
+
+// =============================================================================
+// Cross-module deduplication (Issue #489)
+// =============================================================================
+
+/// Relative tolerance for comparing floating-point parameters (weights, biases).
+/// Two values are considered "similar" when they differ by less than this fraction
+/// of the larger absolute value.
+const PARAM_SIMILARITY_TOLERANCE: f32 = 0.05;
+
+/// Result of cross-module deduplication.
+#[derive(Debug)]
+pub struct CrossModuleDeduplicationResult {
+    /// Deduplicated candidates, sorted by expected improvement (best first).
+    pub candidates: Vec<CoordinatedStructuralCandidateJson>,
+    /// Number of duplicate candidates removed.
+    pub duplicates_removed: usize,
+    /// Total number of candidates before deduplication.
+    pub original_count: usize,
+    /// Number of conflict pairs detected (different operation types on same neuron).
+    pub conflicts_detected: usize,
+}
+
+/// Deduplicate coordinated structural candidates across discovery modules (Issue #489).
+///
+/// Groups candidates by their operation signature (target neuron + operation type +
+/// similar parameters). For each group of duplicates, keeps only the candidate with
+/// the highest `expected_creature_score_gain`.
+///
+/// Also detects conflicts: when different operation types target the same neuron
+/// (e.g., `RemoveNeuron` vs `ChangeSquash`), all are kept but the conflict count
+/// is reported for diagnostics.
+pub fn deduplicate_cross_module_candidates(
+    candidates: Vec<CoordinatedStructuralCandidateJson>,
+) -> CrossModuleDeduplicationResult {
+    let original_count = candidates.len();
+
+    if candidates.len() <= 1 {
+        return CrossModuleDeduplicationResult {
+            candidates,
+            duplicates_removed: 0,
+            original_count,
+            conflicts_detected: 0,
+        };
+    }
+
+    // Step 1: Group candidates by operation signature.
+    // The signature captures what the candidate does (ignoring minor parameter differences).
+    let mut groups: HashMap<String, Vec<CoordinatedStructuralCandidateJson>> = HashMap::new();
+    for c in candidates {
+        let sig = operation_signature(&c);
+        groups.entry(sig).or_default().push(c);
+    }
+
+    // Step 2: For each group, keep only the candidate with the highest expected gain.
+    let mut deduplicated: Vec<CoordinatedStructuralCandidateJson> =
+        Vec::with_capacity(groups.len());
+    let mut duplicates_removed: usize = 0;
+
+    for (_sig, mut group) in groups {
+        // Sort by expected gain descending, keep the best.
+        group.sort_by(|a, b| {
+            b.expected_creature_score_gain
+                .total_cmp(&a.expected_creature_score_gain)
+        });
+        duplicates_removed += group.len() - 1;
+        deduplicated.push(group.into_iter().next().expect("group is non-empty"));
+    }
+
+    // Step 3: Sort output by expected improvement (best first).
+    deduplicated.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+
+    // Step 4: Detect conflicts — different operation types targeting the same neuron.
+    let conflicts_detected = count_neuron_conflicts(&deduplicated);
+
+    CrossModuleDeduplicationResult {
+        candidates: deduplicated,
+        duplicates_removed,
+        original_count,
+        conflicts_detected,
+    }
+}
+
+/// Produce a string signature that identifies the "identity" of a candidate.
+///
+/// Two candidates with the same signature are considered duplicates (targeting the
+/// same neuron with the same operation). Parameters like weight and bias use
+/// bucketed comparison so that minor floating-point differences don't prevent
+/// deduplication.
+fn operation_signature(candidate: &CoordinatedStructuralCandidateJson) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(candidate.operations.len());
+
+    for op in &candidate.operations {
+        let part = match op {
+            CoordinatedStructuralOpJson::RemoveSynapse {
+                from_neuron_uuid,
+                to_neuron_uuid,
+            } => format!("RS:{from_neuron_uuid}->{to_neuron_uuid}"),
+
+            CoordinatedStructuralOpJson::AddSynapse {
+                from_neuron_uuid,
+                to_neuron_uuid,
+                weight,
+            } => {
+                let w_bucket = param_bucket(*weight);
+                format!("AS:{from_neuron_uuid}->{to_neuron_uuid}@{w_bucket}")
+            }
+
+            CoordinatedStructuralOpJson::AddNeuron {
+                neuron_uuid,
+                neuron_type,
+                squash,
+                bias,
+                insert_before_neuron_uuid,
+            } => {
+                let b_bucket = param_bucket(*bias);
+                let before = insert_before_neuron_uuid.as_deref().unwrap_or("none");
+                format!("AN:{neuron_uuid}:{neuron_type}:{squash}:{b_bucket}:{before}")
+            }
+
+            CoordinatedStructuralOpJson::RemoveNeuron { neuron_uuid } => {
+                format!("RN:{neuron_uuid}")
+            }
+
+            CoordinatedStructuralOpJson::ChangeSquash {
+                neuron_uuid,
+                squash,
+            } => format!("CS:{neuron_uuid}:{squash}"),
+
+            CoordinatedStructuralOpJson::SetBias { neuron_uuid, bias } => {
+                let b_bucket = param_bucket(*bias);
+                format!("SB:{neuron_uuid}:{b_bucket}")
+            }
+
+            CoordinatedStructuralOpJson::SetWeight {
+                from_neuron_uuid,
+                to_neuron_uuid,
+                weight,
+            } => {
+                let w_bucket = param_bucket(*weight);
+                format!("SW:{from_neuron_uuid}->{to_neuron_uuid}@{w_bucket}")
+            }
+        };
+        parts.push(part);
+    }
+
+    // Sort operation parts for order-independent comparison.
+    parts.sort();
+    parts.join("|")
+}
+
+/// Bucket a floating-point parameter for similarity comparison.
+///
+/// Values within [`PARAM_SIMILARITY_TOLERANCE`] of each other map to the same bucket.
+/// Uses fixed-precision rounding: bucket = round(value / tolerance) * tolerance.
+fn param_bucket(value: f32) -> String {
+    if value.abs() < PARAM_SIMILARITY_TOLERANCE {
+        return "0.00".to_string();
+    }
+    let bucket = (value / PARAM_SIMILARITY_TOLERANCE).round() * PARAM_SIMILARITY_TOLERANCE;
+    format!("{bucket:.2}")
+}
+
+/// Count conflict pairs: different operation types targeting the same neuron.
+///
+/// A conflict arises when one candidate proposes removing a neuron while another
+/// proposes modifying it (change squash, set bias, etc.). These represent
+/// contradictory interventions that the controller should be aware of.
+fn count_neuron_conflicts(candidates: &[CoordinatedStructuralCandidateJson]) -> usize {
+    // Collect (neuron_uuid, operation_category) pairs.
+    let mut neuron_ops: HashMap<&str, Vec<&str>> = HashMap::new();
+
+    for c in candidates {
+        for op in &c.operations {
+            let (uuid, category) = op_neuron_and_category(op);
+            if let Some(uuid) = uuid {
+                neuron_ops.entry(uuid).or_default().push(category);
+            }
+        }
+    }
+
+    // Count neurons where we see both "remove" and "modify" categories.
+    let mut conflicts = 0;
+    for ops in neuron_ops.values() {
+        let has_remove = ops.contains(&"remove");
+        let has_modify = ops.contains(&"modify");
+        if has_remove && has_modify {
+            conflicts += 1;
+        }
+    }
+
+    conflicts
+}
+
+/// Extract the target neuron UUID and operation category from an operation.
+///
+/// Categories are "remove" (destructive) or "modify" (non-destructive changes).
+/// Returns `(Some(uuid), category)` for neuron-targeting ops, `(None, _)` for
+/// synapse-only ops that don't target a specific neuron for conflict detection.
+fn op_neuron_and_category(op: &CoordinatedStructuralOpJson) -> (Option<&str>, &'static str) {
+    match op {
+        CoordinatedStructuralOpJson::RemoveNeuron { neuron_uuid } => {
+            (Some(neuron_uuid.as_str()), "remove")
+        }
+        CoordinatedStructuralOpJson::ChangeSquash { neuron_uuid, .. } => {
+            (Some(neuron_uuid.as_str()), "modify")
+        }
+        CoordinatedStructuralOpJson::SetBias { neuron_uuid, .. } => {
+            (Some(neuron_uuid.as_str()), "modify")
+        }
+        CoordinatedStructuralOpJson::AddNeuron { neuron_uuid, .. } => {
+            (Some(neuron_uuid.as_str()), "modify")
+        }
+        // Synapse-only operations don't create neuron-level conflicts.
+        CoordinatedStructuralOpJson::RemoveSynapse { .. }
+        | CoordinatedStructuralOpJson::AddSynapse { .. }
+        | CoordinatedStructuralOpJson::SetWeight { .. } => (None, "synapse"),
+    }
 }
 
 #[cfg(test)]
