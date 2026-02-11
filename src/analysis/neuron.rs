@@ -367,6 +367,9 @@ pub(crate) fn analyze_neurons_with_cache(
         .collect();
     let used_inputs_arc = Arc::new(used_inputs);
 
+    // Issue #486 / #192: Collect error values from focus target neurons for distribution analysis.
+    let error_values_for_distribution = Arc::new(Mutex::new(Vec::<f32>::new()));
+
     // Create a shared GPU work queue ONCE before the parallel loop.
     // This eliminates the overhead of creating multiple GPU devices (one per thread).
     // All GPU operations are processed by a single dedicated thread, improving utilisation.
@@ -409,6 +412,20 @@ pub(crate) fn analyze_neurons_with_cache(
             }
             let target_records = target_records_arc.as_ref();
             diagnostics.set_target_record_count(target_uuid, target_records.len());
+
+            // Issue #486 / #192: Collect error values for distribution analysis
+            {
+                let errors: Vec<f32> = target_records
+                    .iter()
+                    .flat_map(|r| r.errors.iter().filter(|e| e.is_finite()).copied())
+                    .collect();
+                if !errors.is_empty() {
+                    error_values_for_distribution
+                        .lock()
+                        .expect("Mutex poisoned")
+                        .extend(errors);
+                }
+            }
 
             // Log target neuron obs_index range for debugging sample matching
             if verbose_enabled() && !target_records.is_empty() {
@@ -846,6 +863,16 @@ pub(crate) fn analyze_neurons_with_cache(
     let no_candidate_reasons = diagnostics.no_candidate_summaries();
     diagnostics.emit_logs();
 
+    // Issue #486 / #192: Compute error distribution from collected target neuron error samples.
+    let error_distribution = {
+        let error_values = std::mem::take(
+            &mut *error_values_for_distribution
+                .lock()
+                .expect("Mutex poisoned"),
+        );
+        super::error_distribution::ErrorDistribution::from_errors(&error_values)
+    };
+
     Ok(AnalyzeNeuronsResult {
         helpful_neurons: helpful_results,
         gpu_used,
@@ -863,7 +890,7 @@ pub(crate) fn analyze_neurons_with_cache(
             total_focus_neurons: original_focus_count,
             timing: timing_collector.finalize(),
             gpu_info: GpuAnalyzer::get_adapter_info(),
-            error_distribution: None, // TODO: Compute from target neuron samples (Issue #192)
+            error_distribution,
         },
     })
 }
