@@ -26,6 +26,9 @@ use crate::analysis::utils::{
 // Import sample data structures (Issue #269)
 use crate::analysis::samples::{EPSILON, HelpfulSample, compute_source_variance_discount};
 
+// Import pessimism discount (Issue #506)
+use crate::analysis::synapse::apply_pessimism_discount;
+
 // Import diagnostics and rejection tracking (Issue #271)
 use crate::analysis::diagnostics::{
     FocusTargetFilterResult, NeuronDiagnostics, TargetMap, compute_impact_scores_for_discounting,
@@ -804,6 +807,13 @@ pub(crate) fn analyze_neurons_with_cache(
         let original = candidate.expected_creature_error_reduction;
         candidate.expected_creature_error_reduction *= impact;
         candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
+
+        // Issue #506: Apply pessimism discount based on improved sample ratio.
+        candidate.expected_creature_score_gain = apply_pessimism_discount(
+            candidate.expected_creature_score_gain,
+            candidate.improved_count,
+            candidate.total_count,
+        );
 
         if verbose_enabled() && is_hidden {
             eprintln!(

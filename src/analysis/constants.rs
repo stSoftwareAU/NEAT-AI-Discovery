@@ -150,6 +150,35 @@ pub const MIN_BOOST_SAMPLES: usize = 10;
 pub const EXISTING_HIDDEN_TARGET_BOOST: f64 = 1.5;
 
 // =============================================================================
+// Pessimism Discount (Issue #506)
+// =============================================================================
+
+/// Minimum pessimism discount applied to all score predictions.
+///
+/// Production analysis (creature b2ff6e45, GRQ-sampler commit a1340f8d) showed
+/// that raw improvement percentages are wildly over-estimated — the sole
+/// successful candidate predicted +0.0205 but achieved only +0.0000011
+/// (an 18,500× over-estimation). The improvement calculation measures the
+/// fraction of a single target neuron's squared error explained by sampled
+/// data, but this does not generalise directly to creature-level score gain.
+///
+/// The pessimism discount scales predictions down based on the ratio of
+/// samples that actually improved (`improved_count / total_count`):
+///
+/// ```text
+/// discount = FLOOR + (1 - FLOOR) × (improved_count / total_count)
+/// discounted_gain = raw_gain × discount
+/// ```
+///
+/// When all samples improve (ratio = 1.0), the discount equals 1.0 (only the
+/// floor applies). When few samples improve, the discount approaches the floor.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Values below 0.1 risk zeroing-out legitimate candidates.
+/// Values above 0.5 provide insufficient correction.
+pub const PESSIMISM_DISCOUNT_FLOOR: f32 = 0.15;
+
+// =============================================================================
 // NaN-safe Floating-Point Comparison Helpers (Issue #483)
 // =============================================================================
 

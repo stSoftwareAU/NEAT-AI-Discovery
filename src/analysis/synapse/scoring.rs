@@ -11,8 +11,10 @@ use crate::analysis::samples::{EPSILON, HelpfulSample};
 use crate::analysis::utils::parse_input_index;
 use std::collections::HashMap;
 
-// Boosting constants
-use crate::analysis::constants::{EXISTING_HIDDEN_TARGET_BOOST, INPUT_SOURCE_BOOST};
+// Boosting and discount constants
+use crate::analysis::constants::{
+    EXISTING_HIDDEN_TARGET_BOOST, INPUT_SOURCE_BOOST, PESSIMISM_DISCOUNT_FLOOR,
+};
 
 // =============================================================================
 // Source-Type Prioritisation (Issue #467)
@@ -507,6 +509,42 @@ pub(crate) fn compute_synapse_improvement_and_count(
     };
 
     (improvement, improved_count, worsened_count, total_count)
+}
+
+// =============================================================================
+// Pessimism Discount (Issue #506)
+// =============================================================================
+
+/// Apply a pessimism discount to an expected score gain based on sample improvement ratio.
+///
+/// Production data (creature b2ff6e45) showed that raw improvement percentages
+/// over-estimate creature-level score gains by orders of magnitude: the sole
+/// successful candidate predicted +0.0205 but achieved only +0.0000011
+/// (18,500× over-estimation). The improvement is computed from a single target
+/// neuron's sampled error, but this does not generalise directly to creature-level
+/// score gain across the full training set.
+///
+/// The discount uses the `improved_count / total_count` ratio as a quality signal:
+/// candidates that improve more samples are more likely to generalise.
+///
+/// ## Formula
+///
+/// ```text
+/// improved_ratio = improved_count / total_count
+/// discount = PESSIMISM_DISCOUNT_FLOOR + (1 - PESSIMISM_DISCOUNT_FLOOR) × improved_ratio
+/// result = gain × discount
+/// ```
+///
+/// ## Returns
+///
+/// The discounted gain, always preserving the sign of the original gain.
+pub fn apply_pessimism_discount(gain: f32, improved_count: u32, total_count: u32) -> f32 {
+    if total_count == 0 {
+        return gain * PESSIMISM_DISCOUNT_FLOOR;
+    }
+    let improved_ratio = improved_count as f32 / total_count as f32;
+    let discount = PESSIMISM_DISCOUNT_FLOOR + (1.0 - PESSIMISM_DISCOUNT_FLOOR) * improved_ratio;
+    gain * discount
 }
 
 /// Wrapper for tests - counts improved samples only.
