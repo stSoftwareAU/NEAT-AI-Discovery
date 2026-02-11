@@ -1387,6 +1387,45 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         discovery_dispatch::run_discovery_modules_parallel(syn, modules, max_candidates, diversify);
     }
 
+    // Issue #489: Cross-module candidate deduplication.
+    // After all discovery modules have contributed coordinated structural candidates,
+    // deduplicate across module boundaries to avoid redundant ablation tests.
+    if let Some(syn) = synapse_result.as_mut()
+        && !syn.coordinated_structural_candidates.is_empty()
+    {
+        crate::watchdog::beat("analysis::analyze_all → cross-module deduplication starting");
+        let _dedup_timer = PhaseTimer::new("cross_module_deduplication");
+
+        let before_count = syn.coordinated_structural_candidates.len();
+        let dedup_result = candidate_clustering::deduplicate_cross_module_candidates(mem::take(
+            &mut syn.coordinated_structural_candidates,
+        ));
+        syn.coordinated_structural_candidates = dedup_result.candidates;
+
+        if dedup_result.duplicates_removed > 0 && utils::verbose_enabled() {
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Cross-module deduplication: removed {} duplicate(s) from {} coordinated candidate(s) → {} remaining",
+                dedup_result.duplicates_removed,
+                before_count,
+                syn.coordinated_structural_candidates.len()
+            );
+        }
+
+        if dedup_result.conflicts_detected > 0 && utils::verbose_enabled() {
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Cross-module deduplication: {} neuron conflict(s) detected (remove vs modify)",
+                dedup_result.conflicts_detected
+            );
+        }
+
+        // Update metadata to reflect the deduplicated count.
+        syn.metadata.candidates_returned = syn.helpful_synapses.len()
+            + syn.harmful_synapses.len()
+            + syn.coordinated_structural_candidates.len();
+
+        crate::watchdog::beat("analysis::analyze_all → cross-module deduplication finished");
+    }
+
     // Issue #224: Candidate clustering to reduce redundant ablation tests.
     // Groups similar candidates by target neuron, source type, and improvement
     // similarity so the controller can test a representative first and skip
