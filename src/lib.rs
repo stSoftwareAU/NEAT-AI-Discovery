@@ -540,6 +540,10 @@ pub struct SynapseAnalysisMetadataJson {
     /// Information about the GPU adapter used (Issue #228).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu_info: Option<GpuAdapterInfoJson>,
+    /// Per-discovery-module statistics for the current run (Issue #485).
+    /// Reports how many candidates each module produced and historical success rates.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub discovery_module_stats: Vec<analysis::module_weights::DiscoveryModuleStatsJson>,
 }
 
 /// JSON representation of neuron analysis metadata.
@@ -1290,6 +1294,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     input_index_max_seen_with_records: s.metadata.input_index_max_seen_with_records,
                     timing: s.metadata.timing.as_ref().map(timing_to_json),
                     gpu_info: s.metadata.gpu_info.as_ref().map(gpu_info_to_json),
+                    discovery_module_stats: s.metadata.discovery_module_stats.clone(),
                 }),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 synapse_weight_updates,

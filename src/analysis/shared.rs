@@ -361,6 +361,12 @@ pub struct SynapseAnalysisMetadata {
     /// Provides percentiles, skewness, kurtosis and other distribution metrics
     /// to enable targeted discovery for specific error patterns like outliers.
     pub error_distribution: Option<ErrorDistribution>,
+
+    /// Per-module discovery statistics for the current run (Issue #485).
+    ///
+    /// Reports how many candidates each discovery module produced, enabling
+    /// operators to see which modules are most effective.
+    pub discovery_module_stats: Vec<super::module_weights::DiscoveryModuleStatsJson>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.

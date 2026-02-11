@@ -311,5 +311,6 @@ pub(crate) fn build_metadata(
         timing: params.timing_collector.finalize(),
         gpu_info: GpuAnalyzer::get_adapter_info(),
         error_distribution,
+        discovery_module_stats: Vec::new(),
     }
 }
