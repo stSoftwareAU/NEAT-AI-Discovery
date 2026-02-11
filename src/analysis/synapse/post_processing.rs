@@ -10,7 +10,7 @@ use crate::analysis::utils::{shuffle_within_top_k, verbose_enabled};
 use std::collections::HashMap;
 
 use super::filtering::truncate_combined_synapse_candidate_sets;
-use super::scoring::{apply_source_type_boost, apply_target_type_boost};
+use super::scoring::{apply_pessimism_discount, apply_source_type_boost, apply_target_type_boost};
 use crate::analysis::cache::RecordCache;
 
 /// Apply impact-based discounting to a single helpful synapse candidate.
@@ -50,6 +50,15 @@ fn apply_impact_to_helpful(
     let original = candidate.expected_creature_error_reduction;
     candidate.expected_creature_error_reduction *= impact;
     candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
+
+    // Issue #506: Apply pessimism discount based on improved sample ratio.
+    // Raw improvement percentages are neuron-level estimates that do not generalise
+    // directly to creature-level score gains (18,500× over-estimation in production).
+    candidate.expected_creature_score_gain = apply_pessimism_discount(
+        candidate.expected_creature_score_gain,
+        candidate.improved_count,
+        candidate.total_count,
+    );
 
     // Issue #467: Apply source-type prioritisation boost for input-neuron sources.
     candidate.expected_creature_score_gain = apply_source_type_boost(
@@ -104,6 +113,13 @@ fn apply_impact_to_harmful(
     candidate.target_neuron_impact = impact;
     candidate.expected_creature_error_reduction *= impact;
     candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
+
+    // Issue #506: Apply pessimism discount based on improved sample ratio.
+    candidate.expected_creature_score_gain = apply_pessimism_discount(
+        candidate.expected_creature_score_gain,
+        candidate.improved_count,
+        candidate.total_count,
+    );
 }
 
 /// Apply impact-based discounting to a coordinated structural candidate.
