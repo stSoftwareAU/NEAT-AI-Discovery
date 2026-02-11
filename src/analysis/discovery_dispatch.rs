@@ -16,6 +16,7 @@ use crate::CoordinatedStructuralCandidateJson;
 use crate::observability::PhaseTimer;
 use rayon::prelude::*;
 
+use super::module_weights::DiscoveryModuleStatsJson;
 use super::shared;
 use super::utils;
 
@@ -120,7 +121,21 @@ pub fn run_discovery_modules_parallel(
     crate::watchdog::beat("analysis::analyze_all → parallel discovery detection finished");
 
     // Sequential merge phase: iterate in original order and merge non-empty results.
+    // Also collect per-module stats for metadata (Issue #485).
     for (module_name, _phase_name, result) in results {
+        let candidates_produced = result.as_ref().map(|r| r.candidates.len()).unwrap_or(0);
+
+        // Record per-module stats in metadata (Issue #485).
+        syn.metadata
+            .discovery_module_stats
+            .push(DiscoveryModuleStatsJson {
+                module_name: module_name.clone(),
+                candidates_produced,
+                attempts: 0,
+                successes: 0,
+                success_rate: 0.5,
+            });
+
         if let Some(result) = result
             && !result.candidates.is_empty()
         {

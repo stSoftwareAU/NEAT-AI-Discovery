@@ -23,6 +23,7 @@
 //! - `correlated_error.rs` - Correlated error pattern detection for shared-cause identification (Issue #344)
 //! - `discovery_dispatch.rs` - Generic discovery module dispatch pattern (Issue #375)
 //! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests (Issue #224)
+//! - `module_weights.rs` - Per-module success rate tracking for adaptive weighting (Issue #485)
 //! - `multi_hop.rs` - Multi-hop candidate analysis for deeper network improvements (Issue #230)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 //! - `oscillating_neuron.rs` - Oscillating neuron detection for stabilisation candidates (Issue #358)
@@ -64,6 +65,7 @@ pub mod error_distribution;
 pub mod gpu;
 pub mod gradient_discovery;
 pub mod input_sensitivity;
+pub mod module_weights;
 pub mod multi_hop;
 pub mod neuron;
 pub mod noise_signal;
