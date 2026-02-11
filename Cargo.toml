@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.12.12"
+version = "0.12.14"
 edition = "2024"
 
 [lib]
@@ -66,5 +66,9 @@ harness = false
 
 [[bench]]
 name = "memory_streaming"
+harness = false
+
+[[bench]]
+name = "clone_reduction"
 harness = false
 

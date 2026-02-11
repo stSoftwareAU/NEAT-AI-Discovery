@@ -65,15 +65,15 @@ pub(crate) fn detect_noisy_vs_trusted(
         map
     }
 
-    #[derive(Clone)]
-    struct IncomingInput {
-        from_uuid: String,
+    #[derive(Clone, Copy)]
+    struct IncomingInput<'a> {
+        from_uuid: &'a str,
         weight: f32,
         mean: f32,
         var: f32,
     }
 
-    let mut incoming_inputs: Vec<IncomingInput> = Vec::new();
+    let mut incoming_inputs: Vec<IncomingInput<'_>> = Vec::new();
     for syn in synapses_by_target.iter() {
         if !syn.from_uuid.starts_with("input-") {
             continue;
@@ -88,7 +88,7 @@ pub(crate) fn detect_noisy_vs_trusted(
             continue;
         };
         incoming_inputs.push(IncomingInput {
-            from_uuid: syn.from_uuid.clone(),
+            from_uuid: &syn.from_uuid,
             weight: syn.weight,
             mean,
             var,
@@ -106,7 +106,7 @@ pub(crate) fn detect_noisy_vs_trusted(
 
     let target_squash = neuron_squash_map.get(target_uuid).map(|s| s.as_str());
 
-    let mut best: Option<(IncomingInput, IncomingInput, f32)> = None; // (noisy, trusted, gain)
+    let mut best: Option<(IncomingInput<'_>, IncomingInput<'_>, f32)> = None; // (noisy, trusted, gain)
 
     for i in 0..incoming_inputs.len() {
         for j in (i + 1)..incoming_inputs.len() {
@@ -126,10 +126,10 @@ pub(crate) fn detect_noisy_vs_trusted(
                 continue;
             }
 
-            let Ok(noisy_records_arc) = cache.get(&noisy.from_uuid) else {
+            let Ok(noisy_records_arc) = cache.get(noisy.from_uuid) else {
                 continue;
             };
-            let Ok(trusted_records_arc) = cache.get(&trusted.from_uuid) else {
+            let Ok(trusted_records_arc) = cache.get(trusted.from_uuid) else {
                 continue;
             };
 
@@ -190,7 +190,7 @@ pub(crate) fn detect_noisy_vs_trusted(
 
             match &best {
                 Some((_, _, best_gain)) if *best_gain >= improvement => {}
-                _ => best = Some((noisy.clone(), trusted.clone(), improvement)),
+                _ => best = Some((*noisy, *trusted, improvement)),
             }
         }
     }
@@ -200,15 +200,15 @@ pub(crate) fn detect_noisy_vs_trusted(
         CoordinatedStructuralCandidateJson {
             operations: vec![
                 CoordinatedStructuralOpJson::RemoveSynapse {
-                    from_neuron_uuid: noisy.from_uuid,
+                    from_neuron_uuid: noisy.from_uuid.to_string(),
                     to_neuron_uuid: target_uuid.to_string(),
                 },
                 CoordinatedStructuralOpJson::RemoveSynapse {
-                    from_neuron_uuid: trusted.from_uuid.clone(),
+                    from_neuron_uuid: trusted.from_uuid.to_string(),
                     to_neuron_uuid: target_uuid.to_string(),
                 },
                 CoordinatedStructuralOpJson::AddSynapse {
-                    from_neuron_uuid: trusted.from_uuid,
+                    from_neuron_uuid: trusted.from_uuid.to_string(),
                     to_neuron_uuid: target_uuid.to_string(),
                     weight: new_weight,
                 },
