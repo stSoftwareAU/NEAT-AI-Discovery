@@ -81,8 +81,10 @@ fn coordinated_structural_can_replace_synapse_with_hidden_relu_neuron() {
         "creature": creature,
         "focusNeurons": ["output-0"],
         // Coordinated structural candidates are part of the synapse candidate budget.
+        // Issue #507: Micro-nudge variant adds a 4th variant per extreme candidate,
+        // so we need a larger neuron budget to ensure the ReLU candidate is not truncated.
         "maxSynapseCandidates": 32,
-        "maxNeuronCandidates": 32,
+        "maxNeuronCandidates": 48,
         "randomSeed": 1
     })
     .to_string();

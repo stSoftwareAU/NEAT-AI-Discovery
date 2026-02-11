@@ -145,6 +145,21 @@ const GENTLE_NUDGE_OUTGOING_ABS_MAX: f32 = 0.02;
 const GENTLE_NUDGE_OUTGOING_SCALE: f32 = 0.1;
 const GENTLE_NUDGE_EXPECTED_MULTIPLIER: f32 = 0.75;
 
+/// Guard rails for the "Micro-Nudge" safety variant (Issue #507).
+///
+/// Ultra-conservative variant targeting the ±0.002–0.005 outgoing weight range.
+/// Production evidence (Feb 2026): several conservative and gentle-nudge candidates
+/// narrowly missed success with score deltas within 0.0003 of zero. The micro-nudge
+/// variant explores even smaller outgoing weights where the sweet spot likely lies.
+///
+/// Only generated when the conservative variant's outgoing weight exceeds
+/// `MICRO_NUDGE_OUTGOING_ABS_MAX` (i.e. when it would meaningfully differ).
+const MICRO_NUDGE_INCOMING_ABS_MAX: f32 = 2.0;
+const MICRO_NUDGE_BIAS_ABS_MAX: f32 = 1.0;
+const MICRO_NUDGE_OUTGOING_ABS_MAX: f32 = 0.005;
+const MICRO_NUDGE_OUTGOING_SCALE: f32 = 0.05;
+const MICRO_NUDGE_EXPECTED_MULTIPLIER: f32 = 0.25;
+
 /// Returns true if this add-neuron candidate is "extreme" enough to warrant a conservative pair.
 ///
 /// We intentionally base this on incoming weight and bias (not outgoing), because outgoing
@@ -248,6 +263,61 @@ fn make_gentle_nudge_add_neuron_variant(candidate: &CandidateNeuronJson) -> Cand
     gentle
 }
 
+/// Create a "Micro-Nudge" variant of an add-neuron candidate (Issue #507).
+///
+/// Ultra-conservative: the outgoing weight is halved again from the conservative variant,
+/// targeting the ±0.002–0.005 range where near-miss production candidates clustered.
+fn make_micro_nudge_add_neuron_variant(candidate: &CandidateNeuronJson) -> CandidateNeuronJson {
+    let incoming_sign = if candidate.incoming_weight >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+    let outgoing_sign = if candidate.outgoing_weight >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+
+    let incoming_weight = incoming_sign
+        * candidate
+            .incoming_weight
+            .abs()
+            .min(MICRO_NUDGE_INCOMING_ABS_MAX);
+    let bias = candidate
+        .bias
+        .clamp(-MICRO_NUDGE_BIAS_ABS_MAX, MICRO_NUDGE_BIAS_ABS_MAX);
+
+    let mut outgoing_weight = (candidate.outgoing_weight * MICRO_NUDGE_OUTGOING_SCALE)
+        .clamp(-MICRO_NUDGE_OUTGOING_ABS_MAX, MICRO_NUDGE_OUTGOING_ABS_MAX);
+    // Keep a small non-zero weight so the candidate actually does something.
+    if outgoing_weight.abs() <= 1e-6 {
+        outgoing_weight = outgoing_sign * 0.002;
+    }
+
+    let mut micro = candidate.clone();
+    micro.incoming_weight = incoming_weight;
+    micro.bias = bias;
+    micro.outgoing_weight = outgoing_weight;
+    micro.expected_creature_error_reduction *= MICRO_NUDGE_EXPECTED_MULTIPLIER;
+    micro.expected_creature_score_gain = micro.expected_creature_error_reduction;
+    micro.comment =
+        Some("Micro-Nudge variant (ultra-conservative outgoing, tight incoming/bias)".to_string());
+    micro
+}
+
+/// Check whether the micro-nudge variant would meaningfully differ from the conservative variant.
+///
+/// Only generate micro-nudge when the conservative outgoing weight exceeds the micro-nudge max.
+/// This avoids wasting the candidate budget on near-identical variants.
+fn should_generate_micro_nudge(candidate: &CandidateNeuronJson) -> bool {
+    let conservative_outgoing = (candidate.outgoing_weight * CONSERVATIVE_OUTGOING_SCALE).clamp(
+        -CONSERVATIVE_OUTGOING_ABS_MAX,
+        CONSERVATIVE_OUTGOING_ABS_MAX,
+    );
+    conservative_outgoing.abs() > MICRO_NUDGE_OUTGOING_ABS_MAX
+}
+
 fn candidates_meaningfully_differ(a: &CandidateNeuronJson, b: &CandidateNeuronJson) -> bool {
     // Two candidates connecting different neuron pairs (or using different neuron squash)
     // are fundamentally different operations, even if clamping produces identical weights.
@@ -291,6 +361,7 @@ pub fn pair_extreme_candidates_with_conservative_variants(
 
         let mut added_conservative = false;
         let mut added_gentle_nudge = false;
+        let mut added_micro_nudge = false;
         if should_pair && output.len() < limit {
             let conservative = make_conservative_add_neuron_variant(&candidate);
             // Only add if it meaningfully differs (avoid duplicates).
@@ -313,20 +384,43 @@ pub fn pair_extreme_candidates_with_conservative_variants(
             }
         }
 
+        // Issue #507: Micro-Nudge variant — only when conservative outgoing exceeds
+        // the micro-nudge max (otherwise the two variants would be near-identical).
+        if should_pair && output.len() < limit && should_generate_micro_nudge(&candidate) {
+            let micro = make_micro_nudge_add_neuron_variant(&candidate);
+            if candidates_meaningfully_differ(&micro, &candidate)
+                && output
+                    .iter()
+                    .all(|existing| candidates_meaningfully_differ(existing, &micro))
+            {
+                output.push(micro);
+                added_micro_nudge = true;
+            }
+        }
+
         // Avoid misleading diagnostics: only claim pairing once we have actually returned
         // variants (and we had room under max_candidates).
         if should_pair && output[original_index].comment.is_none() {
-            output[original_index].comment = Some(
-                match (added_conservative, added_gentle_nudge) {
-                    (true, true) => {
-                        "Extreme candidate (paired with Conservative + Gentle Nudge variants)"
-                    }
-                    (true, false) => "Extreme candidate (paired with Conservative variant only)",
-                    (false, true) => "Extreme candidate (paired with Gentle Nudge variant only)",
-                    (false, false) => "Extreme candidate (no safety variants included)",
-                }
-                .to_string(),
-            );
+            let mut parts = Vec::new();
+            if added_conservative {
+                parts.push("Conservative");
+            }
+            if added_gentle_nudge {
+                parts.push("Gentle Nudge");
+            }
+            if added_micro_nudge {
+                parts.push("Micro-Nudge");
+            }
+            output[original_index].comment = Some(if parts.is_empty() {
+                "Extreme candidate (no safety variants included)".to_string()
+            } else if parts.len() == 1 {
+                format!("Extreme candidate (paired with {} variant only)", parts[0])
+            } else {
+                format!(
+                    "Extreme candidate (paired with {} variants)",
+                    parts.join(" + ")
+                )
+            });
         }
     }
 
