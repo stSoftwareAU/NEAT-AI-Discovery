@@ -226,6 +226,14 @@ pub(crate) fn apply_post_processing(
             .total_cmp(&a.expected_creature_score_gain)
     });
 
+    // Issue #513: Generate weight variants for helpful synapse candidates.
+    // Each candidate gets conservative (0.5×), gentle-nudge (0.25×), and micro-nudge (0.1×)
+    // weight variants. This maximises the pay-off from the expensive discovery process.
+    *helpful_results = crate::analysis::utils::pair_synapse_candidates_with_weight_variants(
+        std::mem::take(helpful_results),
+        input.max_candidates,
+    );
+
     // Deadline coverage: diversify within the top-K for exploration diversity
     if input.analysis_deadline_ms.is_some() {
         use crate::analysis::constants::DIVERSIFY_TOP_K;
