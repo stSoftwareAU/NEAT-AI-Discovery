@@ -467,6 +467,13 @@ pub struct AnalyzeParallelInput {
     /// will explore different candidates over time.
     #[serde(default)]
     pub random_seed: Option<u64>,
+    /// Previous neuron fingerprints from the last discovery run (Issue #490).
+    ///
+    /// When provided, neurons whose structural fingerprint is unchanged
+    /// are skipped, avoiding redundant GPU computation.
+    #[serde(default)]
+    pub previous_neuron_fingerprints:
+        Option<std::collections::HashMap<String, analysis::neuron_fingerprint::NeuronFingerprint>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -505,6 +512,19 @@ pub struct AnalyzeParallelOutput {
     /// Neuron analysis metadata for observability (v0.2.17+).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neuron_metadata: Option<NeuronAnalysisMetadataJson>,
+    /// Current neuron fingerprints for incremental analysis (Issue #490).
+    ///
+    /// Callers should store these and pass them back as `previousNeuronFingerprints`
+    /// on the next discovery run to enable incremental analysis.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub neuron_fingerprints:
+        Option<std::collections::HashMap<String, analysis::neuron_fingerprint::NeuronFingerprint>>,
+    /// Number of focus neurons skipped due to unchanged fingerprints (Issue #490).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint_cache_hits: Option<usize>,
+    /// Number of focus neurons analysed (changed or new fingerprints) (Issue #490).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint_cache_misses: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -708,6 +728,13 @@ pub struct AnalyzeAllInput {
     /// If not provided, the library uses non-deterministic randomness.
     #[serde(default)]
     pub random_seed: Option<u64>,
+    /// Previous neuron fingerprints from the last discovery run (Issue #490).
+    ///
+    /// When provided, neurons whose structural fingerprint is unchanged
+    /// are skipped, avoiding redundant GPU computation.
+    #[serde(default)]
+    pub previous_neuron_fingerprints:
+        Option<std::collections::HashMap<String, analysis::neuron_fingerprint::NeuronFingerprint>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1245,6 +1272,9 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 neuron_diagnostics: None,
                 neuron_gpu_used: None,
                 neuron_metadata: None,
+                neuron_fingerprints: None,
+                fingerprint_cache_hits: None,
+                fingerprint_cache_misses: None,
                 error: Some(format!("Failed to parse input JSON: {e}")),
             };
             return Ok(serde_json::to_string(&output)?);
@@ -1320,6 +1350,17 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     timing: n.metadata.timing.as_ref().map(timing_to_json),
                     gpu_info: n.metadata.gpu_info.as_ref().map(gpu_info_to_json),
                 }),
+                neuron_fingerprints: result.neuron_fingerprints,
+                fingerprint_cache_hits: if result.fingerprint_cache_hits > 0 {
+                    Some(result.fingerprint_cache_hits)
+                } else {
+                    None
+                },
+                fingerprint_cache_misses: if result.fingerprint_cache_misses > 0 {
+                    Some(result.fingerprint_cache_misses)
+                } else {
+                    None
+                },
                 error: None,
             };
             Ok(serde_json::to_string(&output)?)
@@ -1339,6 +1380,9 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 neuron_diagnostics: None,
                 neuron_gpu_used: None,
                 neuron_metadata: None,
+                neuron_fingerprints: None,
+                fingerprint_cache_hits: None,
+                fingerprint_cache_misses: None,
                 error: Some(e.to_string()),
             };
             Ok(serde_json::to_string(&output)?)
@@ -1357,6 +1401,7 @@ fn build_analyze_all_input_from_parallel(input: AnalyzeParallelInput) -> Analyze
         include_synapse_analysis: Some(true),
         include_neuron_analysis: Some(true),
         random_seed: input.random_seed,
+        previous_neuron_fingerprints: input.previous_neuron_fingerprints,
     }
 }
 
@@ -2213,6 +2258,9 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
                     neuron_diagnostics: None,
                     neuron_gpu_used: None,
                     neuron_metadata: None,
+                    neuron_fingerprints: None,
+                    fingerprint_cache_hits: None,
+                    fingerprint_cache_misses: None,
                     error: Some(format!("Failed to serialize output: {e}")),
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {

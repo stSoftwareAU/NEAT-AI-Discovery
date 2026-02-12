@@ -440,6 +440,15 @@ pub struct AnalyzeNeuronsResult {
 pub struct AnalyzeAllResult {
     pub synapse: Option<AnalyzeSynapsesResult>,
     pub neuron: Option<AnalyzeNeuronsResult>,
+    /// Current neuron fingerprints for incremental analysis (Issue #490).
+    ///
+    /// Callers should store these and pass them back on the next run.
+    pub neuron_fingerprints:
+        Option<std::collections::HashMap<String, super::neuron_fingerprint::NeuronFingerprint>>,
+    /// Number of focus neurons skipped due to unchanged fingerprints (Issue #490).
+    pub fingerprint_cache_hits: usize,
+    /// Number of focus neurons analysed (changed or new fingerprints) (Issue #490).
+    pub fingerprint_cache_misses: usize,
 }
 
 /// Reason why no synapse candidate was found for a target neuron

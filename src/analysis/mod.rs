@@ -24,6 +24,7 @@
 //! - `discovery_dispatch.rs` - Generic discovery module dispatch pattern (Issue #375)
 //! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests (Issue #224)
 //! - `module_weights.rs` - Per-module success rate tracking for adaptive weighting (Issue #485)
+//! - `neuron_fingerprint.rs` - Neuron structural fingerprinting for incremental analysis (Issue #490)
 //! - `multi_hop.rs` - Multi-hop candidate analysis for deeper network improvements (Issue #230)
 //! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
 //! - `oscillating_neuron.rs` - Oscillating neuron detection for stabilisation candidates (Issue #358)
@@ -68,6 +69,7 @@ pub mod input_sensitivity;
 pub mod module_weights;
 pub mod multi_hop;
 pub mod neuron;
+pub mod neuron_fingerprint;
 pub mod noise_signal;
 pub mod observation_range;
 pub mod operating_point;
@@ -356,10 +358,61 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     let include_synapse = input.include_synapse_analysis.unwrap_or(true);
     let include_neuron = input.include_neuron_analysis.unwrap_or(true);
 
+    // Issue #490: Compute current fingerprints and filter unchanged neurons.
+    let current_fingerprints = neuron_fingerprint::compute_neuron_fingerprints(&input.creature);
+    let (effective_focus_neurons, fingerprint_cache_hits, fingerprint_cache_misses) = if let Some(
+        prev_fp,
+    ) =
+        &input.previous_neuron_fingerprints
+    {
+        let filter_result = neuron_fingerprint::filter_changed_neurons(
+            &input.focus_neurons,
+            &input.creature,
+            prev_fp,
+        );
+
+        if utils::verbose_enabled() {
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] Incremental analysis (Issue #490): {}/{} focus neurons unchanged (skipped), {} to analyse",
+                filter_result.cache_hits,
+                filter_result.total_focus_neurons,
+                filter_result.cache_misses,
+            );
+        }
+
+        (
+            filter_result.changed,
+            filter_result.cache_hits,
+            filter_result.cache_misses,
+        )
+    } else {
+        let len = input.focus_neurons.len();
+        (input.focus_neurons.clone(), 0, len)
+    };
+
     if !include_synapse && !include_neuron {
         return Ok(AnalyzeAllResult {
             synapse: None,
             neuron: None,
+            neuron_fingerprints: Some(current_fingerprints),
+            fingerprint_cache_hits,
+            fingerprint_cache_misses,
+        });
+    }
+
+    // If all focus neurons were skipped by fingerprint filtering, return early.
+    if effective_focus_neurons.is_empty() && (include_synapse || include_neuron) {
+        if utils::verbose_enabled() {
+            eprintln!(
+                "[NEAT-AI-Discovery][verbose] All focus neurons unchanged — skipping GPU analysis",
+            );
+        }
+        return Ok(AnalyzeAllResult {
+            synapse: None,
+            neuron: None,
+            neuron_fingerprints: Some(current_fingerprints),
+            fingerprint_cache_hits,
+            fingerprint_cache_misses,
         });
     }
 
@@ -379,7 +432,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         Some(AnalyzeSynapsesInput {
             parquet_file: input.parquet_file.clone(),
             creature: input.creature.clone(),
-            focus_neurons: input.focus_neurons.clone(),
+            focus_neurons: effective_focus_neurons.clone(),
             max_candidates: input.max_synapse_candidates,
             analysis_deadline_ms: input.analysis_deadline_ms,
             random_seed: input.random_seed,
@@ -392,7 +445,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         Some(AnalyzeNeuronsInput {
             parquet_file: input.parquet_file.clone(),
             creature: input.creature.clone(),
-            focus_neurons: input.focus_neurons.clone(),
+            focus_neurons: effective_focus_neurons.clone(),
             max_candidates: input.max_neuron_candidates,
             analysis_deadline_ms: input.analysis_deadline_ms,
             random_seed: input.random_seed,
@@ -1492,6 +1545,9 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     Ok(AnalyzeAllResult {
         synapse: synapse_result,
         neuron: neuron_result,
+        neuron_fingerprints: Some(current_fingerprints),
+        fingerprint_cache_hits,
+        fingerprint_cache_misses,
     })
 }
 
