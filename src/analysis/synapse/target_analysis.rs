@@ -14,7 +14,8 @@ use crate::analysis::activation::{get_target_simulation_fn, is_saturating_target
 use crate::analysis::confidence::compute_confidence_metrics;
 use crate::analysis::diagnostics::{TargetDiagnostics, TargetMap, ThresholdContext};
 use crate::analysis::epistatic::{
-    SourceContribution, build_source_contribution, detect_epistatic_pairs,
+    SourceContribution, build_source_contribution, deduplicate_by_dominant_neuron,
+    deduplicate_synergistic_by_dominant_neuron, detect_epistatic_pairs,
     detect_synergistic_candidates, epistatic_pairs_to_coordinated_candidates,
     filter_interfering_epistatic_pairs, filter_interfering_synergistic_candidates,
     synergistic_to_coordinated_candidates,
@@ -849,16 +850,19 @@ fn process_helpful_batch(
             let filtered_pairs =
                 filter_interfering_epistatic_pairs(epistatic_pairs, &source_contributions);
 
-            if !filtered_pairs.is_empty() {
+            // Issue #509: Deduplicate pairs sharing a dominant neuron
+            let deduped_pairs = deduplicate_by_dominant_neuron(filtered_pairs);
+
+            if !deduped_pairs.is_empty() {
                 let epistatic_candidates =
-                    epistatic_pairs_to_coordinated_candidates(&filtered_pairs);
+                    epistatic_pairs_to_coordinated_candidates(&deduped_pairs);
                 if !epistatic_candidates.is_empty() {
                     results.coordinated.extend(epistatic_candidates);
 
                     if verbose_enabled() {
                         eprintln!(
                             "[NEAT-AI-Discovery][verbose] Target {target_uuid}: found {} epistatic pair(s)",
-                            filtered_pairs.len()
+                            deduped_pairs.len()
                         );
                     }
                 }
@@ -875,16 +879,20 @@ fn process_helpful_batch(
                 &source_contributions,
             );
 
-            if !filtered_synergistic.is_empty() {
+            // Issue #509: Deduplicate candidates sharing a dominant (primary) neuron
+            let deduped_synergistic =
+                deduplicate_synergistic_by_dominant_neuron(filtered_synergistic);
+
+            if !deduped_synergistic.is_empty() {
                 let synergistic_coordinated =
-                    synergistic_to_coordinated_candidates(&filtered_synergistic);
+                    synergistic_to_coordinated_candidates(&deduped_synergistic);
                 if !synergistic_coordinated.is_empty() {
                     results.coordinated.extend(synergistic_coordinated);
 
                     if verbose_enabled() {
                         eprintln!(
                             "[NEAT-AI-Discovery][verbose] Target {target_uuid}: found {} synergistic candidate(s)",
-                            filtered_synergistic.len()
+                            deduped_synergistic.len()
                         );
                     }
                 }
