@@ -691,6 +691,7 @@ fn analyze_all_runs_synapse_and_neuron_phases() {
         include_synapse_analysis: Some(true),
         include_neuron_analysis: Some(true),
         random_seed: None,
+        previous_neuron_fingerprints: None,
     };
 
     let result = analyze_all(&input).expect("Combined analysis should succeed");

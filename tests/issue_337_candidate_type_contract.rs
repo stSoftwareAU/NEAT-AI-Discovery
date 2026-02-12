@@ -311,6 +311,9 @@ fn analyze_parallel_output_contains_all_candidate_fields() {
         neuron_diagnostics: None,
         neuron_gpu_used: Some(true),
         neuron_metadata: None,
+        neuron_fingerprints: None,
+        fingerprint_cache_hits: None,
+        fingerprint_cache_misses: None,
         error: None,
     };
 

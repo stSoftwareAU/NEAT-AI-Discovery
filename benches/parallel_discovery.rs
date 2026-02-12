@@ -176,6 +176,7 @@ fn bench_parallel_discovery(c: &mut Criterion) {
                         include_synapse_analysis: Some(true),
                         include_neuron_analysis: Some(false),
                         random_seed: Some(42),
+                        previous_neuron_fingerprints: None,
                     };
                     black_box(analyze_all(&input).expect("analyze_all failed"))
                 })
