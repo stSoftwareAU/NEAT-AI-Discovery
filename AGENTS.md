@@ -37,7 +37,10 @@ admitted back into the population.
 
 ```
 src/
-├── lib.rs                    # FFI entry points (no_mangle extern "C")
+├── lib.rs                    # Module declarations, re-exports, version init
+├── ffi.rs                    # FFI entry points (no_mangle extern "C")
+├── ffi_types.rs              # JSON request/response structs for FFI boundary
+├── ffi_internal.rs           # Internal business-logic functions for FFI
 ├── types.rs                  # Core type definitions
 ├── activations.rs            # Activation function calculations
 ├── record.rs                 # Discovery data recording
