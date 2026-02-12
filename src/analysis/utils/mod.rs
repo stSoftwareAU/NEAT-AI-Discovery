@@ -62,6 +62,8 @@ pub fn gpu_timing_enabled() -> bool {
 
 use crate::CandidateNeuronJson;
 use crate::CandidateSynapseJson;
+use crate::CoordinatedStructuralCandidateJson;
+use crate::CoordinatedStructuralOpJson;
 
 // ============================================================================
 // Sensible-range filtering (production guard rails)
@@ -586,6 +588,194 @@ pub fn pair_synapse_candidates_with_weight_variants(
                     format!("Original (paired with {} variants)", parts.join(" + "))
                 });
             }
+        }
+    }
+
+    output
+}
+
+// ============================================================================
+// Coordinated-structural weight variant generation (Issue #510)
+// ============================================================================
+
+/// Weight scaling factors for coordinated-structural candidate variants.
+///
+/// Coordinated-structural candidates contain AddSynapse operations whose weights
+/// are derived from `source.optimal_weight` (often 0.1). Production evidence
+/// (creature b2ff6e45, GRQ-sampler commit a1340f8d) showed that this magnitude
+/// consistently fails — the same pattern seen with add-neuron extreme candidates.
+///
+/// We reuse the same conservative scaling strategy as synapse candidates (#513),
+/// generating scaled-down variants so the TypeScript controller can test multiple
+/// weight magnitudes for the same coordinated pair.
+const COORDINATED_CONSERVATIVE_WEIGHT_SCALE: f32 = 0.2;
+const COORDINATED_CONSERVATIVE_EXPECTED_MULTIPLIER: f32 = 0.5;
+
+const COORDINATED_GENTLE_NUDGE_WEIGHT_SCALE: f32 = 0.1;
+const COORDINATED_GENTLE_NUDGE_EXPECTED_MULTIPLIER: f32 = 0.75;
+
+const COORDINATED_MICRO_NUDGE_WEIGHT_SCALE: f32 = 0.05;
+const COORDINATED_MICRO_NUDGE_EXPECTED_MULTIPLIER: f32 = 0.25;
+
+/// Minimum absolute weight for a coordinated-structural AddSynapse variant.
+/// Below this, the variant is indistinguishable from zero and would be wasted.
+const COORDINATED_VARIANT_MIN_WEIGHT: f32 = 1e-6;
+
+/// Scale AddSynapse weights in a coordinated-structural candidate by the given factor.
+///
+/// Non-AddSynapse operations (RemoveSynapse, RemoveNeuron, etc.) are preserved
+/// unchanged. Returns `None` if the candidate has no AddSynapse operations or
+/// the scaled weights are too close to the originals to be meaningful.
+fn scale_coordinated_add_synapse_weights(
+    original: &CoordinatedStructuralCandidateJson,
+    scale: f32,
+    expected_multiplier: f32,
+    comment: &str,
+) -> Option<CoordinatedStructuralCandidateJson> {
+    let mut has_add_synapse = false;
+    let mut differs = false;
+
+    let scaled_ops: Vec<CoordinatedStructuralOpJson> = original
+        .operations
+        .iter()
+        .map(|op| match op {
+            CoordinatedStructuralOpJson::AddSynapse {
+                from_neuron_uuid,
+                to_neuron_uuid,
+                weight,
+            } => {
+                has_add_synapse = true;
+                let scaled_weight = weight * scale;
+                if (scaled_weight - weight).abs() > COORDINATED_VARIANT_MIN_WEIGHT {
+                    differs = true;
+                }
+                CoordinatedStructuralOpJson::AddSynapse {
+                    from_neuron_uuid: from_neuron_uuid.clone(),
+                    to_neuron_uuid: to_neuron_uuid.clone(),
+                    weight: scaled_weight,
+                }
+            }
+            other => other.clone(),
+        })
+        .collect();
+
+    if !has_add_synapse || !differs {
+        return None;
+    }
+
+    // Check all AddSynapse weights are above minimum threshold
+    let all_above_min = scaled_ops.iter().all(|op| match op {
+        CoordinatedStructuralOpJson::AddSynapse { weight, .. } => {
+            weight.abs() > COORDINATED_VARIANT_MIN_WEIGHT
+        }
+        _ => true,
+    });
+
+    if !all_above_min {
+        return None;
+    }
+
+    Some(CoordinatedStructuralCandidateJson {
+        operations: scaled_ops,
+        expected_creature_score_gain: original.expected_creature_score_gain * expected_multiplier,
+        comment: Some(comment.to_string()),
+    })
+}
+
+/// Pair each coordinated-structural candidate with weight variants (Issue #510).
+///
+/// For every coordinated-structural candidate that contains AddSynapse operations,
+/// generates up to three additional variants with progressively smaller weights.
+/// The scaling factors match the conservative strategy proven successful for
+/// add-neuron candidates: 0.2× (conservative), 0.1× (gentle nudge), 0.05× (micro-nudge).
+///
+/// Non-AddSynapse operations (RemoveSynapse, RemoveNeuron, etc.) are preserved
+/// unchanged in all variants. Candidates without any AddSynapse operations are
+/// returned as-is with no variants.
+///
+/// Input is expected to be pre-sorted by expected_creature_score_gain (highest first).
+#[doc(hidden)]
+pub fn pair_coordinated_structural_with_weight_variants(
+    sorted_candidates: Vec<CoordinatedStructuralCandidateJson>,
+    max_candidates: Option<usize>,
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    let limit = max_candidates.unwrap_or(usize::MAX);
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let mut output = Vec::with_capacity(sorted_candidates.len().min(limit));
+
+    for candidate in sorted_candidates.into_iter() {
+        if output.len() >= limit {
+            break;
+        }
+
+        let original_index = output.len();
+        output.push(candidate.clone());
+
+        let mut added_conservative = false;
+        let mut added_gentle_nudge = false;
+        let mut added_micro_nudge = false;
+
+        // Conservative variant (0.2× weight — targeting ~0.02 for 0.1 originals)
+        if output.len() < limit
+            && let Some(conservative) = scale_coordinated_add_synapse_weights(
+                &candidate,
+                COORDINATED_CONSERVATIVE_WEIGHT_SCALE,
+                COORDINATED_CONSERVATIVE_EXPECTED_MULTIPLIER,
+                "Conservative variant (AddSynapse weights scaled to 0.2×)",
+            )
+        {
+            output.push(conservative);
+            added_conservative = true;
+        }
+
+        // Gentle Nudge variant (0.1× weight — targeting ~0.01 for 0.1 originals)
+        if output.len() < limit
+            && let Some(gentle) = scale_coordinated_add_synapse_weights(
+                &candidate,
+                COORDINATED_GENTLE_NUDGE_WEIGHT_SCALE,
+                COORDINATED_GENTLE_NUDGE_EXPECTED_MULTIPLIER,
+                "Gentle Nudge variant (AddSynapse weights scaled to 0.1×)",
+            )
+        {
+            output.push(gentle);
+            added_gentle_nudge = true;
+        }
+
+        // Micro-Nudge variant (0.05× weight — targeting ~0.005 for 0.1 originals)
+        if output.len() < limit
+            && let Some(micro) = scale_coordinated_add_synapse_weights(
+                &candidate,
+                COORDINATED_MICRO_NUDGE_WEIGHT_SCALE,
+                COORDINATED_MICRO_NUDGE_EXPECTED_MULTIPLIER,
+                "Micro-Nudge variant (AddSynapse weights scaled to 0.05×)",
+            )
+        {
+            output.push(micro);
+            added_micro_nudge = true;
+        }
+
+        // Append variant info to the original's comment (preserve existing context).
+        let mut parts = Vec::new();
+        if added_conservative {
+            parts.push("Conservative");
+        }
+        if added_gentle_nudge {
+            parts.push("Gentle Nudge");
+        }
+        if added_micro_nudge {
+            parts.push("Micro-Nudge");
+        }
+        if !parts.is_empty() {
+            let variant_suffix = if parts.len() == 1 {
+                format!(" (paired with {} variant only)", parts[0])
+            } else {
+                format!(" (paired with {} variants)", parts.join(" + "))
+            };
+            let existing = output[original_index].comment.take().unwrap_or_default();
+            output[original_index].comment = Some(format!("{existing}{variant_suffix}"));
         }
     }
 

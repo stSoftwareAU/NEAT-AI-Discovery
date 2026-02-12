@@ -234,6 +234,14 @@ pub(crate) fn apply_post_processing(
         input.max_candidates,
     );
 
+    // Issue #510: Generate conservative weight variants for coordinated-structural candidates.
+    // AddSynapse weights are scaled to 0.2× (conservative), 0.1× (gentle nudge), 0.05× (micro-nudge).
+    *coordinated_structural_results =
+        crate::analysis::utils::pair_coordinated_structural_with_weight_variants(
+            std::mem::take(coordinated_structural_results),
+            input.max_candidates,
+        );
+
     // Deadline coverage: diversify within the top-K for exploration diversity
     if input.analysis_deadline_ms.is_some() {
         use crate::analysis::constants::DIVERSIFY_TOP_K;
