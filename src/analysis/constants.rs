@@ -150,6 +150,30 @@ pub const MIN_BOOST_SAMPLES: usize = 10;
 pub const EXISTING_HIDDEN_TARGET_BOOST: f64 = 1.5;
 
 // =============================================================================
+// Individual Operation Pre-Screen (Issue #508)
+// =============================================================================
+
+/// Maximum individual harm allowed for a source to participate in epistatic or
+/// synergistic pairing.
+///
+/// Production analysis (creature b2ff6e45, GRQ-sampler commit a1340f8d) showed
+/// that all 10 coordinated-structural candidates failed because they all included
+/// the same harmful operation (e8480883 → output-0, weight 0.1) which degraded
+/// the score by ~−0.042. The partner neuron varied but could never overcome that
+/// dominant damage.
+///
+/// Before forming a coordinated pair, each individual operation is pre-screened:
+/// if its `individual_improvement` is below this threshold, it is excluded from
+/// pairing. A value of −0.01 allows mildly negative sources (true epistatic
+/// candidates) while rejecting strongly harmful ones.
+///
+/// ## Valid Range
+/// Must be <= 0.0 (negative means harmful). Values below −0.05 provide
+/// insufficient protection; values above −0.001 may over-filter genuine
+/// epistatic pairs.
+pub const MAX_INDIVIDUAL_HARM_FOR_PAIRING: f32 = -0.01;
+
+// =============================================================================
 // Pessimism Discount (Issue #506)
 // =============================================================================
 
