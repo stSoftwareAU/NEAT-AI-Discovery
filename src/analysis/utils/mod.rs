@@ -61,6 +61,7 @@ pub fn gpu_timing_enabled() -> bool {
 // ============================================================================
 
 use crate::CandidateNeuronJson;
+use crate::CandidateSynapseJson;
 
 // ============================================================================
 // Sensible-range filtering (production guard rails)
@@ -421,6 +422,170 @@ pub fn pair_extreme_candidates_with_conservative_variants(
                     parts.join(" + ")
                 )
             });
+        }
+    }
+
+    output
+}
+
+// ============================================================================
+// Synapse weight variant generation (Issue #513)
+// ============================================================================
+
+/// Weight scaling factors for synapse candidate variants.
+///
+/// Synapse candidates have a single `weight` field (already clamped to ±0.1).
+/// We generate scaled-down variants so TypeScript can test multiple weight
+/// magnitudes for the same from→to pair. The discovery process is expensive
+/// (~1 hour), but testing each candidate is cheap (~1 minute), so generating
+/// multiple variants maximises the return on discovery investment.
+const SYNAPSE_CONSERVATIVE_WEIGHT_SCALE: f32 = 0.5;
+const SYNAPSE_CONSERVATIVE_EXPECTED_MULTIPLIER: f32 = 0.5;
+
+const SYNAPSE_GENTLE_NUDGE_WEIGHT_SCALE: f32 = 0.25;
+const SYNAPSE_GENTLE_NUDGE_EXPECTED_MULTIPLIER: f32 = 0.75;
+
+const SYNAPSE_MICRO_NUDGE_WEIGHT_SCALE: f32 = 0.1;
+const SYNAPSE_MICRO_NUDGE_EXPECTED_MULTIPLIER: f32 = 0.25;
+
+/// Minimum absolute weight for a synapse variant to be considered meaningful.
+/// Below this, the variant is indistinguishable from zero and would be wasted.
+const SYNAPSE_VARIANT_MIN_WEIGHT: f32 = 1e-6;
+
+/// Check whether two synapse candidates are meaningfully different.
+fn synapse_candidates_meaningfully_differ(
+    a: &CandidateSynapseJson,
+    b: &CandidateSynapseJson,
+) -> bool {
+    if a.from_neuron_uuid != b.from_neuron_uuid || a.to_neuron_uuid != b.to_neuron_uuid {
+        return true;
+    }
+    (a.weight - b.weight).abs() > SYNAPSE_VARIANT_MIN_WEIGHT
+}
+
+/// Create a conservative weight variant of a synapse candidate.
+fn make_conservative_synapse_variant(candidate: &CandidateSynapseJson) -> CandidateSynapseJson {
+    let mut variant = candidate.clone();
+    variant.weight = candidate.weight * SYNAPSE_CONSERVATIVE_WEIGHT_SCALE;
+    variant.expected_creature_error_reduction *= SYNAPSE_CONSERVATIVE_EXPECTED_MULTIPLIER;
+    variant.expected_creature_score_gain *= SYNAPSE_CONSERVATIVE_EXPECTED_MULTIPLIER;
+    variant.comment = Some("Conservative variant (weight scaled to 0.5×)".to_string());
+    variant
+}
+
+/// Create a gentle-nudge weight variant of a synapse candidate.
+fn make_gentle_nudge_synapse_variant(candidate: &CandidateSynapseJson) -> CandidateSynapseJson {
+    let mut variant = candidate.clone();
+    variant.weight = candidate.weight * SYNAPSE_GENTLE_NUDGE_WEIGHT_SCALE;
+    variant.expected_creature_error_reduction *= SYNAPSE_GENTLE_NUDGE_EXPECTED_MULTIPLIER;
+    variant.expected_creature_score_gain *= SYNAPSE_GENTLE_NUDGE_EXPECTED_MULTIPLIER;
+    variant.comment = Some("Gentle Nudge variant (weight scaled to 0.25×)".to_string());
+    variant
+}
+
+/// Create a micro-nudge weight variant of a synapse candidate.
+fn make_micro_nudge_synapse_variant(candidate: &CandidateSynapseJson) -> CandidateSynapseJson {
+    let mut variant = candidate.clone();
+    variant.weight = candidate.weight * SYNAPSE_MICRO_NUDGE_WEIGHT_SCALE;
+    variant.expected_creature_error_reduction *= SYNAPSE_MICRO_NUDGE_EXPECTED_MULTIPLIER;
+    variant.expected_creature_score_gain *= SYNAPSE_MICRO_NUDGE_EXPECTED_MULTIPLIER;
+    variant.comment = Some("Micro-Nudge variant (weight scaled to 0.1×)".to_string());
+    variant
+}
+
+/// Pair each helpful synapse candidate with weight variants (Issue #513).
+///
+/// For every synapse candidate, generates up to three additional variants with
+/// progressively smaller weights. This gives the TypeScript controller multiple
+/// options to test for the same from→to synapse pair — the discovery process is
+/// expensive but testing each variant is cheap.
+///
+/// Variants are only added when they meaningfully differ from the original and
+/// from each other (weight difference > 1e-6).
+///
+/// Input is expected to be pre-sorted by expected_creature_score_gain (highest first).
+#[doc(hidden)]
+pub fn pair_synapse_candidates_with_weight_variants(
+    sorted_candidates: Vec<CandidateSynapseJson>,
+    max_candidates: Option<usize>,
+) -> Vec<CandidateSynapseJson> {
+    let limit = max_candidates.unwrap_or(usize::MAX);
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let mut output = Vec::with_capacity(sorted_candidates.len().min(limit));
+
+    for candidate in sorted_candidates.into_iter() {
+        if output.len() >= limit {
+            break;
+        }
+
+        let original_index = output.len();
+        output.push(candidate.clone());
+
+        let mut added_conservative = false;
+        let mut added_gentle_nudge = false;
+        let mut added_micro_nudge = false;
+
+        // Conservative variant (0.5× weight)
+        if output.len() < limit {
+            let conservative = make_conservative_synapse_variant(&candidate);
+            if conservative.weight.abs() > SYNAPSE_VARIANT_MIN_WEIGHT
+                && synapse_candidates_meaningfully_differ(&conservative, &candidate)
+            {
+                output.push(conservative);
+                added_conservative = true;
+            }
+        }
+
+        // Gentle Nudge variant (0.25× weight)
+        if output.len() < limit {
+            let gentle = make_gentle_nudge_synapse_variant(&candidate);
+            if gentle.weight.abs() > SYNAPSE_VARIANT_MIN_WEIGHT
+                && synapse_candidates_meaningfully_differ(&gentle, &candidate)
+                && output
+                    .iter()
+                    .all(|existing| synapse_candidates_meaningfully_differ(existing, &gentle))
+            {
+                output.push(gentle);
+                added_gentle_nudge = true;
+            }
+        }
+
+        // Micro-Nudge variant (0.1× weight)
+        if output.len() < limit {
+            let micro = make_micro_nudge_synapse_variant(&candidate);
+            if micro.weight.abs() > SYNAPSE_VARIANT_MIN_WEIGHT
+                && synapse_candidates_meaningfully_differ(&micro, &candidate)
+                && output
+                    .iter()
+                    .all(|existing| synapse_candidates_meaningfully_differ(existing, &micro))
+            {
+                output.push(micro);
+                added_micro_nudge = true;
+            }
+        }
+
+        // Label the original with the variants that were included.
+        if output[original_index].comment.is_none() {
+            let mut parts = Vec::new();
+            if added_conservative {
+                parts.push("Conservative");
+            }
+            if added_gentle_nudge {
+                parts.push("Gentle Nudge");
+            }
+            if added_micro_nudge {
+                parts.push("Micro-Nudge");
+            }
+            if !parts.is_empty() {
+                output[original_index].comment = Some(if parts.len() == 1 {
+                    format!("Original (paired with {} variant only)", parts[0])
+                } else {
+                    format!("Original (paired with {} variants)", parts.join(" + "))
+                });
+            }
         }
     }
 

@@ -805,6 +805,7 @@ fn process_helpful_batch(
                     prediction_confidence: confidence_metrics.prediction_confidence,
                     expected_score_gain_confidence_interval: confidence_metrics
                         .expected_score_gain_confidence_interval,
+                    comment: None,
                 });
             }
         } // End timing scope for result processing
@@ -1006,6 +1007,7 @@ fn process_harmful_batch(
             prediction_confidence: confidence_metrics.prediction_confidence,
             expected_score_gain_confidence_interval: confidence_metrics
                 .expected_score_gain_confidence_interval,
+            comment: None,
         });
     }
 

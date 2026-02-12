@@ -43,6 +43,7 @@ fn candidate_synapse_json_serialisation_contract() {
         outlier_reduction_info: None,
         prediction_confidence: 0.9,
         expected_score_gain_confidence_interval: [0.005, 0.015],
+        comment: None,
     };
 
     let json = serde_json::to_value(&candidate).expect("serialisation should succeed");

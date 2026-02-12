@@ -263,6 +263,13 @@ pub struct CandidateSynapseJson {
     /// The first element is the lower bound, the second is the upper bound.
     /// The point estimate (expectedCreatureScoreGain) should fall within this interval.
     pub expected_score_gain_confidence_interval: [f32; 2],
+    /// Human-readable label identifying weight variants (Issue #513).
+    ///
+    /// When a synapse candidate is paired with conservative/gentle-nudge/micro-nudge
+    /// variants, each variant gets a descriptive comment. The original candidate's
+    /// comment lists which variants were included.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 /// Candidate to update the weight of an existing synapse (delta-based).
