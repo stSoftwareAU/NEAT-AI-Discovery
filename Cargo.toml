@@ -76,3 +76,7 @@ harness = false
 name = "upsert_candidate"
 harness = false
 
+[[bench]]
+name = "gpu_buffer_transfers"
+harness = false
+
