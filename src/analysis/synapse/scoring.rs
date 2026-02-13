@@ -157,8 +157,18 @@ pub(crate) fn compute_relu_improvement_and_count(
 
         let (baseline_error, new_error) = if let Some(target_fn) = target_activation_fn {
             // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
-            let target_value = unsafe { sample.target_value.unwrap_unchecked() };
-            let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
+            // SAFETY INVARIANT: get_target_simulation_fn() only returns Some when
+            // all samples have target_value and target_activation set.
+            debug_assert!(
+                sample.target_value.is_some(),
+                "target_value must be set when target_activation_fn is Some"
+            );
+            debug_assert!(
+                sample.target_activation.is_some(),
+                "target_activation must be set when target_activation_fn is Some"
+            );
+            let target_value = sample.target_value.unwrap();
+            let target_activation = sample.target_activation.unwrap();
             let desired_value = target_value + sample.avg_error;
             let expected = target_fn(desired_value);
 
@@ -251,8 +261,18 @@ pub(crate) fn compute_activation_improvement_and_count(
 
         let (baseline_error, new_error) = if let Some(target_fn) = target_activation_fn {
             // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
-            let target_value = unsafe { sample.target_value.unwrap_unchecked() };
-            let target_activation = unsafe { sample.target_activation.unwrap_unchecked() };
+            // SAFETY INVARIANT: get_target_simulation_fn() only returns Some when
+            // all samples have target_value and target_activation set.
+            debug_assert!(
+                sample.target_value.is_some(),
+                "target_value must be set when target_activation_fn is Some"
+            );
+            debug_assert!(
+                sample.target_activation.is_some(),
+                "target_activation must be set when target_activation_fn is Some"
+            );
+            let target_value = sample.target_value.unwrap();
+            let target_activation = sample.target_activation.unwrap();
             let desired_value = target_value + sample.avg_error;
             let expected = target_fn(desired_value);
 
