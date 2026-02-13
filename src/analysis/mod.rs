@@ -12,7 +12,7 @@
 //! - `system.rs` - System utilities facade (memory, GPU tier detection) (Issue #239)
 //! - `activation.rs` - Activation function related code (Issue #266)
 //! - `samples.rs` - Sample data structures and GPU formats (Issue #269)
-//! - `diagnostics.rs` - Diagnostic tracking and rejection reasons (Issue #271)
+//! - `diagnostics/` - Diagnostic tracking and rejection reasons (Issue #271, #524)
 //! - `constants.rs` - Central discovery thresholds and constants (Issue #424)
 //! - `cache.rs` - Record caching for parquet files (Issue #185)
 //! - `candidate_cache.rs` - Candidate outcome cache for success/failure tracking (Issue #465)
