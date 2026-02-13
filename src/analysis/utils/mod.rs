@@ -13,6 +13,41 @@ pub mod deadline;
 pub mod memory;
 pub mod platform;
 
+// ============================================================================
+// Mutex helpers — graceful handling of poisoned mutexes (Issue #525)
+// ============================================================================
+
+use std::sync::Mutex;
+
+/// Lock a mutex, returning an `anyhow::Error` instead of panicking if poisoned.
+///
+/// In an FFI library a panic unwinds into the calling process (Deno / NEAT-AI)
+/// and causes an unexpected abort. This helper converts a `PoisonError` into a
+/// recoverable `anyhow::Error` that propagates to the JSON `success: false`
+/// boundary.
+///
+/// The `context` parameter is included in the error message for diagnostics.
+pub fn lock_or_bail<'a, T>(
+    mutex: &'a Mutex<T>,
+    context: &str,
+) -> anyhow::Result<std::sync::MutexGuard<'a, T>> {
+    mutex.lock().map_err(|_| {
+        anyhow::anyhow!("Mutex poisoned ({context}): a thread panicked while holding this lock")
+    })
+}
+
+/// Consume a mutex and return its inner value, or an error if poisoned.
+///
+/// Equivalent to `Mutex::into_inner().unwrap()` but returns an error instead
+/// of panicking.
+pub fn into_inner_or_bail<T>(mutex: Mutex<T>, context: &str) -> anyhow::Result<T> {
+    mutex.into_inner().map_err(|_| {
+        anyhow::anyhow!(
+            "Mutex poisoned on into_inner ({context}): a thread panicked while holding this lock"
+        )
+    })
+}
+
 // Re-export key memory functions for convenience
 pub use memory::{
     DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE, LOW_MEMORY_GPU_BATCH_SIZE, MemoryPressure,
