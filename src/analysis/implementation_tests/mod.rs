@@ -84,5 +84,6 @@ mod improvement_model_tests;
 mod optimal_weight_tests;
 mod prediction_accuracy_tests;
 mod relu_evaluation_tests;
+mod safe_unwrap_tests;
 mod sample_matching_tests;
 mod synapse_analysis_tests;
