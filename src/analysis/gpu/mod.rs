@@ -3,29 +3,38 @@
 //! This module contains GPU-related code including device management, GpuAnalyzer,
 //! GpuWorkQueue, and GPU evaluation functions.
 //!
-//! ## Module Structure (Issue #272, #273, #274, #277)
+//! ## Module Structure (Issue #272, #273, #274, #277, #520)
 //!
 //! ```text
 //! src/analysis/gpu/
-//! ├── mod.rs          <- This file: module router and re-exports
-//! ├── shaders.rs      <- GPU shader constants and references (Issue #277)
-//! ├── device.rs       <- GPU device management (Issue #272)
-//! ├── analyzer.rs     <- GpuAnalyzer struct and GpuEvaluator trait (Issue #273)
-//! ├── queue.rs        <- GpuWorkQueue struct and thread management (Issue #274)
-//! └── pipelines.rs    <- Pipeline builders (future)
+//! ├── mod.rs                    <- This file: module router and re-exports
+//! ├── shaders.rs                <- GPU shader constants and references (Issue #277)
+//! ├── device.rs                 <- GPU device management (Issue #272)
+//! ├── analyzer.rs               <- Core GpuAnalyzer struct, initialisation, shared logic
+//! ├── helpful_evaluation.rs     <- Helpful synapse GPU evaluation (Issue #520)
+//! ├── harmful_evaluation.rs     <- Harmful synapse GPU evaluation (Issue #520)
+//! ├── relu_evaluation.rs        <- ReLU activation GPU evaluation (Issue #520)
+//! ├── activation_evaluation.rs  <- Activation function GPU evaluation (Issue #520)
+//! ├── bias_evaluation.rs        <- Bias GPU evaluation (Issue #520)
+//! ├── queue.rs                  <- GpuWorkQueue struct and thread management (Issue #274)
 //! ```
 //!
 //! ## Refactoring Progress
 //!
 //! - [x] shaders.rs - GPU shader constants and references (Issue #277)
 //! - [x] device.rs - GPU device initialisation, detection, buffer management (Issue #272)
-//! - [x] analyzer.rs - GpuAnalyzer struct, GpuEvaluator trait, pipeline builders (Issue #273)
+//! - [x] analyzer.rs - GpuAnalyzer struct, GpuEvaluator trait (Issue #273)
 //! - [x] queue.rs - GpuWorkQueue struct and implementation (Issue #274)
-//! - [ ] pipelines.rs - Shared pipeline builder utilities
+//! - [x] Per-evaluation modules split from analyzer.rs (Issue #520)
 
+pub mod activation_evaluation;
 pub mod analyzer;
+pub mod bias_evaluation;
 pub mod device;
+pub mod harmful_evaluation;
+pub mod helpful_evaluation;
 pub mod queue;
+pub mod relu_evaluation;
 pub mod shaders;
 
 // Re-export device module contents for backwards compatibility

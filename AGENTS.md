@@ -99,10 +99,15 @@ src/
 │   ├── multi_hop.rs          # Multi-hop analysis
 │   ├── implementation_tests/  # Synapse analysis pipeline tests
 │   │
-│   ├── gpu/                  # GPU infrastructure
+│   ├── gpu/                  # GPU infrastructure (Issue #520)
 │   │   ├── mod.rs
 │   │   ├── device.rs         # GPU device management
-│   │   ├── analyzer.rs       # GPU analyser
+│   │   ├── analyzer.rs       # Core GpuAnalyzer struct, initialisation, shared logic
+│   │   ├── helpful_evaluation.rs  # Helpful synapse GPU evaluation
+│   │   ├── harmful_evaluation.rs  # Harmful synapse GPU evaluation
+│   │   ├── relu_evaluation.rs     # ReLU activation GPU evaluation
+│   │   ├── activation_evaluation.rs # Activation function GPU evaluation
+│   │   ├── bias_evaluation.rs     # Bias GPU evaluation
 │   │   ├── queue.rs          # GPU work queue
 │   │   └── shaders.rs        # Shader management
 │   │
