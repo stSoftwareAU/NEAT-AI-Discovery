@@ -4,6 +4,7 @@
 //! in the neural network (saturated neurons, bottlenecks, dead neurons, etc.)
 //! and convert them into coordinated structural candidates.
 
+pub mod activation_mismatch;
 pub mod bottleneck;
 pub mod bounded_range;
 pub mod correlated_error;
@@ -12,6 +13,7 @@ pub mod dormant_synapse;
 pub mod input_sensitivity;
 pub mod noise_signal;
 pub mod observation_range;
+pub mod observation_utilisation;
 pub mod operating_point;
 pub mod opposing_synapse;
 pub mod oscillating_neuron;
