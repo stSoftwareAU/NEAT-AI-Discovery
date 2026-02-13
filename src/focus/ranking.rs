@@ -9,6 +9,7 @@ use super::gradient::{
     compute_gradient_flow_for_neuron,
 };
 use super::impact::compute_impacts_with_activations;
+use crate::analysis::utils::lock_or_bail;
 use crate::analysis::{check_memory_for_parquet, verbose_enabled};
 use crate::discovery_history::DiscoveryHistory;
 use crate::parquet_format::{read_all_records_grouped_by_neuron, read_records_from_parquet};
@@ -136,7 +137,7 @@ impl LazyRecordProvider {
 impl RecordProvider for LazyRecordProvider {
     fn get(&self, neuron_uuid: &str) -> Result<Option<Arc<Vec<DiscoverRecord>>>> {
         {
-            let cache = self.cache.lock().expect("lazy record cache poisoned");
+            let cache = lock_or_bail(&self.cache, "lazy record cache")?;
             if let Some(records) = cache.entries.get(neuron_uuid) {
                 return Ok(Some(Arc::clone(records)));
             }
@@ -154,14 +155,17 @@ impl RecordProvider for LazyRecordProvider {
         records.sort_by_key(|r| r.obs_index);
         let arc_records = Arc::new(records);
 
-        let mut cache = self.cache.lock().expect("lazy record cache poisoned");
+        let mut cache = lock_or_bail(&self.cache, "lazy record cache")?;
         cache.insert(neuron_uuid.to_string(), Arc::clone(&arc_records));
         Ok(Some(arc_records))
     }
 
     fn len(&self) -> usize {
-        let cache = self.cache.lock().expect("lazy record cache poisoned");
-        cache.entries.len()
+        // len() is diagnostic-only; recover data from a poisoned mutex if needed
+        match self.cache.lock() {
+            Ok(cache) => cache.entries.len(),
+            Err(poisoned) => poisoned.into_inner().entries.len(),
+        }
     }
 }
 

@@ -82,8 +82,8 @@ use crate::analysis::shared::AnalyzeSynapsesResult;
 use crate::analysis::diagnostics::{TargetDiagnostics, require_unique_focus};
 
 use crate::analysis::utils::{
-    build_deadline, deadline_passed, log_analysis_start, log_analysis_timeout, order_focus_targets,
-    verbose_enabled,
+    build_deadline, deadline_passed, lock_or_bail, log_analysis_start, log_analysis_timeout,
+    order_focus_targets, verbose_enabled,
 };
 
 use crate::analysis::samples::{compute_source_std_dev, get_constant_source_threshold};
@@ -316,8 +316,10 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     focus_order
         .par_iter()
         .try_for_each(|target_uuid| -> Result<()> {
-            if *analysis_timed_out.lock().expect("Mutex poisoned") || deadline_passed(&deadline) {
-                *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+            if *lock_or_bail(&analysis_timed_out, "analysis_timed_out")?
+                || deadline_passed(&deadline)
+            {
+                *lock_or_bail(&analysis_timed_out, "analysis_timed_out")? = true;
                 return Ok(());
             }
 
@@ -331,27 +333,19 @@ pub(crate) fn analyze_synapses_with_cache_impl(
 
             // Merge results into shared collections
             if !target_results.helpful.is_empty() {
-                helpful_results
-                    .lock()
-                    .expect("Mutex poisoned")
+                lock_or_bail(&helpful_results, "helpful_results")?
                     .extend(target_results.helpful);
             }
             if !target_results.harmful.is_empty() {
-                harmful_results
-                    .lock()
-                    .expect("Mutex poisoned")
+                lock_or_bail(&harmful_results, "harmful_results")?
                     .extend(target_results.harmful);
             }
             if !target_results.coordinated.is_empty() {
-                coordinated_structural_results
-                    .lock()
-                    .expect("Mutex poisoned")
+                lock_or_bail(&coordinated_structural_results, "coordinated_structural_results")?
                     .extend(target_results.coordinated);
             }
             if !target_results.error_values.is_empty() {
-                error_values_for_distribution
-                    .lock()
-                    .expect("Mutex poisoned")
+                lock_or_bail(&error_values_for_distribution, "error_values_for_distribution")?
                     .extend(target_results.error_values);
             }
             if target_results.target_value_seen {
@@ -381,15 +375,16 @@ pub(crate) fn analyze_synapses_with_cache_impl(
             Ok(())
         })?;
 
-    let analysis_timed_out = *analysis_timed_out.lock().expect("Mutex poisoned");
-    let mut helpful_results = std::mem::take(&mut *helpful_results.lock().expect("Mutex poisoned"));
-    let mut harmful_results = std::mem::take(&mut *harmful_results.lock().expect("Mutex poisoned"));
-    let mut coordinated_structural_results = std::mem::take(
-        &mut *coordinated_structural_results
-            .lock()
-            .expect("Mutex poisoned"),
-    );
-    let mut helpful_fallback = helpful_fallback.lock().expect("Mutex poisoned").take();
+    let analysis_timed_out = *lock_or_bail(&analysis_timed_out, "analysis_timed_out")?;
+    let mut helpful_results =
+        std::mem::take(&mut *lock_or_bail(&helpful_results, "helpful_results")?);
+    let mut harmful_results =
+        std::mem::take(&mut *lock_or_bail(&harmful_results, "harmful_results")?);
+    let mut coordinated_structural_results = std::mem::take(&mut *lock_or_bail(
+        &coordinated_structural_results,
+        "coordinated_structural_results",
+    )?);
+    let mut helpful_fallback = lock_or_bail(&helpful_fallback, "helpful_fallback")?.take();
 
     if analysis_timed_out {
         let completed = completed_count.load(std::sync::atomic::Ordering::Relaxed);
@@ -427,11 +422,10 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     let input_min = metadata_input_min_with_records.load(std::sync::atomic::Ordering::Relaxed);
     let input_max = metadata_input_max_with_records.load(std::sync::atomic::Ordering::Relaxed);
 
-    let error_vec = std::mem::take(
-        &mut *error_values_for_distribution
-            .lock()
-            .expect("Mutex poisoned"),
-    );
+    let error_vec = std::mem::take(&mut *lock_or_bail(
+        &error_values_for_distribution,
+        "error_values_for_distribution",
+    )?);
 
     let metadata = post_processing::build_metadata(&post_processing::MetadataParams {
         target_value_seen: metadata_target_value_seen.load(std::sync::atomic::Ordering::Relaxed),

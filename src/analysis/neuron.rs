@@ -18,9 +18,9 @@ use crate::analysis::activation::is_threshold_activation;
 
 // Import utilities
 use crate::analysis::utils::{
-    OrderedNeuron, build_deadline, deadline_passed, log_analysis_start, log_analysis_timeout,
-    order_eligible_sources, parse_input_index, shuffle_slice, shuffle_within_top_k,
-    verbose_enabled,
+    OrderedNeuron, build_deadline, deadline_passed, lock_or_bail, log_analysis_start,
+    log_analysis_timeout, order_eligible_sources, parse_input_index, shuffle_slice,
+    shuffle_within_top_k, verbose_enabled,
 };
 
 // Import sample data structures (Issue #269)
@@ -387,8 +387,8 @@ pub(crate) fn analyze_neurons_with_cache(
     focus_order_arc
         .par_iter()
         .try_for_each(|target_uuid| -> Result<()> {
-            if *analysis_timed_out.lock().expect("Mutex poisoned") || deadline_passed(&deadline) {
-                *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+            if *lock_or_bail(&analysis_timed_out, "analysis_timed_out")? || deadline_passed(&deadline) {
+                *lock_or_bail(&analysis_timed_out, "analysis_timed_out")? = true;
                 return Ok(());
             }
 
@@ -425,7 +425,7 @@ pub(crate) fn analyze_neurons_with_cache(
                 if !errors.is_empty() {
                     error_values_for_distribution
                         .lock()
-                        .expect("Mutex poisoned")
+                        .map_err(|_| anyhow::anyhow!("Mutex poisoned (error_values_for_distribution)"))?
                         .extend(errors);
                 }
             }
@@ -504,7 +504,7 @@ pub(crate) fn analyze_neurons_with_cache(
             for source in &eligible_sources {
                 // Check deadline during pre-filtering
                 if deadline_passed(&deadline) {
-                    *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+                    *lock_or_bail(&analysis_timed_out, "analysis_timed_out")? = true;
                     break;
                 }
                 let source_uuid = source.uuid.as_str();
@@ -534,7 +534,7 @@ pub(crate) fn analyze_neurons_with_cache(
 
             // Log summary of source loading results for debugging
             let sources_checked = sources_to_process.len() + empty_record_sources.len() + load_failure_count as usize;
-            let timed_out_during_loading = *analysis_timed_out.lock().expect("Mutex poisoned");
+            let timed_out_during_loading = *lock_or_bail(&analysis_timed_out, "analysis_timed_out")?;
             if verbose_enabled() && (sources_to_process.is_empty() || load_failure_count > 0 || !empty_record_sources.is_empty() || timed_out_during_loading) {
                 let sources_with_records = sources_to_process.len();
                 let empty_count = empty_record_sources.len();
@@ -560,7 +560,7 @@ pub(crate) fn analyze_neurons_with_cache(
             }
 
             // Check if timed out during pre-filtering
-            if *analysis_timed_out.lock().expect("Mutex poisoned") {
+            if *lock_or_bail(&analysis_timed_out, "analysis_timed_out")? {
                 return Ok(());
             }
 
@@ -641,7 +641,7 @@ pub(crate) fn analyze_neurons_with_cache(
                 for result in work_results {
                     // Check deadline before each evaluation batch
                     if deadline_passed(&deadline) {
-                        *analysis_timed_out.lock().expect("Mutex poisoned") = true;
+                        *lock_or_bail(&analysis_timed_out, "analysis_timed_out")? = true;
                         break;
                     }
 
@@ -701,7 +701,7 @@ pub(crate) fn analyze_neurons_with_cache(
                         }
                         // Issue #216: Direct method call - no lock needed with DashMap-based diagnostics
                         diagnostics.mark_candidate_selected(target_uuid);
-                        let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
+                        let mut map = lock_or_bail(&helpful_map, "helpful_map")?;
                         upsert_candidate(&mut map, candidate);
                     }
 
@@ -721,7 +721,7 @@ pub(crate) fn analyze_neurons_with_cache(
                         }
                         // Issue #216: Direct method call - no lock needed with DashMap-based diagnostics
                         diagnostics.mark_candidate_selected(target_uuid);
-                        let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
+                        let mut map = lock_or_bail(&helpful_map, "helpful_map")?;
                         upsert_candidate(&mut map, candidate);
                     }
 
@@ -746,7 +746,7 @@ pub(crate) fn analyze_neurons_with_cache(
 
                         // Issue #216: Direct method call - no lock needed with DashMap-based diagnostics
                         diagnostics.mark_candidate_selected(target_uuid);
-                        let mut map = helpful_map.lock().expect("Mutex poisoned: helpful_map");
+                        let mut map = lock_or_bail(&helpful_map, "helpful_map")?;
                         upsert_candidate(&mut map, candidate);
                     }
                 }
@@ -761,13 +761,8 @@ pub(crate) fn analyze_neurons_with_cache(
             Ok(())
         })?;
 
-    let analysis_timed_out = *analysis_timed_out
-        .lock()
-        .expect("Mutex poisoned: analysis_timed_out");
-    let helpful_map = helpful_map
-        .lock()
-        .expect("Mutex poisoned: helpful_map")
-        .clone();
+    let analysis_timed_out = *lock_or_bail(&analysis_timed_out, "analysis_timed_out")?;
+    let helpful_map = lock_or_bail(&helpful_map, "helpful_map")?.clone();
 
     // Log timeout with completion stats (always visible, not just verbose)
     if analysis_timed_out {
@@ -875,11 +870,10 @@ pub(crate) fn analyze_neurons_with_cache(
 
     // Issue #486 / #192: Compute error distribution from collected target neuron error samples.
     let error_distribution = {
-        let error_values = std::mem::take(
-            &mut *error_values_for_distribution
-                .lock()
-                .expect("Mutex poisoned"),
-        );
+        let error_values = std::mem::take(&mut *lock_or_bail(
+            &error_values_for_distribution,
+            "error_values_for_distribution",
+        )?);
         super::error_distribution::ErrorDistribution::from_errors(&error_values)
     };
 

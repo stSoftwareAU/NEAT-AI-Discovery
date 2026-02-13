@@ -429,8 +429,14 @@ fn build_adjacency(creature: &CreatureJson) -> HashMap<String, Vec<(String, f32)
 }
 
 fn compute_impacts_internal(creature: &CreatureJson) -> HashMap<String, f32> {
-    compute_impacts_internal_with_stats(creature, None)
-        .expect("impact computation without records should not fail")
+    // Issue #525: Replace expect() with graceful fallback.
+    // This call with None records should never fail (no I/O, no external data),
+    // but if it does we return an empty map rather than panicking in FFI context.
+    debug_assert!(
+        compute_impacts_internal_with_stats(creature, None).is_ok(),
+        "impact computation without records should not fail"
+    );
+    compute_impacts_internal_with_stats(creature, None).unwrap_or_default()
 }
 
 /// Compute impacts with optional activation-based selection statistics.
@@ -507,9 +513,13 @@ fn compute_impacts_internal_with_stats(
     let shared_cache: Mutex<HashMap<String, f32>> = Mutex::new(HashMap::new());
 
     all_neurons.par_iter().for_each(|neuron| {
-        // Check if already computed (another thread might have done it)
+        // Check if already computed (another thread might have done it).
+        // Issue #525: Recover from poisoned mutex instead of panicking.
         {
-            let cache = shared_cache.lock().unwrap();
+            let cache = match shared_cache.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             if cache.contains_key(&neuron.uuid) {
                 return;
             }
@@ -523,11 +533,16 @@ fn compute_impacts_internal_with_stats(
             compute_impact_with_shared_cache(&neuron.uuid, &ctx, &shared_cache, &mut visiting);
 
         // Store result
-        let mut cache = shared_cache.lock().unwrap();
+        let mut cache = match shared_cache.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         cache.insert(neuron.uuid.clone(), impact);
     });
 
-    Ok(shared_cache.into_inner().unwrap())
+    Ok(shared_cache
+        .into_inner()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()))
 }
 
 /// Compute impact with a shared cache for parallel execution.
@@ -537,9 +552,12 @@ fn compute_impact_with_shared_cache(
     shared_cache: &Mutex<HashMap<String, f32>>,
     visiting: &mut HashSet<String>,
 ) -> f32 {
-    // Check cache first
+    // Check cache first. Issue #525: recover from poisoned mutex.
     {
-        let cache = shared_cache.lock().unwrap();
+        let cache = match shared_cache.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         if let Some(&value) = cache.get(uuid) {
             return value;
         }
@@ -624,9 +642,12 @@ fn compute_impact_with_shared_cache(
 
     visiting.remove(uuid);
 
-    // Cache the result
+    // Cache the result. Issue #525: recover from poisoned mutex.
     {
-        let mut cache = shared_cache.lock().unwrap();
+        let mut cache = match shared_cache.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         cache.insert(uuid.to_string(), impact);
     }
 

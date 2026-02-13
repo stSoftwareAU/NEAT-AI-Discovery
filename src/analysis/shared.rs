@@ -122,7 +122,12 @@ impl TimingCollector {
         if !self.enabled {
             return;
         }
-        let mut timings = self.shader_timings.lock().expect("Mutex poisoned");
+        let Ok(mut timings) = self.shader_timings.lock() else {
+            eprintln!(
+                "[NEAT-AI-Discovery] Warning: shader_timings mutex poisoned, skipping timing record"
+            );
+            return;
+        };
         let entry = timings.entry(shader_name.to_string()).or_insert((0, 0));
         entry.0 += 1;
         entry.1 += duration_ns;
@@ -165,7 +170,12 @@ impl TimingCollector {
 
         let total_analysis_ms = self.start_time.elapsed().as_secs_f64() * 1000.0;
 
-        let shader_timings_lock = self.shader_timings.lock().expect("Mutex poisoned");
+        let Ok(shader_timings_lock) = self.shader_timings.lock() else {
+            eprintln!(
+                "[NEAT-AI-Discovery] Warning: shader_timings mutex poisoned, returning partial timing data"
+            );
+            return None;
+        };
         let mut shader_timings = HashMap::new();
         let mut total_shader_ns: u64 = 0;
 
