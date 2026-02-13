@@ -62,6 +62,7 @@ pub use detection::bounded_range;
 pub use detection::correlated_error;
 pub use detection::dead_neuron;
 pub use detection::dormant_synapse;
+pub use detection::error_plateau;
 pub use detection::input_sensitivity;
 pub use detection::noise_signal;
 pub use detection::observation_range;
@@ -69,6 +70,7 @@ pub use detection::observation_utilisation;
 pub use detection::operating_point;
 pub use detection::opposing_synapse;
 pub use detection::oscillating_neuron;
+pub use detection::output_squash_mismatch;
 pub use detection::redundant_path;
 pub use detection::restricted_range;
 pub use detection::saturation;
@@ -691,7 +693,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 .collect(),
         );
 
-        let mut modules: Vec<discovery_dispatch::DiscoveryModuleSpec> = Vec::with_capacity(25);
+        let mut modules: Vec<discovery_dispatch::DiscoveryModuleSpec> = Vec::with_capacity(27);
 
         // Issue #342: Saturated neuron detection
         {
@@ -1438,6 +1440,75 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     }
                     let candidates =
                         gradient_discovery::gradient_candidates_to_coordinated(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
+
+        // Issue #545: Output squash mismatch detection (local minimum escape)
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "output squash mismatch detection".to_string(),
+                phase_name: "output_squash_mismatch_detection",
+                detect_fn: Box::new(move || {
+                    let output_neurons: Vec<(String, String, f32)> = creature
+                        .neurons
+                        .iter()
+                        .filter(|n| n.neuron_type == "output")
+                        .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
+                        .collect();
+                    if output_neurons.is_empty() {
+                        return None;
+                    }
+                    let records = cache.load_records_for_neuron_types(&creature, &["output"]);
+                    let detected = output_squash_mismatch::detect_output_squash_mismatches(
+                        &output_neurons,
+                        &records,
+                    );
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        output_squash_mismatch::output_squash_mismatch_to_coordinated_candidates(
+                            &detected,
+                        );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
+
+        // Issue #545: Error stagnation plateau detection (local minimum escape)
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "error plateau detection".to_string(),
+                phase_name: "error_plateau_detection",
+                detect_fn: Box::new(move || {
+                    let output_neurons: Vec<(String, String, f32)> = creature
+                        .neurons
+                        .iter()
+                        .filter(|n| n.neuron_type == "output")
+                        .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
+                        .collect();
+                    if output_neurons.is_empty() {
+                        return None;
+                    }
+                    let records = cache.load_records_for_neuron_types(&creature, &["output"]);
+                    let detected = error_plateau::detect_error_plateaus(&output_neurons, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        error_plateau::error_plateaus_to_coordinated_candidates(&detected);
                     Some(discovery_dispatch::DiscoveryDetectionResult {
                         detected_count: detected.len(),
                         candidates,
