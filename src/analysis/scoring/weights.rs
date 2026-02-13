@@ -54,7 +54,7 @@ pub const MAX_OUTGOING_WEIGHT: f32 = 0.1;
 const MIN_WEIGHT_RATIO: f32 = 50.0;
 
 // MIN_NEURON_SAMPLE_COUNT moved to constants.rs (Issue #424)
-use super::constants::MIN_NEURON_SAMPLE_COUNT;
+use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT;
 
 // =============================================================================
 // Weight Calculation Functions
@@ -168,7 +168,7 @@ pub fn calculate_optimal_identity_outgoing_and_bias(
     // the discount is applied (see Issue #130 tests).
     //
     // Use the same threshold as compute_source_variance_discount().
-    use super::constants::MIN_SOURCE_STD_DEV;
+    use crate::analysis::constants::MIN_SOURCE_STD_DEV;
     let mean_a = sum_a / n;
     let var_a = (sum_aa / n) - (mean_a * mean_a);
     let std_dev_a = var_a.max(0.0).sqrt();
@@ -433,7 +433,7 @@ pub fn coordinated_structural_activation_delta(
 // =============================================================================
 
 // DEFAULT_SENTINEL_TOLERANCE uses SENTINEL_TOLERANCE from constants.rs (Issue #424)
-pub use super::constants::SENTINEL_TOLERANCE as DEFAULT_SENTINEL_TOLERANCE;
+pub use crate::analysis::constants::SENTINEL_TOLERANCE as DEFAULT_SENTINEL_TOLERANCE;
 
 /// Compute `sum_error_activation` and `sum_activation_sq` after excluding samples
 /// whose source activation is at a sentinel value.

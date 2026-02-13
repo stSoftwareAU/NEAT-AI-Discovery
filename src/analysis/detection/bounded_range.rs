@@ -32,7 +32,7 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 // Constants moved to constants.rs (Issue #424)
-use super::constants::{
+use crate::analysis::constants::{
     CANDIDATE_SENTINELS, MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_BOUNDED_RANGE,
     MIN_SENTINEL_GAP as MIN_GAP, SENTINEL_TOLERANCE as BOUNDARY_TOLERANCE,
 };

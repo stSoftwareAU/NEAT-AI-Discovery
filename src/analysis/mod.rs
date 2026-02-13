@@ -3,94 +3,91 @@
 //! This module provides functions for analysing recorded discovery data to identify
 //! beneficial new synapses and neurons that would reduce error.
 //!
-//! The module is organised into focused submodules:
+//! The module is organised into thematic subdirectories (Issue #528):
+//!
+//! ## Thematic subdirectories
+//! - `detection/` - Pattern detection modules (saturation, bottleneck, dead neuron, etc.)
+//! - `recommendation/` - Candidate recommendation engines (epistatic, multi-hop, etc.)
+//! - `scoring/` - Scoring, confidence, and validation (weights, confidence, etc.)
+//!
+//! ## Core modules (root level)
 //! - `shared.rs` - Common types, result structures, diagnostics
-//! - `synapse.rs` - Synapse analysis functions
+//! - `synapse/` - Synapse analysis pipeline
 //! - `neuron.rs` - Neuron analysis functions
-//! - `gpu.rs` - GPU infrastructure (GpuAnalyzer, GpuWorkQueue)
-//! - `utils.rs` - Utility functions (memory checks, deadlines)
-//! - `system.rs` - System utilities facade (memory, GPU tier detection) (Issue #239)
-//! - `activation.rs` - Activation function related code (Issue #266)
-//! - `samples.rs` - Sample data structures and GPU formats (Issue #269)
-//! - `diagnostics/` - Diagnostic tracking and rejection reasons (Issue #271, #524)
-//! - `constants.rs` - Central discovery thresholds and constants (Issue #424)
-//! - `cache.rs` - Record caching for parquet files (Issue #185)
-//! - `candidate_cache.rs` - Candidate outcome cache for success/failure tracking (Issue #465)
-//! - `streaming.rs` - Streaming parquet loading with block-based caching (Issue #193)
-//! - `saturation.rs` - Saturated neuron detection for activation function changes (Issue #342)
-//! - `bottleneck.rs` - Bottleneck neuron detection for information flow widening (Issue #343)
-//! - `dead_neuron.rs` - Dead neuron detection for removal candidates (Issue #341)
-//! - `correlated_error.rs` - Correlated error pattern detection for shared-cause identification (Issue #344)
-//! - `discovery_dispatch.rs` - Generic discovery module dispatch pattern (Issue #375)
-//! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests (Issue #224)
-//! - `module_weights.rs` - Per-module success rate tracking for adaptive weighting (Issue #485)
-//! - `neuron_fingerprint.rs` - Neuron structural fingerprinting for incremental analysis (Issue #490)
-//! - `multi_hop.rs` - Multi-hop candidate analysis for deeper network improvements (Issue #230)
-//! - `early_termination.rs` - SPRT-based early termination for GPU evaluation (Issue #219)
-//! - `oscillating_neuron.rs` - Oscillating neuron detection for stabilisation candidates (Issue #358)
-//! - `dormant_synapse.rs` - Dormant synapse detection for removal candidates (Issue #359)
-//! - `opposing_synapse.rs` - Opposing synapse detection for removal or weight flip candidates (Issue #360)
-//! - `output_bias_drift.rs` - Output bias drift detection for bias adjustment candidates (Issue #361)
-//! - `bounded_range.rs` - Bounded range detection for sentinel/null value gating (Issue #395)
-//! - `observation_range.rs` - Observation effective range detection from recorded samples (Issue #398)
-//! - `sentinel_gating.rs` - Sentinel value gating for null/sentinel observation suppression (Issue #400)
-//! - `restricted_range.rs` - Restricted activation range detection for underutilised neurons (Issue #399)
-//! - `unbounded_capping.rs` - Unbounded activation capping detection for noise reduction (Issue #441)
-//! - `noise_signal.rs` - High noise-to-signal ratio detection for brittle predictions (Issue #434)
-//! - `input_sensitivity.rs` - Input sensitivity analysis for brittleness detection (Issue #435)
-//! - `cross_validation.rs` - Cross-validation consistency scoring for brittleness detection (Issue #436)
-//! - `activation_recommendation.rs` - Proactive activation function recommendation engine (Issue #431)
-//! - `weight_coherence.rs` - Weight coherence validation for brittleness detection (Issue #437)
-//! - `topology.rs` - Topology-aware network structure analysis (Issue #422)
-//! - `sample_weighted.rs` - Sample-weighted discovery prioritising high-error samples (Issue #423)
-//! - `gradient_discovery.rs` - Gradient-based synapse adjustment for directional improvement hints (Issue #421)
+//! - `gpu/` - GPU infrastructure (GpuAnalyzer, GpuWorkQueue)
+//! - `utils/` - Utility functions (memory checks, deadlines)
+//! - `diagnostics/` - Diagnostic tracking and rejection reasons
+//! - `system.rs` - System utilities facade (memory, GPU tier detection)
+//! - `activation.rs` - Activation function related code
+//! - `samples.rs` - Sample data structures and GPU formats
+//! - `constants.rs` - Central discovery thresholds and constants
+//! - `cache.rs` - Record caching for parquet files
+//! - `candidate_cache.rs` - Candidate outcome cache for success/failure tracking
+//! - `streaming.rs` - Streaming parquet loading with block-based caching
+//! - `discovery_dispatch.rs` - Generic discovery module dispatch pattern
+//! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests
+//! - `module_weights.rs` - Per-module success rate tracking for adaptive weighting
+//! - `neuron_fingerprint.rs` - Neuron structural fingerprinting for incremental analysis
+//! - `early_termination.rs` - SPRT-based early termination for GPU evaluation
 
+// Core modules (remain at root level)
 pub mod activation;
-pub mod activation_recommendation;
-pub mod bottleneck;
-pub mod bounded_range;
 pub mod cache;
 pub mod candidate_cache;
 pub mod candidate_clustering;
-pub mod confidence;
 pub mod constants;
-pub mod correlated_error;
-pub mod cross_validation;
-pub mod dead_neuron;
 pub mod diagnostics;
 pub mod discovery_dispatch;
-pub mod dormant_synapse;
 pub mod early_termination;
-pub mod epistatic;
-pub mod error_distribution;
 pub mod gpu;
-pub mod gradient_discovery;
-pub mod input_sensitivity;
 pub mod module_weights;
-pub mod multi_hop;
 pub mod neuron;
 pub mod neuron_fingerprint;
-pub mod noise_signal;
-pub mod observation_range;
-pub mod operating_point;
-pub mod opposing_synapse;
-pub mod oscillating_neuron;
-pub mod output_bias_drift;
-pub mod redundant_path;
-pub mod restricted_range;
-pub mod sample_weighted;
 pub mod samples;
-pub mod saturation;
-pub mod sentinel_gating;
 pub mod shared;
 pub mod streaming;
 pub mod synapse;
 pub mod system;
-pub mod topology;
-pub mod unbounded_capping;
 pub mod utils;
-pub mod weight_coherence;
-pub mod weights;
+
+// Thematic subdirectories (Issue #528)
+pub mod detection;
+pub mod recommendation;
+pub mod scoring;
+
+// Re-export detection modules at analysis level for backward compatibility
+pub use detection::bottleneck;
+pub use detection::bounded_range;
+pub use detection::correlated_error;
+pub use detection::dead_neuron;
+pub use detection::dormant_synapse;
+pub use detection::input_sensitivity;
+pub use detection::noise_signal;
+pub use detection::observation_range;
+pub use detection::operating_point;
+pub use detection::opposing_synapse;
+pub use detection::oscillating_neuron;
+pub use detection::redundant_path;
+pub use detection::restricted_range;
+pub use detection::saturation;
+pub use detection::sentinel_gating;
+pub use detection::topology;
+pub use detection::unbounded_capping;
+pub use detection::weight_coherence;
+
+// Re-export recommendation modules at analysis level for backward compatibility
+pub use recommendation::activation_recommendation;
+pub use recommendation::epistatic;
+pub use recommendation::gradient_discovery;
+pub use recommendation::multi_hop;
+pub use recommendation::output_bias_drift;
+pub use recommendation::sample_weighted;
+
+// Re-export scoring modules at analysis level for backward compatibility
+pub use scoring::confidence;
+pub use scoring::cross_validation;
+pub use scoring::error_distribution;
+pub use scoring::weights;
 
 // Re-export shared types
 pub use shared::{

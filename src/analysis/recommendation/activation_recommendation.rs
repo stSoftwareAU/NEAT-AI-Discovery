@@ -32,7 +32,7 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 use std::collections::HashMap;
 
 // MIN_SAMPLES_FOR_ANALYSIS moved to constants.rs (Issue #424)
-use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_ANALYSIS;
+use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_ANALYSIS;
 
 /// Threshold for sparsity classification (fraction of zeros).
 const SPARSITY_THRESHOLD: f32 = 0.5;

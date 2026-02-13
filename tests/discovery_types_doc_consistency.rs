@@ -9,31 +9,46 @@ use std::path::Path;
 /// Discovery analysis modules and the section heading they should reference
 /// in `docs/DISCOVERY_TYPES.md`.
 const DISCOVERY_MODULES: &[(&str, &str)] = &[
-    ("src/analysis/saturation.rs", "Saturated Neuron Detection"),
-    ("src/analysis/bottleneck.rs", "Bottleneck Neuron Detection"),
-    ("src/analysis/dead_neuron.rs", "Dead Neuron Detection"),
     (
-        "src/analysis/dormant_synapse.rs",
+        "src/analysis/detection/saturation.rs",
+        "Saturated Neuron Detection",
+    ),
+    (
+        "src/analysis/detection/bottleneck.rs",
+        "Bottleneck Neuron Detection",
+    ),
+    (
+        "src/analysis/detection/dead_neuron.rs",
+        "Dead Neuron Detection",
+    ),
+    (
+        "src/analysis/detection/dormant_synapse.rs",
         "Dormant Synapse Detection",
     ),
     (
-        "src/analysis/opposing_synapse.rs",
+        "src/analysis/detection/opposing_synapse.rs",
         "Opposing Synapse Detection",
     ),
     (
-        "src/analysis/output_bias_drift.rs",
+        "src/analysis/recommendation/output_bias_drift.rs",
         "Output Bias Drift Detection",
     ),
     (
-        "src/analysis/oscillating_neuron.rs",
+        "src/analysis/detection/oscillating_neuron.rs",
         "Oscillating Neuron Detection",
     ),
     (
-        "src/analysis/correlated_error.rs",
+        "src/analysis/detection/correlated_error.rs",
         "Correlated Error Pattern Detection",
     ),
-    ("src/analysis/multi_hop.rs", "Multi-Hop Candidate Analysis"),
-    ("src/analysis/redundant_path.rs", "Redundant Path Pruning"),
+    (
+        "src/analysis/recommendation/multi_hop.rs",
+        "Multi-Hop Candidate Analysis",
+    ),
+    (
+        "src/analysis/detection/redundant_path.rs",
+        "Redundant Path Pruning",
+    ),
 ];
 
 #[test]

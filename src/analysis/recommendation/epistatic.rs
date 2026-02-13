@@ -31,10 +31,10 @@ use crate::analysis::samples::{HelpfulSample, HelpfulStats};
 use std::collections::{HashMap, HashSet};
 
 // MIN_SAMPLES_FOR_EPISTATIC_DETECTION moved to constants.rs (Issue #424)
-use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_EPISTATIC_DETECTION;
+use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_EPISTATIC_DETECTION;
 
 // Issue #508: Individual operation pre-screen threshold
-use super::constants::MAX_INDIVIDUAL_HARM_FOR_PAIRING;
+use crate::analysis::constants::MAX_INDIVIDUAL_HARM_FOR_PAIRING;
 
 /// Minimum activation threshold to consider a neuron "firing" for pattern detection.
 const ACTIVATION_FIRING_THRESHOLD: f32 = 0.5;

@@ -33,7 +33,7 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
 // MIN_SAMPLES_FOR_DETECTION moved to constants.rs (Issue #424)
-use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DETECTION;
+use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DETECTION;
 
 /// Default capping threshold for RELU → RELU6 transition.
 /// Activations above this value would be clipped by RELU6.

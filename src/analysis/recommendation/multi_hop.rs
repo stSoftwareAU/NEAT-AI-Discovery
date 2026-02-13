@@ -36,7 +36,7 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 const MAX_PATH_LENGTH: usize = 4;
 
 // MIN_SAMPLES_FOR_CORRELATION moved to constants.rs (Issue #424)
-use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_CORRELATION;
+use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_CORRELATION;
 
 /// Minimum absolute Pearson correlation between a neuron's activation and a target's
 /// error to consider the neuron as a useful intermediate.

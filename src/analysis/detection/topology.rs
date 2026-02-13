@@ -27,7 +27,7 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 // MIN_SAMPLES_FOR_TOPOLOGY moved to constants.rs (Issue #424)
-use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_TOPOLOGY;
+use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_TOPOLOGY;
 
 /// Maximum efficient path length (hops) from a hidden neuron to an output.
 /// Neurons with longer shortest paths are candidates for skip connections.
