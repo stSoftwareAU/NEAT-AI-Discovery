@@ -77,7 +77,12 @@ src/
 │   ├── neuron.rs             # Neuron analysis
 │   ├── activation.rs         # Activation function analysis
 │   ├── samples.rs            # Sample data structures
-│   ├── diagnostics.rs        # Diagnostic tracking
+│   ├── diagnostics/           # Diagnostic tracking (Issue #524)
+│   │   ├── mod.rs            # Public API, re-exports, impact scoring adapter
+│   │   ├── rejection.rs      # Synapse rejection tracking and reporting
+│   │   ├── neuron_tracking.rs # Neuron rejection tracking and reporting
+│   │   ├── target_data.rs    # Target data structures for sample building
+│   │   └── focus_filter.rs   # Focus target filtering and validation
 │   ├── cache.rs              # Record caching
 │   ├── streaming.rs          # Streaming parquet loading
 │   ├── weights.rs            # Weight analysis

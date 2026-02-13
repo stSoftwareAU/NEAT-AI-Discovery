@@ -1,0 +1,458 @@
+//! Synapse rejection tracking and diagnostic reporting.
+//!
+//! Tracks why synapse candidates were rejected during analysis, including:
+//! - No overlapping samples between source and target
+//! - Zero consistent improvement from GPU evaluation
+//! - Expected improvement below threshold
+//!
+//! Uses `DashMap` for lock-free concurrent access from parallel analysis threads.
+
+use dashmap::DashMap;
+use std::fmt;
+
+use crate::analysis::shared::{
+    SynapseNoCandidateDetail, SynapseNoCandidateReason, SynapseNoCandidateSummary,
+};
+use crate::analysis::utils::verbose_enabled;
+
+// =============================================================================
+// Synapse Rejection Tracking
+// =============================================================================
+
+/// Why a synapse candidate was rejected during analysis.
+#[derive(Clone, Copy)]
+pub(crate) enum RejectionReason {
+    /// No overlapping discovery samples between source and target.
+    NoSamples,
+    /// No consistent improvement in GPU stats.
+    ZeroImprovement,
+    /// Expected improvement below threshold.
+    BelowThreshold,
+}
+
+impl fmt::Display for RejectionReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RejectionReason::NoSamples => write!(f, "no overlapping discovery samples"),
+            RejectionReason::ZeroImprovement => write!(f, "no consistent improvement in GPU stats"),
+            RejectionReason::BelowThreshold => write!(f, "expected improvement below threshold"),
+        }
+    }
+}
+
+/// Detailed rejection information for a synapse candidate.
+#[derive(Clone)]
+pub(crate) struct RejectionDetail {
+    pub(crate) source_uuid: String,
+    pub(crate) reason: RejectionReason,
+    pub(crate) sample_count: usize,
+    pub(crate) source_record_count: usize,
+    pub(crate) improved_count: u32,
+    pub(crate) worsened_count: u32,
+    pub(crate) expected_improvement: f32,
+    pub(crate) threshold: f32,
+    pub(crate) weight: Option<f32>,
+}
+
+impl RejectionDetail {
+    pub(crate) fn score(&self) -> f32 {
+        self.expected_improvement
+    }
+}
+
+/// Threshold calculation context for recording below-threshold rejections.
+pub(crate) struct ThresholdContext {
+    pub(crate) sample_count: usize,
+    pub(crate) expected_improvement: f32,
+    pub(crate) threshold: f32,
+    pub(crate) improved_count: u32,
+    pub(crate) worsened_count: u32,
+    pub(crate) weight: f32,
+}
+
+/// Per-target diagnostic entry for synapse analysis.
+#[derive(Clone)]
+pub(crate) struct TargetDiagnosticEntry {
+    pub(crate) target_uuid: String,
+    pub(crate) target_record_count: usize,
+    pub(crate) evaluated_candidates: u32,
+    pub(crate) candidates_with_samples: u32,
+    pub(crate) total_eligible_sources: u32,
+    pub(crate) input_neuron_count: u32,
+    pub(crate) already_connected_count: u32,
+    pub(crate) record_load_failures: u32,
+    pub(crate) had_candidate: bool,
+    pub(crate) best_rejection: Option<RejectionDetail>,
+}
+
+impl TargetDiagnosticEntry {
+    pub(crate) fn new(target_uuid: &str) -> Self {
+        Self {
+            target_uuid: target_uuid.to_string(),
+            target_record_count: 0,
+            evaluated_candidates: 0,
+            candidates_with_samples: 0,
+            total_eligible_sources: 0,
+            input_neuron_count: 0,
+            already_connected_count: 0,
+            record_load_failures: 0,
+            had_candidate: false,
+            best_rejection: None,
+        }
+    }
+
+    pub(crate) fn update_best(&mut self, detail: RejectionDetail) {
+        match &self.best_rejection {
+            Some(current) => {
+                if detail.score() > current.score()
+                    || (detail.score() == current.score()
+                        && detail.sample_count > current.sample_count)
+                {
+                    self.best_rejection = Some(detail);
+                }
+            }
+            None => self.best_rejection = Some(detail),
+        }
+    }
+}
+
+/// Collection of target diagnostics for synapse analysis.
+///
+/// Uses `DashMap` internally for lock-free concurrent access (Issue #216).
+/// All methods take `&self` instead of `&mut self` to allow concurrent updates
+/// from multiple threads without external synchronisation.
+pub(crate) struct TargetDiagnostics {
+    log_enabled: bool,
+    /// Lock-free concurrent map for diagnostic entries.
+    /// Each focus neuron is processed by a separate thread, and diagnostics
+    /// are recorded without contention using DashMap's sharded internal structure.
+    pub(crate) entries: DashMap<String, TargetDiagnosticEntry>,
+}
+
+impl TargetDiagnostics {
+    pub(crate) fn new(targets: &[&String]) -> Self {
+        let log_enabled = verbose_enabled();
+        let entries = DashMap::new();
+        for target in targets {
+            entries.insert(target.to_string(), TargetDiagnosticEntry::new(target));
+        }
+        Self {
+            log_enabled,
+            entries,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(targets: &[&str]) -> Self {
+        let entries = DashMap::new();
+        for target in targets {
+            entries.insert((*target).to_string(), TargetDiagnosticEntry::new(target));
+        }
+        Self {
+            log_enabled: true,
+            entries,
+        }
+    }
+
+    pub(crate) fn set_target_record_count(&self, target_uuid: &str, count: usize) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.target_record_count = count;
+        }
+    }
+
+    pub(crate) fn set_total_eligible_sources(&self, target_uuid: &str, count: u32) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.total_eligible_sources = count;
+        }
+    }
+
+    pub(crate) fn set_input_neuron_count(&self, target_uuid: &str, count: u32) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.input_neuron_count = count;
+        }
+    }
+
+    pub(crate) fn record_already_connected(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.already_connected_count += 1;
+        }
+    }
+
+    pub(crate) fn record_load_failure(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.record_load_failures += 1;
+        }
+    }
+
+    pub(crate) fn record_candidate_attempt(&self, target_uuid: &str, had_samples: bool) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.evaluated_candidates += 1;
+            if had_samples {
+                entry.candidates_with_samples += 1;
+            }
+        }
+    }
+
+    pub(crate) fn record_no_samples(
+        &self,
+        target_uuid: &str,
+        source_uuid: &str,
+        source_record_count: usize,
+    ) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.update_best(RejectionDetail {
+                source_uuid: source_uuid.to_string(),
+                reason: RejectionReason::NoSamples,
+                sample_count: 0,
+                source_record_count,
+                improved_count: 0,
+                worsened_count: 0,
+                expected_improvement: f32::NEG_INFINITY,
+                threshold: 0.0,
+                weight: None,
+            });
+        }
+    }
+
+    pub(crate) fn record_zero_improvement(
+        &self,
+        target_uuid: &str,
+        source_uuid: &str,
+        sample_count: usize,
+        positive_count: u32,
+        negative_count: u32,
+    ) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.update_best(RejectionDetail {
+                source_uuid: source_uuid.to_string(),
+                reason: RejectionReason::ZeroImprovement,
+                sample_count,
+                source_record_count: sample_count,
+                improved_count: positive_count.max(negative_count),
+                worsened_count: positive_count.min(negative_count),
+                expected_improvement: 0.0,
+                threshold: 0.0,
+                weight: None,
+            });
+        }
+    }
+
+    pub(crate) fn record_below_threshold(
+        &self,
+        target_uuid: &str,
+        source_uuid: &str,
+        context: ThresholdContext,
+    ) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.update_best(RejectionDetail {
+                source_uuid: source_uuid.to_string(),
+                reason: RejectionReason::BelowThreshold,
+                sample_count: context.sample_count,
+                source_record_count: context.sample_count,
+                improved_count: context.improved_count,
+                worsened_count: context.worsened_count,
+                expected_improvement: context.expected_improvement,
+                threshold: context.threshold,
+                weight: Some(context.weight),
+            });
+        }
+    }
+
+    pub(crate) fn mark_candidate_selected(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.had_candidate = true;
+        }
+    }
+
+    pub(crate) fn emit_logs(&self) {
+        if !self.log_enabled {
+            return;
+        }
+
+        for entry_ref in self.entries.iter() {
+            let entry = entry_ref.value();
+            if entry.had_candidate {
+                continue;
+            }
+
+            if entry.total_eligible_sources == 0 {
+                // This should never happen - input/constant neurons are skipped early
+                // and hidden/output neurons should always have at least input neurons as eligible sources
+                // Skip logging to avoid cluttering logs with impossible conditions
+                continue;
+            }
+
+            // Check if neuron is fully connected (all eligible sources already have synapses)
+            // Eligible sources include: ALL input neurons (input-0 through input-(creature.input-1))
+            // AND ALL prior hidden/output neurons (with index < target_index, excluding constants)
+            // This condition is rare - only occurs when neuron is connected to all possible sources
+            if entry.already_connected_count == entry.total_eligible_sources {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} is fully connected: all {} eligible upstream sources already have synapses (all {} input neurons and all prior hidden/output neurons). This is a rare condition.",
+                    entry.target_uuid, entry.total_eligible_sources, entry.input_neuron_count
+                );
+                continue;
+            }
+
+            // Check for record loading failures (this indicates a bug)
+            if entry.record_load_failures > 0 {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} had {} record loading failures (this may indicate a bug - records exist but couldn't be loaded).",
+                    entry.target_uuid, entry.record_load_failures
+                );
+            }
+
+            if entry.evaluated_candidates == 0 {
+                eprintln!(
+                    "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream neurons but none were evaluated ({} already connected, {} record load failures).",
+                    entry.target_uuid,
+                    entry.total_eligible_sources,
+                    entry.already_connected_count,
+                    entry.record_load_failures
+                );
+                continue;
+            }
+
+            let best = match &entry.best_rejection {
+                Some(detail) => detail,
+                None => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} evaluated {} potential synapses but recorded no diagnostics.",
+                        entry.target_uuid, entry.evaluated_candidates
+                    );
+                    continue;
+                }
+            };
+
+            match best.reason {
+                RejectionReason::NoSamples => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} skipped candidate from {} because no aligned samples were available (source records {}, target records {}).",
+                        entry.target_uuid,
+                        best.source_uuid,
+                        best.source_record_count,
+                        entry.target_record_count
+                    );
+                }
+                RejectionReason::ZeroImprovement => {
+                    eprintln!(
+                        "[NEAT-AI-Discovery][verbose] Target {} saw {} aligned samples from {} but GPU stats reported zero consistent improvements (positive {}, negative {}).",
+                        entry.target_uuid,
+                        best.sample_count,
+                        best.source_uuid,
+                        best.improved_count,
+                        best.worsened_count
+                    );
+                }
+                RejectionReason::BelowThreshold => {
+                    if let Some(weight) = best.weight {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Target {} best candidate from {} improved {:.4} but remained below threshold {:.4} (improved {}, worsened {}, suggested weight {:.4}).",
+                            entry.target_uuid,
+                            best.source_uuid,
+                            best.expected_improvement,
+                            best.threshold,
+                            best.improved_count,
+                            best.worsened_count,
+                            weight
+                        );
+                    } else {
+                        eprintln!(
+                            "[NEAT-AI-Discovery][verbose] Target {} best candidate from {} improved {:.4} but remained below threshold {:.4} (improved {}, worsened {}).",
+                            entry.target_uuid,
+                            best.source_uuid,
+                            best.expected_improvement,
+                            best.threshold,
+                            best.improved_count,
+                            best.worsened_count
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn entry_for(&self, target_uuid: &str) -> Option<TargetDiagnosticEntry> {
+        self.entries.get(target_uuid).map(|r| r.value().clone())
+    }
+
+    pub(crate) fn no_candidate_summaries(&self) -> Vec<SynapseNoCandidateSummary> {
+        self.entries
+            .iter()
+            .filter(|entry_ref| !entry_ref.value().had_candidate)
+            .map(|entry_ref| {
+                let entry = entry_ref.value();
+                // Only report "no eligible sources" if both total_eligible_sources and evaluated_candidates are 0
+                // This handles the case where total_eligible_sources might be 0 in tests but evaluated_candidates > 0
+                if entry.total_eligible_sources == 0 && entry.evaluated_candidates == 0 {
+                    return SynapseNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: SynapseNoCandidateReason::NoEligibleSources,
+                        evaluated_candidates: entry.evaluated_candidates,
+                        candidates_with_samples: entry.candidates_with_samples,
+                        target_record_count: entry.target_record_count,
+                        detail: None,
+                    };
+                }
+
+                // Check if neuron is fully connected (all eligible sources already have synapses)
+                // Eligible sources include: ALL input neurons (input-0 through input-(creature.input-1))
+                // AND ALL prior hidden/output neurons (with index < target_index, excluding constants)
+                // This condition is rare - only occurs when neuron is connected to all possible sources
+                if entry.total_eligible_sources > 0
+                    && entry.already_connected_count == entry.total_eligible_sources
+                    && entry.evaluated_candidates == 0
+                {
+                    // Neuron is fully connected - all eligible sources (all inputs + all prior hidden neurons) already have synapses
+                    // This is legitimate but rare, and we report it as "no eligible sources"
+                    // since there are no NEW sources to evaluate
+                    return SynapseNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: SynapseNoCandidateReason::NoEligibleSources,
+                        evaluated_candidates: entry.evaluated_candidates,
+                        candidates_with_samples: entry.candidates_with_samples,
+                        target_record_count: entry.target_record_count,
+                        detail: None,
+                    };
+                }
+
+                if let Some(best) = &entry.best_rejection {
+                    let reason = match best.reason {
+                        RejectionReason::NoSamples => SynapseNoCandidateReason::NoSamples,
+                        RejectionReason::ZeroImprovement => {
+                            SynapseNoCandidateReason::ZeroImprovement
+                        }
+                        RejectionReason::BelowThreshold => SynapseNoCandidateReason::BelowThreshold,
+                    };
+                    return SynapseNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason,
+                        evaluated_candidates: entry.evaluated_candidates,
+                        candidates_with_samples: entry.candidates_with_samples,
+                        target_record_count: entry.target_record_count,
+                        detail: Some(SynapseNoCandidateDetail {
+                            source_uuid: Some(best.source_uuid.clone()),
+                            sample_count: Some(best.sample_count),
+                            source_record_count: Some(best.source_record_count),
+                            improved_count: Some(best.improved_count),
+                            worsened_count: Some(best.worsened_count),
+                            expected_improvement: Some(best.expected_improvement),
+                            threshold: Some(best.threshold),
+                            suggested_weight: best.weight,
+                        }),
+                    };
+                }
+
+                SynapseNoCandidateSummary {
+                    target_uuid: entry.target_uuid.clone(),
+                    reason: SynapseNoCandidateReason::NoDiagnostics,
+                    evaluated_candidates: entry.evaluated_candidates,
+                    candidates_with_samples: entry.candidates_with_samples,
+                    target_record_count: entry.target_record_count,
+                    detail: None,
+                }
+            })
+            .collect()
+    }
+}
