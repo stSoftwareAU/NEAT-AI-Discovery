@@ -32,7 +32,7 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 // MIN_SAMPLES_FOR_BOTTLENECK moved to constants.rs (Issue #424)
-use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_BOTTLENECK;
+use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_BOTTLENECK;
 
 /// Minimum fan-in to consider a hidden neuron as a potential bottleneck.
 /// Neurons with fewer incoming connections are unlikely to be true bottlenecks.

@@ -10,7 +10,7 @@
 //! and kurtosis to help identify non-uniform error patterns that may benefit from
 //! targeted discovery approaches.
 
-use super::samples::HelpfulSample;
+use crate::analysis::samples::HelpfulSample;
 use serde::Serialize;
 
 // =============================================================================

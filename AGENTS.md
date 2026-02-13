@@ -62,7 +62,7 @@ src/
 │   └── tests.rs              # Unit tests for internal components
 │
 ├── analysis/                 # Core analysis engine
-│   ├── mod.rs                # Module organisation
+│   ├── mod.rs                # Module organisation, re-exports
 │   ├── constants.rs          # Central discovery thresholds (Issue #424)
 │   ├── shared.rs             # Common types, results, diagnostics
 │   ├── synapse/              # Synapse analysis (Issue #482)
@@ -77,32 +77,52 @@ src/
 │   ├── neuron.rs             # Neuron analysis
 │   ├── activation.rs         # Activation function analysis
 │   ├── samples.rs            # Sample data structures
-│   ├── diagnostics/           # Diagnostic tracking (Issue #524)
+│   ├── diagnostics/          # Diagnostic tracking (Issue #524)
 │   │   ├── mod.rs            # Public API, re-exports, impact scoring adapter
 │   │   ├── rejection.rs      # Synapse rejection tracking and reporting
 │   │   ├── neuron_tracking.rs # Neuron rejection tracking and reporting
 │   │   ├── target_data.rs    # Target data structures for sample building
 │   │   └── focus_filter.rs   # Focus target filtering and validation
+│   ├── detection/            # Pattern detection modules (Issue #528)
+│   │   ├── mod.rs            # Module declarations
+│   │   ├── saturation.rs     # Saturated neuron detection
+│   │   ├── bottleneck.rs     # Bottleneck neuron detection
+│   │   ├── dead_neuron.rs    # Dead neuron detection
+│   │   ├── dormant_synapse.rs # Dormant synapse detection
+│   │   ├── opposing_synapse.rs # Opposing synapse detection
+│   │   ├── oscillating_neuron.rs # Oscillating neuron detection
+│   │   ├── correlated_error.rs # Correlated error patterns
+│   │   ├── redundant_path.rs # Redundant path detection
+│   │   ├── bounded_range.rs  # Bounded range detection
+│   │   ├── observation_range.rs # Observation effective range
+│   │   ├── sentinel_gating.rs # Sentinel value gating
+│   │   ├── restricted_range.rs # Restricted activation range
+│   │   ├── operating_point.rs # Hidden neuron operating point
+│   │   ├── unbounded_capping.rs # Unbounded activation capping
+│   │   ├── noise_signal.rs   # Noise-to-signal ratio detection
+│   │   ├── input_sensitivity.rs # Input sensitivity analysis
+│   │   ├── topology.rs       # Topology-aware structure analysis
+│   │   └── weight_coherence.rs # Weight coherence validation
+│   ├── recommendation/       # Candidate recommendation modules (Issue #528)
+│   │   ├── mod.rs            # Module declarations
+│   │   ├── activation_recommendation.rs # Activation function recommendation
+│   │   ├── output_bias_drift.rs # Output bias drift detection
+│   │   ├── epistatic.rs      # Epistatic interaction analysis
+│   │   ├── multi_hop.rs      # Multi-hop candidate analysis
+│   │   ├── gradient_discovery.rs # Gradient-based synapse adjustment
+│   │   └── sample_weighted.rs # Sample-weighted discovery
+│   ├── scoring/              # Scoring and confidence modules (Issue #528)
+│   │   ├── mod.rs            # Module declarations
+│   │   ├── confidence.rs     # Confidence metrics
+│   │   ├── weights.rs        # Weight analysis and calculation
+│   │   ├── error_distribution.rs # Error distribution stats
+│   │   └── cross_validation.rs # Cross-validation scoring
 │   ├── cache.rs              # Record caching
 │   ├── streaming.rs          # Streaming parquet loading
-│   ├── weights.rs            # Weight analysis
-│   ├── saturation.rs         # Saturated neuron detection
-│   ├── bottleneck.rs         # Bottleneck detection
-│   ├── dead_neuron.rs        # Dead neuron detection
-│   ├── discovery_dispatch.rs  # Generic discovery module dispatch (Issue #375)
-│   ├── dormant_synapse.rs    # Dormant synapse detection
-│   ├── opposing_synapse.rs   # Opposing synapse detection
-│   ├── output_bias_drift.rs  # Output bias drift detection
-│   ├── oscillating_neuron.rs # Oscillating neuron detection
-│   ├── correlated_error.rs   # Correlated error patterns
-│   ├── redundant_path.rs     # Redundant path detection
-│   ├── error_distribution.rs # Error distribution stats
-│   ├── early_termination.rs  # SPRT-based early stopping
-│   ├── epistatic.rs          # Epistatic interaction analysis
-│   ├── confidence.rs         # Confidence metrics
+│   ├── discovery_dispatch.rs # Generic discovery module dispatch (Issue #375)
 │   ├── candidate_clustering.rs # Redundancy reduction
-│   ├── multi_hop.rs          # Multi-hop analysis
-│   ├── implementation_tests/  # Synapse analysis pipeline tests
+│   ├── early_termination.rs  # SPRT-based early stopping
+│   ├── implementation_tests/ # Synapse analysis pipeline tests
 │   │
 │   ├── gpu/                  # GPU infrastructure (Issue #520)
 │   │   ├── mod.rs

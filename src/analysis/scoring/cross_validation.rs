@@ -42,7 +42,7 @@
 //! - Issue #432: "Brilliant but Brittle" initiative
 //! - `early_termination.rs`: SPRT infrastructure for fold evaluation
 
-use super::samples::HelpfulSample;
+use crate::analysis::samples::HelpfulSample;
 
 /// Configuration for cross-validation consistency scoring.
 #[derive(Debug, Clone)]

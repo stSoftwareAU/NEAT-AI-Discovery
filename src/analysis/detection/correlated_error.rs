@@ -31,7 +31,7 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 // MIN_SAMPLES_FOR_CORRELATION moved to constants.rs (Issue #424)
-use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_CORRELATION;
+use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_CORRELATION;
 
 /// Minimum Pearson correlation to consider two outputs as correlated.
 const CORRELATION_THRESHOLD: f32 = 0.7;

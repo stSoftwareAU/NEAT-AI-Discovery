@@ -28,7 +28,7 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 // MIN_SAMPLES_FOR_DEAD_DETECTION moved to constants.rs (Issue #424)
-use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DEAD_DETECTION;
+use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DEAD_DETECTION;
 
 /// Threshold for mean absolute activation to consider a neuron dead.
 /// Activations below this are effectively zero.

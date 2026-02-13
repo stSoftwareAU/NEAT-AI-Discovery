@@ -31,10 +31,10 @@ use std::collections::HashMap;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-use super::weights::MAX_OUTGOING_WEIGHT;
+use crate::analysis::scoring::weights::MAX_OUTGOING_WEIGHT;
 
 // MIN_SAMPLES_FOR_GRADIENT uses MIN_NEURON_SAMPLE_COUNT (Issue #424)
-use super::constants::MIN_NEURON_SAMPLE_COUNT as MIN_SAMPLES_FOR_GRADIENT;
+use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT as MIN_SAMPLES_FOR_GRADIENT;
 
 /// Minimum absolute gradient to consider a synapse as a candidate.
 /// Below this, the weight change would have negligible error impact.

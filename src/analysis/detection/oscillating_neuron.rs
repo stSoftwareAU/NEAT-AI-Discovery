@@ -31,7 +31,7 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
 // MIN_SAMPLES_FOR_OSCILLATION moved to constants.rs (Issue #424)
-use super::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_OSCILLATION;
+use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_OSCILLATION;
 
 /// Minimum fraction of consecutive sample pairs that must show a sign change
 /// to consider the neuron oscillating.
