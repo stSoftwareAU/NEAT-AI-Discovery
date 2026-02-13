@@ -56,6 +56,9 @@ pub(crate) use gpu_evaluation::{
 pub(crate) use scoring::upsert_candidate;
 
 #[cfg(test)]
+pub(crate) use scoring::compute_candidate_dedup_key;
+
+#[cfg(test)]
 pub(crate) use scoring::compute_synapse_improvement_and_count;
 
 // Test-only re-exports used by implementation_tests

@@ -178,7 +178,7 @@ fn test_split_relu_finds_complementary_pairs() {
 /// negative-weight ReLU (incoming_weight=-1.0) should both be kept, not collide.
 #[test]
 fn test_upsert_keeps_complementary_relu_candidates_by_incoming_weight() {
-    let mut map: HashMap<(String, String, String, i8, i8), CandidateNeuronJson> = HashMap::new();
+    let mut map: HashMap<u64, CandidateNeuronJson> = HashMap::new();
 
     // Positive-orientation ReLU candidate
     // Issue #128: Use creature-level metrics
@@ -234,21 +234,9 @@ fn test_upsert_keeps_complementary_relu_candidates_by_incoming_weight() {
         "Candidates with different incoming_weight should both be kept"
     );
 
-    // Verify both are present with correct values
-    let pos_key = (
-        "source-1".to_string(),
-        "target-1".to_string(),
-        "ReLU".to_string(),
-        1_i8, // incoming sign
-        1_i8, // outgoing sign
-    );
-    let neg_key = (
-        "source-1".to_string(),
-        "target-1".to_string(),
-        "ReLU".to_string(),
-        -1_i8, // incoming sign
-        1_i8,  // outgoing sign
-    );
+    // Verify both are present with correct keys (Issue #526: hash-based dedup keys)
+    let pos_key = compute_candidate_dedup_key(&positive_candidate);
+    let neg_key = compute_candidate_dedup_key(&negative_candidate);
 
     assert!(
         map.contains_key(&pos_key),
@@ -258,6 +246,10 @@ fn test_upsert_keeps_complementary_relu_candidates_by_incoming_weight() {
         map.contains_key(&neg_key),
         "Negative orientation should be present"
     );
+    assert_ne!(
+        pos_key, neg_key,
+        "Different incoming_weight signs must produce different keys"
+    );
 }
 
 /// Test that upsert keeps split-error complementary pairs.
@@ -265,7 +257,7 @@ fn test_upsert_keeps_complementary_relu_candidates_by_incoming_weight() {
 /// source/target pair, both should be kept since they address different samples.
 #[test]
 fn test_upsert_keeps_split_error_complementary_pairs() {
-    let mut map: HashMap<(String, String, String, i8, i8), CandidateNeuronJson> = HashMap::new();
+    let mut map: HashMap<u64, CandidateNeuronJson> = HashMap::new();
 
     // Candidate for positive-error samples (positive outgoing weight)
     let positive_error_candidate = CandidateNeuronJson {

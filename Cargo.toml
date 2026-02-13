@@ -72,3 +72,7 @@ harness = false
 name = "clone_reduction"
 harness = false
 
+[[bench]]
+name = "upsert_candidate"
+harness = false
+

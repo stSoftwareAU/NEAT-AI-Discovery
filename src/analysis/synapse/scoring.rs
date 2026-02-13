@@ -85,27 +85,59 @@ pub(crate) fn weight_sign(weight: f32) -> i8 {
     }
 }
 
-/// Returns true if this add-neuron candidate is "extreme" enough to warrant a conservative pair.
+/// Compute a deduplication key for neuron candidates using FNV-1a hashing.
 ///
-/// We intentionally base this on incoming weight and bias (not outgoing), because outgoing
-/// weight is already clamped and ReLU candidates commonly use outgoing=0.1 by design.
+/// Issue #526: Replaces the previous `(String, String, String, i8, i8)` tuple key
+/// which required 3 String clones per candidate. The hash key is computed from the
+/// same components (source UUID, target UUID, squash, weight signs) but avoids
+/// heap allocation entirely.
+///
+/// The key includes signs of BOTH incoming_weight AND outgoing_weight so that:
+/// 1. Different ReLU orientations (incoming_weight ±1) are kept separately
+/// 2. Split-error complementary pairs (same incoming_weight, opposite outgoing_weight)
+///    are also kept separately — one pushes output UP, one pushes DOWN
+pub(crate) fn compute_candidate_dedup_key(candidate: &CandidateNeuronJson) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325; // FNV-1a offset basis
+    for b in candidate.source_neuron_uuid.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    // Separator byte (0xFF) prevents collisions between e.g. "input-1"+"hidden-2"
+    // and "input-12"+"hidden-" which would otherwise produce the same byte sequence
+    hash ^= 0xFF;
+    hash = hash.wrapping_mul(0x100000001b3);
+    for b in candidate.target_neuron_uuid.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash ^= 0xFF;
+    hash = hash.wrapping_mul(0x100000001b3);
+    for b in candidate.squash.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash ^= 0xFF;
+    hash = hash.wrapping_mul(0x100000001b3);
+    hash ^= weight_sign(candidate.incoming_weight) as u8 as u64;
+    hash = hash.wrapping_mul(0x100000001b3);
+    hash ^= weight_sign(candidate.outgoing_weight) as u8 as u64;
+    hash = hash.wrapping_mul(0x100000001b3);
+    hash
+}
+
+/// Insert or update a neuron candidate in the deduplication map.
+///
+/// Uses a pre-computed FNV-1a hash key (Issue #526) to avoid 3 String clones per call.
+/// The key is derived from (source_uuid, target_uuid, squash, incoming_weight_sign,
+/// outgoing_weight_sign). When a collision occurs, the candidate with the higher
+/// expected_creature_score_gain wins.
 pub(crate) fn upsert_candidate(
-    map: &mut HashMap<(String, String, String, i8, i8), CandidateNeuronJson>,
+    map: &mut HashMap<u64, CandidateNeuronJson>,
     candidate: CandidateNeuronJson,
 ) {
     use std::collections::hash_map::Entry;
 
-    // Key includes signs of BOTH incoming_weight AND outgoing_weight so that:
-    // 1. Different ReLU orientations (incoming_weight ±1) are kept separately
-    // 2. Split-error complementary pairs (same incoming_weight, opposite outgoing_weight)
-    //    are also kept separately - one pushes output UP, one pushes DOWN
-    let key = (
-        candidate.source_neuron_uuid.clone(),
-        candidate.target_neuron_uuid.clone(),
-        candidate.squash.clone(),
-        weight_sign(candidate.incoming_weight),
-        weight_sign(candidate.outgoing_weight),
-    );
+    let key = compute_candidate_dedup_key(&candidate);
 
     match map.entry(key) {
         Entry::Occupied(mut entry) => {

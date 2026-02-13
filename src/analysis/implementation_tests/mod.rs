@@ -15,6 +15,7 @@
 //! - `synapse_analysis_tests` — Synapse and neuron analysis integration
 //! - `optimal_weight_tests` — Optimal outgoing weight calculation
 //! - `prediction_accuracy_tests` — Prediction accuracy vs manual simulation
+//! - `clone_reduction_tests` — Hash-based deduplication key correctness (Issue #526)
 
 // Shared imports for all test modules
 #[allow(unused_imports)]
@@ -41,8 +42,8 @@ pub(super) mod common {
     pub(crate) use crate::analysis::samples::{EPSILON, HelpfulSample, HelpfulStats};
     pub(crate) use crate::analysis::shared::{NeuronNoCandidateReason, SynapseNoCandidateReason};
     pub(crate) use crate::analysis::synapse::{
-        build_samples, compute_net_improvement_with_squash, count_improved_samples,
-        evaluate_relu_candidates_split, upsert_candidate,
+        build_samples, compute_candidate_dedup_key, compute_net_improvement_with_squash,
+        count_improved_samples, evaluate_relu_candidates_split, upsert_candidate,
     };
     pub(crate) use crate::analysis::utils::deadline_override;
     pub(crate) use crate::analysis::weights::{
@@ -78,6 +79,7 @@ pub(super) mod common {
 
 mod bias_calculation_tests;
 mod cache_tests;
+mod clone_reduction_tests;
 mod diagnostics_tests;
 mod gpu_batch_tests;
 mod improvement_model_tests;
