@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.16.0"
+version = "0.17.0"
 edition = "2024"
 
 [lib]
@@ -70,5 +70,9 @@ harness = false
 
 [[bench]]
 name = "clone_reduction"
+harness = false
+
+[[bench]]
+name = "upsert_candidate"
 harness = false
 

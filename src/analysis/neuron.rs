@@ -172,10 +172,7 @@ pub(crate) fn analyze_neurons_with_cache(
 
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_neurons")?;
 
-    let helpful_map = Arc::new(Mutex::new(HashMap::<
-        (String, String, String, i8, i8),
-        CandidateNeuronJson,
-    >::new()));
+    let helpful_map = Arc::new(Mutex::new(HashMap::<u64, CandidateNeuronJson>::new()));
 
     // Issue #216: NeuronDiagnostics uses DashMap internally for lock-free concurrent access.
     // No Mutex wrapper needed - the struct handles concurrency internally.
