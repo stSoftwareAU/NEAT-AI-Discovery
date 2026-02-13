@@ -56,6 +56,7 @@ pub mod recommendation;
 pub mod scoring;
 
 // Re-export detection modules at analysis level for backward compatibility
+pub use detection::activation_mismatch;
 pub use detection::bottleneck;
 pub use detection::bounded_range;
 pub use detection::correlated_error;
@@ -64,6 +65,7 @@ pub use detection::dormant_synapse;
 pub use detection::input_sensitivity;
 pub use detection::noise_signal;
 pub use detection::observation_range;
+pub use detection::observation_utilisation;
 pub use detection::operating_point;
 pub use detection::opposing_synapse;
 pub use detection::oscillating_neuron;
@@ -985,6 +987,36 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             });
         }
 
+        // Issue #543: Observation utilisation detection
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "observation utilisation detection".to_string(),
+                phase_name: "observation_utilisation_detection",
+                detect_fn: Box::new(move || {
+                    let records = cache.load_records_for_neuron_types(&creature, &["input"]);
+                    if records.is_empty() {
+                        return None;
+                    }
+                    let detected = observation_utilisation::detect_underutilised_observations(
+                        &creature, &records,
+                    );
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        observation_utilisation::observation_utilisation_to_coordinated_candidates(
+                            &detected, &creature,
+                        );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
+
         // Issue #399: Restricted activation range detection
         {
             let cache = Arc::clone(&shared_cache);
@@ -1298,6 +1330,35 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                         );
                     Some(discovery_dispatch::DiscoveryDetectionResult {
                         detected_count: recommendations.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
+
+        // Issue #543: Activation mismatch detection
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "activation mismatch detection".to_string(),
+                phase_name: "activation_mismatch_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records = cache.load_records_for_hidden(&hidden);
+                    let detected =
+                        activation_mismatch::detect_activation_mismatches(&hidden, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        activation_mismatch::activation_mismatch_to_coordinated_candidates(
+                            &detected,
+                        );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
                         candidates,
                     })
                 }),
