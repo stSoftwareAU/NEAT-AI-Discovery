@@ -289,6 +289,13 @@ fn merge_coordinated_structural_replacements(
         return;
     }
 
+    // Issue #557: Filter out candidates with non-positive expected_creature_score_gain.
+    // Only candidates predicted to improve the creature's score should be returned.
+    replacements.retain(|c| c.expected_creature_score_gain > 0.0);
+    if replacements.is_empty() {
+        return;
+    }
+
     synapse
         .coordinated_structural_candidates
         .append(&mut replacements);
