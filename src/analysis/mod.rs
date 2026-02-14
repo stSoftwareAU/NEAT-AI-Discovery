@@ -57,6 +57,7 @@ pub mod scoring;
 
 // Re-export detection modules at analysis level for backward compatibility
 pub use detection::activation_mismatch;
+pub use detection::bias_perturbation;
 pub use detection::bottleneck;
 pub use detection::bounded_range;
 pub use detection::correlated_error;
@@ -1606,6 +1607,33 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     }
                     let candidates =
                         weight_magnitude_reset::stuck_synapses_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
+
+        // Issue #551: Bias perturbation for activation regime shifts (local minimum escape)
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "bias perturbation regime shift detection".to_string(),
+                phase_name: "bias_perturbation_regime_shift_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records = cache.load_records_for_hidden(&hidden);
+                    let detected =
+                        bias_perturbation::detect_bias_perturbation_candidates(&hidden, &records);
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        bias_perturbation::bias_perturbation_to_coordinated_candidates(&detected);
                     Some(discovery_dispatch::DiscoveryDetectionResult {
                         detected_count: detected.len(),
                         candidates,

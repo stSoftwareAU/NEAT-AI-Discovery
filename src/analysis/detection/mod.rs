@@ -5,6 +5,7 @@
 //! and convert them into coordinated structural candidates.
 
 pub mod activation_mismatch;
+pub mod bias_perturbation;
 pub mod bottleneck;
 pub mod bounded_range;
 pub mod correlated_error;
