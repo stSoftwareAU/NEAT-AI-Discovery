@@ -819,6 +819,11 @@ pub(crate) fn analyze_neurons_with_cache(
         }
     }
 
+    // Issue #557: Filter out candidates with non-positive expected_creature_score_gain.
+    // After impact discounting, some candidates may have zero or negative gain and
+    // would waste the evaluation budget if returned.
+    helpful_results.retain(|c| c.expected_creature_score_gain > 0.0);
+
     // Sort by expected creature score gain (highest first) - Issue #128
     helpful_results.sort_by(|a, b| {
         b.expected_creature_score_gain

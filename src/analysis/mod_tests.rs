@@ -292,3 +292,62 @@ fn postprocess_updates_neuron_candidates_returned_after_filtering_replacements()
     assert_eq!(neuron.helpful_neurons.len(), 1);
     assert_eq!(neuron.metadata.candidates_returned, 1);
 }
+
+// =============================================================================
+// Issue #557: Positive gain filtering tests
+// =============================================================================
+
+#[test]
+fn merge_coordinated_structural_filters_zero_gain_candidates() {
+    let mut syn = shared::AnalyzeSynapsesResult {
+        helpful_synapses: Vec::new(),
+        harmful_synapses: Vec::new(),
+        synapse_weight_updates: Vec::new(),
+        coordinated_structural_candidates: Vec::new(),
+        candidate_clusters: Vec::new(),
+        gpu_used: false,
+        no_candidate_reasons: Vec::new(),
+        metadata: shared::SynapseAnalysisMetadata {
+            candidates_found: 0,
+            candidates_returned: 0,
+            ..Default::default()
+        },
+    };
+
+    let replacements = vec![
+        CoordinatedStructuralCandidateJson {
+            operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
+                from_neuron_uuid: "a".to_string(),
+                to_neuron_uuid: "b".to_string(),
+            }],
+            expected_creature_score_gain: 0.5,
+            comment: Some("positive".to_string()),
+        },
+        CoordinatedStructuralCandidateJson {
+            operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
+                from_neuron_uuid: "c".to_string(),
+                to_neuron_uuid: "d".to_string(),
+            }],
+            expected_creature_score_gain: 0.0, // should be filtered
+            comment: Some("zero".to_string()),
+        },
+        CoordinatedStructuralCandidateJson {
+            operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
+                from_neuron_uuid: "e".to_string(),
+                to_neuron_uuid: "f".to_string(),
+            }],
+            expected_creature_score_gain: -0.1, // should be filtered
+            comment: Some("negative".to_string()),
+        },
+    ];
+
+    merge_coordinated_structural_replacements(&mut syn, replacements, None, false);
+
+    assert_eq!(
+        syn.coordinated_structural_candidates.len(),
+        1,
+        "only positive-gain candidates should be merged"
+    );
+    assert!(syn.coordinated_structural_candidates[0].expected_creature_score_gain > 0.0);
+    assert_eq!(syn.metadata.candidates_returned, 1);
+}

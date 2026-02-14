@@ -186,3 +186,75 @@ fn run_discovery_module_accumulates_across_multiple_calls() {
     );
     assert_eq!(syn.metadata.candidates_returned, 3);
 }
+
+// =============================================================================
+// Issue #557: Positive gain filtering tests
+// =============================================================================
+
+#[test]
+fn run_discovery_module_filters_zero_gain_candidates() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    run_discovery_module(
+        &mut syn,
+        "zero gain module",
+        "test_phase",
+        None,
+        false,
+        || {
+            Some(DiscoveryDetectionResult {
+                detected_count: 3,
+                candidates: vec![
+                    make_candidate(1.0),
+                    make_candidate(0.0), // should be filtered
+                    make_candidate(0.5),
+                ],
+            })
+        },
+    );
+
+    assert_eq!(
+        syn.coordinated_structural_candidates.len(),
+        2,
+        "zero-gain candidates should be filtered"
+    );
+    for c in &syn.coordinated_structural_candidates {
+        assert!(c.expected_creature_score_gain > 0.0);
+    }
+}
+
+#[test]
+fn run_discovery_module_filters_negative_gain_candidates() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    run_discovery_module(
+        &mut syn,
+        "negative gain module",
+        "test_phase",
+        None,
+        false,
+        || {
+            Some(DiscoveryDetectionResult {
+                detected_count: 2,
+                candidates: vec![make_candidate(-0.1), make_candidate(-0.5)],
+            })
+        },
+    );
+
+    assert!(
+        syn.coordinated_structural_candidates.is_empty(),
+        "all-negative module should produce zero candidates"
+    );
+}

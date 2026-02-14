@@ -212,6 +212,13 @@ pub(crate) fn apply_post_processing(
         apply_impact_to_coordinated(candidate, &impact_scores, &neuron_type_map);
     }
 
+    // Issue #557: Filter out candidates with non-positive expected_creature_score_gain.
+    // After impact discounting, some candidates may have zero or negative gain and
+    // would waste the evaluation budget if returned.
+    helpful_results.retain(|c| c.expected_creature_score_gain > 0.0);
+    harmful_results.retain(|c| c.expected_creature_score_gain > 0.0);
+    coordinated_structural_results.retain(|c| c.expected_creature_score_gain > 0.0);
+
     // Sort all candidate lists by expected_creature_score_gain (highest first)
     helpful_results.sort_by(|a, b| {
         b.expected_creature_score_gain
