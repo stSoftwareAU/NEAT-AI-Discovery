@@ -63,6 +63,9 @@ src/
 │
 ├── analysis/                 # Core analysis engine
 │   ├── mod.rs                # Module organisation, re-exports
+│   ├── orchestration.rs      # Top-level analyse_all dispatch (Issue #562)
+│   ├── candidate_aggregation.rs # Candidate merging and post-processing (Issue #562)
+│   ├── module_dispatch_specs.rs # Discovery module spec builders (Issue #562)
 │   ├── constants.rs          # Central discovery thresholds (Issue #424)
 │   ├── shared.rs             # Common types, results, diagnostics
 │   ├── synapse/              # Synapse analysis (Issue #482)

@@ -3,6 +3,7 @@ use crate::{
     CandidateNeuronJson, CandidateSynapseJson, CoordinatedStructuralCandidateJson,
     CoordinatedStructuralOpJson,
 };
+use anyhow::Result;
 
 #[test]
 fn watchdog_beats_do_not_claim_finished_when_analysis_is_skipped() {
