@@ -28,3 +28,4 @@ pub mod topology;
 pub mod topology_diversification;
 pub mod unbounded_capping;
 pub mod weight_coherence;
+pub mod weight_magnitude_reset;
