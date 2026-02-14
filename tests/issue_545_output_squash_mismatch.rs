@@ -199,8 +199,8 @@ fn test_coordinated_candidate_conversion() {
         "Expected score gain should be positive"
     );
     assert!(
-        coordinated[0].comment.as_ref().unwrap().contains("545"),
-        "Comment should reference issue #545"
+        coordinated[0].comment.as_ref().unwrap().contains("546"),
+        "Comment should reference issue #546"
     );
 
     let ops_json = serde_json::to_string(&coordinated[0].operations).unwrap();
@@ -322,5 +322,76 @@ fn test_logistic_output_with_symmetric_targets() {
     assert!(
         !candidates.is_empty(),
         "Should detect LOGISTIC mismatch when targets are symmetric [-1, 1]"
+    );
+}
+
+// =============================================================================
+// 9. Pre-activation comparison: SOFTSIGN output when TANH fits better
+// =============================================================================
+
+#[test]
+fn test_preactivation_comparison_finds_better_squash() {
+    // SOFTSIGN and TANH have the same range [-1, 1] but different curvatures.
+    // When the pre-activation values span a moderate range, TANH is often a
+    // better fit for smooth target data. The pre-activation comparison strategy
+    // should detect this by simulating alternative squash functions.
+    let outputs = vec![output_neuron("output-1", "SOFTSIGN")];
+
+    let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+        "output-1".to_string(),
+        (0..60)
+            .map(|i| {
+                let x = (i as f32 - 30.0) / 10.0; // range: -3.0 to 2.9
+                // SOFTSIGN: x / (1 + |x|)
+                let softsign_out = x / (1.0 + x.abs());
+                // Target follows TANH curve
+                let tanh_target = x.tanh();
+                let error = softsign_out - tanh_target;
+                make_record("output-1", i, Some(x), softsign_out, error)
+            })
+            .collect(),
+    )];
+
+    let candidates = detect_output_squash_mismatches(&outputs, &records);
+
+    assert!(
+        !candidates.is_empty(),
+        "Should detect mismatch via pre-activation comparison"
+    );
+    assert_eq!(candidates[0].neuron_uuid, "output-1");
+    assert_eq!(candidates[0].current_squash, "SOFTSIGN");
+    assert_eq!(
+        candidates[0].recommended_squash, "TANH",
+        "Should recommend TANH when it reduces error vs SOFTSIGN"
+    );
+}
+
+// =============================================================================
+// 10. Pre-activation comparison: no false positive when squash is optimal
+// =============================================================================
+
+#[test]
+fn test_preactivation_comparison_no_false_positive() {
+    // When TANH is already the correct squash and targets follow TANH curve,
+    // the pre-activation comparison should not recommend any change.
+    let outputs = vec![output_neuron("output-1", "TANH")];
+
+    let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+        "output-1".to_string(),
+        (0..60)
+            .map(|i| {
+                let x = (i as f32 - 30.0) / 15.0;
+                let activation = x.tanh();
+                // Small residual error (network is converging)
+                make_record("output-1", i, Some(x), activation, 0.005)
+            })
+            .collect(),
+    )];
+
+    let candidates = detect_output_squash_mismatches(&outputs, &records);
+
+    assert!(
+        candidates.is_empty(),
+        "Should NOT detect mismatch when squash already fits target data"
     );
 }

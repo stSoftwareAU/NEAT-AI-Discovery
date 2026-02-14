@@ -1,4 +1,4 @@
-//! Output squash mismatch detection module (Issue #545 / #546).
+//! Output squash mismatch detection module (Issue #546).
 //!
 //! Detects when output neurons use an activation function that doesn't match
 //! the target data range, trapping the network in a local minimum. For example,
@@ -6,20 +6,23 @@
 //! uses HARD_TANH (piecewise linear, flat gradients at extremes), the network
 //! cannot converge properly regardless of weight/bias tuning.
 //!
-//! ## Detection Strategy
+//! ## Detection Strategies
 //!
 //! 1. **Clipping analysis**: Checks if a significant fraction of activations are
 //!    at the saturation bounds of the current squash function, suggesting the
 //!    function is too aggressive in its non-linearity.
 //!
-//! 2. **Error-at-bounds correlation**: High errors concentrated at the activation
-//!    bounds indicate the squash function is distorting the output where precision
-//!    matters most.
+//! 2. **Range mismatch**: Detects when the activation range doesn't match the
+//!    target data range (e.g., LOGISTIC [0,1] with targets in [-1,1]).
 //!
-//! 3. **Candidate squash evaluation**: For each detected mismatch, the module
-//!    evaluates which alternative squash function would best fit the observed
-//!    activation and error patterns.
+//! 3. **Unbounded mismatch**: Detects when an unbounded activation has high errors
+//!    outside the expected target range.
+//!
+//! 4. **Pre-activation squash comparison**: When pre-activation values are available,
+//!    simulates what alternative squash functions would produce and selects the one
+//!    that best reduces error against the observed activation/error patterns.
 
+use crate::activations::apply_scalar_squash;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
@@ -38,6 +41,23 @@ const BOUND_TOLERANCE: f32 = 0.02;
 
 /// Minimum error ratio for unbounded-to-bounded recommendation.
 const UNBOUNDED_HIGH_ERROR_FRACTION: f32 = 0.25;
+
+/// Minimum relative error reduction to consider a squash replacement worthwhile
+/// via pre-activation comparison (Strategy 4).
+const MIN_ERROR_REDUCTION_FRACTION: f32 = 0.15;
+
+/// Candidate squash functions evaluated during pre-activation comparison.
+const CANDIDATE_SQUASHES: &[&str] = &[
+    "TANH",
+    "LOGISTIC",
+    "IDENTITY",
+    "SOFTSIGN",
+    "HARD_TANH",
+    "RELU",
+    "SELU",
+    "MISH",
+    "SWISH",
+];
 
 /// A detected output squash mismatch candidate.
 #[derive(Debug, Clone)]
@@ -177,6 +197,88 @@ fn recommend_replacement(current_squash: &str, records: &[DiscoverRecord]) -> (S
     }
 }
 
+/// Evaluate alternative squash functions against pre-activation values.
+///
+/// For each candidate squash, applies the function to all pre-activation values and
+/// computes what the mean absolute error would be. Returns the best alternative
+/// (if any) that would reduce error by at least `MIN_ERROR_REDUCTION_FRACTION`.
+fn evaluate_alternative_squashes(
+    current_squash: &str,
+    records: &[DiscoverRecord],
+    current_mean_error: f32,
+) -> Option<(String, f32, f32)> {
+    // Collect records with pre-activation values
+    let records_with_values: Vec<&DiscoverRecord> =
+        records.iter().filter(|r| r.value.is_some()).collect();
+
+    if records_with_values.len() < MIN_SAMPLES {
+        return None;
+    }
+
+    // For each observation, the "target" output is approximated as:
+    //   target ≈ activation + error
+    // (since error = activation - target in the network's perspective,
+    //  target ≈ activation - error; but errors can be signed so we use
+    //  the actual error sign from the record)
+    let targets: Vec<f32> = records_with_values
+        .iter()
+        .map(|r| r.activation - r.errors.first().copied().unwrap_or(0.0))
+        .collect();
+
+    let pre_activations: Vec<f32> = records_with_values
+        .iter()
+        .map(|r| r.value.unwrap())
+        .collect();
+
+    let mut best: Option<(String, f32, f32)> = None;
+
+    for &candidate_name in CANDIDATE_SQUASHES {
+        // Skip the current squash function
+        if candidate_name.eq_ignore_ascii_case(current_squash) {
+            continue;
+        }
+
+        // Compute mean absolute error if we used this candidate squash
+        let mut total_error = 0.0f32;
+        let mut valid_count = 0usize;
+
+        for (pre_act, target) in pre_activations.iter().zip(targets.iter()) {
+            if let Some(simulated) = apply_scalar_squash(candidate_name, *pre_act)
+                && simulated.is_finite()
+            {
+                total_error += (simulated - target).abs();
+                valid_count += 1;
+            }
+        }
+
+        if valid_count < MIN_SAMPLES {
+            continue;
+        }
+
+        let candidate_mean_error = total_error / valid_count as f32;
+
+        // Check if this candidate meaningfully reduces error
+        let error_reduction = current_mean_error - candidate_mean_error;
+        let reduction_fraction = if current_mean_error > 1e-6 {
+            error_reduction / current_mean_error
+        } else {
+            0.0
+        };
+
+        if reduction_fraction > MIN_ERROR_REDUCTION_FRACTION
+            && (best.is_none() || candidate_mean_error < best.as_ref().unwrap().1)
+        {
+            best = Some((
+                candidate_name.to_string(),
+                candidate_mean_error,
+                reduction_fraction,
+            ));
+        }
+    }
+
+    best
+}
+
 /// Detect output squash mismatches.
 ///
 /// # Arguments
@@ -258,7 +360,7 @@ pub fn detect_output_squash_mismatches(
                     estimated_improvement,
                     mean_error,
                     reason: format!(
-                        "Output neuron {uuid} uses {squash} but {:.0}% of activations are clipped at bounds with {error_ratio:.1}x higher error at bounds vs centre. {recommended} would provide smoother gradients. (Issue #545)",
+                        "Output neuron {uuid} uses {squash} but {:.0}% of activations are clipped at bounds with {error_ratio:.1}x higher error at bounds vs centre. {recommended} would provide smoother gradients. (Issue #546)",
                         clipping_fraction * 100.0,
                     ),
                 });
@@ -307,7 +409,7 @@ pub fn detect_output_squash_mismatches(
                         estimated_improvement,
                         mean_error,
                         reason: format!(
-                            "Output neuron {uuid} uses {squash} (range [{lower:.1}, {upper_bound:.1}]) but {:.0}% of samples have above-average error, suggesting target range extends beyond activation range. {recommended} would provide symmetric [-1,1] range. (Issue #545)",
+                            "Output neuron {uuid} uses {squash} (range [{lower:.1}, {upper_bound:.1}]) but {:.0}% of samples have above-average error, suggesting target range extends beyond activation range. {recommended} would provide symmetric [-1,1] range. (Issue #546)",
                             high_error_fraction * 100.0,
                         ),
                     });
@@ -363,11 +465,38 @@ pub fn detect_output_squash_mismatches(
                     estimated_improvement,
                     mean_error,
                     reason: format!(
-                        "Output neuron {uuid} uses unbounded {squash} but {:.0}% of activations exceed [-1,1] with {error_ratio_display:.1}x higher error outside bounds. {recommended} would bound the output. (Issue #545)",
+                        "Output neuron {uuid} uses unbounded {squash} but {:.0}% of activations exceed [-1,1] with {error_ratio_display:.1}x higher error outside bounds. {recommended} would bound the output. (Issue #546)",
                         out_of_range_fraction * 100.0,
                     ),
                 });
+
+                continue;
             }
+        }
+
+        // Strategy 4: Pre-activation squash comparison
+        // When pre-activation values are available, simulate alternative squash
+        // functions and pick the one that best reduces error.
+        if let Some((best_squash, _best_error, reduction_fraction)) =
+            evaluate_alternative_squashes(squash, records, mean_error)
+        {
+            let sample_confidence = (records.len() as f32 / 100.0).min(1.0);
+            let confidence =
+                (reduction_fraction.min(1.0) * 0.6 + sample_confidence * 0.4).clamp(0.0, 1.0);
+            let estimated_improvement = mean_error * reduction_fraction * 0.5;
+
+            candidates.push(OutputSquashMismatchCandidate {
+                neuron_uuid: uuid.clone(),
+                current_squash: squash.clone(),
+                recommended_squash: best_squash.clone(),
+                confidence,
+                estimated_improvement,
+                mean_error,
+                reason: format!(
+                    "Output neuron {uuid} uses {squash} but simulating pre-activation values through {best_squash} would reduce error by {:.0}%. (Issue #546)",
+                    reduction_fraction * 100.0,
+                ),
+            });
         }
     }
 
