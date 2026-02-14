@@ -166,8 +166,8 @@ fn test_coordinated_candidate_conversion() {
         "Expected score gain should be positive"
     );
     assert!(
-        coordinated[0].comment.as_ref().unwrap().contains("545"),
-        "Comment should reference issue #545"
+        coordinated[0].comment.as_ref().unwrap().contains("547"),
+        "Comment should reference issue #547"
     );
 
     let ops_json = serde_json::to_string(&coordinated[0].operations).unwrap();
