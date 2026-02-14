@@ -75,6 +75,7 @@ pub use detection::redundant_path;
 pub use detection::restricted_range;
 pub use detection::saturation;
 pub use detection::sentinel_gating;
+pub use detection::squash_weight_rescale;
 pub use detection::topology;
 pub use detection::unbounded_capping;
 pub use detection::weight_coherence;
@@ -693,7 +694,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 .collect(),
         );
 
-        let mut modules: Vec<discovery_dispatch::DiscoveryModuleSpec> = Vec::with_capacity(27);
+        let mut modules: Vec<discovery_dispatch::DiscoveryModuleSpec> = Vec::with_capacity(28);
 
         // Issue #342: Saturated neuron detection
         {
@@ -1475,6 +1476,37 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     }
                     let candidates =
                         output_squash_mismatch::output_squash_mismatch_to_coordinated_candidates(
+                            &detected,
+                        );
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
+
+        // Issue #548: Squash + weight rescale detection (coordinated multi-neuron squash exploration)
+        {
+            let cache = Arc::clone(&shared_cache);
+            let hidden = Arc::clone(&hidden_neurons);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "squash weight rescale detection".to_string(),
+                phase_name: "squash_weight_rescale_detection",
+                detect_fn: Box::new(move || {
+                    if hidden.is_empty() {
+                        return None;
+                    }
+                    let records = cache.load_records_for_hidden(&hidden);
+                    let detected = squash_weight_rescale::detect_squash_weight_rescale_candidates(
+                        &creature, &hidden, &records,
+                    );
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        squash_weight_rescale::squash_weight_rescale_to_coordinated_candidates(
                             &detected,
                         );
                     Some(discovery_dispatch::DiscoveryDetectionResult {
