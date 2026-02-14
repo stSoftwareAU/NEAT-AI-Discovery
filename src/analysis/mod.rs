@@ -77,6 +77,7 @@ pub use detection::saturation;
 pub use detection::sentinel_gating;
 pub use detection::squash_weight_rescale;
 pub use detection::topology;
+pub use detection::topology_diversification;
 pub use detection::unbounded_capping;
 pub use detection::weight_coherence;
 
@@ -1387,6 +1388,34 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     }
                     let candidates =
                         topology::topology_issues_to_coordinated_candidates(&detected, &creature);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
+
+        // Issue #549: Topology diversification for structural jumps
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "topology diversification detection".to_string(),
+                phase_name: "topology_diversification_detection",
+                detect_fn: Box::new(move || {
+                    let records = cache.load_records_for_all_neurons(&creature);
+                    let detected =
+                        topology_diversification::detect_topology_diversification_candidates(
+                            &creature, &records,
+                        );
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        topology_diversification::topology_diversification_to_coordinated_candidates(
+                            &detected, &creature,
+                        );
                     Some(discovery_dispatch::DiscoveryDetectionResult {
                         detected_count: detected.len(),
                         candidates,

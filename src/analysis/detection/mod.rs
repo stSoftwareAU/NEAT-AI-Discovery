@@ -25,5 +25,6 @@ pub mod saturation;
 pub mod sentinel_gating;
 pub mod squash_weight_rescale;
 pub mod topology;
+pub mod topology_diversification;
 pub mod unbounded_capping;
 pub mod weight_coherence;
