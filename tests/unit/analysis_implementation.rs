@@ -25,6 +25,27 @@
     #[cfg(target_os = "linux")]
     use crate::analysis::utils::memory::parse_meminfo_line;
 
+    /// Helper to construct `wgpu::AdapterInfo` for tests.
+    fn test_adapter_info(
+        name: &str,
+        device_type: wgpu::DeviceType,
+        backend: wgpu::Backend,
+    ) -> wgpu::AdapterInfo {
+        wgpu::AdapterInfo {
+            name: name.to_string(),
+            vendor: 0,
+            device: 0,
+            device_type,
+            device_pci_bus_id: String::new(),
+            driver: String::new(),
+            driver_info: String::new(),
+            backend,
+            subgroup_min_size: 0,
+            subgroup_max_size: 0,
+            transient_saves_memory: false,
+        }
+    }
+
     // ==================== GPU Tier Detection Tests ====================
 
     #[test]
@@ -128,15 +149,8 @@
     /// Test that M4 is detected as high-performance tier.
     #[test]
     fn gpu_tier_detects_m4_as_high_performance() {
-        let info = wgpu::AdapterInfo {
-            name: "Apple M4".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Metal,
-        };
+        let info =
+            test_adapter_info("Apple M4", wgpu::DeviceType::IntegratedGpu, wgpu::Backend::Metal);
         assert_eq!(
             detect_gpu_tier(&info),
             GpuPerformanceTier::High,
@@ -148,15 +162,8 @@
     #[test]
     fn gpu_tier_detects_m4_pro_max_as_high_performance() {
         for name in ["Apple M4 Pro", "Apple M4 Max", "Apple M4 Ultra"] {
-            let info = wgpu::AdapterInfo {
-                name: name.to_string(),
-                vendor: 0,
-                device: 0,
-                device_type: wgpu::DeviceType::IntegratedGpu,
-                driver: String::new(),
-                driver_info: String::new(),
-                backend: wgpu::Backend::Metal,
-            };
+            let info =
+                test_adapter_info(name, wgpu::DeviceType::IntegratedGpu, wgpu::Backend::Metal);
             assert_eq!(
                 detect_gpu_tier(&info),
                 GpuPerformanceTier::High,
@@ -169,15 +176,8 @@
     #[test]
     fn gpu_tier_detects_m3_pro_max_as_high_performance() {
         for name in ["Apple M3 Pro", "Apple M3 Max"] {
-            let info = wgpu::AdapterInfo {
-                name: name.to_string(),
-                vendor: 0,
-                device: 0,
-                device_type: wgpu::DeviceType::IntegratedGpu,
-                driver: String::new(),
-                driver_info: String::new(),
-                backend: wgpu::Backend::Metal,
-            };
+            let info =
+                test_adapter_info(name, wgpu::DeviceType::IntegratedGpu, wgpu::Backend::Metal);
             assert_eq!(
                 detect_gpu_tier(&info),
                 GpuPerformanceTier::High,
@@ -190,15 +190,8 @@
     #[test]
     fn gpu_tier_detects_base_m_series_as_standard() {
         for name in ["Apple M1", "Apple M2", "Apple M3"] {
-            let info = wgpu::AdapterInfo {
-                name: name.to_string(),
-                vendor: 0,
-                device: 0,
-                device_type: wgpu::DeviceType::IntegratedGpu,
-                driver: String::new(),
-                driver_info: String::new(),
-                backend: wgpu::Backend::Metal,
-            };
+            let info =
+                test_adapter_info(name, wgpu::DeviceType::IntegratedGpu, wgpu::Backend::Metal);
             assert_eq!(
                 detect_gpu_tier(&info),
                 GpuPerformanceTier::Standard,
@@ -210,15 +203,11 @@
     /// Test that discrete GPUs are detected as high-performance.
     #[test]
     fn gpu_tier_detects_discrete_gpu_as_high_performance() {
-        let info = wgpu::AdapterInfo {
-            name: "NVIDIA GeForce RTX 4090".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::DiscreteGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Vulkan,
-        };
+        let info = test_adapter_info(
+            "NVIDIA GeForce RTX 4090",
+            wgpu::DeviceType::DiscreteGpu,
+            wgpu::Backend::Vulkan,
+        );
         assert_eq!(
             detect_gpu_tier(&info),
             GpuPerformanceTier::High,
@@ -229,15 +218,11 @@
     /// Test that unknown integrated GPUs are detected as standard.
     #[test]
     fn gpu_tier_detects_unknown_integrated_as_standard() {
-        let info = wgpu::AdapterInfo {
-            name: "Intel UHD Graphics 630".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Vulkan,
-        };
+        let info = test_adapter_info(
+            "Intel UHD Graphics 630",
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Vulkan,
+        );
         assert_eq!(
             detect_gpu_tier(&info),
             GpuPerformanceTier::Standard,

@@ -13,8 +13,8 @@ serde_json = "1.0"
 anyhow = "1.0"
 parquet = "57.0"  # Apache Parquet format (viewable with standard tools)
 arrow = { version = "57.0", default-features = false }  # Arrow arrays for Parquet
-wgpu = "0.19"
-pollster = "0.3"
+wgpu = "28"
+pollster = "0.4"
 bytemuck = { version = "1.14", features = ["derive"] }
 rayon = "1.8"
 rand = "0.8"
