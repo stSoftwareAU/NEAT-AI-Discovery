@@ -80,6 +80,7 @@ pub use detection::topology;
 pub use detection::topology_diversification;
 pub use detection::unbounded_capping;
 pub use detection::weight_coherence;
+pub use detection::weight_magnitude_reset;
 
 // Re-export recommendation modules at analysis level for backward compatibility
 pub use recommendation::activation_recommendation;
@@ -1577,6 +1578,34 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                     }
                     let candidates =
                         error_plateau::error_plateaus_to_coordinated_candidates(&detected);
+                    Some(discovery_dispatch::DiscoveryDetectionResult {
+                        detected_count: detected.len(),
+                        candidates,
+                    })
+                }),
+            });
+        }
+
+        // Issue #550: Weight magnitude reset for stuck synapses (local minimum escape)
+        {
+            let cache = Arc::clone(&shared_cache);
+            let creature = Arc::clone(&creature);
+            modules.push(discovery_dispatch::DiscoveryModuleSpec {
+                module_name: "weight magnitude reset detection".to_string(),
+                phase_name: "weight_magnitude_reset_detection",
+                detect_fn: Box::new(move || {
+                    let records = cache.load_records_for_all_neurons(&creature);
+                    if records.is_empty() {
+                        return None;
+                    }
+                    let detected = weight_magnitude_reset::detect_stuck_synapse_weight_resets(
+                        &creature, &records,
+                    );
+                    if detected.is_empty() {
+                        return None;
+                    }
+                    let candidates =
+                        weight_magnitude_reset::stuck_synapses_to_coordinated_candidates(&detected);
                     Some(discovery_dispatch::DiscoveryDetectionResult {
                         detected_count: detected.len(),
                         candidates,
