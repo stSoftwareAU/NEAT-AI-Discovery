@@ -23,6 +23,7 @@ pub mod redundant_path;
 pub mod restricted_range;
 pub mod saturation;
 pub mod sentinel_gating;
+pub mod squash_weight_rescale;
 pub mod topology;
 pub mod unbounded_capping;
 pub mod weight_coherence;
