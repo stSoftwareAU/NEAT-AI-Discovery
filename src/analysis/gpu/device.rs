@@ -195,11 +195,10 @@ pub fn create_wgpu_instance_safely() -> Option<wgpu::Instance> {
 
     // Wrap in catch_unwind to handle any remaining panics from backend probing
     let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-        wgpu::Instance::new(wgpu::InstanceDescriptor {
+        wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends,
             flags: wgpu::InstanceFlags::default(),
-            dx12_shader_compiler: wgpu::Dx12Compiler::default(),
-            gles_minor_version: wgpu::Gles3MinorVersion::default(),
+            ..Default::default()
         })
     }));
 
@@ -261,9 +260,10 @@ pub fn poll_device_until_idle(device: &wgpu::Device, timeout: Duration, label: &
     use std::time::Instant;
     let start = Instant::now();
     loop {
-        let result = device.poll(wgpu::Maintain::Poll);
-        if result.is_queue_empty() {
-            return Ok(());
+        match device.poll(wgpu::PollType::Poll) {
+            Ok(status) if status.is_queue_empty() => return Ok(()),
+            Ok(_) => {} // Queue not empty yet; keep polling.
+            Err(e) => return Err(anyhow!("GPU device poll error ({label}): {e}")),
         }
         if start.elapsed() > timeout {
             return Err(anyhow!(
@@ -302,8 +302,11 @@ pub fn wait_for_buffer_map(
             }
         }
 
-        let result = device.poll(wgpu::Maintain::Poll);
-        if result.is_queue_empty() && start.elapsed() > Duration::from_millis(250) {
+        let queue_empty = matches!(
+            device.poll(wgpu::PollType::Poll),
+            Ok(status) if status.is_queue_empty()
+        );
+        if queue_empty && start.elapsed() > Duration::from_millis(250) {
             // If the queue is empty but the callback hasn't fired, something is off.
             // Keep trying until timeout, but this is a strong signal of driver trouble.
         }
@@ -364,7 +367,7 @@ pub fn wait_for_buffer_maps_batch(
             return Ok(());
         }
 
-        device.poll(wgpu::Maintain::Poll);
+        let _ = device.poll(wgpu::PollType::Poll);
 
         if start.elapsed() > timeout {
             return Err(anyhow!(
@@ -434,7 +437,8 @@ pub fn get_adapter_info_internal() -> Option<wgpu::AdapterInfo> {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
-    }))?;
+    }))
+    .ok()?;
 
     Some(adapter.get_info())
 }
@@ -446,6 +450,28 @@ pub fn get_adapter_info_internal() -> Option<wgpu::AdapterInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Helper to construct `wgpu::AdapterInfo` for tests.
+    /// Fills in sensible defaults for fields not relevant to the test.
+    fn test_adapter_info(
+        name: &str,
+        device_type: wgpu::DeviceType,
+        backend: wgpu::Backend,
+    ) -> wgpu::AdapterInfo {
+        wgpu::AdapterInfo {
+            name: name.to_string(),
+            vendor: 0,
+            device: 0,
+            device_type,
+            device_pci_bus_id: String::new(),
+            driver: String::new(),
+            driver_info: String::new(),
+            backend,
+            subgroup_min_size: 0,
+            subgroup_max_size: 0,
+            transient_saves_memory: false,
+        }
+    }
 
     #[test]
     fn test_gpu_performance_tier_variants() {
@@ -480,138 +506,94 @@ mod tests {
     #[test]
     fn test_detect_unified_memory_apple() {
         // Test Apple Silicon detection
-        let apple_info = wgpu::AdapterInfo {
-            name: "Apple M1".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Metal,
-        };
+        let apple_info = test_adapter_info(
+            "Apple M1",
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Metal,
+        );
         assert!(detect_unified_memory(&apple_info));
 
-        let apple_m4_info = wgpu::AdapterInfo {
-            name: "Apple M4 Pro".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Metal,
-        };
+        let apple_m4_info = test_adapter_info(
+            "Apple M4 Pro",
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Metal,
+        );
         assert!(detect_unified_memory(&apple_m4_info));
     }
 
     #[test]
     fn test_detect_unified_memory_non_apple() {
         // Test non-Apple GPU detection (should return false)
-        let nvidia_info = wgpu::AdapterInfo {
-            name: "NVIDIA GeForce RTX 4090".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::DiscreteGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Vulkan,
-        };
+        let nvidia_info = test_adapter_info(
+            "NVIDIA GeForce RTX 4090",
+            wgpu::DeviceType::DiscreteGpu,
+            wgpu::Backend::Vulkan,
+        );
         assert!(!detect_unified_memory(&nvidia_info));
 
-        let intel_info = wgpu::AdapterInfo {
-            name: "Intel UHD Graphics 630".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Vulkan,
-        };
+        let intel_info = test_adapter_info(
+            "Intel UHD Graphics 630",
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Vulkan,
+        );
         // Conservative: non-Apple integrated GPUs return false
         assert!(!detect_unified_memory(&intel_info));
     }
 
     #[test]
     fn test_detect_gpu_tier_m4() {
-        let m4_info = wgpu::AdapterInfo {
-            name: "Apple M4".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Metal,
-        };
-        assert_eq!(detect_gpu_tier(&m4_info), GpuPerformanceTier::High);
+        let info = test_adapter_info(
+            "Apple M4",
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Metal,
+        );
+        assert_eq!(detect_gpu_tier(&info), GpuPerformanceTier::High);
     }
 
     #[test]
     fn test_detect_gpu_tier_m3_pro() {
-        let m3_pro_info = wgpu::AdapterInfo {
-            name: "Apple M3 Pro".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Metal,
-        };
-        assert_eq!(detect_gpu_tier(&m3_pro_info), GpuPerformanceTier::High);
+        let info = test_adapter_info(
+            "Apple M3 Pro",
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Metal,
+        );
+        assert_eq!(detect_gpu_tier(&info), GpuPerformanceTier::High);
     }
 
     #[test]
     fn test_detect_gpu_tier_m1_base() {
-        let m1_info = wgpu::AdapterInfo {
-            name: "Apple M1".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Metal,
-        };
-        assert_eq!(detect_gpu_tier(&m1_info), GpuPerformanceTier::Standard);
+        let info = test_adapter_info(
+            "Apple M1",
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Metal,
+        );
+        assert_eq!(detect_gpu_tier(&info), GpuPerformanceTier::Standard);
     }
 
     #[test]
     fn test_detect_gpu_tier_discrete() {
-        let nvidia_info = wgpu::AdapterInfo {
-            name: "NVIDIA GeForce RTX 4090".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::DiscreteGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Vulkan,
-        };
-        assert_eq!(detect_gpu_tier(&nvidia_info), GpuPerformanceTier::High);
+        let info = test_adapter_info(
+            "NVIDIA GeForce RTX 4090",
+            wgpu::DeviceType::DiscreteGpu,
+            wgpu::Backend::Vulkan,
+        );
+        assert_eq!(detect_gpu_tier(&info), GpuPerformanceTier::High);
     }
 
     #[test]
     fn test_detect_gpu_tier_integrated() {
-        let intel_info = wgpu::AdapterInfo {
-            name: "Intel UHD Graphics".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::IntegratedGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Vulkan,
-        };
-        assert_eq!(detect_gpu_tier(&intel_info), GpuPerformanceTier::Standard);
+        let info = test_adapter_info(
+            "Intel UHD Graphics",
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::Backend::Vulkan,
+        );
+        assert_eq!(detect_gpu_tier(&info), GpuPerformanceTier::Standard);
     }
 
     #[test]
     fn test_detect_gpu_tier_unknown() {
-        let unknown_info = wgpu::AdapterInfo {
-            name: "Unknown GPU".to_string(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::Other,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend: wgpu::Backend::Empty,
-        };
-        assert_eq!(detect_gpu_tier(&unknown_info), GpuPerformanceTier::Unknown);
+        let info = test_adapter_info("Unknown GPU", wgpu::DeviceType::Other, wgpu::Backend::Noop);
+        assert_eq!(detect_gpu_tier(&info), GpuPerformanceTier::Unknown);
     }
 
     #[test]

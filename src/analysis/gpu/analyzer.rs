@@ -283,18 +283,17 @@ impl GpuAnalyzer {
             force_fallback_adapter: false,
         }));
 
-        let Some(adapter) = adapter else {
-            return no_gpu_result("No GPU adapter found");
+        let adapter = match adapter {
+            Ok(adapter) => adapter,
+            Err(_) => return no_gpu_result("No GPU adapter found"),
         };
 
-        let device_result = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("NEAT-AI Discovery GPU probe device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-            },
-            None,
-        ));
+        let device_result = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("NEAT-AI Discovery GPU probe device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            ..Default::default()
+        }));
 
         match device_result {
             Ok(_) => GpuAvailabilityResult {
@@ -370,8 +369,8 @@ impl GpuAnalyzer {
         }));
 
         let adapter = match adapter {
-            Some(adapter) => adapter,
-            None => {
+            Ok(adapter) => adapter,
+            Err(_) => {
                 // GPU is required - return an error instead of a CPU-only analyzer.
                 // TypeScript calls check_gpu_available() before discovery, but the GPU
                 // could become unavailable due to race conditions or resource exhaustion.
@@ -392,26 +391,25 @@ impl GpuAnalyzer {
         // Log GPU info once per process (helps diagnose performance issues)
         log_gpu_info_once(&adapter_info, gpu_tier, batch_size);
 
-        let (device, queue) = match pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
+        let (device, queue) =
+            match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("NEAT-AI Discovery GPU device"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
-            },
-            None,
-        )) {
-            Ok(result) => result,
-            Err(e) => {
-                // GPU is required - return an error instead of a CPU-only analyzer.
-                // TypeScript calls check_gpu_available() before discovery, but the GPU
-                // could become unavailable due to race conditions or resource exhaustion.
-                // Returning an error here prevents panics in GPU methods that .expect() on device.
-                anyhow::bail!(
-                    "GPU device creation failed: {e}. Discovery requires GPU acceleration. \
+                ..Default::default()
+            })) {
+                Ok(result) => result,
+                Err(e) => {
+                    // GPU is required - return an error instead of a CPU-only analyzer.
+                    // TypeScript calls check_gpu_available() before discovery, but the GPU
+                    // could become unavailable due to race conditions or resource exhaustion.
+                    // Returning an error here prevents panics in GPU methods that .expect() on device.
+                    anyhow::bail!(
+                        "GPU device creation failed: {e}. Discovery requires GPU acceleration. \
                      This may indicate a transient GPU resource issue - consider retrying."
-                );
-            }
-        };
+                    );
+                }
+            };
 
         let (helpful_layout, helpful_pipeline) =
             Self::build_helpful_pipeline(&device, "helpful-synapse-pipeline");
