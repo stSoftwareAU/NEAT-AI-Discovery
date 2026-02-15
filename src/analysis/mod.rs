@@ -21,7 +21,7 @@
 //! - `activation.rs` - Activation function related code
 //! - `samples.rs` - Sample data structures and GPU formats
 //! - `constants.rs` - Central discovery thresholds and constants
-//! - `cache.rs` - Record caching for parquet files
+//! - `cache/` - Record caching for parquet files (Issue #565)
 //! - `candidate_cache.rs` - Candidate outcome cache for success/failure tracking
 //! - `streaming.rs` - Streaming parquet loading with block-based caching
 //! - `discovery_dispatch.rs` - Generic discovery module dispatch pattern
