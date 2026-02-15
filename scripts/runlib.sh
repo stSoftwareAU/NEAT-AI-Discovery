@@ -2,6 +2,25 @@
 # Shared logic for library build/versioning.
 set -euo pipefail
 
+# Minimum rustc version required by dependencies (e.g. wgpu 28 requires 1.92)
+RUST_MSRV="1.92.0"
+
+# Returns 0 if v1 >= v2 (semver-style), 1 otherwise.
+_version_ge() {
+  local v1="$1" v2="$2"
+  local IFS=.
+  local i
+  local -a a b
+  a=(${v1%%-*})  # strip any -pre suffix
+  b=(${v2%%-*})
+  for ((i=0; i<${#a[@]} || i<${#b[@]}; i++)); do
+    local x=${a[i]:-0} y=${b[i]:-0}
+    ((10#$x > 10#$y)) && return 0
+    ((10#$x < 10#$y)) && return 1
+  done
+  return 0
+}
+
 _require_tools() {
   export PATH="$HOME/.cargo/bin:$PATH"
   
@@ -101,6 +120,25 @@ _require_tools() {
       echo "ERROR: Failed to set default Rust toolchain. Please run 'rustup default stable' manually." >&2
       exit 1
     }
+  fi
+
+  # Check Rust version meets minimum (e.g. wgpu 28 requires rustc 1.92)
+  local rust_ver
+  rust_ver="$(rustc --version 2>/dev/null | sed -n 's/^rustc \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p')"
+  if [[ -z "$rust_ver" ]]; then
+    echo "WARNING: Could not determine rustc version, skipping version check" >&2
+  elif ! _version_ge "$rust_ver" "$RUST_MSRV"; then
+    echo "rustc ${rust_ver} is below minimum required (${RUST_MSRV}). Updating toolchain..." >&2
+    rustup update stable >&2 || {
+      echo "ERROR: Failed to update Rust toolchain. Please run 'rustup update stable' manually." >&2
+      exit 1
+    }
+    rust_ver="$(rustc --version 2>/dev/null | sed -n 's/^rustc \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p')"
+    if ! _version_ge "$rust_ver" "$RUST_MSRV"; then
+      echo "ERROR: rustc ${rust_ver} still below ${RUST_MSRV} after update. Dependencies (e.g. wgpu) require a newer Rust." >&2
+      exit 1
+    fi
+    echo "Rust updated to rustc ${rust_ver}" >&2
   fi
 }
 
