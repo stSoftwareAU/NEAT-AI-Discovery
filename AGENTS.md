@@ -110,7 +110,12 @@ src/
 │   │   ├── mod.rs            # Module declarations
 │   │   ├── activation_recommendation.rs # Activation function recommendation
 │   │   ├── output_bias_drift.rs # Output bias drift detection
-│   │   ├── epistatic.rs      # Epistatic interaction analysis
+│   │   ├── epistatic/         # Epistatic interaction analysis (Issue #563)
+│   │   │   ├── mod.rs            # Public API, types, re-exports
+│   │   │   ├── candidate_generation.rs # Pair generation, complementarity, conversion
+│   │   │   ├── pre_screening.rs  # Residual analysis, synergistic detection
+│   │   │   ├── deduplication.rs  # Dominant-neuron deduplication (Issue #509)
+│   │   │   └── scoring.rs       # Interference detection, filtering (Issue #415)
 │   │   ├── multi_hop.rs      # Multi-hop candidate analysis
 │   │   ├── gradient_discovery.rs # Gradient-based synapse adjustment
 │   │   └── sample_weighted.rs # Sample-weighted discovery
