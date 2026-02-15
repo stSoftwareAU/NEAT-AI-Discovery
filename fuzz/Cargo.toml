@@ -1,0 +1,32 @@
+[package]
+name = "neat-ai-discovery-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1.0"
+
+[dependencies.neat_ai_discovery]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+# ─── Fuzz targets ───────────────────────────────────────────────────────────
+# Each target fuzzes a different FFI entry point's JSON deserialisation layer.
+
+[[bin]]
+name = "fuzz_ffi_deserialisation"
+path = "fuzz_targets/fuzz_ffi_deserialisation.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_ffi_entry_points"
+path = "fuzz_targets/fuzz_ffi_entry_points.rs"
+doc = false
