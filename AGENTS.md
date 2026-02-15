@@ -58,7 +58,11 @@ src/
 │   ├── allocation.rs         # Budget allocation strategies
 │   ├── gradient.rs           # Gradient flow analysis
 │   ├── impact.rs             # Impact calculation (squash-aware)
-│   ├── ranking.rs            # Neuron ranking, record providers, removal candidates
+│   ├── ranking/              # Neuron ranking and selection (Issue #564)
+│   │   ├── mod.rs            # Public API, orchestration, rank_focus_neurons
+│   │   ├── record_providers.rs # Record provider trait, eager/lazy implementations
+│   │   ├── score_calculation.rs # Neuron score computation, frequency, variance
+│   │   └── removal_candidates.rs # Removal candidates, SynapseCounts, constant removal
 │   └── tests.rs              # Unit tests for internal components
 │
 ├── analysis/                 # Core analysis engine

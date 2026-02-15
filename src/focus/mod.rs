@@ -5,13 +5,16 @@
 //! for analysis based on error, structural impact, gradient flow, and
 //! activation frequency.
 //!
-//! ## Module Structure (Issue #491)
+//! ## Module Structure (Issue #491, #564)
 //!
 //! - `layers` — Network layer computation via BFS from inputs
 //! - `allocation` — Budget allocation strategies (Equal, Proportional, OutputFirst)
 //! - `gradient` — Gradient flow analysis (saturation, dead neurons)
 //! - `impact` — Structural impact calculation (squash-aware, selection stats)
-//! - `ranking` — Neuron ranking, record providers, removal candidates
+//! - `ranking/` — Neuron ranking, record providers, removal candidates (Issue #564)
+//!   - `record_providers` — Record provider trait and implementations (eager/lazy)
+//!   - `score_calculation` — Individual neuron ranking score computation
+//!   - `removal_candidates` — Removal candidate identification and constant neuron removal
 
 mod allocation;
 mod gradient;
