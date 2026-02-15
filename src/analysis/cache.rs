@@ -80,6 +80,7 @@ impl RecordCache {
     ///   Slower (O(N) parquet scans for N neurons) but works on memory-constrained systems.
     ///
     /// This ensures discovery works on any modern Mac/PC, adapting to available resources.
+    #[tracing::instrument(skip_all, fields(parquet_file))]
     pub fn new_adaptive(parquet_file: &str) -> Result<Self> {
         // Check if we have enough memory for pre-loading
         match check_memory_for_parquet(parquet_file) {
@@ -89,12 +90,11 @@ impl RecordCache {
             }
             Err(memory_error) => {
                 // Insufficient memory - fall back to lazy loading
-                eprintln!(
-                    "[NEAT-AI-Discovery] Insufficient memory for pre-loading. \
-                     Falling back to lazy-loading mode (slower but memory-efficient)."
+                tracing::warn!(
+                    "insufficient memory for pre-loading — falling back to lazy-loading mode"
                 );
                 if verbose_enabled() {
-                    eprintln!("[NEAT-AI-Discovery][verbose] Memory check failed: {memory_error}");
+                    tracing::debug!(%memory_error, "memory check failed");
                 }
                 Self::new_lazy(parquet_file)
             }
@@ -106,10 +106,7 @@ impl RecordCache {
     fn new_lazy(parquet_file: &str) -> Result<Self> {
         use crate::parquet_format::read_records_from_parquet;
 
-        eprintln!(
-            "[NEAT-AI-Discovery] Using lazy-loading mode for parquet file. \
-             This is slower but uses less memory."
-        );
+        tracing::info!("using lazy-loading mode for parquet file");
 
         Ok(Self {
             parquet_file: parquet_file.to_string(),
@@ -144,9 +141,7 @@ impl RecordCache {
 
         if verbose_enabled() {
             let count = cache.read().len();
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Pre-loaded {count} neurons from parquet in {elapsed:?}"
-            );
+            tracing::debug!(count, ?elapsed, "pre-loaded neurons from parquet");
         }
 
         // In pre-loaded mode, if a neuron UUID wasn't in the parquet file,
@@ -334,9 +329,11 @@ impl RecordCache {
         if verbose_enabled() {
             let file_size_mb = file_size as f64 / (1024.0 * 1024.0);
             let available_gb = available as f64 / (1024.0 * 1024.0 * 1024.0);
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Tiered loading: file={file_size_mb:.1}MB, \
-                 available={available_gb:.1}GB, strategy={strategy:?}"
+            tracing::debug!(
+                file_size_mb,
+                available_gb,
+                ?strategy,
+                "tiered loading strategy selected"
             );
         }
 
@@ -361,7 +358,7 @@ impl RecordCache {
             }
             LoadingStrategy::Streaming => {
                 // Use the existing streaming cache
-                eprintln!("[NEAT-AI-Discovery] Using streaming mode for very large parquet file.");
+                tracing::info!("using streaming mode for very large parquet file");
                 Self::new_lazy(parquet_file)
             }
         }
@@ -534,9 +531,7 @@ impl LruRecordCache {
 
         if verbose_enabled() {
             let capacity_mb = capacity_bytes as f64 / (1024.0 * 1024.0);
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Creating LRU cache with capacity {capacity_mb:.1}MB"
-            );
+            tracing::debug!(capacity_mb, "creating LRU cache");
         }
 
         Ok(Self {
@@ -873,9 +868,7 @@ impl CompressedLruRecordCache {
 
         if verbose_enabled() {
             let capacity_mb = capacity_bytes as f64 / (1024.0 * 1024.0);
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Creating compressed LRU cache with capacity {capacity_mb:.1}MB"
-            );
+            tracing::debug!(capacity_mb, "creating compressed LRU cache");
         }
 
         Ok(Self {
@@ -1003,9 +996,7 @@ impl TieredRecordCache {
         let strategy = select_loading_strategy(file_size, available);
 
         if verbose_enabled() {
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] TieredRecordCache selected strategy: {strategy:?}"
-            );
+            tracing::debug!(?strategy, "TieredRecordCache selected loading strategy");
         }
 
         let inner = match strategy {

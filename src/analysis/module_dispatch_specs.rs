@@ -999,18 +999,18 @@ pub(crate) fn deduplicate_cross_module_candidates(syn: &mut shared::AnalyzeSynap
     syn.coordinated_structural_candidates = dedup_result.candidates;
 
     if dedup_result.duplicates_removed > 0 && utils::verbose_enabled() {
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Cross-module deduplication: removed {} duplicate(s) from {} coordinated candidate(s) → {} remaining",
-            dedup_result.duplicates_removed,
-            before_count,
-            syn.coordinated_structural_candidates.len()
+        tracing::debug!(
+            duplicates_removed = dedup_result.duplicates_removed,
+            before_count = before_count,
+            remaining = syn.coordinated_structural_candidates.len(),
+            "Cross-module deduplication: removed duplicate(s) from coordinated candidate(s)"
         );
     }
 
     if dedup_result.conflicts_detected > 0 && utils::verbose_enabled() {
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Cross-module deduplication: {} neuron conflict(s) detected (remove vs modify)",
-            dedup_result.conflicts_detected
+        tracing::debug!(
+            conflicts_detected = dedup_result.conflicts_detected,
+            "Cross-module deduplication: neuron conflict(s) detected (remove vs modify)"
         );
     }
 
@@ -1067,11 +1067,11 @@ pub(crate) fn cluster_synapse_candidates(
 
     if !clusters.is_empty() && utils::verbose_enabled() {
         let total_clustered: usize = clusters.iter().map(|c| c.member_count).sum();
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Candidate clustering: {} cluster(s) covering {} candidate(s) of {} total",
-            clusters.len(),
-            total_clustered,
-            clusterable.len()
+        tracing::debug!(
+            cluster_count = clusters.len(),
+            clustered_candidates = total_clustered,
+            total_candidates = clusterable.len(),
+            "Candidate clustering: cluster(s) covering candidate(s)"
         );
     }
 

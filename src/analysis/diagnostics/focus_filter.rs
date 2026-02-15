@@ -80,9 +80,10 @@ pub(crate) fn filter_focus_targets_for_neuron_analysis(
                 }
                 Some(unknown_type) => {
                     // Unknown type - treat as hidden.
-                    eprintln!(
-                        "[NEAT-AI-Discovery] Warning: Unknown neuron type '{unknown_type}' for UUID '{uuid}'. \
-                        Treating as hidden neuron."
+                    tracing::warn!(
+                        neuron_type = %unknown_type,
+                        neuron_uuid = %uuid,
+                        "Unknown neuron type encountered — treating as hidden neuron"
                     );
                     if output_only_targets {
                         result.skipped_hidden.push((*uuid).clone());
@@ -94,9 +95,9 @@ pub(crate) fn filter_focus_targets_for_neuron_analysis(
                 }
                 None => {
                     // Unknown UUID - this is likely a bug, skip it.
-                    eprintln!(
-                        "[NEAT-AI-Discovery] Warning: Unknown neuron UUID '{uuid}' in focus list \
-                        (not found in creature). Skipping."
+                    tracing::warn!(
+                        neuron_uuid = %uuid,
+                        "Unknown neuron UUID in focus list (not found in creature) — skipping"
                     );
                     None
                 }

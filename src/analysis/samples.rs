@@ -742,8 +742,9 @@ pub fn constant_source_effect_threshold_from_env() -> Option<f32> {
         Ok(v) if v.is_finite() && v > 0.0 => Some(v),
         _ => {
             if verbose_enabled() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Ignoring invalid NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD={trimmed:?} (expected 0 or a finite number > 0)"
+                tracing::debug!(
+                    raw_value = ?trimmed,
+                    "Ignoring invalid NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD (expected 0 or a finite number > 0)"
                 );
             }
             Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD)
@@ -851,8 +852,9 @@ pub fn get_constant_source_threshold(source_std_dev_avg: Option<f32>) -> Option<
                 Ok(v) if v.is_finite() && v > 0.0 => return Some(v), // Explicit override
                 _ => {
                     if verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Ignoring invalid NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD={trimmed:?} (expected 0 or a finite number > 0)"
+                        tracing::debug!(
+                            raw_value = ?trimmed,
+                            "Ignoring invalid NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD (expected 0 or a finite number > 0)"
                         );
                     }
                     // Fall through to dynamic calculation
@@ -866,8 +868,10 @@ pub fn get_constant_source_threshold(source_std_dev_avg: Option<f32>) -> Option<
         Some(avg) if avg.is_finite() && avg > 0.0 => {
             let threshold = compute_dynamic_constant_source_threshold(avg);
             if verbose_enabled() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Using dynamic constant-source threshold: {threshold:.2e} (source_std_dev_avg={avg:.4})"
+                tracing::debug!(
+                    threshold = format_args!("{threshold:.2e}"),
+                    source_std_dev_avg = format_args!("{avg:.4}"),
+                    "Using dynamic constant-source threshold"
                 );
             }
             Some(threshold)

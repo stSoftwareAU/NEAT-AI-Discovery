@@ -166,8 +166,9 @@ pub(crate) fn analyse_single_target(
         Some(index) => *index,
         None => {
             if verbose_enabled() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {target_uuid} not found in creature neuron order map (neuron may not exist in creature definition). Skipping."
+                tracing::debug!(
+                    target_uuid = target_uuid,
+                    "Target not found in creature neuron order map (neuron may not exist in creature definition). Skipping."
                 );
             }
             return Ok(results);
@@ -206,10 +207,10 @@ pub(crate) fn analyse_single_target(
                     match ctx.neuron_type_map.get(&neuron.uuid) {
                         Some(neuron_type) => neuron_type != "constant",
                         None => {
-                            eprintln!(
-                                "[NEAT-AI-Discovery] ERROR: Invalid neuron UUID '{}' found in ordered_neurons. \
-                                Not found in comprehensive neuron type map. This indicates a serious data integrity bug.",
-                                neuron.uuid
+                            tracing::warn!(
+                                neuron_uuid = %neuron.uuid,
+                                "Invalid neuron UUID found in ordered_neurons. \
+                                Not found in comprehensive neuron type map. This indicates a serious data integrity bug."
                             );
                             false
                         }
@@ -244,10 +245,15 @@ pub(crate) fn analyse_single_target(
             .filter(|n| n.index < target_index && ctx.input_neuron_uuids.contains(&n.uuid))
             .count();
 
-        eprintln!(
-            "[NEAT-AI-Discovery] BUG: Target {target_uuid} (type: {target_neuron_type}, index: {target_index}) has no eligible upstream neurons. \
-            creature.input: {input_count}, neurons before target: {neurons_before_index}, constants before target: {constants_before_index}, \
-            input neurons before target: {input_neurons_before_index}. This should not happen for hidden/output neurons with index >= creature.input."
+        tracing::warn!(
+            target_uuid = target_uuid,
+            target_neuron_type = target_neuron_type,
+            target_index = target_index,
+            input_count = input_count,
+            neurons_before_target = neurons_before_index,
+            constants_before_target = constants_before_index,
+            input_neurons_before_target = input_neurons_before_index,
+            "BUG: Target has no eligible upstream neurons. This should not happen for hidden/output neurons with index >= creature.input."
         );
 
         return Ok(results);
@@ -330,8 +336,10 @@ pub(crate) fn analyse_single_target(
                     empty_record_sources.push(source_uuid.to_string());
                     let is_input = ctx.input_neuron_uuids.contains(source_uuid);
                     if verbose_enabled() && !is_input {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Source {source_uuid} (target {target_uuid}) has no records in parquet file."
+                        tracing::debug!(
+                            source_uuid = source_uuid,
+                            target_uuid = target_uuid,
+                            "Source has no records in parquet file."
                         );
                     }
                 }
@@ -339,8 +347,11 @@ pub(crate) fn analyse_single_target(
             Err(err) => {
                 load_failure_count += 1;
                 if verbose_enabled() {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Failed to load records for source {source_uuid} (target {target_uuid}): {err}"
+                    tracing::debug!(
+                        source_uuid = source_uuid,
+                        target_uuid = target_uuid,
+                        error = %err,
+                        "Failed to load records for source."
                     );
                 }
             }
@@ -355,11 +366,12 @@ pub(crate) fn analyse_single_target(
     let empty_non_input_count = empty_record_sources.len() - empty_input_neuron_count;
 
     if verbose_enabled() && empty_input_neuron_count > 0 {
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Target {target_uuid}: {} of {} input neurons have no records in parquet file (plus {} non-input sources). This may indicate incomplete parquet data.",
-            empty_input_neuron_count,
-            ctx.input_neuron_uuids.len(),
-            empty_non_input_count
+        tracing::debug!(
+            target_uuid = target_uuid,
+            empty_input_neuron_count = empty_input_neuron_count,
+            total_input_neurons = ctx.input_neuron_uuids.len(),
+            empty_non_input_count = empty_non_input_count,
+            "Input neurons have no records in parquet file. This may indicate incomplete parquet data."
         );
     }
 
@@ -410,13 +422,13 @@ pub(crate) fn analyse_single_target(
             } else {
                 0.0
             };
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Target {}: {} sources grouped into {} locality groups (max={}, avg={:.1})",
-                target_uuid,
-                sources_to_process.len(),
-                locality_groups.len(),
-                max_group,
-                avg_group
+            tracing::debug!(
+                target_uuid = target_uuid,
+                source_count = sources_to_process.len(),
+                group_count = locality_groups.len(),
+                max_group_size = max_group,
+                avg_group_size = format_args!("{avg_group:.1}"),
+                "Sources grouped into locality groups."
             );
         }
 
@@ -830,9 +842,10 @@ fn process_helpful_batch(
 
     // Issue #202: Detect epistatic neuron pairs
     if verbose_enabled() {
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Target {target_uuid}: collected {} source contributions for epistatic detection",
-            source_contributions.len()
+        tracing::debug!(
+            target_uuid = target_uuid,
+            source_contribution_count = source_contributions.len(),
+            "Collected source contributions for epistatic detection."
         );
     }
     if source_contributions.len() >= 2 {
@@ -860,9 +873,10 @@ fn process_helpful_batch(
                     results.coordinated.extend(epistatic_candidates);
 
                     if verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Target {target_uuid}: found {} epistatic pair(s)",
-                            deduped_pairs.len()
+                        tracing::trace!(
+                            target_uuid = target_uuid,
+                            epistatic_pair_count = deduped_pairs.len(),
+                            "Found epistatic pair(s) for target."
                         );
                     }
                 }
@@ -890,9 +904,10 @@ fn process_helpful_batch(
                     results.coordinated.extend(synergistic_coordinated);
 
                     if verbose_enabled() {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Target {target_uuid}: found {} synergistic candidate(s)",
-                            deduped_synergistic.len()
+                        tracing::trace!(
+                            target_uuid = target_uuid,
+                            synergistic_candidate_count = deduped_synergistic.len(),
+                            "Found synergistic candidate(s) for target."
                         );
                     }
                 }
@@ -918,9 +933,10 @@ fn process_helpful_batch(
                 results.coordinated.extend(redundant_coordinated);
 
                 if verbose_enabled() {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {target_uuid}: found {} redundant path(s) for pruning",
-                        redundant_paths.len()
+                    tracing::trace!(
+                        target_uuid = target_uuid,
+                        redundant_path_count = redundant_paths.len(),
+                        "Found redundant path(s) for pruning on target."
                     );
                 }
             }

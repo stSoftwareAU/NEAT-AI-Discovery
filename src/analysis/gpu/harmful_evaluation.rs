@@ -20,7 +20,7 @@ use crate::analysis::samples::{
     EPSILON, GpuHelpfulSample, HarmfulContribution, HarmfulStats, HarmfulUniforms, HelpfulSample,
     ReductionUniforms,
 };
-use crate::analysis::utils::{cap_gpu_batch_size_by_bytes, verbose_enabled};
+use crate::analysis::utils::cap_gpu_batch_size_by_bytes;
 
 use super::analyzer::{GPU_MAX_BATCH_ALLOC_BYTES, GpuAnalyzer};
 
@@ -229,17 +229,16 @@ impl GpuAnalyzer {
             GPU_MAX_BATCH_ALLOC_BYTES,
         );
 
-        if verbose_enabled() && effective_batch_size < self.batch_size {
+        if effective_batch_size < self.batch_size {
             let bytes_per_op = max_sample_len.saturating_mul(bytes_per_sample);
             let approx_mb = (bytes_per_op as f64 / (1024.0 * 1024.0)).max(0.0);
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Capping GPU harmful batch size from {} to {} due to large sample count. \
-                 max_sample_len={}, approx_buffers_per_op\u{2248}{:.1}MB, cap={}MB",
-                self.batch_size,
-                effective_batch_size,
-                max_sample_len,
-                approx_mb,
-                GPU_MAX_BATCH_ALLOC_BYTES / (1024 * 1024)
+            tracing::trace!(
+                original_batch_size = self.batch_size,
+                effective_batch_size = effective_batch_size,
+                max_sample_len = max_sample_len,
+                approx_buffers_per_op_mb = format_args!("{approx_mb:.1}"),
+                cap_mb = GPU_MAX_BATCH_ALLOC_BYTES / (1024 * 1024),
+                "Capping GPU harmful batch size due to large sample count"
             );
         }
 
@@ -494,16 +493,16 @@ impl GpuAnalyzer {
                         stats.harmful_error_sum += contribution.error_magnitude;
                     }
 
-                    // Log reduction usage for verbose output
-                    if verbose_enabled()
-                        && non_empty_reduction_flags
-                            .get(buffer_idx)
-                            .copied()
-                            .unwrap_or(false)
+                    // Log reduction usage at trace level
+                    if non_empty_reduction_flags
+                        .get(buffer_idx)
+                        .copied()
+                        .unwrap_or(false)
                     {
                         let num_partial_sums = contributions.len();
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] GPU reduction (harmful): transferred {num_partial_sums} partial sums instead of full contributions"
+                        tracing::trace!(
+                            partial_sums = num_partial_sums,
+                            "GPU reduction (harmful): transferred partial sums instead of full contributions"
                         );
                     }
 

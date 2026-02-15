@@ -64,9 +64,7 @@ pub fn init_debug_handlers() {
         #[cfg(unix)]
         install_signal_handler();
 
-        eprintln!(
-            "[NEAT-AI-Discovery][debug] Debug handlers initialised (deadlock detection + kill -USR1 thread dump)"
-        );
+        tracing::debug!("debug handlers initialised (deadlock detection + kill -USR1 thread dump)");
     });
 }
 
@@ -135,7 +133,7 @@ fn install_signal_handler() {
             let mut signals = match Signals::new([SIGUSR1]) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("[NEAT-AI-Discovery][debug] Failed to install SIGUSR1 handler: {e}");
+                    tracing::warn!("failed to install SIGUSR1 handler: {e}");
                     return;
                 }
             };

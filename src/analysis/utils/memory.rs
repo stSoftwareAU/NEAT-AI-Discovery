@@ -98,8 +98,11 @@ pub fn detect_memory_tier() -> MemoryTier {
             MemoryTier::Standard => "standard",
             MemoryTier::High => "high",
         };
-        eprintln!(
-            "[NEAT-AI-Discovery] Memory: {available_gb:.1}GB available / {total_gb:.1}GB total | Tier: {tier_str}"
+        tracing::info!(
+            available_gb = format_args!("{available_gb:.1}"),
+            total_gb = format_args!("{total_gb:.1}"),
+            tier = tier_str,
+            "Memory detected"
         );
 
         memory_tier
@@ -352,10 +355,12 @@ pub fn check_memory_for_parquet(parquet_file: &str) -> Result<()> {
         let total_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
         let available_mb = available_bytes as f64 / (1024.0 * 1024.0);
         let usage_percent = (file_size_gb * 3.0 / total_gb) * 100.0;
-        eprintln!(
-            "[NEAT-AI-Discovery] Loading {file_size_mb:.0} MB parquet file \
-             (estimated {estimated_mb:.0} MB in memory = {usage_percent:.0}% of RAM, \
-             {available_mb:.0} MB available)"
+        tracing::info!(
+            file_size_mb = format_args!("{file_size_mb:.0}"),
+            estimated_mb = format_args!("{estimated_mb:.0}"),
+            usage_percent = format_args!("{usage_percent:.0}"),
+            available_mb = format_args!("{available_mb:.0}"),
+            "Loading parquet file"
         );
     }
 
@@ -563,7 +568,7 @@ pub fn ensure_xdg_runtime_dir() {
             if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
                 let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
                 if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
-                    eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {runtime_dir:?}: {e}");
+                    tracing::warn!(path = %runtime_dir.display(), error = %e, "Failed to create XDG_RUNTIME_DIR");
                 } else {
                     // SAFETY: Inside Once::call_once, so guaranteed single-threaded execution.
                     // Called before any GPU init.

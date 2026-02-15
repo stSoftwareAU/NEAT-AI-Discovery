@@ -213,42 +213,41 @@ impl NeuronDiagnostics {
 
             // Input neurons are observation sources, not computation nodes
             if entry.input_filtered {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} was filtered out (input neuron). \
-                    Input neurons are observation sources, not computation nodes - they have no \
-                    activation function or error to reduce.",
-                    entry.target_uuid
+                tracing::trace!(
+                    target_uuid = %entry.target_uuid,
+                    filter_reason = "input neuron",
+                    "Target was filtered out — input neurons are observation sources, not computation nodes"
                 );
                 continue;
             }
 
             // Hidden neurons have backpropagated errors that don't reliably predict output error
             if entry.hidden_filtered {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} was filtered out (hidden neuron). \
-                    Add-neuron analysis only targets output neurons because hidden neuron error \
-                    reduction doesn't reliably translate to creature score improvement.",
-                    entry.target_uuid
+                tracing::trace!(
+                    target_uuid = %entry.target_uuid,
+                    filter_reason = "hidden neuron",
+                    "Target was filtered out — add-neuron analysis only targets output neurons"
                 );
                 continue;
             }
 
             // Constant neurons don't receive inputs - they always output a fixed value
             if entry.constant_filtered {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} was filtered out (constant neuron). \
-                    Constant neurons don't receive inputs - they always output a fixed value \
-                    regardless of network state, so adding a connection to them has no effect.",
-                    entry.target_uuid
+                tracing::trace!(
+                    target_uuid = %entry.target_uuid,
+                    filter_reason = "constant neuron",
+                    "Target was filtered out — constant neurons don't receive inputs"
                 );
                 continue;
             }
 
             // Check for record loading failures (this indicates a bug or data issue)
             if entry.record_load_failures > 0 {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} had {} record loading failures out of {} eligible sources (this may indicate a data integrity issue - records exist but couldn't be loaded).",
-                    entry.target_uuid, entry.record_load_failures, entry.total_eligible_sources
+                tracing::warn!(
+                    target_uuid = %entry.target_uuid,
+                    record_load_failures = entry.record_load_failures,
+                    eligible_sources = entry.total_eligible_sources,
+                    "Target had record loading failures (this may indicate a data integrity issue — records exist but couldn't be loaded)"
                 );
             }
 
@@ -257,27 +256,32 @@ impl NeuronDiagnostics {
                     && entry.record_load_failures == entry.total_eligible_sources
                 {
                     // All eligible sources failed to load - this is a data/bug issue, not "no sources"
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream sources but all {} failed to load from parquet file.",
-                        entry.target_uuid, entry.total_eligible_sources, entry.record_load_failures
+                    tracing::warn!(
+                        target_uuid = %entry.target_uuid,
+                        eligible_sources = entry.total_eligible_sources,
+                        record_load_failures = entry.record_load_failures,
+                        "Target had eligible upstream sources but all failed to load from parquet file"
                     );
                 } else if entry.total_eligible_sources > 0 && entry.record_load_failures == 0 {
                     // Sources exist, no load failures, but none evaluated - likely timeout before sources could be checked
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream sources but none were evaluated (0 load failures). Likely analysis TIMEOUT before source loading could start.",
-                        entry.target_uuid, entry.total_eligible_sources
+                    tracing::warn!(
+                        target_uuid = %entry.target_uuid,
+                        eligible_sources = entry.total_eligible_sources,
+                        "Target had eligible upstream sources but none were evaluated (0 load failures) — likely analysis timeout"
                     );
                 } else if entry.total_eligible_sources > 0 {
                     // Some sources exist, some failures, none evaluated
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream sources but none were evaluated ({} load failures).",
-                        entry.target_uuid, entry.total_eligible_sources, entry.record_load_failures
+                    tracing::trace!(
+                        target_uuid = %entry.target_uuid,
+                        eligible_sources = entry.total_eligible_sources,
+                        record_load_failures = entry.record_load_failures,
+                        "Target had eligible upstream sources but none were evaluated"
                     );
                 } else {
                     // Genuinely no eligible sources (e.g., target is first neuron)
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} had no upstream neurons to analyse.",
-                        entry.target_uuid
+                    tracing::trace!(
+                        target_uuid = %entry.target_uuid,
+                        "Target had no upstream neurons to analyse"
                     );
                 }
                 continue;
@@ -286,18 +290,20 @@ impl NeuronDiagnostics {
             let best = match &entry.best_rejection {
                 Some(detail) => detail,
                 None => {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} evaluated {} upstream neurons but recorded no diagnostics.",
-                        entry.target_uuid, entry.evaluated_sources
+                    tracing::trace!(
+                        target_uuid = %entry.target_uuid,
+                        evaluated_sources = entry.evaluated_sources,
+                        "Target evaluated upstream neurons but recorded no diagnostics"
                     );
                     continue;
                 }
             };
 
             // Currently only NoSamples is used
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Target {} skipped candidate from {} because no overlapping samples were found.",
-                entry.target_uuid, best.source_uuid
+            tracing::trace!(
+                target_uuid = %entry.target_uuid,
+                source_uuid = %best.source_uuid,
+                "Target skipped candidate — no overlapping samples were found"
             );
         }
     }

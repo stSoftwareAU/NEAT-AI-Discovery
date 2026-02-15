@@ -81,9 +81,9 @@ pub(crate) fn compute_impact_scores_for_discounting(
         Ok(scores) => scores,
         Err(err) => {
             if verbose_enabled() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Falling back to conservative impact calculation \
-                    (no activation-based selection stats). Reason: {err}"
+                tracing::debug!(
+                    reason = %err,
+                    "Falling back to conservative impact calculation (no activation-based selection stats)"
                 );
             }
             compute_impacts_public(creature)

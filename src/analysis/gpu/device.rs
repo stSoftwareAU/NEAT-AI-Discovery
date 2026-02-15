@@ -29,9 +29,6 @@ use std::time::Duration;
 
 use crate::analysis::utils::{ensure_xdg_runtime_dir, suppress_mesa_warnings_if_requested};
 
-#[cfg(target_os = "linux")]
-use crate::analysis::utils::verbose_enabled;
-
 // =============================================================================
 // Constants
 // =============================================================================
@@ -217,28 +214,26 @@ pub fn create_wgpu_instance_safely() -> Option<wgpu::Instance> {
             #[cfg(target_os = "linux")]
             {
                 // On Linux, this is expected on headless servers without GPU
-                if verbose_enabled() {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] wgpu instance creation failed: {panic_msg}. \
-                         Discovery will be disabled on this machine."
-                    );
-                }
+                tracing::debug!(
+                    panic_message = %panic_msg,
+                    "wgpu instance creation failed — discovery will be disabled on this machine"
+                );
             }
 
             #[cfg(target_os = "macos")]
             {
                 // On macOS, this is unexpected - Metal should always be available
-                eprintln!(
-                    "[NEAT-AI-Discovery] ERROR: wgpu instance creation failed on macOS: {panic_msg}. \
-                     This indicates a system configuration issue."
+                tracing::error!(
+                    panic_message = %panic_msg,
+                    "wgpu instance creation failed on macOS — this indicates a system configuration issue"
                 );
             }
 
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
-                eprintln!(
-                    "[NEAT-AI-Discovery] wgpu instance creation failed: {panic_msg}. \
-                     Discovery will be disabled on this machine."
+                tracing::warn!(
+                    panic_message = %panic_msg,
+                    "wgpu instance creation failed — discovery will be disabled on this machine"
                 );
             }
 

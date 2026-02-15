@@ -462,6 +462,7 @@ Key environment variables that control library behaviour:
 
 | Variable | Purpose |
 |----------|---------|
+| `RUST_LOG` | Control log level via `tracing` (e.g. `neat_ai_discovery=info`) |
 | `NEAT_AI_DISCOVERY_VERBOSE` | Enable verbose logging (`1` to enable) |
 | `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` | Override GPU batch size (64–4096) |
 | `NEAT_AI_DISCOVERY_GPU_TIMING` | Enable GPU kernel profiling (`1` to enable) |

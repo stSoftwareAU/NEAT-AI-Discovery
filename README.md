@@ -205,6 +205,7 @@ For impact calculation details, see
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NEAT_AI_DISCOVERY_LIB_PATH` | `~/.cargo/lib/` | Path to the compiled library |
+| `RUST_LOG` | `warn` | Control structured log level (e.g. `neat_ai_discovery=info`) |
 | `NEAT_AI_DISCOVERY_VERBOSE` | off | Enable verbose logging |
 | `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` | auto | GPU batch size (64–4096) |
 | `NEAT_AI_DISCOVERY_GPU_TIMING` | off | Enable GPU kernel profiling |
