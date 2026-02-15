@@ -286,7 +286,51 @@ cargo test --lib --tests --all-features -- --test-threads=1
 
 # Run benchmarks
 cargo bench --bench <bench_name>
+
+# Run fuzz tests (requires nightly toolchain and cargo-fuzz)
+cargo +nightly fuzz run fuzz_ffi_deserialisation -- -max_total_time=60
+cargo +nightly fuzz run fuzz_ffi_entry_points -- -max_total_time=60
 ```
+
+### Fuzz Testing
+
+The `fuzz/` directory contains [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html)
+targets that exercise the FFI JSON boundary with arbitrary inputs. This helps
+catch panics from malformed, truncated, or adversarial JSON before they reach
+production.
+
+**Prerequisites:**
+
+```bash
+# Install cargo-fuzz (one-time setup)
+cargo install cargo-fuzz
+
+# Ensure the nightly toolchain is available
+rustup toolchain install nightly
+```
+
+**Available targets:**
+
+| Target | Description |
+|--------|-------------|
+| `fuzz_ffi_deserialisation` | Fuzzes `serde_json::from_str` for all FFI input types |
+| `fuzz_ffi_entry_points` | Fuzzes the `*_internal` business-logic functions |
+
+**Running:**
+
+```bash
+# Run a specific target for 60 seconds
+cargo +nightly fuzz run fuzz_ffi_deserialisation -- -max_total_time=60
+
+# Run with a maximum input length of 4096 bytes
+cargo +nightly fuzz run fuzz_ffi_entry_points -- -max_total_time=60 -max_len=4096
+
+# List all available fuzz targets
+cargo +nightly fuzz list
+```
+
+Crash-reproducing inputs (if any) are saved to `fuzz/artifacts/`. The fuzzer
+corpus is stored in `fuzz/corpus/` and grows over successive runs.
 
 ## Why Use This Library?
 
