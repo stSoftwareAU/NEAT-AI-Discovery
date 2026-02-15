@@ -129,7 +129,13 @@ src/
 │   │   ├── weights.rs        # Weight analysis and calculation
 │   │   ├── error_distribution.rs # Error distribution stats
 │   │   └── cross_validation.rs # Cross-validation scoring
-│   ├── cache.rs              # Record caching
+│   ├── cache/                # Record caching (Issue #565)
+│   │   ├── mod.rs            # Public API, RecordCache, re-exports
+│   │   ├── loading_strategy.rs # LoadingStrategy, select_loading_strategy
+│   │   ├── lru_cache.rs      # LruRecordCache, LruCacheStats, eviction
+│   │   ├── compressed_cache.rs # CompressedLruRecordCache (LZ4)
+│   │   ├── tiered_cache.rs   # TieredRecordCache, auto strategy selection
+│   │   └── serialisation.rs  # Binary serialisation, CompressedCacheEntry
 │   ├── streaming.rs          # Streaming parquet loading
 │   ├── discovery_dispatch.rs # Generic discovery module dispatch (Issue #375)
 │   ├── candidate_clustering.rs # Redundancy reduction
