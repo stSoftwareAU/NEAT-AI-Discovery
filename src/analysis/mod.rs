@@ -39,6 +39,7 @@ pub mod constants;
 pub mod diagnostics;
 pub mod discovery_dispatch;
 pub mod early_termination;
+pub mod ensemble_scoring;
 pub mod gpu;
 pub mod module_weights;
 pub mod neuron;

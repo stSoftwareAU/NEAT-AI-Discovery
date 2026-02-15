@@ -1079,3 +1079,47 @@ pub(crate) fn cluster_synapse_candidates(
 
     crate::watchdog::beat("analysis::analyze_all → candidate clustering finished");
 }
+
+/// Apply ensemble scoring to combine predictions across discovery modules (Issue #572).
+///
+/// Groups coordinated structural candidates by their target neuron/synapse,
+/// boosts candidates that multiple modules agree on, and penalises candidates
+/// where modules disagree on the direction of change.
+pub(crate) fn apply_ensemble_scoring(syn: &mut shared::AnalyzeSynapsesResult) {
+    use super::{ensemble_scoring, module_weights::ModuleOutcomeTracker, utils};
+    use crate::observability::PhaseTimer;
+
+    if syn.coordinated_structural_candidates.is_empty() {
+        return;
+    }
+
+    crate::watchdog::beat("analysis::analyze_all → ensemble scoring starting");
+    let _timer = PhaseTimer::new("ensemble_scoring");
+
+    let tracker = ModuleOutcomeTracker::default();
+    let before_count = syn.coordinated_structural_candidates.len();
+
+    let result = ensemble_scoring::apply_ensemble_scoring(
+        std::mem::take(&mut syn.coordinated_structural_candidates),
+        &tracker,
+    );
+
+    syn.coordinated_structural_candidates = result.candidates;
+
+    if utils::verbose_enabled() {
+        tracing::debug!(
+            before = before_count,
+            after = syn.coordinated_structural_candidates.len(),
+            ensemble = result.ensemble_candidates,
+            single_module = result.single_module_candidates,
+            "Ensemble scoring: combined cross-module predictions"
+        );
+    }
+
+    // Update metadata to reflect post-ensemble counts.
+    syn.metadata.candidates_returned = syn.helpful_synapses.len()
+        + syn.harmful_synapses.len()
+        + syn.coordinated_structural_candidates.len();
+
+    crate::watchdog::beat("analysis::analyze_all → ensemble scoring finished");
+}

@@ -328,6 +328,11 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         module_dispatch_specs::deduplicate_cross_module_candidates(syn);
     }
 
+    // Issue #572: Ensemble candidate scoring — combine predictions across modules.
+    if let Some(syn) = synapse_result.as_mut() {
+        module_dispatch_specs::apply_ensemble_scoring(syn);
+    }
+
     // Issue #224: Candidate clustering to reduce redundant ablation tests.
     if let Some(syn) = synapse_result.as_mut() {
         module_dispatch_specs::cluster_synapse_candidates(syn, &input.creature);
