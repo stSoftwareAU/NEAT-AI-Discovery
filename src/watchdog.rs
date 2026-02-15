@@ -198,19 +198,13 @@ fn watchdog_loop(config: WatchdogConfig, stop: Arc<AtomicBool>, state: Arc<BeatS
         if elapsed_ms >= config.stall_timeout.as_millis() as u64 {
             let current_stage = state.stage.lock().clone();
 
-            eprintln!("\n{}", "=".repeat(80));
-            eprintln!("[NEAT-AI-Discovery] WATCHDOG STALL DETECTED");
-            eprintln!(
-                "[NEAT-AI-Discovery] No progress heartbeat for {:.1} minutes (stall timeout = {:.1} minutes).",
-                elapsed_ms as f64 / 1000.0 / 60.0,
-                config.stall_timeout.as_secs_f64() / 60.0
+            tracing::error!(
+                elapsed_minutes = format_args!("{:.1}", elapsed_ms as f64 / 1000.0 / 60.0),
+                stall_timeout_minutes = format_args!("{:.1}", config.stall_timeout.as_secs_f64() / 60.0),
+                last_stage = %current_stage,
+                abort_delay_secs = format_args!("{:.1}", config.abort_delay.as_secs_f64()),
+                "WATCHDOG STALL DETECTED — triggering thread dump then aborting"
             );
-            eprintln!("[NEAT-AI-Discovery] Last known stage: {current_stage}");
-            eprintln!(
-                "[NEAT-AI-Discovery] Triggering SIGUSR1 thread dump, then aborting in {:.1} seconds.",
-                config.abort_delay.as_secs_f64()
-            );
-            eprintln!("{}", "=".repeat(80));
 
             // Trigger a thread dump if supported (Unix). This is best-effort.
             #[cfg(unix)]

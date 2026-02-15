@@ -1,4 +1,4 @@
-//! Structured observability and profiling hooks for NEAT-AI Discovery (Issue #214).
+//! Structured observability and profiling hooks for NEAT-AI Discovery (Issue #214, #575).
 //!
 //! This module provides infrastructure for understanding where time is spent during
 //! discovery analysis, enabling:
@@ -6,11 +6,13 @@
 //! - Identification of optimisation opportunities
 //! - Debugging of GPU-related performance issues
 //! - Understanding of resource utilisation patterns
+//! - Structured, levelled logging via the `tracing` crate (Issue #575)
 //!
 //! ## Environment Variables
 //!
 //! | Variable | Values | Description |
 //! |----------|--------|-------------|
+//! | `RUST_LOG` | filter string | Control log level (e.g. `neat_ai_discovery=info`) |
 //! | `NEAT_AI_DISCOVERY_TIMING` | `1` | Print phase timing to stderr |
 //! | `NEAT_AI_DISCOVERY_PROFILE` | `json` | Output structured profile as JSON |
 //! | `NEAT_AI_DISCOVERY_GPU_METRICS` | `1` | Print GPU metrics to stderr |
@@ -40,6 +42,35 @@
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
+
+// =============================================================================
+// Tracing Subscriber Initialisation (Issue #575)
+// =============================================================================
+
+/// Initialise the `tracing` subscriber with `EnvFilter` for structured logging.
+///
+/// The subscriber writes human-readable output to stderr, controlled by the
+/// `RUST_LOG` environment variable (e.g. `RUST_LOG=neat_ai_discovery=info`).
+///
+/// If `RUST_LOG` is not set, the default level is `warn` so that existing
+/// behaviour (minimal output) is preserved.
+///
+/// This function is idempotent — calling it more than once is safe (subsequent
+/// calls are no-ops).
+pub fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::fmt;
+    use tracing_subscriber::prelude::*;
+
+    // Use try_init so that repeated calls (or test environments that already
+    // have a subscriber) do not panic.
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::layer().with_target(true).with_writer(std::io::stderr))
+        .try_init();
+}
 
 // =============================================================================
 // Environment Variable Parsing
@@ -142,7 +173,7 @@ impl Drop for PhaseTimer {
     fn drop(&mut self) {
         if timing_enabled() {
             let duration = self.start.elapsed();
-            eprintln!("[timing] {}: {:?}", self.phase, duration);
+            tracing::debug!(phase = self.phase, ?duration, "phase timing");
         }
     }
 }
@@ -256,11 +287,11 @@ impl GpuMetrics {
     ///
     /// Output format: `[gpu] batches: N, samples: N, utilisation: N.N%`
     pub fn report(&self) {
-        eprintln!(
-            "[gpu] batches: {}, samples: {}, utilisation: {:.1}%",
-            self.batch_count(),
-            self.total_samples_processed(),
-            self.utilisation_percent()
+        tracing::info!(
+            batches = self.batch_count(),
+            samples = self.total_samples_processed(),
+            utilisation_percent = format_args!("{:.1}", self.utilisation_percent()),
+            "GPU metrics"
         );
     }
 }
@@ -501,9 +532,9 @@ impl ProfileData {
     pub fn report(&self) {
         if profile_mode() == ProfileMode::Json {
             let json = self.to_json();
-            eprintln!(
-                "{}",
-                serde_json::to_string_pretty(&json).unwrap_or_else(|_| "{}".to_string())
+            tracing::info!(
+                profile = %serde_json::to_string_pretty(&json).unwrap_or_else(|_| "{}".to_string()),
+                "profile data"
             );
         }
     }
@@ -539,9 +570,9 @@ impl Drop for ScopedPhaseTimer<'_> {
         let duration_ms = self.start.elapsed().as_millis() as u64;
         self.profile.record_phase(&self.phase, duration_ms);
 
-        // Also print to stderr if timing is enabled
+        // Also emit via tracing if timing is enabled
         if timing_enabled() {
-            eprintln!("[timing] {}: {}ms", self.phase, duration_ms);
+            tracing::debug!(phase = %self.phase, duration_ms, "scoped phase timing");
         }
     }
 }

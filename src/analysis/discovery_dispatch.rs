@@ -40,6 +40,7 @@ pub struct DiscoveryDetectionResult {
 ///
 /// The `detect_fn` closure encapsulates all module-specific logic (record
 /// collection, detection, and conversion to coordinated candidates).
+#[tracing::instrument(skip_all, fields(module = module_name, phase = phase_name))]
 pub fn run_discovery_module(
     syn: &mut shared::AnalyzeSynapsesResult,
     module_name: &str,
@@ -58,10 +59,11 @@ pub fn run_discovery_module(
         && !result.candidates.is_empty()
     {
         if utils::verbose_enabled() {
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] {module_name}: found {} detection(s), {} candidate(s)",
-                result.detected_count,
-                result.candidates.len()
+            tracing::debug!(
+                module = module_name,
+                detections = result.detected_count,
+                candidates = result.candidates.len(),
+                "discovery module results"
             );
         }
 
@@ -95,6 +97,7 @@ pub struct DiscoveryModuleSpec {
 ///
 /// The merge phase runs sequentially because `merge_coordinated_structural_replacements`
 /// mutates the synapse result and may re-sort/truncate the combined candidate set.
+#[tracing::instrument(skip_all, fields(module_count = modules.len()))]
 pub fn run_discovery_modules_parallel(
     syn: &mut shared::AnalyzeSynapsesResult,
     modules: Vec<DiscoveryModuleSpec>,
@@ -140,10 +143,11 @@ pub fn run_discovery_modules_parallel(
             && !result.candidates.is_empty()
         {
             if utils::verbose_enabled() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] {module_name}: found {} detection(s), {} candidate(s)",
-                    result.detected_count,
-                    result.candidates.len()
+                tracing::debug!(
+                    module = %module_name,
+                    detections = result.detected_count,
+                    candidates = result.candidates.len(),
+                    "discovery module results"
                 );
             }
 

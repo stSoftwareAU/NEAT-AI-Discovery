@@ -548,21 +548,21 @@ pub fn rank_focus_neurons(
                 (Arc::new(EagerRecordProvider::new(records)), false)
             }
             Err(memory_error) => {
-                eprintln!(
-                    "[NEAT-AI-Discovery] Insufficient memory for full pre-load in focus ranking. \
+                tracing::warn!(
+                    "Insufficient memory for full pre-load in focus ranking. \
                      Using lazy-loading mode (slower but memory-efficient)."
                 );
                 if verbose_enabled() {
-                    eprintln!("[NEAT-AI-Discovery][verbose] Memory check failed: {memory_error}");
+                    tracing::debug!(error = %memory_error, "Memory check failed");
                 }
                 (Arc::new(LazyRecordProvider::new(parquet_file)), true)
             }
         };
 
     if is_lazy_mode && verbose_enabled() {
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Lazy record cache initialised (cached: {} neurons)",
-            records_provider.len()
+        tracing::debug!(
+            cached_neurons = records_provider.len(),
+            "Lazy record cache initialised"
         );
     }
 
@@ -928,21 +928,21 @@ pub fn rank_focus_neurons_with_history(
                 (Arc::new(EagerRecordProvider::new(records)), false)
             }
             Err(memory_error) => {
-                eprintln!(
-                    "[NEAT-AI-Discovery] Insufficient memory for full pre-load in focus ranking. \
+                tracing::warn!(
+                    "Insufficient memory for full pre-load in focus ranking. \
                      Using lazy-loading mode (slower but memory-efficient)."
                 );
                 if verbose_enabled() {
-                    eprintln!("[NEAT-AI-Discovery][verbose] Memory check failed: {memory_error}");
+                    tracing::debug!(error = %memory_error, "Memory check failed");
                 }
                 (Arc::new(LazyRecordProvider::new(parquet_file)), true)
             }
         };
 
     if is_lazy_mode && verbose_enabled() {
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Lazy record cache initialised (cached: {} neurons)",
-            records_provider.len()
+        tracing::debug!(
+            cached_neurons = records_provider.len(),
+            "Lazy record cache initialised"
         );
     }
 

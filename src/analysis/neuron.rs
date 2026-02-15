@@ -114,34 +114,40 @@ pub(crate) fn analyze_neurons_with_cache(
     if verbose_enabled() {
         let non_input_count = input.creature.neurons.len();
         let total_neurons = input.creature.input + non_input_count;
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Neuron analysis creature config: {} input neurons (input-0 to input-{}), {} non-input neurons, {} total ordered neurons",
-            input.creature.input,
-            input.creature.input.saturating_sub(1),
+        tracing::debug!(
+            input_neurons = input.creature.input,
+            input_max_index = input.creature.input.saturating_sub(1),
             non_input_count,
-            total_neurons
+            total_neurons,
+            "Neuron analysis creature config"
         );
 
         // Verify input neurons exist in parquet by checking a sample
         if input.creature.input > 0 {
             match cache.get("input-0") {
                 Ok(records) => {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Parquet data check: input-0 has {} records",
-                        records.len()
+                    tracing::debug!(
+                        neuron = "input-0",
+                        record_count = records.len(),
+                        "Parquet data check"
                     );
                     if !records.is_empty() {
                         let first = &records[0];
                         let last = &records[records.len() - 1];
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Parquet data check: input-0 obs_index range [{}, {}], first activation={:.4}",
-                            first.obs_index, last.obs_index, first.activation
+                        tracing::debug!(
+                            neuron = "input-0",
+                            first_obs_index = first.obs_index,
+                            last_obs_index = last.obs_index,
+                            first_activation = format_args!("{:.4}", first.activation),
+                            "Parquet data check obs_index range"
                         );
                     }
                 }
                 Err(err) => {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Parquet data check FAILED: input-0 error: {err}"
+                    tracing::debug!(
+                        neuron = "input-0",
+                        error = %err,
+                        "Parquet data check failed"
                     );
                 }
             }
@@ -151,14 +157,17 @@ pub(crate) fn analyze_neurons_with_cache(
             let mid_uuid = format!("input-{mid_input}");
             match cache.get(&mid_uuid) {
                 Ok(records) => {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Parquet data check: {mid_uuid} has {} records",
-                        records.len()
+                    tracing::debug!(
+                        neuron = %mid_uuid,
+                        record_count = records.len(),
+                        "Parquet data check"
                     );
                 }
                 Err(err) => {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Parquet data check FAILED: {mid_uuid} error: {err}"
+                    tracing::debug!(
+                        neuron = %mid_uuid,
+                        error = %err,
+                        "Parquet data check failed"
                     );
                 }
             }
@@ -251,19 +260,19 @@ pub(crate) fn analyze_neurons_with_cache(
                 skipped_constant.iter().take(5).collect::<Vec<_>>()
             ));
         }
-        eprintln!(
-            "[NEAT-AI-Discovery] Filtered {} neuron(s) from add-neuron analysis. {}. Remaining valid targets: {}",
+        tracing::info!(
             total_skipped,
-            skipped_parts.join(". "),
-            focus_order.len()
+            skipped_detail = %skipped_parts.join(". "),
+            remaining_targets = focus_order.len(),
+            "Filtered neuron(s) from add-neuron analysis"
         );
     }
 
     // If no output neurons remain after filtering, return early with empty results
     if focus_order.is_empty() {
-        eprintln!(
-            "[NEAT-AI-Discovery] No output neurons in focus list ({original_focus_count} non-output neurons filtered out). \
-            Add-neuron candidates can only target output neurons."
+        tracing::warn!(
+            original_focus_count,
+            "No output neurons in focus list — add-neuron candidates can only target output neurons"
         );
         // Build no_candidate_reasons with correct reason for each neuron type
         let mut no_candidate_reasons: Vec<NeuronNoCandidateSummary> = Vec::new();
@@ -330,10 +339,10 @@ pub(crate) fn analyze_neurons_with_cache(
 
     // Log threshold-crossing neurons for visibility
     if verbose_enabled() && !threshold_targets.is_empty() {
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Using threshold-crossing model for {} STEP/BIPOLAR neurons: {:?}",
-            threshold_targets.len(),
-            threshold_targets.iter().take(5).collect::<Vec<_>>()
+        tracing::debug!(
+            count = threshold_targets.len(),
+            sample = ?threshold_targets.iter().take(5).collect::<Vec<_>>(),
+            "Using threshold-crossing model for STEP/BIPOLAR neurons"
         );
     }
 
@@ -401,7 +410,7 @@ pub(crate) fn analyze_neurons_with_cache(
                 Ok(records) => records,
                 Err(err) => {
                     if cfg!(debug_assertions) {
-                        eprintln!("Failed to load target neuron records for {target_uuid}: {err}");
+                        tracing::error!(target_uuid = %target_uuid, error = %err, "Failed to load target neuron records");
                     }
                     return Ok(());
                 }
@@ -432,13 +441,13 @@ pub(crate) fn analyze_neurons_with_cache(
                 let first_obs = target_records.first().map(|r| r.obs_index).unwrap_or(0);
                 let last_obs = target_records.last().map(|r| r.obs_index).unwrap_or(0);
                 let has_errors = target_records.iter().any(|r| !r.errors.is_empty());
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} has {} records, obs_index range [{}, {}], has_errors={}",
-                    target_uuid,
-                    target_records.len(),
-                    first_obs,
-                    last_obs,
-                    has_errors
+                tracing::trace!(
+                    target_uuid = %target_uuid,
+                    record_count = target_records.len(),
+                    first_obs_index = first_obs,
+                    last_obs_index = last_obs,
+                    has_errors,
+                    "Target neuron record details"
                 );
             }
 
@@ -482,12 +491,12 @@ pub(crate) fn analyze_neurons_with_cache(
 
             // Log focus neuron details for debugging
             if verbose_enabled() && total_eligible == 0 {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} (index {}) has 0 eligible upstream sources. creature.input={}, so input neurons span indices 0-{}. This indicates target_index <= 0 or a creature configuration mismatch.",
-                    target_uuid,
+                tracing::debug!(
+                    target_uuid = %target_uuid,
                     target_index,
-                    ordered_neurons_arc.len().saturating_sub(input.creature.neurons.len()),
-                    ordered_neurons_arc.len().saturating_sub(input.creature.neurons.len()).saturating_sub(1)
+                    creature_input = ordered_neurons_arc.len().saturating_sub(input.creature.neurons.len()),
+                    max_input_index = ordered_neurons_arc.len().saturating_sub(input.creature.neurons.len()).saturating_sub(1),
+                    "Target has 0 eligible upstream sources — possible creature configuration mismatch"
                 );
             }
 
@@ -516,8 +525,11 @@ pub(crate) fn analyze_neurons_with_cache(
                     Err(err) => {
                         load_failure_count += 1;
                         if verbose_enabled() {
-                            eprintln!(
-                                "[NEAT-AI-Discovery][verbose] Failed to load source neuron records for {source_uuid} (target {target_uuid}): {err}"
+                            tracing::debug!(
+                                source_uuid,
+                                target_uuid = %target_uuid,
+                                error = %err,
+                                "Failed to load source neuron records"
                             );
                         }
                     }
@@ -536,16 +548,29 @@ pub(crate) fn analyze_neurons_with_cache(
                 let sources_with_records = sources_to_process.len();
                 let empty_count = empty_record_sources.len();
                 if timed_out_during_loading && sources_checked == 0 {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {target_uuid} source loading: TIMEOUT before any of {total_eligible} eligible sources could be checked"
+                    tracing::debug!(
+                        target_uuid = %target_uuid,
+                        total_eligible,
+                        "Source loading timed out before any eligible sources could be checked"
                     );
                 } else if timed_out_during_loading {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {target_uuid} source loading: TIMEOUT after checking {sources_checked}/{total_eligible} eligible sources ({sources_with_records} with records, {empty_count} empty, {load_failure_count} failures)"
+                    tracing::debug!(
+                        target_uuid = %target_uuid,
+                        sources_checked,
+                        total_eligible,
+                        sources_with_records,
+                        empty_count,
+                        load_failure_count,
+                        "Source loading timed out after partial check"
                     );
                 } else {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {target_uuid} source loading: {total_eligible} eligible -> {sources_with_records} with records, {empty_count} empty records, {load_failure_count} load failures"
+                    tracing::debug!(
+                        target_uuid = %target_uuid,
+                        total_eligible,
+                        sources_with_records,
+                        empty_count,
+                        load_failure_count,
+                        "Source loading summary"
                     );
                 }
             }
@@ -592,13 +617,13 @@ pub(crate) fn analyze_neurons_with_cache(
                     } else {
                         0.0
                     };
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Neuron analysis target {}: {} sources grouped into {} locality groups (max={}, avg={:.1})",
-                        target_uuid,
-                        sources_to_process.len(),
-                        locality_groups.len(),
-                        max_group,
-                        avg_group
+                    tracing::debug!(
+                        target_uuid = %target_uuid,
+                        source_count = sources_to_process.len(),
+                        locality_group_count = locality_groups.len(),
+                        max_group_size = max_group,
+                        avg_group_size = format_args!("{avg_group:.1}"),
+                        "Neuron analysis locality grouping"
                     );
                 }
 
@@ -688,12 +713,13 @@ pub(crate) fn analyze_neurons_with_cache(
                         candidate.expected_creature_score_gain *= source_variance_discount;
 
                         if verbose_enabled() {
-                            eprintln!(
-                                "[NEAT-AI-Discovery][verbose] ReLU (push UP) {} -> {}: {:.2}% improvement (variance discount: {:.2})",
-                                result.source_uuid,
-                                target_uuid,
-                                candidate.expected_creature_score_gain * 100.0,
-                                source_variance_discount
+                            tracing::trace!(
+                                direction = "push UP",
+                                source_uuid = %result.source_uuid,
+                                target_uuid = %target_uuid,
+                                improvement_pct = format_args!("{:.2}", candidate.expected_creature_score_gain * 100.0),
+                                variance_discount = format_args!("{:.2}", source_variance_discount),
+                                "ReLU candidate identified"
                             );
                         }
                         // Issue #216: Direct method call - no lock needed with DashMap-based diagnostics
@@ -708,12 +734,13 @@ pub(crate) fn analyze_neurons_with_cache(
                         candidate.expected_creature_score_gain *= source_variance_discount;
 
                         if verbose_enabled() {
-                            eprintln!(
-                                "[NEAT-AI-Discovery][verbose] ReLU (push DOWN) {} -> {}: {:.2}% improvement (variance discount: {:.2})",
-                                result.source_uuid,
-                                target_uuid,
-                                candidate.expected_creature_score_gain * 100.0,
-                                source_variance_discount
+                            tracing::trace!(
+                                direction = "push DOWN",
+                                source_uuid = %result.source_uuid,
+                                target_uuid = %target_uuid,
+                                improvement_pct = format_args!("{:.2}", candidate.expected_creature_score_gain * 100.0),
+                                variance_discount = format_args!("{:.2}", source_variance_discount),
+                                "ReLU candidate identified"
                             );
                         }
                         // Issue #216: Direct method call - no lock needed with DashMap-based diagnostics
@@ -808,13 +835,12 @@ pub(crate) fn analyze_neurons_with_cache(
         );
 
         if verbose_enabled() && is_hidden {
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Neuron candidate → {} impact {:.3}: \
-                {:.4}% → {:.4}%",
-                &candidate.target_neuron_uuid[..12.min(candidate.target_neuron_uuid.len())],
-                impact,
-                original * 100.0,
-                candidate.expected_creature_score_gain * 100.0
+            tracing::trace!(
+                target_uuid = %&candidate.target_neuron_uuid[..12.min(candidate.target_neuron_uuid.len())],
+                impact = format_args!("{impact:.3}"),
+                original_pct = format_args!("{:.4}", original * 100.0),
+                discounted_pct = format_args!("{:.4}", candidate.expected_creature_score_gain * 100.0),
+                "Neuron candidate impact discount applied"
             );
         }
     }

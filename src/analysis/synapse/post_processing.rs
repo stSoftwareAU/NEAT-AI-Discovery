@@ -74,13 +74,12 @@ fn apply_impact_to_helpful(
     );
 
     if verbose_enabled() && is_hidden {
-        eprintln!(
-            "[NEAT-AI-Discovery][verbose] Synapse candidate → {} impact {:.3}: \
-            {:.4}% → {:.4}%",
-            &candidate.to_neuron_uuid[..12.min(candidate.to_neuron_uuid.len())],
-            impact,
-            original * 100.0,
-            candidate.expected_creature_score_gain * 100.0
+        tracing::debug!(
+            to_neuron_uuid = &candidate.to_neuron_uuid[..12.min(candidate.to_neuron_uuid.len())],
+            impact = format_args!("{impact:.3}"),
+            original_pct = format_args!("{:.4}", original * 100.0),
+            discounted_pct = format_args!("{:.4}", candidate.expected_creature_score_gain * 100.0),
+            "Synapse candidate impact discounting applied"
         );
     }
 }

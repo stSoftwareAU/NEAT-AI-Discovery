@@ -20,7 +20,7 @@ use crate::analysis::samples::{
     EPSILON, GpuHelpfulSample, HelpfulContribution, HelpfulSample, HelpfulStats, HelpfulUniforms,
     ReductionUniforms,
 };
-use crate::analysis::utils::{cap_gpu_batch_size_by_bytes, verbose_enabled};
+use crate::analysis::utils::cap_gpu_batch_size_by_bytes;
 
 use super::analyzer::{GPU_MAX_BATCH_ALLOC_BYTES, GpuAnalyzer};
 
@@ -222,17 +222,16 @@ impl GpuAnalyzer {
             GPU_MAX_BATCH_ALLOC_BYTES,
         );
 
-        if verbose_enabled() && effective_batch_size < self.batch_size {
+        if effective_batch_size < self.batch_size {
             let bytes_per_op = max_sample_len.saturating_mul(bytes_per_sample);
             let approx_mb = (bytes_per_op as f64 / (1024.0 * 1024.0)).max(0.0);
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Capping GPU helpful batch size from {} to {} due to large sample count. \
-                 max_sample_len={}, approx_buffers_per_op\u{2248}{:.1}MB, cap={}MB",
-                self.batch_size,
-                effective_batch_size,
-                max_sample_len,
-                approx_mb,
-                GPU_MAX_BATCH_ALLOC_BYTES / (1024 * 1024)
+            tracing::trace!(
+                original_batch_size = self.batch_size,
+                effective_batch_size = effective_batch_size,
+                max_sample_len = max_sample_len,
+                approx_buffers_per_op_mb = format_args!("{approx_mb:.1}"),
+                cap_mb = GPU_MAX_BATCH_ALLOC_BYTES / (1024 * 1024),
+                "Capping GPU helpful batch size due to large sample count"
             );
         }
 
@@ -488,11 +487,12 @@ impl GpuAnalyzer {
                     stats.error_activation_sum += contribution.error_activation;
                 }
 
-                // Log reduction usage for verbose output
-                if verbose_enabled() && non_empty_reduction_flags.get(i).copied().unwrap_or(false) {
+                // Log reduction usage at trace level
+                if non_empty_reduction_flags.get(i).copied().unwrap_or(false) {
                     let (_, count) = batch_contribution_sizes[i];
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] GPU reduction: transferred {count} partial sums instead of full contributions"
+                    tracing::trace!(
+                        partial_sums = count,
+                        "GPU reduction (helpful): transferred partial sums instead of full contributions"
                     );
                 }
 

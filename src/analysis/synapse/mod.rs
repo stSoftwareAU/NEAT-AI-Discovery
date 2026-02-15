@@ -283,8 +283,10 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         if std_dev_count > 0 {
             let avg = (std_dev_sum / std_dev_count as f64) as f32;
             if verbose_enabled() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Source variance profile: avg_std_dev={avg:.4} (sampled {std_dev_count} sources)"
+                tracing::debug!(
+                    avg_std_dev = %format!("{avg:.4}"),
+                    sampled_sources = std_dev_count,
+                    "Source variance profile"
                 );
             }
             Some(avg)

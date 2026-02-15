@@ -287,28 +287,31 @@ impl TargetDiagnostics {
             // AND ALL prior hidden/output neurons (with index < target_index, excluding constants)
             // This condition is rare - only occurs when neuron is connected to all possible sources
             if entry.already_connected_count == entry.total_eligible_sources {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} is fully connected: all {} eligible upstream sources already have synapses (all {} input neurons and all prior hidden/output neurons). This is a rare condition.",
-                    entry.target_uuid, entry.total_eligible_sources, entry.input_neuron_count
+                tracing::trace!(
+                    target_uuid = %entry.target_uuid,
+                    eligible_sources = entry.total_eligible_sources,
+                    input_neuron_count = entry.input_neuron_count,
+                    "Target is fully connected: all eligible upstream sources already have synapses"
                 );
                 continue;
             }
 
             // Check for record loading failures (this indicates a bug)
             if entry.record_load_failures > 0 {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} had {} record loading failures (this may indicate a bug - records exist but couldn't be loaded).",
-                    entry.target_uuid, entry.record_load_failures
+                tracing::warn!(
+                    target_uuid = %entry.target_uuid,
+                    record_load_failures = entry.record_load_failures,
+                    "Target had record loading failures (this may indicate a bug — records exist but couldn't be loaded)"
                 );
             }
 
             if entry.evaluated_candidates == 0 {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Target {} had {} eligible upstream neurons but none were evaluated ({} already connected, {} record load failures).",
-                    entry.target_uuid,
-                    entry.total_eligible_sources,
-                    entry.already_connected_count,
-                    entry.record_load_failures
+                tracing::trace!(
+                    target_uuid = %entry.target_uuid,
+                    eligible_sources = entry.total_eligible_sources,
+                    already_connected = entry.already_connected_count,
+                    record_load_failures = entry.record_load_failures,
+                    "Target had eligible upstream neurons but none were evaluated"
                 );
                 continue;
             }
@@ -316,9 +319,10 @@ impl TargetDiagnostics {
             let best = match &entry.best_rejection {
                 Some(detail) => detail,
                 None => {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} evaluated {} potential synapses but recorded no diagnostics.",
-                        entry.target_uuid, entry.evaluated_candidates
+                    tracing::trace!(
+                        target_uuid = %entry.target_uuid,
+                        evaluated_candidates = entry.evaluated_candidates,
+                        "Target evaluated potential synapses but recorded no diagnostics"
                     );
                     continue;
                 }
@@ -326,47 +330,35 @@ impl TargetDiagnostics {
 
             match best.reason {
                 RejectionReason::NoSamples => {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} skipped candidate from {} because no aligned samples were available (source records {}, target records {}).",
-                        entry.target_uuid,
-                        best.source_uuid,
-                        best.source_record_count,
-                        entry.target_record_count
+                    tracing::trace!(
+                        target_uuid = %entry.target_uuid,
+                        source_uuid = %best.source_uuid,
+                        source_record_count = best.source_record_count,
+                        target_record_count = entry.target_record_count,
+                        "Target skipped candidate — no aligned samples were available"
                     );
                 }
                 RejectionReason::ZeroImprovement => {
-                    eprintln!(
-                        "[NEAT-AI-Discovery][verbose] Target {} saw {} aligned samples from {} but GPU stats reported zero consistent improvements (positive {}, negative {}).",
-                        entry.target_uuid,
-                        best.sample_count,
-                        best.source_uuid,
-                        best.improved_count,
-                        best.worsened_count
+                    tracing::trace!(
+                        target_uuid = %entry.target_uuid,
+                        sample_count = best.sample_count,
+                        source_uuid = %best.source_uuid,
+                        improved_count = best.improved_count,
+                        worsened_count = best.worsened_count,
+                        "Target saw aligned samples but GPU stats reported zero consistent improvements"
                     );
                 }
                 RejectionReason::BelowThreshold => {
-                    if let Some(weight) = best.weight {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Target {} best candidate from {} improved {:.4} but remained below threshold {:.4} (improved {}, worsened {}, suggested weight {:.4}).",
-                            entry.target_uuid,
-                            best.source_uuid,
-                            best.expected_improvement,
-                            best.threshold,
-                            best.improved_count,
-                            best.worsened_count,
-                            weight
-                        );
-                    } else {
-                        eprintln!(
-                            "[NEAT-AI-Discovery][verbose] Target {} best candidate from {} improved {:.4} but remained below threshold {:.4} (improved {}, worsened {}).",
-                            entry.target_uuid,
-                            best.source_uuid,
-                            best.expected_improvement,
-                            best.threshold,
-                            best.improved_count,
-                            best.worsened_count
-                        );
-                    }
+                    tracing::trace!(
+                        target_uuid = %entry.target_uuid,
+                        source_uuid = %best.source_uuid,
+                        expected_improvement = best.expected_improvement,
+                        threshold = best.threshold,
+                        improved_count = best.improved_count,
+                        worsened_count = best.worsened_count,
+                        suggested_weight = best.weight,
+                        "Target best candidate improved but remained below threshold"
+                    );
                 }
             }
         }

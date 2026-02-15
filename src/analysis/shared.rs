@@ -123,8 +123,10 @@ impl TimingCollector {
             return;
         }
         let Ok(mut timings) = self.shader_timings.lock() else {
-            eprintln!(
-                "[NEAT-AI-Discovery] Warning: shader_timings mutex poisoned, skipping timing record"
+            tracing::warn!(
+                mutex = "shader_timings",
+                action = "skipping timing record",
+                "Mutex poisoned"
             );
             return;
         };
@@ -171,8 +173,10 @@ impl TimingCollector {
         let total_analysis_ms = self.start_time.elapsed().as_secs_f64() * 1000.0;
 
         let Ok(shader_timings_lock) = self.shader_timings.lock() else {
-            eprintln!(
-                "[NEAT-AI-Discovery] Warning: shader_timings mutex poisoned, returning partial timing data"
+            tracing::warn!(
+                mutex = "shader_timings",
+                action = "returning partial timing data",
+                "Mutex poisoned"
             );
             return None;
         };

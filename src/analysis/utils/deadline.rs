@@ -86,17 +86,23 @@ pub fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
     // NOTE: If these warnings appear, it's a bug in the calling code (NEAT-AI or GRQ)
     // that should be fixed to pass valid timeout values.
     let validated_ms = if relative_ms < MIN_DURATION_MS {
-        eprintln!(
-            "⚠️  [NEAT-AI-Discovery] BUG: analysis_deadline_ms ({:.1}s) is less than minimum (3s). \
-             Using default 10 minute timeout. Please fix the calling code (NEAT-AI/GRQ) to pass a valid timeout.",
-            relative_ms as f64 / 1000.0
+        let duration_secs = relative_ms as f64 / 1000.0;
+        tracing::warn!(
+            duration_secs,
+            min_secs = 3.0,
+            default_secs = DEFAULT_DURATION_MS as f64 / 1000.0,
+            "BUG: analysis_deadline_ms is less than minimum. Using default 10 minute timeout. \
+             Please fix the calling code (NEAT-AI/GRQ) to pass a valid timeout."
         );
         DEFAULT_DURATION_MS
     } else if relative_ms > MAX_DURATION_MS {
-        eprintln!(
-            "⚠️  [NEAT-AI-Discovery] BUG: analysis_deadline_ms ({:.1}s) exceeds maximum (1 hour). \
-             Using default 10 minute timeout. Please fix the calling code (NEAT-AI/GRQ) to pass a valid timeout.",
-            relative_ms as f64 / 1000.0
+        let duration_secs = relative_ms as f64 / 1000.0;
+        tracing::warn!(
+            duration_secs,
+            max_secs = MAX_DURATION_MS as f64 / 1000.0,
+            default_secs = DEFAULT_DURATION_MS as f64 / 1000.0,
+            "BUG: analysis_deadline_ms exceeds maximum. Using default 10 minute timeout. \
+             Please fix the calling code (NEAT-AI/GRQ) to pass a valid timeout."
         );
         DEFAULT_DURATION_MS
     } else {
@@ -200,14 +206,21 @@ pub fn log_analysis_start(
             // Absolute timestamp
             let elapsed_secs =
                 now_ms.saturating_sub(raw_ms.saturating_sub(deadline_duration_ms)) as f64 / 1000.0;
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] {analysis_type} deadline_ms={raw_ms} (absolute timestamp), \
-                 {elapsed_secs:.1}s elapsed since timeout was set, {deadline_secs:.1}s remaining"
+            tracing::debug!(
+                analysis_type,
+                deadline_ms = raw_ms,
+                kind = "absolute_timestamp",
+                elapsed_secs,
+                remaining_secs = deadline_secs,
+                "Deadline is an absolute timestamp"
             );
         } else {
             // Relative duration
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] {analysis_type} deadline_ms={raw_ms} (relative duration)"
+            tracing::debug!(
+                analysis_type,
+                deadline_ms = raw_ms,
+                kind = "relative_duration",
+                "Deadline is a relative duration"
             );
         }
     }
@@ -215,8 +228,10 @@ pub fn log_analysis_start(
     // Warn if timeout is very short - likely means focus selection took most of the allotted time
     const MIN_USEFUL_TIMEOUT_SECS: f64 = 60.0; // 1 minute minimum for useful analysis
     if deadline_secs < MIN_USEFUL_TIMEOUT_SECS {
-        eprintln!(
-            "💡  [NEAT-AI-Discovery]: Only {deadline_secs:.1}s remaining for {analysis_type} analysis. \
+        tracing::warn!(
+            remaining_secs = deadline_secs,
+            analysis_type,
+            "Only {deadline_secs:.1}s remaining for analysis. \
              Focus selection may have consumed most of the timeout. \
              Consider increasing discoveryAnalysisTimeoutMinutes."
         );
@@ -230,28 +245,32 @@ pub fn log_analysis_start(
         format!("{deadline_secs:.1} seconds")
     };
 
-    eprintln!(
-        "[NEAT-AI-Discovery] Starting {analysis_type} analysis: {focus_count} focus neurons, timeout: {timeout_str}"
+    tracing::info!(
+        analysis_type,
+        focus_count,
+        timeout = %timeout_str,
+        "Starting analysis"
     );
 
     // Log the shuffled order if verbose mode is enabled
     if verbose_enabled() && !shuffled_order.is_empty() {
         let preview: Vec<&str> = shuffled_order.iter().take(5).map(|s| s.as_str()).collect();
         let extra = shuffled_order.len().saturating_sub(5);
-        let suffix = if extra > 0 {
-            format!("... (+{extra} more)")
-        } else {
-            String::new()
-        };
-        eprintln!("[NEAT-AI-Discovery][verbose] Randomised focus order: {preview:?}{suffix}");
+        tracing::debug!(
+            preview = ?preview,
+            remaining = extra,
+            "Randomised focus order"
+        );
     }
 }
 
 /// Log when analysis timeout is reached. Always prints (not verbose-only).
 pub fn log_analysis_timeout(analysis_type: &str, completed_count: usize, total_count: usize) {
-    eprintln!(
-        "[NEAT-AI-Discovery] {analysis_type} analysis reached timeout. Completed {completed_count}/{total_count} focus neurons. \
-         Returning partial results."
+    tracing::info!(
+        analysis_type,
+        completed_count,
+        total_count,
+        "Analysis reached timeout. Returning partial results."
     );
 }
 
@@ -347,8 +366,9 @@ pub fn source_input_index_bias_from_env() -> Option<f64> {
         Ok(v) if v.is_finite() && v > 0.0 => Some(v),
         _ => {
             if verbose_enabled() {
-                eprintln!(
-                    "[NEAT-AI-Discovery][verbose] Ignoring invalid NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS={trimmed:?} (expected a finite number > 0)"
+                tracing::debug!(
+                    raw_value = trimmed,
+                    "Ignoring invalid NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS (expected a finite number > 0)"
                 );
             }
             None
@@ -425,11 +445,11 @@ pub fn order_eligible_sources(
 
         // Log when focusing on unused observations
         if verbose_enabled() && !unused_inputs.is_empty() {
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Focus unused observations: prioritising {} unused inputs over {} used inputs and {} other sources",
-                unused_inputs.len(),
-                used_inputs_vec.len(),
-                non_inputs.len()
+            tracing::debug!(
+                unused_input_count = unused_inputs.len(),
+                used_input_count = used_inputs_vec.len(),
+                other_source_count = non_inputs.len(),
+                "Focus unused observations: prioritising unused inputs"
             );
         }
 

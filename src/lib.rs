@@ -38,11 +38,20 @@ const LIB_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Static flag to ensure version is logged only once
 static VERSION_LOGGED: OnceCell<()> = OnceCell::new();
 
-/// Log library version on first initialization
-/// This shows the ACTUAL compiled version embedded in the binary at build time
+/// Log library version on first initialisation.
+///
+/// Initialises the tracing subscriber (Issue #575) and debug handlers, then
+/// logs the compiled library version.
 pub(crate) fn log_version_once() {
     VERSION_LOGGED.get_or_init(|| {
-        eprintln!("[NEAT-AI-Discovery] Library version {LIB_VERSION} initialized (compiled version embedded in binary)");
+        // Initialise structured logging subscriber before any tracing calls.
+        observability::init_tracing();
+
+        tracing::info!(
+            version = LIB_VERSION,
+            "NEAT-AI-Discovery library initialised"
+        );
+
         // Initialise debug handlers (deadlock detection + kill -3 thread dump)
         debug::init_debug_handlers();
     });

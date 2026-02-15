@@ -20,7 +20,7 @@ use crate::analysis::samples::{HelpfulSample, ReluStats};
 use crate::analysis::utils::{
     DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE, LOW_MEMORY_GPU_BATCH_SIZE, MemoryTier,
     check_system_memory_requirements, detect_memory_tier, ensure_xdg_runtime_dir, get_memory_info,
-    suppress_mesa_warnings_if_requested, verbose_enabled,
+    suppress_mesa_warnings_if_requested,
 };
 
 /// Maximum allocation size (256 MB) for a single GPU batch operation.
@@ -129,8 +129,10 @@ fn check_minimum_system_requirements() -> Option<GpuAvailabilityResult> {
     if let Some(reason) = check_system_memory_requirements(available, total) {
         let available_gb = available as f64 / (1024.0 * 1024.0 * 1024.0);
         let total_gb = total as f64 / (1024.0 * 1024.0 * 1024.0);
-        eprintln!(
-            "[NEAT-AI-Discovery] Memory check failed: {available_gb:.2}GB available / {total_gb:.1}GB total. Discovery disabled."
+        tracing::warn!(
+            available_gb = format_args!("{available_gb:.2}"),
+            total_gb = format_args!("{total_gb:.1}"),
+            "Memory check failed — discovery disabled"
         );
 
         // On macOS, memory failure should be treated as an error because:
@@ -229,22 +231,20 @@ fn log_gpu_info_once(
             wgpu::DeviceType::Other => "other",
         };
 
-        eprintln!(
-            "[NEAT-AI-Discovery] GPU: {} ({} {}) | Tier: {} | Batch size: {}",
-            adapter_info.name,
-            device_type,
-            format!("{:?}", adapter_info.backend).to_lowercase(),
-            tier_str,
-            batch_size
+        tracing::info!(
+            gpu_name = %adapter_info.name,
+            device_type = device_type,
+            backend = %format!("{:?}", adapter_info.backend).to_lowercase(),
+            tier = tier_str,
+            batch_size = batch_size,
+            "GPU device initialised"
         );
 
-        // Provide tuning hints for verbose mode
-        if verbose_enabled() {
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] GPU tuning: Set NEAT_AI_DISCOVERY_GPU_BATCH_SIZE=N to override (64-4096). \
-                 Higher values improve GPU utilisation on powerful hardware."
-            );
-        }
+        // Provide tuning hints at debug level
+        tracing::debug!(
+            "GPU tuning: set NEAT_AI_DISCOVERY_GPU_BATCH_SIZE=N to override (64-4096) — \
+             higher values improve GPU utilisation on powerful hardware"
+        );
 
         true
     });

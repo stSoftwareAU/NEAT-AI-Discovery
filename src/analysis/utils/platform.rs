@@ -64,7 +64,7 @@ pub fn ensure_xdg_runtime_dir() {
             if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
                 let runtime_dir = temp_dir.join("neat-ai-discovery-runtime");
                 if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
-                    eprintln!("[NEAT-AI-Discovery] Warning: Failed to create XDG_RUNTIME_DIR at {runtime_dir:?}: {e}");
+                    tracing::warn!(?runtime_dir, %e, "failed to create XDG_RUNTIME_DIR");
                 } else {
                     // SAFETY: Inside Once::call_once, so guaranteed single-threaded execution.
                     // Called before any GPU init.

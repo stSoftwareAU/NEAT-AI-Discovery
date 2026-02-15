@@ -68,6 +68,7 @@ pub(crate) fn run_optional_analysis<T>(
 /// When no deadline is set, the original "neuron-first" ordering is preserved for
 /// backwards compatibility (neuron discovery creates new network structure and may be
 /// considered higher value when time is not constrained).
+#[tracing::instrument(skip_all, fields(focus_neurons = input.focus_neurons.len()))]
 pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Phase timer for total analysis (Issue #214)
     let _total_timer = PhaseTimer::new("total_analysis");
@@ -85,35 +86,32 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
     // Issue #490: Compute current fingerprints and filter unchanged neurons.
     let current_fingerprints = neuron_fingerprint::compute_neuron_fingerprints(&input.creature);
-    let (effective_focus_neurons, fingerprint_cache_hits, fingerprint_cache_misses) = if let Some(
-        prev_fp,
-    ) =
-        &input.previous_neuron_fingerprints
-    {
-        let filter_result = neuron_fingerprint::filter_changed_neurons(
-            &input.focus_neurons,
-            &input.creature,
-            prev_fp,
-        );
-
-        if utils::verbose_enabled() {
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Incremental analysis (Issue #490): {}/{} focus neurons unchanged (skipped), {} to analyse",
-                filter_result.cache_hits,
-                filter_result.total_focus_neurons,
-                filter_result.cache_misses,
+    let (effective_focus_neurons, fingerprint_cache_hits, fingerprint_cache_misses) =
+        if let Some(prev_fp) = &input.previous_neuron_fingerprints {
+            let filter_result = neuron_fingerprint::filter_changed_neurons(
+                &input.focus_neurons,
+                &input.creature,
+                prev_fp,
             );
-        }
 
-        (
-            filter_result.changed,
-            filter_result.cache_hits,
-            filter_result.cache_misses,
-        )
-    } else {
-        let len = input.focus_neurons.len();
-        (input.focus_neurons.clone(), 0, len)
-    };
+            if utils::verbose_enabled() {
+                tracing::debug!(
+                    cache_hits = filter_result.cache_hits,
+                    total = filter_result.total_focus_neurons,
+                    to_analyse = filter_result.cache_misses,
+                    "incremental analysis: skipping unchanged focus neurons"
+                );
+            }
+
+            (
+                filter_result.changed,
+                filter_result.cache_hits,
+                filter_result.cache_misses,
+            )
+        } else {
+            let len = input.focus_neurons.len();
+            (input.focus_neurons.clone(), 0, len)
+        };
 
     if !include_synapse && !include_neuron {
         return Ok(AnalyzeAllResult {
@@ -128,9 +126,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // If all focus neurons were skipped by fingerprint filtering, return early.
     if effective_focus_neurons.is_empty() && (include_synapse || include_neuron) {
         if utils::verbose_enabled() {
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] All focus neurons unchanged — skipping GPU analysis",
-            );
+            tracing::debug!("all focus neurons unchanged — skipping GPU analysis");
         }
         return Ok(AnalyzeAllResult {
             synapse: None,
@@ -197,10 +193,10 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             && choose_deadline_order_synapse_first(input.random_seed, now_ms);
 
         if utils::verbose_enabled() {
-            eprintln!(
-                "[NEAT-AI-Discovery][verbose] Deadline set ({}ms) - randomised ordering: {} first",
-                input.analysis_deadline_ms.unwrap_or(0),
-                if synapse_first { "synapse" } else { "neuron" }
+            tracing::debug!(
+                deadline_ms = input.analysis_deadline_ms.unwrap_or(0),
+                first = if synapse_first { "synapse" } else { "neuron" },
+                "deadline set — randomised analysis ordering"
             );
         }
 

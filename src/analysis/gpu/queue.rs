@@ -656,10 +656,10 @@ impl Drop for GpuWorkQueue {
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                 // GPU thread is stuck (likely in Metal driver)
                 // Log warning and abandon the thread - it will be cleaned up on process exit
-                eprintln!(
-                    "[NEAT-AI-Discovery] WARNING: GPU thread did not exit within {GPU_SHUTDOWN_TIMEOUT_SECS}s. \
-                     The GPU driver may be hung. Abandoning thread to prevent deadlock. \
-                     Consider restarting the process."
+                tracing::warn!(
+                    timeout_secs = GPU_SHUTDOWN_TIMEOUT_SECS,
+                    "GPU thread did not exit within timeout — the GPU driver may be hung, \
+                     abandoning thread to prevent deadlock. Consider restarting the process."
                 );
                 // Don't join - the thread is stuck and joining would block forever
                 let _ = self.thread_handle.take();
