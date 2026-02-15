@@ -31,6 +31,7 @@ signal-hook = "0.3"  # Signal handling (SIGUSR1 for thread dumps)
 tempfile = "3.8"
 serial_test = "3.0"
 criterion = { version = "0.5", default-features = false, features = ["rayon", "cargo_bench_support"] }
+proptest = "1.6"  # Property-based testing for mathematical functions (Issue #573)
 
 [[bench]]
 name = "synapse_counts"
