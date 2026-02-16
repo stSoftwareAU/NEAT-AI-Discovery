@@ -82,6 +82,22 @@ pub const HELPFUL_REDUCE_SHADER: &str = include_str!("../../shaders/helpful_redu
 /// For 100K samples: 1.6MB → 6.3KB transfer
 pub const HARMFUL_REDUCE_SHADER: &str = include_str!("../../shaders/harmful_reduce.wgsl");
 
+/// ReLU contribution reduction shader (Issue #567).
+///
+/// Performs parallel tree reduction within workgroups to aggregate ReluContribution
+/// data on the GPU. This reduces GPU→CPU data transfer by ~255× for large sample counts.
+///
+/// For 100K samples: 4.0MB → 15.6KB transfer
+pub const RELU_REDUCE_SHADER: &str = include_str!("../../shaders/relu_reduce.wgsl");
+
+/// Activation output reduction shader (Issue #567).
+///
+/// Performs parallel tree reduction within workgroups to aggregate ActivationOutput
+/// data on the GPU. This reduces GPU→CPU data transfer by ~255× for large sample counts.
+///
+/// For 100K samples: 2.8MB → 10.9KB transfer
+pub const ACTIVATION_REDUCE_SHADER: &str = include_str!("../../shaders/activation_reduce.wgsl");
+
 // =============================================================================
 // Workgroup Configuration
 // =============================================================================
@@ -220,6 +236,14 @@ mod tests {
             HARMFUL_REDUCE_SHADER.contains("@compute"),
             "HARMFUL_REDUCE_SHADER should contain @compute decorator"
         );
+        assert!(
+            RELU_REDUCE_SHADER.contains("@compute"),
+            "RELU_REDUCE_SHADER should contain @compute decorator"
+        );
+        assert!(
+            ACTIVATION_REDUCE_SHADER.contains("@compute"),
+            "ACTIVATION_REDUCE_SHADER should contain @compute decorator"
+        );
     }
 
     #[test]
@@ -254,6 +278,14 @@ mod tests {
         assert!(
             HARMFUL_REDUCE_SHADER.contains(&expected_workgroup),
             "HARMFUL_REDUCE_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
+        );
+        assert!(
+            RELU_REDUCE_SHADER.contains(&expected_workgroup),
+            "RELU_REDUCE_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
+        );
+        assert!(
+            ACTIVATION_REDUCE_SHADER.contains(&expected_workgroup),
+            "ACTIVATION_REDUCE_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
         );
     }
 
@@ -303,6 +335,8 @@ mod tests {
             ("bias", BIAS_SHADER),
             ("helpful_reduce", HELPFUL_REDUCE_SHADER),
             ("harmful_reduce", HARMFUL_REDUCE_SHADER),
+            ("relu_reduce", RELU_REDUCE_SHADER),
+            ("activation_reduce", ACTIVATION_REDUCE_SHADER),
         ] {
             assert!(
                 shader.contains("struct") || shader.contains("fn "),
@@ -348,6 +382,22 @@ mod tests {
             HARMFUL_REDUCE_SHADER.contains("fn zero_contribution"),
             "HARMFUL_REDUCE_SHADER should contain zero_contribution function"
         );
+        assert!(
+            RELU_REDUCE_SHADER.contains("fn add_contributions"),
+            "RELU_REDUCE_SHADER should contain add_contributions function"
+        );
+        assert!(
+            RELU_REDUCE_SHADER.contains("fn zero_contribution"),
+            "RELU_REDUCE_SHADER should contain zero_contribution function"
+        );
+        assert!(
+            ACTIVATION_REDUCE_SHADER.contains("fn add_outputs"),
+            "ACTIVATION_REDUCE_SHADER should contain add_outputs function"
+        );
+        assert!(
+            ACTIVATION_REDUCE_SHADER.contains("fn zero_output"),
+            "ACTIVATION_REDUCE_SHADER should contain zero_output function"
+        );
     }
 
     #[test]
@@ -360,6 +410,14 @@ mod tests {
         assert!(
             HARMFUL_REDUCE_SHADER.contains("var<workgroup>"),
             "HARMFUL_REDUCE_SHADER should use workgroup shared memory"
+        );
+        assert!(
+            RELU_REDUCE_SHADER.contains("var<workgroup>"),
+            "RELU_REDUCE_SHADER should use workgroup shared memory"
+        );
+        assert!(
+            ACTIVATION_REDUCE_SHADER.contains("var<workgroup>"),
+            "ACTIVATION_REDUCE_SHADER should use workgroup shared memory"
         );
     }
 }

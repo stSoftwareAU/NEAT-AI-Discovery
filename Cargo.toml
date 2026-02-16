@@ -87,3 +87,7 @@ harness = false
 name = "async_pipeline"
 harness = false
 
+[[bench]]
+name = "gpu_shader_workgroup"
+harness = false
+

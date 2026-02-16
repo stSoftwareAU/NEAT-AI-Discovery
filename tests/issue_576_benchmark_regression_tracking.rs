@@ -23,6 +23,7 @@ const EXPECTED_BENCHMARKS: &[&str] = &[
     "upsert_candidate",
     "gpu_buffer_transfers",
     "async_pipeline",
+    "gpu_shader_workgroup",
 ];
 
 #[test]

@@ -12,9 +12,12 @@ use wgpu::util::DeviceExt;
 use crate::analysis::gpu::device::{
     GPU_BUFFER_MAP_TIMEOUT_SECS, wait_for_buffer_map, wait_for_buffer_maps_batch,
 };
-use crate::analysis::gpu::shaders::{ACTIVATION_SHADER, WORKGROUP_SIZE};
+use crate::analysis::gpu::shaders::{
+    ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER, GPU_REDUCTION_THRESHOLD, WORKGROUP_SIZE,
+};
 use crate::analysis::samples::{
     ActivationOutput, ActivationUniforms, EPSILON, GpuHelpfulSample, HelpfulSample,
+    ReductionUniforms,
 };
 
 use super::analyzer::GpuAnalyzer;
@@ -86,6 +89,73 @@ impl GpuAnalyzer {
 
         (layout, pipeline)
     }
+
+    /// Build the activation output reduction pipeline (Issue #567).
+    ///
+    /// This pipeline aggregates ActivationOutput data on the GPU using parallel
+    /// tree reduction within workgroups, reducing GPU→CPU transfer by ~255×.
+    pub(super) fn build_activation_reduce_pipeline(
+        device: &wgpu::Device,
+        label: &str,
+    ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("activation-reduce-shader"),
+            source: wgpu::ShaderSource::Wgsl(ACTIVATION_REDUCE_SHADER.into()),
+        });
+
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("activation-reduce-bind-group"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: &[&layout],
+            immediate_size: 0,
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        (layout, pipeline)
+    }
 }
 
 // =============================================================================
@@ -96,6 +166,9 @@ impl GpuAnalyzer {
     /// GPU-accelerated general activation evaluation.
     ///
     /// Returns (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count).
+    ///
+    /// For sample sets with >= GPU_REDUCTION_THRESHOLD samples, uses GPU-side
+    /// workgroup reduction to minimise data transfer (Issue #567).
     pub fn evaluate_activation_gpu(
         &self,
         samples: &[HelpfulSample],
@@ -181,18 +254,13 @@ impl GpuAnalyzer {
             label: Some("activation-bind-group"),
         });
 
-        let output_size = (std::mem::size_of::<ActivationOutput>() * samples.len()) as u64;
-        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("activation-staging-buffer"),
-            size: output_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("activation-command-encoder"),
         });
 
+        // Per-sample computation pass
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("activation-compute-pass"),
@@ -200,11 +268,102 @@ impl GpuAnalyzer {
             });
             compute_pass.set_pipeline(activation_pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
-            let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
             compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
         }
 
-        encoder.copy_buffer_to_buffer(&outputs_buffer, 0, &staging_buffer, 0, output_size);
+        // Issue #567: Use GPU-side reduction for large sample counts
+        let use_reduction = samples.len() >= GPU_REDUCTION_THRESHOLD;
+
+        let (staging_buffer, transfer_size) = if use_reduction {
+            let activation_reduce_layout = self
+                .activation_reduce_layout
+                .as_ref()
+                .context("GPU activation reduce layout not initialised")?;
+            let activation_reduce_pipeline = self
+                .activation_reduce_pipeline
+                .as_ref()
+                .context("GPU activation reduce pipeline not initialised")?;
+
+            let num_workgroups = workgroups;
+            let partial_sums_size =
+                (std::mem::size_of::<ActivationOutput>() * num_workgroups as usize) as u64;
+
+            let partial_sums_zeroed = vec![ActivationOutput::zeroed(); num_workgroups as usize];
+            let partial_sums_buffer =
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("activation-partial-sums-buffer"),
+                    contents: bytemuck::cast_slice(&partial_sums_zeroed),
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_SRC
+                        | wgpu::BufferUsages::COPY_DST,
+                });
+
+            let reduction_uniforms = ReductionUniforms {
+                contribution_count: samples.len() as u32,
+                pad0: 0,
+                pad1: 0,
+                pad2: 0,
+            };
+            let reduction_uniform_buffer =
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("activation-reduction-uniform-buffer"),
+                    contents: bytemuck::bytes_of(&reduction_uniforms),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+
+            let reduction_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: activation_reduce_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: outputs_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: partial_sums_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: reduction_uniform_buffer.as_entire_binding(),
+                    },
+                ],
+                label: Some("activation-reduction-bind-group"),
+            });
+
+            // Reduction compute pass
+            {
+                let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("activation-reduction-compute-pass"),
+                    timestamp_writes: None,
+                });
+                compute_pass.set_pipeline(activation_reduce_pipeline);
+                compute_pass.set_bind_group(0, &reduction_bind_group, &[]);
+                compute_pass.dispatch_workgroups(num_workgroups, 1, 1);
+            }
+
+            let staging = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("activation-staging-buffer-reduced"),
+                size: partial_sums_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            encoder.copy_buffer_to_buffer(&partial_sums_buffer, 0, &staging, 0, partial_sums_size);
+
+            (staging, partial_sums_size)
+        } else {
+            let output_size = (std::mem::size_of::<ActivationOutput>() * samples.len()) as u64;
+            let staging = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("activation-staging-buffer"),
+                size: output_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            encoder.copy_buffer_to_buffer(&outputs_buffer, 0, &staging, 0, output_size);
+
+            (staging, output_size)
+        };
 
         queue.submit(Some(encoder.finish()));
 
@@ -223,27 +382,44 @@ impl GpuAnalyzer {
         let data = buffer_slice.get_mapped_range();
         let outputs: &[ActivationOutput] = bytemuck::cast_slice(&data);
 
-        let mut sum_activation_sq = 0.0;
-        let mut sum_error_activation = 0.0;
-        let mut total_baseline_error_sq = 0.0;
+        let mut sum_activation_sq = 0.0f32;
+        let mut sum_error_activation = 0.0f32;
 
-        for (idx, output) in outputs.iter().enumerate() {
-            if idx < samples.len() {
-                let sample = &samples[idx];
-                if sample.avg_error.is_finite() {
-                    total_baseline_error_sq += sample.avg_error * sample.avg_error;
-                }
-                if output.valid > 0 {
+        if use_reduction {
+            // Reduction path: aggregate partial sums (much fewer elements)
+            for output in outputs {
+                sum_activation_sq += output.output_sq;
+                sum_error_activation += output.error_output;
+            }
+
+            if outputs.len() > 1 {
+                tracing::trace!(
+                    partial_sums = outputs.len(),
+                    "GPU reduction (activation): transferred partial sums instead of full outputs"
+                );
+            }
+        } else {
+            // Direct path: iterate over all outputs
+            for (idx, output) in outputs.iter().enumerate() {
+                if idx < samples.len() && output.valid > 0 {
                     sum_activation_sq += output.output_sq;
                     sum_error_activation += output.error_output;
                 }
             }
         }
 
+        // Baseline error computed on CPU (same for both paths)
+        let total_baseline_error_sq: f32 = samples
+            .iter()
+            .filter(|s| s.avg_error.is_finite())
+            .map(|s| s.avg_error * s.avg_error)
+            .sum();
+
         // Note: improved_count is not calculated here because it requires weight validation
         // that happens in the caller. The caller will calculate improved_count after
         // validating and clamping the outgoing_weight.
 
+        let _ = transfer_size; // Used for buffer sizing
         drop(data);
         staging_buffer.unmap();
 
@@ -260,12 +436,16 @@ impl GpuAnalyzer {
     /// Issue #201: Evaluates multiple activation function configurations in a single
     /// GPU command buffer submission, reducing CPU-GPU round-trips by 10-20%.
     ///
+    /// Issue #567: For sample sets with >= GPU_REDUCTION_THRESHOLD samples, uses
+    /// GPU-side workgroup reduction to minimise data transfer by ~255×.
+    ///
     /// Instead of submitting separate GPU operations for each (activation_type, orientation, scale)
     /// combination, this method:
     /// 1. Uploads sample data once
     /// 2. Creates all compute passes in a single command buffer
-    /// 3. Maps all result buffers together with a single `device.poll(Wait)`
-    /// 4. Processes all results in a single CPU pass
+    /// 3. Optionally reduces outputs on GPU for large sample counts
+    /// 4. Maps all result buffers together with a single `device.poll(Wait)`
+    /// 5. Processes all results in a single CPU pass
     ///
     /// # Arguments
     /// * `samples` - The sample data to evaluate (uploaded once)
@@ -307,6 +487,9 @@ impl GpuAnalyzer {
             .as_ref()
             .context("GPU activation pipeline not initialised")?;
 
+        // Issue #567: Check if we should use GPU reduction
+        let use_reduction = samples.len() >= GPU_REDUCTION_THRESHOLD;
+
         // Pre-convert samples to GPU format once (shared across all configs)
         let gpu_samples: Vec<GpuHelpfulSample> = samples
             .iter()
@@ -330,12 +513,15 @@ impl GpuAnalyzer {
 
         // Calculate sizes
         let outputs_zeroed = vec![ActivationOutput::zeroed(); samples.len()];
-        let output_size = (std::mem::size_of::<ActivationOutput>() * samples.len()) as u64;
+        let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
 
         // Create output buffers, staging buffers, uniform buffers, and bind groups for each config
         let mut output_buffers = Vec::with_capacity(activation_configs.len());
         let mut staging_buffers = Vec::with_capacity(activation_configs.len());
         let mut bind_groups = Vec::with_capacity(activation_configs.len());
+        // Issue #567: Track partial sums buffers for reduction path
+        let mut partial_sums_buffers: Vec<Option<wgpu::Buffer>> =
+            Vec::with_capacity(activation_configs.len());
 
         for (config_idx, &(activation_type, orientation, scale)) in
             activation_configs.iter().enumerate()
@@ -347,14 +533,6 @@ impl GpuAnalyzer {
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
-            });
-
-            // Staging buffer for this config
-            let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("batched-activation-staging-buffer-{config_idx}")),
-                size: output_size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
             });
 
             // Uniform buffer for this config
@@ -393,8 +571,44 @@ impl GpuAnalyzer {
                 label: Some(&format!("batched-activation-bind-group-{config_idx}")),
             });
 
+            if use_reduction {
+                // Create partial sums buffer and staging for reduced output
+                let partial_sums_size =
+                    (std::mem::size_of::<ActivationOutput>() * workgroups as usize) as u64;
+                let partial_sums_zeroed = vec![ActivationOutput::zeroed(); workgroups as usize];
+                let partial_sums_buffer =
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&format!("batched-activation-partial-sums-{config_idx}")),
+                        contents: bytemuck::cast_slice(&partial_sums_zeroed),
+                        usage: wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::COPY_SRC
+                            | wgpu::BufferUsages::COPY_DST,
+                    });
+
+                let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(&format!("batched-activation-staging-reduced-{config_idx}")),
+                    size: partial_sums_size,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+
+                partial_sums_buffers.push(Some(partial_sums_buffer));
+                staging_buffers.push(staging_buffer);
+            } else {
+                // Direct transfer path
+                let output_size = (std::mem::size_of::<ActivationOutput>() * samples.len()) as u64;
+                let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(&format!("batched-activation-staging-buffer-{config_idx}")),
+                    size: output_size,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+
+                partial_sums_buffers.push(None);
+                staging_buffers.push(staging_buffer);
+            }
+
             output_buffers.push(outputs_buffer);
-            staging_buffers.push(staging_buffer);
             bind_groups.push(bind_group);
         }
 
@@ -403,8 +617,7 @@ impl GpuAnalyzer {
             label: Some("batched-activation-command-encoder"),
         });
 
-        // Issue all compute passes in a single command buffer
-        let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
+        // Issue all per-sample compute passes in a single command buffer
         for (config_idx, bind_group) in bind_groups.iter().enumerate() {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(&format!("batched-activation-compute-pass-{config_idx}")),
@@ -415,9 +628,84 @@ impl GpuAnalyzer {
             compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
         }
 
-        // Copy all output buffers to staging buffers
-        for (output_buffer, staging_buffer) in output_buffers.iter().zip(staging_buffers.iter()) {
-            encoder.copy_buffer_to_buffer(output_buffer, 0, staging_buffer, 0, output_size);
+        // Issue #567: Add reduction passes and copy commands
+        if use_reduction {
+            let activation_reduce_layout = self
+                .activation_reduce_layout
+                .as_ref()
+                .context("GPU activation reduce layout not initialised")?;
+            let activation_reduce_pipeline = self
+                .activation_reduce_pipeline
+                .as_ref()
+                .context("GPU activation reduce pipeline not initialised")?;
+
+            let reduction_uniforms = ReductionUniforms {
+                contribution_count: samples.len() as u32,
+                pad0: 0,
+                pad1: 0,
+                pad2: 0,
+            };
+            let reduction_uniform_buffer =
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("batched-activation-reduction-uniforms"),
+                    contents: bytemuck::bytes_of(&reduction_uniforms),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+
+            let partial_sums_size =
+                (std::mem::size_of::<ActivationOutput>() * workgroups as usize) as u64;
+
+            for (config_idx, output_buffer) in output_buffers.iter().enumerate() {
+                let partial_sums_buffer = partial_sums_buffers[config_idx].as_ref().unwrap();
+
+                let reduction_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: activation_reduce_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: output_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: partial_sums_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: reduction_uniform_buffer.as_entire_binding(),
+                        },
+                    ],
+                    label: Some(&format!(
+                        "batched-activation-reduction-bind-group-{config_idx}"
+                    )),
+                });
+
+                {
+                    let mut compute_pass =
+                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some(&format!("batched-activation-reduction-pass-{config_idx}")),
+                            timestamp_writes: None,
+                        });
+                    compute_pass.set_pipeline(activation_reduce_pipeline);
+                    compute_pass.set_bind_group(0, &reduction_bind_group, &[]);
+                    compute_pass.dispatch_workgroups(workgroups, 1, 1);
+                }
+
+                // Copy partial sums to staging
+                encoder.copy_buffer_to_buffer(
+                    partial_sums_buffer,
+                    0,
+                    &staging_buffers[config_idx],
+                    0,
+                    partial_sums_size,
+                );
+            }
+        } else {
+            // Direct path: copy all output buffers to staging buffers
+            let output_size = (std::mem::size_of::<ActivationOutput>() * samples.len()) as u64;
+            for (output_buffer, staging_buffer) in output_buffers.iter().zip(staging_buffers.iter())
+            {
+                encoder.copy_buffer_to_buffer(output_buffer, 0, staging_buffer, 0, output_size);
+            }
         }
 
         // Submit the SINGLE command buffer with ALL operations
@@ -453,10 +741,19 @@ impl GpuAnalyzer {
             let mut sum_activation_sq = 0.0f32;
             let mut sum_error_activation = 0.0f32;
 
-            for (idx, output) in outputs.iter().enumerate() {
-                if idx < samples.len() && output.valid > 0 {
+            if use_reduction {
+                // Reduction path: aggregate partial sums
+                for output in outputs {
                     sum_activation_sq += output.output_sq;
                     sum_error_activation += output.error_output;
+                }
+            } else {
+                // Direct path: iterate over all outputs
+                for (idx, output) in outputs.iter().enumerate() {
+                    if idx < samples.len() && output.valid > 0 {
+                        sum_activation_sq += output.output_sq;
+                        sum_error_activation += output.error_output;
+                    }
                 }
             }
 

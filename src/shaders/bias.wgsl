@@ -196,71 +196,108 @@ fn apply_activation(x: f32, activation_type: u32) -> f32 {
     }
 }
 
+// Issue #567: Workgroup shared memory for tiled sample loading.
+// Instead of each thread reading all samples from global memory independently,
+// we load tiles of samples into shared memory cooperatively, then all threads
+// process them from fast shared memory. This reduces global memory reads by
+// the workgroup size factor (256×).
+const TILE_SIZE: u32 = 256u;
+var<workgroup> shared_samples: array<HelpfulSample, 256>;
+
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+fn main(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>
+) {
     let bias_idx = global_id.x;
-    if (bias_idx >= uniforms.bias_count) {
-        return;
-    }
+    let local_idx = local_id.x;
 
-    let bias = bias_candidates[bias_idx];
-    var result: BiasResult;
-    result.bias_value = bias;
-    result.error_reduction = 0.0;
-    result.valid_sample_count = 0u;
-    result.pad0 = 0u;
+    // Each thread processes one bias candidate (if in range)
+    let in_range = bias_idx < uniforms.bias_count;
 
-    // Calculate baseline error (no new neuron)
+    var bias: f32 = 0.0;
     var total_baseline_error_sq: f32 = 0.0;
     var total_new_error_sq: f32 = 0.0;
     var valid_samples: u32 = 0u;
 
-    // Test this bias value across all samples
-    for (var sample_idx: u32 = 0u; sample_idx < uniforms.sample_count; sample_idx = sample_idx + 1u) {
-        let sample = samples[sample_idx];
+    if (in_range) {
+        bias = bias_candidates[bias_idx];
+    }
 
-        // Skip non-finite samples
-        if (!is_finite_value(sample.activation) || !is_finite_value(sample.avg_error)) {
-            continue;
-        }
+    // Process samples in tiles using shared memory
+    let tile_count = (uniforms.sample_count + TILE_SIZE - 1u) / TILE_SIZE;
 
-        // Accumulate baseline error
-        total_baseline_error_sq = total_baseline_error_sq + (sample.avg_error * sample.avg_error);
-
-        // Calculate new neuron's activation with this bias
-        let pre_activation = uniforms.incoming_weight * sample.activation + bias;
-        let new_neuron_activation = apply_activation(pre_activation, uniforms.activation_type);
-
-        if (!is_finite_value(new_neuron_activation)) {
-            // If activation is non-finite, this sample keeps baseline error
-            total_new_error_sq = total_new_error_sq + (sample.avg_error * sample.avg_error);
-            continue;
-        }
-
-        // Calculate new error at target neuron
-        let correction = uniforms.outgoing_weight * new_neuron_activation;
-        let new_error = sample.avg_error - correction;
-
-        if (is_finite_value(new_error)) {
-            total_new_error_sq = total_new_error_sq + (new_error * new_error);
-            valid_samples = valid_samples + 1u;
+    for (var tile: u32 = 0u; tile < tile_count; tile = tile + 1u) {
+        // Cooperatively load a tile of samples into shared memory
+        let sample_load_idx = tile * TILE_SIZE + local_idx;
+        if (sample_load_idx < uniforms.sample_count) {
+            shared_samples[local_idx] = samples[sample_load_idx];
         } else {
-            // Non-finite new error, keep baseline
-            total_new_error_sq = total_new_error_sq + (sample.avg_error * sample.avg_error);
+            // Pad with invalid samples (NaN error so they get skipped)
+            var pad_sample: HelpfulSample;
+            pad_sample.activation = 0.0;
+            pad_sample.avg_error = bitcast<f32>(0x7fc00000u); // NaN
+            shared_samples[local_idx] = pad_sample;
         }
+
+        // Synchronise: all threads must finish loading before processing
+        workgroupBarrier();
+
+        // Each thread processes the tile for its own bias candidate
+        if (in_range) {
+            let tile_end = min(TILE_SIZE, uniforms.sample_count - tile * TILE_SIZE);
+            for (var i: u32 = 0u; i < tile_end; i = i + 1u) {
+                let sample = shared_samples[i];
+
+                // Skip non-finite samples
+                if (!is_finite_value(sample.activation) || !is_finite_value(sample.avg_error)) {
+                    continue;
+                }
+
+                // Accumulate baseline error
+                total_baseline_error_sq = total_baseline_error_sq + (sample.avg_error * sample.avg_error);
+
+                // Calculate new neuron's activation with this bias
+                let pre_activation = uniforms.incoming_weight * sample.activation + bias;
+                let new_neuron_activation = apply_activation(pre_activation, uniforms.activation_type);
+
+                if (!is_finite_value(new_neuron_activation)) {
+                    total_new_error_sq = total_new_error_sq + (sample.avg_error * sample.avg_error);
+                    continue;
+                }
+
+                // Calculate new error at target neuron
+                let correction = uniforms.outgoing_weight * new_neuron_activation;
+                let new_error = sample.avg_error - correction;
+
+                if (is_finite_value(new_error)) {
+                    total_new_error_sq = total_new_error_sq + (new_error * new_error);
+                    valid_samples = valid_samples + 1u;
+                } else {
+                    total_new_error_sq = total_new_error_sq + (sample.avg_error * sample.avg_error);
+                }
+            }
+        }
+
+        // Synchronise: all threads must finish processing before loading next tile
+        workgroupBarrier();
     }
 
-    // Only consider this bias if we have enough valid samples
-    if (valid_samples >= uniforms.min_sample_count) {
-        // Error reduction is positive when new error is less than baseline
-        result.error_reduction = total_baseline_error_sq - total_new_error_sq;
-        result.valid_sample_count = valid_samples;
-    } else {
-        // Not enough samples, mark as invalid with negative error reduction
-        result.error_reduction = -1e10;
-        result.valid_sample_count = valid_samples;
-    }
+    // Write result
+    if (in_range) {
+        var result: BiasResult;
+        result.bias_value = bias;
+        result.pad0 = 0u;
 
-    results[bias_idx] = result;
+        if (valid_samples >= uniforms.min_sample_count) {
+            result.error_reduction = total_baseline_error_sq - total_new_error_sq;
+            result.valid_sample_count = valid_samples;
+        } else {
+            result.error_reduction = -1e10;
+            result.valid_sample_count = valid_samples;
+        }
+
+        results[bias_idx] = result;
+    }
 }
 
