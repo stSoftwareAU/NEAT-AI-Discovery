@@ -8,12 +8,12 @@ use std::sync::Arc;
 
 use super::{
     activation_mismatch, activation_recommendation, bias_perturbation, bottleneck, bounded_range,
-    cache, correlated_error, dead_neuron, discovery_dispatch, dormant_synapse, error_plateau,
-    gradient_discovery, input_sensitivity, multi_hop, noise_signal, observation_utilisation,
-    operating_point, opposing_synapse, oscillating_neuron, output_bias_drift,
-    output_squash_mismatch, restricted_range, sample_weighted, saturation, sentinel_gating, shared,
-    skip_connection, squash_weight_rescale, symmetry_breaking, topology, topology_diversification,
-    unbounded_capping, weight_coherence, weight_magnitude_reset,
+    cache, co_adaptation, correlated_error, dead_neuron, discovery_dispatch, dormant_synapse,
+    error_plateau, gradient_discovery, input_sensitivity, multi_hop, noise_signal,
+    observation_utilisation, operating_point, opposing_synapse, oscillating_neuron,
+    output_bias_drift, output_squash_mismatch, restricted_range, sample_weighted, saturation,
+    sentinel_gating, shared, skip_connection, squash_weight_rescale, symmetry_breaking, topology,
+    topology_diversification, unbounded_capping, weight_coherence, weight_magnitude_reset,
 };
 
 /// Build all discovery module specs for parallel dispatch.
@@ -985,6 +985,33 @@ pub(crate) fn build_discovery_module_specs(
                 let candidates = skip_connection::skip_connections_to_coordinated_candidates(
                     &detected, &creature,
                 );
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            }),
+        });
+    }
+
+    // Issue #571: Activation co-adaptation detection for redundant neuron pairs
+    {
+        let cache = Arc::clone(shared_cache);
+        let hidden = Arc::clone(hidden_neurons);
+        let creature = Arc::clone(creature);
+        modules.push(discovery_dispatch::DiscoveryModuleSpec {
+            module_name: "co-adaptation detection".to_string(),
+            phase_name: "co_adaptation_detection",
+            detect_fn: Box::new(move || {
+                if hidden.len() < 2 {
+                    return None;
+                }
+                let records = cache.load_records_for_hidden(&hidden);
+                let detected = co_adaptation::detect_co_adapted_neurons(&creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    co_adaptation::co_adapted_pairs_to_coordinated_candidates(&detected, &creature);
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
