@@ -24,7 +24,7 @@ use crate::analysis::gpu::GpuWorkQueue;
 use crate::analysis::redundant_path::{
     ExistingPathContribution, detect_redundant_paths, redundant_paths_to_coordinated_candidates,
 };
-use crate::analysis::samples::{EPSILON, HelpfulSample, NeuronStats};
+use crate::analysis::samples::{EPSILON, HelpfulSample, HelpfulStats, NeuronStats};
 use crate::analysis::shared::TimingScope;
 use crate::analysis::utils::{
     OrderedNeuron, deadline_passed, order_eligible_sources, parse_input_index, verbose_enabled,
@@ -516,50 +516,70 @@ pub(crate) fn analyse_single_target(
         }));
     }
 
-    // Process helpful synapse candidates via GPU batching
-    if !helpful_work_batch.is_empty() {
-        process_helpful_batch(
+    // Issue #568: Overlap CPU analysis with GPU computation.
+    // Submit the helpful GPU batch non-blocking, then prepare harmful samples
+    // (CPU work) while the GPU processes the helpful batch.
+    let helpful_future = if !helpful_work_batch.is_empty() {
+        Some(submit_helpful_gpu_work(
+            &helpful_work_batch,
+            gpu,
+            ctx,
+            &mut results,
+        )?)
+    } else {
+        None
+    };
+
+    // While GPU processes helpful batch, prepare harmful samples on CPU
+    let harmful_prep = if !deadline_passed(&ctx.deadline) {
+        let target_idx_for_harmful = ctx.neuron_index.get_index(target_uuid);
+        target_idx_for_harmful
+            .and_then(|idx| ctx.synapses_by_target.get(&idx))
+            .map(|existing| prepare_harmful_samples(existing, cache, target_map_ref))
+    } else {
+        None
+    };
+
+    // Collect helpful GPU results and process them
+    if let Some(future) = helpful_future {
+        collect_and_process_helpful_results(
+            future,
             &helpful_work_batch,
             target_uuid,
             cache,
-            gpu,
             ctx,
             &existing_path_contributions,
             &mut results,
         )?;
     }
 
-    // Process harmful synapses
-    if !deadline_passed(&ctx.deadline) {
-        let target_idx_for_harmful = ctx.neuron_index.get_index(target_uuid);
-        if let Some(existing) =
-            target_idx_for_harmful.and_then(|idx| ctx.synapses_by_target.get(&idx))
-        {
-            process_harmful_batch(
-                target_uuid,
-                existing,
-                cache,
-                gpu,
-                ctx,
-                target_map_ref,
-                &mut results,
-            )?;
-        }
+    // Process harmful synapses (GPU submission + result processing)
+    if let Some(harmful_work) = harmful_prep
+        && !harmful_work.is_empty()
+    {
+        process_harmful_batch_from_prepared(
+            target_uuid,
+            &harmful_work,
+            gpu,
+            ctx,
+            cache,
+            &mut results,
+        )?;
     }
 
     Ok(results)
 }
 
-/// Process a batch of helpful synapse candidates via GPU evaluation.
-fn process_helpful_batch(
+/// Issue #568: Submit helpful GPU work non-blocking.
+///
+/// Clones sample data for the GPU, tracks metadata, and submits the batch.
+/// Returns a `GpuFuture` that can be collected after overlapping CPU work.
+fn submit_helpful_gpu_work(
     helpful_work_batch: &[HelpfulWork],
-    target_uuid: &str,
-    cache: &RecordCache,
     gpu: &GpuWorkQueue,
     ctx: &TargetAnalysisContext,
-    existing_path_contributions: &[ExistingPathContribution],
     results: &mut TargetAnalysisResults,
-) -> Result<()> {
+) -> Result<crate::analysis::gpu::queue::GpuFuture<Vec<HelpfulStats>>> {
     let helpful_samples: Vec<Vec<HelpfulSample>> = helpful_work_batch
         .iter()
         .map(|w| w.samples.clone()) // Clone required: GPU queue takes ownership of sample data
@@ -573,10 +593,21 @@ fn process_helpful_batch(
         }
     }
 
-    let helpful_stats_batch = {
-        let _timing = TimingScope::shader(&ctx.timing_collector, "helpful");
-        gpu.evaluate_helpful_batch(helpful_samples, &ctx.deadline)?
-    };
+    let _timing = TimingScope::shader(&ctx.timing_collector, "helpful");
+    gpu.submit_helpful_batch(helpful_samples, &ctx.deadline)
+}
+
+/// Issue #568: Collect helpful GPU results and process them into candidates.
+fn collect_and_process_helpful_results(
+    future: crate::analysis::gpu::queue::GpuFuture<Vec<HelpfulStats>>,
+    helpful_work_batch: &[HelpfulWork],
+    target_uuid: &str,
+    cache: &RecordCache,
+    ctx: &TargetAnalysisContext,
+    existing_path_contributions: &[ExistingPathContribution],
+    results: &mut TargetAnalysisResults,
+) -> Result<()> {
+    let helpful_stats_batch = future.collect()?;
 
     let mut candidates_to_add = Vec::new();
     let mut coordinated_to_add = Vec::new();
@@ -946,21 +977,24 @@ fn process_helpful_batch(
     Ok(())
 }
 
-/// Process harmful synapses for a single target neuron via batched GPU evaluation.
-fn process_harmful_batch(
-    target_uuid: &str,
+/// Pre-built harmful synapse work item for CPU/GPU overlap (Issue #568).
+struct PreparedHarmfulWork {
+    from_uuid: String,
+    to_uuid: String,
+    weight: f32,
+    samples: Vec<HelpfulSample>,
+}
+
+/// Issue #568: Prepare harmful synapse samples on CPU (no GPU needed).
+///
+/// This function loads records from cache and builds samples, which is pure CPU work.
+/// It is called while the helpful GPU batch is being processed, overlapping CPU and GPU.
+fn prepare_harmful_samples(
     existing_synapses: &[SynapseJson],
     cache: &RecordCache,
-    gpu: &GpuWorkQueue,
-    ctx: &TargetAnalysisContext,
     target_map_ref: &TargetMap,
-    results: &mut TargetAnalysisResults,
-) -> Result<()> {
-    struct HarmfulWork<'a> {
-        synapse: &'a SynapseJson,
-        samples: Vec<HelpfulSample>,
-    }
-    let mut harmful_work: Vec<HarmfulWork<'_>> = Vec::with_capacity(existing_synapses.len());
+) -> Vec<PreparedHarmfulWork> {
+    let mut harmful_work = Vec::with_capacity(existing_synapses.len());
 
     for synapse in existing_synapses {
         let from_records_arc = match cache.get(&synapse.from_uuid) {
@@ -976,16 +1010,29 @@ fn process_harmful_batch(
             continue;
         }
 
-        harmful_work.push(HarmfulWork { synapse, samples });
+        harmful_work.push(PreparedHarmfulWork {
+            from_uuid: synapse.from_uuid.clone(),
+            to_uuid: synapse.to_uuid.clone(),
+            weight: synapse.weight,
+            samples,
+        });
     }
 
-    if harmful_work.is_empty() {
-        return Ok(());
-    }
+    harmful_work
+}
 
+/// Issue #568: Process pre-built harmful samples via GPU evaluation.
+fn process_harmful_batch_from_prepared(
+    target_uuid: &str,
+    harmful_work: &[PreparedHarmfulWork],
+    gpu: &GpuWorkQueue,
+    ctx: &TargetAnalysisContext,
+    cache: &RecordCache,
+    results: &mut TargetAnalysisResults,
+) -> Result<()> {
     let batch_input: Vec<(Vec<HelpfulSample>, f32)> = harmful_work
         .iter()
-        .map(|w| (w.samples.clone(), w.synapse.weight)) // Clone required: GPU queue takes ownership
+        .map(|w| (w.samples.clone(), w.weight)) // Clone required: GPU queue takes ownership
         .collect();
 
     let batch_stats = {
@@ -1016,11 +1063,11 @@ fn process_harmful_batch(
         let confidence_metrics =
             compute_confidence_metrics(&work.samples, neuron_error_improvement, None);
         harmful_candidates.push(CandidateSynapseJson {
-            from_neuron_uuid: work.synapse.from_uuid.clone(),
-            to_neuron_uuid: work.synapse.to_uuid.clone(),
+            from_neuron_uuid: work.from_uuid.clone(),
+            to_neuron_uuid: work.to_uuid.clone(),
             from_neuron_index: None,
             to_neuron_index: None,
-            weight: work.synapse.weight,
+            weight: work.weight,
             target_neuron_impact: 1.0,
             expected_creature_error_reduction: neuron_error_improvement,
             expected_creature_score_gain: neuron_error_improvement,

@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.30.0"
+version = "0.30.2"
 edition = "2024"
 
 [lib]
@@ -81,5 +81,9 @@ harness = false
 
 [[bench]]
 name = "gpu_buffer_transfers"
+harness = false
+
+[[bench]]
+name = "async_pipeline"
 harness = false
 

@@ -51,6 +51,39 @@ use crate::analysis::utils::{calculate_gpu_batch_timeout, get_work_queue_capacit
 use crate::observability::{global_gpu_metrics, gpu_metrics_enabled};
 
 // =============================================================================
+// GPU Future — non-blocking handle for pending GPU results (Issue #568)
+// =============================================================================
+
+/// A handle to a pending GPU computation result.
+///
+/// Returned by `GpuWorkQueue::submit_helpful_batch` to allow the caller to
+/// perform CPU work while the GPU processes the batch, then collect the result
+/// later via `collect()`.
+pub(crate) struct GpuFuture<T> {
+    response_rx: Receiver<Result<T>>,
+    timeout: Duration,
+}
+
+impl<T> GpuFuture<T> {
+    /// Block until the GPU result is available.
+    ///
+    /// This should be called after performing any overlapping CPU work.
+    pub(crate) fn collect(self) -> Result<T> {
+        let timeout_secs = self.timeout.as_secs();
+        match self.response_rx.recv_timeout(self.timeout) {
+            Ok(result) => result,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
+                "GPU batch evaluation timed out after {timeout_secs}s. \
+                 The GPU may be unresponsive. Consider reducing batch size or restarting."
+            )),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                Err(anyhow!("GPU response channel closed unexpectedly"))
+            }
+        }
+    }
+}
+
+// =============================================================================
 // GPU Work Queue - Centralised GPU thread for improved utilisation
 // =============================================================================
 
@@ -335,6 +368,55 @@ impl GpuWorkQueue {
                 }
             }
         }
+    }
+
+    /// Submit a helpful batch to the GPU thread without blocking (Issue #568).
+    ///
+    /// Returns a `GpuFuture` that can be collected later, allowing the caller
+    /// to perform CPU work (e.g., preparing harmful samples) while the GPU
+    /// processes the helpful batch.
+    pub(crate) fn submit_helpful_batch(
+        &self,
+        samples: Vec<Vec<HelpfulSample>>,
+        deadline: &Option<std::time::SystemTime>,
+    ) -> Result<GpuFuture<Vec<HelpfulStats>>> {
+        if samples.is_empty() {
+            // Return a pre-resolved future with empty results
+            let (tx, rx) = bounded(1);
+            let _ = tx.send(Ok(Vec::new()));
+            return Ok(GpuFuture {
+                response_rx: rx,
+                timeout: Duration::from_secs(1),
+            });
+        }
+
+        let (response_tx, response_rx) = bounded(1);
+        let timeout = calculate_gpu_batch_timeout(deadline);
+        let timeout_secs = timeout.as_secs();
+
+        match self.work_tx.send_timeout(
+            GpuWorkRequest::HelpfulBatch {
+                samples,
+                response_tx,
+            },
+            timeout,
+        ) {
+            Ok(()) => {}
+            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
+                return Err(anyhow!(
+                    "GPU work queue full - send timed out after {timeout_secs}s. \
+                     The GPU thread may be hung. Consider restarting the process."
+                ));
+            }
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                return Err(anyhow!("GPU work queue channel closed"));
+            }
+        }
+
+        Ok(GpuFuture {
+            response_rx,
+            timeout,
+        })
     }
 
     /// Submit a batch of helpful evaluations and wait for results.
