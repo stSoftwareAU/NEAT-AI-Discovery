@@ -24,6 +24,7 @@ pub mod redundant_path;
 pub mod restricted_range;
 pub mod saturation;
 pub mod sentinel_gating;
+pub mod skip_connection;
 pub mod squash_weight_rescale;
 pub mod symmetry_breaking;
 pub mod topology;
