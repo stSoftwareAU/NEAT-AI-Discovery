@@ -54,6 +54,9 @@ pub struct GpuAnalyzer {
     /// Reduction pipeline for HarmfulContribution aggregation (Issue #218)
     pub(super) harmful_reduce_layout: Option<wgpu::BindGroupLayout>,
     pub(super) harmful_reduce_pipeline: Option<wgpu::ComputePipeline>,
+    /// Reduction pipeline for ActivationOutput aggregation (Issue #567)
+    pub(super) activation_reduce_layout: Option<wgpu::BindGroupLayout>,
+    pub(super) activation_reduce_pipeline: Option<wgpu::ComputePipeline>,
     /// Optimised GPU batch size based on detected hardware.
     /// Higher values improve GPU utilisation on high-performance hardware.
     pub(super) batch_size: usize,
@@ -424,6 +427,9 @@ impl GpuAnalyzer {
             Self::build_helpful_reduce_pipeline(&device, "helpful-reduce-pipeline");
         let (harmful_reduce_layout, harmful_reduce_pipeline) =
             Self::build_harmful_reduce_pipeline(&device, "harmful-reduce-pipeline");
+        // Issue #567: Build activation reduction pipeline
+        let (activation_reduce_layout, activation_reduce_pipeline) =
+            Self::build_activation_reduce_pipeline(&device, "activation-reduce-pipeline");
 
         // CRITICAL: Warm up the GPU by polling to ensure all pipeline creation work is complete.
         //
@@ -453,6 +459,8 @@ impl GpuAnalyzer {
             helpful_reduce_pipeline: Some(helpful_reduce_pipeline),
             harmful_reduce_layout: Some(harmful_reduce_layout),
             harmful_reduce_pipeline: Some(harmful_reduce_pipeline),
+            activation_reduce_layout: Some(activation_reduce_layout),
+            activation_reduce_pipeline: Some(activation_reduce_pipeline),
             batch_size,
         })
     }
