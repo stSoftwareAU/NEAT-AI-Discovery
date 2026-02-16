@@ -77,6 +77,7 @@ pub use detection::redundant_path;
 pub use detection::restricted_range;
 pub use detection::saturation;
 pub use detection::sentinel_gating;
+pub use detection::skip_connection;
 pub use detection::squash_weight_rescale;
 pub use detection::symmetry_breaking;
 pub use detection::topology;

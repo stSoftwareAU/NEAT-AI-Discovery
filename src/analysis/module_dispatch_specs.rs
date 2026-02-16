@@ -12,7 +12,7 @@ use super::{
     gradient_discovery, input_sensitivity, multi_hop, noise_signal, observation_utilisation,
     operating_point, opposing_synapse, oscillating_neuron, output_bias_drift,
     output_squash_mismatch, restricted_range, sample_weighted, saturation, sentinel_gating, shared,
-    squash_weight_rescale, symmetry_breaking, topology, topology_diversification,
+    skip_connection, squash_weight_rescale, symmetry_breaking, topology, topology_diversification,
     unbounded_capping, weight_coherence, weight_magnitude_reset,
 };
 
@@ -956,6 +956,35 @@ pub(crate) fn build_discovery_module_specs(
                 }
                 let candidates =
                     symmetry_breaking::symmetric_neurons_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            }),
+        });
+    }
+
+    // Issue #570: Skip-connection discovery for beneficial residual connections
+    {
+        let cache = Arc::clone(shared_cache);
+        let hidden = Arc::clone(hidden_neurons);
+        let creature = Arc::clone(creature);
+        modules.push(discovery_dispatch::DiscoveryModuleSpec {
+            module_name: "skip connection discovery".to_string(),
+            phase_name: "skip_connection_discovery",
+            detect_fn: Box::new(move || {
+                if hidden.is_empty() {
+                    return None;
+                }
+                let records = cache.load_records_for_all_neurons(&creature);
+                let detected =
+                    skip_connection::detect_skip_connection_candidates(&creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = skip_connection::skip_connections_to_coordinated_candidates(
+                    &detected, &creature,
+                );
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
