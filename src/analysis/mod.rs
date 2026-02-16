@@ -61,6 +61,7 @@ pub use detection::activation_mismatch;
 pub use detection::bias_perturbation;
 pub use detection::bottleneck;
 pub use detection::bounded_range;
+pub use detection::co_adaptation;
 pub use detection::correlated_error;
 pub use detection::dead_neuron;
 pub use detection::dormant_synapse;

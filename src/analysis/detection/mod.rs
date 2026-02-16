@@ -8,6 +8,7 @@ pub mod activation_mismatch;
 pub mod bias_perturbation;
 pub mod bottleneck;
 pub mod bounded_range;
+pub mod co_adaptation;
 pub mod correlated_error;
 pub mod dead_neuron;
 pub mod dormant_synapse;
