@@ -83,3 +83,7 @@ harness = false
 name = "gpu_buffer_transfers"
 harness = false
 
+[[bench]]
+name = "async_pipeline"
+harness = false
+

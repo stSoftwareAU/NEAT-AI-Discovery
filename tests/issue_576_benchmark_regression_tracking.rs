@@ -22,6 +22,7 @@ const EXPECTED_BENCHMARKS: &[&str] = &[
     "clone_reduction",
     "upsert_candidate",
     "gpu_buffer_transfers",
+    "async_pipeline",
 ];
 
 #[test]
