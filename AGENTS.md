@@ -86,7 +86,11 @@ src/
 │   │   ├── filtering.rs      # Candidate filtering, deduplication
 │   │   ├── structural_patterns.rs # Coordinated structural discovery
 │   │   └── post_processing.rs # Impact discounting, sorting, metadata
-│   ├── neuron.rs             # Neuron analysis
+│   ├── neuron/               # Neuron analysis (Issue #598)
+│   │   ├── mod.rs            # Public API, orchestration, parallel loop
+│   │   ├── preparation.rs    # Focus target filtering, neuron type maps, source loading
+│   │   ├── evaluation.rs     # GPU-based candidate evaluation (ReLU, activation specs)
+│   │   └── post_processing.rs # Impact discounting, sorting, filtering, result assembly
 │   ├── activation.rs         # Activation function analysis
 │   ├── samples/              # Sample data structures (Issue #597)
 │   │   ├── mod.rs            # Public API, re-exports, core sample types
