@@ -88,7 +88,11 @@ src/
 │   │   └── post_processing.rs # Impact discounting, sorting, metadata
 │   ├── neuron.rs             # Neuron analysis
 │   ├── activation.rs         # Activation function analysis
-│   ├── samples.rs            # Sample data structures
+│   ├── samples/              # Sample data structures (Issue #597)
+│   │   ├── mod.rs            # Public API, re-exports, core sample types
+│   │   ├── gpu_types.rs      # GPU-compatible data formats (#[repr(C)], bytemuck)
+│   │   ├── statistics.rs     # Statistics types (NeuronStats, HelpfulStats, etc.)
+│   │   └── thresholds.rs     # Threshold computation and source variance analysis
 │   ├── diagnostics/          # Diagnostic tracking (Issue #524)
 │   │   ├── mod.rs            # Public API, re-exports, impact scoring adapter
 │   │   ├── rejection.rs      # Synapse rejection tracking and reporting
