@@ -1,0 +1,184 @@
+//! Neuron analysis post-processing — impact discounting, sorting, filtering,
+//! and result assembly.
+//!
+//! Extracted from neuron.rs as part of issue #598.
+
+use crate::{AnalyzeNeuronsInput, CandidateNeuronJson};
+use anyhow::Result;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use crate::analysis::cache::RecordCache;
+use crate::analysis::diagnostics::{NeuronDiagnostics, compute_impact_scores_for_discounting};
+use crate::analysis::gpu::GpuAnalyzer;
+use crate::analysis::shared::AnalyzeNeuronsResult;
+use crate::analysis::synapse::apply_pessimism_discount;
+use crate::analysis::utils::{
+    lock_or_bail, log_analysis_timeout, shuffle_within_top_k, verbose_enabled,
+};
+
+/// Build the final neuron analysis result from the collected candidates.
+///
+/// This applies impact-based discounting, pessimism discount, filtering,
+/// sorting, and assembles the result metadata.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_neuron_results(
+    analysis_timed_out: &Arc<Mutex<bool>>,
+    helpful_map: &Arc<Mutex<HashMap<u64, CandidateNeuronJson>>>,
+    completed_count: &Arc<std::sync::atomic::AtomicUsize>,
+    total_focus_count: usize,
+    original_focus_count: usize,
+    order_map_arc: &Arc<HashMap<String, usize>>,
+    neuron_type_map: &HashMap<String, String>,
+    input: &AnalyzeNeuronsInput,
+    cache: &Arc<RecordCache>,
+    error_values_for_distribution: &Arc<Mutex<Vec<f32>>>,
+    timing_collector: &Arc<crate::analysis::shared::TimingCollector>,
+    diagnostics: &Arc<NeuronDiagnostics>,
+    gpu_used: bool,
+) -> Result<AnalyzeNeuronsResult> {
+    let analysis_timed_out = *lock_or_bail(analysis_timed_out, "analysis_timed_out")?;
+    let helpful_map = lock_or_bail(helpful_map, "helpful_map")?.clone();
+
+    // Log timeout with completion stats (always visible, not just verbose)
+    if analysis_timed_out {
+        let completed = completed_count.load(std::sync::atomic::Ordering::Relaxed);
+        log_analysis_timeout("neuron", completed, total_focus_count);
+    }
+
+    let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
+
+    // Issue #128: Apply impact-based discounting and set creature-level metrics.
+    apply_impact_discounting(
+        &mut helpful_results,
+        order_map_arc,
+        neuron_type_map,
+        input,
+        cache,
+    );
+
+    // Issue #557: Filter out candidates with non-positive expected_creature_score_gain.
+    helpful_results.retain(|c| c.expected_creature_score_gain > 0.0);
+
+    // Sort by expected creature score gain (highest first) - Issue #128
+    helpful_results.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+
+    // Production experiment: pair "extreme" candidates with a conservative variant.
+    helpful_results = crate::analysis::utils::pair_extreme_candidates_with_conservative_variants(
+        helpful_results,
+        None,
+    );
+
+    // Production guard rail (Dec 2025): only return candidates within sensible parameter ranges.
+    helpful_results = crate::analysis::utils::filter_candidates_to_sensible_ranges(helpful_results);
+
+    // Deadline coverage (Jan 2026): diversify within the top-K
+    if input.analysis_deadline_ms.is_some() {
+        use crate::analysis::constants::DIVERSIFY_TOP_K;
+        shuffle_within_top_k(
+            helpful_results.as_mut_slice(),
+            input.random_seed,
+            "neuron:candidates:top_k",
+            DIVERSIFY_TOP_K,
+        );
+    }
+
+    // Track candidates_found AFTER pairing but BEFORE truncation.
+    let candidates_found = helpful_results.len();
+
+    // Apply max_candidates limit (truncation)
+    if let Some(limit) = input.max_candidates {
+        helpful_results.truncate(limit);
+    }
+
+    let candidates_returned = helpful_results.len();
+
+    let no_candidate_reasons = diagnostics.no_candidate_summaries();
+    diagnostics.emit_logs();
+
+    // Issue #486 / #192: Compute error distribution from collected target neuron error samples.
+    let error_distribution = {
+        let error_values = std::mem::take(&mut *lock_or_bail(
+            error_values_for_distribution,
+            "error_values_for_distribution",
+        )?);
+        crate::analysis::error_distribution::ErrorDistribution::from_errors(&error_values)
+    };
+
+    Ok(AnalyzeNeuronsResult {
+        helpful_neurons: helpful_results,
+        gpu_used,
+        no_candidate_reasons,
+        metadata: crate::analysis::shared::NeuronAnalysisMetadata {
+            candidates_found,
+            candidates_returned,
+            timed_out: analysis_timed_out,
+            completed_focus_neurons: completed_count.load(std::sync::atomic::Ordering::Relaxed),
+            total_focus_neurons: original_focus_count,
+            timing: timing_collector.finalize(),
+            gpu_info: GpuAnalyzer::get_adapter_info(),
+            error_distribution,
+        },
+    })
+}
+
+/// Apply impact-based discounting to neuron candidates.
+///
+/// Output neurons have impact = 1.0 (no discount).
+/// Hidden neurons have impact in [0, 1] based on their weighted paths to outputs.
+fn apply_impact_discounting(
+    helpful_results: &mut [CandidateNeuronJson],
+    order_map_arc: &Arc<HashMap<String, usize>>,
+    neuron_type_map: &HashMap<String, String>,
+    input: &AnalyzeNeuronsInput,
+    cache: &Arc<RecordCache>,
+) {
+    let impact_scores = compute_impact_scores_for_discounting(&input.creature, cache.as_ref());
+    for candidate in helpful_results.iter_mut() {
+        candidate.source_neuron_index = order_map_arc.get(&candidate.source_neuron_uuid).copied();
+        candidate.target_neuron_index = order_map_arc.get(&candidate.target_neuron_uuid).copied();
+
+        let is_hidden = neuron_type_map
+            .get(&candidate.target_neuron_uuid)
+            .map(|t| t != "output")
+            .unwrap_or(true);
+
+        let impact = if is_hidden {
+            if let Some(&impact) = impact_scores.get(&candidate.target_neuron_uuid) {
+                impact.clamp(0.0, 1.0)
+            } else {
+                // No impact score means disconnected from outputs - heavy discount
+                0.1
+            }
+        } else {
+            // Output neuron - full impact
+            1.0
+        };
+
+        // Update creature-level metrics
+        candidate.target_neuron_impact = impact;
+        let original = candidate.expected_creature_error_reduction;
+        candidate.expected_creature_error_reduction *= impact;
+        candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
+
+        // Issue #506: Apply pessimism discount based on improved sample ratio.
+        candidate.expected_creature_score_gain = apply_pessimism_discount(
+            candidate.expected_creature_score_gain,
+            candidate.improved_count,
+            candidate.total_count,
+        );
+
+        if verbose_enabled() && is_hidden {
+            tracing::trace!(
+                target_uuid = %&candidate.target_neuron_uuid[..12.min(candidate.target_neuron_uuid.len())],
+                impact = format_args!("{impact:.3}"),
+                original_pct = format_args!("{:.4}", original * 100.0),
+                discounted_pct = format_args!("{:.4}", candidate.expected_creature_score_gain * 100.0),
+                "Neuron candidate impact discount applied"
+            );
+        }
+    }
+}
