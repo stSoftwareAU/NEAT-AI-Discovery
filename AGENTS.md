@@ -79,7 +79,11 @@ src/
 │   ├── shared.rs             # Common types, results, diagnostics
 │   ├── synapse/              # Synapse analysis (Issue #482)
 │   │   ├── mod.rs            # Public API, entry points, orchestration
-│   │   ├── target_analysis.rs # Per-target analysis loop
+│   │   ├── target_analysis/  # Per-target analysis loop (Issue #599)
+│   │   │   ├── mod.rs            # Public API, types, main analysis loop
+│   │   │   ├── evaluation.rs     # GPU work submission, result collection, candidate processing
+│   │   │   ├── candidate_selection.rs # Epistatic, synergistic, redundant path detection
+│   │   │   └── statistics.rs     # Source filtering, record loading, sample building
 │   │   ├── scoring.rs        # Improvement calculation, boosting
 │   │   ├── gpu_evaluation.rs # GPU batch orchestration
 │   │   ├── candidate_generation.rs # Sample building, locality grouping
