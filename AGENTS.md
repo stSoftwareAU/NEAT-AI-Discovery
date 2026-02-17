@@ -69,7 +69,12 @@ src/
 │   ├── mod.rs                # Module organisation, re-exports
 │   ├── orchestration.rs      # Top-level analyse_all dispatch (Issue #562)
 │   ├── candidate_aggregation.rs # Candidate merging and post-processing (Issue #562)
-│   ├── module_dispatch_specs.rs # Discovery module spec builders (Issue #562)
+│   ├── module_dispatch_specs/   # Discovery module spec builders (Issue #562, #595)
+│   │   ├── mod.rs              # Public API, build_discovery_module_specs, orchestration
+│   │   ├── neuron_specs.rs     # Neuron-focused dispatch specs
+│   │   ├── synapse_specs.rs    # Synapse-focused dispatch specs
+│   │   ├── structural_specs.rs # Structural discovery dispatch specs
+│   │   └── scoring_specs.rs    # Scoring and recommendation dispatch specs
 │   ├── constants.rs          # Central discovery thresholds (Issue #424)
 │   ├── shared.rs             # Common types, results, diagnostics
 │   ├── synapse/              # Synapse analysis (Issue #482)
