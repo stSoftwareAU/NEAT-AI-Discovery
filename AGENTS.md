@@ -39,7 +39,12 @@ admitted back into the population.
 src/
 ├── lib.rs                    # Module declarations, re-exports, version init
 ├── ffi.rs                    # FFI entry points (no_mangle extern "C")
-├── ffi_types.rs              # JSON request/response structs for FFI boundary
+├── ffi_types/                # JSON request/response structs for FFI boundary (Issue #596)
+│   ├── mod.rs                # Public API, re-exports, shared types (Creature, Neuron, Synapse)
+│   ├── requests.rs           # FFI request structs (input from NEAT-AI)
+│   ├── responses.rs          # FFI response structs (output to NEAT-AI)
+│   ├── candidates.rs         # Candidate-related types (synapse, neuron, coordinated)
+│   └── session.rs            # Streaming session types
 ├── ffi_internal.rs           # Internal business-logic functions for FFI
 ├── types.rs                  # Core type definitions
 ├── activations.rs            # Activation function calculations
