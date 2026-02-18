@@ -164,7 +164,11 @@ src/
 │   ├── scoring/              # Scoring and confidence modules (Issue #528)
 │   │   ├── mod.rs            # Module declarations
 │   │   ├── confidence.rs     # Confidence metrics
-│   │   ├── weights.rs        # Weight analysis and calculation
+│   │   ├── weights/          # Weight analysis and calculation (Issue #609)
+│   │   │   ├── mod.rs            # Public API, re-exports, constants
+│   │   │   ├── calculation.rs    # Core weight calculation (least squares, bias search)
+│   │   │   ├── normalisation.rs  # Range-aware weight computation (sentinel filtering)
+│   │   │   └── adjustment.rs     # Dynamic weight adjustments (delta clamping)
 │   │   ├── error_distribution.rs # Error distribution stats
 │   │   └── cross_validation.rs # Cross-validation scoring
 │   ├── cache/                # Record caching (Issue #565)
