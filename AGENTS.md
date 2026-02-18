@@ -53,7 +53,10 @@ src/
 ├── ffi_internal.rs           # Internal business-logic functions for FFI
 ├── types.rs                  # Core type definitions
 ├── activations.rs            # Activation function calculations
-├── record.rs                 # Discovery data recording
+├── record/                   # Discovery data recording (Issue #604)
+│   ├── mod.rs                # Public API, re-exports, orchestration
+│   ├── validation.rs         # Input validation and observation index resolution
+│   └── processing.rs         # Record building from training data
 ├── streaming.rs              # Streaming session management
 ├── parquet_format/            # Parquet I/O (Issue #600)
 │   ├── mod.rs                # Public API, re-exports
