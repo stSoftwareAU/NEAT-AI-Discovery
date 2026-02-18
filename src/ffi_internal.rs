@@ -432,6 +432,45 @@ pub fn export_visualisation_snapshot_internal(input_json: &str) -> Result<String
     }
 }
 
+/// Returns a calibration summary from discovery history (Issue #605).
+///
+/// Takes JSON input containing a serialised `DiscoveryHistory` and returns
+/// calibration metrics (MAE, bias, calibration factor) per module/candidate type.
+pub fn get_calibration_summary_internal(input_json: &str) -> Result<String> {
+    let input: CalibrationSummaryInput = match serde_json::from_str(input_json) {
+        Ok(input) => input,
+        Err(e) => {
+            let output = CalibrationSummaryOutput {
+                success: false,
+                calibration_summary: vec![],
+                error: Some(format!("Failed to parse input JSON: {e}")),
+            };
+            return Ok(serde_json::to_string(&output)?);
+        }
+    };
+
+    let history: crate::discovery_history::DiscoveryHistory =
+        match serde_json::from_str(&input.discovery_history) {
+            Ok(h) => h,
+            Err(e) => {
+                let output = CalibrationSummaryOutput {
+                    success: false,
+                    calibration_summary: vec![],
+                    error: Some(format!("Failed to parse discovery history: {e}")),
+                };
+                return Ok(serde_json::to_string(&output)?);
+            }
+        };
+
+    let summary = history.calibration_summary();
+    let output = CalibrationSummaryOutput {
+        success: true,
+        calibration_summary: summary,
+        error: None,
+    };
+    Ok(serde_json::to_string(&output)?)
+}
+
 /// Read discovery records from Parquet file for a specific neuron
 ///
 /// Takes JSON input and returns JSON output for easy integration with TypeScript/DenoJS

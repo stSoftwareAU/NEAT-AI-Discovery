@@ -325,6 +325,21 @@ pub struct DiscoverRecordJson {
 }
 
 // ============================================================================
+// Calibration Summary (Issue #605)
+// ============================================================================
+
+/// JSON output from get_calibration_summary function.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalibrationSummaryOutput {
+    pub success: bool,
+    /// Calibration summary entries, one per module/candidate-type combination.
+    pub calibration_summary: Vec<crate::discovery_history::CalibrationSummaryEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+// ============================================================================
 // Diagnostic types
 // ============================================================================
 

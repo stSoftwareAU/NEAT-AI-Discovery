@@ -264,6 +264,106 @@ pub extern "C" fn export_visualisation_snapshot(
 }
 
 // ============================================================================
+// Calibration Summary (Issue #605)
+// ============================================================================
+
+/// FFI export for querying calibration summary from discovery history.
+///
+/// Input JSON:
+/// ```json
+/// {
+///   "discoveryHistory": "<serialised DiscoveryHistory JSON string>"
+/// }
+/// ```
+///
+/// Output JSON:
+/// ```json
+/// {
+///   "success": true,
+///   "calibrationSummary": [
+///     {
+///       "moduleName": "saturation",
+///       "candidateType": "addSynapse",
+///       "sampleCount": 10,
+///       "meanAbsoluteError": 0.02,
+///       "bias": 0.01,
+///       "calibrationFactor": 0.95
+///     }
+///   ]
+/// }
+/// ```
+///
+/// # Safety
+/// The returned pointer must be freed using free_discovery_result
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn get_calibration_summary(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+    use std::panic;
+
+    panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        log_version_once();
+
+        let input_str = unsafe {
+            if input_json.is_null() {
+                let error = r#"{"success":false,"calibrationSummary":[],"error":"Null input pointer"}"#;
+                return CString::new(error).unwrap().into_raw();
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    let error = r#"{"success":false,"calibrationSummary":[],"error":"Invalid UTF-8 in input"}"#;
+                    return CString::new(error).unwrap().into_raw();
+                }
+            }
+        };
+
+        let json_result = match crate::get_calibration_summary_internal(input_str) {
+            Ok(json) => json,
+            Err(e) => {
+                let output = crate::ffi_types::CalibrationSummaryOutput {
+                    success: false,
+                    calibration_summary: vec![],
+                    error: Some(e.to_string()),
+                };
+                serde_json::to_string(&output).unwrap_or_else(|_| {
+                    r#"{"success":false,"calibrationSummary":[],"error":"Failed to serialize error message"}"#.to_string()
+                })
+            }
+        };
+
+        match CString::new(json_result) {
+            Ok(c_string) => c_string.into_raw(),
+            Err(_) => {
+                let error = r#"{"success":false,"calibrationSummary":[],"error":"Failed to create output string"}"#;
+                CString::new(error).unwrap().into_raw()
+            }
+        }
+    }))
+    .unwrap_or_else(|panic_info| {
+        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+        let error_json = format!(
+            "{{\"success\":false,\"calibrationSummary\":[],\"error\":\"Internal panic caught: {}\"}}",
+            msg.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        CString::new(error_json)
+            .unwrap_or_else(|_| {
+                CString::new(r#"{"success":false,"calibrationSummary":[],"error":"Failed to create panic error string"}"#)
+                    .unwrap()
+            })
+            .into_raw()
+    })
+}
+
+// ============================================================================
 // Library version
 // ============================================================================
 
