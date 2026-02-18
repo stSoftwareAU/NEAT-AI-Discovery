@@ -1,10 +1,9 @@
-# Archived PR Summaries
+# Documentation Archive
 
-This directory contains historical PR summary files (`pr-summary-*.md`) that
-were previously stored in the `docs/` root.
+This directory contains archived documentation that is retained for historical
+reference.
 
-Each file documents the changes, evidence, and test plan for a specific pull
-request. They are retained here for reference but are not actively maintained.
+## Contents
 
-New PR summaries continue to be created at `docs/pr-summary-<ISSUE>.md` as part
-of each pull request (see [CONTRIBUTING.md](../../CONTRIBUTING.md) for details).
+- **[pr-summaries/](pr-summaries/)** — Historical PR summary files documenting
+  changes, evidence, and test plans for each pull request.
