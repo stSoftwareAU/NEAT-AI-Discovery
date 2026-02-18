@@ -37,6 +37,178 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// =============================================================================
+// Calibration Tracking (Issue #605)
+// =============================================================================
+
+/// Build a string key from module name and candidate type for HashMap lookup.
+fn calibration_key(module_name: &str, candidate_type: &str) -> String {
+    format!("{module_name}::{candidate_type}")
+}
+
+/// Parse a calibration key back into (module_name, candidate_type).
+fn parse_calibration_key(key: &str) -> (&str, &str) {
+    key.split_once("::").unwrap_or((key, ""))
+}
+
+/// A single predicted vs actual improvement observation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct CalibrationObservation {
+    predicted: f64,
+    actual: f64,
+}
+
+/// Summary of calibration metrics for a single module/candidate-type combination.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalibrationSummaryEntry {
+    /// Discovery module name (e.g. "saturation", "bottleneck").
+    pub module_name: String,
+    /// Candidate type (e.g. "addSynapse", "addNeuron").
+    pub candidate_type: String,
+    /// Number of recorded predictions.
+    pub sample_count: usize,
+    /// Mean absolute error between predicted and actual improvement.
+    pub mean_absolute_error: f64,
+    /// Bias direction: positive means over-prediction, negative means under-prediction.
+    /// Computed as mean(predicted - actual).
+    pub bias: f64,
+    /// Calibration factor: multiply future predictions by this to correct bias.
+    /// Computed as mean(actual / predicted), clamped to [0.1, 10.0].
+    pub calibration_factor: f64,
+}
+
+/// Tracks predicted vs actual improvement accuracy per discovery module and
+/// candidate type (Issue #605).
+///
+/// Records observations of (predicted improvement, actual improvement) and
+/// computes calibration metrics: mean absolute error, bias direction, and
+/// per-module calibration factors.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CalibrationTracker {
+    /// Observations keyed by "module_name::candidate_type".
+    observations: HashMap<String, Vec<CalibrationObservation>>,
+}
+
+/// Minimum number of observations before calibration factor is applied.
+const MIN_CALIBRATION_SAMPLES: usize = 1;
+
+/// Clamp range for calibration factors to prevent extreme corrections.
+const CALIBRATION_FACTOR_MIN: f64 = 0.1;
+const CALIBRATION_FACTOR_MAX: f64 = 10.0;
+
+impl CalibrationTracker {
+    /// Creates a new empty calibration tracker.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records a predicted vs actual improvement observation.
+    ///
+    /// # Arguments
+    ///
+    /// * `module_name` - The discovery module that produced the candidate
+    /// * `candidate_type` - The type of candidate (e.g. "addSynapse", "addNeuron")
+    /// * `predicted` - The predicted improvement (expected creature score gain)
+    /// * `actual` - The actual improvement observed after ablation testing
+    pub fn record_prediction(
+        &mut self,
+        module_name: &str,
+        candidate_type: &str,
+        predicted: f64,
+        actual: f64,
+    ) {
+        let key = calibration_key(module_name, candidate_type);
+        self.observations
+            .entry(key)
+            .or_default()
+            .push(CalibrationObservation { predicted, actual });
+    }
+
+    /// Returns a calibration factor for the given module and candidate type.
+    ///
+    /// Multiply future predictions by this factor to correct for systematic bias.
+    /// Returns 1.0 (no correction) if no observations exist for the combination.
+    pub fn calibration_factor(&self, module_name: &str, candidate_type: &str) -> f64 {
+        let key = calibration_key(module_name, candidate_type);
+
+        let observations = match self.observations.get(&key) {
+            Some(obs) if obs.len() >= MIN_CALIBRATION_SAMPLES => obs,
+            _ => return 1.0,
+        };
+
+        compute_calibration_factor(observations)
+    }
+
+    /// Returns a summary of calibration metrics for all tracked modules.
+    ///
+    /// Results are sorted by sample count (descending) for easy review.
+    pub fn calibration_summary(&self) -> Vec<CalibrationSummaryEntry> {
+        let mut entries: Vec<CalibrationSummaryEntry> = self
+            .observations
+            .iter()
+            .map(|(key, obs)| {
+                let (module_name, candidate_type) = parse_calibration_key(key);
+                let n = obs.len() as f64;
+                let mae: f64 = obs
+                    .iter()
+                    .map(|o| (o.predicted - o.actual).abs())
+                    .sum::<f64>()
+                    / n;
+                let bias: f64 = obs.iter().map(|o| o.predicted - o.actual).sum::<f64>() / n;
+                let factor = compute_calibration_factor(obs);
+
+                CalibrationSummaryEntry {
+                    module_name: module_name.to_string(),
+                    candidate_type: candidate_type.to_string(),
+                    sample_count: obs.len(),
+                    mean_absolute_error: mae,
+                    bias,
+                    calibration_factor: factor,
+                }
+            })
+            .collect();
+
+        entries.sort_by(|a, b| b.sample_count.cmp(&a.sample_count));
+        entries
+    }
+}
+
+/// Compute calibration factor from observations as mean(actual / predicted),
+/// clamped to a reasonable range.
+fn compute_calibration_factor(observations: &[CalibrationObservation]) -> f64 {
+    if observations.is_empty() {
+        return 1.0;
+    }
+
+    // Use ratio-based calibration: mean(actual / predicted)
+    // Skip entries where predicted is near zero to avoid division issues.
+    let epsilon = 1e-10;
+    let mut ratio_sum = 0.0;
+    let mut ratio_count = 0u32;
+
+    for obs in observations {
+        if obs.predicted.abs() > epsilon {
+            ratio_sum += obs.actual / obs.predicted;
+            ratio_count += 1;
+        } else {
+            // Predicted was ~0 but actual may be non-zero.
+            // Treat as a large under-prediction: cap ratio.
+            ratio_sum += CALIBRATION_FACTOR_MAX;
+            ratio_count += 1;
+        }
+    }
+
+    if ratio_count == 0 {
+        return 1.0;
+    }
+
+    let mean_ratio = ratio_sum / ratio_count as f64;
+    mean_ratio.clamp(CALIBRATION_FACTOR_MIN, CALIBRATION_FACTOR_MAX)
+}
+
 /// Tracks discovery history for a single neuron.
 ///
 /// This struct records how many times a neuron has been selected as a focus target
@@ -182,6 +354,9 @@ impl NeuronDiscoveryHistory {
 pub struct DiscoveryHistory {
     /// History entries keyed by neuron UUID
     neurons: HashMap<String, NeuronDiscoveryHistory>,
+    /// Calibration tracker for predicted vs actual improvement (Issue #605)
+    #[serde(default)]
+    calibration: CalibrationTracker,
 }
 
 impl DiscoveryHistory {
@@ -242,6 +417,33 @@ impl DiscoveryHistory {
     /// Clears all history entries.
     pub fn clear(&mut self) {
         self.neurons.clear();
+    }
+
+    /// Records a calibration observation (predicted vs actual improvement).
+    ///
+    /// Delegates to the internal `CalibrationTracker`.
+    pub fn record_calibration(
+        &mut self,
+        module_name: &str,
+        candidate_type: &str,
+        predicted: f64,
+        actual: f64,
+    ) {
+        self.calibration
+            .record_prediction(module_name, candidate_type, predicted, actual);
+    }
+
+    /// Returns the calibration factor for a given module and candidate type.
+    ///
+    /// Returns 1.0 if no calibration data exists for the combination.
+    pub fn calibration_factor(&self, module_name: &str, candidate_type: &str) -> f64 {
+        self.calibration
+            .calibration_factor(module_name, candidate_type)
+    }
+
+    /// Returns a summary of calibration metrics for all tracked modules.
+    pub fn calibration_summary(&self) -> Vec<CalibrationSummaryEntry> {
+        self.calibration.calibration_summary()
     }
 
     /// Removes history for neurons that are no longer in the creature.

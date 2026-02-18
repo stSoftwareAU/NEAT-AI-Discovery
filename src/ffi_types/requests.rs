@@ -179,3 +179,11 @@ pub struct ReadDiscoveryInput {
     pub parquet_file: String,
     pub neuron_uuid: String,
 }
+
+/// JSON input for get_calibration_summary function (Issue #605).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalibrationSummaryInput {
+    /// Serialised `DiscoveryHistory` JSON string containing calibration data.
+    pub discovery_history: String,
+}
