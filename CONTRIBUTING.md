@@ -200,8 +200,8 @@ fn test_gpu_kernel_computes_impacts() {
 
 ### PR Summary File
 
-Every PR must include a summary file at `docs/pr-summary-<ISSUE>.md` containing
-the following sections. (Older PR summaries are archived in `docs/archive/`.)
+Every PR must include a summary file at `docs/archive/pr-summaries/pr-summary-<ISSUE>.md`
+containing the following sections.
 
 1. **Summary** — brief description of what was changed and why
 2. **Evidence** — screenshots for UI changes, benchmark results for performance
