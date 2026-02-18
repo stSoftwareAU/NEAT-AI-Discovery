@@ -50,7 +50,11 @@ src/
 ├── activations.rs            # Activation function calculations
 ├── record.rs                 # Discovery data recording
 ├── streaming.rs              # Streaming session management
-├── parquet_format.rs         # Parquet I/O
+├── parquet_format/            # Parquet I/O (Issue #600)
+│   ├── mod.rs                # Public API, re-exports
+│   ├── schema.rs             # Schema definitions and validation
+│   ├── writer.rs             # Parquet writing and serialisation
+│   └── reader.rs             # Parquet reading and deserialisation
 ├── export.rs                 # Data export utilities
 ├── discovery_history.rs      # Historical tracking
 ├── debug.rs                  # Debugging utilities
