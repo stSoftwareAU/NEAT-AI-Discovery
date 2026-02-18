@@ -333,6 +333,11 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         module_dispatch_specs::apply_ensemble_scoring(syn);
     }
 
+    // Issue #610: Diversity-aware reranking — penalise structurally similar candidates.
+    if let Some(syn) = synapse_result.as_mut() {
+        module_dispatch_specs::apply_diversity_reranking(syn);
+    }
+
     // Issue #224: Candidate clustering to reduce redundant ablation tests.
     if let Some(syn) = synapse_result.as_mut() {
         module_dispatch_specs::cluster_synapse_candidates(syn, &input.creature);
