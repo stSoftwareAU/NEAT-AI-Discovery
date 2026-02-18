@@ -117,6 +117,31 @@ impl ModuleOutcomeTracker {
         &self.modules
     }
 
+    /// Applies a decay factor to all module statistics (Issue #603).
+    ///
+    /// Multiplies `attempts` and `successes` by the given `factor` (clamped to [0.0, 1.0]),
+    /// rounding down. This prevents historical data from permanently biasing allocation
+    /// by gradually reducing the weight of old outcomes.
+    ///
+    /// - `factor = 1.0` — no change (preserve all history)
+    /// - `factor = 0.5` — halve all counts (moderate decay)
+    /// - `factor = 0.0` — clear all counts (full reset)
+    ///
+    /// The success rate is approximately preserved because both numerator and denominator
+    /// are scaled by the same factor.
+    pub fn apply_decay(&mut self, factor: f64) {
+        let factor = factor.clamp(0.0, 1.0);
+        for stats in self.modules.values_mut() {
+            stats.attempts = (stats.attempts as f64 * factor).round() as u32;
+            stats.successes = (stats.successes as f64 * factor).round() as u32;
+            stats.candidates_produced = (stats.candidates_produced as f64 * factor).round() as u32;
+            // Ensure successes never exceeds attempts after rounding.
+            if stats.successes > stats.attempts {
+                stats.successes = stats.attempts;
+            }
+        }
+    }
+
     /// Returns a scoring boost factor for candidates from the given module.
     ///
     /// The boost is based on the Bayesian success rate. Modules with higher
@@ -139,6 +164,88 @@ impl ModuleOutcomeTracker {
         let rate = stats.success_rate();
         (2.0 * rate).clamp(0.5, 2.0)
     }
+}
+
+/// Allocate time budgets to discovery modules based on historical yield (Issue #603).
+///
+/// Returns a map from module name to allocated time in milliseconds. The allocation
+/// strategy is:
+///
+/// 1. **Sufficient history**: Modules with >= [`MIN_BOOST_SAMPLES`] attempts get time
+///    proportional to their Bayesian success rate, with a minimum floor of 0.5 to
+///    prevent starvation.
+/// 2. **Sparse history**: Modules with fewer attempts get a neutral weight (1.0),
+///    equivalent to proportional allocation.
+/// 3. **Decay factor**: The `decay_factor` parameter (0.0–1.0) blends between equal
+///    allocation (0.0) and fully history-driven allocation (1.0). This prevents
+///    historical data from permanently biasing the allocation.
+///
+/// # Arguments
+///
+/// * `module_names` — The names of modules to allocate time for.
+/// * `tracker` — Historical outcome tracker with per-module success/failure data.
+/// * `total_ms` — Total time budget to distribute across all modules.
+/// * `decay_factor` — How much historical data influences allocation (0.0 = equal, 1.0 = full).
+pub fn allocate_time_budgets(
+    module_names: &[String],
+    tracker: &ModuleOutcomeTracker,
+    total_ms: u64,
+    decay_factor: f64,
+) -> HashMap<String, u64> {
+    let mut budgets = HashMap::new();
+    if module_names.is_empty() || total_ms == 0 {
+        return budgets;
+    }
+
+    let decay_factor = decay_factor.clamp(0.0, 1.0);
+
+    // Compute a weight for each module based on historical yield.
+    // Modules with sufficient data get a weight derived from their Bayesian success rate.
+    // Modules without sufficient data get a neutral weight (1.0).
+    let equal_weight = 1.0;
+    let min_adaptive_weight = 0.5;
+
+    let weights: Vec<f64> = module_names
+        .iter()
+        .map(|name| {
+            let stats = tracker.stats(name);
+            let adaptive_weight = if (stats.attempts as usize) >= MIN_BOOST_SAMPLES {
+                // Use success rate as the weight, with a floor to prevent starvation.
+                stats.success_rate().max(min_adaptive_weight)
+            } else {
+                // Insufficient data — neutral weight.
+                equal_weight
+            };
+            // Blend between equal and adaptive based on decay factor.
+            equal_weight * (1.0 - decay_factor) + adaptive_weight * decay_factor
+        })
+        .collect();
+
+    let total_weight: f64 = weights.iter().sum();
+    if total_weight <= 0.0 {
+        // Safety: shouldn't happen with the floor, but fall back to equal.
+        let per_module = total_ms / module_names.len() as u64;
+        for name in module_names {
+            budgets.insert(name.clone(), per_module);
+        }
+        return budgets;
+    }
+
+    // Distribute time proportionally, handling rounding.
+    let mut allocated: u64 = 0;
+    for (i, name) in module_names.iter().enumerate() {
+        let share = if i == module_names.len() - 1 {
+            // Last module gets the remainder to avoid rounding loss.
+            total_ms - allocated
+        } else {
+            let fraction = weights[i] / total_weight;
+            (total_ms as f64 * fraction).round() as u64
+        };
+        budgets.insert(name.clone(), share);
+        allocated += share;
+    }
+
+    budgets
 }
 
 /// Per-module statistics for JSON metadata output.
