@@ -112,7 +112,11 @@ src/
 │   │   ├── preparation.rs    # Focus target filtering, neuron type maps, source loading
 │   │   ├── evaluation.rs     # GPU-based candidate evaluation (ReLU, activation specs)
 │   │   └── post_processing.rs # Impact discounting, sorting, filtering, result assembly
-│   ├── activation.rs         # Activation function analysis
+│   ├── activation/           # Activation function analysis (Issue #607)
+│   │   ├── mod.rs            # Public API, re-exports, tests
+│   │   ├── functions.rs      # CPU activation function implementations
+│   │   ├── specs.rs          # Candidate specs, GPU ID mapping, bias helpers
+│   │   └── simulation.rs     # Target simulation, predicates, variance checking
 │   ├── samples/              # Sample data structures (Issue #597)
 │   │   ├── mod.rs            # Public API, re-exports, core sample types
 │   │   ├── gpu_types.rs      # GPU-compatible data formats (#[repr(C)], bytemuck)
