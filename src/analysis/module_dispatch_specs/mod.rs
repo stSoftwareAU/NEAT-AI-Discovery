@@ -18,7 +18,7 @@ mod synapse_specs;
 use std::sync::Arc;
 
 use super::{
-    cache, candidate_clustering, discovery_dispatch, ensemble_scoring,
+    cache, candidate_clustering, candidate_diversity, discovery_dispatch, ensemble_scoring,
     module_weights::ModuleOutcomeTracker, shared, utils,
 };
 
@@ -151,6 +151,49 @@ pub(crate) fn cluster_synapse_candidates(
     syn.candidate_clusters = clusters;
 
     crate::watchdog::beat("analysis::analyze_all → candidate clustering finished");
+}
+
+/// Apply diversity-aware reranking to coordinated structural candidates (Issue #610).
+///
+/// Penalises candidates that are structurally similar to higher-ranked candidates,
+/// promoting diverse mutation exploration over redundant clusters.
+pub(crate) fn apply_diversity_reranking(syn: &mut shared::AnalyzeSynapsesResult) {
+    use crate::observability::PhaseTimer;
+
+    if syn.coordinated_structural_candidates.len() <= 1 {
+        return;
+    }
+
+    crate::watchdog::beat("analysis::analyze_all → diversity reranking starting");
+    let _timer = PhaseTimer::new("diversity_reranking");
+
+    let before_order: Vec<f32> = syn
+        .coordinated_structural_candidates
+        .iter()
+        .map(|c| c.expected_creature_score_gain)
+        .collect();
+
+    let config = candidate_diversity::DiversityConfig::default();
+    syn.coordinated_structural_candidates = candidate_diversity::rerank_with_diversity(
+        std::mem::take(&mut syn.coordinated_structural_candidates),
+        &config,
+    );
+
+    if utils::verbose_enabled() {
+        let after_order: Vec<f32> = syn
+            .coordinated_structural_candidates
+            .iter()
+            .map(|c| c.expected_creature_score_gain)
+            .collect();
+        let reordered = before_order != after_order;
+        tracing::debug!(
+            candidates = syn.coordinated_structural_candidates.len(),
+            reordered,
+            "Diversity reranking: applied structural diversity penalty"
+        );
+    }
+
+    crate::watchdog::beat("analysis::analyze_all → diversity reranking finished");
 }
 
 /// Apply ensemble scoring to combine predictions across discovery modules (Issue #572).
