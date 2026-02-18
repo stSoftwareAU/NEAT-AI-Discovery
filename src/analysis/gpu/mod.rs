@@ -16,7 +16,11 @@
 //! ├── relu_evaluation.rs        <- ReLU activation GPU evaluation (Issue #520)
 //! ├── activation_evaluation.rs  <- Activation function GPU evaluation (Issue #520)
 //! ├── bias_evaluation.rs        <- Bias GPU evaluation (Issue #520)
-//! ├── queue.rs                  <- GpuWorkQueue struct and thread management (Issue #274)
+//! ├── queue/                    <- GPU work queue (Issue #274, #608)
+//! │   ├── mod.rs                <- Public API, re-exports, queue types
+//! │   ├── submission.rs         <- Work item submission and batching
+//! │   ├── execution.rs          <- GPU execution and result collection
+//! │   └── scheduling.rs         <- Work scheduling and prioritisation
 //! ```
 //!
 //! ## Refactoring Progress
@@ -24,7 +28,7 @@
 //! - [x] shaders.rs - GPU shader constants and references (Issue #277)
 //! - [x] device.rs - GPU device initialisation, detection, buffer management (Issue #272)
 //! - [x] analyzer.rs - GpuAnalyzer struct, GpuEvaluator trait (Issue #273)
-//! - [x] queue.rs - GpuWorkQueue struct and implementation (Issue #274)
+//! - [x] queue/ - GpuWorkQueue sub-modules (Issue #274, #608)
 //! - [x] Per-evaluation modules split from analyzer.rs (Issue #520)
 
 pub mod activation_evaluation;

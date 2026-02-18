@@ -189,7 +189,11 @@ src/
 │   │   ├── relu_evaluation.rs     # ReLU activation GPU evaluation
 │   │   ├── activation_evaluation.rs # Activation function GPU evaluation
 │   │   ├── bias_evaluation.rs     # Bias GPU evaluation
-│   │   ├── queue.rs          # GPU work queue
+│   │   ├── queue/            # GPU work queue (Issue #608)
+│   │   │   ├── mod.rs            # Public API, re-exports, queue types
+│   │   │   ├── submission.rs     # Work item submission and batching
+│   │   │   ├── execution.rs      # GPU execution and result collection
+│   │   │   └── scheduling.rs     # Work scheduling and prioritisation
 │   │   └── shaders.rs        # Shader management
 │   │
 │   └── utils/                # Utilities
