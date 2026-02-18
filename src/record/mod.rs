@@ -1,4 +1,11 @@
-//! Record discovery data logic
+//! Record discovery data logic.
+//!
+//! Split into focused sub-modules (Issue #604):
+//! - `validation` — input validation and observation index resolution
+//! - `processing` — record building from training data and Parquet writing
+
+mod processing;
+mod validation;
 
 use anyhow::{Context, Result};
 use std::fs;
@@ -6,7 +13,6 @@ use std::path::Path;
 
 use crate::RecordDiscoveryInput;
 use crate::parquet_format::ParquetRecordWriter;
-use crate::types::DiscoverRecord;
 
 /// Result of recording discovery data
 #[derive(Debug)]
@@ -28,70 +34,9 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
     fs::create_dir_all(temp_dir)
         .with_context(|| format!("Failed to create temp directory: {temp_dir_str}"))?;
 
-    let non_input_neuron_count = input
-        .creature
-        .neurons
-        .iter()
-        .filter(|n| n.neuron_type != "input")
-        .count();
-
-    if non_input_neuron_count == 0 {
-        return Err(anyhow::anyhow!(
-            "Cannot record discovery data: creature has no non-input neurons. Input neurons are skipped during discovery recording. Discovery recording requires at least one hidden or output neuron to record activations and errors."
-        ));
-    }
-
-    // Determine observation indices to assign to each training record
-    let obs_indices: Vec<u32> = if let Some(ref record_indices) = input.record_indices {
-        if record_indices.len() != input.training_data.len() {
-            return Err(anyhow::anyhow!(
-                "record_indices length ({}) must match training_data length ({}) when provided",
-                record_indices.len(),
-                input.training_data.len()
-            ));
-        }
-
-        let mut seen = std::collections::HashSet::new();
-        let mut indices = Vec::with_capacity(record_indices.len());
-        for &idx in record_indices {
-            if !seen.insert(idx) {
-                return Err(anyhow::anyhow!(
-                    "Record index {idx} is duplicated in record_indices. Discovery recording requires unique indices."
-                ));
-            }
-            let obs_index_u32 = u32::try_from(idx).map_err(|_| {
-                anyhow::anyhow!(
-                    "Record index {idx} exceeds maximum supported size ({max})",
-                    max = u32::MAX
-                )
-            })?;
-            indices.push(obs_index_u32);
-        }
-        indices
-    } else {
-        if input.training_data.len() > u32::MAX as usize {
-            return Err(anyhow::anyhow!(
-                "Training data has {} records which exceeds maximum supported size ({})",
-                input.training_data.len(),
-                u32::MAX
-            ));
-        }
-
-        (0..input.training_data.len())
-            .map(|idx| {
-                u32::try_from(idx).map_err(|_| {
-                    anyhow::anyhow!("Observation index {} exceeds u32::MAX ({})", idx, u32::MAX)
-                })
-            })
-            .collect::<Result<Vec<u32>>>()?
-    };
+    let (non_input_neuron_count, obs_indices) = validation::validate_and_resolve_indices(input)?;
 
     let records_per_sample = non_input_neuron_count + input.creature.input;
-    if input.training_data.is_empty() || records_per_sample == 0 {
-        return Err(anyhow::anyhow!(
-            "No discovery records were generated from the training data"
-        ));
-    }
 
     let estimated_total_records = input
         .training_data
@@ -113,74 +58,7 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
     )
     .context("Failed to initialise Parquet writer")?;
 
-    let mut wrote_any_records = false;
-
-    for (relative_idx, training_record) in input.training_data.iter().enumerate() {
-        let obs_index_u32 = obs_indices[relative_idx];
-
-        let mut batch_records = Vec::with_capacity(non_input_neuron_count + input.creature.input);
-
-        // Use pre-computed neuron_data if available (from TypeScript)
-        // Otherwise, we would need to activate the creature here (not implemented)
-        if let Some(neuron_data) = &training_record.neuron_data {
-            // Process each neuron from pre-computed data
-            for neuron_info in neuron_data {
-                // Skip input neurons and non-existent neurons (match TypeScript behavior)
-                let neuron = match input
-                    .creature
-                    .neurons
-                    .iter()
-                    .find(|n| n.uuid == neuron_info.neuron_uuid)
-                {
-                    Some(n) => n,
-                    None => continue, // Skip non-existent neurons to prevent invalid discovery data
-                };
-
-                if neuron.neuron_type == "input" {
-                    continue;
-                }
-
-                let record = DiscoverRecord::new(
-                    obs_index_u32,
-                    neuron_info.neuron_uuid.clone(),
-                    neuron_info.value,
-                    neuron_info.activation,
-                    neuron_info.errors.clone(),
-                );
-
-                batch_records.push(record);
-            }
-        } else {
-            // No pre-computed data - this should not happen in normal operation
-            // TypeScript should always provide neuron_data
-            return Err(anyhow::anyhow!(
-                "No pre-computed neuron_data provided. TypeScript must compute activations and errors before calling Rust."
-            ));
-        }
-
-        // Record input neuron activations for GPU-assisted analysis
-        for (input_index, value) in training_record.input.iter().enumerate() {
-            let input_uuid = format!("input-{input_index}");
-
-            let record =
-                DiscoverRecord::new(obs_index_u32, input_uuid, Some(*value), *value, Vec::new());
-
-            batch_records.push(record);
-        }
-
-        if !batch_records.is_empty() {
-            writer
-                .write_records(&batch_records)
-                .context("Failed to write discovery batch to Parquet")?;
-            wrote_any_records = true;
-        }
-    }
-
-    if !wrote_any_records {
-        return Err(anyhow::anyhow!(
-            "No discovery records were generated from the training data"
-        ));
-    }
+    processing::process_training_data(input, &obs_indices, non_input_neuron_count, &mut writer)?;
 
     writer
         .finish()
