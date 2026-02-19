@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use super::super::{
     bounded_range, cache, discovery_dispatch, error_plateau, gradient_discovery, input_sensitivity,
-    observation_utilisation, output_bias_drift, output_squash_mismatch, sample_weighted,
-    sentinel_gating,
+    observation_utilisation, output_bias_drift, output_range_compression, output_squash_mismatch,
+    sample_weighted, sentinel_gating,
 };
 
 /// Append scoring and recommendation discovery module specs to the provided vector.
@@ -221,6 +221,37 @@ pub(crate) fn append_scoring_specs(
                     return None;
                 }
                 let candidates = gradient_discovery::gradient_candidates_to_coordinated(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            }),
+        });
+    }
+
+    // Issue #645: Output range compression detection
+    {
+        let cache = Arc::clone(shared_cache);
+        let creature = Arc::clone(creature);
+        modules.push(discovery_dispatch::DiscoveryModuleSpec {
+            module_name: "output range compression detection".to_string(),
+            phase_name: "output_range_compression_detection",
+            detect_fn: Box::new(move || {
+                let records = cache.load_records_for_neuron_types(&creature, &["output"]);
+                if records.is_empty() {
+                    return None;
+                }
+                let config = output_range_compression::OutputRangeCompressionConfig::default();
+                let detected = output_range_compression::detect_output_range_compression(
+                    &creature, &records, &config,
+                );
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    output_range_compression::output_range_compression_to_coordinated_candidates(
+                        &detected, &creature,
+                    );
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
