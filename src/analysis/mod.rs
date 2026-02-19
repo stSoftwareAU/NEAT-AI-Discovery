@@ -89,6 +89,7 @@ pub use detection::topology_diversification;
 pub use detection::unbounded_capping;
 pub use detection::weight_coherence;
 pub use detection::weight_magnitude_reset;
+pub use detection::weight_polarity_flip;
 
 // Re-export recommendation modules at analysis level for backward compatibility
 pub use recommendation::activation_recommendation;
