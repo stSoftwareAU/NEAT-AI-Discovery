@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 
 use crate::types::DiscoverRecord;
+use std::time::SystemTime;
 
 /// Read all discovery records from a Parquet file, grouped by neuron UUID.
 /// This is more efficient than calling read_records_from_parquet multiple times
@@ -14,6 +15,27 @@ use crate::types::DiscoverRecord;
 pub fn read_all_records_grouped_by_neuron(
     file_path: &str,
 ) -> Result<HashMap<String, Vec<DiscoverRecord>>> {
+    read_all_records_grouped_by_neuron_with_deadline(file_path, None)
+}
+
+/// Read all discovery records from a Parquet file, grouped by neuron UUID,
+/// with optional deadline checking and watchdog beats (Issue #648).
+///
+/// When a deadline is provided, the reader checks at each batch boundary
+/// whether the deadline has passed. If so, it aborts early with a clear
+/// error message. Watchdog beats are emitted every batch to prevent
+/// the watchdog from triggering during long loads.
+pub fn read_all_records_grouped_by_neuron_with_deadline(
+    file_path: &str,
+    deadline: Option<SystemTime>,
+) -> Result<HashMap<String, Vec<DiscoverRecord>>> {
+    // Check deadline before starting
+    if let Some(dl) = deadline
+        && SystemTime::now() >= dl
+    {
+        anyhow::bail!("Parquet loading aborted: deadline already passed before loading started");
+    }
+
     let file = File::open(file_path)
         .with_context(|| format!("Failed to open Parquet file: {file_path}"))?;
 
@@ -24,7 +46,29 @@ pub fn read_all_records_grouped_by_neuron(
 
     let mut grouped_records: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
 
-    for batch_result in reader {
+    for (batch_count, batch_result) in reader.enumerate() {
+        // Check deadline at each batch boundary (Issue #648)
+        if let Some(dl) = deadline
+            && SystemTime::now() >= dl
+        {
+            let neurons_loaded = grouped_records.len();
+            tracing::warn!(
+                batch_count,
+                neurons_loaded,
+                "Parquet loading aborted: deadline reached after {batch_count} batches \
+                 ({neurons_loaded} neurons loaded)"
+            );
+            anyhow::bail!(
+                "Parquet loading aborted: deadline reached after {batch_count} batches \
+                 ({neurons_loaded} neurons loaded)"
+            );
+        }
+
+        // Beat the watchdog periodically during loading (Issue #648)
+        if batch_count.is_multiple_of(10) {
+            crate::watchdog::beat(format!("parquet loading: batch {batch_count}"));
+        }
+
         let batch = batch_result.context("Failed to read record batch")?;
 
         // Get columns - use schema field names to find correct columns instead of hardcoded indices

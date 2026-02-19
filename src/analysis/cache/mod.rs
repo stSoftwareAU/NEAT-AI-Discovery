@@ -100,11 +100,28 @@ impl RecordCache {
     /// This ensures discovery works on any modern Mac/PC, adapting to available resources.
     #[tracing::instrument(skip_all, fields(parquet_file))]
     pub fn new_adaptive(parquet_file: &str) -> Result<Self> {
+        Self::new_adaptive_with_deadline(parquet_file, None)
+    }
+
+    /// Create an adaptive cache with optional deadline checking (Issue #648).
+    ///
+    /// When a deadline is provided, the parquet loading phase checks the deadline
+    /// periodically at batch boundaries and aborts early with a clear error if
+    /// the deadline is reached. Watchdog beats are emitted during loading to
+    /// prevent the watchdog from triggering for legitimately slow (but progressing)
+    /// loads.
+    ///
+    /// If no deadline is provided, behaves identically to `new_adaptive()`.
+    #[tracing::instrument(skip_all, fields(parquet_file))]
+    pub fn new_adaptive_with_deadline(
+        parquet_file: &str,
+        deadline: Option<std::time::SystemTime>,
+    ) -> Result<Self> {
         // Check if we have enough memory for pre-loading
         match check_memory_for_parquet(parquet_file) {
             Ok(()) => {
                 // Sufficient memory - use fast pre-loaded mode
-                Self::new_preloaded_internal(parquet_file)
+                Self::new_preloaded_with_deadline(parquet_file, deadline)
             }
             Err(memory_error) => {
                 // Insufficient memory - fall back to lazy loading
@@ -137,11 +154,19 @@ impl RecordCache {
 
     /// Internal pre-loaded implementation (called when memory check passes).
     fn new_preloaded_internal(parquet_file: &str) -> Result<Self> {
-        use crate::parquet_format::read_all_records_grouped_by_neuron;
+        Self::new_preloaded_with_deadline(parquet_file, None)
+    }
+
+    /// Internal pre-loaded implementation with optional deadline (Issue #648).
+    fn new_preloaded_with_deadline(
+        parquet_file: &str,
+        deadline: Option<std::time::SystemTime>,
+    ) -> Result<Self> {
+        use crate::parquet_format::read_all_records_grouped_by_neuron_with_deadline;
         use std::time::Instant;
 
         let start = Instant::now();
-        let grouped = read_all_records_grouped_by_neuron(parquet_file)?;
+        let grouped = read_all_records_grouped_by_neuron_with_deadline(parquet_file, deadline)?;
         let elapsed = start.elapsed();
 
         // Pre-populate the cache with OnceCell-wrapped records
