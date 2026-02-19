@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use super::super::{
     activation_mismatch, activation_recommendation, bias_perturbation, bottleneck, cache,
-    co_adaptation, dead_neuron, discovery_dispatch, noise_signal, operating_point,
+    co_adaptation, dead_neuron, discovery_dispatch, monotonicity, noise_signal, operating_point,
     oscillating_neuron, restricted_range, saturation, squash_weight_rescale, symmetry_breaking,
     unbounded_capping,
 };
@@ -406,6 +406,34 @@ pub(crate) fn append_neuron_specs(
                     squash_weight_rescale::squash_weight_rescale_to_coordinated_candidates(
                         &detected,
                     );
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            }),
+        });
+    }
+
+    // Issue #643: Activation-error monotonicity detection
+    {
+        let cache = Arc::clone(shared_cache);
+        let hidden = Arc::clone(hidden_neurons);
+        let creature = Arc::clone(creature);
+        modules.push(discovery_dispatch::DiscoveryModuleSpec {
+            module_name: "monotonicity detection".to_string(),
+            phase_name: "monotonicity_detection",
+            detect_fn: Box::new(move || {
+                if hidden.is_empty() {
+                    return None;
+                }
+                let records = cache.load_records_for_hidden(&hidden);
+                let detected = monotonicity::detect_non_monotonic_neurons(&creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = monotonicity::non_monotonic_neurons_to_coordinated_candidates(
+                    &detected, &creature,
+                );
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,

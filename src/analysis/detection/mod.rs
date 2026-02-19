@@ -15,6 +15,7 @@ pub mod dormant_synapse;
 pub mod error_plateau;
 pub mod hard_sample_cluster;
 pub mod input_sensitivity;
+pub mod monotonicity;
 pub mod noise_signal;
 pub mod observation_range;
 pub mod observation_utilisation;
