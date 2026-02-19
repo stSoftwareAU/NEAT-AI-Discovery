@@ -68,6 +68,12 @@ changes** that are likely to improve the creature's score.
   │  • Missing connections?  → Add synapse / multi-hop analysis     │
   │  • Missing computations? → Add neuron analysis                  │
   │  • Useless neurons?      → Remove low-impact neuron             │
+  │  • Wrong activation?     → Activation mismatch / recommendation │
+  │  • Gradient attenuation? → Skip connection discovery            │
+  │  • Fragile weights?      → Weight coherence / noise-to-signal   │
+  │  • Sentinel values?      → Bounded range / sentinel gating      │
+  │  • Error plateau?        → Squash change + bias recentring      │
+  │  • Co-adapted neurons?   → Co-adaptation / symmetry breaking    │
   └─────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
@@ -112,6 +118,8 @@ earning their keep.
 | [Opposing Synapse](opposing-synapse.md) | Connections that increase error | Remove or flip the synapse |
 | [Redundant Path](redundant-path.md) | Duplicate paths carrying the same signal | Remove the weaker path |
 | [Remove Low-Impact](remove-low-impact.md) | Neurons below the cost of growth | Remove the neuron |
+| [Co-Adaptation](co-adaptation.md) | Neuron pairs with correlated activations | Remove redundant neuron or perturb weights |
+| [Noise-to-Signal Ratio](noise-signal.md) | Neurons/synapses with high noise-to-signal | Remove or dampen noisy components |
 
 ### Repair Discoveries (Fix Broken Components)
 
@@ -123,6 +131,16 @@ configuration.
 | [Saturated Neuron](saturated-neuron.md) | Neurons stuck at activation bounds | Change activation function + adjust bias |
 | [Output Bias Drift](output-bias-drift.md) | Outputs consistently predicting too high/low | Adjust the bias |
 | [Oscillating Neuron](oscillating-neuron.md) | Neurons flipping between ± values | Change activation function |
+| [Activation Mismatch](activation-mismatch.md) | Activation function incompatible with data | Change to compatible activation |
+| [Unbounded Capping](unbounded-capping.md) | Unbounded activations producing extreme values | Cap with bounded activation (e.g., RELU6) |
+| [Restricted Range](restricted-range.md) | Neurons using tiny fraction of output range | Change squash, adjust bias, or rescale weights |
+| [Operating Point](operating-point.md) | Pre-activation misaligned with active zone | Shift bias, change squash, or rescale weights |
+| [Bias Perturbation](bias-perturbation.md) | Neurons stuck in saturated tail of activation | Large bias shift to active zone centre |
+| [Squash + Weight Rescale](squash-weight-rescale.md) | Activation change needed with weight compensation | Coordinated squash change + weight rescaling |
+| [Activation Recommendation](activation-recommendation.md) | Activation mismatched to input distribution | Proactive squash change based on data shape |
+| [Symmetry Breaking](symmetry-breaking.md) | Neuron pairs with near-identical weight configs | Perturb weights and bias to break symmetry |
+| [Error Plateau](error-plateau.md) | Output neurons stuck at uniformly high error | Change squash + recentre bias |
+| [Output Squash Mismatch](output-squash-mismatch.md) | Output activation incompatible with target data | Change to compatible output activation |
 
 ### Growth Discoveries (Add Missing Structure)
 
@@ -136,6 +154,32 @@ paths would reduce error.
 | [Multi-Hop](multi-hop.md) | Useful indirect signal paths (2–3 hops) | Add synapse or relay neuron |
 | [Add Neuron](add-neuron.md) | Missing intermediate computations | Add hidden neuron |
 | [Add Synapse](add-synapse.md) | Missing direct connections | Add synapse |
+| [Skip Connection](skip-connection.md) | Deep neurons with attenuated gradients | Add direct shortcut from shallow source |
+| [Topology Diversification](topology-diversification.md) | Output with no hidden-neuron paths | Add non-linear hidden neuron |
+
+### Synapse Weight Discoveries (Adjust Weights)
+
+These discoveries fine-tune synapse weights to improve signal flow and
+reduce brittleness.
+
+| Scenario | What It Finds | Proposed Fix |
+|----------|--------------|--------------|
+| [Gradient-Based Synapse Adjustment](gradient-discovery.md) | Synapses with gradient-based improvement potential | Adjust weight in error-reducing direction |
+| [Weight Coherence](weight-coherence.md) | Incoherent ratios, constant paths, symmetric cancellation | Rescale, adjust bias, or reduce cancelling weights |
+| [Weight Magnitude Reset](weight-magnitude-reset.md) | Synapses stuck in error plateau | Try dramatically different weight values |
+| [Input Sensitivity](input-sensitivity.md) | Dominant inputs or threshold cliff effects | Reduce weight, add dampening, or shift bias |
+| [Sample-Weighted Discovery](sample-weighted.md) | Neurons failing on high-error samples | Adjust bias toward hard-sample performance |
+
+### Data Quality Discoveries (Handle Sentinel Values)
+
+These discoveries improve how the network handles missing or special-marker
+input values.
+
+| Scenario | What It Finds | Proposed Fix |
+|----------|--------------|--------------|
+| [Bounded Range](bounded-range.md) | Sentinel boundary clusters in activations | Add gating neuron to suppress sentinels |
+| [Sentinel Value Gating](sentinel-gating.md) | Input sentinels confirmed by error analysis | Add STEP gate to separate sentinel from signal |
+| [Observation Utilisation](observation-utilisation.md) | Inputs dominated by sentinel values | Bias-compensate downstream neurons |
 
 ---
 
