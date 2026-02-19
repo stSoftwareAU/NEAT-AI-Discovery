@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::super::{
     cache, discovery_dispatch, dormant_synapse, noise_signal, opposing_synapse, weight_coherence,
-    weight_magnitude_reset,
+    weight_magnitude_reset, weight_polarity_flip,
 };
 
 /// Append synapse-focused discovery module specs to the provided vector.
@@ -188,6 +188,34 @@ pub(crate) fn append_synapse_specs(
                 }
                 let candidates =
                     weight_magnitude_reset::stuck_synapses_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            }),
+        });
+    }
+
+    // Issue #644: Weight polarity flip detection (gradient-weight sign disagreement)
+    {
+        let cache = Arc::clone(shared_cache);
+        let creature = Arc::clone(creature);
+        modules.push(discovery_dispatch::DiscoveryModuleSpec {
+            module_name: "weight polarity flip detection".to_string(),
+            phase_name: "weight_polarity_flip_detection",
+            detect_fn: Box::new(move || {
+                let records = cache.load_records_for_all_neurons(&creature);
+                if records.is_empty() {
+                    return None;
+                }
+                let detected = weight_polarity_flip::detect_weight_polarity_flip_candidates(
+                    &creature, &records,
+                );
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    weight_polarity_flip::polarity_flip_candidates_to_coordinated(&detected);
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
