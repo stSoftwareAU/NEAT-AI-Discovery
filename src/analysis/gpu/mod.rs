@@ -55,8 +55,11 @@ pub use device::GPU_QUEUE_TIMEOUT_MAX_SECS;
 // Re-export analyzer module contents
 pub use analyzer::{GPU_MAX_BATCH_ALLOC_BYTES, GpuAnalyzer, GpuEvaluator};
 
-// Re-export queue module contents (Issue #274)
+// Re-export queue module contents (Issue #274, #647)
 pub use queue::GpuWorkQueue;
+pub use queue::recovery::{
+    DEFAULT_GPU_RETRY_LIMIT, GPU_RETRY_LIMIT_ENV, get_gpu_retry_limit, is_device_lost_error,
+};
 
 // Re-export shader module contents (Issue #277)
 pub use shaders::{

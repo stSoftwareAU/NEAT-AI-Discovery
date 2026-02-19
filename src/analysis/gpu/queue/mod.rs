@@ -44,6 +44,7 @@
 //! - `scheduling` — Work scheduling, initialisation, and shutdown
 
 mod execution;
+pub(crate) mod recovery;
 mod scheduling;
 mod submission;
 
