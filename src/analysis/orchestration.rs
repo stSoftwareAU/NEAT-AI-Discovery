@@ -141,8 +141,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
     // Pre-load ALL records from parquet in one pass. This is MUCH faster than
     // lazy-loading each neuron separately (1 scan vs ~2000 scans for large creatures).
+    // Issue #648: Pass the analysis deadline so loading can abort early if time runs out.
+    let loading_deadline = utils::build_deadline(input.analysis_deadline_ms);
     let parquet_loading_start = std::time::Instant::now();
-    let shared_cache = Arc::new(cache::RecordCache::new_adaptive(&input.parquet_file)?);
+    let shared_cache = Arc::new(cache::RecordCache::new_adaptive_with_deadline(
+        &input.parquet_file,
+        loading_deadline,
+    )?);
     profile.record_phase(
         "parquet_loading",
         parquet_loading_start.elapsed().as_millis() as u64,
