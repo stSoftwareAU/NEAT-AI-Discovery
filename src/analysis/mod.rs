@@ -67,6 +67,7 @@ pub use detection::correlated_error;
 pub use detection::dead_neuron;
 pub use detection::dormant_synapse;
 pub use detection::error_plateau;
+pub use detection::hard_sample_cluster;
 pub use detection::input_sensitivity;
 pub use detection::noise_signal;
 pub use detection::observation_range;

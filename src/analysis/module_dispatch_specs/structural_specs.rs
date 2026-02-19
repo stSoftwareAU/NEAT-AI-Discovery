@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use super::super::{
-    cache, correlated_error, discovery_dispatch, multi_hop, skip_connection, topology,
-    topology_diversification,
+    cache, correlated_error, discovery_dispatch, hard_sample_cluster, multi_hop, skip_connection,
+    topology, topology_diversification,
 };
 
 /// Append structural discovery module specs to the provided vector.
@@ -153,6 +153,33 @@ pub(crate) fn append_structural_specs(
                 let candidates = skip_connection::skip_connections_to_coordinated_candidates(
                     &detected, &creature,
                 );
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            }),
+        });
+    }
+
+    // Issue #642: Hard sample cluster detection (cross-network high-error observations)
+    {
+        let cache = Arc::clone(shared_cache);
+        let creature = Arc::clone(creature);
+        modules.push(discovery_dispatch::DiscoveryModuleSpec {
+            module_name: "hard sample cluster detection".to_string(),
+            phase_name: "hard_sample_cluster_detection",
+            detect_fn: Box::new(move || {
+                let records = cache.load_records_for_all_neurons(&creature);
+                let config = hard_sample_cluster::HardSampleClusterConfig::default();
+                let detected =
+                    hard_sample_cluster::detect_hard_sample_clusters(&creature, &records, &config);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    hard_sample_cluster::hard_sample_clusters_to_coordinated_candidates(
+                        &detected, &creature,
+                    );
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
