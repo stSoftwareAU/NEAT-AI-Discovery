@@ -45,11 +45,15 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
             Ok(json) => json,
             Err(e) => {
                 // Properly serialize error message to avoid JSON injection issues
+                let err_msg = e.to_string();
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = RecordDiscoveryOutput {
                     success: false,
                     temp_dir: None,
                     file: None,
-                    error: Some(e.to_string()),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
                     // Fallback if serialization fails (shouldn't happen)
@@ -153,10 +157,14 @@ pub extern "C" fn start_discovery_session(
         let input: StartSessionInput = match serde_json::from_str(input_str) {
             Ok(input) => input,
             Err(e) => {
+                let err_msg = format!("Failed to parse input JSON: {e}");
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = StartSessionOutput {
                     success: false,
                     session_id: None,
-                    error: Some(format!("Failed to parse input JSON: {e}")),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 let json = serde_json::to_string(&output).unwrap();
                 return CString::new(json).unwrap().into_raw();
@@ -164,16 +172,27 @@ pub extern "C" fn start_discovery_session(
         };
 
         let output = match streaming::start_session(input.creature, input.temp_dir) {
-            Ok(session_id) => StartSessionOutput {
-                success: true,
-                session_id: Some(session_id),
-                error: None,
-            },
-            Err(e) => StartSessionOutput {
-                success: false,
-                session_id: None,
-                error: Some(e.to_string()),
-            },
+            Ok(session_id) => {
+                let (error_kind, retryable) = no_error_fields();
+                StartSessionOutput {
+                    success: true,
+                    session_id: Some(session_id),
+                    error: None,
+                    error_kind,
+                    retryable,
+                }
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                let (error_kind, retryable) = error_fields(&err_msg);
+                StartSessionOutput {
+                    success: false,
+                    session_id: None,
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
+                }
+            }
         };
 
         let json = serde_json::to_string(&output).unwrap();
@@ -249,10 +268,14 @@ pub extern "C" fn append_discovery_records(
         let input: AppendRecordsInput = match serde_json::from_str(input_str) {
             Ok(input) => input,
             Err(e) => {
+                let err_msg = format!("Failed to parse input JSON: {e}");
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = AppendRecordsOutput {
                     success: false,
                     records_written: None,
-                    error: Some(format!("Failed to parse input JSON: {e}")),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 let json = serde_json::to_string(&output).unwrap();
                 return CString::new(json).unwrap().into_raw();
@@ -267,16 +290,27 @@ pub extern "C" fn append_discovery_records(
             .collect();
 
         let output = match streaming::append_records(&input.session_id, batches) {
-            Ok(records_written) => AppendRecordsOutput {
-                success: true,
-                records_written: Some(records_written),
-                error: None,
-            },
-            Err(e) => AppendRecordsOutput {
-                success: false,
-                records_written: None,
-                error: Some(e.to_string()),
-            },
+            Ok(records_written) => {
+                let (error_kind, retryable) = no_error_fields();
+                AppendRecordsOutput {
+                    success: true,
+                    records_written: Some(records_written),
+                    error: None,
+                    error_kind,
+                    retryable,
+                }
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                let (error_kind, retryable) = error_fields(&err_msg);
+                AppendRecordsOutput {
+                    success: false,
+                    records_written: None,
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
+                }
+            }
         };
 
         let json = serde_json::to_string(&output).unwrap();
@@ -347,12 +381,16 @@ pub extern "C" fn finish_discovery_session(
         let input: FinishSessionInput = match serde_json::from_str(input_str) {
             Ok(input) => input,
             Err(e) => {
+                let err_msg = format!("Failed to parse input JSON: {e}");
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = FinishSessionOutput {
                     success: false,
                     temp_dir: None,
                     file: None,
                     total_records: None,
-                    error: Some(format!("Failed to parse input JSON: {e}")),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 let json = serde_json::to_string(&output).unwrap();
                 return CString::new(json).unwrap().into_raw();
@@ -360,20 +398,31 @@ pub extern "C" fn finish_discovery_session(
         };
 
         let output = match streaming::finish_session(&input.session_id) {
-            Ok((temp_dir, file, total_records)) => FinishSessionOutput {
-                success: true,
-                temp_dir: Some(temp_dir),
-                file: Some(file),
-                total_records: Some(total_records),
-                error: None,
-            },
-            Err(e) => FinishSessionOutput {
-                success: false,
-                temp_dir: None,
-                file: None,
-                total_records: None,
-                error: Some(e.to_string()),
-            },
+            Ok((temp_dir, file, total_records)) => {
+                let (error_kind, retryable) = no_error_fields();
+                FinishSessionOutput {
+                    success: true,
+                    temp_dir: Some(temp_dir),
+                    file: Some(file),
+                    total_records: Some(total_records),
+                    error: None,
+                    error_kind,
+                    retryable,
+                }
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                let (error_kind, retryable) = error_fields(&err_msg);
+                FinishSessionOutput {
+                    success: false,
+                    temp_dir: None,
+                    file: None,
+                    total_records: None,
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
+                }
+            }
         };
 
         let json = serde_json::to_string(&output).unwrap();
@@ -443,9 +492,13 @@ pub extern "C" fn cancel_discovery_session(
         let input: CancelSessionInput = match serde_json::from_str(input_str) {
             Ok(input) => input,
             Err(e) => {
+                let err_msg = format!("Failed to parse input JSON: {e}");
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = CancelSessionOutput {
                     success: false,
-                    error: Some(format!("Failed to parse input JSON: {e}")),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 let json = serde_json::to_string(&output).unwrap();
                 return CString::new(json).unwrap().into_raw();
@@ -453,14 +506,25 @@ pub extern "C" fn cancel_discovery_session(
         };
 
         let output = match streaming::cancel_session(&input.session_id) {
-            Ok(()) => CancelSessionOutput {
-                success: true,
-                error: None,
-            },
-            Err(e) => CancelSessionOutput {
-                success: false,
-                error: Some(e.to_string()),
-            },
+            Ok(()) => {
+                let (error_kind, retryable) = no_error_fields();
+                CancelSessionOutput {
+                    success: true,
+                    error: None,
+                    error_kind,
+                    retryable,
+                }
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                let (error_kind, retryable) = error_fields(&err_msg);
+                CancelSessionOutput {
+                    success: false,
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
+                }
+            }
         };
 
         let json = serde_json::to_string(&output).unwrap();

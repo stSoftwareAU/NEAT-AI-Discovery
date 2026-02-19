@@ -17,11 +17,15 @@ pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
             Ok(json) => json,
             Err(e) => {
                 // Properly serialize error message to avoid JSON injection issues
+                let err_msg = format!("Failed to probe GPU: {e}");
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = CheckGpuOutput {
                     success: false,
                     gpu_available: false,
                     reason: None,
-                    error: Some(format!("Failed to probe GPU: {e}")),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
                     // Fallback if serialization fails (shouldn't happen)

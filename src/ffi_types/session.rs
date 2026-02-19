@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{CreatureJson, NeuronData};
+use super::{CreatureJson, DiscoveryErrorKind, NeuronData};
 
 /// JSON input for start_discovery_session function
 #[derive(Debug, Deserialize)]
@@ -24,6 +24,12 @@ pub struct StartSessionOutput {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 /// A single observation to append to a streaming session
@@ -52,6 +58,12 @@ pub struct AppendRecordsOutput {
     pub records_written: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 /// JSON input for finish_discovery_session function
@@ -74,6 +86,12 @@ pub struct FinishSessionOutput {
     pub total_records: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 /// JSON input for cancel_discovery_session function
@@ -90,4 +108,10 @@ pub struct CancelSessionOutput {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }

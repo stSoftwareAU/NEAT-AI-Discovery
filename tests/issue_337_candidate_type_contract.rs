@@ -315,6 +315,8 @@ fn analyze_parallel_output_contains_all_candidate_fields() {
         fingerprint_cache_hits: None,
         fingerprint_cache_misses: None,
         error: None,
+        error_kind: None,
+        retryable: None,
     };
 
     let json: serde_json::Value =
@@ -362,6 +364,8 @@ fn rank_focus_neurons_output_contains_removal_candidate_fields() {
         total_neurons: Some(10),
         duration_ms: Some(100),
         error: None,
+        error_kind: None,
+        retryable: None,
     };
 
     let json: serde_json::Value =
