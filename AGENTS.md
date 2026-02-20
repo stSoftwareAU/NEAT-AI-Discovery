@@ -50,7 +50,12 @@ src/
 │   ├── responses.rs          # FFI response structs (output to NEAT-AI)
 │   ├── candidates.rs         # Candidate-related types (synapse, neuron, coordinated)
 │   └── session.rs            # Streaming session types
-├── ffi_internal.rs           # Internal business-logic functions for FFI
+├── ffi_internal/             # Internal business-logic functions for FFI (Issue #665)
+│   ├── mod.rs                # Public API, re-exports, unit tests
+│   ├── recording.rs          # Recording business logic (record_discovery_internal)
+│   ├── analysis.rs           # Analysis business logic (analyze_parallel, rank_focus, calibration)
+│   ├── gpu.rs                # GPU probe and version business logic
+│   └── utilities.rs          # Utility business logic (merge, read, export)
 ├── types.rs                  # Core type definitions
 ├── activations.rs            # Activation function calculations
 ├── record/                   # Discovery data recording (Issue #604)
