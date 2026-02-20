@@ -30,13 +30,13 @@ pub use ffi_types::*;
 // integration tests (`neat_ai_discovery::*_internal`) continue to work.
 pub use ffi_internal::*;
 
-use once_cell::sync::OnceCell;
+use std::sync::OnceLock;
 
 // Library version from Cargo.toml
 const LIB_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Static flag to ensure version is logged only once
-static VERSION_LOGGED: OnceCell<()> = OnceCell::new();
+static VERSION_LOGGED: OnceLock<()> = OnceLock::new();
 
 /// Log library version on first initialisation.
 ///

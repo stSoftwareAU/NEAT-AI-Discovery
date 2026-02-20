@@ -33,7 +33,7 @@ use rand::Rng;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crate::parquet_format::ParquetRecordWriter;
 use crate::types::DiscoverRecord;
@@ -44,8 +44,8 @@ use crate::{CreatureJson, NeuronData};
 const STREAMING_MAX_CAPACITY: usize = i32::MAX as usize;
 
 /// Global session storage
-static SESSIONS: once_cell::sync::Lazy<Arc<Mutex<HashMap<String, RecordingSession>>>> =
-    once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+static SESSIONS: LazyLock<Arc<Mutex<HashMap<String, RecordingSession>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 /// A recording session that holds an open Parquet writer
 pub struct RecordingSession {

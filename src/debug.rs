@@ -20,13 +20,13 @@
 //! // And deadlocks will be detected and panic
 //! ```
 
-use once_cell::sync::OnceCell;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
 /// Static flag to ensure handlers are only initialised once.
-static DEBUG_HANDLERS_INITIALISED: OnceCell<()> = OnceCell::new();
+static DEBUG_HANDLERS_INITIALISED: OnceLock<()> = OnceLock::new();
 
 /// Flag to track if we're in verbose mode (shows more detail).
 static VERBOSE_MODE: AtomicBool = AtomicBool::new(false);

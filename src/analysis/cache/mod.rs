@@ -62,15 +62,14 @@ pub use super::streaming::{
 use crate::CreatureJson;
 use crate::types::DiscoverRecord;
 use anyhow::{Context, Result};
-use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::analysis::utils::{check_memory_for_parquet, get_memory_info, verbose_enabled};
 
 type RecordCacheLoader = dyn Fn(&str, &str) -> Result<Vec<DiscoverRecord>> + Send + Sync + 'static;
-type CachedNeuronRecords = OnceCell<Arc<Vec<DiscoverRecord>>>;
+type CachedNeuronRecords = OnceLock<Result<Arc<Vec<DiscoverRecord>>, String>>;
 
 /// A thread-safe cache for neuron discovery records loaded from parquet files.
 ///
@@ -169,14 +168,14 @@ impl RecordCache {
         let grouped = read_all_records_grouped_by_neuron_with_deadline(parquet_file, deadline)?;
         let elapsed = start.elapsed();
 
-        // Pre-populate the cache with OnceCell-wrapped records
+        // Pre-populate the cache with OnceLock-wrapped records
         let cache: RwLock<HashMap<String, Arc<CachedNeuronRecords>>> = RwLock::new(
             grouped
                 .into_iter()
                 .map(|(k, v)| {
-                    let cell = OnceCell::new();
-                    // OnceCell::set can't fail here - cell was just created
-                    cell.set(Arc::new(v)).ok();
+                    let cell = OnceLock::new();
+                    // OnceLock::set can't fail here - cell was just created
+                    cell.set(Ok(Arc::new(v))).ok();
                     (k, Arc::new(cell))
                 })
                 .collect(),
@@ -207,7 +206,7 @@ impl RecordCache {
     /// - First attempts a read lock to check if the cell already exists (fast path)
     /// - Only acquires a write lock if the cell needs to be created (slow path)
     ///
-    /// After obtaining the cell, uses `OnceCell::get_or_try_init()` for thread-safe
+    /// After obtaining the cell, uses `OnceLock::get_or_try_init()` for thread-safe
     /// lazy initialisation without holding the cache lock.
     pub fn get(&self, neuron_uuid: &str) -> Result<Arc<Vec<DiscoverRecord>>> {
         // Fast path: try to get with read lock first (allows concurrent reads)
@@ -224,24 +223,28 @@ impl RecordCache {
                 // Double-check: another thread may have inserted while we were waiting
                 cache
                     .entry(neuron_uuid.to_string())
-                    .or_insert_with(|| Arc::new(OnceCell::new()))
+                    .or_insert_with(|| Arc::new(OnceLock::new()))
                     .clone()
             }
         };
 
-        // Use get_or_try_init to lazily initialise the cell.
-        // If the value has already been initialised (e.g., from pre-loading or
-        // a previous call), this returns instantly.
-        // Note: This happens OUTSIDE the cache lock, so other threads can access
-        // other neurons while this one is being loaded.
-        let records = cell.get_or_try_init(|| -> Result<Arc<Vec<DiscoverRecord>>> {
-            let loader = Arc::clone(&self.loader);
-            let result = loader(&self.parquet_file, neuron_uuid)
-                .with_context(|| format!("Failed to load records for neuron '{neuron_uuid}'"))?;
-            Ok(Arc::new(result))
-        })?;
+        // Lazily initialise the cell outside the cache lock so other threads can
+        // access other neurons while this one is being loaded. get_or_init
+        // guarantees only one thread executes the loader for a given neuron.
+        let parquet = self.parquet_file.clone();
+        let loader = Arc::clone(&self.loader);
+        let result = cell.get_or_init(|| {
+            loader(&parquet, neuron_uuid)
+                .map(Arc::new)
+                .map_err(|e| format!("{e:#}"))
+        });
 
-        Ok(Arc::clone(records))
+        match result {
+            Ok(records) => Ok(Arc::clone(records)),
+            Err(msg) => Err(anyhow::anyhow!(
+                "Failed to load records for neuron '{neuron_uuid}': {msg}"
+            )),
+        }
     }
 
     /// Get the number of entries in the cache.
