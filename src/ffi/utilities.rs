@@ -37,10 +37,14 @@ pub extern "C" fn merge_discovery_parquet(
         let json_result = match crate::merge_discovery_parquet_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
+                let err_msg = e.to_string();
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = MergeParquetOutput {
                     success: false,
                     output_file: None,
-                    error: Some(e.to_string()),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
                     r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
@@ -123,10 +127,14 @@ pub extern "C" fn read_discovery_records_ffi(
             Ok(json) => json,
             Err(e) => {
                 // Properly serialize error message to avoid JSON injection issues
+                let err_msg = e.to_string();
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = ReadDiscoveryOutput {
                     success: false,
                     records: None,
-                    error: Some(e.to_string()),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
                     // Fallback if serialization fails (shouldn't happen)
@@ -222,11 +230,15 @@ pub extern "C" fn export_visualisation_snapshot(
         let json_result = match crate::export_visualisation_snapshot_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
+                let err_msg = e.to_string();
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = ExportVisualisationSnapshotOutput {
                     success: false,
                     out_file: None,
                     stats: None,
-                    error: Some(e.to_string()),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
                     r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
@@ -323,10 +335,14 @@ pub extern "C" fn get_calibration_summary(
         let json_result = match crate::get_calibration_summary_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
+                let err_msg = e.to_string();
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = crate::ffi_types::CalibrationSummaryOutput {
                     success: false,
                     calibration_summary: vec![],
-                    error: Some(e.to_string()),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
                     r#"{"success":false,"calibrationSummary":[],"error":"Failed to serialize error message"}"#.to_string()
@@ -388,10 +404,14 @@ pub extern "C" fn get_library_version() -> *mut std::ffi::c_char {
             Ok(json) => json,
             Err(e) => {
                 // Properly serialize error message to avoid JSON injection issues
+                let err_msg = format!("Failed to get version: {e}");
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = GetVersionOutput {
                     success: false,
                     version: String::new(),
-                    error: Some(format!("Failed to get version: {e}")),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
                     // Fallback if serialization fails (shouldn't happen)

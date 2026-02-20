@@ -35,6 +35,8 @@ pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mu
         let json_result = match crate::rank_focus_neurons_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
+                let err_msg = e.to_string();
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = RankFocusNeuronsOutput {
                     success: false,
                     neurons: None,
@@ -44,7 +46,9 @@ pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mu
                     processed_neurons: None,
                     total_neurons: None,
                     duration_ms: None,
-                    error: Some(e.to_string()),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
                     r#"{"success":false,"error":"Failed to serialize output"}"#.to_string()
@@ -116,6 +120,8 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
             Ok(json) => json,
             Err(e) => {
                 // Properly serialize error message to avoid JSON injection issues
+                let err_msg = format!("Failed to serialize output: {e}");
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = AnalyzeParallelOutput {
                     success: false,
                     helpful_synapses: None,
@@ -133,7 +139,9 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
                     neuron_fingerprints: None,
                     fingerprint_cache_hits: None,
                     fingerprint_cache_misses: None,
-                    error: Some(format!("Failed to serialize output: {e}")),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
                     // Fallback if serialization fails (shouldn't happen)

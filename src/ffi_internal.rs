@@ -19,11 +19,15 @@ pub fn record_discovery_internal(input_json: &str) -> Result<String> {
     let input: RecordDiscoveryInput = match serde_json::from_str(input_json) {
         Ok(input) => input,
         Err(e) => {
+            let err_msg = format!("Failed to parse input JSON: {e}");
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = RecordDiscoveryOutput {
                 success: false,
                 temp_dir: None,
                 file: None,
-                error: Some(format!("Failed to parse input JSON: {e}")),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -33,22 +37,29 @@ pub fn record_discovery_internal(input_json: &str) -> Result<String> {
     let result = match record::record_discovery_data(&input) {
         Ok(result) => result,
         Err(e) => {
+            let err_msg = e.to_string();
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = RecordDiscoveryOutput {
                 success: false,
                 temp_dir: None,
                 file: None,
-                error: Some(e.to_string()),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             return Ok(serde_json::to_string(&output)?);
         }
     };
 
     // Success case
+    let (error_kind, retryable) = no_error_fields();
     let output = RecordDiscoveryOutput {
         success: true,
         temp_dir: Some(result.temp_dir),
         file: Some(result.file),
         error: None,
+        error_kind,
+        retryable,
     };
 
     Ok(serde_json::to_string(&output)?)
@@ -58,38 +69,53 @@ pub fn merge_discovery_parquet_internal(input_json: &str) -> Result<String> {
     let input: MergeParquetInput = match serde_json::from_str(input_json) {
         Ok(input) => input,
         Err(e) => {
+            let err_msg = format!("Failed to parse input JSON: {e}");
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = MergeParquetOutput {
                 success: false,
                 output_file: None,
-                error: Some(format!("Failed to parse input JSON: {e}")),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             return Ok(serde_json::to_string(&output)?);
         }
     };
 
     if input.input_files.is_empty() {
+        let err_msg = "No discovery parquet files provided for merge".to_string();
+        let (error_kind, retryable) = error_fields(&err_msg);
         let output = MergeParquetOutput {
             success: false,
             output_file: None,
-            error: Some("No discovery parquet files provided for merge".to_string()),
+            error: Some(err_msg),
+            error_kind,
+            retryable,
         };
         return Ok(serde_json::to_string(&output)?);
     }
 
     match parquet_format::merge_parquet_files(&input.output_file, &input.input_files) {
         Ok(()) => {
+            let (error_kind, retryable) = no_error_fields();
             let output = MergeParquetOutput {
                 success: true,
                 output_file: Some(input.output_file),
                 error: None,
+                error_kind,
+                retryable,
             };
             Ok(serde_json::to_string(&output)?)
         }
         Err(e) => {
+            let err_msg = e.to_string();
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = MergeParquetOutput {
                 success: false,
                 output_file: None,
-                error: Some(e.to_string()),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             Ok(serde_json::to_string(&output)?)
         }
@@ -101,6 +127,8 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
     {
         Ok(value) => value,
         Err(e) => {
+            let err_msg = format!("Failed to parse input JSON: {e}");
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = AnalyzeParallelOutput {
                 success: false,
                 helpful_synapses: None,
@@ -118,7 +146,9 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 neuron_fingerprints: None,
                 fingerprint_cache_hits: None,
                 fingerprint_cache_misses: None,
-                error: Some(format!("Failed to parse input JSON: {e}")),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -205,10 +235,14 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     None
                 },
                 error: None,
+                error_kind: None,
+                retryable: None,
             };
             Ok(serde_json::to_string(&output)?)
         }
         Err(e) => {
+            let err_msg = e.to_string();
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = AnalyzeParallelOutput {
                 success: false,
                 helpful_synapses: None,
@@ -226,7 +260,9 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 neuron_fingerprints: None,
                 fingerprint_cache_hits: None,
                 fingerprint_cache_misses: None,
-                error: Some(e.to_string()),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             Ok(serde_json::to_string(&output)?)
         }
@@ -256,28 +292,38 @@ pub fn check_gpu_available_internal() -> Result<String> {
     // On macOS, missing GPU is an error (Metal should always work).
     // On Linux, missing GPU gracefully disables discovery (common on headless servers).
     let output = if result.is_error {
+        let err_msg = "GPU required but not available".to_string();
+        let (error_kind, retryable) = error_fields(&err_msg);
         CheckGpuOutput {
             success: false,
             gpu_available: false,
             reason: result.reason,
-            error: Some("GPU required but not available".to_string()),
+            error: Some(err_msg),
+            error_kind,
+            retryable,
         }
     } else {
+        let (error_kind, retryable) = no_error_fields();
         CheckGpuOutput {
             success: true,
             gpu_available: result.available,
             reason: result.reason,
             error: None,
+            error_kind,
+            retryable,
         }
     };
     Ok(serde_json::to_string(&output)?)
 }
 
 pub fn get_library_version_internal() -> Result<String> {
+    let (error_kind, retryable) = no_error_fields();
     let output = GetVersionOutput {
         success: true,
         version: crate::LIB_VERSION.to_string(),
         error: None,
+        error_kind,
+        retryable,
     };
     Ok(serde_json::to_string(&output)?)
 }
@@ -286,6 +332,8 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     let input: RankFocusNeuronsInput = match serde_json::from_str(input_json) {
         Ok(value) => value,
         Err(e) => {
+            let err_msg = format!("Failed to parse input JSON: {e}");
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = RankFocusNeuronsOutput {
                 success: false,
                 neurons: None,
@@ -295,7 +343,9 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 processed_neurons: None,
                 total_neurons: None,
                 duration_ms: None,
-                error: Some(format!("Failed to parse input JSON: {e}")),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -335,6 +385,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                     reason: c.reason,
                 })
                 .collect();
+            let (error_kind, retryable) = no_error_fields();
             let output = RankFocusNeuronsOutput {
                 success: true,
                 neurons: Some(neurons),
@@ -354,10 +405,14 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 total_neurons: Some(stats.total_neurons),
                 duration_ms: Some(stats.duration_ms.min(u64::MAX as u128) as u64),
                 error: None,
+                error_kind,
+                retryable,
             };
             Ok(serde_json::to_string(&output)?)
         }
         Err(e) => {
+            let err_msg = e.to_string();
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = RankFocusNeuronsOutput {
                 success: false,
                 neurons: None,
@@ -367,7 +422,9 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 processed_neurons: None,
                 total_neurons: None,
                 duration_ms: None,
-                error: Some(e.to_string()),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             Ok(serde_json::to_string(&output)?)
         }
@@ -383,11 +440,15 @@ pub fn export_visualisation_snapshot_internal(input_json: &str) -> Result<String
     let input: ExportVisualisationSnapshotInput = match serde_json::from_str(input_json) {
         Ok(value) => value,
         Err(e) => {
+            let err_msg = format!("Failed to parse input JSON: {e}");
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = ExportVisualisationSnapshotOutput {
                 success: false,
                 out_file: None,
                 stats: None,
-                error: Some(format!("Failed to parse input JSON: {e}")),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -407,6 +468,7 @@ pub fn export_visualisation_snapshot_internal(input_json: &str) -> Result<String
         &options,
     ) {
         Ok(stats) => {
+            let (error_kind, retryable) = no_error_fields();
             let output = ExportVisualisationSnapshotOutput {
                 success: true,
                 out_file: Some(input.out_file),
@@ -417,15 +479,21 @@ pub fn export_visualisation_snapshot_internal(input_json: &str) -> Result<String
                     output_count: stats.output_count,
                 }),
                 error: None,
+                error_kind,
+                retryable,
             };
             Ok(serde_json::to_string(&output)?)
         }
         Err(e) => {
+            let err_msg = e.to_string();
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = ExportVisualisationSnapshotOutput {
                 success: false,
                 out_file: None,
                 stats: None,
-                error: Some(e.to_string()),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             Ok(serde_json::to_string(&output)?)
         }
@@ -440,10 +508,14 @@ pub fn get_calibration_summary_internal(input_json: &str) -> Result<String> {
     let input: CalibrationSummaryInput = match serde_json::from_str(input_json) {
         Ok(input) => input,
         Err(e) => {
+            let err_msg = format!("Failed to parse input JSON: {e}");
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = CalibrationSummaryOutput {
                 success: false,
                 calibration_summary: vec![],
-                error: Some(format!("Failed to parse input JSON: {e}")),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -453,20 +525,27 @@ pub fn get_calibration_summary_internal(input_json: &str) -> Result<String> {
         match serde_json::from_str(&input.discovery_history) {
             Ok(h) => h,
             Err(e) => {
+                let err_msg = format!("Failed to parse discovery history: {e}");
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = CalibrationSummaryOutput {
                     success: false,
                     calibration_summary: vec![],
-                    error: Some(format!("Failed to parse discovery history: {e}")),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 return Ok(serde_json::to_string(&output)?);
             }
         };
 
     let summary = history.calibration_summary();
+    let (error_kind, retryable) = no_error_fields();
     let output = CalibrationSummaryOutput {
         success: true,
         calibration_summary: summary,
         error: None,
+        error_kind,
+        retryable,
     };
     Ok(serde_json::to_string(&output)?)
 }
@@ -482,10 +561,14 @@ pub fn read_discovery_records(input_json: &str) -> Result<String> {
     let input: ReadDiscoveryInput = match serde_json::from_str(input_json) {
         Ok(input) => input,
         Err(e) => {
+            let err_msg = format!("Failed to parse input JSON: {e}");
+            let (error_kind, retryable) = error_fields(&err_msg);
             let output = ReadDiscoveryOutput {
                 success: false,
                 records: None,
-                error: Some(format!("Failed to parse input JSON: {e}")),
+                error: Some(err_msg),
+                error_kind,
+                retryable,
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -496,10 +579,14 @@ pub fn read_discovery_records(input_json: &str) -> Result<String> {
         match read_records_from_parquet(&input.parquet_file, &input.neuron_uuid) {
             Ok(records) => records,
             Err(e) => {
+                let err_msg = e.to_string();
+                let (error_kind, retryable) = error_fields(&err_msg);
                 let output = ReadDiscoveryOutput {
                     success: false,
                     records: None,
-                    error: Some(e.to_string()),
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
                 };
                 return Ok(serde_json::to_string(&output)?);
             }
@@ -517,10 +604,13 @@ pub fn read_discovery_records(input_json: &str) -> Result<String> {
         })
         .collect();
 
+    let (error_kind, retryable) = no_error_fields();
     let output = ReadDiscoveryOutput {
         success: true,
         records: Some(json_records),
         error: None,
+        error_kind,
+        retryable,
     };
 
     let json_string = serde_json::to_string(&output)?;
@@ -598,11 +688,14 @@ mod tests {
 
         for error_msg in error_messages {
             // Test RecordDiscoveryOutput
+            let (error_kind, retryable) = error_fields(error_msg);
             let output = RecordDiscoveryOutput {
                 success: false,
                 temp_dir: None,
                 file: None,
                 error: Some(error_msg.to_string()),
+                error_kind,
+                retryable,
             };
             let json = serde_json::to_string(&output).unwrap();
             // Verify JSON is valid and can be parsed back
@@ -611,10 +704,13 @@ mod tests {
             assert_eq!(parsed["error"].as_str(), Some(error_msg));
 
             // Test ReadDiscoveryOutput
+            let (error_kind, retryable) = error_fields(error_msg);
             let read_output = ReadDiscoveryOutput {
                 success: false,
                 records: None,
                 error: Some(error_msg.to_string()),
+                error_kind,
+                retryable,
             };
             let read_json = serde_json::to_string(&read_output).unwrap();
             // Verify JSON is valid and can be parsed back

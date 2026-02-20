@@ -5,6 +5,7 @@
 
 use serde::Serialize;
 
+use super::DiscoveryErrorKind;
 use crate::analysis;
 
 use super::{
@@ -22,6 +23,12 @@ pub struct RecordDiscoveryOutput {
     pub file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,6 +82,12 @@ pub struct AnalyzeParallelOutput {
     pub fingerprint_cache_misses: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 // Coordinated structural candidates are now produced inside synapse analysis and surfaced via
@@ -223,6 +236,12 @@ pub struct CheckGpuOutput {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -232,6 +251,12 @@ pub struct GetVersionOutput {
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -261,6 +286,12 @@ pub struct RankFocusNeuronsOutput {
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -271,6 +302,12 @@ pub struct MergeParquetOutput {
     pub output_file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 // ============================================================================
@@ -288,6 +325,12 @@ pub struct ExportVisualisationSnapshotOutput {
     pub stats: Option<ExportVisualisationStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 /// Statistics from the export operation
@@ -312,6 +355,12 @@ pub struct ReadDiscoveryOutput {
     pub records: Option<Vec<DiscoverRecordJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 /// JSON representation of DiscoverRecord for serialization
@@ -337,6 +386,12 @@ pub struct CalibrationSummaryOutput {
     pub calibration_summary: Vec<crate::discovery_history::CalibrationSummaryEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured error classification for retry decisions (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<DiscoveryErrorKind>,
+    /// Whether this error is typically worth retrying (Issue #651).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
 }
 
 // ============================================================================

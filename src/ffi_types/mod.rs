@@ -4,12 +4,14 @@
 //! FFI boundary between this Rust library and the TypeScript/Deno controller.
 
 mod candidates;
+mod error_classification;
 mod requests;
 mod responses;
 mod session;
 
 // Re-export all sub-module types to preserve the existing public API.
 pub use candidates::*;
+pub use error_classification::*;
 pub use requests::*;
 pub use responses::*;
 pub use session::*;
