@@ -60,6 +60,7 @@ pub mod scoring;
 // Re-export detection modules at analysis level for backward compatibility
 pub use detection::activation_mismatch;
 pub use detection::bias_perturbation;
+pub use detection::bimodal_neuron;
 pub use detection::bottleneck;
 pub use detection::bounded_range;
 pub use detection::co_adaptation;

@@ -2,16 +2,16 @@
 //!
 //! Covers: saturated, bottleneck, dead, oscillating, restricted range,
 //! operating point, unbounded capping, noisy neurons, activation
-//! recommendation, activation mismatch, bias perturbation, symmetry
-//! breaking, and co-adaptation detection.
+//! recommendation, activation mismatch, bimodal neuron, bias perturbation,
+//! symmetry breaking, and co-adaptation detection.
 
 use std::sync::Arc;
 
 use super::super::{
-    activation_mismatch, activation_recommendation, bias_perturbation, bottleneck, cache,
-    co_adaptation, dead_neuron, discovery_dispatch, monotonicity, noise_signal, operating_point,
-    oscillating_neuron, restricted_range, saturation, squash_weight_rescale, symmetry_breaking,
-    unbounded_capping,
+    activation_mismatch, activation_recommendation, bias_perturbation, bimodal_neuron, bottleneck,
+    cache, co_adaptation, dead_neuron, discovery_dispatch, monotonicity, noise_signal,
+    operating_point, oscillating_neuron, restricted_range, saturation, squash_weight_rescale,
+    symmetry_breaking, unbounded_capping,
 };
 
 /// Append neuron-focused discovery module specs to the provided vector.
@@ -434,6 +434,32 @@ pub(crate) fn append_neuron_specs(
                 let candidates = monotonicity::non_monotonic_neurons_to_coordinated_candidates(
                     &detected, &creature,
                 );
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            }),
+        });
+    }
+
+    // Issue #640: Bimodal neuron detection (pre-activation distribution shape)
+    {
+        let cache = Arc::clone(shared_cache);
+        let hidden = Arc::clone(hidden_neurons);
+        modules.push(discovery_dispatch::DiscoveryModuleSpec {
+            module_name: "bimodal neuron detection".to_string(),
+            phase_name: "bimodal_neuron_detection",
+            detect_fn: Box::new(move || {
+                if hidden.is_empty() {
+                    return None;
+                }
+                let records = cache.load_records_for_hidden(&hidden);
+                let detected = bimodal_neuron::detect_bimodal_neurons(&hidden, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    bimodal_neuron::bimodal_neurons_to_coordinated_candidates(&detected);
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,

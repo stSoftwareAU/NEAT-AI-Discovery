@@ -6,6 +6,7 @@
 
 pub mod activation_mismatch;
 pub mod bias_perturbation;
+pub mod bimodal_neuron;
 pub mod bottleneck;
 pub mod bounded_range;
 pub mod co_adaptation;
