@@ -42,7 +42,7 @@ and signs it on macOS for FFI compatibility.
 
 ```bash
 # Run all tests (unit + integration)
-cargo test --lib --tests --all-features -- --test-threads=1
+cargo test --lib --tests --all-features -- --test-threads=2
 
 # Run specific test file
 cargo test --test <test_name>
@@ -54,8 +54,9 @@ cargo test test_hidden_neuron
 cargo bench --bench <bench_name>
 ```
 
-Tests run sequentially (`--test-threads=1`) due to shared global state (deadline
-overrides, GPU failure guards, environment variables).
+Tests that mutate shared global state (environment variables, deadline overrides,
+watchdog) are marked with `#[serial]` from the `serial_test` crate and will not
+run concurrently with each other. All other tests run in parallel (`--test-threads=2`).
 
 ---
 
@@ -80,7 +81,7 @@ We follow strict TDD:
 3. `cargo fmt --all` (auto-formatting)
 4. `cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args`
 5. `cargo check --all-targets --all-features`
-6. `cargo test --lib --tests --all-features -- --test-threads=1`
+6. `cargo test --lib --tests --all-features -- --test-threads=2`
 7. `cargo build --release --lib`
 
 If any step fails, fix the issue and re-run. Do **not** commit code that fails

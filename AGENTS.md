@@ -374,8 +374,9 @@ tests.** If you need to confirm performance, create proper benchmarks.
 - **Modified test** — requires justification (did requirements change?).
 - **Removed/skipped test** — red flag; must be justified.
 
-Tests run sequentially (`--test-threads=1`) due to shared global state
-(deadline overrides, GPU failure guards, environment variables).
+Tests that mutate shared global state (environment variables, deadline
+overrides, watchdog) are marked with `#[serial]` from the `serial_test` crate.
+All other tests may run in parallel (`--test-threads=2`).
 
 GPU-dependent tests include `skip_without_gpu!()` and are skipped automatically
 on machines without a GPU.
@@ -394,7 +395,7 @@ so do not skip this step.
 3. `cargo fmt --all` (auto-formatting)
 4. `cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args`
 5. `cargo check --all-targets --all-features`
-6. `cargo test --lib --tests --all-features -- --test-threads=1`
+6. `cargo test --lib --tests --all-features -- --test-threads=2`
 7. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
 8. `cargo build --release --lib`
 
@@ -583,7 +584,7 @@ with success/failure rates and detailed descriptions.
 ./quality.sh
 
 # Run all tests
-cargo test --lib --tests --all-features -- --test-threads=1
+cargo test --lib --tests --all-features -- --test-threads=2
 
 # Run specific test
 cargo test --test <test_name>

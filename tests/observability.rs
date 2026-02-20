@@ -19,6 +19,7 @@ use neat_ai_discovery::observability::{
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use serial_test::serial;
 use std::env;
 use std::time::Duration;
 use tempfile::tempdir;
@@ -357,11 +358,12 @@ fn create_test_data() -> (String, CreatureJson) {
 
 /// Test that timing output includes phase breakdown when NEAT_AI_DISCOVERY_TIMING=1.
 #[test]
+#[serial]
 fn integration_timing_output() {
     skip_without_gpu!();
 
     // Set environment variable
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::set_var("NEAT_AI_DISCOVERY_TIMING", "1") };
 
     let (parquet_file, creature) = create_test_data();
@@ -388,10 +390,11 @@ fn integration_timing_output() {
 
 /// Test that JSON profile output is structured correctly when NEAT_AI_DISCOVERY_PROFILE=json.
 #[test]
+#[serial]
 fn integration_json_profile() {
     skip_without_gpu!();
 
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::set_var("NEAT_AI_DISCOVERY_PROFILE", "json") };
 
     let (parquet_file, creature) = create_test_data();
@@ -423,10 +426,11 @@ fn integration_json_profile() {
 
 /// Test that GPU metrics are collected when NEAT_AI_DISCOVERY_GPU_METRICS=1.
 #[test]
+#[serial]
 fn integration_gpu_metrics() {
     skip_without_gpu!();
 
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::set_var("NEAT_AI_DISCOVERY_GPU_METRICS", "1") };
 
     let (parquet_file, creature) = create_test_data();

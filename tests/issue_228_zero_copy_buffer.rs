@@ -22,6 +22,7 @@ use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses, supports_unifie
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use serial_test::serial;
 use tempfile::tempdir;
 
 /// Skip test if no GPU available
@@ -106,10 +107,11 @@ fn zero_copy_config_default() {
 
 /// Test that ZeroCopyBufferConfig respects environment variable override.
 #[test]
+#[serial]
 fn zero_copy_config_env_override() {
     skip_without_gpu!();
 
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     // Test enabling via env var
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
@@ -147,6 +149,7 @@ fn zero_copy_config_env_override() {
 ///
 /// This test verifies that enabling zero-copy doesn't change the analysis results.
 #[test]
+#[serial]
 fn zero_copy_produces_correct_results() {
     skip_without_gpu!();
 
@@ -191,7 +194,7 @@ fn zero_copy_produces_correct_results() {
         synapses: Vec::new(),
     };
 
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     // Run analysis with zero-copy enabled (if supported)
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
@@ -342,6 +345,7 @@ fn metadata_includes_zero_copy_status() {
 /// This test creates multiple analysis requests that would be processed
 /// concurrently, verifying that the ring buffer synchronisation is correct.
 #[test]
+#[serial]
 fn zero_copy_no_data_corruption() {
     skip_without_gpu!();
 
@@ -388,7 +392,7 @@ fn zero_copy_no_data_corruption() {
         synapses: Vec::new(),
     };
 
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     // Enable zero-copy
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");

@@ -37,7 +37,7 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
-        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        // SAFETY: Serialised via #[serial] — no concurrent env access.
         unsafe { std::env::set_var(key, value) };
         Self { key, previous }
     }
@@ -45,7 +45,7 @@ impl EnvVarGuard {
 
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
-        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        // SAFETY: Serialised via #[serial] — no concurrent env access.
         match &self.previous {
             Some(v) => unsafe { std::env::set_var(self.key, v) },
             None => unsafe { std::env::remove_var(self.key) },
@@ -159,8 +159,7 @@ fn issue_182_env_var_parsing() {
 #[serial]
 fn issue_182_env_var_parsing_not_set() {
     // Test with env var explicitly removed (using guard to restore)
-    // Note: This test may fail if run in parallel with other tests that set the env var.
-    // quality.sh runs tests with --test-threads=1 to avoid this.
+    // Note: This test is serialised via #[serial] to avoid concurrent env var access.
     let _guard = EnvVarGuard::set("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS", "");
     // Empty string should be treated as disabled
     assert!(
@@ -266,7 +265,7 @@ fn issue_182_without_env_var_no_prioritisation() {
     skip_without_gpu!();
 
     // Ensure env var is NOT set
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS") };
 
     let creature = create_test_creature();

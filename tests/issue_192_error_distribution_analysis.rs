@@ -19,6 +19,7 @@ use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 use tempfile::NamedTempFile;
 
 /// Skip test if no GPU available
@@ -371,9 +372,10 @@ fn test_detect_error_modes_unimodal() {
 
 /// Test: outlier_analysis_enabled returns false by default.
 #[test]
+#[serial]
 fn test_outlier_analysis_disabled_by_default() {
     // Ensure env var is not set
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS") };
 
     let enabled = outlier_analysis_enabled();
@@ -382,8 +384,9 @@ fn test_outlier_analysis_disabled_by_default() {
 
 /// Test: outlier_percentile_from_env returns 90 by default.
 #[test]
+#[serial]
 fn test_outlier_percentile_default() {
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE") };
 
     let percentile = outlier_percentile_from_env();
@@ -500,11 +503,12 @@ fn test_synapse_analysis_includes_error_distribution() {
 
 /// Test: Candidate includes outlier information when outlier analysis is enabled.
 #[test]
+#[serial]
 fn test_candidate_includes_outlier_info_when_enabled() {
     skip_without_gpu!();
 
     // Enable outlier analysis
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { std::env::set_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS", "1") };
 
     let creature = create_test_creature(
