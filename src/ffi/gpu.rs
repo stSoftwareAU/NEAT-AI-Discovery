@@ -16,9 +16,7 @@ pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
         let json_result = match crate::check_gpu_available_internal() {
             Ok(json) => json,
             Err(e) => {
-                // Properly serialize error message to avoid JSON injection issues
-                let err_msg = format!("Failed to probe GPU: {e}");
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = CheckGpuOutput {
                     success: false,
                     gpu_available: false,
@@ -28,7 +26,6 @@ pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
                     retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
-                    // Fallback if serialization fails (shouldn't happen)
                     r#"{"success":false,"gpuAvailable":false,"error":"Failed to serialize error message"}"#.to_string()
                 })
             }

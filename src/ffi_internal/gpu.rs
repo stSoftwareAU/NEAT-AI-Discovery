@@ -11,15 +11,17 @@ pub fn check_gpu_available_internal() -> Result<String> {
     // On macOS, missing GPU is an error (Metal should always work).
     // On Linux, missing GPU gracefully disables discovery (common on headless servers).
     let output = if result.is_error {
-        let err_msg = "GPU required but not available".to_string();
-        let (error_kind, retryable) = error_fields(&err_msg);
+        let typed = DiscoveryError::GpuUnavailable {
+            reason: "GPU required but not available".to_string(),
+        };
+        let kind = typed.error_kind();
         CheckGpuOutput {
             success: false,
             gpu_available: false,
             reason: result.reason,
-            error: Some(err_msg),
-            error_kind,
-            retryable,
+            error: Some(typed.to_string()),
+            error_kind: Some(kind),
+            retryable: Some(kind.is_retryable()),
         }
     } else {
         let (error_kind, retryable) = no_error_fields();

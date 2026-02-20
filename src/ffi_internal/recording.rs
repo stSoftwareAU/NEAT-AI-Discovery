@@ -16,15 +16,17 @@ pub fn record_discovery_internal(input_json: &str) -> Result<String> {
     let input: RecordDiscoveryInput = match serde_json::from_str(input_json) {
         Ok(input) => input,
         Err(e) => {
-            let err_msg = format!("Failed to parse input JSON: {e}");
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let typed = DiscoveryError::InvalidInput {
+                detail: format!("Failed to parse input JSON: {e}"),
+            };
+            let kind = typed.error_kind();
             let output = RecordDiscoveryOutput {
                 success: false,
                 temp_dir: None,
                 file: None,
-                error: Some(err_msg),
-                error_kind,
-                retryable,
+                error: Some(typed.to_string()),
+                error_kind: Some(kind),
+                retryable: Some(kind.is_retryable()),
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -34,8 +36,7 @@ pub fn record_discovery_internal(input_json: &str) -> Result<String> {
     let result = match record::record_discovery_data(&input) {
         Ok(result) => result,
         Err(e) => {
-            let err_msg = e.to_string();
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
             let output = RecordDiscoveryOutput {
                 success: false,
                 temp_dir: None,

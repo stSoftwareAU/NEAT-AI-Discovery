@@ -37,8 +37,7 @@ pub extern "C" fn merge_discovery_parquet(
         let json_result = match crate::merge_discovery_parquet_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
-                let err_msg = e.to_string();
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = MergeParquetOutput {
                     success: false,
                     output_file: None,
@@ -126,9 +125,7 @@ pub extern "C" fn read_discovery_records_ffi(
         let json_result = match crate::read_discovery_records(input_str) {
             Ok(json) => json,
             Err(e) => {
-                // Properly serialize error message to avoid JSON injection issues
-                let err_msg = e.to_string();
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = ReadDiscoveryOutput {
                     success: false,
                     records: None,
@@ -137,7 +134,6 @@ pub extern "C" fn read_discovery_records_ffi(
                     retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
-                    // Fallback if serialization fails (shouldn't happen)
                     r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
                 })
             }
@@ -230,8 +226,7 @@ pub extern "C" fn export_visualisation_snapshot(
         let json_result = match crate::export_visualisation_snapshot_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
-                let err_msg = e.to_string();
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = ExportVisualisationSnapshotOutput {
                     success: false,
                     out_file: None,
@@ -335,8 +330,7 @@ pub extern "C" fn get_calibration_summary(
         let json_result = match crate::get_calibration_summary_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
-                let err_msg = e.to_string();
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = crate::ffi_types::CalibrationSummaryOutput {
                     success: false,
                     calibration_summary: vec![],
@@ -403,9 +397,7 @@ pub extern "C" fn get_library_version() -> *mut std::ffi::c_char {
         let json_result = match crate::get_library_version_internal() {
             Ok(json) => json,
             Err(e) => {
-                // Properly serialize error message to avoid JSON injection issues
-                let err_msg = format!("Failed to get version: {e}");
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = GetVersionOutput {
                     success: false,
                     version: String::new(),
@@ -414,7 +406,6 @@ pub extern "C" fn get_library_version() -> *mut std::ffi::c_char {
                     retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
-                    // Fallback if serialization fails (shouldn't happen)
                     r#"{"success":false,"version":"","error":"Failed to serialize error message"}"#
                         .to_string()
                 })

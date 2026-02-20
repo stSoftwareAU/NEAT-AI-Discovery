@@ -44,9 +44,7 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
         let json_result = match crate::record_discovery_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
-                // Properly serialize error message to avoid JSON injection issues
-                let err_msg = e.to_string();
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = RecordDiscoveryOutput {
                     success: false,
                     temp_dir: None,
@@ -56,7 +54,6 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
                     retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
-                    // Fallback if serialization fails (shouldn't happen)
                     r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
                 })
             }
@@ -157,14 +154,16 @@ pub extern "C" fn start_discovery_session(
         let input: StartSessionInput = match serde_json::from_str(input_str) {
             Ok(input) => input,
             Err(e) => {
-                let err_msg = format!("Failed to parse input JSON: {e}");
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let typed = DiscoveryError::InvalidInput {
+                    detail: format!("Failed to parse input JSON: {e}"),
+                };
+                let kind = typed.error_kind();
                 let output = StartSessionOutput {
                     success: false,
                     session_id: None,
-                    error: Some(err_msg),
-                    error_kind,
-                    retryable,
+                    error: Some(typed.to_string()),
+                    error_kind: Some(kind),
+                    retryable: Some(kind.is_retryable()),
                 };
                 let json = serde_json::to_string(&output).unwrap();
                 return CString::new(json).unwrap().into_raw();
@@ -183,8 +182,7 @@ pub extern "C" fn start_discovery_session(
                 }
             }
             Err(e) => {
-                let err_msg = e.to_string();
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 StartSessionOutput {
                     success: false,
                     session_id: None,
@@ -268,14 +266,16 @@ pub extern "C" fn append_discovery_records(
         let input: AppendRecordsInput = match serde_json::from_str(input_str) {
             Ok(input) => input,
             Err(e) => {
-                let err_msg = format!("Failed to parse input JSON: {e}");
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let typed = DiscoveryError::InvalidInput {
+                    detail: format!("Failed to parse input JSON: {e}"),
+                };
+                let kind = typed.error_kind();
                 let output = AppendRecordsOutput {
                     success: false,
                     records_written: None,
-                    error: Some(err_msg),
-                    error_kind,
-                    retryable,
+                    error: Some(typed.to_string()),
+                    error_kind: Some(kind),
+                    retryable: Some(kind.is_retryable()),
                 };
                 let json = serde_json::to_string(&output).unwrap();
                 return CString::new(json).unwrap().into_raw();
@@ -301,8 +301,7 @@ pub extern "C" fn append_discovery_records(
                 }
             }
             Err(e) => {
-                let err_msg = e.to_string();
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 AppendRecordsOutput {
                     success: false,
                     records_written: None,
@@ -381,16 +380,18 @@ pub extern "C" fn finish_discovery_session(
         let input: FinishSessionInput = match serde_json::from_str(input_str) {
             Ok(input) => input,
             Err(e) => {
-                let err_msg = format!("Failed to parse input JSON: {e}");
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let typed = DiscoveryError::InvalidInput {
+                    detail: format!("Failed to parse input JSON: {e}"),
+                };
+                let kind = typed.error_kind();
                 let output = FinishSessionOutput {
                     success: false,
                     temp_dir: None,
                     file: None,
                     total_records: None,
-                    error: Some(err_msg),
-                    error_kind,
-                    retryable,
+                    error: Some(typed.to_string()),
+                    error_kind: Some(kind),
+                    retryable: Some(kind.is_retryable()),
                 };
                 let json = serde_json::to_string(&output).unwrap();
                 return CString::new(json).unwrap().into_raw();
@@ -411,8 +412,7 @@ pub extern "C" fn finish_discovery_session(
                 }
             }
             Err(e) => {
-                let err_msg = e.to_string();
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 FinishSessionOutput {
                     success: false,
                     temp_dir: None,
@@ -492,13 +492,15 @@ pub extern "C" fn cancel_discovery_session(
         let input: CancelSessionInput = match serde_json::from_str(input_str) {
             Ok(input) => input,
             Err(e) => {
-                let err_msg = format!("Failed to parse input JSON: {e}");
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let typed = DiscoveryError::InvalidInput {
+                    detail: format!("Failed to parse input JSON: {e}"),
+                };
+                let kind = typed.error_kind();
                 let output = CancelSessionOutput {
                     success: false,
-                    error: Some(err_msg),
-                    error_kind,
-                    retryable,
+                    error: Some(typed.to_string()),
+                    error_kind: Some(kind),
+                    retryable: Some(kind.is_retryable()),
                 };
                 let json = serde_json::to_string(&output).unwrap();
                 return CString::new(json).unwrap().into_raw();
@@ -516,8 +518,7 @@ pub extern "C" fn cancel_discovery_session(
                 }
             }
             Err(e) => {
-                let err_msg = e.to_string();
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 CancelSessionOutput {
                     success: false,
                     error: Some(err_msg),

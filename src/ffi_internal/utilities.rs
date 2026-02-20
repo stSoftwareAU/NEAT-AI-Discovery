@@ -9,28 +9,32 @@ pub fn merge_discovery_parquet_internal(input_json: &str) -> Result<String> {
     let input: MergeParquetInput = match serde_json::from_str(input_json) {
         Ok(input) => input,
         Err(e) => {
-            let err_msg = format!("Failed to parse input JSON: {e}");
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let typed = DiscoveryError::InvalidInput {
+                detail: format!("Failed to parse input JSON: {e}"),
+            };
+            let kind = typed.error_kind();
             let output = MergeParquetOutput {
                 success: false,
                 output_file: None,
-                error: Some(err_msg),
-                error_kind,
-                retryable,
+                error: Some(typed.to_string()),
+                error_kind: Some(kind),
+                retryable: Some(kind.is_retryable()),
             };
             return Ok(serde_json::to_string(&output)?);
         }
     };
 
     if input.input_files.is_empty() {
-        let err_msg = "No discovery parquet files provided for merge".to_string();
-        let (error_kind, retryable) = error_fields(&err_msg);
+        let typed = DiscoveryError::InvalidInput {
+            detail: "No discovery parquet files provided for merge".to_string(),
+        };
+        let kind = typed.error_kind();
         let output = MergeParquetOutput {
             success: false,
             output_file: None,
-            error: Some(err_msg),
-            error_kind,
-            retryable,
+            error: Some(typed.to_string()),
+            error_kind: Some(kind),
+            retryable: Some(kind.is_retryable()),
         };
         return Ok(serde_json::to_string(&output)?);
     }
@@ -48,8 +52,7 @@ pub fn merge_discovery_parquet_internal(input_json: &str) -> Result<String> {
             Ok(serde_json::to_string(&output)?)
         }
         Err(e) => {
-            let err_msg = e.to_string();
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
             let output = MergeParquetOutput {
                 success: false,
                 output_file: None,
@@ -71,15 +74,17 @@ pub fn export_visualisation_snapshot_internal(input_json: &str) -> Result<String
     let input: ExportVisualisationSnapshotInput = match serde_json::from_str(input_json) {
         Ok(value) => value,
         Err(e) => {
-            let err_msg = format!("Failed to parse input JSON: {e}");
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let typed = DiscoveryError::InvalidInput {
+                detail: format!("Failed to parse input JSON: {e}"),
+            };
+            let kind = typed.error_kind();
             let output = ExportVisualisationSnapshotOutput {
                 success: false,
                 out_file: None,
                 stats: None,
-                error: Some(err_msg),
-                error_kind,
-                retryable,
+                error: Some(typed.to_string()),
+                error_kind: Some(kind),
+                retryable: Some(kind.is_retryable()),
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -116,8 +121,7 @@ pub fn export_visualisation_snapshot_internal(input_json: &str) -> Result<String
             Ok(serde_json::to_string(&output)?)
         }
         Err(e) => {
-            let err_msg = e.to_string();
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
             let output = ExportVisualisationSnapshotOutput {
                 success: false,
                 out_file: None,
@@ -142,14 +146,16 @@ pub fn read_discovery_records(input_json: &str) -> Result<String> {
     let input: ReadDiscoveryInput = match serde_json::from_str(input_json) {
         Ok(input) => input,
         Err(e) => {
-            let err_msg = format!("Failed to parse input JSON: {e}");
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let typed = DiscoveryError::InvalidInput {
+                detail: format!("Failed to parse input JSON: {e}"),
+            };
+            let kind = typed.error_kind();
             let output = ReadDiscoveryOutput {
                 success: false,
                 records: None,
-                error: Some(err_msg),
-                error_kind,
-                retryable,
+                error: Some(typed.to_string()),
+                error_kind: Some(kind),
+                retryable: Some(kind.is_retryable()),
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -160,8 +166,7 @@ pub fn read_discovery_records(input_json: &str) -> Result<String> {
         match read_records_from_parquet(&input.parquet_file, &input.neuron_uuid) {
             Ok(records) => records,
             Err(e) => {
-                let err_msg = e.to_string();
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = ReadDiscoveryOutput {
                     success: false,
                     records: None,

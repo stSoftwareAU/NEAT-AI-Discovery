@@ -35,8 +35,7 @@ pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mu
         let json_result = match crate::rank_focus_neurons_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
-                let err_msg = e.to_string();
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = RankFocusNeuronsOutput {
                     success: false,
                     neurons: None,
@@ -119,9 +118,7 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
         let json_result = match crate::analyze_parallel_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
-                // Properly serialize error message to avoid JSON injection issues
-                let err_msg = format!("Failed to serialize output: {e}");
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = AnalyzeParallelOutput {
                     success: false,
                     helpful_synapses: None,
@@ -144,7 +141,6 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
                     retryable,
                 };
                 serde_json::to_string(&output).unwrap_or_else(|_| {
-                    // Fallback if serialization fails (shouldn't happen)
                     r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
                 })
             }
