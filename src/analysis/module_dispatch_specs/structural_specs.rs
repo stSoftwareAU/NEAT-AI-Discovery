@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use super::super::{
-    cache, correlated_error, discovery_dispatch, hard_sample_cluster, multi_hop, skip_connection,
-    topology, topology_diversification,
+    cache, correlated_error, discovery_dispatch, hard_sample_cluster, multi_hop, output_conflict,
+    skip_connection, topology, topology_diversification,
 };
 
 /// Append structural discovery module specs to the provided vector.
@@ -151,6 +151,42 @@ pub(crate) fn append_structural_specs(
                     return None;
                 }
                 let candidates = skip_connection::skip_connections_to_coordinated_candidates(
+                    &detected, &creature,
+                );
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            }),
+        });
+    }
+
+    // Issue #639: Per-output error disaggregation for hidden neurons
+    {
+        let cache = Arc::clone(shared_cache);
+        let hidden = Arc::clone(hidden_neurons);
+        let creature = Arc::clone(creature);
+        modules.push(discovery_dispatch::DiscoveryModuleSpec {
+            module_name: "output conflict detection".to_string(),
+            phase_name: "output_conflict_detection",
+            detect_fn: Box::new(move || {
+                if hidden.is_empty() {
+                    return None;
+                }
+                let output_count = creature
+                    .neurons
+                    .iter()
+                    .filter(|n| n.neuron_type == "output")
+                    .count();
+                if output_count < 2 {
+                    return None;
+                }
+                let records = cache.load_records_for_neuron_types(&creature, &["hidden"]);
+                let detected = output_conflict::detect_output_conflict_neurons(&creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates = output_conflict::output_conflicts_to_coordinated_candidates(
                     &detected, &creature,
                 );
                 Some(discovery_dispatch::DiscoveryDetectionResult {
