@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use super::super::{
-    cache, discovery_dispatch, dormant_synapse, noise_signal, opposing_synapse, weight_coherence,
-    weight_magnitude_reset, weight_polarity_flip,
+    cache, discovery_dispatch, dormant_synapse, fanin_polarity_conflict, noise_signal,
+    opposing_synapse, weight_coherence, weight_magnitude_reset, weight_polarity_flip,
 };
 
 /// Append synapse-focused discovery module specs to the provided vector.
@@ -188,6 +188,36 @@ pub(crate) fn append_synapse_specs(
                 }
                 let candidates =
                     weight_magnitude_reset::stuck_synapses_to_coordinated_candidates(&detected);
+                Some(discovery_dispatch::DiscoveryDetectionResult {
+                    detected_count: detected.len(),
+                    candidates,
+                })
+            }),
+        });
+    }
+
+    // Issue #641: Fan-in weight polarity conflict detection
+    {
+        let cache = Arc::clone(shared_cache);
+        let hidden = Arc::clone(hidden_neurons);
+        let creature = Arc::clone(creature);
+        modules.push(discovery_dispatch::DiscoveryModuleSpec {
+            module_name: "fan-in polarity conflict detection".to_string(),
+            phase_name: "fanin_polarity_conflict_detection",
+            detect_fn: Box::new(move || {
+                if hidden.is_empty() {
+                    return None;
+                }
+                let records = cache.load_records_for_all_neurons(&creature);
+                let detected =
+                    fanin_polarity_conflict::detect_fanin_polarity_conflicts(&creature, &records);
+                if detected.is_empty() {
+                    return None;
+                }
+                let candidates =
+                    fanin_polarity_conflict::fanin_polarity_conflicts_to_coordinated_candidates(
+                        &detected, &creature,
+                    );
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
