@@ -1,10 +1,16 @@
-//! Structured error classification for FFI responses (Issue #651).
+//! Structured error classification for FFI responses (Issue #651, #677).
 //!
-//! Classifies `anyhow::Error` messages into categories so the NEAT-AI controller
-//! can make informed retry decisions — retrying transient GPU errors but not
-//! retrying data validation failures.
+//! Provides both **typed error enums** (`DiscoveryError`) and string-based
+//! classification (`classify_error`) so the NEAT-AI controller can make informed
+//! retry decisions — retrying transient GPU errors but not retrying data
+//! validation failures.
+//!
+//! Prefer constructing a `DiscoveryError` variant when the error category is
+//! known at the call site. The string-based fallback handles third-party errors
+//! (wgpu, parquet, etc.) whose messages we cannot control.
 
 use serde::Serialize;
+use thiserror::Error;
 
 /// Classification of discovery errors for retry decision-making.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -37,6 +43,81 @@ impl DiscoveryErrorKind {
         )
     }
 }
+
+// ============================================================================
+// Typed domain error enum (Issue #677)
+// ============================================================================
+
+/// Typed domain errors for the discovery library.
+///
+/// Each variant maps to a `DiscoveryErrorKind` via `error_kind()`, removing the
+/// need for string matching when the error category is known at construction.
+#[derive(Debug, Error)]
+pub enum DiscoveryError {
+    /// GPU is permanently unavailable (no device, unsupported hardware).
+    #[error("GPU unavailable: {reason}")]
+    GpuUnavailable { reason: String },
+
+    /// Transient GPU failure (device lost, driver reset).
+    #[error("GPU device lost: {detail}")]
+    GpuDeviceLost { detail: String },
+
+    /// Invalid input data (parse failure, missing fields, bad format).
+    #[error("Invalid input: {detail}")]
+    InvalidInput { detail: String },
+
+    /// Analysis deadline exceeded.
+    #[error("Deadline exceeded after {deadline_ms}ms")]
+    Timeout { deadline_ms: u64 },
+
+    /// Memory exhaustion (GPU buffer allocation, system OOM).
+    #[error("Memory exhausted: {detail}")]
+    MemoryExhausted { detail: String },
+
+    /// File I/O failure (parquet, file system).
+    #[error("I/O error: {detail}")]
+    Io { detail: String },
+}
+
+impl DiscoveryError {
+    /// Return the `DiscoveryErrorKind` for this typed error via pattern matching.
+    pub fn error_kind(&self) -> DiscoveryErrorKind {
+        match self {
+            Self::GpuUnavailable { .. } => DiscoveryErrorKind::GpuPermanent,
+            Self::GpuDeviceLost { .. } => DiscoveryErrorKind::GpuTransient,
+            Self::InvalidInput { .. } => DiscoveryErrorKind::DataValidation,
+            Self::Timeout { .. } => DiscoveryErrorKind::Timeout,
+            Self::MemoryExhausted { .. } => DiscoveryErrorKind::MemoryExhausted,
+            Self::Io { .. } => DiscoveryErrorKind::IoError,
+        }
+    }
+}
+
+// ============================================================================
+// Classify from anyhow::Error — downcast first, then fall back to strings
+// ============================================================================
+
+/// Classify an `anyhow::Error` by first attempting to downcast to a typed
+/// `DiscoveryError`, then falling back to string-based classification.
+pub fn classify_anyhow_error(err: &anyhow::Error) -> DiscoveryErrorKind {
+    if let Some(discovery_err) = err.downcast_ref::<DiscoveryError>() {
+        return discovery_err.error_kind();
+    }
+    classify_error(&err.to_string())
+}
+
+/// Return `(error_msg, error_kind, retryable)` from an `anyhow::Error`,
+/// preferring typed downcast over string matching.
+pub fn error_fields_from_anyhow(
+    err: &anyhow::Error,
+) -> (String, Option<DiscoveryErrorKind>, Option<bool>) {
+    let kind = classify_anyhow_error(err);
+    (err.to_string(), Some(kind), Some(kind.is_retryable()))
+}
+
+// ============================================================================
+// String-based classification (backward-compatible fallback)
+// ============================================================================
 
 /// Classify an error message into a `DiscoveryErrorKind`.
 ///

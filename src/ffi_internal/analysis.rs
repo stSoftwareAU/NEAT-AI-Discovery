@@ -10,8 +10,10 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
     {
         Ok(value) => value,
         Err(e) => {
-            let err_msg = format!("Failed to parse input JSON: {e}");
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let typed = DiscoveryError::InvalidInput {
+                detail: format!("Failed to parse input JSON: {e}"),
+            };
+            let kind = typed.error_kind();
             let output = AnalyzeParallelOutput {
                 success: false,
                 helpful_synapses: None,
@@ -29,9 +31,9 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 neuron_fingerprints: None,
                 fingerprint_cache_hits: None,
                 fingerprint_cache_misses: None,
-                error: Some(err_msg),
-                error_kind,
-                retryable,
+                error: Some(typed.to_string()),
+                error_kind: Some(kind),
+                retryable: Some(kind.is_retryable()),
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -124,8 +126,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
             Ok(serde_json::to_string(&output)?)
         }
         Err(e) => {
-            let err_msg = e.to_string();
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
             let output = AnalyzeParallelOutput {
                 success: false,
                 helpful_synapses: None,
@@ -173,8 +174,10 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     let input: RankFocusNeuronsInput = match serde_json::from_str(input_json) {
         Ok(value) => value,
         Err(e) => {
-            let err_msg = format!("Failed to parse input JSON: {e}");
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let typed = DiscoveryError::InvalidInput {
+                detail: format!("Failed to parse input JSON: {e}"),
+            };
+            let kind = typed.error_kind();
             let output = RankFocusNeuronsOutput {
                 success: false,
                 neurons: None,
@@ -184,9 +187,9 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 processed_neurons: None,
                 total_neurons: None,
                 duration_ms: None,
-                error: Some(err_msg),
-                error_kind,
-                retryable,
+                error: Some(typed.to_string()),
+                error_kind: Some(kind),
+                retryable: Some(kind.is_retryable()),
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -252,8 +255,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
             Ok(serde_json::to_string(&output)?)
         }
         Err(e) => {
-            let err_msg = e.to_string();
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
             let output = RankFocusNeuronsOutput {
                 success: false,
                 neurons: None,
@@ -280,14 +282,16 @@ pub fn get_calibration_summary_internal(input_json: &str) -> Result<String> {
     let input: CalibrationSummaryInput = match serde_json::from_str(input_json) {
         Ok(input) => input,
         Err(e) => {
-            let err_msg = format!("Failed to parse input JSON: {e}");
-            let (error_kind, retryable) = error_fields(&err_msg);
+            let typed = DiscoveryError::InvalidInput {
+                detail: format!("Failed to parse input JSON: {e}"),
+            };
+            let kind = typed.error_kind();
             let output = CalibrationSummaryOutput {
                 success: false,
                 calibration_summary: vec![],
-                error: Some(err_msg),
-                error_kind,
-                retryable,
+                error: Some(typed.to_string()),
+                error_kind: Some(kind),
+                retryable: Some(kind.is_retryable()),
             };
             return Ok(serde_json::to_string(&output)?);
         }
@@ -297,14 +301,16 @@ pub fn get_calibration_summary_internal(input_json: &str) -> Result<String> {
         match serde_json::from_str(&input.discovery_history) {
             Ok(h) => h,
             Err(e) => {
-                let err_msg = format!("Failed to parse discovery history: {e}");
-                let (error_kind, retryable) = error_fields(&err_msg);
+                let typed = DiscoveryError::InvalidInput {
+                    detail: format!("Failed to parse discovery history: {e}"),
+                };
+                let kind = typed.error_kind();
                 let output = CalibrationSummaryOutput {
                     success: false,
                     calibration_summary: vec![],
-                    error: Some(err_msg),
-                    error_kind,
-                    retryable,
+                    error: Some(typed.to_string()),
+                    error_kind: Some(kind),
+                    retryable: Some(kind.is_retryable()),
                 };
                 return Ok(serde_json::to_string(&output)?);
             }
