@@ -9,13 +9,13 @@
 //! to use borrows instead of clones.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use neat_ai_discovery::analysis::bottleneck::{
+use neat_ai_discovery::analysis::detection::bottleneck::{
     bottleneck_neurons_to_coordinated_candidates, detect_bottleneck_neurons,
 };
-use neat_ai_discovery::analysis::bounded_range::{
+use neat_ai_discovery::analysis::detection::bounded_range::{
     bounded_range_to_coordinated_candidates, detect_bounded_range_neurons,
 };
-use neat_ai_discovery::analysis::restricted_range::{
+use neat_ai_discovery::analysis::detection::restricted_range::{
     RestrictedRangeConfig, detect_restricted_range_neurons,
     restricted_range_to_coordinated_candidates,
 };

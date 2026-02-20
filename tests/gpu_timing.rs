@@ -86,7 +86,7 @@ fn create_test_data() -> (String, CreatureJson) {
 /// TimingCollector behavior when constructed with `enabled=false`.
 #[test]
 fn timing_collector_disabled() {
-    use neat_ai_discovery::analysis::TimingCollector;
+    use neat_ai_discovery::analysis::shared::TimingCollector;
 
     let collector = TimingCollector::new(false);
 
@@ -256,7 +256,7 @@ fn timing_in_json_output() {
 /// Performance measurement belongs in `benches/`, not unit tests.
 #[test]
 fn timing_collector_disabled_vs_enabled_behaviour() {
-    use neat_ai_discovery::analysis::TimingCollector;
+    use neat_ai_discovery::analysis::shared::TimingCollector;
 
     // Disabled collector: recordings are no-ops, finalize returns None.
     let disabled_collector = TimingCollector::new(false);

@@ -14,7 +14,7 @@
 mod common;
 
 use common::{make_creature, neuron, record, synapse};
-use neat_ai_discovery::analysis::dead_neuron::{
+use neat_ai_discovery::analysis::detection::dead_neuron::{
     DeadNeuronCandidate, dead_neurons_to_coordinated_candidates, detect_dead_neurons,
 };
 use neat_ai_discovery::types::DiscoverRecord;

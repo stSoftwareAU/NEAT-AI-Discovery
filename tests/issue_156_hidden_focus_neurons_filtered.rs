@@ -7,7 +7,8 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::{GpuAnalyzer, NeuronNoCandidateReason, analyze_neurons};
+use neat_ai_discovery::analysis::shared::NeuronNoCandidateReason;
+use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson, SynapseJson};

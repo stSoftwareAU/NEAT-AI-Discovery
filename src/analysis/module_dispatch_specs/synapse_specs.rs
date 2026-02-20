@@ -6,10 +6,11 @@
 
 use std::sync::Arc;
 
-use super::super::{
-    cache, discovery_dispatch, dormant_synapse, fanin_polarity_conflict, noise_signal,
-    opposing_synapse, weight_coherence, weight_magnitude_reset, weight_polarity_flip,
+use super::super::detection::{
+    dormant_synapse, fanin_polarity_conflict, noise_signal, opposing_synapse, weight_coherence,
+    weight_magnitude_reset, weight_polarity_flip,
 };
+use super::super::{cache, discovery_dispatch};
 
 /// Append synapse-focused discovery module specs to the provided vector.
 pub(crate) fn append_synapse_specs(

@@ -19,7 +19,7 @@
 mod common;
 
 use common::{make_creature, neuron, output, synapse};
-use neat_ai_discovery::analysis::observation_range::detect_observation_ranges;
+use neat_ai_discovery::analysis::detection::observation_range::detect_observation_ranges;
 use neat_ai_discovery::types::DiscoverRecord;
 
 /// Helper to create a record with a specific error value.

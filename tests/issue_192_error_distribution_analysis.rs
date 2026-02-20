@@ -11,10 +11,10 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::error_distribution::{
+use neat_ai_discovery::analysis::samples::HelpfulSample;
+use neat_ai_discovery::analysis::scoring::error_distribution::{
     ErrorDistribution, detect_error_modes, outlier_analysis_enabled, outlier_percentile_from_env,
 };
-use neat_ai_discovery::analysis::samples::HelpfulSample;
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

@@ -11,7 +11,7 @@ use crate::analysis::cache::RecordCache;
 use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT;
 use crate::analysis::diagnostics::TargetMap;
 use crate::analysis::samples::{EPSILON, HelpfulSample};
-use crate::analysis::weights::calculate_optimal_outgoing_weight;
+use crate::analysis::scoring::weights::calculate_optimal_outgoing_weight;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, SynapseJson};
 use std::collections::{HashMap, HashSet};
@@ -145,7 +145,7 @@ pub(crate) fn detect_noisy_vs_trusted(
                     continue;
                 };
                 let Some(activation) =
-                    crate::analysis::weights::coordinated_structural_activation_delta(
+                    crate::analysis::scoring::weights::coordinated_structural_activation_delta(
                         *trusted_act,
                         *noisy_act,
                         noisy.weight,

@@ -8,16 +8,16 @@
 use crate::CandidateSynapseJson;
 use crate::analysis::activation::{get_target_simulation_fn, is_saturating_target};
 use crate::analysis::cache::RecordCache;
-use crate::analysis::confidence::compute_confidence_metrics;
+use crate::analysis::detection::redundant_path::ExistingPathContribution;
 use crate::analysis::diagnostics::ThresholdContext;
-use crate::analysis::epistatic::{SourceContribution, build_source_contribution};
 use crate::analysis::gpu::GpuWorkQueue;
-use crate::analysis::redundant_path::ExistingPathContribution;
+use crate::analysis::recommendation::epistatic::{SourceContribution, build_source_contribution};
 use crate::analysis::samples::{EPSILON, HelpfulSample, HelpfulStats, NeuronStats};
-use crate::analysis::shared::TimingScope;
-use crate::analysis::weights::{
+use crate::analysis::scoring::confidence::compute_confidence_metrics;
+use crate::analysis::scoring::weights::{
     MAX_OUTGOING_WEIGHT, calculate_optimal_outgoing_weight, clamp_weight_update_delta,
 };
+use crate::analysis::shared::TimingScope;
 use anyhow::Result;
 
 use super::statistics::PreparedHarmfulWork;

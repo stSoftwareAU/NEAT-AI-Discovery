@@ -17,7 +17,7 @@
 mod common;
 
 use common::{make_creature, neuron, synapse};
-use neat_ai_discovery::analysis::weight_coherence::{
+use neat_ai_discovery::analysis::detection::weight_coherence::{
     IncoherentWeightRatioCandidate, NearConstantPathCandidate, SymmetricCancellationCandidate,
     WeightCoherenceConfig, detect_incoherent_weight_ratios, detect_near_constant_paths,
     detect_symmetric_cancellation, incoherent_ratios_to_coordinated_candidates,

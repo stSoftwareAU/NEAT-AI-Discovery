@@ -1216,7 +1216,7 @@ fn test_hidden_neurons_are_analysed_not_filtered() {
         r.target_uuid == "hidden-0"
             && matches!(
                 r.reason,
-                neat_ai_discovery::analysis::NeuronNoCandidateReason::HiddenNeuronFiltered
+                neat_ai_discovery::analysis::shared::NeuronNoCandidateReason::HiddenNeuronFiltered
             )
     });
 
@@ -1378,7 +1378,7 @@ fn test_hidden_neuron_candidates_have_impact_discounted_predictions() {
         r.target_uuid == "hidden-0"
             && matches!(
                 r.reason,
-                neat_ai_discovery::analysis::NeuronNoCandidateReason::HiddenNeuronFiltered
+                neat_ai_discovery::analysis::shared::NeuronNoCandidateReason::HiddenNeuronFiltered
             )
     });
 

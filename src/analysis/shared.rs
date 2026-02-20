@@ -7,7 +7,7 @@ use crate::{
 use std::collections::HashMap;
 
 // Re-import ErrorDistribution for metadata (Issue #192)
-use super::error_distribution::ErrorDistribution;
+use super::scoring::error_distribution::ErrorDistribution;
 
 // =============================================================================
 // GPU Timing Types (Issue #195)

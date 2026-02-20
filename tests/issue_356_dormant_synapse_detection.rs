@@ -13,7 +13,7 @@
 mod common;
 
 use common::{make_creature, neuron, synapse};
-use neat_ai_discovery::analysis::dormant_synapse::{
+use neat_ai_discovery::analysis::detection::dormant_synapse::{
     detect_dormant_synapses, dormant_synapses_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;

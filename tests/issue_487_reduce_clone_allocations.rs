@@ -8,7 +8,7 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::bottleneck::{
+use neat_ai_discovery::analysis::detection::bottleneck::{
     bottleneck_neurons_to_coordinated_candidates, detect_bottleneck_neurons,
 };
 use neat_ai_discovery::analysis::samples::{HelpfulSample, HelpfulStats};
@@ -197,10 +197,10 @@ fn helpful_sample_is_copy() {
 // Phase 2 (#487): Additional clone reduction — correctness verification
 // =============================================================================
 
-use neat_ai_discovery::analysis::bounded_range::{
+use neat_ai_discovery::analysis::detection::bounded_range::{
     bounded_range_to_coordinated_candidates, detect_bounded_range_neurons,
 };
-use neat_ai_discovery::analysis::restricted_range::{
+use neat_ai_discovery::analysis::detection::restricted_range::{
     RestrictedRangeConfig, detect_restricted_range_neurons,
     restricted_range_to_coordinated_candidates,
 };

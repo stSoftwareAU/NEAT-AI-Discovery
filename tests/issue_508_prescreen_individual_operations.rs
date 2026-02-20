@@ -17,7 +17,7 @@
 //! 2. `detect_synergistic_candidates`: filters out complement sources whose
 //!    individual improvement is strongly harmful.
 
-use neat_ai_discovery::analysis::epistatic::{
+use neat_ai_discovery::analysis::recommendation::epistatic::{
     SourceContribution, build_source_contribution, detect_epistatic_pairs,
     detect_synergistic_candidates,
 };

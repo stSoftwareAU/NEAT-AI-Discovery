@@ -12,7 +12,7 @@
 //! 4. Test structural recommendations (parallel path, bypass)
 //! 5. Verify with network that has natural fan-in (should not flag)
 
-use neat_ai_discovery::analysis::bottleneck::{
+use neat_ai_discovery::analysis::detection::bottleneck::{
     BottleneckNeuronCandidate, bottleneck_neurons_to_coordinated_candidates,
     detect_bottleneck_neurons,
 };

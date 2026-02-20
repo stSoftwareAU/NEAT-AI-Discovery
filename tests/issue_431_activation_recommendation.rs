@@ -12,7 +12,7 @@
 //! 5. Test proactive recommendation generation
 //! 6. Test that recommendations differ from current reactive approach
 
-use neat_ai_discovery::analysis::activation_recommendation::{
+use neat_ai_discovery::analysis::recommendation::activation_recommendation::{
     ActivationRecommendation, InputDistribution, InputDistributionClass, OutputRangeRequirement,
     analyse_input_distribution, classify_activation_suitability, detect_output_range_requirements,
     recommend_activation_function,
@@ -419,7 +419,7 @@ fn test_insufficient_samples_no_recommendation() {
 /// Test conversion of recommendation to coordinated structural candidate.
 #[test]
 fn test_recommendation_to_coordinated_candidate() {
-    use neat_ai_discovery::analysis::activation_recommendation::recommendation_to_coordinated_candidate;
+    use neat_ai_discovery::analysis::recommendation::activation_recommendation::recommendation_to_coordinated_candidate;
 
     let recommendation = ActivationRecommendation {
         neuron_uuid: "hidden-42".to_string(),
@@ -484,7 +484,7 @@ fn test_classifies_bimodal_input_distribution() {
 /// Test that gradient flow concerns are factored into recommendations.
 #[test]
 fn test_considers_gradient_flow() {
-    use neat_ai_discovery::analysis::activation_recommendation::analyse_gradient_flow_risk;
+    use neat_ai_discovery::analysis::recommendation::activation_recommendation::analyse_gradient_flow_risk;
 
     // Activations near saturation for TANH
     let records: Vec<DiscoverRecord> = (0..100)

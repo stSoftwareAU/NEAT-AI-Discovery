@@ -27,7 +27,7 @@
 mod common;
 
 use common::{hidden, make_creature, output, record, synapse};
-use neat_ai_discovery::analysis::unbounded_capping::{
+use neat_ai_discovery::analysis::detection::unbounded_capping::{
     detect_unbounded_capping_candidates, unbounded_capping_to_coordinated_candidates,
 };
 

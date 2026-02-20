@@ -21,7 +21,7 @@ mod common;
 
 use common::{hidden, hidden_with_bias, make_creature, neuron, output, synapse};
 use neat_ai_discovery::CoordinatedStructuralOpJson;
-use neat_ai_discovery::analysis::restricted_range::{
+use neat_ai_discovery::analysis::detection::restricted_range::{
     RestrictedRangeConfig, detect_restricted_range_neurons,
     restricted_range_to_coordinated_candidates,
 };

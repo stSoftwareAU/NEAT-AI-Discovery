@@ -156,7 +156,7 @@ fn test_sentinel_constants_ordering_invariants() {
 /// sufficient samples.
 #[test]
 fn test_saturation_detection_produces_valid_candidates() {
-    use neat_ai_discovery::analysis::saturation::detect_saturated_neurons;
+    use neat_ai_discovery::analysis::detection::saturation::detect_saturated_neurons;
     use neat_ai_discovery::types::DiscoverRecord;
 
     let neurons = vec![("h1".to_string(), "LOGISTIC".to_string(), 0.0_f32)];
@@ -197,7 +197,7 @@ fn test_saturation_detection_produces_valid_candidates() {
 #[test]
 fn test_dead_neuron_detection_produces_valid_candidates() {
     use common::{hidden, make_creature, neuron, output, synapse};
-    use neat_ai_discovery::analysis::dead_neuron::detect_dead_neurons;
+    use neat_ai_discovery::analysis::detection::dead_neuron::detect_dead_neurons;
     use neat_ai_discovery::types::DiscoverRecord;
 
     let creature = make_creature(
@@ -248,7 +248,7 @@ fn test_dead_neuron_detection_produces_valid_candidates() {
 #[test]
 fn test_dormant_synapse_detection_produces_valid_candidates() {
     use common::{hidden, make_creature, neuron, output, synapse};
-    use neat_ai_discovery::analysis::dormant_synapse::detect_dormant_synapses;
+    use neat_ai_discovery::analysis::detection::dormant_synapse::detect_dormant_synapses;
     use neat_ai_discovery::types::DiscoverRecord;
 
     let creature = make_creature(
@@ -298,7 +298,7 @@ fn test_dormant_synapse_detection_produces_valid_candidates() {
 /// Verify that oscillating neuron detection handles edge cases without panicking.
 #[test]
 fn test_oscillating_detection_handles_constant_activation() {
-    use neat_ai_discovery::analysis::oscillating_neuron::detect_oscillating_neurons;
+    use neat_ai_discovery::analysis::detection::oscillating_neuron::detect_oscillating_neurons;
     use neat_ai_discovery::types::DiscoverRecord;
 
     let neurons = vec![("h1".to_string(), "TANH".to_string(), 0.0_f32)];

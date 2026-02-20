@@ -501,7 +501,7 @@ pub struct NeuronDiagnosticDetailJson {
 // ============================================================================
 
 /// Convert GPU adapter info to JSON representation.
-pub(crate) fn gpu_info_to_json(info: &analysis::GpuAdapterInfo) -> GpuAdapterInfoJson {
+pub(crate) fn gpu_info_to_json(info: &analysis::shared::GpuAdapterInfo) -> GpuAdapterInfoJson {
     GpuAdapterInfoJson {
         name: info.name.clone(),
         unified_memory: info.has_unified_memory,
@@ -510,7 +510,7 @@ pub(crate) fn gpu_info_to_json(info: &analysis::GpuAdapterInfo) -> GpuAdapterInf
 }
 
 /// Convert internal timing data to JSON representation.
-pub(crate) fn timing_to_json(timing: &analysis::AnalysisTiming) -> AnalysisTimingJson {
+pub(crate) fn timing_to_json(timing: &analysis::shared::AnalysisTiming) -> AnalysisTimingJson {
     AnalysisTimingJson {
         total_analysis_ms: timing.total_analysis_ms,
         gpu: GpuTimingBreakdownJson {
@@ -540,7 +540,7 @@ pub(crate) fn timing_to_json(timing: &analysis::AnalysisTiming) -> AnalysisTimin
 }
 
 pub(crate) fn synapse_diagnostics_json(
-    summaries: &[analysis::SynapseNoCandidateSummary],
+    summaries: &[analysis::shared::SynapseNoCandidateSummary],
 ) -> Option<Vec<SynapseDiagnosticJson>> {
     if summaries.is_empty() {
         return None;
@@ -551,19 +551,19 @@ pub(crate) fn synapse_diagnostics_json(
             .map(|summary| SynapseDiagnosticJson {
                 target_neuron_uuid: summary.target_uuid.clone(),
                 reason: match summary.reason {
-                    analysis::SynapseNoCandidateReason::NoEligibleSources => {
+                    analysis::shared::SynapseNoCandidateReason::NoEligibleSources => {
                         SynapseDiagnosticReasonJson::NoEligibleSources
                     }
-                    analysis::SynapseNoCandidateReason::NoDiagnostics => {
+                    analysis::shared::SynapseNoCandidateReason::NoDiagnostics => {
                         SynapseDiagnosticReasonJson::NoDiagnostics
                     }
-                    analysis::SynapseNoCandidateReason::NoSamples => {
+                    analysis::shared::SynapseNoCandidateReason::NoSamples => {
                         SynapseDiagnosticReasonJson::NoSamples
                     }
-                    analysis::SynapseNoCandidateReason::ZeroImprovement => {
+                    analysis::shared::SynapseNoCandidateReason::ZeroImprovement => {
                         SynapseDiagnosticReasonJson::ZeroImprovement
                     }
-                    analysis::SynapseNoCandidateReason::BelowThreshold => {
+                    analysis::shared::SynapseNoCandidateReason::BelowThreshold => {
                         SynapseDiagnosticReasonJson::BelowThreshold
                     }
                 },
@@ -589,7 +589,7 @@ pub(crate) fn synapse_diagnostics_json(
 }
 
 pub(crate) fn neuron_diagnostics_json(
-    summaries: &[analysis::NeuronNoCandidateSummary],
+    summaries: &[analysis::shared::NeuronNoCandidateSummary],
 ) -> Option<Vec<NeuronDiagnosticJson>> {
     if summaries.is_empty() {
         return None;
@@ -600,31 +600,31 @@ pub(crate) fn neuron_diagnostics_json(
             .map(|summary| NeuronDiagnosticJson {
                 target_neuron_uuid: summary.target_uuid.clone(),
                 reason: match summary.reason {
-                    analysis::NeuronNoCandidateReason::NoEligibleSources => {
+                    analysis::shared::NeuronNoCandidateReason::NoEligibleSources => {
                         NeuronDiagnosticReasonJson::NoEligibleSources
                     }
-                    analysis::NeuronNoCandidateReason::NoDiagnostics => {
+                    analysis::shared::NeuronNoCandidateReason::NoDiagnostics => {
                         NeuronDiagnosticReasonJson::NoDiagnostics
                     }
-                    analysis::NeuronNoCandidateReason::NoSamples => {
+                    analysis::shared::NeuronNoCandidateReason::NoSamples => {
                         NeuronDiagnosticReasonJson::NoSamples
                     }
-                    analysis::NeuronNoCandidateReason::NotEnoughActivations => {
+                    analysis::shared::NeuronNoCandidateReason::NotEnoughActivations => {
                         NeuronDiagnosticReasonJson::NotEnoughActivations
                     }
-                    analysis::NeuronNoCandidateReason::WeightDegenerate => {
+                    analysis::shared::NeuronNoCandidateReason::WeightDegenerate => {
                         NeuronDiagnosticReasonJson::WeightDegenerate
                     }
-                    analysis::NeuronNoCandidateReason::BelowThreshold => {
+                    analysis::shared::NeuronNoCandidateReason::BelowThreshold => {
                         NeuronDiagnosticReasonJson::BelowThreshold
                     }
-                    analysis::NeuronNoCandidateReason::HiddenNeuronFiltered => {
+                    analysis::shared::NeuronNoCandidateReason::HiddenNeuronFiltered => {
                         NeuronDiagnosticReasonJson::HiddenNeuronFiltered
                     }
-                    analysis::NeuronNoCandidateReason::InputNeuronFiltered => {
+                    analysis::shared::NeuronNoCandidateReason::InputNeuronFiltered => {
                         NeuronDiagnosticReasonJson::InputNeuronFiltered
                     }
-                    analysis::NeuronNoCandidateReason::ConstantNeuronFiltered => {
+                    analysis::shared::NeuronNoCandidateReason::ConstantNeuronFiltered => {
                         NeuronDiagnosticReasonJson::ConstantNeuronFiltered
                     }
                 },

@@ -4,11 +4,11 @@
 //! which perform well on discovery samples but poorly on held-out validation data.
 //! Such candidates are "brilliant but brittle" - overfitting to the discovery sample.
 
-use neat_ai_discovery::analysis::cross_validation::{
+use neat_ai_discovery::analysis::samples::HelpfulSample;
+use neat_ai_discovery::analysis::scoring::cross_validation::{
     CrossValidationConfig, CrossValidationResult, FoldResult, PerformanceVariance,
     apply_brittleness_penalty, compute_cross_validation_score,
 };
-use neat_ai_discovery::analysis::samples::HelpfulSample;
 
 // =============================================================================
 // CrossValidationConfig Tests

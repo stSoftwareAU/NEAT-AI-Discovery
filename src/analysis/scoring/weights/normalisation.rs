@@ -3,7 +3,7 @@
 //! This module handles sentinel-aware weight computation, filtering out samples
 //! at detected sentinel values before computing optimal weights.
 
-use crate::analysis::observation_range::ObservationRangeResult;
+use crate::analysis::detection::observation_range::ObservationRangeResult;
 use crate::analysis::samples::HelpfulSample;
 
 use super::calculation::calculate_optimal_outgoing_weight;

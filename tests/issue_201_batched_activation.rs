@@ -16,9 +16,9 @@
 
 mod common;
 
+use neat_ai_discovery::analysis::activation::{ACTIVATION_SPECS, activation_name_to_gpu_id};
 use neat_ai_discovery::analysis::gpu::{GpuAnalyzer, GpuEvaluator};
 use neat_ai_discovery::analysis::samples::HelpfulSample;
-use neat_ai_discovery::analysis::{ACTIVATION_SPECS, activation_name_to_gpu_id};
 
 /// Skip test if no GPU available
 macro_rules! skip_without_gpu {

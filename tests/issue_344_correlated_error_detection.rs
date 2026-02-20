@@ -12,7 +12,7 @@
 //! 5. Test with independent errors (should not form groups)
 //! 6. Test single output neuron (should skip — nothing to correlate)
 
-use neat_ai_discovery::analysis::correlated_error::{
+use neat_ai_discovery::analysis::detection::correlated_error::{
     CorrelatedErrorGroup, correlated_errors_to_coordinated_candidates,
     detect_correlated_error_patterns,
 };

@@ -10,9 +10,8 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::{
-    GpuAnalyzer, analyze_synapses, focus_unused_observations_from_env,
-};
+use neat_ai_discovery::analysis::utils::focus_unused_observations_from_env;
+use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};

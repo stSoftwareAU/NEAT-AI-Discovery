@@ -17,9 +17,8 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::{
-    GpuAnalyzer, ZeroCopyBufferConfig, analyze_synapses, supports_unified_memory,
-};
+use neat_ai_discovery::analysis::shared::ZeroCopyBufferConfig;
+use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses, supports_unified_memory};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};

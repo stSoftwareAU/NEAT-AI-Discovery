@@ -15,7 +15,7 @@
 mod common;
 
 use common::{make_creature, neuron, synapse};
-use neat_ai_discovery::analysis::noise_signal::{
+use neat_ai_discovery::analysis::detection::noise_signal::{
     NoisyNeuronCandidate, NoisySynapseCandidate, detect_noisy_neurons, detect_noisy_synapses,
     noisy_neurons_to_coordinated_candidates, noisy_synapses_to_coordinated_candidates,
 };

@@ -37,7 +37,7 @@
 //! 28. Verify all-negative errors produce correct statistics
 //! 29. Verify records with empty error vectors are handled
 
-use neat_ai_discovery::analysis::output_bias_drift::{
+use neat_ai_discovery::analysis::recommendation::output_bias_drift::{
     detect_output_bias_drift, output_bias_drift_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;

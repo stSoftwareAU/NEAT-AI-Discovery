@@ -326,7 +326,9 @@ pub(crate) fn build_metadata(
     use crate::analysis::gpu::GpuAnalyzer;
 
     let error_distribution =
-        crate::analysis::error_distribution::ErrorDistribution::from_errors(params.error_values);
+        crate::analysis::scoring::error_distribution::ErrorDistribution::from_errors(
+            params.error_values,
+        );
 
     crate::analysis::shared::SynapseAnalysisMetadata {
         target_value_available: params.target_value_seen,

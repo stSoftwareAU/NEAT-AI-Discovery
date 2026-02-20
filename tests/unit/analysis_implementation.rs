@@ -4,7 +4,7 @@
 // without changing visibility.
 
     use super::*;
-    use crate::analysis::ACTIVATION_SPECS;
+    use crate::analysis::activation::ACTIVATION_SPECS;
 
     // Import GPU types from the refactored gpu module (Issue #272, #273)
     use crate::analysis::gpu::{

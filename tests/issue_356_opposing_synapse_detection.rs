@@ -10,7 +10,7 @@
 //! 3. Verify helpful synapses are not flagged
 //! 4. Test coordinated structural candidate conversion (removal vs weight flip)
 
-use neat_ai_discovery::analysis::opposing_synapse::{
+use neat_ai_discovery::analysis::detection::opposing_synapse::{
     detect_opposing_synapses, opposing_synapses_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;

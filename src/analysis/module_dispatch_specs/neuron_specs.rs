@@ -7,12 +7,13 @@
 
 use std::sync::Arc;
 
-use super::super::{
-    activation_mismatch, activation_recommendation, bias_perturbation, bimodal_neuron, bottleneck,
-    cache, co_adaptation, dead_neuron, discovery_dispatch, monotonicity, noise_signal,
-    operating_point, oscillating_neuron, restricted_range, saturation, squash_weight_rescale,
-    symmetry_breaking, unbounded_capping,
+use super::super::detection::{
+    activation_mismatch, bias_perturbation, bimodal_neuron, bottleneck, co_adaptation, dead_neuron,
+    monotonicity, noise_signal, operating_point, oscillating_neuron, restricted_range, saturation,
+    squash_weight_rescale, symmetry_breaking, unbounded_capping,
 };
+use super::super::recommendation::activation_recommendation;
+use super::super::{cache, discovery_dispatch};
 
 /// Append neuron-focused discovery module specs to the provided vector.
 pub(crate) fn append_neuron_specs(

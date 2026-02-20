@@ -9,16 +9,16 @@
 mod common;
 
 use neat_ai_discovery::activations::apply_scalar_squash;
-use neat_ai_discovery::analysis::confidence::compute_confidence_metrics;
 use neat_ai_discovery::analysis::constants::{cmp_f32_asc, cmp_f32_desc};
-use neat_ai_discovery::analysis::cross_validation::{
+use neat_ai_discovery::analysis::neuron_fingerprint::compute_neuron_fingerprints;
+use neat_ai_discovery::analysis::samples::HelpfulSample;
+use neat_ai_discovery::analysis::scoring::confidence::compute_confidence_metrics;
+use neat_ai_discovery::analysis::scoring::cross_validation::{
     CrossValidationConfig, FoldResult, PerformanceVariance, apply_brittleness_penalty,
     compute_cross_validation_score,
 };
-use neat_ai_discovery::analysis::error_distribution::ErrorDistribution;
-use neat_ai_discovery::analysis::neuron_fingerprint::compute_neuron_fingerprints;
-use neat_ai_discovery::analysis::samples::HelpfulSample;
-use neat_ai_discovery::analysis::weights::{
+use neat_ai_discovery::analysis::scoring::error_distribution::ErrorDistribution;
+use neat_ai_discovery::analysis::scoring::weights::{
     MAX_OUTGOING_WEIGHT, calculate_optimal_outgoing_weight, clamp_weight_update_delta,
     coordinated_structural_activation_delta,
 };

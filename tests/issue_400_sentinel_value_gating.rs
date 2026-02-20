@@ -22,7 +22,7 @@ mod common;
 
 use common::{make_creature, neuron, output, synapse};
 use neat_ai_discovery::CoordinatedStructuralOpJson;
-use neat_ai_discovery::analysis::sentinel_gating::{
+use neat_ai_discovery::analysis::detection::sentinel_gating::{
     detect_sentinel_gating_candidates, sentinel_gating_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
