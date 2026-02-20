@@ -1,0 +1,66 @@
+# cargo-deny configuration for NEAT-AI-Discovery
+# https://embarkstudios.github.io/cargo-deny/
+#
+# Run: cargo deny check
+# This file enforces licence compliance, bans unsafe dependencies,
+# detects duplicates, and scans for known vulnerabilities.
+
+[graph]
+targets = []
+all-features = true
+
+# =============================================================================
+# Licences — only allow licences compatible with Apache-2.0
+# =============================================================================
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "Unlicense",
+    "Zlib",
+    "0BSD",
+    "CC0-1.0",
+    "Unicode-3.0",
+
+]
+confidence-threshold = 0.8
+
+# LGPL-2.1-or-later: r-efi is a UEFI runtime interface crate, only relevant
+# on UEFI targets.  It is a transitive dependency (via getrandom) and is not
+# linked into macOS or standard Linux builds.  The LGPL permits dynamic linking
+# without imposing copyleft on the larger work.
+[[licenses.exceptions]]
+name = "r-efi"
+allow = ["LGPL-2.1-or-later"]
+
+# =============================================================================
+# Bans — prevent unwanted or duplicate crates
+# =============================================================================
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "lowest-version"
+
+# =============================================================================
+# Advisories — scan for known vulnerabilities via the RustSec advisory database
+# =============================================================================
+[advisories]
+ignore = [
+    # paste is unmaintained but is a transitive dependency of metal (wgpu-hal)
+    # and parquet — we cannot replace it until upstream crates migrate.
+    { id = "RUSTSEC-2024-0436", reason = "transitive dep from metal/parquet; awaiting upstream migration to pastey" },
+]
+
+# =============================================================================
+# Sources — only allow crates from crates.io
+# =============================================================================
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

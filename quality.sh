@@ -14,6 +14,10 @@ echo "================================"
 echo "📝 Checking bash script syntax..."
 find . -name "*.sh" -type f -not -path "./target/*" -not -path "./.git/*" -exec bash -n {} \;
 
+# Licence and dependency audit
+echo "📜 Running licence and dependency audit..."
+cargo deny check
+
 # Use workspace for faster builds
 echo "🏗️ Building (debug) for quick feedback..."
 cargo build
