@@ -88,7 +88,7 @@ pub struct CandidateClusterJson {
 
 /// Cluster candidates by target neuron, source type, and improvement similarity.
 ///
-/// Returns a list of clusters, each containing at least [`MIN_CLUSTER_SIZE`] members.
+/// Returns a list of clusters, each containing at least `MIN_CLUSTER_SIZE` members.
 /// Clusters are sorted by representative improvement (best first).
 ///
 /// # Arguments

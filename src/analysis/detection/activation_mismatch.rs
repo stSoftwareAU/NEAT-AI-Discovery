@@ -27,7 +27,7 @@
 //! - Recommends ELU (preserves negative information with smooth curve)
 //!
 //! ### Bounded Underutilisation (`BoundedUnderutilised`)
-//! - Activation function has bounded output range (TANH ∈ [-1,1], LOGISTIC ∈ [0,1])
+//! - Activation function has bounded output range (TANH ∈ \[-1,1\], LOGISTIC ∈ \[0,1\])
 //! - Observed activation range covers < `UTILISATION_THRESHOLD` of the theoretical range
 //! - Recommends IDENTITY (no bounds, preserves full signal)
 

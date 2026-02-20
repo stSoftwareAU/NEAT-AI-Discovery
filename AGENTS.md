@@ -390,7 +390,8 @@ so do not skip this step.
 4. `cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args`
 5. `cargo check --all-targets --all-features`
 6. `cargo test --lib --tests --all-features -- --test-threads=1`
-7. `cargo build --release --lib`
+7. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
+8. `cargo build --release --lib`
 
 If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `./quality.sh`.
@@ -401,7 +402,7 @@ GitHub Actions runs on every pull request to `Develop`:
 
 - `auto-format` — applies `rustfmt` and commits fixes
 - `version-increment` — auto-bumps patch version when `src/` changes
-- `quality` — fmt check, Clippy, cargo check, tests, build
+- `quality` — fmt check, Clippy, cargo check, doc build, tests, build
 - `shell-checks` — validates bash script syntax
 - `spell-check` — runs codespell on the codebase
 - `validation` — checks required files and `Cargo.toml`

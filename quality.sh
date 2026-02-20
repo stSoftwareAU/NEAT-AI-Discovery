@@ -36,6 +36,9 @@ echo "🧪 Running tests..."
 # Note: Exclude benchmarks (--benches) since criterion benchmarks use custom harness and fail with --test-threads
 cargo test --lib --tests --all-features -- --test-threads=1
 
+echo "📖 Building documentation..."
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+
 echo "🏗️ Building release library..."
 cargo build --release --lib
 
