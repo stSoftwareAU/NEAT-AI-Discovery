@@ -13,7 +13,7 @@
 //! 6. Verify multi-hop candidates produce valid coordinated structural operations
 //! 7. Test edge cases (empty network, single layer, already connected)
 
-use neat_ai_discovery::analysis::multi_hop::{
+use neat_ai_discovery::analysis::recommendation::multi_hop::{
     MultiHopCandidate, detect_multi_hop_candidates, multi_hop_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;

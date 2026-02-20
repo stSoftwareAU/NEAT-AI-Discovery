@@ -11,7 +11,7 @@
 //! 4. Test edge cases: insufficient samples, small errors
 //! 5. Test coordinated structural candidate conversion
 
-use neat_ai_discovery::analysis::output_bias_drift::{
+use neat_ai_discovery::analysis::recommendation::output_bias_drift::{
     detect_output_bias_drift, output_bias_drift_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;

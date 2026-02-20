@@ -13,7 +13,7 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::topology::{
+use neat_ai_discovery::analysis::detection::topology::{
     detect_topology_issues, topology_issues_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;

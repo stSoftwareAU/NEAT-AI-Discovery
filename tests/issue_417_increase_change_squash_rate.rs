@@ -15,12 +15,12 @@
 //! - Test expanded activation function recommendations
 //! - Test proactive activation recommendation integration
 
-use neat_ai_discovery::analysis::activation_recommendation::{
-    recommend_activation_function, recommendations_to_coordinated_candidates,
-};
-use neat_ai_discovery::analysis::oscillating_neuron::detect_oscillating_neurons;
-use neat_ai_discovery::analysis::saturation::{
+use neat_ai_discovery::analysis::detection::oscillating_neuron::detect_oscillating_neurons;
+use neat_ai_discovery::analysis::detection::saturation::{
     detect_saturated_neurons, saturated_neurons_to_coordinated_candidates,
+};
+use neat_ai_discovery::analysis::recommendation::activation_recommendation::{
+    recommend_activation_function, recommendations_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 

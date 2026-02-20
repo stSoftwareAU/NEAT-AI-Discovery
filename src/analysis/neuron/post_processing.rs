@@ -105,7 +105,7 @@ pub(crate) fn build_neuron_results(
             error_values_for_distribution,
             "error_values_for_distribution",
         )?);
-        crate::analysis::error_distribution::ErrorDistribution::from_errors(&error_values)
+        crate::analysis::scoring::error_distribution::ErrorDistribution::from_errors(&error_values)
     };
 
     Ok(AnalyzeNeuronsResult {

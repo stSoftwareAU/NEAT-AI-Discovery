@@ -12,10 +12,8 @@
 mod common;
 
 use common::{neuron, output, synapse};
-use neat_ai_discovery::analysis::{
-    GpuAnalyzer, NeuronNoCandidateReason, SynapseNoCandidateReason, analyze_neurons,
-    analyze_synapses,
-};
+use neat_ai_discovery::analysis::shared::{NeuronNoCandidateReason, SynapseNoCandidateReason};
+use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{

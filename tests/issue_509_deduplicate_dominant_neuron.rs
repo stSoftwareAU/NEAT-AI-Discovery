@@ -18,7 +18,7 @@
 //! `MAX_PAIRS_PER_DOMINANT_NEURON` diverse pairs per group (varying the partner,
 //! complementarity, etc.) rather than all N×M combinations.
 
-use neat_ai_discovery::analysis::epistatic::{
+use neat_ai_discovery::analysis::recommendation::epistatic::{
     EpistaticPairCandidate, SynergisticCandidate, deduplicate_by_dominant_neuron,
     deduplicate_synergistic_by_dominant_neuron,
 };

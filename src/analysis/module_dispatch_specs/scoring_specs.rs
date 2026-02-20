@@ -7,11 +7,12 @@
 
 use std::sync::Arc;
 
-use super::super::{
-    bounded_range, cache, discovery_dispatch, error_plateau, gradient_discovery, input_sensitivity,
-    observation_utilisation, output_bias_drift, output_range_compression, output_squash_mismatch,
-    sample_weighted, sentinel_gating,
+use super::super::detection::{
+    bounded_range, error_plateau, input_sensitivity, observation_utilisation,
+    output_range_compression, output_squash_mismatch, sentinel_gating,
 };
+use super::super::recommendation::{gradient_discovery, output_bias_drift, sample_weighted};
+use super::super::{cache, discovery_dispatch};
 
 /// Append scoring and recommendation discovery module specs to the provided vector.
 pub(crate) fn append_scoring_specs(

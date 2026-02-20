@@ -6,10 +6,12 @@
 
 use std::sync::Arc;
 
-use super::super::{
-    cache, correlated_error, discovery_dispatch, hard_sample_cluster, multi_hop, output_conflict,
-    skip_connection, topology, topology_diversification,
+use super::super::detection::{
+    correlated_error, hard_sample_cluster, output_conflict, skip_connection, topology,
+    topology_diversification,
 };
+use super::super::recommendation::multi_hop;
+use super::super::{cache, discovery_dispatch};
 
 /// Append structural discovery module specs to the provided vector.
 pub(crate) fn append_structural_specs(

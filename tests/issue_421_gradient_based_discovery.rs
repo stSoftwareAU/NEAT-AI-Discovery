@@ -18,7 +18,7 @@
 mod common;
 
 use common::{make_creature, neuron, output, synapse};
-use neat_ai_discovery::analysis::gradient_discovery::{
+use neat_ai_discovery::analysis::recommendation::gradient_discovery::{
     compute_synapse_gradient, detect_gradient_candidates, gradient_candidates_to_coordinated,
 };
 use neat_ai_discovery::types::DiscoverRecord;

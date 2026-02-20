@@ -19,7 +19,7 @@
 //! 9. Verify candidates are sorted by estimated improvement
 //! 10. Verify empty records produce no candidates
 
-use neat_ai_discovery::analysis::bimodal_neuron::{
+use neat_ai_discovery::analysis::detection::bimodal_neuron::{
     bimodal_neurons_to_coordinated_candidates, detect_bimodal_neurons,
 };
 use neat_ai_discovery::types::DiscoverRecord;

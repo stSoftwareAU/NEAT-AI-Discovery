@@ -33,7 +33,7 @@ use super::gradient::{
     build_squash_map, compute_gradient_flow_factor, compute_gradient_flow_for_neuron,
 };
 use super::impact::compute_impacts_with_activations;
-use crate::analysis::{check_memory_for_parquet, verbose_enabled};
+use crate::analysis::utils::{check_memory_for_parquet, verbose_enabled};
 use crate::discovery_history::DiscoveryHistory;
 use crate::parquet_format::read_all_records_grouped_by_neuron;
 use crate::{CoordinatedStructuralCandidateJson, CreatureJson, NeuronJson};

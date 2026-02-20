@@ -9,10 +9,10 @@
 mod common;
 
 use neat_ai_discovery::analysis::constants::{cmp_f32_asc, cmp_f32_desc, cmp_f64_desc};
-use neat_ai_discovery::analysis::error_distribution::ErrorDistribution;
-use neat_ai_discovery::analysis::sample_weighted::{
+use neat_ai_discovery::analysis::recommendation::sample_weighted::{
     SampleWeightedConfig, compute_sample_weights, detect_high_error_neurons, stratify_samples,
 };
+use neat_ai_discovery::analysis::scoring::error_distribution::ErrorDistribution;
 use neat_ai_discovery::types::DiscoverRecord;
 
 // =============================================================================

@@ -40,15 +40,15 @@ pub(super) mod common {
     };
     pub(crate) use crate::analysis::gpu::GpuAnalyzer;
     pub(crate) use crate::analysis::samples::{EPSILON, HelpfulSample, HelpfulStats};
+    pub(crate) use crate::analysis::scoring::weights::{
+        MAX_OUTGOING_WEIGHT, calculate_optimal_bias, calculate_optimal_outgoing_weight,
+    };
     pub(crate) use crate::analysis::shared::{NeuronNoCandidateReason, SynapseNoCandidateReason};
     pub(crate) use crate::analysis::synapse::{
         build_samples, compute_candidate_dedup_key, compute_net_improvement_with_squash,
         count_improved_samples, evaluate_relu_candidates_split, upsert_candidate,
     };
     pub(crate) use crate::analysis::utils::deadline_override;
-    pub(crate) use crate::analysis::weights::{
-        MAX_OUTGOING_WEIGHT, calculate_optimal_bias, calculate_optimal_outgoing_weight,
-    };
     pub(crate) use crate::parquet_format::write_records_to_parquet;
     pub(crate) use crate::types::DiscoverRecord;
     pub(crate) use crate::{

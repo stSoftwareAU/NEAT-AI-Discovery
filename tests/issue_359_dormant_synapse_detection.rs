@@ -26,7 +26,7 @@
 //! 18. Verify negative near-zero weight is detected
 //! 19. Verify coordinated candidates sorted by expected score gain
 
-use neat_ai_discovery::analysis::dormant_synapse::{
+use neat_ai_discovery::analysis::detection::dormant_synapse::{
     detect_dormant_synapses, dormant_synapses_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;

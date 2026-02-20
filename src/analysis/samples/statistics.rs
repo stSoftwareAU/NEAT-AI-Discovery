@@ -3,7 +3,7 @@
 use super::{EPSILON, HelpfulSample};
 
 // Import confidence interval calculations (Issue #194)
-use crate::analysis::confidence::compute_confidence_metrics;
+use crate::analysis::scoring::confidence::compute_confidence_metrics;
 
 /// Statistics computed from neuron error and activation samples.
 #[derive(Debug, Clone)]
@@ -293,7 +293,7 @@ impl ReluStats {
         original_samples: &[HelpfulSample],
     ) -> Option<crate::CandidateNeuronJson> {
         use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT;
-        use crate::analysis::weights::MAX_OUTGOING_WEIGHT;
+        use crate::analysis::scoring::weights::MAX_OUTGOING_WEIGHT;
 
         let sample_count = self.samples.len();
         if sample_count < MIN_NEURON_SAMPLE_COUNT || self.activation_sq_sum <= EPSILON {

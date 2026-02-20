@@ -16,7 +16,7 @@
 mod common;
 
 use common::{make_creature, neuron, synapse};
-use neat_ai_discovery::analysis::input_sensitivity::{
+use neat_ai_discovery::analysis::detection::input_sensitivity::{
     DominantInputCandidate, InputSensitivityConfig, ThresholdEffectCandidate,
     detect_dominant_inputs, detect_threshold_effects, dominant_inputs_to_coordinated_candidates,
     threshold_effects_to_coordinated_candidates,

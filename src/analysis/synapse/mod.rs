@@ -508,7 +508,7 @@ mod tests {
     use super::scoring::weight_sign;
     use super::*;
     use crate::analysis::samples::{EPSILON, HelpfulSample};
-    use crate::analysis::weights::MAX_OUTGOING_WEIGHT;
+    use crate::analysis::scoring::weights::MAX_OUTGOING_WEIGHT;
     use std::collections::HashSet;
 
     #[test]

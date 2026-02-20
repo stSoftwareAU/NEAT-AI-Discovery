@@ -8,7 +8,8 @@
 //! These tests exercise real public functions with test data and verify
 //! that confidence metrics behave correctly for candidate reliability assessment.
 
-use neat_ai_discovery::analysis::{HelpfulSample, compute_confidence_metrics};
+use neat_ai_discovery::analysis::samples::HelpfulSample;
+use neat_ai_discovery::analysis::scoring::confidence::compute_confidence_metrics;
 
 // =============================================================================
 // Helper

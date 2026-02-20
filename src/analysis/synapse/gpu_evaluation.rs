@@ -8,10 +8,10 @@ use crate::analysis::activation::{
     ACTIVATION_SPECS, ActivationCandidateSpec, activation_name_to_gpu_id, get_target_simulation_fn,
     has_sufficient_output_variance,
 };
-use crate::analysis::confidence::compute_confidence_metrics;
 use crate::analysis::gpu::GpuEvaluator;
 use crate::analysis::samples::{EPSILON, HelpfulSample, NeuronStats};
-use crate::analysis::weights::{
+use crate::analysis::scoring::confidence::compute_confidence_metrics;
+use crate::analysis::scoring::weights::{
     MAX_OUTGOING_WEIGHT, calculate_optimal_bias, calculate_optimal_identity_outgoing_and_bias,
     calculate_optimal_outgoing_weight,
 };

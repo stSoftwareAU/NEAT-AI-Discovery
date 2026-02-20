@@ -18,7 +18,7 @@
 
 mod common;
 
-use neat_ai_discovery::analysis::sample_weighted::{
+use neat_ai_discovery::analysis::recommendation::sample_weighted::{
     SampleWeightedConfig, compute_sample_weights, detect_high_error_neurons,
     high_error_neurons_to_coordinated_candidates, stratify_samples,
 };

@@ -250,8 +250,8 @@ pub(crate) fn build_existing_edge_work(
     target_uuid: &str,
     target_map_ref: &TargetMap,
     helpful_work_batch: &mut Vec<HelpfulWork>,
-) -> Vec<crate::analysis::redundant_path::ExistingPathContribution> {
-    use crate::analysis::redundant_path::ExistingPathContribution;
+) -> Vec<crate::analysis::detection::redundant_path::ExistingPathContribution> {
+    use crate::analysis::detection::redundant_path::ExistingPathContribution;
 
     let existing_path_contributions: Vec<ExistingPathContribution> = existing_sources_to_process
         .par_iter()

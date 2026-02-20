@@ -34,7 +34,7 @@
 //! 25. Verify removal candidate uses removeSynapse operation
 //! 26. Verify Pearson correlation computed correctly for perfect correlation
 
-use neat_ai_discovery::analysis::opposing_synapse::{
+use neat_ai_discovery::analysis::detection::opposing_synapse::{
     detect_opposing_synapses, opposing_synapses_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
@@ -976,7 +976,7 @@ fn test_empty_candidates_conversion() {
 // ---------------------------------------------------------------------------
 #[test]
 fn test_weight_flip_uses_negated_weight() {
-    use neat_ai_discovery::analysis::opposing_synapse::OpposingSynapseCandidate;
+    use neat_ai_discovery::analysis::detection::opposing_synapse::OpposingSynapseCandidate;
 
     // Construct a moderate-opposition candidate directly to test weight flip path
     let candidate = OpposingSynapseCandidate {
@@ -1010,7 +1010,7 @@ fn test_weight_flip_uses_negated_weight() {
 // ---------------------------------------------------------------------------
 #[test]
 fn test_removal_candidate_uses_remove_synapse() {
-    use neat_ai_discovery::analysis::opposing_synapse::OpposingSynapseCandidate;
+    use neat_ai_discovery::analysis::detection::opposing_synapse::OpposingSynapseCandidate;
 
     // Construct a strong-opposition candidate directly to test removal path
     let candidate = OpposingSynapseCandidate {
@@ -1183,7 +1183,7 @@ fn test_multiple_output_neurons() {
 // ---------------------------------------------------------------------------
 #[test]
 fn test_weight_flip_discount_factor() {
-    use neat_ai_discovery::analysis::opposing_synapse::OpposingSynapseCandidate;
+    use neat_ai_discovery::analysis::detection::opposing_synapse::OpposingSynapseCandidate;
 
     let removal_candidate = OpposingSynapseCandidate {
         from_neuron_uuid: "a".to_string(),

@@ -11,7 +11,7 @@
 //! 4. Test edge cases: balanced vs unbalanced oscillation, dead neurons
 //! 5. Test coordinated structural candidate conversion
 
-use neat_ai_discovery::analysis::oscillating_neuron::{
+use neat_ai_discovery::analysis::detection::oscillating_neuron::{
     detect_oscillating_neurons, oscillating_neurons_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;

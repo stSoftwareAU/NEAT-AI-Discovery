@@ -20,7 +20,7 @@
 //! 11. Verify candidates are sorted by estimated improvement
 //! 12. Verify irregular oscillation patterns (not perfectly alternating)
 
-use neat_ai_discovery::analysis::oscillating_neuron::{
+use neat_ai_discovery::analysis::detection::oscillating_neuron::{
     detect_oscillating_neurons, oscillating_neurons_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;

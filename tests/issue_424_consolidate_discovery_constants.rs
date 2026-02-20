@@ -52,7 +52,7 @@ fn test_diversify_top_k_accessible() {
 /// indirectly via sample count filtering).
 #[test]
 fn test_saturation_detection_uses_centralised_constants() {
-    use neat_ai_discovery::analysis::saturation::detect_saturated_neurons;
+    use neat_ai_discovery::analysis::detection::saturation::detect_saturated_neurons;
     use neat_ai_discovery::types::DiscoverRecord;
 
     let neurons = vec![("h1".to_string(), "LOGISTIC".to_string(), 0.0_f32)];
@@ -81,7 +81,7 @@ fn test_saturation_detection_uses_centralised_constants() {
 /// Verify that dead neuron detection still works with centralised constants.
 #[test]
 fn test_dead_neuron_detection_uses_centralised_constants() {
-    use neat_ai_discovery::analysis::dead_neuron::detect_dead_neurons;
+    use neat_ai_discovery::analysis::detection::dead_neuron::detect_dead_neurons;
     use neat_ai_discovery::types::DiscoverRecord;
     use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 

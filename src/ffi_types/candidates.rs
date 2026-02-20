@@ -45,7 +45,7 @@ pub struct CandidateSynapseJson {
     /// Only populated when outlier analysis is enabled via
     /// `NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS=1`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub outlier_reduction_info: Option<analysis::OutlierReductionInfo>,
+    pub outlier_reduction_info: Option<analysis::scoring::error_distribution::OutlierReductionInfo>,
     /// Overall confidence score for this prediction (Issue #194).
     ///
     /// A value between 0.0 and 1.0 indicating how reliable the prediction is.

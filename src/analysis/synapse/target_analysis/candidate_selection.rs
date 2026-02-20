@@ -5,14 +5,14 @@
 //!
 //! Extracted from target_analysis.rs as part of Issue #599.
 
-use crate::analysis::epistatic::{
+use crate::analysis::detection::redundant_path::{
+    ExistingPathContribution, detect_redundant_paths, redundant_paths_to_coordinated_candidates,
+};
+use crate::analysis::recommendation::epistatic::{
     SourceContribution, deduplicate_by_dominant_neuron, deduplicate_synergistic_by_dominant_neuron,
     detect_epistatic_pairs, detect_synergistic_candidates,
     epistatic_pairs_to_coordinated_candidates, filter_interfering_epistatic_pairs,
     filter_interfering_synergistic_candidates, synergistic_to_coordinated_candidates,
-};
-use crate::analysis::redundant_path::{
-    ExistingPathContribution, detect_redundant_paths, redundant_paths_to_coordinated_candidates,
 };
 use crate::analysis::utils::verbose_enabled;
 

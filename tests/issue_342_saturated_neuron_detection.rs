@@ -12,7 +12,7 @@
 //! 4. Test activation function recommendation logic
 //! 5. Test bias adjustment calculation
 
-use neat_ai_discovery::analysis::saturation::{
+use neat_ai_discovery::analysis::detection::saturation::{
     SaturatedNeuronCandidate, detect_saturated_neurons, saturated_neurons_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;

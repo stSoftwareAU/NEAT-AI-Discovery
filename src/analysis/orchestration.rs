@@ -15,9 +15,9 @@ use crate::observability::{
 };
 use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
 
+use super::shared::AnalyzeAllResult;
 use super::{
-    AnalyzeAllResult, cache, candidate_aggregation, module_dispatch_specs, neuron,
-    neuron_fingerprint, synapse, utils,
+    cache, candidate_aggregation, module_dispatch_specs, neuron, neuron_fingerprint, synapse, utils,
 };
 
 /// Choose analysis ordering when deadline-constrained.
