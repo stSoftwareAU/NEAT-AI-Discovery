@@ -17,17 +17,16 @@
 //!   returned as JSON, but would not terminate the worker process.
 //! - All comments are written in Australian English.
 
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::sync::{
-    Arc,
+    Arc, LazyLock,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
 
 /// Global watchdog heartbeat state (if watchdog is enabled for the current operation).
-static ACTIVE: Lazy<Mutex<Option<Arc<BeatState>>>> = Lazy::new(|| Mutex::new(None));
+static ACTIVE: LazyLock<Mutex<Option<Arc<BeatState>>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Watchdog configuration loaded from environment variables.
 #[derive(Debug, Clone)]
@@ -86,7 +85,8 @@ pub(crate) fn start_from_env(initial_stage: &str) -> Option<Watchdog> {
 
 /// Test-only global lock to prevent parallel tests from racing on the global ACTIVE state.
 #[cfg(test)]
-static TEST_SERIAL: Lazy<parking_lot::Mutex<()>> = Lazy::new(|| parking_lot::Mutex::new(()));
+static TEST_SERIAL: LazyLock<parking_lot::Mutex<()>> =
+    LazyLock::new(|| parking_lot::Mutex::new(()));
 
 /// Acquire the test-only serialisation lock (used by tests that touch global watchdog state).
 #[cfg(test)]
