@@ -13,7 +13,7 @@
 //!    function is too aggressive in its non-linearity.
 //!
 //! 2. **Range mismatch**: Detects when the activation range doesn't match the
-//!    target data range (e.g., LOGISTIC [0,1] with targets in [-1,1]).
+//!    target data range (e.g., LOGISTIC \[0,1\] with targets in \[-1,1\]).
 //!
 //! 3. **Unbounded mismatch**: Detects when an unbounded activation has high errors
 //!    outside the expected target range.

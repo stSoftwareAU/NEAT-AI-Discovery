@@ -23,7 +23,7 @@ const MAX_PAIRS_PER_DOMINANT_NEURON: usize = 3;
 ///
 /// Groups pairs by the neuron with the larger individual improvement (the
 /// "dominant" neuron). From each group, keeps at most
-/// [`MAX_PAIRS_PER_DOMINANT_NEURON`] pairs, selecting by highest combined
+/// `MAX_PAIRS_PER_DOMINANT_NEURON` pairs, selecting by highest combined
 /// improvement to maximise diversity and expected benefit.
 ///
 /// # Arguments
@@ -66,7 +66,7 @@ pub fn deduplicate_by_dominant_neuron(
 ///
 /// For synergistic candidates, the primary source is the dominant neuron (it was
 /// chosen as the best single-source candidate). Groups by primary source and
-/// keeps at most [`MAX_PAIRS_PER_DOMINANT_NEURON`] per group.
+/// keeps at most `MAX_PAIRS_PER_DOMINANT_NEURON` per group.
 ///
 /// # Arguments
 /// * `candidates` - Synergistic candidates to deduplicate.

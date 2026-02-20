@@ -19,7 +19,7 @@
 //!
 //! 2. **Output range requirements**:
 //!    - Binary outputs → LOGISTIC, STEP, BIPOLAR
-//!    - Bounded [0,1] → LOGISTIC
+//!    - Bounded \[0,1\] → LOGISTIC
 //!    - Bounded [-1,1] → TANH, HARD_TANH
 //!    - Unbounded → IDENTITY, RELU
 //!
@@ -54,7 +54,7 @@ pub enum InputDistributionClass {
     Gaussian,
     /// Sparse: many zeros with occasional non-zero values.
     Sparse,
-    /// Bounded: values constrained to a tight range (e.g., [0,1]).
+    /// Bounded: values constrained to a tight range (e.g., \[0,1\]).
     Bounded,
     /// Uniform: evenly distributed across the range.
     Uniform,
