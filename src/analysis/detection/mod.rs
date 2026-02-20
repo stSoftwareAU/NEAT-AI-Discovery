@@ -22,6 +22,7 @@ pub mod observation_utilisation;
 pub mod operating_point;
 pub mod opposing_synapse;
 pub mod oscillating_neuron;
+pub mod output_conflict;
 pub mod output_range_compression;
 pub mod output_squash_mismatch;
 pub mod redundant_path;

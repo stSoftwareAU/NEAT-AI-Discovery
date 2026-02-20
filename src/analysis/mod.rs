@@ -76,6 +76,7 @@ pub use detection::observation_utilisation;
 pub use detection::operating_point;
 pub use detection::opposing_synapse;
 pub use detection::oscillating_neuron;
+pub use detection::output_conflict;
 pub use detection::output_range_compression;
 pub use detection::output_squash_mismatch;
 pub use detection::redundant_path;
