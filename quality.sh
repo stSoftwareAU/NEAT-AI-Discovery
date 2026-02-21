@@ -26,7 +26,7 @@ echo "🪄 Auto-formatting code..."
 cargo fmt --all
 
 echo "🔧 Running linter..."
-cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args
+cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args -D clippy::filter_next -D clippy::collapsible_if
 
 echo "✅ Running type checks..."
 cargo check --all-targets --all-features

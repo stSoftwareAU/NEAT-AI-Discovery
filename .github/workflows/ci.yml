@@ -221,7 +221,7 @@ jobs:
       run: cargo fmt --all -- --check
       
     - name: Run linter
-      run: cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args
+      run: cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args -D clippy::filter_next -D clippy::collapsible_if
       
     - name: Check types
       run: cargo check --all-targets --all-features
