@@ -188,13 +188,10 @@ fn e2e_dead_neuron_produces_remove_neuron_candidate() {
         .unwrap_or(&empty_arr);
 
     let has_remove_neuron = coordinated.iter().any(|g| {
-        g["operations"]
-            .as_array()
-            .map(|ops| {
-                ops.iter()
-                    .any(|op| op["type"] == "removeNeuron" && op["neuronUuid"] == "hidden-dead")
-            })
-            .unwrap_or(false)
+        g["operations"].as_array().is_some_and(|ops| {
+            ops.iter()
+                .any(|op| op["type"] == "removeNeuron" && op["neuronUuid"] == "hidden-dead")
+        })
     });
 
     // The dead neuron should be detected — either as a coordinated removal or
@@ -366,16 +363,13 @@ fn e2e_opposing_synapses_produce_removal_or_weight_candidate() {
         .unwrap_or(&empty_harmful);
 
     let has_structural_fix = coordinated.iter().any(|g| {
-        g["operations"]
-            .as_array()
-            .map(|ops| {
-                ops.iter().any(|op| {
-                    op["type"] == "removeSynapse"
-                        || op["type"] == "setWeight"
-                        || op["type"] == "removeNeuron"
-                })
+        g["operations"].as_array().is_some_and(|ops| {
+            ops.iter().any(|op| {
+                op["type"] == "removeSynapse"
+                    || op["type"] == "setWeight"
+                    || op["type"] == "removeNeuron"
             })
-            .unwrap_or(false)
+        })
     });
 
     let has_weight_update = !weight_updates.is_empty();
@@ -489,26 +483,21 @@ fn e2e_saturated_neuron_produces_squash_or_bias_candidate() {
         .unwrap_or(&empty_coordinated);
 
     let has_squash_or_bias_fix = coordinated.iter().any(|g| {
-        g["operations"]
-            .as_array()
-            .map(|ops| {
-                ops.iter().any(|op| {
-                    (op["type"] == "changeSquash" || op["type"] == "setBias")
-                        && op["neuronUuid"] == "hidden-sat"
-                })
+        g["operations"].as_array().is_some_and(|ops| {
+            ops.iter().any(|op| {
+                (op["type"] == "changeSquash" || op["type"] == "setBias")
+                    && op["neuronUuid"] == "hidden-sat"
             })
-            .unwrap_or(false)
+        })
     });
 
     // Also check for helpful synapses or neurons that bypass the saturated path
     let has_helpful_synapse = output["helpfulSynapses"]
         .as_array()
-        .map(|a| !a.is_empty())
-        .unwrap_or(false);
+        .is_some_and(|a| !a.is_empty());
     let has_helpful_neuron = output["helpfulNeurons"]
         .as_array()
-        .map(|a| !a.is_empty())
-        .unwrap_or(false);
+        .is_some_and(|a| !a.is_empty());
 
     // The pipeline should find SOME way to address the saturation issue
     assert!(
@@ -518,12 +507,10 @@ fn e2e_saturated_neuron_produces_squash_or_bias_candidate() {
         coordinated.len(),
         output["helpfulSynapses"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0),
+            .map_or(0, std::vec::Vec::len),
         output["helpfulNeurons"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0),
+            .map_or(0, std::vec::Vec::len),
     );
 
     // Verify all returned candidates have positive expected improvement
@@ -604,16 +591,13 @@ fn e2e_minimal_creature_handles_gracefully() {
         "Minimal creature handled gracefully: helpfulSynapses={}, helpfulNeurons={}, coordinated={}",
         output["helpfulSynapses"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0),
+            .map_or(0, std::vec::Vec::len),
         output["helpfulNeurons"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0),
+            .map_or(0, std::vec::Vec::len),
         output["coordinatedStructuralCandidates"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0),
+            .map_or(0, std::vec::Vec::len),
     );
 }
 
@@ -757,20 +741,16 @@ fn e2e_realistic_creature_produces_candidates_with_positive_improvement() {
     // produce at least some candidates
     let total_candidates = output["helpfulSynapses"]
         .as_array()
-        .map(|a| a.len())
-        .unwrap_or(0)
+        .map_or(0, std::vec::Vec::len)
         + output["helpfulNeurons"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0)
+            .map_or(0, std::vec::Vec::len)
         + output["coordinatedStructuralCandidates"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0)
+            .map_or(0, std::vec::Vec::len)
         + output["synapseWeightUpdates"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0);
+            .map_or(0, std::vec::Vec::len);
 
     assert!(
         total_candidates > 0,
@@ -801,19 +781,15 @@ fn e2e_realistic_creature_produces_candidates_with_positive_improvement() {
         total_candidates,
         output["helpfulSynapses"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0),
+            .map_or(0, std::vec::Vec::len),
         output["helpfulNeurons"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0),
+            .map_or(0, std::vec::Vec::len),
         output["coordinatedStructuralCandidates"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0),
+            .map_or(0, std::vec::Vec::len),
         output["synapseWeightUpdates"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0),
+            .map_or(0, std::vec::Vec::len),
     );
 }

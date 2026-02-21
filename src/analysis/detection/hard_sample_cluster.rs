@@ -237,7 +237,7 @@ fn aggregate_obs_errors(
 
     for &uuid in output_uuids {
         if let Some(records) = records_map.get(uuid) {
-            for r in records.iter() {
+            for r in *records {
                 let abs_error = if r.errors.is_empty() {
                     0.0
                 } else {
@@ -282,7 +282,7 @@ fn find_dominant_inputs(
         let mut easy_sum = 0.0_f32;
         let mut easy_count = 0_u32;
 
-        for r in records.iter() {
+        for r in *records {
             if hard_obs.contains(&r.obs_index) {
                 hard_sum += r.activation;
                 hard_count += 1;

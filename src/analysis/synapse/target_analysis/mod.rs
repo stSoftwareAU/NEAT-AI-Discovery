@@ -224,8 +224,7 @@ pub(crate) fn analyse_single_target(
                     && ctx
                         .neuron_type_map
                         .get(&n.uuid)
-                        .map(|t| t == "constant")
-                        .unwrap_or(false)
+                        .is_some_and(|t| t == "constant")
             })
             .count();
         let input_neurons_before_index = ctx

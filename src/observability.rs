@@ -464,8 +464,7 @@ impl ProfileData {
     pub fn to_json(&self) -> serde_json::Value {
         let total_ms = self
             .start_time
-            .map(|s| s.elapsed().as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |s| s.elapsed().as_millis() as u64);
 
         let phases: serde_json::Map<String, serde_json::Value> = self
             .phases

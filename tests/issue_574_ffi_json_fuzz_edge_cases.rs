@@ -405,7 +405,7 @@ fn creature_json_round_trip() {
         "output": 1
     });
 
-    let creature: CreatureJson = serde_json::from_value(json.clone()).unwrap();
+    let creature: CreatureJson = serde_json::from_value(json).unwrap();
     assert_eq!(creature.neurons.len(), 1);
     assert_eq!(creature.synapses.len(), 1);
     assert_eq!(creature.input, 2);

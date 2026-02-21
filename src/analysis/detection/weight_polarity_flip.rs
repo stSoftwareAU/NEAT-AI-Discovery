@@ -146,7 +146,7 @@ pub fn detect_weight_polarity_flip_candidates(
         // Compute per-sample gradients
         let mut gradients: Vec<f32> = Vec::new();
 
-        for source in source_records.iter() {
+        for source in *source_records {
             if !source.activation.is_finite() {
                 continue;
             }

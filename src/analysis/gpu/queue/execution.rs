@@ -33,7 +33,7 @@ fn execute_request(
             samples,
             response_tx,
         } => {
-            let sample_count: usize = samples.iter().map(|v| v.len()).sum();
+            let sample_count: usize = samples.iter().map(std::vec::Vec::len).sum();
             let start = if track_metrics {
                 Some(Instant::now())
             } else {
@@ -41,7 +41,7 @@ fn execute_request(
             };
 
             let samples_refs: Vec<&[HelpfulSample]> =
-                samples.iter().map(|v| v.as_slice()).collect();
+                samples.iter().map(std::vec::Vec::as_slice).collect();
             let result = analyzer.evaluate_helpful_batch(&samples_refs);
 
             if let Some(start) = start {

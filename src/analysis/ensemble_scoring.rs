@@ -279,18 +279,17 @@ fn penalise_conflicting_candidates(
 /// description prefixed by the module name. If no comment is present,
 /// returns "unknown".
 fn extract_module_name(candidate: &CoordinatedStructuralCandidateJson) -> String {
-    candidate
-        .comment
-        .as_ref()
-        .map(|c| {
+    candidate.comment.as_ref().map_or_else(
+        || "unknown".to_string(),
+        |c| {
             // Take the first part before any colon or pipe separator.
             c.split(&[':', '|'][..])
                 .next()
                 .unwrap_or("unknown")
                 .trim()
                 .to_string()
-        })
-        .unwrap_or_else(|| "unknown".to_string())
+        },
+    )
 }
 
 #[cfg(test)]

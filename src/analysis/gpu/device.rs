@@ -351,7 +351,7 @@ pub fn wait_for_buffer_maps_batch(
             }
         }
 
-        if done.iter().all(|x| x.is_some()) {
+        if done.iter().all(std::option::Option::is_some) {
             // Validate all results.
             for (i, result) in done.into_iter().enumerate() {
                 match result.expect("checked is_some") {

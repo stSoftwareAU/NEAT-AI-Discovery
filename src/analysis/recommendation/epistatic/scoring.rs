@@ -410,7 +410,7 @@ mod tests {
             },
             SourceContribution {
                 source_uuid: "input-1".to_string(),
-                samples: samples.clone(),
+                samples,
                 optimal_weight: 0.5,
                 individual_improvement: 0.1,
                 firing_indices: HashSet::new(),

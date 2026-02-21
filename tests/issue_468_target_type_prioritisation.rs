@@ -170,8 +170,7 @@ fn order_focus_targets_places_existing_hidden_before_output() {
         .position(|uuid| {
             neuron_type_map
                 .get(uuid.as_str())
-                .map(|t| *t == "output")
-                .unwrap_or(false)
+                .is_some_and(|t| *t == "output")
         })
         .expect("Should have at least one output neuron");
 
@@ -180,8 +179,7 @@ fn order_focus_targets_places_existing_hidden_before_output() {
         .rposition(|uuid| {
             neuron_type_map
                 .get(uuid.as_str())
-                .map(|t| *t == "hidden")
-                .unwrap_or(false)
+                .is_some_and(|t| *t == "hidden")
         })
         .expect("Should have at least one hidden neuron");
 
@@ -217,16 +215,14 @@ fn order_focus_targets_consistent_across_seeds() {
             .filter(|uuid| {
                 neuron_type_map
                     .get(uuid.as_str())
-                    .map(|t| *t == "hidden")
-                    .unwrap_or(false)
+                    .is_some_and(|t| *t == "hidden")
             })
             .count();
 
         for (i, uuid) in targets.iter().enumerate() {
             let is_hidden = neuron_type_map
                 .get(uuid.as_str())
-                .map(|t| *t == "hidden")
-                .unwrap_or(false);
+                .is_some_and(|t| *t == "hidden");
             if i < hidden_count {
                 assert!(
                     is_hidden,

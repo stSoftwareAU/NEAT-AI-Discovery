@@ -139,8 +139,7 @@ pub fn detect_topology_issues(
         .filter(|&&uuid| {
             records_map
                 .get(uuid)
-                .map(|r| r.len() >= MIN_SAMPLES_FOR_TOPOLOGY)
-                .unwrap_or(false)
+                .is_some_and(|r| r.len() >= MIN_SAMPLES_FOR_TOPOLOGY)
         })
         .copied()
         .collect();
@@ -211,8 +210,8 @@ pub fn detect_topology_issues(
             continue;
         }
 
-        let fan_in = fan_in_map.get(uuid).map(|v| v.len()).unwrap_or(0);
-        let fan_out = fan_out_map.get(uuid).map(|v| v.len()).unwrap_or(0);
+        let fan_in = fan_in_map.get(uuid).map_or(0, std::vec::Vec::len);
+        let fan_out = fan_out_map.get(uuid).map_or(0, std::vec::Vec::len);
         let mean_err = mean_errors.get(uuid).copied().unwrap_or(0.0);
 
         // Find the best output to connect to (closest that isn't already connected)
@@ -249,7 +248,7 @@ pub fn detect_topology_issues(
     let fan_ins: Vec<(&str, usize)> = qualified_hidden
         .iter()
         .map(|&uuid| {
-            let fi = fan_in_map.get(uuid).map(|v| v.len()).unwrap_or(0);
+            let fi = fan_in_map.get(uuid).map_or(0, std::vec::Vec::len);
             (uuid, fi)
         })
         .collect();
@@ -260,8 +259,7 @@ pub fn detect_topology_issues(
             .iter()
             .map(|(_, fi)| *fi)
             .max()
-            .map(|_| fan_ins.iter().map(|(_, fi)| *fi).min().unwrap_or(0))
-            .unwrap_or(0);
+            .map_or(0, |_| fan_ins.iter().map(|(_, fi)| *fi).min().unwrap_or(0));
 
         // Only flag imbalance if there's a significant ratio difference
         if min_fan_in > 0 && max_fan_in as f32 / min_fan_in as f32 >= MIN_IMBALANCE_RATIO {
@@ -273,7 +271,7 @@ pub fn detect_topology_issues(
                     continue;
                 }
 
-                let fan_out = fan_out_map.get(uuid).map(|v| v.len()).unwrap_or(0);
+                let fan_out = fan_out_map.get(uuid).map_or(0, std::vec::Vec::len);
                 let mean_err = mean_errors.get(uuid).copied().unwrap_or(0.0);
                 let path_len = path_distances.get(uuid).copied().unwrap_or(0);
 

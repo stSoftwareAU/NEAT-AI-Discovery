@@ -199,8 +199,14 @@ pub fn detect_bottleneck_neurons(
             bottleneck_score,
             estimated_improvement,
             recommended_actions,
-            upstream_uuids: fan_in_list.iter().map(|s| s.to_string()).collect(),
-            downstream_uuids: fan_out_list.iter().map(|s| s.to_string()).collect(),
+            upstream_uuids: fan_in_list
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            downstream_uuids: fan_out_list
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
         });
     }
 
@@ -268,8 +274,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
                 .neurons
                 .iter()
                 .find(|n| n.uuid == c.neuron_uuid)
-                .map(|n| n.squash.as_str())
-                .unwrap_or("TANH");
+                .map_or("TANH", |n| n.squash.as_str());
 
             // Build comment before moving squash into operations
             let comment = format!(
@@ -324,7 +329,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
                     .unwrap_or(0.1);
                 operations.push(CoordinatedStructuralOpJson::AddSynapse {
                     from_neuron_uuid: new_uuid.clone(),
-                    to_neuron_uuid: downstream_uuid.to_string(),
+                    to_neuron_uuid: downstream_uuid.clone(),
                     weight: existing_weight * 0.5, // Start with scaled-down weight
                 });
             }

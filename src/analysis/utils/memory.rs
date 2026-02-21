@@ -134,31 +134,29 @@ pub fn get_memory_info() -> (u64, u64) {
 
     // Get page size and free/inactive pages from vm_stat
     let vm_stat = Command::new("vm_stat").output().ok();
-    let available = vm_stat
-        .map(|o| {
-            let output = String::from_utf8_lossy(&o.stdout);
-            // Parse page size from vm_stat header - handles both Apple Silicon (16KB)
-            // and Intel Macs (4KB) correctly
-            let page_size = parse_vm_stat_page_size(&output);
+    let available = vm_stat.map_or(total / 2, |o| {
+        let output = String::from_utf8_lossy(&o.stdout);
+        // Parse page size from vm_stat header - handles both Apple Silicon (16KB)
+        // and Intel Macs (4KB) correctly
+        let page_size = parse_vm_stat_page_size(&output);
 
-            let mut free_pages: u64 = 0;
-            let mut inactive_pages: u64 = 0;
-            let mut purgeable_pages: u64 = 0;
+        let mut free_pages: u64 = 0;
+        let mut inactive_pages: u64 = 0;
+        let mut purgeable_pages: u64 = 0;
 
-            for line in output.lines() {
-                if line.starts_with("Pages free:") {
-                    free_pages = parse_vm_stat_line(line);
-                } else if line.starts_with("Pages inactive:") {
-                    inactive_pages = parse_vm_stat_line(line);
-                } else if line.starts_with("Pages purgeable:") {
-                    purgeable_pages = parse_vm_stat_line(line);
-                }
+        for line in output.lines() {
+            if line.starts_with("Pages free:") {
+                free_pages = parse_vm_stat_line(line);
+            } else if line.starts_with("Pages inactive:") {
+                inactive_pages = parse_vm_stat_line(line);
+            } else if line.starts_with("Pages purgeable:") {
+                purgeable_pages = parse_vm_stat_line(line);
             }
+        }
 
-            // Available = free + inactive + purgeable (memory that can be reclaimed)
-            (free_pages + inactive_pages + purgeable_pages) * page_size
-        })
-        .unwrap_or(total / 2); // Default to half of total
+        // Available = free + inactive + purgeable (memory that can be reclaimed)
+        (free_pages + inactive_pages + purgeable_pages) * page_size
+    }); // Default to half of total
 
     (available, total)
 }

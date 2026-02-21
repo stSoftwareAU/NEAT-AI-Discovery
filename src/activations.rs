@@ -278,13 +278,13 @@ pub fn apply_scalar_squash(name: &str, x: f32) -> Option<f32> {
 pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
     let n = normalise_squash_name(name);
     match n.as_ref() {
-        "ABSOLUTE" => Some(|x| x.abs()),
-        "ARCTAN" => Some(|x| x.atan()),
+        "ABSOLUTE" => Some(f32::abs),
+        "ARCTAN" => Some(f32::atan),
         "BENT_IDENTITY" => Some(|x| ((x * x + 1.0).sqrt() - 1.0) / 2.0 + x),
         "BIPOLAR" => Some(|x| if x > 0.0 { 1.0 } else { -1.0 }),
         "BIPOLAR_SIGMOID" => Some(|x| 2.0 / (1.0 + (-x).exp()) - 1.0),
         "COMPLEMENT" | "INVERSE" => Some(|x| 1.0 - x),
-        "COSINE" => Some(|x| x.cos()),
+        "COSINE" => Some(f32::cos),
         "CUBE" => Some(|x| x * x * x),
         "ELU" => Some(|x| if x >= 0.0 { x } else { x.exp() - 1.0 }),
         "EXPONENTIAL" => Some(|x| {
@@ -335,7 +335,7 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
                 LAMBDA * ALPHA * (x.exp() - 1.0)
             }
         }),
-        "SINE" | "SINUSOID" => Some(|x| x.sin()),
+        "SINE" | "SINUSOID" => Some(f32::sin),
         "SOFTPLUS" => Some(|x| {
             if !x.is_finite() {
                 SOFTPLUS_SMALL_THRESHOLD
@@ -376,8 +376,8 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
             };
             x * sigmoid
         }),
-        "TAN" => Some(|x| x.tan()),
-        "TANH" => Some(|x| x.tanh()),
+        "TAN" => Some(f32::tan),
+        "TANH" => Some(f32::tanh),
         _ => None,
     }
 }

@@ -162,7 +162,7 @@ pub fn stratify_samples(records: &[DiscoverRecord]) -> StratifiedAnalysis {
 
     // Compute median
     let mut sorted_errors: Vec<f32> = abs_errors.clone();
-    sorted_errors.sort_by(|a, b| a.total_cmp(b));
+    sorted_errors.sort_by(f32::total_cmp);
     let median = sorted_errors[sorted_errors.len() / 2];
 
     // Split into easy (≤ median) and hard (> median)

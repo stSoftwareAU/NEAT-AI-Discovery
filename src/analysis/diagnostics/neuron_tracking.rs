@@ -105,7 +105,7 @@ impl NeuronDiagnostics {
         let log_enabled = verbose_enabled();
         let entries = DashMap::new();
         for target in targets {
-            entries.insert(target.to_string(), NeuronDiagnosticEntry::new(target));
+            entries.insert((*target).clone(), NeuronDiagnosticEntry::new(target));
         }
         Self {
             log_enabled,
@@ -201,7 +201,7 @@ impl NeuronDiagnostics {
             return;
         }
 
-        for entry_ref in self.entries.iter() {
+        for entry_ref in &self.entries {
             let entry = entry_ref.value();
             if entry.had_candidate {
                 continue;
@@ -398,7 +398,7 @@ impl NeuronDiagnostics {
                         target_record_count: entry.target_record_count,
                         detail: Some(NeuronNoCandidateDetail {
                             source_uuid: Some(best.source_uuid.clone()),
-                            orientation: best.orientation.map(|name| name.to_string()),
+                            orientation: best.orientation.map(std::string::ToString::to_string),
                             sample_count: Some(best.sample_count),
                             improved_count: None,
                             worsened_count: None,

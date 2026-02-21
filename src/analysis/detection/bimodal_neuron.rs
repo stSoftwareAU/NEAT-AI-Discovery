@@ -100,7 +100,7 @@ pub fn detect_bimodal_neurons(
             continue;
         }
 
-        values.sort_by(|a, b| a.total_cmp(b));
+        values.sort_by(f32::total_cmp);
 
         if let Some(result) = compute_bimodality(&values) {
             let separation = (result.upper_mean - result.lower_mean).abs();
@@ -155,7 +155,7 @@ fn compute_bimodality(values: &[f32]) -> Option<BimodalityResult> {
 
     // Find median gap
     let mut sorted_gaps = gaps.clone();
-    sorted_gaps.sort_by(|a, b| a.total_cmp(b));
+    sorted_gaps.sort_by(f32::total_cmp);
     let median_gap = sorted_gaps[sorted_gaps.len() / 2];
 
     if median_gap < 1e-10 {

@@ -108,7 +108,7 @@ pub(crate) fn collect_and_process_helpful_results(
             let target_squash = ctx
                 .neuron_squash_map
                 .get(&work.target_uuid)
-                .map(|s| s.as_str());
+                .map(std::string::String::as_str);
 
             if get_target_simulation_fn(&work.samples, target_squash).is_some() {
                 results.saturation_aware_used = true;

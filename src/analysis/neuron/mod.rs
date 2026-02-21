@@ -206,8 +206,8 @@ pub(crate) fn analyze_neurons_with_cache(
 
             // Log target neuron obs_index range for debugging sample matching
             if verbose_enabled() && !target_records.is_empty() {
-                let first_obs = target_records.first().map(|r| r.obs_index).unwrap_or(0);
-                let last_obs = target_records.last().map(|r| r.obs_index).unwrap_or(0);
+                let first_obs = target_records.first().map_or(0, |r| r.obs_index);
+                let last_obs = target_records.last().map_or(0, |r| r.obs_index);
                 let has_errors = target_records.iter().any(|r| !r.errors.is_empty());
                 tracing::trace!(
                     target_uuid = %target_uuid,
@@ -223,8 +223,7 @@ pub(crate) fn analyze_neurons_with_cache(
             // removed as dead code; add-synapse is the intended mechanism.
             let is_threshold_target = neuron_squash_map_arc
                 .get(target_uuid)
-                .map(|squash| crate::analysis::activation::is_threshold_activation(squash))
-                .unwrap_or(false);
+                .is_some_and(|squash| crate::analysis::activation::is_threshold_activation(squash));
 
             let target_index = match order_map_arc.get(target_uuid.as_str()) {
                 Some(index) => *index,

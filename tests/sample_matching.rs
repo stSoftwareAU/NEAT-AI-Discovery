@@ -99,7 +99,7 @@ fn analysis_pairs_samples_by_obs_index() {
 
     // Create records with deliberate obs_index gaps
     let mut records = Vec::new();
-    for obs_index in [0, 2, 4, 6, 8].iter() {
+    for obs_index in &[0, 2, 4, 6, 8] {
         records.push(DiscoverRecord::new(
             *obs_index,
             "input-0".to_string(),

@@ -195,7 +195,7 @@ fn synergistic_discovery_detects_xor_pattern() {
     // Look for synergistic candidates in coordinatedStructuralCandidates
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     // We expect to find a synergistic candidate that combines both inputs
@@ -214,15 +214,11 @@ fn synergistic_discovery_detects_xor_pattern() {
             .any(|op| op["type"] == "addSynapse" && op["fromNeuronUuid"] == "input-1");
 
         // Check comment mentions synergistic relationship
-        let is_synergistic = c
-            .get("comment")
-            .and_then(|v| v.as_str())
-            .map(|s| {
-                s.to_lowercase().contains("synergistic")
-                    || s.to_lowercase().contains("residual")
-                    || s.to_lowercase().contains("combined")
-            })
-            .unwrap_or(false);
+        let is_synergistic = c.get("comment").and_then(|v| v.as_str()).is_some_and(|s| {
+            s.to_lowercase().contains("synergistic")
+                || s.to_lowercase().contains("residual")
+                || s.to_lowercase().contains("combined")
+        });
 
         has_input_0 && has_input_1 && is_synergistic
     });
@@ -342,7 +338,7 @@ fn residual_analysis_finds_complementary_sources() {
     // where combined improvement > max(individual improvements)
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     let found_synergistic = coordinated.iter().any(|c| {
@@ -460,7 +456,7 @@ fn synergistic_discovery_detects_interference_cancellation() {
     // Check for synergistic candidate (interference cancellation)
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     let found_interference_cancellation = coordinated.iter().any(|c| {
@@ -559,7 +555,7 @@ fn synergistic_candidate_has_expected_structure() {
 
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     // Find a candidate that involves both inputs
@@ -695,7 +691,7 @@ fn no_false_positives_for_independent_inputs() {
     // for completely overlapping inputs (no synergy benefit)
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     // Filter for true synergistic candidates (not other types like epistatic)
@@ -704,8 +700,7 @@ fn no_false_positives_for_independent_inputs() {
         .filter(|c| {
             c.get("comment")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_lowercase().contains("synergistic"))
-                .unwrap_or(false)
+                .is_some_and(|s| s.to_lowercase().contains("synergistic"))
         })
         .count();
 

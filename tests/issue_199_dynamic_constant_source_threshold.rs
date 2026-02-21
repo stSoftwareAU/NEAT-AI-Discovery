@@ -397,8 +397,7 @@ fn issue_199_env_var_zero_disables_folding() {
     let has_constant_source_set_bias = result.coordinated_structural_candidates.iter().any(|c| {
         c.comment
             .as_ref()
-            .map(|comment| comment.contains("Fold constant source"))
-            .unwrap_or(false)
+            .is_some_and(|comment| comment.contains("Fold constant source"))
     });
 
     assert!(

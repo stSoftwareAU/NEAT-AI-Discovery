@@ -351,7 +351,7 @@ pub fn export_visualisation_snapshot(
         let (mean_act, var_act, min_act, max_act) = compute_stats(&activation);
 
         // Flatten errors for stats
-        let flat_errors: Vec<f32> = errors.iter().flat_map(|e| e.iter().cloned()).collect();
+        let flat_errors: Vec<f32> = errors.iter().flat_map(|e| e.iter().copied()).collect();
         let (mean_err, var_err, min_err, max_err) = compute_stats(&flat_errors);
 
         // Compute Mean Absolute Error (MAE) - used in focus neuron ranking
@@ -531,9 +531,7 @@ pub fn export_visualisation_snapshot(
                 let recorded_activation = recording.activation[pos];
 
                 let value_delta = json_safe_f32(
-                    recorded_value
-                        .map(|rv| (rv - reconstructed_value).abs())
-                        .unwrap_or(0.0),
+                    recorded_value.map_or(0.0, |rv| (rv - reconstructed_value).abs()),
                 );
                 let activation_delta =
                     json_safe_f32((recorded_activation - reconstructed_activation).abs());

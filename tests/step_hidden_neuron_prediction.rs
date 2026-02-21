@@ -167,7 +167,7 @@ fn test_step_hidden_neuron_prediction_vs_reality() {
     // Run add-neuron analysis targeting the STEP hidden neuron
     let input = AnalyzeNeuronsInput {
         parquet_file: parquet_path.to_string(),
-        creature: creature.clone(),
+        creature,
         focus_neurons: vec!["hidden-step".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,

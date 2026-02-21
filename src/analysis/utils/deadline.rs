@@ -254,7 +254,11 @@ pub fn log_analysis_start(
 
     // Log the shuffled order if verbose mode is enabled
     if verbose_enabled() && !shuffled_order.is_empty() {
-        let preview: Vec<&str> = shuffled_order.iter().take(5).map(|s| s.as_str()).collect();
+        let preview: Vec<&str> = shuffled_order
+            .iter()
+            .take(5)
+            .map(std::string::String::as_str)
+            .collect();
         let extra = shuffled_order.len().saturating_sub(5);
         tracing::debug!(
             preview = ?preview,
@@ -504,7 +508,7 @@ pub fn order_eligible_sources(
     };
 
     let mut keyed: Vec<(f64, &OrderedNeuron)> = Vec::with_capacity(inputs.len());
-    for &n in inputs.iter() {
+    for &n in &inputs {
         let weight = if let Some(i) = parse_input_index(&n.uuid) {
             // Normalise to (0, 1] based on input index, then apply power bias.
             // Epsilon keeps weight > 0 even for i=0 with high bias.
@@ -554,8 +558,7 @@ pub fn order_focus_targets(
     let (mut hidden, mut others): (Vec<_>, Vec<_>) = targets.drain(..).partition(|uuid| {
         neuron_type_map
             .get(uuid.as_str())
-            .map(|t| *t == "hidden")
-            .unwrap_or(false)
+            .is_some_and(|t| *t == "hidden")
     });
 
     // Shuffle each partition independently

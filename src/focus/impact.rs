@@ -74,7 +74,9 @@ pub fn compute_selection_stats(
         .neurons
         .iter()
         .filter(|n| {
-            let squash = squash_map.get(&n.uuid).map(|s| s.as_str()).unwrap_or("");
+            let squash = squash_map
+                .get(&n.uuid)
+                .map_or("", std::string::String::as_str);
             matches!(squash, "MINIMUM" | "MAXIMUM" | "IF")
         })
         .collect();
@@ -85,8 +87,7 @@ pub fn compute_selection_stats(
         .map(|target_neuron| -> Result<Option<SelectionStats>> {
             let squash = squash_map
                 .get(&target_neuron.uuid)
-                .map(|s| s.as_str())
-                .unwrap_or("");
+                .map_or("", std::string::String::as_str);
 
             // Get incoming synapses to this neuron
             let incoming_synapses: Vec<&SynapseJson> = creature
@@ -102,10 +103,10 @@ pub fn compute_selection_stats(
             let mut local_stats = SelectionStats::new();
             match squash {
                 "MINIMUM" => {
-                    compute_min_stats(&incoming_synapses, grouped_records, &mut local_stats)?
+                    compute_min_stats(&incoming_synapses, grouped_records, &mut local_stats)?;
                 }
                 "MAXIMUM" => {
-                    compute_max_stats(&incoming_synapses, grouped_records, &mut local_stats)?
+                    compute_max_stats(&incoming_synapses, grouped_records, &mut local_stats)?;
                 }
                 "IF" => compute_if_stats(&incoming_synapses, grouped_records, &mut local_stats)?,
                 _ => {}
@@ -542,7 +543,7 @@ fn compute_impacts_internal_with_stats(
 
     Ok(shared_cache
         .into_inner()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()))
+        .unwrap_or_else(std::sync::PoisonError::into_inner))
 }
 
 /// Compute impact with a shared cache for parallel execution.
@@ -583,8 +584,7 @@ fn compute_impact_with_shared_cache(
             let squash = ctx
                 .squash_map
                 .get(to_uuid)
-                .map(|s| s.as_str())
-                .unwrap_or("IDENTITY");
+                .map_or("IDENTITY", std::string::String::as_str);
             let category = SquashCategory::from_squash(squash);
 
             let contribution = match category {

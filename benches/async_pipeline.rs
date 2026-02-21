@@ -172,7 +172,7 @@ fn bench_async_pipeline(c: &mut Criterion) {
                         previous_neuron_fingerprints: None,
                     };
                     black_box(analyze_all(&input).expect("analyze_all failed"))
-                })
+                });
             },
         );
     }

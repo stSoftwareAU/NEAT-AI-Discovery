@@ -405,8 +405,7 @@ impl DiscoveryHistory {
     pub fn bayesian_score_for(&self, neuron_uuid: &str) -> f64 {
         self.neurons
             .get(neuron_uuid)
-            .map(|h| h.bayesian_score())
-            .unwrap_or(0.5) // Neutral prior for unknown neurons
+            .map_or(0.5, NeuronDiscoveryHistory::bayesian_score) // Neutral prior for unknown neurons
     }
 
     /// Returns an iterator over all neuron history entries.

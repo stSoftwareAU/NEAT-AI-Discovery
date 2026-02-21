@@ -334,7 +334,7 @@ fn combo_successful_filters_interfering_pairs() {
     // because they're redundant (would cause combo-successful failure)
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     let has_combined_candidate = coordinated.iter().any(|c| {
@@ -438,7 +438,7 @@ fn combo_successful_allows_compatible_pairs() {
     // Complementary inputs should appear as a combined candidate
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     let has_combined_candidate = coordinated.iter().any(|c| {

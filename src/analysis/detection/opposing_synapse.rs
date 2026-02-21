@@ -126,7 +126,7 @@ pub fn detect_opposing_synapses(
         let mut contributions: Vec<f32> = Vec::new();
         let mut errors: Vec<f32> = Vec::new();
 
-        for source_record in source_records.iter() {
+        for source_record in *source_records {
             let contribution = synapse.weight * source_record.activation;
 
             if let Some(target_record) = target_obs_map.get(&source_record.obs_index)

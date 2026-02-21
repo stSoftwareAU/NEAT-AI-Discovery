@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.42.8"
+version = "0.42.10"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -91,4 +91,21 @@ harness = false
 [[bench]]
 name = "gpu_shader_workgroup"
 harness = false
+
+# Lint configuration (Issue #675)
+# Selectively enable useful pedantic and nursery lints.
+[lints.clippy]
+uninlined_format_args = "deny"
+
+# Pedantic lints — useful subset that improves code quality
+cloned_instead_of_copied = "warn"
+explicit_iter_loop = "warn"
+implicit_clone = "warn"
+map_unwrap_or = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+unnested_or_patterns = "warn"
+
+# Nursery lints — stable enough to be useful
+redundant_clone = "warn"
 

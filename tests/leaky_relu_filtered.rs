@@ -52,7 +52,7 @@ fn add_neuron_candidates_do_not_include_leaky_relu() {
     }
 
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": training_data,
         "temp_dir": temp_path.to_str().unwrap()
     });

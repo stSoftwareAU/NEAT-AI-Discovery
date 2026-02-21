@@ -625,7 +625,7 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                     // CRITICAL FIX: Recompute optimal weight WITH the bias included.
                     let mut sum_activation_sq_with_bias = 0.0f32;
                     let mut sum_error_activation_with_bias = 0.0f32;
-                    for sample in samples.iter() {
+                    for sample in samples {
                         let pre_activation = incoming_weight * sample.activation + optimal_bias;
                         let output = (spec.activation)(pre_activation);
                         if output.is_finite() {
@@ -956,7 +956,7 @@ fn evaluate_all_activation_specs_sequential<G: GpuEvaluator>(
     target_squash: Option<&str>,
 ) -> Result<Vec<CandidateNeuronJson>> {
     let mut results = Vec::new();
-    for spec in ACTIVATION_SPECS.iter() {
+    for spec in &ACTIVATION_SPECS {
         if let Some(candidate) = evaluate_activation_candidate(
             gpu,
             source_uuid,

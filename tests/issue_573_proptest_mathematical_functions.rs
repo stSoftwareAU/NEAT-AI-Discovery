@@ -663,7 +663,7 @@ proptest! {
         let y1 = apply_scalar_squash(name, x);
         let y2 = apply_scalar_squash(name, x);
         prop_assert_eq!(
-            y1.map(|v| v.to_bits()), y2.map(|v| v.to_bits()),
+            y1.map(f32::to_bits), y2.map(f32::to_bits),
             "{}({}) not deterministic: {:?} vs {:?}", name, x, y1, y2
         );
     }
@@ -1009,7 +1009,7 @@ proptest! {
         sorted_asc.sort_by(cmp_f32_asc);
 
         // Verify the sort is deterministic: sorting twice gives the same result
-        let mut sorted_again = values.clone();
+        let mut sorted_again = values;
         sorted_again.sort_by(cmp_f32_asc);
         for (i, (a, b)) in sorted_asc.iter().zip(sorted_again.iter()).enumerate() {
             prop_assert_eq!(

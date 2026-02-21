@@ -30,8 +30,7 @@ fn apply_impact_to_helpful(
 
     let is_hidden = neuron_type_map
         .get(&candidate.to_neuron_uuid)
-        .map(|t| t != "output")
-        .unwrap_or(true); // Default to hidden if type unknown
+        .is_none_or(|t| t != "output"); // Default to hidden if type unknown
 
     let impact = if is_hidden {
         if let Some(&impact) = impact_scores.get(&candidate.to_neuron_uuid) {
@@ -96,8 +95,7 @@ fn apply_impact_to_harmful(
 
     let is_hidden = neuron_type_map
         .get(&candidate.to_neuron_uuid)
-        .map(|t| t != "output")
-        .unwrap_or(true);
+        .is_none_or(|t| t != "output");
 
     let impact = if is_hidden {
         if let Some(&impact) = impact_scores.get(&candidate.to_neuron_uuid) {
@@ -160,8 +158,7 @@ fn apply_impact_to_coordinated(
 
     let is_hidden = neuron_type_map
         .get(target_uuid)
-        .map(|t| t != "output")
-        .unwrap_or(true);
+        .is_none_or(|t| t != "output");
     let impact = if is_hidden {
         impact_scores
             .get(target_uuid)

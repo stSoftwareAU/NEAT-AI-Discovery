@@ -111,7 +111,7 @@ fn start_deadlock_detector() {
                     "Deadlock detected! {} deadlock(s) involving {} total threads. \
                      See stderr for full backtrace information.",
                     deadlocks.len(),
-                    deadlocks.iter().map(|d| d.len()).sum::<usize>()
+                    deadlocks.iter().map(std::vec::Vec::len).sum::<usize>()
                 );
             }
         })

@@ -300,7 +300,7 @@ mod tests {
     fn test_target_diagnostics_concurrent_record_count() {
         // Test concurrent updates to target record counts from multiple threads
         let targets: Vec<String> = (0..64).map(|i| format!("target-{i}")).collect();
-        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let target_refs: Vec<&str> = targets.iter().map(std::string::String::as_str).collect();
         let diagnostics = Arc::new(TargetDiagnostics::new_for_tests(&target_refs));
 
         let handles: Vec<_> = (0..64)
@@ -334,7 +334,7 @@ mod tests {
     fn test_target_diagnostics_concurrent_candidate_attempts() {
         // Test concurrent candidate attempt recording from multiple threads
         let targets: Vec<String> = (0..8).map(|i| format!("target-{i}")).collect();
-        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let target_refs: Vec<&str> = targets.iter().map(std::string::String::as_str).collect();
         let diagnostics = Arc::new(TargetDiagnostics::new_for_tests(&target_refs));
 
         // Each thread will record 10 candidate attempts for each target
@@ -378,7 +378,7 @@ mod tests {
     fn test_target_diagnostics_concurrent_mark_selected() {
         // Test concurrent marking of candidates as selected
         let targets: Vec<String> = (0..32).map(|i| format!("target-{i}")).collect();
-        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let target_refs: Vec<&str> = targets.iter().map(std::string::String::as_str).collect();
         let diagnostics = Arc::new(TargetDiagnostics::new_for_tests(&target_refs));
 
         let handles: Vec<_> = (0..32)
@@ -410,7 +410,7 @@ mod tests {
     fn test_neuron_diagnostics_concurrent_record_count() {
         // Test concurrent updates to neuron record counts from multiple threads
         let targets: Vec<String> = (0..64).map(|i| format!("neuron-{i}")).collect();
-        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let target_refs: Vec<&str> = targets.iter().map(std::string::String::as_str).collect();
         let diagnostics = Arc::new(NeuronDiagnostics::new_for_tests(&target_refs));
 
         let handles: Vec<_> = (0..64)
@@ -443,7 +443,7 @@ mod tests {
     fn test_neuron_diagnostics_concurrent_candidate_attempts() {
         // Test concurrent candidate attempt recording from multiple threads
         let targets: Vec<String> = (0..8).map(|i| format!("neuron-{i}")).collect();
-        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let target_refs: Vec<&str> = targets.iter().map(std::string::String::as_str).collect();
         let diagnostics = Arc::new(NeuronDiagnostics::new_for_tests(&target_refs));
 
         // Each thread will record 10 candidate attempts for each target
@@ -487,7 +487,7 @@ mod tests {
     fn test_neuron_diagnostics_concurrent_filtered_marking() {
         // Test concurrent marking of neurons as filtered
         let targets: Vec<String> = (0..30).map(|i| format!("neuron-{i}")).collect();
-        let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+        let target_refs: Vec<&str> = targets.iter().map(std::string::String::as_str).collect();
         let diagnostics = Arc::new(NeuronDiagnostics::new_for_tests(&target_refs));
 
         let handles: Vec<_> = (0..30)

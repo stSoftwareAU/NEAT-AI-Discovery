@@ -123,11 +123,8 @@ impl ErrorDistribution {
         let percentiles = compute_percentiles(errors);
 
         // Compute min and max
-        let min = errors.iter().copied().fold(f32::INFINITY, |a, b| a.min(b));
-        let max = errors
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, |a, b| a.max(b));
+        let min = errors.iter().copied().fold(f32::INFINITY, f32::min);
+        let max = errors.iter().copied().fold(f32::NEG_INFINITY, f32::max);
 
         // Interquartile range
         let iqr = percentiles[3] - percentiles[1];
@@ -230,7 +227,7 @@ fn compute_percentiles(values: &[f32]) -> [f32; 5] {
     }
 
     let mut sorted: Vec<f32> = values.to_vec();
-    sorted.sort_by(|a, b| a.total_cmp(b));
+    sorted.sort_by(f32::total_cmp);
 
     let n = sorted.len();
 
@@ -307,11 +304,8 @@ pub fn detect_error_modes(samples: &[HelpfulSample]) -> Vec<ErrorMode> {
 fn detect_modes_histogram(errors: &[f32]) -> Vec<ErrorMode> {
     const NUM_BINS: usize = 20;
 
-    let min = errors.iter().copied().fold(f32::INFINITY, |a, b| a.min(b));
-    let max = errors
-        .iter()
-        .copied()
-        .fold(f32::NEG_INFINITY, |a, b| a.max(b));
+    let min = errors.iter().copied().fold(f32::INFINITY, f32::min);
+    let max = errors.iter().copied().fold(f32::NEG_INFINITY, f32::max);
 
     let range = max - min;
     if range < 1e-6 {
@@ -422,11 +416,10 @@ pub struct OutlierReductionInfo {
 pub fn outlier_analysis_enabled() -> bool {
     std::env::var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS")
         .ok()
-        .map(|v| {
+        .is_some_and(|v| {
             let v = v.trim().to_lowercase();
             v == "1" || v == "true" || v == "yes"
         })
-        .unwrap_or(false)
 }
 
 /// Get the outlier percentile threshold from environment variable.

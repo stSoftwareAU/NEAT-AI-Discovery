@@ -126,7 +126,7 @@ pub fn run_discovery_modules_parallel(
     // Sequential merge phase: iterate in original order and merge non-empty results.
     // Also collect per-module stats for metadata (Issue #485).
     for (module_name, _phase_name, result) in results {
-        let candidates_produced = result.as_ref().map(|r| r.candidates.len()).unwrap_or(0);
+        let candidates_produced = result.as_ref().map_or(0, |r| r.candidates.len());
 
         // Record per-module stats in metadata (Issue #485).
         syn.metadata

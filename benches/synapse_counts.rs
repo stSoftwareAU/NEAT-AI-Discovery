@@ -136,12 +136,12 @@ fn bench_synapse_counts(c: &mut Criterion) {
 
         // Benchmark old approach
         group.bench_with_input(BenchmarkId::new("old_O(n×m)", &id), &creature, |b, c| {
-            b.iter(|| bench_old_approach(black_box(c)))
+            b.iter(|| bench_old_approach(black_box(c)));
         });
 
         // Benchmark new approach
         group.bench_with_input(BenchmarkId::new("new_O(n+m)", &id), &creature, |b, c| {
-            b.iter(|| bench_new_approach(black_box(c)))
+            b.iter(|| bench_new_approach(black_box(c)));
         });
     }
 

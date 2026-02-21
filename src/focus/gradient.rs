@@ -422,7 +422,7 @@ pub fn compute_gradient_flow_stats(
             let mut dead_count = 0u32;
             let mut valid_count = 0u32;
 
-            for record in neuron_records.iter() {
+            for record in neuron_records {
                 // Use pre-activation value if available, otherwise skip
                 let value = match record.value {
                     Some(v) if v.is_finite() => v,

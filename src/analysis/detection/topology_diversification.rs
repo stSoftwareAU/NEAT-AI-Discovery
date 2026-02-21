@@ -157,7 +157,7 @@ fn best_source_input(
             let var_b = activation_variance(records_map.get(b).copied());
             var_a.total_cmp(&var_b)
         })
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
 }
 
 /// Compute activation variance for a set of records.

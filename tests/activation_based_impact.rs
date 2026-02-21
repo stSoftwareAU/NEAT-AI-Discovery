@@ -41,7 +41,7 @@ fn create_creature(
                 from_uuid: from.to_string(),
                 to_uuid: to.to_string(),
                 weight,
-                synapse_type: synapse_type.map(|s| s.to_string()),
+                synapse_type: synapse_type.map(std::string::ToString::to_string),
             })
             .collect(),
         input: input_count,

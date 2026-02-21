@@ -124,7 +124,7 @@ pub fn detect_correlated_error_patterns(
     for &uuid in &output_neurons_with_errors {
         if let Some(records) = records_map.get(uuid) {
             let mut obs_map = HashMap::new();
-            for r in records.iter() {
+            for r in *records {
                 if let Some(&err) = r.errors.first() {
                     obs_map.insert(r.obs_index, err);
                 }
@@ -220,7 +220,10 @@ pub fn detect_correlated_error_patterns(
             mean_correlation * mean_abs_error * (group_uuids.len() as f32) * 0.01;
 
         results.push(CorrelatedErrorGroup {
-            output_neuron_uuids: group_uuids.iter().map(|s| s.to_string()).collect(),
+            output_neuron_uuids: group_uuids
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             mean_correlation,
             shared_error_sample_count,
             total_sample_count,

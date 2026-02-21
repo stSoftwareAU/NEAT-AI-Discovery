@@ -117,8 +117,7 @@ pub(crate) fn cluster_synapse_candidates(
                 .neurons
                 .iter()
                 .find(|n| n.uuid == c.from_neuron_uuid)
-                .map(|n| n.neuron_type.clone())
-                .unwrap_or_else(|| "input".to_string()),
+                .map_or_else(|| "input".to_string(), |n| n.neuron_type.clone()),
         });
     }
 
@@ -131,8 +130,7 @@ pub(crate) fn cluster_synapse_candidates(
                 .neurons
                 .iter()
                 .find(|n| n.uuid == c.from_neuron_uuid)
-                .map(|n| n.neuron_type.clone())
-                .unwrap_or_else(|| "input".to_string()),
+                .map_or_else(|| "input".to_string(), |n| n.neuron_type.clone()),
         });
     }
 
