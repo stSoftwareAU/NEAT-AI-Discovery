@@ -95,8 +95,8 @@ echo "════════════════════════�
 git checkout -q "$BASELINE_COMMIT"
 cargo build --release -q 2>/dev/null
 
-BASELINE_UNIT=$(run_benchmark "Unit tests" "cargo test --lib -- --test-threads=1")
-BASELINE_FULL=$(run_benchmark "Full test suite" "cargo test --all-targets --all-features -- --test-threads=1")
+BASELINE_UNIT=$(run_benchmark "Unit tests" "cargo test --lib -- --test-threads=2")
+BASELINE_FULL=$(run_benchmark "Full test suite" "cargo test --all-targets --all-features -- --test-threads=2")
 
 if [ -n "$PARQUET_FILE" ] && [ -f "$PARQUET_FILE" ]; then
     echo "⏱️  Running: Parquet analysis ($PARQUET_FILE)"
@@ -123,8 +123,8 @@ echo "📊 CURRENT (${CURRENT_BRANCH:-$CURRENT_REF})"
 echo "═══════════════════════════════════════"
 cargo build --release -q 2>/dev/null
 
-CURRENT_UNIT=$(run_benchmark "Unit tests" "cargo test --lib -- --test-threads=1")
-CURRENT_FULL=$(run_benchmark "Full test suite" "cargo test --all-targets --all-features -- --test-threads=1")
+CURRENT_UNIT=$(run_benchmark "Unit tests" "cargo test --lib -- --test-threads=2")
+CURRENT_FULL=$(run_benchmark "Full test suite" "cargo test --all-targets --all-features -- --test-threads=2")
 
 if [ -n "$PARQUET_FILE" ] && [ -f "$PARQUET_FILE" ]; then
     echo "⏱️  Running: Parquet analysis ($PARQUET_FILE)"

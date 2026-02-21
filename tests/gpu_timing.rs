@@ -17,6 +17,7 @@ use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons, analyze_synapses
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use serial_test::serial;
 use std::env;
 use tempfile::tempdir;
 
@@ -104,11 +105,12 @@ fn timing_collector_disabled() {
 
 /// Test that timing IS collected when the environment variable is set.
 #[test]
+#[serial]
 fn timing_enabled_via_env_var() {
     skip_without_gpu!();
 
     // Set the environment variable to enable timing
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1") };
 
     let (parquet_file, creature) = create_test_data();
@@ -164,10 +166,11 @@ fn timing_enabled_via_env_var() {
 
 /// Test that per-shader timing is collected.
 #[test]
+#[serial]
 fn per_shader_timing_collected() {
     skip_without_gpu!();
 
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1") };
 
     let (parquet_file, creature) = create_test_data();
@@ -200,10 +203,11 @@ fn per_shader_timing_collected() {
 
 /// Test that timing output is included in JSON response when enabled.
 #[test]
+#[serial]
 fn timing_in_json_output() {
     skip_without_gpu!();
 
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1") };
 
     let (parquet_file, creature) = create_test_data();
@@ -301,10 +305,11 @@ fn timing_collector_disabled_vs_enabled_behaviour() {
 /// This tests the neuron analysis code path to ensure timing is properly
 /// integrated there (not just synapse analysis).
 #[test]
+#[serial]
 fn neuron_analysis_timing_collected() {
     skip_without_gpu!();
 
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::set_var("NEAT_AI_DISCOVERY_GPU_TIMING", "1") };
 
     let (parquet_file, creature) = create_test_data();

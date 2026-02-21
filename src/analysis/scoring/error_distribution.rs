@@ -584,8 +584,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_env_var_defaults() {
-        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        // SAFETY: Serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS");
             std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE");

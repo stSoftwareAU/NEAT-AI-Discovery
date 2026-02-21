@@ -21,6 +21,7 @@ mod common;
 
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
+use serial_test::serial;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
@@ -28,7 +29,7 @@ use tempfile::TempDir;
 /// Set up small block size for testing (10 records per block).
 /// This ensures multiple blocks are created from small test datasets.
 fn setup_test_block_size() {
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_BLOCK_SIZE", "10");
     }
@@ -36,7 +37,7 @@ fn setup_test_block_size() {
 
 /// Restore default block size after tests.
 fn teardown_test_block_size() {
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_BLOCK_SIZE");
     }
@@ -119,6 +120,7 @@ fn streaming_cache_respects_max_blocks() {
 
 /// Test that LRU eviction works correctly.
 #[test]
+#[serial]
 fn streaming_cache_evicts_least_recently_used() {
     use neat_ai_discovery::analysis::cache::StreamingRecordCache;
 
@@ -160,6 +162,7 @@ fn streaming_cache_evicts_least_recently_used() {
 
 /// Test that prefetch mechanism loads adjacent blocks.
 #[test]
+#[serial]
 fn streaming_cache_prefetches_adjacent_blocks() {
     use neat_ai_discovery::analysis::cache::StreamingRecordCache;
     use std::thread;
@@ -288,6 +291,7 @@ fn streaming_cache_stats_are_accurate() {
 
 /// Test that streaming cache memory usage is bounded.
 #[test]
+#[serial]
 fn streaming_cache_bounds_memory_usage() {
     use neat_ai_discovery::analysis::cache::StreamingRecordCache;
 
@@ -344,6 +348,7 @@ fn new_adaptive_uses_streaming_for_memory_constraints() {
 
 /// Test that streaming mode provides same data as pre-loaded mode.
 #[test]
+#[serial]
 fn streaming_mode_matches_preloaded_data() {
     use neat_ai_discovery::analysis::cache::{RecordCache, StreamingRecordCache};
 

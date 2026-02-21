@@ -12,6 +12,7 @@ use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 use tempfile::NamedTempFile;
 
 /// Skip test if no GPU available.
@@ -24,7 +25,7 @@ macro_rules! skip_without_gpu {
     };
 }
 
-/// Minimal env var guard so tests remain isolated (quality.sh runs tests with 1 thread, but keep it tidy).
+/// Minimal env var guard so tests remain isolated (env var tests are serialised via `#[serial]`).
 struct EnvVarGuard {
     key: &'static str,
     previous: Option<String>,
@@ -33,7 +34,7 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
-        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        // SAFETY: Serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::set_var(key, value);
         }
@@ -43,7 +44,7 @@ impl EnvVarGuard {
 
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
-        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        // SAFETY: Serialised via #[serial] — no concurrent env access.
         match &self.previous {
             Some(v) => unsafe { std::env::set_var(self.key, v) },
             None => unsafe { std::env::remove_var(self.key) },
@@ -52,6 +53,7 @@ impl Drop for EnvVarGuard {
 }
 
 #[test]
+#[serial]
 fn issue_156_hidden_focus_neurons_are_filtered_when_output_only_mode_is_enabled() {
     skip_without_gpu!();
 

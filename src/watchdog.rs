@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn watchdog_config_disabled_by_default() {
         let _lock = lock_for_test_serialisation();
-        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        // SAFETY: Serialised via lock_for_test_serialisation() — no concurrent env access.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS");
         }

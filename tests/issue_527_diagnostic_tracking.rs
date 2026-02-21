@@ -19,6 +19,7 @@ use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{
     AnalyzeNeuronsInput, AnalyzeSynapsesInput, CreatureJson, analyze_parallel_internal,
 };
+use serial_test::serial;
 use tempfile::NamedTempFile;
 
 /// Skip test if no GPU available.
@@ -76,6 +77,7 @@ fn write_minimal_records(path: &str, neuron_uuids: &[&str], obs_count: u32) {
 // =============================================================================
 
 #[test]
+#[serial]
 fn hidden_neuron_reported_as_filtered_in_neuron_diagnostics() {
     skip_without_gpu!();
 
@@ -89,7 +91,7 @@ fn hidden_neuron_reported_as_filtered_in_neuron_diagnostics() {
     );
 
     // Enable output-only mode so hidden neurons get filtered
-    // SAFETY: Tests run single-threaded (--test-threads=1)
+    // SAFETY: Serialised via #[serial] — no concurrent env access
     let prev = std::env::var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY").ok();
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY", "1");
@@ -107,7 +109,7 @@ fn hidden_neuron_reported_as_filtered_in_neuron_diagnostics() {
     let result = analyze_neurons(&input).expect("analysis should succeed");
 
     // Restore env var
-    // SAFETY: Tests run single-threaded (--test-threads=1)
+    // SAFETY: Serialised via #[serial] — no concurrent env access
     match &prev {
         Some(v) => unsafe { std::env::set_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY", v) },
         None => unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY") },
@@ -309,6 +311,7 @@ fn json_output_includes_diagnostic_fields() {
 // =============================================================================
 
 #[test]
+#[serial]
 fn json_diagnostic_reasons_use_snake_case() {
     skip_without_gpu!();
 
@@ -322,7 +325,7 @@ fn json_diagnostic_reasons_use_snake_case() {
     );
 
     // Enable output-only mode so hidden neurons get filtered and generate diagnostics
-    // SAFETY: Tests run single-threaded (--test-threads=1)
+    // SAFETY: Serialised via #[serial] — no concurrent env access
     let prev = std::env::var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY").ok();
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY", "1");
@@ -344,7 +347,7 @@ fn json_diagnostic_reasons_use_snake_case() {
         serde_json::from_str(&output_json).expect("output should be valid JSON");
 
     // Restore env var
-    // SAFETY: Tests run single-threaded (--test-threads=1)
+    // SAFETY: Serialised via #[serial] — no concurrent env access
     match &prev {
         Some(v) => unsafe { std::env::set_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY", v) },
         None => unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY") },

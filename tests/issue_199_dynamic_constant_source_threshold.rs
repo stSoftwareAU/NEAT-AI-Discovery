@@ -27,7 +27,7 @@ fn issue_199_low_variance_sources_use_default_threshold() {
     skip_without_gpu!();
 
     // Clear any env override to use dynamic threshold
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
     }
@@ -127,7 +127,7 @@ fn issue_199_high_variance_sources_scale_threshold() {
     skip_without_gpu!();
 
     // Clear any env override to use dynamic threshold
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
     }
@@ -241,7 +241,7 @@ fn issue_199_env_var_override_takes_precedence() {
     skip_without_gpu!();
 
     // Set explicit threshold via env var - should override dynamic calculation
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD", "1e-3");
     }
@@ -325,7 +325,7 @@ fn issue_199_env_var_zero_disables_folding() {
     skip_without_gpu!();
 
     // Set threshold to 0 to disable folding entirely
-    // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD", "0");
     }

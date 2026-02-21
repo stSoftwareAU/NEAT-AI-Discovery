@@ -283,7 +283,7 @@ workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
 ./quality.sh
 
 # Run all tests
-cargo test --lib --tests --all-features -- --test-threads=1
+cargo test --lib --tests --all-features -- --test-threads=2
 
 # Run benchmarks
 cargo bench --bench <bench_name>

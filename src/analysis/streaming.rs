@@ -702,9 +702,10 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn is_streaming_enabled_default() {
         // When env var is not set, streaming should be enabled
-        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        // SAFETY: Serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_PRELOAD_ALL");
         }
@@ -720,14 +721,15 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn block_size_respects_minimum() {
         // Even with small values, block size should be at least MIN_BLOCK_SIZE
-        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        // SAFETY: Serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::set_var("NEAT_AI_DISCOVERY_BLOCK_SIZE", "1");
         }
         assert!(get_block_size() >= MIN_BLOCK_SIZE);
-        // SAFETY: Tests run single-threaded (--test-threads=1), no concurrent env access.
+        // SAFETY: Serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_BLOCK_SIZE");
         }
