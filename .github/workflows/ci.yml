@@ -28,7 +28,6 @@ jobs:
     name: Auto-increment Versions
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    needs: [auto-format]
     permissions:
       contents: write
       pull-requests: write
@@ -248,6 +247,7 @@ jobs:
   security:
     uses: ./.github/workflows/security.yml
     if: github.event_name == 'pull_request'
+    needs: [version-increment]
     with:
       include-dependency-review: true
 
@@ -255,6 +255,7 @@ jobs:
     name: Project Validation
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    needs: [version-increment]
     
     steps:
     - name: Checkout code
@@ -326,6 +327,7 @@ jobs:
     name: Auto-format Code
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    needs: [version-increment]
     permissions:
       contents: write
       pull-requests: write
@@ -389,6 +391,7 @@ jobs:
     name: Shell Script Quality
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    needs: [version-increment]
     
     steps:
     - name: Checkout code
@@ -422,6 +425,7 @@ jobs:
     name: Spell Check
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    needs: [version-increment]
     
     steps:
     - name: Checkout code
