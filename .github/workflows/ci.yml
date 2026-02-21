@@ -296,7 +296,7 @@ jobs:
         fi
         
         for field in "name" "version" "edition"; do
-          if ! grep -q "$field = " Cargo.toml; then
+          if ! grep -vE "^[[:space:]]*#" Cargo.toml | grep -qE "^[[:space:]]*${field}[[:space:]]*="; then
             echo "❌ Missing '$field' field in Cargo.toml"
             exit 1
           fi
