@@ -393,7 +393,7 @@ so do not skip this step.
 1. Bash syntax check (all `.sh` files)
 2. `cargo build` (debug, quick feedback)
 3. `cargo fmt --all` (auto-formatting)
-4. `cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args`
+4. `cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args -D clippy::filter_next -D clippy::collapsible_if`
 5. `cargo check --all-targets --all-features`
 6. `cargo test --lib --tests --all-features -- --test-threads=2`
 7. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
@@ -596,7 +596,7 @@ cargo bench --bench <bench_name>
 cargo fmt --all -- --check
 
 # Lint
-cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args
+cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args -D clippy::filter_next -D clippy::collapsible_if
 ```
 
 ---
