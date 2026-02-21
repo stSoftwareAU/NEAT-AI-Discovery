@@ -38,14 +38,11 @@ pub fn compute_source_variance_discount(samples: &[HelpfulSample]) -> f32 {
     use crate::analysis::constants::MIN_SOURCE_STD_DEV;
 
     let mut activation_sum = 0.0f64;
-    let mut activation_sq_sum = 0.0f64;
     let mut count = 0u32;
 
     for sample in samples {
         if sample.activation.is_finite() {
-            let a = sample.activation as f64;
-            activation_sum += a;
-            activation_sq_sum += a * a;
+            activation_sum += sample.activation as f64;
             count += 1;
         }
     }
@@ -56,8 +53,17 @@ pub fn compute_source_variance_discount(samples: &[HelpfulSample]) -> f32 {
 
     let n = count as f64;
     let mean = activation_sum / n;
-    let variance = (activation_sq_sum / n) - (mean * mean);
-    let std_dev = variance.max(0.0).sqrt() as f32;
+
+    // Two-pass algorithm: compute variance from deviations to avoid
+    // catastrophic cancellation when activation values are large.
+    let mut variance_sum = 0.0f64;
+    for sample in samples {
+        if sample.activation.is_finite() {
+            let d = sample.activation as f64 - mean;
+            variance_sum += d * d;
+        }
+    }
+    let std_dev = (variance_sum / n).sqrt() as f32;
 
     // Linear discount: full credit at MIN_SOURCE_STD_DEV, zero at 0
     // Values above MIN_SOURCE_STD_DEV get full credit (capped at 1.0)
