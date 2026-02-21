@@ -40,7 +40,7 @@ fn test_relu_spiking_detected() {
         output("output-0", "IDENTITY"),
     ];
 
-    let creature = make_creature(neurons.clone(), vec![synapse("hidden-1", "output-0", 1.0)]);
+    let creature = make_creature(neurons, vec![synapse("hidden-1", "output-0", 1.0)]);
 
     let hidden_neurons: Vec<(String, String, f32)> = creature
         .neurons
@@ -137,7 +137,7 @@ fn test_identity_spiking_detected() {
         output("output-0", "IDENTITY"),
     ];
 
-    let creature = make_creature(neurons.clone(), vec![synapse("hidden-1", "output-0", 1.0)]);
+    let creature = make_creature(neurons, vec![synapse("hidden-1", "output-0", 1.0)]);
 
     let hidden_neurons: Vec<(String, String, f32)> = creature
         .neurons
@@ -190,7 +190,7 @@ fn test_identity_spiking_detected() {
 fn test_output_neurons_excluded() {
     let neurons = vec![hidden("hidden-1", "RELU"), output("output-0", "RELU")];
 
-    let creature = make_creature(neurons.clone(), vec![synapse("hidden-1", "output-0", 1.0)]);
+    let creature = make_creature(neurons, vec![synapse("hidden-1", "output-0", 1.0)]);
 
     // Only include hidden neurons
     let hidden_neurons: Vec<(String, String, f32)> = creature
@@ -246,7 +246,7 @@ fn test_bounded_activations_excluded() {
         output("output-0", "IDENTITY"),
     ];
 
-    let creature = make_creature(neurons.clone(), vec![synapse("hidden-1", "output-0", 1.0)]);
+    let creature = make_creature(neurons, vec![synapse("hidden-1", "output-0", 1.0)]);
 
     let hidden_neurons: Vec<(String, String, f32)> = creature
         .neurons
@@ -290,7 +290,7 @@ fn test_bounded_activations_excluded() {
 fn test_conversion_to_coordinated_candidates() {
     let neurons = vec![hidden("hidden-1", "RELU"), output("output-0", "IDENTITY")];
 
-    let creature = make_creature(neurons.clone(), vec![synapse("hidden-1", "output-0", 1.0)]);
+    let creature = make_creature(neurons, vec![synapse("hidden-1", "output-0", 1.0)]);
 
     let hidden_neurons: Vec<(String, String, f32)> = creature
         .neurons
@@ -340,7 +340,7 @@ fn test_conversion_to_coordinated_candidates() {
 fn test_insufficient_samples_skipped() {
     let neurons = vec![hidden("hidden-1", "RELU"), output("output-0", "IDENTITY")];
 
-    let creature = make_creature(neurons.clone(), vec![synapse("hidden-1", "output-0", 1.0)]);
+    let creature = make_creature(neurons, vec![synapse("hidden-1", "output-0", 1.0)]);
 
     let hidden_neurons: Vec<(String, String, f32)> = creature
         .neurons
@@ -377,7 +377,7 @@ fn test_leakyrelu_spiking_detected() {
         output("output-0", "IDENTITY"),
     ];
 
-    let creature = make_creature(neurons.clone(), vec![synapse("hidden-1", "output-0", 1.0)]);
+    let creature = make_creature(neurons, vec![synapse("hidden-1", "output-0", 1.0)]);
 
     let hidden_neurons: Vec<(String, String, f32)> = creature
         .neurons
@@ -408,7 +408,7 @@ fn test_leakyrelu_spiking_detected() {
 fn test_occasional_spikes_not_detected() {
     let neurons = vec![hidden("hidden-1", "RELU"), output("output-0", "IDENTITY")];
 
-    let creature = make_creature(neurons.clone(), vec![synapse("hidden-1", "output-0", 1.0)]);
+    let creature = make_creature(neurons, vec![synapse("hidden-1", "output-0", 1.0)]);
 
     let hidden_neurons: Vec<(String, String, f32)> = creature
         .neurons

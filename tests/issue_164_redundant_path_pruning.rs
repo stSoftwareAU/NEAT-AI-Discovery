@@ -132,7 +132,7 @@ fn redundant_identical_paths_detected() {
     // Look for redundant path pruning candidates in coordinatedStructuralCandidates
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     let found_redundant = coordinated.iter().any(|c| {
@@ -273,19 +273,16 @@ fn independent_paths_not_detected_as_redundant() {
     // Check coordinated candidates - should NOT have redundant path pruning
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     let redundant_count = coordinated
         .iter()
         .filter(|c| {
-            c.get("comment")
-                .and_then(|v| v.as_str())
-                .map(|s| {
-                    let lower = s.to_lowercase();
-                    lower.contains("redundant") || lower.contains("164")
-                })
-                .unwrap_or(false)
+            c.get("comment").and_then(|v| v.as_str()).is_some_and(|s| {
+                let lower = s.to_lowercase();
+                lower.contains("redundant") || lower.contains("164")
+            })
         })
         .count();
 
@@ -394,18 +391,15 @@ fn redundant_path_candidate_has_expected_structure() {
 
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     // Find the redundant path candidate
     let redundant_candidate = coordinated.iter().find(|c| {
-        c.get("comment")
-            .and_then(|v| v.as_str())
-            .map(|s| {
-                let lower = s.to_lowercase();
-                lower.contains("redundant") || lower.contains("164")
-            })
-            .unwrap_or(false)
+        c.get("comment").and_then(|v| v.as_str()).is_some_and(|s| {
+            let lower = s.to_lowercase();
+            lower.contains("redundant") || lower.contains("164")
+        })
     });
 
     assert!(

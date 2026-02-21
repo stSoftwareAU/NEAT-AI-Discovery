@@ -226,7 +226,10 @@ fn stress_1000_neurons_pipeline_completes_without_panic() {
     let focus_uuids: Vec<String> = std::iter::once("output-0".to_string())
         .chain((0..n_hidden).step_by(10).map(|i| format!("h-{i}")))
         .collect();
-    let focus_refs: Vec<&str> = focus_uuids.iter().map(|s| s.as_str()).collect();
+    let focus_refs: Vec<&str> = focus_uuids
+        .iter()
+        .map(std::string::String::as_str)
+        .collect();
 
     let output = run_pipeline(&creature, &records, &focus_refs);
 
@@ -234,20 +237,16 @@ fn stress_1000_neurons_pipeline_completes_without_panic() {
     // Log candidate counts for visibility.
     let helpful_syn = output["helpfulSynapses"]
         .as_array()
-        .map(|a| a.len())
-        .unwrap_or(0);
+        .map_or(0, std::vec::Vec::len);
     let helpful_neu = output["helpfulNeurons"]
         .as_array()
-        .map(|a| a.len())
-        .unwrap_or(0);
+        .map_or(0, std::vec::Vec::len);
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.len())
-        .unwrap_or(0);
+        .map_or(0, std::vec::Vec::len);
     let weight_upd = output["synapseWeightUpdates"]
         .as_array()
-        .map(|a| a.len())
-        .unwrap_or(0);
+        .map_or(0, std::vec::Vec::len);
 
     eprintln!(
         "1,000-neuron stress test completed: helpfulSynapses={helpful_syn}, \
@@ -292,26 +291,25 @@ fn stress_2000_neurons_5000_plus_synapses() {
     let focus_uuids: Vec<String> = std::iter::once("output-0".to_string())
         .chain((0..n_hidden).step_by(20).map(|i| format!("h-{i}")))
         .collect();
-    let focus_refs: Vec<&str> = focus_uuids.iter().map(|s| s.as_str()).collect();
+    let focus_refs: Vec<&str> = focus_uuids
+        .iter()
+        .map(std::string::String::as_str)
+        .collect();
 
     let output = run_pipeline(&creature, &records, &focus_refs);
 
     let total = output["helpfulSynapses"]
         .as_array()
-        .map(|a| a.len())
-        .unwrap_or(0)
+        .map_or(0, std::vec::Vec::len)
         + output["helpfulNeurons"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0)
+            .map_or(0, std::vec::Vec::len)
         + output["coordinatedStructuralCandidates"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0)
+            .map_or(0, std::vec::Vec::len)
         + output["synapseWeightUpdates"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0);
+            .map_or(0, std::vec::Vec::len);
 
     eprintln!("2,000-neuron stress test completed: {total} total candidates across all types");
 }
@@ -338,7 +336,10 @@ fn stress_memory_no_unbounded_growth() {
     let focus_uuids: Vec<String> = std::iter::once("output-0".to_string())
         .chain((0..n_hidden).step_by(10).map(|i| format!("h-{i}")))
         .collect();
-    let focus_refs: Vec<&str> = focus_uuids.iter().map(|s| s.as_str()).collect();
+    let focus_refs: Vec<&str> = focus_uuids
+        .iter()
+        .map(std::string::String::as_str)
+        .collect();
 
     // First run — warm up GPU, caches, etc.
     let _output1 = run_pipeline(&creature, &records, &focus_refs);
@@ -447,7 +448,10 @@ fn stress_gpu_buffers_handle_large_creature() {
     let focus_uuids: Vec<String> = std::iter::once("output-0".to_string())
         .chain((0..n_hidden).step_by(15).map(|i| format!("h-{i}")))
         .collect();
-    let focus_refs: Vec<&str> = focus_uuids.iter().map(|s| s.as_str()).collect();
+    let focus_refs: Vec<&str> = focus_uuids
+        .iter()
+        .map(std::string::String::as_str)
+        .collect();
 
     let output = run_pipeline(&creature, &records, &focus_refs);
 
@@ -500,26 +504,25 @@ fn stress_mixed_activations_at_scale() {
     let focus_uuids: Vec<String> = std::iter::once("output-0".to_string())
         .chain((0..n_hidden).step_by(5).map(|i| format!("h-{i}")))
         .collect();
-    let focus_refs: Vec<&str> = focus_uuids.iter().map(|s| s.as_str()).collect();
+    let focus_refs: Vec<&str> = focus_uuids
+        .iter()
+        .map(std::string::String::as_str)
+        .collect();
 
     let output = run_pipeline(&creature, &records, &focus_refs);
 
     let total = output["helpfulSynapses"]
         .as_array()
-        .map(|a| a.len())
-        .unwrap_or(0)
+        .map_or(0, std::vec::Vec::len)
         + output["helpfulNeurons"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0)
+            .map_or(0, std::vec::Vec::len)
         + output["coordinatedStructuralCandidates"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0)
+            .map_or(0, std::vec::Vec::len)
         + output["synapseWeightUpdates"]
             .as_array()
-            .map(|a| a.len())
-            .unwrap_or(0);
+            .map_or(0, std::vec::Vec::len);
 
     eprintln!(
         "Mixed-activation stress test: {total} candidates from {} focus neurons",

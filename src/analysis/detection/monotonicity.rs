@@ -215,8 +215,7 @@ pub fn non_monotonic_neurons_to_coordinated_candidates(
             .neurons
             .iter()
             .find(|n| n.uuid == c.neuron_uuid)
-            .map(|n| n.squash.as_str())
-            .unwrap_or("LOGISTIC");
+            .map_or("LOGISTIC", |n| n.squash.as_str());
 
         // Find synapses going out of this neuron
         let outgoing: Vec<&crate::SynapseJson> = creature

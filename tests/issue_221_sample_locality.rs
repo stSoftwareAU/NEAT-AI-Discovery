@@ -335,8 +335,8 @@ fn sample_locality_batching_produces_results() {
     let creature = create_correlated_input_creature(input_count);
 
     let input = AnalyzeSynapsesInput {
-        parquet_file: parquet_file.clone(),
-        creature: creature.clone(),
+        parquet_file,
+        creature,
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,
@@ -405,8 +405,8 @@ fn sample_locality_preserves_correctness() {
 
     // Run analysis with a fixed seed for reproducibility
     let input = AnalyzeSynapsesInput {
-        parquet_file: parquet_file.clone(),
-        creature: creature.clone(),
+        parquet_file,
+        creature,
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(50),
         analysis_deadline_ms: None,
@@ -452,8 +452,8 @@ fn source_batching_90_percent_overlap_produces_results() {
     let creature = create_correlated_input_creature(input_count);
 
     let input = AnalyzeSynapsesInput {
-        parquet_file: parquet_file.clone(),
-        creature: creature.clone(),
+        parquet_file,
+        creature,
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
         analysis_deadline_ms: None,

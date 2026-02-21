@@ -306,7 +306,7 @@ fn test_reduction_multiple_batches() {
         })
         .collect();
 
-    let batch_refs: Vec<&[HelpfulSample]> = batches.iter().map(|b| b.as_slice()).collect();
+    let batch_refs: Vec<&[HelpfulSample]> = batches.iter().map(std::vec::Vec::as_slice).collect();
 
     let results = analyzer
         .evaluate_helpful_batch(&batch_refs)

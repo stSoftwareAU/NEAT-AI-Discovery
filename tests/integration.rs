@@ -206,7 +206,7 @@ fn test_impact_with_very_small_incoming_weight_is_not_zeroed() {
 
     // Write minimal data to the parquet file
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": [{
             "input": [],
             "output": [0.5],
@@ -337,7 +337,7 @@ fn test_impact_calculation_with_multiple_incoming_connections() {
 
     // Write minimal data to the parquet file
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": [{
             "input": [0.1, 0.2],
             "output": [0.5],
@@ -483,7 +483,7 @@ fn test_analyze_neurons_returns_non_zero_bias() {
 
     // Record discovery data
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": training_data,
         "temp_dir": temp_path.to_str().unwrap()
     });
@@ -582,7 +582,7 @@ fn test_bias_values_are_activation_specific() {
 
     // Record discovery data
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": training_data,
         "temp_dir": temp_path.to_str().unwrap()
     });
@@ -712,7 +712,7 @@ fn test_cumulative_impact_with_multiple_output_connections() {
 
     // Write discovery data
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": [{
             "input": [0.5],
             "output": [0.25, 0.25],
@@ -847,7 +847,7 @@ fn test_add_neuron_finds_candidates_with_correlated_errors() {
 
     // Record discovery data
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": training_data,
         "temp_dir": temp_path.to_str().unwrap()
     });
@@ -955,7 +955,7 @@ fn test_add_neuron_with_hard_tanh_target_uses_bias_aware_weight() {
 
     // Record discovery data
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": training_data,
         "temp_dir": temp_path.to_str().unwrap()
     });
@@ -1057,7 +1057,7 @@ fn test_bias_improves_neuron_performance() {
 
     // Record discovery data
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": training_data,
         "temp_dir": temp_path.to_str().unwrap()
     });
@@ -1182,7 +1182,7 @@ fn test_hidden_neurons_are_analysed_not_filtered() {
 
     // Record discovery data
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": training_data,
         "temp_dir": temp_path.to_str().unwrap()
     });
@@ -1344,7 +1344,7 @@ fn test_hidden_neuron_candidates_have_impact_discounted_predictions() {
 
     // Record discovery data
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": training_data,
         "temp_dir": temp_path.to_str().unwrap()
     });

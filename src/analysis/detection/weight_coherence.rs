@@ -206,13 +206,11 @@ pub fn detect_incoherent_weight_ratios(
         // Calculate incoming and outgoing weight sums
         let incoming_sum: f32 = incoming_weights
             .get(neuron_uuid)
-            .map(|weights| weights.iter().map(|w| w.abs()).sum())
-            .unwrap_or(0.0);
+            .map_or(0.0, |weights| weights.iter().map(|w| w.abs()).sum());
 
         let outgoing_sum: f32 = outgoing_weights
             .get(neuron_uuid)
-            .map(|weights| weights.iter().map(|w| w.abs()).sum())
-            .unwrap_or(0.0);
+            .map_or(0.0, |weights| weights.iter().map(|w| w.abs()).sum());
 
         // Skip if no meaningful weights
         if incoming_sum <= EPSILON || outgoing_sum <= EPSILON {
@@ -315,16 +313,13 @@ pub fn detect_near_constant_paths(
 
         if variance < config.min_activation_variance {
             // Find the largest incoming weight that might cause saturation
-            let causing_weight = incoming_weights
-                .get(neuron_uuid)
-                .map(|weights| {
-                    weights
-                        .iter()
-                        .map(|w| w.abs())
-                        .max_by(|a, b| a.total_cmp(b))
-                        .unwrap_or(0.0)
-                })
-                .unwrap_or(0.0);
+            let causing_weight = incoming_weights.get(neuron_uuid).map_or(0.0, |weights| {
+                weights
+                    .iter()
+                    .map(|w| w.abs())
+                    .max_by(f32::total_cmp)
+                    .unwrap_or(0.0)
+            });
 
             // Recommend setBias for saturating activations
             let recommended_action = if is_saturating_squash(squash) && mean.abs() > 0.9 {

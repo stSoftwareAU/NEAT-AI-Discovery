@@ -173,8 +173,7 @@ fn regression_hidden_neurons_must_be_analyzed_not_filtered() {
         .any(|c| c.target_neuron_uuid == "hidden-0");
 
     let hidden_was_analyzed = hidden_diagnostic
-        .map(|d| !matches!(d.reason, NeuronNoCandidateReason::HiddenNeuronFiltered))
-        .unwrap_or(true); // No diagnostic = was analyzed and found candidates
+        .is_none_or(|d| !matches!(d.reason, NeuronNoCandidateReason::HiddenNeuronFiltered)); // No diagnostic = was analyzed and found candidates
 
     assert!(
         hidden_has_candidates || hidden_was_analyzed,

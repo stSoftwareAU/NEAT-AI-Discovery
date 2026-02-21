@@ -84,8 +84,7 @@ pub fn get_streaming_config_from_env() -> StreamingConfig {
 pub fn is_streaming_enabled() -> bool {
     std::env::var("NEAT_AI_DISCOVERY_PRELOAD_ALL")
         .ok()
-        .map(|v| v != "1" && v.to_lowercase() != "true")
-        .unwrap_or(true)
+        .is_none_or(|v| v != "1" && v.to_lowercase() != "true")
 }
 
 /// Get the block size from environment or use default.

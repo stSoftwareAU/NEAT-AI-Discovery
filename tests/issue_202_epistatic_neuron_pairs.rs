@@ -146,7 +146,7 @@ fn epistatic_pair_detected_for_complementary_error_patterns() {
     // Look for epistatic pair candidates in coordinatedStructuralCandidates
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     // We expect to find a coordinated candidate that adds BOTH synapses
@@ -276,7 +276,7 @@ fn epistatic_pair_detected_via_correlation_analysis() {
     // The system should detect this as a potential epistatic pair since combined > individual
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     // Check for epistatic pair detection
@@ -490,7 +490,7 @@ fn epistatic_pair_candidate_has_expected_structure() {
 
     let coordinated = output["coordinatedStructuralCandidates"]
         .as_array()
-        .map(|a| a.to_vec())
+        .cloned()
         .unwrap_or_default();
 
     // Find an epistatic pair candidate

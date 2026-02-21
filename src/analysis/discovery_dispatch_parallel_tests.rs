@@ -35,7 +35,7 @@ fn make_module(
     name: &str,
     candidates: Option<Vec<CoordinatedStructuralCandidateJson>>,
 ) -> DiscoveryModuleSpec {
-    let detected_count = candidates.as_ref().map(|c| c.len()).unwrap_or(0);
+    let detected_count = candidates.as_ref().map_or(0, std::vec::Vec::len);
     DiscoveryModuleSpec {
         module_name: name.to_string(),
         phase_name: "test_phase",

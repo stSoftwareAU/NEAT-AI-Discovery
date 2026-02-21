@@ -471,10 +471,8 @@ fn test_threshold_respects_environment_variable() {
         .collect();
 
     // First check with default threshold
-    let candidates_default = detect_noisy_neurons(
-        &creature,
-        &[("hidden-borderline".to_string(), records.clone())],
-    );
+    let candidates_default =
+        detect_noisy_neurons(&creature, &[("hidden-borderline".to_string(), records)]);
 
     // Store result for comparison
     let detected_with_default = !candidates_default.is_empty();

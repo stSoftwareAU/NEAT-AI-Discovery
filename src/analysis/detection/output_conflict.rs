@@ -158,7 +158,7 @@ pub fn detect_output_conflict_neurons(
             .iter()
             .copied()
             .filter(|&e| e < 0.0)
-            .map(|e| e.abs())
+            .map(f32::abs)
             .fold(0.0_f32, f32::max);
 
         let conflict_severity = max_positive * max_negative_abs;
@@ -225,7 +225,7 @@ pub fn output_conflicts_to_coordinated_candidates(
         .collect();
 
     // Find the first output neuron UUID for insert_before placement
-    let first_output_uuid = output_uuids.first().map(|s| s.to_string());
+    let first_output_uuid = output_uuids.first().map(std::string::ToString::to_string);
 
     let mut results = Vec::new();
 

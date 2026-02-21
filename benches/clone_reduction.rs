@@ -225,7 +225,7 @@ fn bench_bottleneck_detection(c: &mut Criterion) {
         let (creature, records) = create_bottleneck_creature(count);
 
         group.bench_function(format!("detect_{count}_bottlenecks"), |b| {
-            b.iter(|| detect_bottleneck_neurons(black_box(&creature), black_box(&records)))
+            b.iter(|| detect_bottleneck_neurons(black_box(&creature), black_box(&records)));
         });
 
         let candidates = detect_bottleneck_neurons(&creature, &records);
@@ -236,7 +236,7 @@ fn bench_bottleneck_detection(c: &mut Criterion) {
                         black_box(&candidates),
                         black_box(&creature),
                     )
-                })
+                });
             });
         }
     }
@@ -258,7 +258,7 @@ fn bench_restricted_range(c: &mut Criterion) {
                     black_box(&records),
                     black_box(&config),
                 )
-            })
+            });
         });
 
         let detected = detect_restricted_range_neurons(&creature, &records, &config);
@@ -269,7 +269,7 @@ fn bench_restricted_range(c: &mut Criterion) {
                         black_box(&detected),
                         black_box(&creature),
                     )
-                })
+                });
             });
         }
     }
@@ -284,13 +284,13 @@ fn bench_bounded_range(c: &mut Criterion) {
         let (creature, records) = create_bounded_range_creature(count);
 
         group.bench_function(format!("detect_{count}_neurons"), |b| {
-            b.iter(|| detect_bounded_range_neurons(black_box(&creature), black_box(&records)))
+            b.iter(|| detect_bounded_range_neurons(black_box(&creature), black_box(&records)));
         });
 
         let detected = detect_bounded_range_neurons(&creature, &records);
         if !detected.is_empty() {
             group.bench_function(format!("convert_{count}_neurons"), |b| {
-                b.iter(|| bounded_range_to_coordinated_candidates(black_box(&detected)))
+                b.iter(|| bounded_range_to_coordinated_candidates(black_box(&detected)));
             });
         }
     }

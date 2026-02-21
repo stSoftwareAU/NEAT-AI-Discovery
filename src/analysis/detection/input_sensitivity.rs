@@ -265,7 +265,7 @@ pub fn detect_dominant_inputs(
             let mut matched_inputs = Vec::new();
             let mut matched_errors = Vec::new();
 
-            for record in input_records.iter() {
+            for record in *input_records {
                 if let Some(&error) = target_map.get(&record.obs_index) {
                     matched_inputs.push(record.activation);
                     matched_errors.push(error);
@@ -436,7 +436,7 @@ pub fn detect_threshold_effects(
             let mut matched_values = Vec::new();
             let mut matched_activations = Vec::new();
 
-            for record in input_records.iter() {
+            for record in *input_records {
                 if let (Some(&value), Some(&activation)) = (
                     hidden_value_map.get(&record.obs_index),
                     hidden_activation_map.get(&record.obs_index),
@@ -516,8 +516,7 @@ pub fn detect_threshold_effects(
             let target_uuid = synapse_map
                 .get(hidden_uuid)
                 .and_then(|conns| conns.first())
-                .map(|(to, _)| to.to_string())
-                .unwrap_or_else(|| "output-0".to_string());
+                .map_or_else(|| "output-0".to_string(), |(to, _)| to.to_string());
 
             candidates.push(ThresholdEffectCandidate {
                 input_neuron_uuid: input_uuid.to_string(),

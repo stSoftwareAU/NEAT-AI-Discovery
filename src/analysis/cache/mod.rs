@@ -274,7 +274,7 @@ impl RecordCache {
             .filter_map(|uuid| {
                 self.get(uuid)
                     .ok()
-                    .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                    .map(|r| (uuid.clone(), r.as_ref().clone()))
             })
             .collect()
     }
@@ -290,7 +290,7 @@ impl RecordCache {
             .filter_map(|(uuid, _, _)| {
                 self.get(uuid)
                     .ok()
-                    .map(|r| (uuid.clone(), r.as_ref().to_vec()))
+                    .map(|r| (uuid.clone(), r.as_ref().clone()))
             })
             .collect()
     }

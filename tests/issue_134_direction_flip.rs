@@ -74,7 +74,7 @@ fn issue_134_bent_identity_target_simulation_rejects_linear_false_positive() {
     };
 
     let input = AnalyzeSynapsesInput {
-        parquet_file: parquet_file.clone(),
+        parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: None,

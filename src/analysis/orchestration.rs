@@ -171,7 +171,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         Some(AnalyzeNeuronsInput {
             parquet_file: input.parquet_file.clone(),
             creature: input.creature.clone(),
-            focus_neurons: effective_focus_neurons.clone(),
+            focus_neurons: effective_focus_neurons,
             max_candidates: input.max_neuron_candidates,
             analysis_deadline_ms: input.analysis_deadline_ms,
             random_seed: input.random_seed,
@@ -191,8 +191,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         let now_ms = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .ok()
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_millis() as u64);
         let synapse_first = include_synapse
             && include_neuron
             && choose_deadline_order_synapse_first(input.random_seed, now_ms);
@@ -349,18 +348,14 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     }
 
     // Collect final profile data (Issue #214)
-    let synapse_candidates = synapse_result
-        .as_ref()
-        .map(|s| {
-            s.helpful_synapses.len()
-                + s.harmful_synapses.len()
-                + s.coordinated_structural_candidates.len()
-        })
-        .unwrap_or(0);
+    let synapse_candidates = synapse_result.as_ref().map_or(0, |s| {
+        s.helpful_synapses.len()
+            + s.harmful_synapses.len()
+            + s.coordinated_structural_candidates.len()
+    });
     let neuron_candidates = neuron_result
         .as_ref()
-        .map(|n| n.helpful_neurons.len())
-        .unwrap_or(0);
+        .map_or(0, |n| n.helpful_neurons.len());
     let total_candidates = synapse_candidates + neuron_candidates;
     profile.set_candidates_found(total_candidates);
     profile.set_candidates_returned(total_candidates);
@@ -368,12 +363,10 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Set focus neurons completed from metadata
     let synapse_completed = synapse_result
         .as_ref()
-        .map(|s| s.metadata.completed_focus_neurons)
-        .unwrap_or(0);
+        .map_or(0, |s| s.metadata.completed_focus_neurons);
     let neuron_completed = neuron_result
         .as_ref()
-        .map(|n| n.metadata.completed_focus_neurons)
-        .unwrap_or(0);
+        .map_or(0, |n| n.metadata.completed_focus_neurons);
     profile.set_focus_neurons_completed(synapse_completed.max(neuron_completed));
 
     // Get GPU device info if available

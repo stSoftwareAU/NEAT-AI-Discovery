@@ -561,8 +561,7 @@ fn get_activation_score(suitability: &HashMap<String, f32>, squash: &str) -> f32
     suitability
         .iter()
         .find(|(k, _)| normalise_squash_name(k) == normalised)
-        .map(|(_, v)| *v)
-        .unwrap_or(0.5) // Default score for unknown activations
+        .map_or(0.5, |(_, v)| *v) // Default score for unknown activations
 }
 
 /// Normalise activation function name for comparison.

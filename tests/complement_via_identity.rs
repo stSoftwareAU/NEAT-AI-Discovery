@@ -65,7 +65,7 @@ fn test_complement_is_discovered_as_identity_not_inverse() {
 
     // Record discovery data
     let input_json = serde_json::json!({
-        "creature": creature.clone(),
+        "creature": creature,
         "training_data": training_data,
         "temp_dir": temp_path.to_str().expect("Temp path should be valid UTF-8")
     });

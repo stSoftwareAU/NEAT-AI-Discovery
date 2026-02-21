@@ -92,3 +92,20 @@ harness = false
 name = "gpu_shader_workgroup"
 harness = false
 
+# Lint configuration (Issue #675)
+# Selectively enable useful pedantic and nursery lints.
+[lints.clippy]
+uninlined_format_args = "deny"
+
+# Pedantic lints — useful subset that improves code quality
+cloned_instead_of_copied = "warn"
+explicit_iter_loop = "warn"
+implicit_clone = "warn"
+map_unwrap_or = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+unnested_or_patterns = "warn"
+
+# Nursery lints — stable enough to be useful
+redundant_clone = "warn"
+

@@ -222,7 +222,7 @@ fn test_conservative_params_more_stable_across_samples() {
 
     let subset_input = AnalyzeNeuronsInput {
         parquet_file: subset_temp.path().to_str().unwrap().to_string(),
-        creature: creature.clone(),
+        creature,
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(100),
         analysis_deadline_ms: None,
@@ -289,8 +289,8 @@ fn test_large_bias_causes_saturation() {
             .map(|&x| (incoming * x + bias).tanh())
             .collect();
 
-        let range = outputs.iter().cloned().fold(f32::MAX, f32::min)
-            ..=outputs.iter().cloned().fold(f32::MIN, f32::max);
+        let range = outputs.iter().copied().fold(f32::MAX, f32::min)
+            ..=outputs.iter().copied().fold(f32::MIN, f32::max);
         let spread = *range.end() - *range.start();
 
         eprintln!(
@@ -426,7 +426,7 @@ fn test_synapse_candidates_no_bias_optimisation() {
     let records = generate_sample_subset_data(42, 100, 0.05);
 
     // Need to add records for hidden neuron as well
-    let mut all_records = records.clone();
+    let mut all_records = records;
     for i in 0..100 {
         let obs_idx = i as u32;
         let pseudo_random = ((42.0f32 * 0.618 + i as f32 * 0.381).sin() * 1000.0).fract();
@@ -540,8 +540,8 @@ fn test_synapse_weight_distribution() {
     }
 
     // Check if synapse weights are consistent across samples
-    let min_weight = all_weights.iter().cloned().fold(f32::MAX, f32::min);
-    let max_weight = all_weights.iter().cloned().fold(f32::MIN, f32::max);
+    let min_weight = all_weights.iter().copied().fold(f32::MAX, f32::min);
+    let max_weight = all_weights.iter().copied().fold(f32::MIN, f32::max);
     let avg_weight = all_weights.iter().sum::<f32>() / all_weights.len() as f32;
 
     eprintln!("\n=== Synapse Weight Distribution ===");

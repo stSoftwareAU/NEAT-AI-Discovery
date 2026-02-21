@@ -106,7 +106,7 @@ fn generate_exploratory_weights(current_weight: f32) -> Vec<f32> {
     }
 
     // Deduplicate: remove weights that are too close to each other
-    weights.sort_by(|a, b| a.total_cmp(b));
+    weights.sort_by(f32::total_cmp);
     weights.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
 
     // Remove the current weight if it accidentally ended up in the list

@@ -1,0 +1,18 @@
+# rustfmt configuration for NEAT-AI-Discovery
+# Pins formatting rules so upgrades to rustfmt do not cause churn.
+# See https://rust-lang.github.io/rustfmt/ for all options.
+
+# Maximum line width before wrapping
+max_width = 100
+
+# Use Unix-style line endings
+newline_style = "Unix"
+
+# Edition must match Cargo.toml
+edition = "2024"
+
+# Use field init shorthand (e.g., `Foo { bar }` instead of `Foo { bar: bar }`)
+use_field_init_shorthand = true
+
+# Use `?` operator shorthand where possible
+use_try_shorthand = true

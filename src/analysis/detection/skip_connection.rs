@@ -134,8 +134,7 @@ pub fn detect_skip_connection_candidates(
         .filter(|&&uuid| {
             records_map
                 .get(uuid)
-                .map(|r| r.len() >= MIN_DISCOVERY_SAMPLE_COUNT)
-                .unwrap_or(false)
+                .is_some_and(|r| r.len() >= MIN_DISCOVERY_SAMPLE_COUNT)
         })
         .copied()
         .collect();

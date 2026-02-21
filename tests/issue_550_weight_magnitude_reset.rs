@@ -226,7 +226,7 @@ fn test_weight_candidates_span_wide_range() {
             if json.contains("setWeight") {
                 // Extract weight from JSON
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json)
-                    && let Some(w) = val.get("weight").and_then(|v| v.as_f64())
+                    && let Some(w) = val.get("weight").and_then(serde_json::Value::as_f64)
                 {
                     weights.push(w as f32);
                 }
@@ -242,8 +242,8 @@ fn test_weight_candidates_span_wide_range() {
     // Verify the weights span a wide range: should include both positive and negative,
     // or significantly different magnitudes
     let has_sign_variation = weights.iter().any(|w| *w < 0.0) && weights.iter().any(|w| *w > 0.0);
-    let min_w = weights.iter().cloned().fold(f32::INFINITY, f32::min);
-    let max_w = weights.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let min_w = weights.iter().copied().fold(f32::INFINITY, f32::min);
+    let max_w = weights.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     let has_magnitude_variation = (max_w - min_w).abs() > 0.5;
 
     assert!(

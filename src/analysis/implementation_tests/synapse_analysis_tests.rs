@@ -63,7 +63,7 @@ fn analyze_neurons_rejects_duplicate_focus_targets() {
     };
 
     let input = AnalyzeNeuronsInput {
-        parquet_file: parquet_file.clone(),
+        parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string(), "output-0".to_string()],
         max_candidates: None,
@@ -486,7 +486,7 @@ fn analyze_synapses_reports_diagnostics_when_no_candidates() {
     };
 
     let input = AnalyzeSynapsesInput {
-        parquet_file: parquet_file.clone(),
+        parquet_file,
         creature,
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: None,

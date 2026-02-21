@@ -148,8 +148,7 @@ pub(crate) fn convert_neurons_to_coordinated_replacements(
             .neurons
             .iter()
             .find(|n| n.uuid == candidate.target_neuron_uuid)
-            .map(|n| n.neuron_type == "output")
-            .unwrap_or(false);
+            .is_some_and(|n| n.neuron_type == "output");
         if !is_target_output {
             expected_gain *= 0.1;
         }

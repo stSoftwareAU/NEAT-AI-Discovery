@@ -55,8 +55,7 @@ pub fn apply_target_type_boost(
 ) -> f32 {
     if neuron_type_map
         .get(target_uuid)
-        .map(|t| t == "hidden")
-        .unwrap_or(false)
+        .is_some_and(|t| t == "hidden")
     {
         gain * EXISTING_HIDDEN_TARGET_BOOST as f32
     } else {
@@ -182,7 +181,7 @@ pub(crate) fn compute_relu_improvement_and_count(
     let mut improved_count = 0u32;
     let mut worsened_count = 0u32;
 
-    for sample in samples.iter() {
+    for sample in samples {
         let pre_activation = incoming_weight * sample.activation + bias;
         let relu_output = pre_activation.max(0.0);
         let contribution = outgoing_weight * relu_output;

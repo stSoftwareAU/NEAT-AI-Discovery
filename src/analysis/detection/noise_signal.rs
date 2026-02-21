@@ -260,7 +260,7 @@ pub fn detect_noisy_synapses(
 
         // Match source activations with target errors by obs_index
         let mut matched_pairs: Vec<(f32, f32)> = Vec::new();
-        for record in source_records.iter() {
+        for record in *source_records {
             if let Some(&error) = target_error_map.get(&record.obs_index) {
                 matched_pairs.push((record.activation, error));
             }

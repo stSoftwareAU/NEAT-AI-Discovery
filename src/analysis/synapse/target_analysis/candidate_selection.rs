@@ -43,8 +43,7 @@ pub(crate) fn detect_epistatic_and_synergistic(
     let target_is_output = ctx
         .neuron_type_map
         .get(target_uuid)
-        .map(|t| t == "output")
-        .unwrap_or(false);
+        .is_some_and(|t| t == "output");
     let target_impact = if target_is_output { 1.0 } else { 0.5 };
 
     // Issue #202: Detect epistatic neuron pairs
@@ -119,8 +118,7 @@ pub(crate) fn detect_redundant_path_candidates(
     let target_is_output = ctx
         .neuron_type_map
         .get(target_uuid)
-        .map(|t| t == "output")
-        .unwrap_or(false);
+        .is_some_and(|t| t == "output");
     let target_impact = if target_is_output { 1.0 } else { 0.5 };
 
     let redundant_paths =

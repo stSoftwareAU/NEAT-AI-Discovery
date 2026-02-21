@@ -64,7 +64,7 @@ fn bench_upsert_candidate(c: &mut Criterion) {
                 map.entry(key).or_insert_with(|| candidate.clone());
             }
             black_box(&map);
-        })
+        });
     });
 
     // Larger: 1000 candidates from 100 sources × 10 targets
@@ -95,7 +95,7 @@ fn bench_upsert_candidate(c: &mut Criterion) {
                 map.entry(key).or_insert_with(|| candidate.clone());
             }
             black_box(&map);
-        })
+        });
     });
 
     // Hash-based key approach (the optimisation)
@@ -121,7 +121,7 @@ fn bench_upsert_candidate(c: &mut Criterion) {
                 map.entry(key).or_insert_with(|| candidate.clone());
             }
             black_box(&map);
-        })
+        });
     });
 
     group.bench_function("1000_candidates_hash_key", |b| {
@@ -146,7 +146,7 @@ fn bench_upsert_candidate(c: &mut Criterion) {
                 map.entry(key).or_insert_with(|| candidate.clone());
             }
             black_box(&map);
-        })
+        });
     });
 
     group.finish();

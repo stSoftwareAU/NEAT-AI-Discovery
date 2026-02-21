@@ -1,0 +1,15 @@
+# Clippy configuration for NEAT-AI-Discovery
+# Pins thresholds so upgrades to clippy do not silently change behaviour.
+# See https://doc.rust-lang.org/clippy/lint_configuration.html for all options.
+
+# Functions with more than this many lines trigger `too_many_lines`
+too-many-lines-threshold = 150
+
+# Maximum cognitive complexity before clippy warns
+cognitive-complexity-threshold = 30
+
+# Maximum number of enum variants
+enum-variant-size-threshold = 200
+
+# Types considered expensive to pass by value
+too-large-for-stack = 200

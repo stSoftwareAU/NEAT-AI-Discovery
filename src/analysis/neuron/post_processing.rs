@@ -143,8 +143,7 @@ fn apply_impact_discounting(
 
         let is_hidden = neuron_type_map
             .get(&candidate.target_neuron_uuid)
-            .map(|t| t != "output")
-            .unwrap_or(true);
+            .is_none_or(|t| t != "output");
 
         let impact = if is_hidden {
             if let Some(&impact) = impact_scores.get(&candidate.target_neuron_uuid) {

@@ -235,8 +235,7 @@ pub fn fanin_polarity_conflicts_to_coordinated_candidates(
             .neurons
             .iter()
             .find(|n| n.uuid == c.neuron_uuid)
-            .map(|n| n.squash.clone())
-            .unwrap_or_else(|| "TANH".to_string());
+            .map_or_else(|| "TANH".to_string(), |n| n.squash.clone());
 
         // Generate a deterministic UUID for the new neuron
         let new_neuron_uuid = format!("fanin-split-{}", c.neuron_uuid);

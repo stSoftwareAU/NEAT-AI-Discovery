@@ -53,7 +53,7 @@ pub(crate) fn filter_focus_targets_for_neuron_analysis(
         .filter_map(|uuid| {
             // By default we analyse both output and hidden focus targets (hidden will be discounted).
             // If `output_only_targets` is set, hidden targets are filtered.
-            let neuron_type = neuron_type_map.get(*uuid).map(|s| s.as_str());
+            let neuron_type = neuron_type_map.get(*uuid).map(std::string::String::as_str);
             match neuron_type {
                 Some("output") => {
                     record_threshold_target(uuid);

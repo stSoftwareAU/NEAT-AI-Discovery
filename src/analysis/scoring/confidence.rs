@@ -91,9 +91,7 @@ pub fn compute_confidence_metrics(
     // Compute individual confidence factors
     let sample_confidence = compute_sample_confidence(samples.len());
     let variance_confidence = compute_source_variance_confidence(samples);
-    let model_confidence = model_r_squared
-        .map(compute_model_fit_confidence)
-        .unwrap_or(1.0);
+    let model_confidence = model_r_squared.map_or(1.0, compute_model_fit_confidence);
 
     // Overall confidence: geometric mean of all factors
     // All factors matter, so we use geometric mean (any low factor drags down the result)

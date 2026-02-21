@@ -142,8 +142,7 @@ pub fn observation_utilisation_to_coordinated_candidates(
                 .synapses
                 .iter()
                 .find(|s| s.from_uuid == obs.neuron_uuid && s.to_uuid == target_uuid)
-                .map(|s| s.weight)
-                .unwrap_or(0.0);
+                .map_or(0.0, |s| s.weight);
 
             if current_weight.abs() < 1e-8 {
                 continue;

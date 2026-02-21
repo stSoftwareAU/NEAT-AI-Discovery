@@ -142,7 +142,7 @@ impl PerformanceVariance {
         }
 
         // Compute improvement ratios for each fold
-        let ratios: Vec<f64> = folds.iter().map(|f| f.improvement_ratio()).collect();
+        let ratios: Vec<f64> = folds.iter().map(FoldResult::improvement_ratio).collect();
 
         // Compute mean
         let sum: f64 = ratios.iter().sum();
@@ -153,8 +153,8 @@ impl PerformanceVariance {
         let variance = (sq_sum / ratios.len() as f64) - (mean * mean);
 
         // Compute min/max
-        let max_improvement = ratios.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let min_improvement = ratios.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max_improvement = ratios.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let min_improvement = ratios.iter().copied().fold(f64::INFINITY, f64::min);
 
         Self {
             mean_improvement_ratio: mean,

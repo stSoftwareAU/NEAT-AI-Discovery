@@ -74,7 +74,7 @@ pub(crate) fn detect_noisy_vs_trusted(
     }
 
     let mut incoming_inputs: Vec<IncomingInput<'_>> = Vec::new();
-    for syn in synapses_by_target.iter() {
+    for syn in synapses_by_target {
         if !syn.from_uuid.starts_with("input-") {
             continue;
         }
@@ -104,7 +104,9 @@ pub(crate) fn detect_noisy_vs_trusted(
     const MEAN_EPS: f32 = 1e-3;
     const MIN_VAR_RATIO: f32 = 10.0;
 
-    let target_squash = neuron_squash_map.get(target_uuid).map(|s| s.as_str());
+    let target_squash = neuron_squash_map
+        .get(target_uuid)
+        .map(std::string::String::as_str);
 
     let mut best: Option<(IncomingInput<'_>, IncomingInput<'_>, f32)> = None; // (noisy, trusted, gain)
 
@@ -137,7 +139,7 @@ pub(crate) fn detect_noisy_vs_trusted(
             let trusted_map = activation_map(trusted_records_arc.as_ref());
 
             let mut delta_samples: Vec<HelpfulSample> = Vec::with_capacity(target_map.map.len());
-            for (obs_index, target) in target_map.map.iter() {
+            for (obs_index, target) in &target_map.map {
                 let Some(noisy_act) = noisy_map.get(obs_index) else {
                     continue;
                 };
@@ -326,7 +328,7 @@ pub(crate) fn detect_collapsible_hidden_neurons(
         let h_map = build_act_map(h_records.as_ref());
 
         let mut samples: Vec<HelpfulSample> = Vec::with_capacity(target_map_b.map.len());
-        for (obs_index, target) in target_map_b.map.iter() {
+        for (obs_index, target) in &target_map_b.map {
             let Some(a_act) = a_map.get(obs_index) else {
                 continue;
             };

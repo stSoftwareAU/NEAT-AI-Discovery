@@ -176,11 +176,11 @@ fn bench_build_existing_synapses(c: &mut Criterion) {
         let id = format!("{num_neurons}n_{num_synapses}s");
 
         group.bench_with_input(BenchmarkId::new("string_keys", &id), &creature, |b, c| {
-            b.iter(|| build_existing_synapses_string(black_box(c)))
+            b.iter(|| build_existing_synapses_string(black_box(c)));
         });
 
         group.bench_with_input(BenchmarkId::new("interned_keys", &id), &creature, |b, c| {
-            b.iter(|| build_existing_synapses_interned(black_box(c)))
+            b.iter(|| build_existing_synapses_interned(black_box(c)));
         });
     }
 
@@ -198,11 +198,11 @@ fn bench_build_synapse_weights(c: &mut Criterion) {
         let id = format!("{num_neurons}n_{num_synapses}s");
 
         group.bench_with_input(BenchmarkId::new("string_keys", &id), &creature, |b, c| {
-            b.iter(|| build_synapse_weights_string(black_box(c)))
+            b.iter(|| build_synapse_weights_string(black_box(c)));
         });
 
         group.bench_with_input(BenchmarkId::new("interned_keys", &id), &creature, |b, c| {
-            b.iter(|| build_synapse_weights_interned(black_box(c)))
+            b.iter(|| build_synapse_weights_interned(black_box(c)));
         });
     }
 
@@ -234,7 +234,7 @@ fn bench_lookup_synapses(c: &mut Criterion) {
         .collect();
 
     group.bench_function("string_keys_1000_lookups", |b| {
-        b.iter(|| lookup_synapses_string(black_box(&string_set), black_box(&queries)))
+        b.iter(|| lookup_synapses_string(black_box(&string_set), black_box(&queries)));
     });
 
     group.bench_function("interned_keys_1000_lookups", |b| {
@@ -244,7 +244,7 @@ fn bench_lookup_synapses(c: &mut Criterion) {
                 black_box(&index),
                 black_box(&queries),
             )
-        })
+        });
     });
 
     group.finish();

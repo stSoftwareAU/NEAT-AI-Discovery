@@ -56,7 +56,9 @@ pub(crate) fn evaluate_neuron_candidates(
         }
 
         // Get target_squash for accurate HARD_TANH modelling
-        let target_squash = neuron_squash_map_arc.get(target_uuid).map(|s| s.as_str());
+        let target_squash = neuron_squash_map_arc
+            .get(target_uuid)
+            .map(std::string::String::as_str);
 
         // Issue #130 (v0.2.2): Compute source variance discount.
         // If source activation has low variance, predictions are unreliable.

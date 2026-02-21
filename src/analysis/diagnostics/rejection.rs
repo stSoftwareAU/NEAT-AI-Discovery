@@ -134,7 +134,7 @@ impl TargetDiagnostics {
         let log_enabled = verbose_enabled();
         let entries = DashMap::new();
         for target in targets {
-            entries.insert(target.to_string(), TargetDiagnosticEntry::new(target));
+            entries.insert((*target).clone(), TargetDiagnosticEntry::new(target));
         }
         Self {
             log_enabled,
@@ -269,7 +269,7 @@ impl TargetDiagnostics {
             return;
         }
 
-        for entry_ref in self.entries.iter() {
+        for entry_ref in &self.entries {
             let entry = entry_ref.value();
             if entry.had_candidate {
                 continue;

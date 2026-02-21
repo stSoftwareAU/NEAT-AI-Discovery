@@ -22,7 +22,7 @@ fn run_analysis(
     focus: &[&str],
     max_synapse: usize,
 ) -> serde_json::Value {
-    let focus_vec: Vec<String> = focus.iter().map(|s| s.to_string()).collect();
+    let focus_vec: Vec<String> = focus.iter().map(std::string::ToString::to_string).collect();
     let input_json = serde_json::json!({
         "parquetFile": parquet_path,
         "creature": creature,
@@ -53,8 +53,7 @@ fn has_operation(
 ) -> bool {
     group["operations"]
         .as_array()
-        .map(|ops| ops.iter().any(&predicate))
-        .unwrap_or(false)
+        .is_some_and(|ops| ops.iter().any(&predicate))
 }
 
 // =============================================================================
