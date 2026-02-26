@@ -17,33 +17,39 @@ use crate::analysis::utils::{
     lock_or_bail, log_analysis_timeout, shuffle_within_top_k, verbose_enabled,
 };
 
+/// Parameters for building the final neuron analysis result.
+pub(crate) struct NeuronResultParams<'a> {
+    pub analysis_timed_out: &'a Arc<Mutex<bool>>,
+    pub helpful_map: &'a Arc<Mutex<HashMap<u64, CandidateNeuronJson>>>,
+    pub completed_count: &'a Arc<std::sync::atomic::AtomicUsize>,
+    pub total_focus_count: usize,
+    pub original_focus_count: usize,
+    pub order_map: &'a Arc<HashMap<String, usize>>,
+    pub neuron_type_map: &'a HashMap<String, String>,
+    pub input: &'a AnalyzeNeuronsInput,
+    pub cache: &'a Arc<RecordCache>,
+    pub error_values_for_distribution: &'a Arc<Mutex<Vec<f32>>>,
+    pub timing_collector: &'a Arc<crate::analysis::shared::TimingCollector>,
+    pub diagnostics: &'a Arc<NeuronDiagnostics>,
+    pub gpu_used: bool,
+}
+
 /// Build the final neuron analysis result from the collected candidates.
 ///
 /// This applies impact-based discounting, pessimism discount, filtering,
 /// sorting, and assembles the result metadata.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_neuron_results(
-    analysis_timed_out: &Arc<Mutex<bool>>,
-    helpful_map: &Arc<Mutex<HashMap<u64, CandidateNeuronJson>>>,
-    completed_count: &Arc<std::sync::atomic::AtomicUsize>,
-    total_focus_count: usize,
-    original_focus_count: usize,
-    order_map_arc: &Arc<HashMap<String, usize>>,
-    neuron_type_map: &HashMap<String, String>,
-    input: &AnalyzeNeuronsInput,
-    cache: &Arc<RecordCache>,
-    error_values_for_distribution: &Arc<Mutex<Vec<f32>>>,
-    timing_collector: &Arc<crate::analysis::shared::TimingCollector>,
-    diagnostics: &Arc<NeuronDiagnostics>,
-    gpu_used: bool,
+    params: &NeuronResultParams<'_>,
 ) -> Result<AnalyzeNeuronsResult> {
-    let analysis_timed_out = *lock_or_bail(analysis_timed_out, "analysis_timed_out")?;
-    let helpful_map = lock_or_bail(helpful_map, "helpful_map")?.clone();
+    let analysis_timed_out = *lock_or_bail(params.analysis_timed_out, "analysis_timed_out")?;
+    let helpful_map = lock_or_bail(params.helpful_map, "helpful_map")?.clone();
 
     // Log timeout with completion stats (always visible, not just verbose)
     if analysis_timed_out {
-        let completed = completed_count.load(std::sync::atomic::Ordering::Relaxed);
-        log_analysis_timeout("neuron", completed, total_focus_count);
+        let completed = params
+            .completed_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        log_analysis_timeout("neuron", completed, params.total_focus_count);
     }
 
     let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
@@ -51,10 +57,10 @@ pub(crate) fn build_neuron_results(
     // Issue #128: Apply impact-based discounting and set creature-level metrics.
     apply_impact_discounting(
         &mut helpful_results,
-        order_map_arc,
-        neuron_type_map,
-        input,
-        cache,
+        params.order_map,
+        params.neuron_type_map,
+        params.input,
+        params.cache,
     );
 
     // Issue #557: Filter out candidates with non-positive expected_creature_score_gain.
@@ -76,11 +82,11 @@ pub(crate) fn build_neuron_results(
     helpful_results = crate::analysis::utils::filter_candidates_to_sensible_ranges(helpful_results);
 
     // Deadline coverage (Jan 2026): diversify within the top-K
-    if input.analysis_deadline_ms.is_some() {
+    if params.input.analysis_deadline_ms.is_some() {
         use crate::analysis::constants::DIVERSIFY_TOP_K;
         shuffle_within_top_k(
             helpful_results.as_mut_slice(),
-            input.random_seed,
+            params.input.random_seed,
             "neuron:candidates:top_k",
             DIVERSIFY_TOP_K,
         );
@@ -90,19 +96,19 @@ pub(crate) fn build_neuron_results(
     let candidates_found = helpful_results.len();
 
     // Apply max_candidates limit (truncation)
-    if let Some(limit) = input.max_candidates {
+    if let Some(limit) = params.input.max_candidates {
         helpful_results.truncate(limit);
     }
 
     let candidates_returned = helpful_results.len();
 
-    let no_candidate_reasons = diagnostics.no_candidate_summaries();
-    diagnostics.emit_logs();
+    let no_candidate_reasons = params.diagnostics.no_candidate_summaries();
+    params.diagnostics.emit_logs();
 
     // Issue #486 / #192: Compute error distribution from collected target neuron error samples.
     let error_distribution = {
         let error_values = std::mem::take(&mut *lock_or_bail(
-            error_values_for_distribution,
+            params.error_values_for_distribution,
             "error_values_for_distribution",
         )?);
         crate::analysis::scoring::error_distribution::ErrorDistribution::from_errors(&error_values)
@@ -110,15 +116,17 @@ pub(crate) fn build_neuron_results(
 
     Ok(AnalyzeNeuronsResult {
         helpful_neurons: helpful_results,
-        gpu_used,
+        gpu_used: params.gpu_used,
         no_candidate_reasons,
         metadata: crate::analysis::shared::NeuronAnalysisMetadata {
             candidates_found,
             candidates_returned,
             timed_out: analysis_timed_out,
-            completed_focus_neurons: completed_count.load(std::sync::atomic::Ordering::Relaxed),
-            total_focus_neurons: original_focus_count,
-            timing: timing_collector.finalize(),
+            completed_focus_neurons: params
+                .completed_count
+                .load(std::sync::atomic::Ordering::Relaxed),
+            total_focus_neurons: params.original_focus_count,
+            timing: params.timing_collector.finalize(),
             gpu_info: GpuAnalyzer::get_adapter_info(),
             error_distribution,
         },

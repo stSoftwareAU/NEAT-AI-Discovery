@@ -183,6 +183,19 @@ pub(crate) fn evaluate_relu_candidates_split<G: GpuEvaluator>(
 // Activation Candidate Evaluation
 // =============================================================================
 
+/// Parameters for evaluating an activation function candidate from an error
+/// subset, computing net improvement across all samples.
+pub(crate) struct SubsetEvalParams<'a> {
+    pub source_uuid: &'a str,
+    pub target_uuid: &'a str,
+    pub subset_samples: &'a [HelpfulSample],
+    pub all_samples: &'a [HelpfulSample],
+    pub spec: &'a ActivationCandidateSpec,
+    pub target_squash: Option<&'a str>,
+    pub total_baseline_error_sq: f32,
+    pub target_activation_fn: Option<fn(f32) -> f32>,
+}
+
 /// Helper for split-error evaluation: compute optimal weight from subset, evaluate on all samples.
 ///
 /// This is the core of the split-error fix for non-ReLU activations. By computing
@@ -190,22 +203,15 @@ pub(crate) fn evaluate_relu_candidates_split<G: GpuEvaluator>(
 /// a weight that's tuned to help that subset. We then evaluate the NET improvement
 /// across ALL samples to ensure the candidate doesn't hurt the other subset more
 /// than it helps the target subset.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
     gpu: &G,
-    source_uuid: &str,
-    target_uuid: &str,
-    subset_samples: &[HelpfulSample], // Used to compute optimal weight
-    all_samples: &[HelpfulSample],    // Used to compute net improvement
-    spec: &ActivationCandidateSpec,
-    target_squash: Option<&str>,
-    total_baseline_error_sq: f32,
-    target_activation_fn: Option<fn(f32) -> f32>,
+    params: &SubsetEvalParams<'_>,
 ) -> Result<Option<CandidateNeuronJson>> {
-    if subset_samples.len() < MIN_NEURON_SAMPLE_COUNT {
+    if params.subset_samples.len() < MIN_NEURON_SAMPLE_COUNT {
         return Ok(None);
     }
 
+    let spec = params.spec;
     let activation_type = activation_name_to_gpu_id(spec.name);
 
     let mut best_candidate: Option<CandidateNeuronJson> = None;
@@ -221,7 +227,7 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
 
             // Compute optimal weight from SUBSET samples using GPU
             let (sum_activation_sq, sum_error_activation) = match gpu.evaluate_activation(
-                subset_samples,
+                params.subset_samples,
                 activation_type,
                 orientation,
                 scale,
@@ -231,7 +237,7 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
                     // Fall back to CPU on GPU error
                     let mut sum_act_sq = 0.0;
                     let mut sum_err_act = 0.0;
-                    for sample in subset_samples {
+                    for sample in params.subset_samples {
                         let pre_activation = incoming_weight * sample.activation;
                         let output = (spec.activation)(pre_activation);
                         if output.is_finite() {
@@ -244,8 +250,10 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
             };
 
             let (outgoing_weight, optimal_bias) = if spec.name == "IDENTITY" {
-                match calculate_optimal_identity_outgoing_and_bias(subset_samples, incoming_weight)
-                {
+                match calculate_optimal_identity_outgoing_and_bias(
+                    params.subset_samples,
+                    incoming_weight,
+                ) {
                     Some((w, b)) => (w, b),
                     None => continue,
                 }
@@ -262,20 +270,20 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
 
                 // Calculate optimal bias from subset
                 let optimal_bias = calculate_optimal_bias(
-                    subset_samples,
+                    params.subset_samples,
                     incoming_weight,
                     outgoing_weight,
                     spec.activation,
                     spec.name,
                     None,
-                    target_squash,
+                    params.target_squash,
                 );
                 (outgoing_weight, optimal_bias)
             };
 
             // Issue #123: Check for saturation - reject if neuron output is nearly constant.
             if !has_sufficient_output_variance(
-                all_samples,
+                params.all_samples,
                 incoming_weight,
                 optimal_bias,
                 spec.activation,
@@ -286,13 +294,13 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
             // CRITICAL: Evaluate NET improvement across ALL samples
             let (net_improvement, improved_count, total_count) =
                 compute_activation_improvement_and_count(
-                    all_samples,
+                    params.all_samples,
                     incoming_weight,
                     outgoing_weight,
                     optimal_bias,
                     spec.activation,
-                    total_baseline_error_sq,
-                    target_activation_fn,
+                    params.total_baseline_error_sq,
+                    params.target_activation_fn,
                 );
 
             // Only consider candidates with positive NET improvement
@@ -301,7 +309,7 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
             }
 
             // Apply validity filters
-            let absolute_improvement = net_improvement * total_baseline_error_sq;
+            let absolute_improvement = net_improvement * params.total_baseline_error_sq;
             if absolute_improvement < 0.001 {
                 continue;
             }
@@ -321,17 +329,18 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
 
                 best_net_improvement = net_improvement;
 
-                let target_stats = NeuronStats::from_samples(all_samples).map(|s| s.to_json());
+                let target_stats =
+                    NeuronStats::from_samples(params.all_samples).map(|s| s.to_json());
                 // Issue #128: Use creature-level metrics
                 // Issue #194: Compute confidence metrics for this prediction
                 let confidence_metrics = compute_confidence_metrics(
-                    all_samples,
+                    params.all_samples,
                     net_improvement,
                     None, // R² not available for neuron candidates
                 );
                 best_candidate = Some(CandidateNeuronJson {
-                    source_neuron_uuid: source_uuid.to_string(),
-                    target_neuron_uuid: target_uuid.to_string(),
+                    source_neuron_uuid: params.source_uuid.to_string(),
+                    target_neuron_uuid: params.target_uuid.to_string(),
                     source_neuron_index: None, // Set during impact discounting
                     target_neuron_index: None, // Set during impact discounting
                     incoming_weight,
@@ -356,20 +365,27 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
     Ok(best_candidate)
 }
 
+/// Parameters for evaluating activation candidates for a source-target pair.
+pub(crate) struct ActivationEvalParams<'a> {
+    pub source_uuid: &'a str,
+    pub target_uuid: &'a str,
+    pub samples: &'a [HelpfulSample],
+    pub threshold: f32,
+    pub spec: &'a ActivationCandidateSpec,
+    pub target_squash: Option<&'a str>,
+}
+
 /// Evaluate activation candidates for a given source-target pair.
 ///
 /// This function handles both split-error evaluation and fallback to all-samples
 /// evaluation when appropriate.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
     gpu: &G,
-    source_uuid: &str,
-    target_uuid: &str,
-    samples: &[HelpfulSample],
-    threshold: f32,
-    spec: &ActivationCandidateSpec,
-    target_squash: Option<&str>,
+    params: &ActivationEvalParams<'_>,
 ) -> Result<Option<CandidateNeuronJson>> {
+    let samples = params.samples;
+    let spec = params.spec;
+
     if samples.len() < MIN_NEURON_SAMPLE_COUNT {
         return Ok(None);
     }
@@ -377,7 +393,7 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
     let activation_type = activation_name_to_gpu_id(spec.name);
 
     let mut best_candidate: Option<CandidateNeuronJson> = None;
-    let mut best_score = threshold;
+    let mut best_score = params.threshold;
     let mut fallback_candidate: Option<CandidateNeuronJson> = None;
     let mut fallback_score = f32::MIN;
 
@@ -403,7 +419,7 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
     }
 
     // Get target activation function for net improvement calculation
-    let target_activation_fn = get_target_simulation_fn(samples, target_squash);
+    let target_activation_fn = get_target_simulation_fn(samples, params.target_squash);
 
     // v0.1.136: Track whether split-error evaluation was properly attempted.
     let positive_subset_valid = positive_error_samples.len() >= MIN_NEURON_SAMPLE_COUNT;
@@ -426,17 +442,17 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
             continue;
         }
 
-        if let Some(candidate) = evaluate_activation_for_subset(
-            gpu,
-            source_uuid,
-            target_uuid,
-            error_samples, // Compute weight from subset
-            samples,       // Evaluate improvement on ALL samples
+        let subset_params = SubsetEvalParams {
+            source_uuid: params.source_uuid,
+            target_uuid: params.target_uuid,
+            subset_samples: error_samples,
+            all_samples: samples,
             spec,
-            target_squash,
+            target_squash: params.target_squash,
             total_baseline_error_sq,
             target_activation_fn,
-        )? {
+        };
+        if let Some(candidate) = evaluate_activation_for_subset(gpu, &subset_params)? {
             let gain = candidate.expected_creature_score_gain;
             // Track best (above threshold) and fallback (above 0) candidates.
             if gain > best_score {
@@ -508,7 +524,7 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
             }
 
             // For non-linear targets, search for best outgoing_weight
-            let target_activation_fn = get_target_simulation_fn(samples, target_squash);
+            let target_activation_fn = get_target_simulation_fn(samples, params.target_squash);
             let (outgoing_weight, optimal_bias, neuron_error_improvement, final_improved_count) =
                 if spec.name == "IDENTITY" {
                     let (outgoing_weight, optimal_bias) =
@@ -573,7 +589,7 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                             spec.activation,
                             spec.name,
                             None,
-                            target_squash,
+                            params.target_squash,
                         );
 
                         // Single pass for improvement and count with target simulation
@@ -619,7 +635,7 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                         spec.activation,
                         spec.name,
                         None,
-                        target_squash,
+                        params.target_squash,
                     );
 
                     // CRITICAL FIX: Recompute optimal weight WITH the bias included.
@@ -700,8 +716,8 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                     None, // R² not available for neuron candidates
                 );
                 best_candidate = Some(CandidateNeuronJson {
-                    source_neuron_uuid: source_uuid.to_string(),
-                    target_neuron_uuid: target_uuid.to_string(),
+                    source_neuron_uuid: params.source_uuid.to_string(),
+                    target_neuron_uuid: params.target_uuid.to_string(),
                     source_neuron_index: None,
                     target_neuron_index: None,
                     incoming_weight,
@@ -733,8 +749,8 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                     None, // R² not available for neuron candidates
                 );
                 fallback_candidate = Some(CandidateNeuronJson {
-                    source_neuron_uuid: source_uuid.to_string(),
-                    target_neuron_uuid: target_uuid.to_string(),
+                    source_neuron_uuid: params.source_uuid.to_string(),
+                    target_neuron_uuid: params.target_uuid.to_string(),
                     source_neuron_index: None,
                     target_neuron_index: None,
                     incoming_weight,
@@ -767,7 +783,6 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
 ///
 /// Issue #201: This function reduces GPU round-trips by 10-20% by evaluating multiple
 /// activation function configurations in a single GPU command buffer submission.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_all_activation_specs_batched<G: GpuEvaluator>(
     gpu: &G,
     source_uuid: &str,
@@ -957,15 +972,15 @@ fn evaluate_all_activation_specs_sequential<G: GpuEvaluator>(
 ) -> Result<Vec<CandidateNeuronJson>> {
     let mut results = Vec::new();
     for spec in &ACTIVATION_SPECS {
-        if let Some(candidate) = evaluate_activation_candidate(
-            gpu,
+        let eval_params = ActivationEvalParams {
             source_uuid,
             target_uuid,
             samples,
             threshold,
             spec,
             target_squash,
-        )? {
+        };
+        if let Some(candidate) = evaluate_activation_candidate(gpu, &eval_params)? {
             results.push(candidate);
         }
     }

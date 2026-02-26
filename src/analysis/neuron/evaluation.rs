@@ -26,23 +26,28 @@ pub(crate) struct NeuronWorkResult {
     pub samples: Vec<HelpfulSample>,
 }
 
+/// Shared context for neuron candidate evaluation, grouping parameters that
+/// are passed through evaluate → relu_split / activation_specs.
+pub(crate) struct NeuronEvalContext<'a> {
+    pub gpu: &'a GpuWorkQueue,
+    pub neuron_squash_map: &'a Arc<HashMap<String, String>>,
+    pub timing_collector: &'a Arc<super::super::shared::TimingCollector>,
+    pub diagnostics: &'a Arc<NeuronDiagnostics>,
+    pub helpful_map: &'a Arc<Mutex<HashMap<u64, CandidateNeuronJson>>>,
+    pub threshold: f32,
+}
+
 /// Evaluate neuron candidates for all sources with samples against a single
 /// target neuron using GPU shaders.
 ///
 /// This handles both ReLU split evaluation and batched activation spec
 /// evaluation, applying source variance discounting.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_neuron_candidates(
     work_results: &[NeuronWorkResult],
     target_uuid: &str,
-    gpu: &GpuWorkQueue,
-    neuron_squash_map_arc: &Arc<HashMap<String, String>>,
-    timing_collector: &Arc<super::super::shared::TimingCollector>,
+    ctx: &NeuronEvalContext<'_>,
     deadline: &Option<SystemTime>,
     analysis_timed_out: &Arc<Mutex<bool>>,
-    diagnostics: &Arc<NeuronDiagnostics>,
-    helpful_map: &Arc<Mutex<HashMap<u64, CandidateNeuronJson>>>,
-    threshold: f32,
 ) -> Result<()> {
     for result in work_results {
         // Check deadline before each evaluation batch
@@ -56,7 +61,8 @@ pub(crate) fn evaluate_neuron_candidates(
         }
 
         // Get target_squash for accurate HARD_TANH modelling
-        let target_squash = neuron_squash_map_arc
+        let target_squash = ctx
+            .neuron_squash_map
             .get(target_uuid)
             .map(std::string::String::as_str);
 
@@ -70,57 +76,44 @@ pub(crate) fn evaluate_neuron_candidates(
 
         // ReLU evaluation: split by TARGET neuron's error sign.
         evaluate_relu_split(
-            gpu,
             &result.source_uuid,
             target_uuid,
             &result.samples,
-            threshold,
             target_squash,
             source_variance_discount,
-            timing_collector,
-            diagnostics,
-            helpful_map,
+            ctx,
         )?;
 
         // Issue #201: Evaluate all activation specs in a single batched GPU call
         evaluate_activation_specs(
-            gpu,
             &result.source_uuid,
             target_uuid,
             &result.samples,
-            threshold,
             target_squash,
             source_variance_discount,
-            timing_collector,
-            diagnostics,
-            helpful_map,
+            ctx,
         )?;
     }
     Ok(())
 }
 
 /// Evaluate ReLU candidates with positive/negative error split.
-#[allow(clippy::too_many_arguments)]
 fn evaluate_relu_split(
-    gpu: &GpuWorkQueue,
     source_uuid: &str,
     target_uuid: &str,
     samples: &[HelpfulSample],
-    threshold: f32,
     target_squash: Option<&str>,
     source_variance_discount: f32,
-    timing_collector: &Arc<super::super::shared::TimingCollector>,
-    diagnostics: &Arc<NeuronDiagnostics>,
-    helpful_map: &Arc<Mutex<HashMap<u64, CandidateNeuronJson>>>,
+    ctx: &NeuronEvalContext<'_>,
 ) -> Result<()> {
     let split_result = {
-        let _timing = TimingScope::shader(timing_collector, "relu");
+        let _timing = TimingScope::shader(ctx.timing_collector, "relu");
         evaluate_relu_candidates_split(
-            gpu,
+            ctx.gpu,
             source_uuid,
             target_uuid,
             samples,
-            threshold,
+            ctx.threshold,
             target_squash,
         )?
     };
@@ -140,8 +133,8 @@ fn evaluate_relu_split(
                 "ReLU candidate identified"
             );
         }
-        diagnostics.mark_candidate_selected(target_uuid);
-        let mut map = lock_or_bail(helpful_map, "helpful_map")?;
+        ctx.diagnostics.mark_candidate_selected(target_uuid);
+        let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
         upsert_candidate(&mut map, candidate);
     }
 
@@ -160,8 +153,8 @@ fn evaluate_relu_split(
                 "ReLU candidate identified"
             );
         }
-        diagnostics.mark_candidate_selected(target_uuid);
-        let mut map = lock_or_bail(helpful_map, "helpful_map")?;
+        ctx.diagnostics.mark_candidate_selected(target_uuid);
+        let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
         upsert_candidate(&mut map, candidate);
     }
 
@@ -169,27 +162,22 @@ fn evaluate_relu_split(
 }
 
 /// Evaluate all activation function specs in a single batched GPU call.
-#[allow(clippy::too_many_arguments)]
 fn evaluate_activation_specs(
-    gpu: &GpuWorkQueue,
     source_uuid: &str,
     target_uuid: &str,
     samples: &[HelpfulSample],
-    threshold: f32,
     target_squash: Option<&str>,
     source_variance_discount: f32,
-    timing_collector: &Arc<super::super::shared::TimingCollector>,
-    diagnostics: &Arc<NeuronDiagnostics>,
-    helpful_map: &Arc<Mutex<HashMap<u64, CandidateNeuronJson>>>,
+    ctx: &NeuronEvalContext<'_>,
 ) -> Result<()> {
     let batched_candidates = {
-        let _timing = TimingScope::shader(timing_collector, "activation");
+        let _timing = TimingScope::shader(ctx.timing_collector, "activation");
         evaluate_all_activation_specs_batched(
-            gpu,
+            ctx.gpu,
             source_uuid,
             target_uuid,
             samples,
-            threshold,
+            ctx.threshold,
             target_squash,
         )?
     };
@@ -199,8 +187,8 @@ fn evaluate_activation_specs(
         candidate.expected_creature_error_reduction *= source_variance_discount;
         candidate.expected_creature_score_gain *= source_variance_discount;
 
-        diagnostics.mark_candidate_selected(target_uuid);
-        let mut map = lock_or_bail(helpful_map, "helpful_map")?;
+        ctx.diagnostics.mark_candidate_selected(target_uuid);
+        let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
         upsert_candidate(&mut map, candidate);
     }
 

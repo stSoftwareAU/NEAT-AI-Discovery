@@ -212,17 +212,17 @@ pub fn detect_multi_hop_candidates(
 
             // Try to extend to three-hop if path length allows
             if all_candidates.len() < MAX_TOTAL_CANDIDATES && MAX_PATH_LENGTH >= 3 {
-                find_three_hop_extensions(
+                let three_hop_ctx = ThreeHopContext {
                     intermediate_uuid,
                     target_uuid,
-                    corr,
-                    &source_candidate_uuids,
-                    &activation_by_obs,
-                    &existing_synapses,
-                    &output_uuids,
+                    intermediate_target_corr: corr,
+                    source_candidates: &source_candidate_uuids,
+                    activation_by_obs: &activation_by_obs,
+                    existing_synapses: &existing_synapses,
+                    output_uuids: &output_uuids,
                     target_errors,
-                    &mut all_candidates,
-                );
+                };
+                find_three_hop_extensions(&three_hop_ctx, &mut all_candidates);
             }
         }
     }
@@ -236,47 +236,54 @@ pub fn detect_multi_hop_candidates(
     all_candidates
 }
 
+/// Context for extending two-hop candidates into three-hop candidates.
+struct ThreeHopContext<'a> {
+    intermediate_uuid: &'a str,
+    target_uuid: &'a str,
+    intermediate_target_corr: f32,
+    source_candidates: &'a [&'a str],
+    activation_by_obs: &'a HashMap<&'a str, HashMap<u32, f32>>,
+    existing_synapses: &'a HashSet<(&'a str, &'a str)>,
+    output_uuids: &'a HashSet<&'a str>,
+    target_errors: &'a HashMap<u32, f32>,
+}
+
 /// Extend a two-hop candidate (intermediate → target) to a three-hop candidate
 /// (source → intermediate → target) by finding sources whose activation correlates
 /// with the intermediate's activation.
-#[allow(clippy::too_many_arguments)]
-fn find_three_hop_extensions(
-    intermediate_uuid: &str,
-    target_uuid: &str,
-    intermediate_target_corr: f32,
-    source_candidates: &[&str],
-    activation_by_obs: &HashMap<&str, HashMap<u32, f32>>,
-    existing_synapses: &HashSet<(&str, &str)>,
-    output_uuids: &HashSet<&str>,
-    target_errors: &HashMap<u32, f32>,
-    candidates: &mut Vec<MultiHopCandidate>,
-) {
-    let intermediate_activations = match activation_by_obs.get(intermediate_uuid) {
+fn find_three_hop_extensions(ctx: &ThreeHopContext<'_>, candidates: &mut Vec<MultiHopCandidate>) {
+    let intermediate_activations = match ctx.activation_by_obs.get(ctx.intermediate_uuid) {
         Some(a) => a,
         None => return,
     };
 
-    for &source_uuid in source_candidates {
-        if source_uuid == intermediate_uuid || source_uuid == target_uuid {
+    for &source_uuid in ctx.source_candidates {
+        if source_uuid == ctx.intermediate_uuid || source_uuid == ctx.target_uuid {
             continue;
         }
 
         // Skip output neurons as intermediates
-        if output_uuids.contains(source_uuid) {
+        if ctx.output_uuids.contains(source_uuid) {
             continue;
         }
 
         // Skip if source already connected to intermediate
-        if existing_synapses.contains(&(source_uuid, intermediate_uuid)) {
+        if ctx
+            .existing_synapses
+            .contains(&(source_uuid, ctx.intermediate_uuid))
+        {
             continue;
         }
 
         // Skip if source already connected to target
-        if existing_synapses.contains(&(source_uuid, target_uuid)) {
+        if ctx
+            .existing_synapses
+            .contains(&(source_uuid, ctx.target_uuid))
+        {
             continue;
         }
 
-        let source_activations = match activation_by_obs.get(source_uuid) {
+        let source_activations = match ctx.activation_by_obs.get(source_uuid) {
             Some(a) => a,
             None => continue,
         };
@@ -291,9 +298,10 @@ fn find_three_hop_extensions(
 
         // Combined correlation: geometric mean of the two correlations
         let combined_corr =
-            (source_intermediate_corr.abs() * intermediate_target_corr.abs()).sqrt();
+            (source_intermediate_corr.abs() * ctx.intermediate_target_corr.abs()).sqrt();
 
-        let estimated_improvement = combined_corr * compute_mean_abs_error(target_errors) * 0.005;
+        let estimated_improvement =
+            combined_corr * compute_mean_abs_error(ctx.target_errors) * 0.005;
 
         if estimated_improvement <= 0.0 {
             continue;
@@ -302,8 +310,8 @@ fn find_three_hop_extensions(
         candidates.push(MultiHopCandidate {
             path: vec![
                 source_uuid.to_string(),
-                intermediate_uuid.to_string(),
-                target_uuid.to_string(),
+                ctx.intermediate_uuid.to_string(),
+                ctx.target_uuid.to_string(),
             ],
             estimated_improvement,
             correlation_strength: combined_corr,

@@ -129,17 +129,19 @@ pub(crate) fn convert_neurons_to_coordinated_replacements(
             candidate.bias,
         );
 
-        let mut expected_gain = synapse::expected_gain_replace_synapse_with_hidden_neuron(
-            shared_cache.as_ref(),
-            &candidate.source_neuron_uuid,
-            &candidate.target_neuron_uuid,
+        let replace_params = synapse::ReplaceSynapseParams {
+            cache: shared_cache.as_ref(),
+            source_uuid: &candidate.source_neuron_uuid,
+            target_uuid: &candidate.target_neuron_uuid,
             old_weight,
-            candidate.incoming_weight,
-            candidate.outgoing_weight,
-            candidate.bias,
-            &candidate.squash,
-        )
-        .unwrap_or(candidate.expected_creature_score_gain);
+            incoming_weight: candidate.incoming_weight,
+            outgoing_weight: candidate.outgoing_weight,
+            bias: candidate.bias,
+            squash: &candidate.squash,
+        };
+        let mut expected_gain =
+            synapse::expected_gain_replace_synapse_with_hidden_neuron(&replace_params)
+                .unwrap_or(candidate.expected_creature_score_gain);
 
         // Apply a conservative impact discount when the target is hidden.
         // This mirrors the synapse/neurons discounting semantics without requiring deep graph analysis.

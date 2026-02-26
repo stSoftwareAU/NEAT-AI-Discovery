@@ -301,17 +301,20 @@ pub(crate) fn analyze_neurons_with_cache(
 
             // Phase 4: GPU evaluation
             if !is_threshold_target {
+                let eval_ctx = evaluation::NeuronEvalContext {
+                    gpu,
+                    neuron_squash_map: &neuron_squash_map_arc,
+                    timing_collector: &timing_collector,
+                    diagnostics: &diagnostics,
+                    helpful_map: &helpful_map,
+                    threshold,
+                };
                 evaluation::evaluate_neuron_candidates(
                     &work_results,
                     target_uuid,
-                    gpu,
-                    &neuron_squash_map_arc,
-                    &timing_collector,
+                    &eval_ctx,
                     &deadline,
                     &analysis_timed_out,
-                    &diagnostics,
-                    &helpful_map,
-                    threshold,
                 )?;
             }
 
@@ -325,19 +328,20 @@ pub(crate) fn analyze_neurons_with_cache(
         })?;
 
     // Post-processing: impact discounting, sorting, filtering, result assembly
-    post_processing::build_neuron_results(
-        &analysis_timed_out,
-        &helpful_map,
-        &completed_count,
+    let result_params = post_processing::NeuronResultParams {
+        analysis_timed_out: &analysis_timed_out,
+        helpful_map: &helpful_map,
+        completed_count: &completed_count,
         total_focus_count,
-        prep.original_focus_count,
-        &order_map_arc,
-        &prep.neuron_type_map,
+        original_focus_count: prep.original_focus_count,
+        order_map: &order_map_arc,
+        neuron_type_map: &prep.neuron_type_map,
         input,
-        &cache,
-        &error_values_for_distribution,
-        &timing_collector,
-        &diagnostics,
+        cache: &cache,
+        error_values_for_distribution: &error_values_for_distribution,
+        timing_collector: &timing_collector,
+        diagnostics: &diagnostics,
         gpu_used,
-    )
+    };
+    post_processing::build_neuron_results(&result_params)
 }
