@@ -12,7 +12,7 @@ use super::common::*;
 use crate::analysis::activation::ActivationCandidateSpec;
 use crate::analysis::gpu::GpuEvaluator;
 use crate::analysis::samples::ReluStats;
-use crate::analysis::synapse::evaluate_activation_candidate;
+use crate::analysis::synapse::{ActivationEvalParams, evaluate_activation_candidate};
 use anyhow::anyhow;
 
 struct AlwaysFailGpuEvaluator;
@@ -106,9 +106,16 @@ fn identity_all_samples_fallback_uses_affine_fit_even_when_base_weight_is_none()
         });
     }
 
+    let eval_params = ActivationEvalParams {
+        source_uuid: "source-0",
+        target_uuid: "target-0",
+        samples: &samples,
+        threshold: 0.0,
+        spec: &spec,
+        target_squash: None,
+    };
     let candidate =
-        evaluate_activation_candidate(&gpu, "source-0", "target-0", &samples, 0.0, &spec, None)
-            .expect("Evaluation should succeed");
+        evaluate_activation_candidate(&gpu, &eval_params).expect("Evaluation should succeed");
 
     assert!(
         candidate.is_some(),

@@ -45,8 +45,8 @@ pub(crate) use candidate_generation::{
 };
 
 pub(crate) use filtering::{
-    deterministic_coordinated_neuron_uuid, expected_gain_replace_synapse_with_hidden_neuron,
-    truncate_combined_synapse_candidate_sets,
+    ReplaceSynapseParams, deterministic_coordinated_neuron_uuid,
+    expected_gain_replace_synapse_with_hidden_neuron, truncate_combined_synapse_candidate_sets,
 };
 
 pub(crate) use gpu_evaluation::{
@@ -65,7 +65,7 @@ pub(crate) use scoring::compute_synapse_improvement_and_count;
 #[cfg(test)]
 pub(crate) use candidate_generation::build_samples;
 #[cfg(test)]
-pub(crate) use gpu_evaluation::evaluate_activation_candidate;
+pub(crate) use gpu_evaluation::{ActivationEvalParams, evaluate_activation_candidate};
 #[cfg(test)]
 pub(crate) use scoring::{
     compute_net_improvement_with_squash, compute_relu_improvement_and_count,

@@ -44,24 +44,29 @@ pub(crate) fn deterministic_coordinated_neuron_uuid(
     format!("coordinated-hidden-{hash:016x}")
 }
 
+/// Parameters for computing expected gain when replacing a synapse with a
+/// hidden neuron.
+pub(crate) struct ReplaceSynapseParams<'a> {
+    pub cache: &'a RecordCache,
+    pub source_uuid: &'a str,
+    pub target_uuid: &'a str,
+    pub old_weight: f32,
+    pub incoming_weight: f32,
+    pub outgoing_weight: f32,
+    pub bias: f32,
+    pub squash: &'a str,
+}
+
 /// Compute expected gain for a coordinated "replace synapse with neuron" group.
 ///
 /// This models the coordinated operation sequence:
 /// 1) remove direct synapse (source -> target)
 /// 2) add hidden neuron with (source -> newNeuron) and (newNeuron -> target)
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn expected_gain_replace_synapse_with_hidden_neuron(
-    cache: &RecordCache,
-    source_uuid: &str,
-    target_uuid: &str,
-    old_weight: f32,
-    incoming_weight: f32,
-    outgoing_weight: f32,
-    bias: f32,
-    squash: &str,
+    params: &ReplaceSynapseParams<'_>,
 ) -> Option<f32> {
-    let from_records_arc = cache.get(source_uuid).ok()?;
-    let target_records_arc = cache.get(target_uuid).ok()?;
+    let from_records_arc = params.cache.get(params.source_uuid).ok()?;
+    let target_records_arc = params.cache.get(params.target_uuid).ok()?;
     if from_records_arc.is_empty() || target_records_arc.is_empty() {
         return None;
     }
@@ -78,7 +83,7 @@ pub(crate) fn expected_gain_replace_synapse_with_hidden_neuron(
 
     // Adjust baseline errors for the removal of the existing direct synapse.
     for s in &mut samples {
-        s.avg_error += old_weight * s.activation;
+        s.avg_error += params.old_weight * s.activation;
     }
 
     let total_baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
@@ -86,12 +91,12 @@ pub(crate) fn expected_gain_replace_synapse_with_hidden_neuron(
         return None;
     }
 
-    if squash.eq_ignore_ascii_case("ReLU") {
+    if params.squash.eq_ignore_ascii_case("ReLU") {
         let (improvement, _improved, _total) = compute_relu_improvement_and_count(
             samples.as_slice(),
-            incoming_weight,
-            outgoing_weight,
-            bias,
+            params.incoming_weight,
+            params.outgoing_weight,
+            params.bias,
             total_baseline_error_sq,
             None, // linear domain
         );
@@ -99,7 +104,7 @@ pub(crate) fn expected_gain_replace_synapse_with_hidden_neuron(
     }
 
     // Map squash names to activation functions
-    let activation_fn: fn(f32) -> f32 = match squash {
+    let activation_fn: fn(f32) -> f32 = match params.squash {
         "GELU" => gelu_activation,
         "ELU" => elu_activation,
         "Softplus" => softplus_activation,
@@ -120,9 +125,9 @@ pub(crate) fn expected_gain_replace_synapse_with_hidden_neuron(
 
     let (improvement, _improved, _total) = compute_activation_improvement_and_count(
         samples.as_slice(),
-        incoming_weight,
-        outgoing_weight,
-        bias,
+        params.incoming_weight,
+        params.outgoing_weight,
+        params.bias,
         activation_fn,
         total_baseline_error_sq,
         None, // linear domain
