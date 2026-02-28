@@ -62,14 +62,6 @@ pub enum EarlyTerminationDecision {
 /// ```
 #[derive(Debug, Clone)]
 pub struct SequentialEvaluator {
-    /// Type I error rate (false positive rate) - probability of accepting a bad candidate
-    /// (Stored for debugging and future extensions; bounds are precomputed)
-    #[allow(dead_code)]
-    alpha: f64,
-    /// Type II error rate (false negative rate) - probability of rejecting a good candidate
-    /// (Stored for debugging and future extensions; bounds are precomputed)
-    #[allow(dead_code)]
-    beta: f64,
     /// Minimum improvement threshold (H1 hypothesis boundary)
     /// A threshold of 0.0 means we're testing if the improvement rate > 0.5 (better than random)
     threshold: f64,
@@ -117,8 +109,6 @@ impl SequentialEvaluator {
         let lower_bound = (beta / (1.0 - alpha)).ln();
 
         Self {
-            alpha,
-            beta,
             threshold,
             positive_count: 0,
             negative_count: 0,
