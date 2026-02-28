@@ -91,8 +91,8 @@ pub fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
             duration_secs,
             min_secs = 3.0,
             default_secs = DEFAULT_DURATION_MS as f64 / 1000.0,
-            "BUG: analysis_deadline_ms is less than minimum. Using default 10 minute timeout. \
-             Please fix the calling code (NEAT-AI/GRQ) to pass a valid timeout."
+            "analysis_deadline_ms is below minimum — falling back to default 10 minute timeout. \
+             The calling code (NEAT-AI/GRQ) should pass a valid timeout."
         );
         DEFAULT_DURATION_MS
     } else if relative_ms > MAX_DURATION_MS {
@@ -101,8 +101,8 @@ pub fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
             duration_secs,
             max_secs = MAX_DURATION_MS as f64 / 1000.0,
             default_secs = DEFAULT_DURATION_MS as f64 / 1000.0,
-            "BUG: analysis_deadline_ms exceeds maximum. Using default 10 minute timeout. \
-             Please fix the calling code (NEAT-AI/GRQ) to pass a valid timeout."
+            "analysis_deadline_ms exceeds maximum — falling back to default 10 minute timeout. \
+             The calling code (NEAT-AI/GRQ) should pass a valid timeout."
         );
         DEFAULT_DURATION_MS
     } else {

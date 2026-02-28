@@ -445,6 +445,81 @@ fn calculate_gpu_batch_timeout_clamps_to_max() {
 }
 
 // ============================================================================
+// calculate_effective_timeout_ms boundary condition tests (Issue #718)
+// ============================================================================
+
+#[test]
+fn effective_timeout_just_below_minimum_defaults_to_ten_minutes() {
+    // 2999ms is just below the 3000ms minimum
+    let result = calculate_effective_timeout_ms(Some(MIN_DURATION_MS - 1));
+    assert_eq!(
+        result,
+        Some(DEFAULT_DURATION_MS),
+        "Duration just below minimum should fall back to default"
+    );
+}
+
+#[test]
+fn effective_timeout_at_exact_minimum_passes_through() {
+    let result = calculate_effective_timeout_ms(Some(MIN_DURATION_MS));
+    assert_eq!(
+        result,
+        Some(MIN_DURATION_MS),
+        "Duration at exact minimum should pass through"
+    );
+}
+
+#[test]
+fn effective_timeout_just_above_minimum_passes_through() {
+    let result = calculate_effective_timeout_ms(Some(MIN_DURATION_MS + 1));
+    assert_eq!(
+        result,
+        Some(MIN_DURATION_MS + 1),
+        "Duration just above minimum should pass through"
+    );
+}
+
+#[test]
+fn effective_timeout_just_below_maximum_passes_through() {
+    let result = calculate_effective_timeout_ms(Some(MAX_DURATION_MS - 1));
+    assert_eq!(
+        result,
+        Some(MAX_DURATION_MS - 1),
+        "Duration just below maximum should pass through"
+    );
+}
+
+#[test]
+fn effective_timeout_at_exact_maximum_passes_through() {
+    let result = calculate_effective_timeout_ms(Some(MAX_DURATION_MS));
+    assert_eq!(
+        result,
+        Some(MAX_DURATION_MS),
+        "Duration at exact maximum should pass through"
+    );
+}
+
+#[test]
+fn effective_timeout_just_above_maximum_defaults_to_ten_minutes() {
+    let result = calculate_effective_timeout_ms(Some(MAX_DURATION_MS + 1));
+    assert_eq!(
+        result,
+        Some(DEFAULT_DURATION_MS),
+        "Duration just above maximum should fall back to default"
+    );
+}
+
+#[test]
+fn effective_timeout_zero_defaults_to_ten_minutes() {
+    let result = calculate_effective_timeout_ms(Some(0));
+    assert_eq!(
+        result,
+        Some(DEFAULT_DURATION_MS),
+        "Zero duration should fall back to default"
+    );
+}
+
+// ============================================================================
 // OrderedNeuron tests
 // ============================================================================
 

@@ -233,7 +233,7 @@ pub(crate) fn analyse_single_target(
             .filter(|n| n.index < target_index && ctx.input_neuron_uuids.contains(&n.uuid))
             .count();
 
-        tracing::warn!(
+        tracing::error!(
             target_uuid = target_uuid,
             target_neuron_type = target_neuron_type,
             target_index = target_index,
@@ -241,7 +241,8 @@ pub(crate) fn analyse_single_target(
             neurons_before_target = neurons_before_index,
             constants_before_target = constants_before_index,
             input_neurons_before_target = input_neurons_before_index,
-            "BUG: Target has no eligible upstream neurons. This should not happen for hidden/output neurons with index >= creature.input."
+            "Target has no eligible upstream neurons — this should not happen for \
+             hidden/output neurons with index >= creature.input"
         );
 
         return Ok(results);
