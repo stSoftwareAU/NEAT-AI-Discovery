@@ -32,6 +32,7 @@ mod candidate_generation;
 mod filtering;
 mod gpu_evaluation;
 mod post_processing;
+mod preparation;
 mod scoring;
 mod structural_patterns;
 mod target_analysis;
@@ -76,8 +77,7 @@ pub(crate) use scoring::{
 // Imports for the core pipeline
 // =============================================================================
 
-use crate::intern::NeuronIndex;
-use crate::{AnalyzeSynapsesInput, CandidateSynapseJson, SynapseJson};
+use crate::{AnalyzeSynapsesInput, CandidateSynapseJson};
 use anyhow::Result;
 
 use crate::analysis::shared::AnalyzeSynapsesResult;
@@ -86,17 +86,15 @@ use crate::analysis::diagnostics::{TargetDiagnostics, require_unique_focus};
 
 use crate::analysis::utils::{
     build_deadline, deadline_passed, lock_or_bail, log_analysis_start, log_analysis_timeout,
-    order_focus_targets, verbose_enabled,
+    order_focus_targets,
 };
-
-use crate::analysis::samples::{compute_source_std_dev, get_constant_source_threshold};
 
 use crate::analysis::gpu::{GpuAnalyzer, GpuWorkQueue};
 
 use super::cache::RecordCache;
 
 use rayon::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 // =============================================================================
@@ -113,82 +111,18 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     cache: Arc<RecordCache>,
     gpu_queue: Arc<GpuWorkQueue>,
 ) -> Result<AnalyzeSynapsesResult> {
-    let ordered_neurons = build_ordered_neurons(&input.creature);
-    let order_map: HashMap<String, usize> = ordered_neurons
-        .iter()
-        .map(|neuron| (neuron.uuid.clone(), neuron.index))
-        .collect();
+    // Phase 1: Build creature lookup maps
+    let lookups = preparation::build_creature_lookups(input);
 
-    let mut neuron_index = NeuronIndex::with_capacity(
-        input.creature.neurons.len() + input.creature.input + input.creature.synapses.len() / 10,
-    );
-
-    // Pre-intern all neuron UUIDs
-    for i in 0..input.creature.input {
-        neuron_index.intern(&format!("input-{i}"));
-    }
-    for neuron in &input.creature.neurons {
-        neuron_index.intern(&neuron.uuid);
-    }
-
-    // Build existing_synapses using interned indices
-    let existing_synapses: HashSet<(u32, u32)> = input
-        .creature
-        .synapses
-        .iter()
-        .map(|synapse| {
-            (
-                neuron_index.intern(&synapse.from_uuid),
-                neuron_index.intern(&synapse.to_uuid),
-            )
-        })
-        .collect();
-
-    let existing_synapse_weights: HashMap<(u32, u32), f32> = input
-        .creature
-        .synapses
-        .iter()
-        .map(|synapse| {
-            (
-                (
-                    neuron_index.intern(&synapse.from_uuid),
-                    neuron_index.intern(&synapse.to_uuid),
-                ),
-                synapse.weight,
-            )
-        })
-        .collect();
-
-    let synapses_by_target: HashMap<u32, Vec<SynapseJson>> = input
-        .creature
-        .synapses
-        .iter()
-        .map(|synapse| (neuron_index.intern(&synapse.to_uuid), synapse.clone()))
-        .fold(HashMap::new(), |mut acc, (key, val)| {
-            acc.entry(key).or_default().push(val);
-            acc
-        });
-
-    let neuron_squash_map: HashMap<String, String> = input
-        .creature
-        .neurons
-        .iter()
-        .map(|n| (n.uuid.clone(), n.squash.clone()))
-        .collect();
-
+    // Phase 2: Focus target and diagnostics setup
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_synapses")?;
-
     let diagnostics = Arc::new(TargetDiagnostics::new(&unique_focus));
-
     let timing_collector = Arc::new(super::shared::TimingCollector::new(
         super::utils::gpu_timing_enabled(),
     ));
-
     let deadline = build_deadline(input.analysis_deadline_ms);
 
     let mut focus_order: Vec<String> = unique_focus.iter().map(|s| (*s).clone()).collect();
-
-    // Issue #468: Order focus targets by neuron type (hidden first)
     let focus_neuron_type_map: HashMap<&str, &str> = input
         .creature
         .neurons
@@ -196,7 +130,6 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         .map(|n| (n.uuid.as_str(), n.neuron_type.as_str()))
         .collect();
     order_focus_targets(&mut focus_order, input.random_seed, &focus_neuron_type_map);
-
     log_analysis_start(
         "synapse",
         input.analysis_deadline_ms,
@@ -207,109 +140,31 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     let total_focus_count = focus_order.len();
     let completed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-    // GPU is always required
     assert!(
         GpuAnalyzer::gpu_is_available(),
         "Discovery logic called without GPU - check_gpu_available should have prevented this"
     );
-    let gpu_used = true;
 
-    let helpful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
-    let harmful_results = Arc::new(Mutex::new(Vec::<CandidateSynapseJson>::new()));
-    let coordinated_structural_results = Arc::new(Mutex::new(Vec::<
-        crate::CoordinatedStructuralCandidateJson,
-    >::new()));
-    let helpful_fallback = Arc::new(Mutex::new(Option::<CandidateSynapseJson>::None));
-    let analysis_timed_out = Arc::new(Mutex::new(false));
+    // Phase 3: Shared result collections for parallel processing
+    let collectors = SharedResultCollectors::new();
 
-    // Metadata tracking for observability
-    let metadata_target_value_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let metadata_saturation_aware_used = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let metadata_seen_any_input_with_records = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let metadata_input_min_with_records = Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX));
-    let metadata_input_max_with_records = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    // Phase 4: Compute constant-source threshold
+    let constant_source_effect_threshold =
+        preparation::compute_constant_source_threshold_from_cache(input, cache.as_ref());
 
-    let error_values_for_distribution = Arc::new(Mutex::new(Vec::<f32>::new()));
-
-    // Build comprehensive neuron type map
-    let mut neuron_type_map: HashMap<String, String> = HashMap::new();
-    for input_index in 0..input.creature.input {
-        neuron_type_map.insert(format!("input-{input_index}"), "input".to_string());
-    }
-    for neuron in &input.creature.neurons {
-        neuron_type_map.insert(neuron.uuid.clone(), neuron.neuron_type.clone());
-    }
-
-    let input_neuron_uuids: HashSet<String> = (0..input.creature.input)
-        .map(|i| format!("input-{i}"))
-        .collect();
-
-    // Issue #182: Build used inputs set
-    let used_inputs: HashSet<String> = input
-        .creature
-        .synapses
-        .iter()
-        .filter(|s| crate::analysis::utils::parse_input_index(&s.from_uuid).is_some())
-        .map(|s| s.from_uuid.clone())
-        .collect();
-
-    // Neuron bias map for constant-source folding
-    let neuron_bias_map: HashMap<String, f32> = input
-        .creature
-        .neurons
-        .iter()
-        .map(|n| (n.uuid.clone(), n.bias))
-        .collect();
-
-    // Compute dynamic constant-source threshold
-    let source_std_dev_avg: Option<f32> = {
-        let mut std_dev_sum = 0.0f64;
-        let mut std_dev_count = 0u32;
-        let max_samples = input.creature.input.min(50);
-
-        for input_idx in 0..max_samples {
-            let input_uuid = format!("input-{input_idx}");
-            if let Ok(records) = cache.get(&input_uuid)
-                && records.len() >= 2
-            {
-                let std_dev = compute_source_std_dev(&records);
-                if std_dev.is_finite() {
-                    std_dev_sum += std_dev as f64;
-                    std_dev_count += 1;
-                }
-            }
-        }
-
-        if std_dev_count > 0 {
-            let avg = (std_dev_sum / std_dev_count as f64) as f32;
-            if verbose_enabled() {
-                tracing::debug!(
-                    avg_std_dev = %format!("{avg:.4}"),
-                    sampled_sources = std_dev_count,
-                    "Source variance profile"
-                );
-            }
-            Some(avg)
-        } else {
-            None
-        }
-    };
-
-    let constant_source_effect_threshold = get_constant_source_threshold(source_std_dev_avg);
-
-    // Build shared context for per-target analysis
+    // Phase 5: Build shared context for per-target analysis
     let ctx = Arc::new(target_analysis::TargetAnalysisContext {
-        ordered_neurons: Arc::new(ordered_neurons),
-        order_map: Arc::new(order_map),
-        neuron_index: Arc::new(neuron_index),
-        existing_synapses: Arc::new(existing_synapses),
-        existing_synapse_weights: Arc::new(existing_synapse_weights),
-        synapses_by_target: Arc::new(synapses_by_target),
-        neuron_squash_map: Arc::new(neuron_squash_map),
-        neuron_type_map: Arc::new(neuron_type_map),
-        input_neuron_uuids: Arc::new(input_neuron_uuids),
-        used_inputs: Arc::new(used_inputs),
-        neuron_bias_map: Arc::new(neuron_bias_map),
+        ordered_neurons: Arc::new(lookups.ordered_neurons),
+        order_map: Arc::new(lookups.order_map),
+        neuron_index: Arc::new(lookups.neuron_index),
+        existing_synapses: Arc::new(lookups.existing_synapses),
+        existing_synapse_weights: Arc::new(lookups.existing_synapse_weights),
+        synapses_by_target: Arc::new(lookups.synapses_by_target),
+        neuron_squash_map: Arc::new(lookups.neuron_squash_map),
+        neuron_type_map: Arc::new(lookups.neuron_type_map),
+        input_neuron_uuids: Arc::new(lookups.input_neuron_uuids),
+        used_inputs: Arc::new(lookups.used_inputs),
+        neuron_bias_map: Arc::new(lookups.neuron_bias_map),
         constant_source_effect_threshold,
         diagnostics: diagnostics.clone(),
         timing_collector: timing_collector.clone(),
@@ -317,14 +172,14 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         threshold: 0.0,
     });
 
-    // Process each focus neuron in parallel
+    // Phase 6: Process each focus neuron in parallel
     focus_order
         .par_iter()
         .try_for_each(|target_uuid| -> Result<()> {
-            if *lock_or_bail(&analysis_timed_out, "analysis_timed_out")?
+            if *lock_or_bail(&collectors.analysis_timed_out, "analysis_timed_out")?
                 || deadline_passed(&deadline)
             {
-                *lock_or_bail(&analysis_timed_out, "analysis_timed_out")? = true;
+                *lock_or_bail(&collectors.analysis_timed_out, "analysis_timed_out")? = true;
                 return Ok(());
             }
 
@@ -336,41 +191,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                 &ctx,
             )?;
 
-            // Merge results into shared collections
-            if !target_results.helpful.is_empty() {
-                lock_or_bail(&helpful_results, "helpful_results")?
-                    .extend(target_results.helpful);
-            }
-            if !target_results.harmful.is_empty() {
-                lock_or_bail(&harmful_results, "harmful_results")?
-                    .extend(target_results.harmful);
-            }
-            if !target_results.coordinated.is_empty() {
-                lock_or_bail(&coordinated_structural_results, "coordinated_structural_results")?
-                    .extend(target_results.coordinated);
-            }
-            if !target_results.error_values.is_empty() {
-                lock_or_bail(&error_values_for_distribution, "error_values_for_distribution")?
-                    .extend(target_results.error_values);
-            }
-            if target_results.target_value_seen {
-                metadata_target_value_seen.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-            if target_results.saturation_aware_used {
-                metadata_saturation_aware_used.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-            if target_results.input_metadata.seen_any {
-                metadata_seen_any_input_with_records
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                let _ = metadata_input_min_with_records.fetch_min(
-                    target_results.input_metadata.min_index,
-                    std::sync::atomic::Ordering::Relaxed,
-                );
-                let _ = metadata_input_max_with_records.fetch_max(
-                    target_results.input_metadata.max_index,
-                    std::sync::atomic::Ordering::Relaxed,
-                );
-            }
+            collectors.merge_target_results(target_results)?;
 
             let completed =
                 completed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -380,32 +201,149 @@ pub(crate) fn analyze_synapses_with_cache_impl(
             Ok(())
         })?;
 
-    let analysis_timed_out = *lock_or_bail(&analysis_timed_out, "analysis_timed_out")?;
+    // Phase 7: Collect results and build final output
+    finalise_synapse_results(&FinaliseParams {
+        collectors,
+        completed_count,
+        total_focus_count,
+        diagnostics,
+        timing_collector,
+        input,
+        cache,
+        order_map: &ctx.order_map,
+    })
+}
+
+/// Shared mutable state collected during parallel target analysis.
+struct SharedResultCollectors {
+    helpful_results: Arc<Mutex<Vec<CandidateSynapseJson>>>,
+    harmful_results: Arc<Mutex<Vec<CandidateSynapseJson>>>,
+    coordinated_structural_results: Arc<Mutex<Vec<crate::CoordinatedStructuralCandidateJson>>>,
+    helpful_fallback: Arc<Mutex<Option<CandidateSynapseJson>>>,
+    analysis_timed_out: Arc<Mutex<bool>>,
+    error_values_for_distribution: Arc<Mutex<Vec<f32>>>,
+    metadata_target_value_seen: Arc<std::sync::atomic::AtomicBool>,
+    metadata_saturation_aware_used: Arc<std::sync::atomic::AtomicBool>,
+    metadata_seen_any_input_with_records: Arc<std::sync::atomic::AtomicBool>,
+    metadata_input_min_with_records: Arc<std::sync::atomic::AtomicUsize>,
+    metadata_input_max_with_records: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl SharedResultCollectors {
+    fn new() -> Self {
+        Self {
+            helpful_results: Arc::new(Mutex::new(Vec::new())),
+            harmful_results: Arc::new(Mutex::new(Vec::new())),
+            coordinated_structural_results: Arc::new(Mutex::new(Vec::new())),
+            helpful_fallback: Arc::new(Mutex::new(None)),
+            analysis_timed_out: Arc::new(Mutex::new(false)),
+            error_values_for_distribution: Arc::new(Mutex::new(Vec::new())),
+            metadata_target_value_seen: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            metadata_saturation_aware_used: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            metadata_seen_any_input_with_records: Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            )),
+            metadata_input_min_with_records: Arc::new(std::sync::atomic::AtomicUsize::new(
+                usize::MAX,
+            )),
+            metadata_input_max_with_records: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
+    }
+
+    /// Merge a single target's results into the shared collections.
+    fn merge_target_results(
+        &self,
+        target_results: target_analysis::TargetAnalysisResults,
+    ) -> Result<()> {
+        if !target_results.helpful.is_empty() {
+            lock_or_bail(&self.helpful_results, "helpful_results")?.extend(target_results.helpful);
+        }
+        if !target_results.harmful.is_empty() {
+            lock_or_bail(&self.harmful_results, "harmful_results")?.extend(target_results.harmful);
+        }
+        if !target_results.coordinated.is_empty() {
+            lock_or_bail(
+                &self.coordinated_structural_results,
+                "coordinated_structural_results",
+            )?
+            .extend(target_results.coordinated);
+        }
+        if !target_results.error_values.is_empty() {
+            lock_or_bail(
+                &self.error_values_for_distribution,
+                "error_values_for_distribution",
+            )?
+            .extend(target_results.error_values);
+        }
+        if target_results.target_value_seen {
+            self.metadata_target_value_seen
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        if target_results.saturation_aware_used {
+            self.metadata_saturation_aware_used
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        if target_results.input_metadata.seen_any {
+            self.metadata_seen_any_input_with_records
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            let _ = self.metadata_input_min_with_records.fetch_min(
+                target_results.input_metadata.min_index,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            let _ = self.metadata_input_max_with_records.fetch_max(
+                target_results.input_metadata.max_index,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Parameters for the result finalisation phase.
+struct FinaliseParams<'a> {
+    collectors: SharedResultCollectors,
+    completed_count: Arc<std::sync::atomic::AtomicUsize>,
+    total_focus_count: usize,
+    diagnostics: Arc<TargetDiagnostics>,
+    timing_collector: Arc<super::shared::TimingCollector>,
+    input: &'a AnalyzeSynapsesInput,
+    cache: Arc<RecordCache>,
+    order_map: &'a HashMap<String, usize>,
+}
+
+/// Collect results from shared state, apply post-processing, and build the final output.
+fn finalise_synapse_results(params: &FinaliseParams<'_>) -> Result<AnalyzeSynapsesResult> {
+    let c = &params.collectors;
+    let analysis_timed_out = *lock_or_bail(&c.analysis_timed_out, "analysis_timed_out")?;
     let mut helpful_results =
-        std::mem::take(&mut *lock_or_bail(&helpful_results, "helpful_results")?);
+        std::mem::take(&mut *lock_or_bail(&c.helpful_results, "helpful_results")?);
     let mut harmful_results =
-        std::mem::take(&mut *lock_or_bail(&harmful_results, "harmful_results")?);
+        std::mem::take(&mut *lock_or_bail(&c.harmful_results, "harmful_results")?);
     let mut coordinated_structural_results = std::mem::take(&mut *lock_or_bail(
-        &coordinated_structural_results,
+        &c.coordinated_structural_results,
         "coordinated_structural_results",
     )?);
-    let mut helpful_fallback = lock_or_bail(&helpful_fallback, "helpful_fallback")?.take();
+    let mut helpful_fallback = lock_or_bail(&c.helpful_fallback, "helpful_fallback")?.take();
 
     if analysis_timed_out {
-        let completed = completed_count.load(std::sync::atomic::Ordering::Relaxed);
-        log_analysis_timeout("synapse", completed, total_focus_count);
+        let completed = params
+            .completed_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        log_analysis_timeout("synapse", completed, params.total_focus_count);
     }
 
     if helpful_results.is_empty()
         && let Some(candidate) = helpful_fallback.take()
     {
-        diagnostics.mark_candidate_selected(&candidate.to_neuron_uuid);
+        params
+            .diagnostics
+            .mark_candidate_selected(&candidate.to_neuron_uuid);
         helpful_results.push(candidate);
     }
 
     // Collapse 1-in/1-out hidden neurons into direct synapses (Issue #425)
     let collapse_candidates =
-        structural_patterns::detect_collapsible_hidden_neurons(input, cache.as_ref());
+        structural_patterns::detect_collapsible_hidden_neurons(params.input, params.cache.as_ref());
     coordinated_structural_results.extend(collapse_candidates);
 
     // Post-processing: impact discounting, sorting, diversification, truncation
@@ -413,39 +351,49 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         &mut helpful_results,
         &mut harmful_results,
         &mut coordinated_structural_results,
-        input,
-        cache.as_ref(),
-        &ctx.order_map,
+        params.input,
+        params.cache.as_ref(),
+        params.order_map,
     );
 
-    let no_candidate_reasons = diagnostics.no_candidate_summaries();
-    diagnostics.emit_logs();
+    let no_candidate_reasons = params.diagnostics.no_candidate_summaries();
+    params.diagnostics.emit_logs();
 
     // Build metadata
-    let saw_any_input =
-        metadata_seen_any_input_with_records.load(std::sync::atomic::Ordering::Relaxed);
-    let input_min = metadata_input_min_with_records.load(std::sync::atomic::Ordering::Relaxed);
-    let input_max = metadata_input_max_with_records.load(std::sync::atomic::Ordering::Relaxed);
+    let saw_any_input = c
+        .metadata_seen_any_input_with_records
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let input_min = c
+        .metadata_input_min_with_records
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let input_max = c
+        .metadata_input_max_with_records
+        .load(std::sync::atomic::Ordering::Relaxed);
 
     let error_vec = std::mem::take(&mut *lock_or_bail(
-        &error_values_for_distribution,
+        &c.error_values_for_distribution,
         "error_values_for_distribution",
     )?);
 
     let metadata = post_processing::build_metadata(&post_processing::MetadataParams {
-        target_value_seen: metadata_target_value_seen.load(std::sync::atomic::Ordering::Relaxed),
-        saturation_aware_used: metadata_saturation_aware_used
+        target_value_seen: c
+            .metadata_target_value_seen
+            .load(std::sync::atomic::Ordering::Relaxed),
+        saturation_aware_used: c
+            .metadata_saturation_aware_used
             .load(std::sync::atomic::Ordering::Relaxed),
         candidates_found: pp_metrics.candidates_found,
         candidates_returned: pp_metrics.candidates_returned,
         analysis_timed_out,
-        completed_focus_neurons: completed_count.load(std::sync::atomic::Ordering::Relaxed),
-        total_focus_neurons: total_focus_count,
+        completed_focus_neurons: params
+            .completed_count
+            .load(std::sync::atomic::Ordering::Relaxed),
+        total_focus_neurons: params.total_focus_count,
         saw_any_input,
         input_min,
         input_max,
         error_values: &error_vec,
-        timing_collector: &timing_collector,
+        timing_collector: &params.timing_collector,
     });
 
     Ok(AnalyzeSynapsesResult {
@@ -454,7 +402,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         synapse_weight_updates: Vec::new(),
         coordinated_structural_candidates: coordinated_structural_results,
         candidate_clusters: Vec::new(),
-        gpu_used,
+        gpu_used: true,
         no_candidate_reasons,
         metadata,
     })
