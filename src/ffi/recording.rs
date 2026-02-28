@@ -7,16 +7,17 @@ use crate::{log_version_once, streaming};
 // Recording — single-call
 // ============================================================================
 
-/// FFI export for recording discovery data
+/// FFI export for recording discovery data.
 ///
 /// # Safety
-/// This function is unsafe because it deals with raw C strings.
-/// The caller must ensure:
-/// - input_json is a valid null-terminated C string
-/// - The returned pointer is freed using free_discovery_result
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
 #[unsafe(no_mangle)]
-pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+pub unsafe extern "C" fn record_discovery(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
     use std::panic;
 
@@ -25,7 +26,8 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         log_version_once();
 
-        // Read input C string
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
                 let error = r#"{"success":false,"error":"Null input pointer"}"#;
@@ -40,7 +42,6 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
             }
         };
 
-        // Call the Rust function with original string
         let json_result = match crate::record_discovery_internal(input_str) {
             Ok(json) => json,
             Err(e) => {
@@ -126,9 +127,13 @@ pub extern "C" fn record_discovery(input_json: *const std::ffi::c_char) -> *mut 
 ///   "sessionId": "uuid-string"
 /// }
 /// ```
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// # Safety
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
 #[unsafe(no_mangle)]
-pub extern "C" fn start_discovery_session(
+pub unsafe extern "C" fn start_discovery_session(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
@@ -137,6 +142,8 @@ pub extern "C" fn start_discovery_session(
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         log_version_once();
 
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
                 let error = r#"{"success":false,"error":"Null input pointer"}"#;
@@ -240,15 +247,21 @@ pub extern "C" fn start_discovery_session(
 ///   "recordsWritten": 42
 /// }
 /// ```
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// # Safety
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
 #[unsafe(no_mangle)]
-pub extern "C" fn append_discovery_records(
+pub unsafe extern "C" fn append_discovery_records(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
     use std::panic;
 
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
                 let error = r#"{"success":false,"error":"Null input pointer"}"#;
@@ -354,15 +367,21 @@ pub extern "C" fn append_discovery_records(
 ///   "totalRecords": 12345
 /// }
 /// ```
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// # Safety
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
 #[unsafe(no_mangle)]
-pub extern "C" fn finish_discovery_session(
+pub unsafe extern "C" fn finish_discovery_session(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
     use std::panic;
 
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
                 let error = r#"{"success":false,"error":"Null input pointer"}"#;
@@ -466,15 +485,21 @@ pub extern "C" fn finish_discovery_session(
 ///   "success": true
 /// }
 /// ```
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// # Safety
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
 #[unsafe(no_mangle)]
-pub extern "C" fn cancel_discovery_session(
+pub unsafe extern "C" fn cancel_discovery_session(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
     use std::panic;
 
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
                 let error = r#"{"success":false,"error":"Null input pointer"}"#;

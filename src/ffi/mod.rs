@@ -25,9 +25,13 @@ mod utilities;
 // Memory management
 // ============================================================================
 
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// # Safety
+///
+/// - `ptr` must be null or a pointer previously returned by one of the FFI
+///   functions in this module (allocated via `CString::into_raw`).
+/// - Each pointer must be freed exactly once.
 #[unsafe(no_mangle)]
-pub extern "C" fn free_discovery_result(ptr: *mut std::ffi::c_char) {
+pub unsafe extern "C" fn free_discovery_result(ptr: *mut std::ffi::c_char) {
     use std::ffi::CString;
     use std::panic;
 
@@ -35,6 +39,9 @@ pub extern "C" fn free_discovery_result(ptr: *mut std::ffi::c_char) {
     // This is unlikely to panic, but we protect it anyway for safety
     let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
         if !ptr.is_null() {
+            // SAFETY: caller guarantees `ptr` was allocated by
+            // `CString::into_raw` in a prior FFI call, and is freed
+            // exactly once.
             unsafe {
                 let _ = CString::from_raw(ptr);
             }

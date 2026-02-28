@@ -7,9 +7,13 @@ use crate::log_version_once;
 // Merge Parquet
 // ============================================================================
 
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// # Safety
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
 #[unsafe(no_mangle)]
-pub extern "C" fn merge_discovery_parquet(
+pub unsafe extern "C" fn merge_discovery_parquet(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
@@ -20,6 +24,8 @@ pub extern "C" fn merge_discovery_parquet(
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         log_version_once();
 
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
                 let error = r#"{"success":false,"error":"Null input pointer"}"#;
@@ -86,16 +92,15 @@ pub extern "C" fn merge_discovery_parquet(
 // Read discovery records
 // ============================================================================
 
-/// FFI export for reading discovery records
+/// FFI export for reading discovery records.
 ///
 /// # Safety
-/// This function is unsafe because it deals with raw C strings.
-/// The caller must ensure:
-/// - input_json is a valid null-terminated C string
-/// - The returned pointer is freed using free_discovery_result
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
 #[unsafe(no_mangle)]
-pub extern "C" fn read_discovery_records_ffi(
+pub unsafe extern "C" fn read_discovery_records_ffi(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
@@ -106,7 +111,8 @@ pub extern "C" fn read_discovery_records_ffi(
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         log_version_once();
 
-        // Read input C string
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
                 let error = r#"{"success":false,"error":"Null input pointer"}"#;
@@ -121,7 +127,6 @@ pub extern "C" fn read_discovery_records_ffi(
             }
         };
 
-        // Call the Rust function
         let json_result = match crate::read_discovery_records(input_str) {
             Ok(json) => json,
             Err(e) => {
@@ -198,9 +203,13 @@ pub extern "C" fn read_discovery_records_ffi(
 ///   "stats": { "obsCount": 1000, "neuronCount": 50, "synapseCount": 200, "outputCount": 1 }
 /// }
 /// ```
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// # Safety
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
 #[unsafe(no_mangle)]
-pub extern "C" fn export_visualisation_snapshot(
+pub unsafe extern "C" fn export_visualisation_snapshot(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
@@ -209,6 +218,8 @@ pub extern "C" fn export_visualisation_snapshot(
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         log_version_once();
 
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
                 let error = r#"{"success":false,"error":"Null input pointer"}"#;
@@ -301,10 +312,12 @@ pub extern "C" fn export_visualisation_snapshot(
 /// ```
 ///
 /// # Safety
-/// The returned pointer must be freed using free_discovery_result
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
 #[unsafe(no_mangle)]
-pub extern "C" fn get_calibration_summary(
+pub unsafe extern "C" fn get_calibration_summary(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
@@ -313,6 +326,8 @@ pub extern "C" fn get_calibration_summary(
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         log_version_once();
 
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
                 let error = r#"{"success":false,"calibrationSummary":[],"error":"Null input pointer"}"#;
