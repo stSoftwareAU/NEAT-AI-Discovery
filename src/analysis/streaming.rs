@@ -165,9 +165,6 @@ pub struct StreamingCacheStats {
 /// in the Parquet file.
 #[derive(Debug)]
 struct CacheBlock {
-    /// Block identifier (typically row group index).
-    #[allow(dead_code)]
-    block_id: usize,
     /// Records in this block, keyed by neuron UUID.
     records: HashMap<String, Arc<Vec<DiscoverRecord>>>,
     /// When this block was last accessed.
@@ -177,7 +174,7 @@ struct CacheBlock {
 }
 
 impl CacheBlock {
-    fn new(block_id: usize, records: HashMap<String, Vec<DiscoverRecord>>) -> Self {
+    fn new(records: HashMap<String, Vec<DiscoverRecord>>) -> Self {
         // Estimate memory size
         let size_bytes: usize = records
             .iter()
@@ -194,7 +191,6 @@ impl CacheBlock {
             .sum();
 
         Self {
-            block_id,
             records: records.into_iter().map(|(k, v)| (k, Arc::new(v))).collect(),
             last_access: Instant::now(),
             size_bytes,
@@ -358,7 +354,7 @@ impl StreamingRecordCache {
                 let mut blocks = inner.blocks.write();
                 blocks
                     .entry(req.block_id)
-                    .or_insert_with(|| CacheBlock::new(req.block_id, block_records));
+                    .or_insert_with(|| CacheBlock::new(block_records));
             }
         }
     }
@@ -599,7 +595,7 @@ impl StreamingRecordCache {
                 let mut blocks = self.inner.blocks.write();
                 blocks
                     .entry(block_id)
-                    .or_insert_with(|| CacheBlock::new(block_id, block_records));
+                    .or_insert_with(|| CacheBlock::new(block_records));
             }
 
             // Trigger prefetch for adjacent blocks

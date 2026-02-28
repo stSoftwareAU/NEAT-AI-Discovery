@@ -168,9 +168,6 @@ pub(crate) fn deserialise_records(data: &[u8]) -> Result<Vec<DiscoverRecord>> {
 pub(crate) struct CompressedCacheEntry {
     /// LZ4-compressed serialised record data.
     pub(crate) compressed_data: Vec<u8>,
-    /// Number of records (for quick stats without decompression).
-    #[allow(dead_code)]
-    pub(crate) record_count: usize,
     /// Size of the compressed data in bytes (what we actually store).
     pub(crate) compressed_size: usize,
     /// Last access time for LRU ordering.
@@ -184,7 +181,6 @@ impl CompressedCacheEntry {
         let compressed_size = compressed.len();
         Self {
             compressed_data: compressed,
-            record_count: records.len(),
             compressed_size,
             last_access: std::time::Instant::now(),
         }
@@ -314,7 +310,6 @@ mod tests {
     fn decompress_returns_error_on_corrupted_lz4() {
         let entry = CompressedCacheEntry {
             compressed_data: vec![0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x01],
-            record_count: 1,
             compressed_size: 6,
             last_access: std::time::Instant::now(),
         };

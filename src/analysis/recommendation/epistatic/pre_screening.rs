@@ -110,15 +110,12 @@ pub fn detect_synergistic_candidates(
 fn compute_residual_errors(samples: &[HelpfulSample], weight: f32) -> Vec<ResidualSample> {
     samples
         .iter()
-        .enumerate()
-        .map(|(idx, s)| {
+        .map(|s| {
             let contribution = weight * s.activation;
             let residual_error = s.avg_error - contribution;
             ResidualSample {
-                sample_index: idx,
                 original_error: s.avg_error,
                 residual_error,
-                primary_contribution: contribution,
             }
         })
         .collect()
@@ -126,12 +123,9 @@ fn compute_residual_errors(samples: &[HelpfulSample], weight: f32) -> Vec<Residu
 
 /// Internal structure for residual analysis.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields used for debugging and future extensions
 struct ResidualSample {
-    sample_index: usize,
     original_error: f32,
     residual_error: f32,
-    primary_contribution: f32,
 }
 
 /// Compute Pearson correlation coefficient between two activation patterns.
