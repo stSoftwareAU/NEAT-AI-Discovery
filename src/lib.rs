@@ -9,7 +9,7 @@ pub mod analysis;
 pub mod debug;
 pub mod discovery_history;
 pub mod export;
-mod ffi;
+pub mod ffi;
 mod ffi_internal;
 pub mod ffi_types;
 pub mod focus;

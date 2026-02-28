@@ -7,9 +7,15 @@ use crate::log_version_once;
 // Rank focus neurons
 // ============================================================================
 
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// # Safety
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
 #[unsafe(no_mangle)]
-pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+pub unsafe extern "C" fn rank_focus_neurons(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
     use std::panic;
 
@@ -18,6 +24,8 @@ pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mu
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         log_version_once();
 
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
                 let error = r#"{"success":false,"error":"Null input pointer"}"#;
@@ -90,9 +98,15 @@ pub extern "C" fn rank_focus_neurons(input_json: *const std::ffi::c_char) -> *mu
 // Analyze parallel
 // ============================================================================
 
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// # Safety
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
 #[unsafe(no_mangle)]
-pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+pub unsafe extern "C" fn analyze_parallel(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
     use std::ffi::{CStr, CString};
     use std::panic;
 
@@ -101,6 +115,8 @@ pub extern "C" fn analyze_parallel(input_json: *const std::ffi::c_char) -> *mut 
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         log_version_once();
 
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
                 let error = r#"{"success":false,"error":"Null input pointer"}"#;
