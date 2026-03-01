@@ -408,6 +408,7 @@ GitHub Actions runs on every pull request to `Develop`:
 
 - `auto-format` — applies `rustfmt` and commits fixes
 - `version-increment` — auto-bumps patch version when `src/` changes
+  (see [Version Management](#version-management) for why this is critical)
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
 - `shell-checks` — validates bash script syntax
 - `spell-check` — runs codespell on the codebase
@@ -433,9 +434,22 @@ This script:
 
 ### Version Management
 
-**Do not manually bump versions.** CI increments `Cargo.toml` patch versions
-when `src/` changes are detected. To confirm what a worker has loaded, call
-`get_library_version()`.
+> **CRITICAL: The version in `Cargo.toml` must always be incremented on any
+> code change.** Remote and unattended machines cache the compiled library by
+> version number. If the version is not incremented, those machines will
+> continue using the old compiled library and never pick up the new changes.
+
+**How versions are incremented:**
+
+- **CI auto-increment**: The `version-increment` CI job automatically bumps the
+  patch version when `src/` changes are detected in a pull request. This is the
+  primary mechanism — in most cases, you do not need to bump the version
+  manually.
+- **Manual increment**: If you are making changes outside of the normal PR
+  workflow, or if CI does not run (e.g., direct commits), you **must** manually
+  increment the patch version in `Cargo.toml` (e.g., `0.43.8` → `0.43.9`).
+- **Verification**: To confirm what version a worker has loaded, call
+  `get_library_version()`.
 
 ---
 
