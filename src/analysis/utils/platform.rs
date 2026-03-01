@@ -28,11 +28,13 @@ pub fn suppress_mesa_warnings_if_requested() {
 
             // Suppress Mesa GLSL shader cache warnings
             if env::var("MESA_GLSL_CACHE_DISABLE").is_err() {
+                // SAFETY: single-threaded at this point (Once guard) and before GPU init
                 unsafe { env::set_var("MESA_GLSL_CACHE_DISABLE", "true") };
             }
 
             // Suppress general Mesa debug output
             if env::var("MESA_DEBUG").is_err() {
+                // SAFETY: single-threaded at this point (Once guard) and before GPU init
                 unsafe { env::set_var("MESA_DEBUG", "silent") };
             }
         }
