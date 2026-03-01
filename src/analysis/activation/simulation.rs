@@ -133,40 +133,6 @@ pub fn get_target_simulation_mode(
     TargetSimulationMode::None
 }
 
-/// Returns `true` when the target squash is a **bounded** activation that can
-/// saturate, AND all samples have the target data needed for simulation.
-///
-/// This is more targeted than `get_target_simulation_fn`, which returns `Some`
-/// for nearly all activation functions (including unbounded ones like
-/// BENT_IDENTITY and IDENTITY).  Weight-search heuristics (Issue #413) should
-/// only be applied to genuinely saturating activations.
-#[inline]
-pub(crate) fn is_saturating_target(samples: &[HelpfulSample], target_squash: Option<&str>) -> bool {
-    let Some(squash) = target_squash else {
-        return false;
-    };
-    let upper = squash.to_ascii_uppercase();
-    let bounded = matches!(
-        upper.as_str(),
-        "TANH"
-            | "LOGISTIC"
-            | "HARD_TANH"
-            | "CLIPPED"
-            | "BIPOLAR"
-            | "BIPOLAR_SIGMOID"
-            | "STEP"
-            | "SOFTSIGN"
-            | "ISRU"
-            | "ARCTAN"
-            | "RELU6"
-    );
-    bounded
-        && get_target_activation_fn(squash).is_some()
-        && samples
-            .iter()
-            .all(|s| s.target_value.is_some() && s.target_activation.is_some())
-}
-
 /// Legacy function for backwards compatibility - returns true only for HARD_TANH (or its alias CLIPPED).
 /// Deprecated: Use get_target_simulation_fn instead for more accurate simulation
 #[inline]

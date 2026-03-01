@@ -177,6 +177,21 @@ pub const MAX_INDIVIDUAL_HARM_FOR_PAIRING: f32 = -0.01;
 // Pessimism Discount (Issue #506)
 // =============================================================================
 
+/// Minimum ratio of improved samples required for a synapse candidate to be accepted.
+///
+/// Issue #730: The add-synapses module had a 0% success rate because candidates
+/// where more samples worsened than improved were still being proposed. This
+/// threshold requires that at least this fraction of samples must improve before
+/// a candidate is considered viable.
+///
+/// A ratio of 0.5 means at least half the samples must improve, filtering out
+/// candidates that hurt more than they help.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Values below 0.3 provide insufficient filtering.
+/// Values above 0.75 may over-filter legitimate candidates.
+pub const MIN_IMPROVED_RATIO: f32 = 0.5;
+
 /// Minimum pessimism discount applied to all score predictions.
 ///
 /// Production analysis (creature b2ff6e45, GRQ-sampler commit a1340f8d) showed
