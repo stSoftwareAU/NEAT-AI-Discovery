@@ -410,30 +410,16 @@ pub struct OutlierReductionInfo {
 
 /// Check if outlier analysis is enabled via environment variable.
 ///
-/// Controlled via `NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS`:
-/// - "1" or "true": enabled
-/// - Any other value or unset: disabled (default)
+/// Delegates to [`crate::config::outlier_analysis()`].
 pub fn outlier_analysis_enabled() -> bool {
-    std::env::var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS")
-        .ok()
-        .is_some_and(|v| {
-            let v = v.trim().to_lowercase();
-            v == "1" || v == "true" || v == "yes"
-        })
+    crate::config::outlier_analysis()
 }
 
 /// Get the outlier percentile threshold from environment variable.
 ///
-/// Controlled via `NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE`:
-/// - Integer value 1-99 (default: 90)
-///
-/// Returns 90 if not set or invalid.
+/// Delegates to [`crate::config::outlier_percentile()`].
 pub fn outlier_percentile_from_env() -> u8 {
-    std::env::var("NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE")
-        .ok()
-        .and_then(|v| v.trim().parse::<u8>().ok())
-        .filter(|&p| p > 0 && p < 100)
-        .unwrap_or(90)
+    crate::config::outlier_percentile()
 }
 
 // =============================================================================

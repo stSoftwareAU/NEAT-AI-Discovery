@@ -6,6 +6,7 @@
 
 pub mod activations;
 pub mod analysis;
+pub mod config;
 pub mod debug;
 pub mod discovery_history;
 pub mod export;

@@ -5,8 +5,6 @@
 //! and retries the failed work item. This allows unattended workers to recover
 //! from transient GPU issues without restarting the entire discovery process.
 
-use std::sync::OnceLock;
-
 /// Default maximum number of consecutive device-lost recovery attempts before
 /// propagating the error to the caller.
 pub const DEFAULT_GPU_RETRY_LIMIT: u32 = 3;
@@ -16,18 +14,9 @@ pub const GPU_RETRY_LIMIT_ENV: &str = "NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT";
 
 /// Get the configured GPU retry limit.
 ///
-/// Reads from `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` environment variable on first
-/// call and caches the result. Falls back to `DEFAULT_GPU_RETRY_LIMIT` if the
-/// variable is not set or contains an invalid value.
+/// Delegates to [`crate::config::gpu_retry_limit()`].
 pub fn get_gpu_retry_limit() -> u32 {
-    static LIMIT: OnceLock<u32> = OnceLock::new();
-    *LIMIT.get_or_init(|| {
-        std::env::var(GPU_RETRY_LIMIT_ENV)
-            .ok()
-            .and_then(|val| val.parse::<u32>().ok())
-            .filter(|&n| n <= 10)
-            .unwrap_or(DEFAULT_GPU_RETRY_LIMIT)
-    })
+    crate::config::gpu_retry_limit()
 }
 
 /// Check whether an error indicates the GPU device has been lost or is in an

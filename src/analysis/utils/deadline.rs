@@ -361,41 +361,14 @@ pub fn shuffle_within_top_k<T>(items: &mut [T], seed: Option<u64>, context: &str
 /// - unset / empty: disabled (pure shuffle)
 /// - `> 0`: enabled (weighted random permutation; higher = stronger bias to the end)
 pub fn source_input_index_bias_from_env() -> Option<f64> {
-    let raw = std::env::var("NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS").ok()?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    match trimmed.parse::<f64>() {
-        Ok(v) if v.is_finite() && v > 0.0 => Some(v),
-        _ => {
-            if verbose_enabled() {
-                tracing::debug!(
-                    raw_value = trimmed,
-                    "Ignoring invalid NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS (expected a finite number > 0)"
-                );
-            }
-            None
-        }
-    }
+    crate::config::source_input_index_bias()
 }
 
 /// Check if discovery should focus on unused observations (Issue #182).
 ///
-/// When enabled via `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1`, input neurons
-/// that have NO existing outgoing synapses are prioritised in the source ordering.
-/// This is useful when new observations have been added to the training data and
-/// the user wants discovery to focus on connecting these new inputs first.
-///
-/// Values that enable the feature: "1", "true", "yes" (case-insensitive)
-/// Values that disable the feature: unset, empty, "0", "false", "no"
+/// Delegates to [`crate::config::focus_unused_observations()`].
 pub fn focus_unused_observations_from_env() -> bool {
-    let raw = match std::env::var("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS") {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    let trimmed = raw.trim().to_lowercase();
-    matches!(trimmed.as_str(), "1" | "true" | "yes")
+    crate::config::focus_unused_observations()
 }
 
 /// Neuron with UUID and index for source ordering.

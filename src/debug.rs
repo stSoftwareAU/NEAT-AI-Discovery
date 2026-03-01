@@ -53,7 +53,7 @@ const DEADLOCK_CHECK_INTERVAL_SECS: u64 = 10;
 pub fn init_debug_handlers() {
     DEBUG_HANDLERS_INITIALISED.get_or_init(|| {
         // Check if verbose mode is enabled
-        if std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok() {
+        if crate::config::verbose() {
             VERBOSE_MODE.store(true, Ordering::Relaxed);
         }
 
@@ -235,8 +235,7 @@ fn run_sample_command(pid: u32) {
     ));
     let out_path_str = out_path.to_string_lossy().to_string();
 
-    let sample_program =
-        std::env::var("NEAT_AI_DISCOVERY_SAMPLE_PROGRAM").unwrap_or_else(|_| "sample".to_string());
+    let sample_program = crate::config::sample_program();
     let sample_args = vec![
         pid.to_string(),
         "1".to_string(),

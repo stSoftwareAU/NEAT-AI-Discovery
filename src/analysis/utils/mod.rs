@@ -76,19 +76,19 @@ pub use deadline::deadline_override;
 /// Check if verbose logging is enabled. Result is cached for performance.
 /// Set `NEAT_AI_DISCOVERY_VERBOSE=1` to enable verbose logging.
 /// This is public so it can be used by focus.rs and other modules.
+///
+/// Delegates to [`crate::config::verbose()`].
 pub fn verbose_enabled() -> bool {
-    use std::sync::OnceLock;
-    static VERBOSE: OnceLock<bool> = OnceLock::new();
-    *VERBOSE.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok())
+    crate::config::verbose()
 }
 
 /// Check if GPU timing is enabled. Result is cached for performance.
 /// Set `NEAT_AI_DISCOVERY_GPU_TIMING=1` to enable GPU timing collection.
 /// This adds ~5% overhead when enabled but provides detailed timing breakdown.
+///
+/// Delegates to [`crate::config::gpu_timing()`].
 pub fn gpu_timing_enabled() -> bool {
-    use std::sync::OnceLock;
-    static GPU_TIMING: OnceLock<bool> = OnceLock::new();
-    *GPU_TIMING.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_GPU_TIMING").is_ok())
+    crate::config::gpu_timing()
 }
 
 // ============================================================================

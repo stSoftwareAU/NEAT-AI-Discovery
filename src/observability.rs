@@ -78,46 +78,28 @@ pub fn init_tracing() {
 
 /// Check if phase timing is enabled via `NEAT_AI_DISCOVERY_TIMING=1`.
 ///
-/// Result is cached for performance using OnceLock.
+/// Delegates to [`crate::config::timing()`].
 pub fn timing_enabled() -> bool {
-    static TIMING: OnceLock<bool> = OnceLock::new();
-    *TIMING.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_TIMING").is_ok())
+    crate::config::timing()
 }
 
 /// Check if GPU metrics output is enabled via `NEAT_AI_DISCOVERY_GPU_METRICS=1`.
 ///
-/// Result is cached for performance using OnceLock.
+/// Delegates to [`crate::config::gpu_metrics()`].
 pub fn gpu_metrics_enabled() -> bool {
-    static GPU_METRICS: OnceLock<bool> = OnceLock::new();
-    *GPU_METRICS.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_GPU_METRICS").is_ok())
+    crate::config::gpu_metrics()
 }
 
 /// Profile output mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ProfileMode {
-    /// No profiling output.
-    #[default]
-    None,
-    /// Output structured profile as JSON to stderr.
-    Json,
-}
+///
+/// Re-exported from [`crate::config::ProfileMode`] for backward compatibility.
+pub type ProfileMode = crate::config::ProfileMode;
 
 /// Get the current profile mode from `NEAT_AI_DISCOVERY_PROFILE` environment variable.
 ///
-/// Result is cached for performance using OnceLock.
+/// Delegates to [`crate::config::profile_mode()`].
 pub fn profile_mode() -> ProfileMode {
-    static PROFILE_MODE: OnceLock<ProfileMode> = OnceLock::new();
-    *PROFILE_MODE.get_or_init(|| {
-        match std::env::var("NEAT_AI_DISCOVERY_PROFILE")
-            .as_deref()
-            .unwrap_or("")
-            .to_lowercase()
-            .as_str()
-        {
-            "json" => ProfileMode::Json,
-            _ => ProfileMode::None,
-        }
-    })
+    crate::config::profile_mode()
 }
 
 // =============================================================================
