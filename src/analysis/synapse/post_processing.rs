@@ -12,17 +12,77 @@ use std::collections::HashMap;
 use super::filtering::truncate_combined_synapse_candidate_sets;
 use super::scoring::{apply_pessimism_discount, apply_source_type_boost, apply_target_type_boost};
 use crate::analysis::cache::RecordCache;
+use crate::analysis::samples::EPSILON;
+
+/// Scale a raw neuron-level prediction by the target neuron's fraction of total creature error.
+///
+/// Issue #730: Raw improvement predictions measure error reduction at a single target neuron,
+/// but these do not translate directly to creature-level score changes. A synapse improving
+/// one neuron's error by 5% does not mean 5% creature improvement — it depends on what
+/// fraction of total creature error that neuron contributes.
+///
+/// ## Formula
+///
+/// ```text
+/// error_fraction = target_error_sq / total_error_sq
+/// scaled_prediction = raw_prediction × error_fraction
+/// ```
+///
+/// ## Arguments
+///
+/// * `raw_prediction` — Neuron-level improvement (fraction of target error reduced)
+/// * `target_error_sq` — Sum of squared errors for the target neuron
+/// * `total_error_sq` — Sum of squared errors across all focus neurons
+pub fn scale_by_error_fraction(
+    raw_prediction: f32,
+    target_error_sq: f32,
+    total_error_sq: f32,
+) -> f32 {
+    if total_error_sq <= EPSILON {
+        return 0.0;
+    }
+    let fraction = (target_error_sq / total_error_sq).clamp(0.0, 1.0);
+    raw_prediction * fraction
+}
+
+/// Compute sum of squared errors for each neuron in the creature from the cache.
+///
+/// Issue #730: Used to determine what fraction of total creature error each target
+/// neuron contributes, enabling creature-level prediction calibration.
+fn compute_neuron_error_sq_map(
+    input: &crate::AnalyzeSynapsesInput,
+    cache: &RecordCache,
+) -> HashMap<String, f32> {
+    let mut error_sq_map = HashMap::new();
+    for neuron in &input.creature.neurons {
+        if let Ok(records) = cache.get(&neuron.uuid) {
+            let error_sq: f32 = records
+                .iter()
+                .flat_map(|r| r.errors.iter())
+                .filter(|e| e.is_finite())
+                .map(|e| e * e)
+                .sum();
+            if error_sq > EPSILON {
+                error_sq_map.insert(neuron.uuid.clone(), error_sq);
+            }
+        }
+    }
+    error_sq_map
+}
 
 /// Apply impact-based discounting to a single helpful synapse candidate.
 ///
 /// Updates `target_neuron_impact`, `expected_creature_error_reduction`,
 /// and `expected_creature_score_gain` based on the target neuron's distance
-/// from outputs. Also applies source-type and target-type boosts (Issues #467, #468).
+/// from outputs. Also applies creature-level error fraction scaling (Issue #730)
+/// and source-type and target-type boosts (Issues #467, #468).
 fn apply_impact_to_helpful(
     candidate: &mut CandidateSynapseJson,
     impact_scores: &HashMap<String, f32>,
     neuron_type_map: &HashMap<String, String>,
     order_map: &HashMap<String, usize>,
+    target_error_sq: f32,
+    total_error_sq: f32,
 ) {
     // Populate indices for debugging/analysis (consistent with CandidateNeuronJson).
     candidate.from_neuron_index = order_map.get(&candidate.from_neuron_uuid).copied();
@@ -47,6 +107,15 @@ fn apply_impact_to_helpful(
     // Update creature-level metrics
     candidate.target_neuron_impact = impact;
     let original = candidate.expected_creature_error_reduction;
+
+    // Issue #730: Scale by target neuron's fraction of total creature error.
+    // This converts neuron-level improvement to creature-level improvement.
+    candidate.expected_creature_error_reduction = scale_by_error_fraction(
+        candidate.expected_creature_error_reduction,
+        target_error_sq,
+        total_error_sq,
+    );
+
     candidate.expected_creature_error_reduction *= impact;
     candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
 
@@ -193,9 +262,24 @@ pub(crate) fn apply_post_processing(
         .map(|n| (n.uuid.clone(), n.neuron_type.clone()))
         .collect();
 
+    // Issue #730: Compute per-neuron and total error for creature-level calibration.
+    let error_sq_map = compute_neuron_error_sq_map(input, cache);
+    let total_error_sq: f32 = error_sq_map.values().sum();
+
     // Apply impact discounting to helpful synapse candidates
     for candidate in helpful_results.iter_mut() {
-        apply_impact_to_helpful(candidate, &impact_scores, &neuron_type_map, order_map);
+        let target_error_sq = error_sq_map
+            .get(&candidate.to_neuron_uuid)
+            .copied()
+            .unwrap_or(0.0);
+        apply_impact_to_helpful(
+            candidate,
+            &impact_scores,
+            &neuron_type_map,
+            order_map,
+            target_error_sq,
+            total_error_sq,
+        );
     }
 
     // Apply impact discounting to harmful synapse candidates

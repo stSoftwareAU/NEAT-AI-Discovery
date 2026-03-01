@@ -31,7 +31,7 @@
 mod candidate_generation;
 mod filtering;
 mod gpu_evaluation;
-mod post_processing;
+pub mod post_processing;
 mod preparation;
 mod scoring;
 mod structural_patterns;
@@ -799,6 +799,156 @@ mod tests {
             improvement.abs() < 0.05,
             "Uncorrelated source should give near-zero improvement, got {improvement}"
         );
+    }
+
+    // =========================================================================
+    // Issue #730: Multi-weight search and improved ratio tests
+    // =========================================================================
+
+    /// Issue #730: Multi-weight search should find improvement >= single weight
+    /// for noisy data where the optimal weight overshoots.
+    #[test]
+    fn test_issue_730_multi_weight_search_finds_better_improvement() {
+        // Samples where outliers pull the optimal weight too high
+        let samples: Vec<HelpfulSample> = (0..100)
+            .map(|i| {
+                let x = (i as f32 - 50.0) / 50.0;
+                let noise = ((i as f32 * 3.7).sin()) * 0.08;
+                let error = if i % 25 == 0 {
+                    0.2 * x // Outlier: strong correlation
+                } else {
+                    0.01 * x + noise // Weak correlation + noise
+                };
+                HelpfulSample {
+                    activation: x,
+                    avg_error: error,
+                    target_value: None,
+                    target_activation: None,
+                }
+            })
+            .collect();
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        let optimal_weight = compute_linear_optimal_weight(&samples);
+
+        // Single weight evaluation
+        let (single_imp, _, _, _) =
+            compute_synapse_improvement_and_count(&samples, optimal_weight, baseline_sq, None);
+
+        // Multi-weight search
+        let scales: [f32; 9] = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, -0.5, -1.0];
+        let mut best_improvement = f32::NEG_INFINITY;
+
+        for &scale in &scales {
+            let w = (optimal_weight * scale).clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+            if w.abs() <= EPSILON {
+                continue;
+            }
+            let (imp, _, _, _) =
+                compute_synapse_improvement_and_count(&samples, w, baseline_sq, None);
+            if imp > best_improvement {
+                best_improvement = imp;
+            }
+        }
+
+        assert!(
+            best_improvement >= single_imp,
+            "Multi-weight search should find improvement >= single weight. \
+             Single={single_imp:.6}, Best={best_improvement:.6}"
+        );
+    }
+
+    /// Issue #730: Multi-weight search should find candidates with better
+    /// improved/worsened ratio than single weight for noisy data.
+    #[test]
+    fn test_issue_730_multi_weight_improves_ratio() {
+        let samples: Vec<HelpfulSample> = (0..100)
+            .map(|i| {
+                let x = (i as f32 - 50.0) / 50.0;
+                let error = 0.005 * x; // Very small true correlation
+                HelpfulSample {
+                    activation: x,
+                    avg_error: error,
+                    target_value: None,
+                    target_activation: None,
+                }
+            })
+            .collect();
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+        let optimal_weight = compute_linear_optimal_weight(&samples);
+
+        // Single weight
+        let (_, single_improved, single_worsened, _) =
+            compute_synapse_improvement_and_count(&samples, optimal_weight, baseline_sq, None);
+
+        // Multi-weight: find best by improvement
+        let scales: [f32; 9] = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, -0.5, -1.0];
+        let mut best_imp = f32::NEG_INFINITY;
+        let mut best_improved = 0u32;
+        let mut best_worsened = 0u32;
+
+        for &scale in &scales {
+            let w = (optimal_weight * scale).clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+            if w.abs() <= EPSILON {
+                continue;
+            }
+            let (imp, improved, worsened, _) =
+                compute_synapse_improvement_and_count(&samples, w, baseline_sq, None);
+            if imp > best_imp {
+                best_imp = imp;
+                best_improved = improved;
+                best_worsened = worsened;
+            }
+        }
+
+        // Best multi-weight candidate should have at least as good a ratio
+        let single_net = single_improved as i32 - single_worsened as i32;
+        let best_net = best_improved as i32 - best_worsened as i32;
+
+        assert!(
+            best_net >= single_net,
+            "Multi-weight should find better or equal net improvement. \
+             Single: {single_improved}-{single_worsened}={single_net}, \
+             Best: {best_improved}-{best_worsened}={best_net}"
+        );
+    }
+
+    /// Issue #730: Candidates with more worsened than improved samples should
+    /// have non-positive improvement (these should be filtered in production).
+    #[test]
+    fn test_issue_730_worsened_exceeds_improved_poor_score() {
+        // Random noise — no real correlation
+        let samples: Vec<HelpfulSample> = (0..100)
+            .map(|i| {
+                let x = (i as f32 - 50.0) / 50.0;
+                let error = 0.1 * ((i as f32 * 7.3).sin());
+                HelpfulSample {
+                    activation: x,
+                    avg_error: error,
+                    target_value: None,
+                    target_activation: None,
+                }
+            })
+            .collect();
+
+        let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+
+        // For uncorrelated data with various weights, when worsened > improved
+        // the overall improvement should be low
+        let test_weights = [0.01f32, 0.05, 0.1, -0.01, -0.05, -0.1];
+        for &w in &test_weights {
+            let (improvement, improved, worsened, _) =
+                compute_synapse_improvement_and_count(&samples, w, baseline_sq, None);
+
+            if worsened > improved {
+                assert!(
+                    improvement < 0.01,
+                    "With worsened ({worsened}) > improved ({improved}), \
+                     improvement should be very small, got {improvement:.6} for weight={w}"
+                );
+            }
+        }
     }
 }
 

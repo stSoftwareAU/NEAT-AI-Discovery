@@ -6,7 +6,7 @@
 //! Extracted from target_analysis.rs as part of Issue #599.
 
 use crate::CandidateSynapseJson;
-use crate::analysis::activation::{get_target_simulation_fn, is_saturating_target};
+use crate::analysis::activation::get_target_simulation_fn;
 use crate::analysis::cache::RecordCache;
 use crate::analysis::detection::redundant_path::ExistingPathContribution;
 use crate::analysis::diagnostics::ThresholdContext;
@@ -131,8 +131,11 @@ pub(crate) fn collect_and_process_helpful_results(
                             target_squash,
                         );
                     (delta_weight, improvement, improved, worsened)
-                } else if is_saturating_target(&work.samples, target_squash) {
-                    // Issue #413: Search over scaled weights for saturating targets
+                } else {
+                    // Issue #730: Multi-weight search for ALL new synapse candidates.
+                    // Previously only saturating targets used weight search (Issue #413).
+                    // Production data showed 0% success rate because a single computed
+                    // weight often overshoots, especially with noisy samples.
                     let weight_candidates: [f32; 9] = [
                         weight * 0.1,
                         weight * 0.25,
@@ -169,15 +172,6 @@ pub(crate) fn collect_and_process_helpful_results(
                         }
                     }
                     (best_weight, best_improvement, best_improved, best_worsened)
-                } else {
-                    let (improvement, improved, worsened, _) =
-                        compute_synapse_improvement_and_count(
-                            &work.samples,
-                            weight,
-                            baseline_error_sq,
-                            target_squash,
-                        );
-                    (weight, improvement, improved, worsened)
                 };
 
             // Issue #202: Track source contribution for epistatic pair detection
@@ -193,6 +187,20 @@ pub(crate) fn collect_and_process_helpful_results(
 
             if neuron_error_improvement <= 0.0 {
                 continue;
+            }
+
+            // Issue #730: Filter candidates where insufficient samples improve.
+            // Candidates where worsened > improved have 0% success rate in production.
+            {
+                use crate::analysis::constants::MIN_IMPROVED_RATIO;
+                let improved_ratio = if total_count > 0 {
+                    improved_count as f32 / total_count as f32
+                } else {
+                    0.0
+                };
+                if improved_ratio < MIN_IMPROVED_RATIO {
+                    continue;
+                }
             }
 
             if neuron_error_improvement <= ctx.threshold {
