@@ -181,16 +181,10 @@ fn get_adjusted_batch_size(gpu_tier: GpuPerformanceTier) -> usize {
 }
 
 /// Get cached batch size override from environment variable.
-/// Returns None if not set or invalid.
+///
+/// Delegates to [`crate::config::gpu_batch_size_override()`].
 fn get_batch_size_override() -> Option<usize> {
-    use std::sync::OnceLock;
-    static OVERRIDE: OnceLock<Option<usize>> = OnceLock::new();
-    *OVERRIDE.get_or_init(|| {
-        std::env::var("NEAT_AI_DISCOVERY_GPU_BATCH_SIZE")
-            .ok()
-            .and_then(|val| val.parse::<usize>().ok())
-            .filter(|size| (64..=4096).contains(size))
-    })
+    crate::config::gpu_batch_size_override()
 }
 
 /// Get optimised GPU batch size based on detected GPU tier (without memory adjustment).

@@ -27,7 +27,6 @@
 //! - `setBias`: Shift operating point away from threshold regions
 
 use std::collections::{HashMap, HashSet};
-use std::env;
 
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -70,18 +69,12 @@ impl Default for InputSensitivityConfig {
 
 /// Get dominance threshold from environment variable or default.
 fn dominance_threshold_from_env() -> f32 {
-    env::var("NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_DOMINANCE_THRESHOLD)
+    crate::config::dominance_threshold(DEFAULT_DOMINANCE_THRESHOLD)
 }
 
 /// Get gradient threshold from environment variable or default.
 fn gradient_threshold_from_env() -> f32 {
-    env::var("NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_GRADIENT_THRESHOLD)
+    crate::config::gradient_threshold(DEFAULT_GRADIENT_THRESHOLD)
 }
 
 /// Candidate for a dominant input with excessive leverage.

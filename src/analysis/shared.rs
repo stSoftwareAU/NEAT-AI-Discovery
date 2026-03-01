@@ -630,24 +630,10 @@ impl Default for ZeroCopyBufferConfig {
 impl ZeroCopyBufferConfig {
     /// Create configuration from environment variables.
     ///
-    /// Checks `NEAT_AI_DISCOVERY_ZERO_COPY`:
-    /// - "1" or "true": Force-enable zero-copy
-    /// - "0" or "false": Force-disable zero-copy
-    /// - Not set: Auto-detect based on hardware
+    /// Delegates to [`crate::config::zero_copy_override()`].
     pub fn from_env() -> Self {
-        let force_enabled = std::env::var("NEAT_AI_DISCOVERY_ZERO_COPY")
-            .ok()
-            .and_then(|v| {
-                let v = v.trim().to_lowercase();
-                match v.as_str() {
-                    "1" | "true" | "yes" => Some(true),
-                    "0" | "false" | "no" => Some(false),
-                    _ => None,
-                }
-            });
-
         Self {
-            force_enabled,
+            force_enabled: crate::config::zero_copy_override(),
             buffer_count: 3,
         }
     }

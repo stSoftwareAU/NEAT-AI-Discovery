@@ -29,7 +29,6 @@
 //! - `setWeight`: To reduce weight of partially useful but noisy connections
 
 use std::collections::HashSet;
-use std::env;
 
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -93,10 +92,7 @@ pub struct NoisySynapseCandidate {
 
 /// Get the noise-to-signal threshold from environment variable or default.
 fn noise_signal_threshold_from_env() -> f32 {
-    env::var("NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_NOISE_SIGNAL_THRESHOLD)
+    crate::config::noise_signal_threshold(DEFAULT_NOISE_SIGNAL_THRESHOLD)
 }
 
 /// Compute variance of a slice of f32 values.

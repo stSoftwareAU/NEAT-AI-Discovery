@@ -80,29 +80,7 @@ pub fn compute_source_variance_discount(samples: &[HelpfulSample]) -> f32 {
 /// Note: For dynamic threshold based on source variance profile, use
 /// `compute_dynamic_constant_source_threshold()` instead.
 pub fn constant_source_effect_threshold_from_env() -> Option<f32> {
-    use crate::analysis::utils::verbose_enabled;
-
-    let raw = std::env::var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD").ok();
-    let Some(raw) = raw else {
-        return Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
-    };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
-    }
-    match trimmed.parse::<f32>() {
-        Ok(v) if v.is_finite() && v == 0.0 => None,
-        Ok(v) if v.is_finite() && v > 0.0 => Some(v),
-        _ => {
-            if verbose_enabled() {
-                tracing::debug!(
-                    raw_value = ?trimmed,
-                    "Ignoring invalid NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD (expected 0 or a finite number > 0)"
-                );
-            }
-            Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD)
-        }
-    }
+    crate::config::constant_source_effect_threshold()
 }
 
 /// Compute the dynamic constant-source effect threshold based on source variance profile.
@@ -190,30 +168,19 @@ pub fn compute_source_std_dev(records: &[DiscoverRecord]) -> f32 {
 pub fn get_constant_source_threshold(source_std_dev_avg: Option<f32>) -> Option<f32> {
     use crate::analysis::utils::verbose_enabled;
 
-    // First check for env var override
-    let raw = std::env::var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD").ok();
+    // Check for explicit env var override via central config
+    let env_threshold = crate::config::constant_source_effect_threshold();
 
-    // If env var is set and valid, use it (explicit override takes precedence)
-    if let Some(raw) = raw {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            match trimmed.parse::<f32>() {
-                Ok(v) if v.is_finite() && v == 0.0 => return None, // Disabled
-                Ok(v) if v.is_finite() && v > 0.0 => return Some(v), // Explicit override
-                _ => {
-                    if verbose_enabled() {
-                        tracing::debug!(
-                            raw_value = ?trimmed,
-                            "Ignoring invalid NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD (expected 0 or a finite number > 0)"
-                        );
-                    }
-                    // Fall through to dynamic calculation
-                }
-            }
+    // If env var explicitly set to 0 (disabled), respect that
+    if std::env::var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD").is_ok() {
+        match env_threshold {
+            None => return None, // Disabled
+            Some(v) if v != DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD => return Some(v), // Explicit override
+            _ => {} // Default or invalid — fall through
         }
     }
 
-    // No valid env var override - use dynamic threshold if source variance is provided
+    // No valid env var override — use dynamic threshold if source variance is provided
     match source_std_dev_avg {
         Some(avg) if avg.is_finite() && avg > 0.0 => {
             let threshold = compute_dynamic_constant_source_threshold(avg);

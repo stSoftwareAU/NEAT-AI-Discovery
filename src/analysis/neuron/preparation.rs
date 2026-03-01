@@ -93,7 +93,7 @@ pub(crate) fn prepare_neuron_analysis<'a>(
 
     // Filter focus neurons to valid add-neuron targets.
     let original_focus_count = unique_focus.len();
-    let output_only_targets = std::env::var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY").is_ok();
+    let output_only_targets = crate::config::neuron_targets_output_only();
     let FocusTargetFilterResult {
         focus_order,
         skipped_hidden,

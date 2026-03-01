@@ -19,7 +19,7 @@ pub fn suppress_mesa_warnings_if_requested() {
 
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        if env::var("NEAT_AI_DISCOVERY_QUIET_GPU").is_ok() {
+        if crate::config::quiet_gpu() {
             // Suppress EGL debug messages (these cause "failed to open /dev/dri/..." warnings)
             if env::var("EGL_LOG_LEVEL").is_err() {
                 // SAFETY: single-threaded at this point (Once guard) and before GPU init

@@ -38,25 +38,16 @@ pub(crate) struct WatchdogConfig {
 impl WatchdogConfig {
     /// Load watchdog configuration from environment variables.
     ///
+    /// Delegates to [`crate::config::watchdog_stall_timeout()`] and
+    /// [`crate::config::watchdog_abort_delay()`].
+    ///
     /// Returns `None` when watchdog is disabled.
     pub(crate) fn from_env() -> Option<Self> {
-        let stall_secs = std::env::var("NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0);
-
-        if stall_secs == 0 {
-            return None;
-        }
-
-        let abort_delay_secs = std::env::var("NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(2);
+        let stall_timeout = crate::config::watchdog_stall_timeout()?;
 
         Some(Self {
-            stall_timeout: Duration::from_secs(stall_secs),
-            abort_delay: Duration::from_secs(abort_delay_secs),
+            stall_timeout,
+            abort_delay: crate::config::watchdog_abort_delay(),
         })
     }
 }

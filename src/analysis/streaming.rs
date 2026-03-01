@@ -30,9 +30,6 @@ use std::time::Instant;
 // Constants
 // =============================================================================
 
-/// Default records per block (can be overridden by env var).
-const DEFAULT_BLOCK_SIZE: usize = 10000;
-
 /// Minimum records per block (for testing with small datasets).
 const MIN_BLOCK_SIZE: usize = 10;
 
@@ -62,38 +59,27 @@ impl Default for StreamingConfig {
 }
 
 /// Get streaming configuration from environment variables.
+///
+/// Delegates to [`crate::config`] accessors.
 pub fn get_streaming_config_from_env() -> StreamingConfig {
-    let max_cached_blocks = std::env::var("NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS")
-        .ok()
-        .and_then(|v| v.parse().ok());
-
-    let prefetch_depth = std::env::var("NEAT_AI_DISCOVERY_PREFETCH_DEPTH")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .or(Some(2));
-
     StreamingConfig {
-        max_cached_blocks,
-        prefetch_depth,
+        max_cached_blocks: crate::config::max_cached_blocks(),
+        prefetch_depth: Some(crate::config::prefetch_depth()),
     }
 }
 
 /// Check if streaming mode is enabled (vs full preload).
 ///
-/// Returns false if `NEAT_AI_DISCOVERY_PRELOAD_ALL=1` is set.
+/// Delegates to [`crate::config::streaming_enabled()`].
 pub fn is_streaming_enabled() -> bool {
-    std::env::var("NEAT_AI_DISCOVERY_PRELOAD_ALL")
-        .ok()
-        .is_none_or(|v| v != "1" && v.to_lowercase() != "true")
+    crate::config::streaming_enabled()
 }
 
 /// Get the block size from environment or use default.
+///
+/// Delegates to [`crate::config::block_size()`].
 fn get_block_size() -> usize {
-    std::env::var("NEAT_AI_DISCOVERY_BLOCK_SIZE")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_BLOCK_SIZE)
-        .max(MIN_BLOCK_SIZE)
+    crate::config::block_size()
 }
 
 /// Calculate an adaptive block size based on available memory (Issue #420).
