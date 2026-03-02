@@ -486,9 +486,10 @@ mod tests {
     }
 
     #[test]
-    fn test_prescreen_allows_mildly_negative_source() {
-        // Source with individual_improvement above MAX_INDIVIDUAL_HARM_FOR_PAIRING
-        // (e.g. -0.005 > -0.01) should NOT be pre-screened out.
+    fn test_prescreen_rejects_mildly_negative_source() {
+        // Issue #731: Threshold tightened from -0.01 to 0.0.
+        // A source with individual_improvement = -0.005 (mildly negative) should
+        // now be pre-screened out, since the threshold is 0.0.
         use crate::analysis::recommendation::epistatic::candidate_generation::{
             build_source_contribution, detect_epistatic_pairs,
         };
@@ -521,14 +522,14 @@ mod tests {
             ),
         ];
 
-        // Verify that detect_epistatic_pairs doesn't reject based on pre-screen.
-        // The pair may or may not be produced depending on combined improvement checks,
-        // but the pre-screen filter itself should not be the blocker.
-        // We verify this by checking that valid_sources includes both contributions
-        // (indirectly, by checking the function runs without filtering them out).
-        let _pairs = detect_epistatic_pairs("output-0", &contributions, 1.0);
-        // If both sources were pre-screened out, we'd get 0 valid_sources and return early.
-        // The function reaching the pairing logic (even if no pairs pass other checks)
-        // is sufficient evidence the pre-screen didn't over-filter.
+        // With threshold at 0.0, the mildly-negative source is rejected by pre-screen.
+        // Only one valid source remains, so no pairs can be formed.
+        let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0);
+        assert!(
+            pairs
+                .iter()
+                .all(|p| p.source_a_uuid != "mildly-neg" && p.source_b_uuid != "mildly-neg"),
+            "Mildly negative source should be pre-screened out with threshold 0.0"
+        );
     }
 }
