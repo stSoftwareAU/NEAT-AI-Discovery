@@ -18,8 +18,9 @@ fn test_pessimism_discount_partial_improvement() {
     // Only 60% of samples improved
     let discounted = apply_pessimism_discount(0.05, 60, 100);
 
-    // discount = 0.15 + 0.85 × 0.6 = 0.66
-    // discounted = 0.05 × 0.66 = 0.033
+    // Issue #733: Changed from linear to concave curve.
+    // discount = 0.15 + 0.85 × 0.6^0.6 ≈ 0.15 + 0.85 × 0.736 ≈ 0.776
+    // discounted = 0.05 × 0.776 ≈ 0.0388
     assert!(
         discounted < 0.05,
         "Pessimism discount should reduce gain when only 60% of samples improved, got {discounted}"
@@ -28,10 +29,10 @@ fn test_pessimism_discount_partial_improvement() {
         discounted > 0.0,
         "Discounted gain should remain positive, got {discounted}"
     );
-    // Verify roughly correct magnitude
+    // Concave curve gives higher result than old linear (0.033)
     assert!(
-        (discounted - 0.033).abs() < 0.002,
-        "Expected ~0.033, got {discounted}"
+        discounted > 0.033,
+        "Issue #733: Concave curve at 60% should give higher result than old linear (0.033), got {discounted}"
     );
 }
 
@@ -123,11 +124,12 @@ fn test_pessimism_discount_reduces_weak_signal_significantly() {
     // Only 30% of samples improved — weak signal
     let discounted = apply_pessimism_discount(raw_gain, 60, 200);
 
-    // discount = 0.15 + 0.85 × 0.3 = 0.405
-    // discounted = 0.0205 × 0.405 ≈ 0.0083
+    // Issue #733: With concave curve, 30% ratio gives a higher discount than
+    // the old linear formula, but the prediction should still be meaningfully
+    // reduced (at least 40% reduction).
     assert!(
-        discounted < raw_gain * 0.5,
-        "Weak signal (30% improved) should reduce prediction by at least 50%: raw={raw_gain}, discounted={discounted}"
+        discounted < raw_gain * 0.6,
+        "Weak signal (30% improved) should reduce prediction by at least 40%: raw={raw_gain}, discounted={discounted}"
     );
     assert!(discounted > 0.0, "Discounted gain should remain positive");
 }

@@ -119,43 +119,71 @@ fn evaluate_relu_split(
     };
 
     if let Some(mut candidate) = split_result.positive_error_candidate {
-        // Issue #130: Apply source variance discount
-        candidate.expected_creature_error_reduction *= source_variance_discount;
-        candidate.expected_creature_score_gain *= source_variance_discount;
+        // Issue #733: Filter neuron candidates where insufficient samples improve.
+        if !passes_neuron_improved_ratio(&candidate) {
+            if verbose_enabled() {
+                tracing::trace!(
+                    direction = "push UP",
+                    source_uuid = %source_uuid,
+                    target_uuid = %target_uuid,
+                    improved = candidate.improved_count,
+                    total = candidate.total_count,
+                    "ReLU candidate filtered by NEURON_MIN_IMPROVED_RATIO"
+                );
+            }
+        } else {
+            // Issue #130: Apply source variance discount
+            candidate.expected_creature_error_reduction *= source_variance_discount;
+            candidate.expected_creature_score_gain *= source_variance_discount;
 
-        if verbose_enabled() {
-            tracing::trace!(
-                direction = "push UP",
-                source_uuid = %source_uuid,
-                target_uuid = %target_uuid,
-                improvement_pct = format_args!("{:.2}", candidate.expected_creature_score_gain * 100.0),
-                variance_discount = format_args!("{:.2}", source_variance_discount),
-                "ReLU candidate identified"
-            );
+            if verbose_enabled() {
+                tracing::trace!(
+                    direction = "push UP",
+                    source_uuid = %source_uuid,
+                    target_uuid = %target_uuid,
+                    improvement_pct = format_args!("{:.2}", candidate.expected_creature_score_gain * 100.0),
+                    variance_discount = format_args!("{:.2}", source_variance_discount),
+                    "ReLU candidate identified"
+                );
+            }
+            ctx.diagnostics.mark_candidate_selected(target_uuid);
+            let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
+            upsert_candidate(&mut map, candidate);
         }
-        ctx.diagnostics.mark_candidate_selected(target_uuid);
-        let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
-        upsert_candidate(&mut map, candidate);
     }
 
     if let Some(mut candidate) = split_result.negative_error_candidate {
-        // Issue #130: Apply source variance discount
-        candidate.expected_creature_error_reduction *= source_variance_discount;
-        candidate.expected_creature_score_gain *= source_variance_discount;
+        // Issue #733: Filter neuron candidates where insufficient samples improve.
+        if !passes_neuron_improved_ratio(&candidate) {
+            if verbose_enabled() {
+                tracing::trace!(
+                    direction = "push DOWN",
+                    source_uuid = %source_uuid,
+                    target_uuid = %target_uuid,
+                    improved = candidate.improved_count,
+                    total = candidate.total_count,
+                    "ReLU candidate filtered by NEURON_MIN_IMPROVED_RATIO"
+                );
+            }
+        } else {
+            // Issue #130: Apply source variance discount
+            candidate.expected_creature_error_reduction *= source_variance_discount;
+            candidate.expected_creature_score_gain *= source_variance_discount;
 
-        if verbose_enabled() {
-            tracing::trace!(
-                direction = "push DOWN",
-                source_uuid = %source_uuid,
-                target_uuid = %target_uuid,
-                improvement_pct = format_args!("{:.2}", candidate.expected_creature_score_gain * 100.0),
-                variance_discount = format_args!("{:.2}", source_variance_discount),
-                "ReLU candidate identified"
-            );
+            if verbose_enabled() {
+                tracing::trace!(
+                    direction = "push DOWN",
+                    source_uuid = %source_uuid,
+                    target_uuid = %target_uuid,
+                    improvement_pct = format_args!("{:.2}", candidate.expected_creature_score_gain * 100.0),
+                    variance_discount = format_args!("{:.2}", source_variance_discount),
+                    "ReLU candidate identified"
+                );
+            }
+            ctx.diagnostics.mark_candidate_selected(target_uuid);
+            let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
+            upsert_candidate(&mut map, candidate);
         }
-        ctx.diagnostics.mark_candidate_selected(target_uuid);
-        let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
-        upsert_candidate(&mut map, candidate);
     }
 
     Ok(())
@@ -183,6 +211,11 @@ fn evaluate_activation_specs(
     };
 
     for mut candidate in batched_candidates {
+        // Issue #733: Filter neuron candidates where insufficient samples improve.
+        if !passes_neuron_improved_ratio(&candidate) {
+            continue;
+        }
+
         // Issue #130: Apply source variance discount
         candidate.expected_creature_error_reduction *= source_variance_discount;
         candidate.expected_creature_score_gain *= source_variance_discount;
@@ -193,4 +226,18 @@ fn evaluate_activation_specs(
     }
 
     Ok(())
+}
+
+/// Issue #733: Check whether a neuron candidate passes the minimum improved ratio threshold.
+///
+/// Filters out neuron candidates where insufficient samples show improvement,
+/// reducing candidate volume while retaining higher-quality candidates.
+fn passes_neuron_improved_ratio(candidate: &CandidateNeuronJson) -> bool {
+    use crate::analysis::constants::NEURON_MIN_IMPROVED_RATIO;
+
+    if candidate.total_count == 0 {
+        return false;
+    }
+    let improved_ratio = candidate.improved_count as f32 / candidate.total_count as f32;
+    improved_ratio >= NEURON_MIN_IMPROVED_RATIO
 }

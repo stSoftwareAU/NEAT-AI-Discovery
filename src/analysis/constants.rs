@@ -191,6 +191,19 @@ pub const MAX_INDIVIDUAL_HARM_FOR_PAIRING: f32 = 0.0;
 /// Values above 0.75 may over-filter legitimate candidates.
 pub const MIN_IMPROVED_RATIO: f32 = 0.5;
 
+/// Minimum ratio of improved samples required for a neuron candidate to be accepted.
+///
+/// Issue #733: The add-neurons module had a 14.1% success rate. Neuron candidates
+/// are inherently noisier than synapse candidates because they involve two new
+/// connections (incoming + outgoing) rather than one. A slightly lower threshold
+/// than `MIN_IMPROVED_RATIO` allows moderate-quality candidates through while
+/// still filtering out clearly bad ones.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Values below 0.3 provide insufficient filtering.
+/// Values above MIN_IMPROVED_RATIO may be too strict for neuron candidates.
+pub const NEURON_MIN_IMPROVED_RATIO: f32 = 0.4;
+
 /// Minimum pessimism discount applied to all score predictions.
 ///
 /// Production analysis (creature b2ff6e45, GRQ-sampler commit a1340f8d) showed
@@ -200,21 +213,45 @@ pub const MIN_IMPROVED_RATIO: f32 = 0.5;
 /// fraction of a single target neuron's squared error explained by sampled
 /// data, but this does not generalise directly to creature-level score gain.
 ///
-/// The pessimism discount scales predictions down based on the ratio of
-/// samples that actually improved (`improved_count / total_count`):
+/// The pessimism discount scales predictions down using a concave (power) curve
+/// based on the ratio of samples that actually improved:
 ///
 /// ```text
-/// discount = FLOOR + (1 - FLOOR) × (improved_count / total_count)
+/// improved_ratio = improved_count / total_count
+/// adjusted_ratio = improved_ratio ^ PESSIMISM_CURVE_EXPONENT
+/// discount = FLOOR + (1 - FLOOR) × adjusted_ratio
 /// discounted_gain = raw_gain × discount
 /// ```
 ///
-/// When all samples improve (ratio = 1.0), the discount equals 1.0 (only the
-/// floor applies). When few samples improve, the discount approaches the floor.
+/// Issue #733: Changed from linear to concave curve. The linear formula was
+/// too aggressive for add-neurons candidates (14.1% success rate), discounting
+/// moderate-quality candidates (30-60% improved ratio) excessively. The concave
+/// curve is more forgiving at moderate ratios while remaining aggressive at
+/// very low ratios (<10%).
 ///
 /// ## Valid Range
 /// Must be in (0.0, 1.0). Values below 0.1 risk zeroing-out legitimate candidates.
 /// Values above 0.5 provide insufficient correction.
 pub const PESSIMISM_DISCOUNT_FLOOR: f32 = 0.15;
+
+/// Exponent for the concave pessimism discount curve (Issue #733).
+///
+/// The improved ratio is raised to this power before being used in the discount
+/// formula. An exponent < 1.0 produces a concave curve that is:
+/// - More forgiving at moderate ratios (30-60%): retains add-neuron candidates
+///   with genuine but moderate signal
+/// - Still aggressive at very low ratios (<10%): filters out noise
+///
+/// With exponent 0.6:
+/// - ratio 0.1 → 0.1^0.6 ≈ 0.251 (aggressive)
+/// - ratio 0.4 → 0.4^0.6 ≈ 0.575 (forgiving vs linear 0.4)
+/// - ratio 0.7 → 0.7^0.6 ≈ 0.802 (forgiving vs linear 0.7)
+/// - ratio 1.0 → 1.0 (unchanged)
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0]. Values below 0.3 may over-flatten the curve.
+/// Values above 0.9 give near-linear behaviour with minimal benefit.
+pub const PESSIMISM_CURVE_EXPONENT: f32 = 0.6;
 
 // =============================================================================
 // NaN-safe Floating-Point Comparison Helpers (Issue #483)

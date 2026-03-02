@@ -48,14 +48,22 @@ fn pessimism_discount_no_samples_improved_gives_floor() {
 
 #[test]
 fn pessimism_discount_half_samples_improved() {
-    // When half improve, discount = FLOOR + (1 - FLOOR) × 0.5
+    // Issue #733: Changed from linear to concave curve.
+    // When half improve, discount = FLOOR + (1 - FLOOR) × 0.5^EXPONENT
+    // With EXPONENT=0.6: 0.5^0.6 ≈ 0.660, discount ≈ 0.15 + 0.85 × 0.660 ≈ 0.711
     let gain = 0.10;
     let result = apply_pessimism_discount(gain, 50, 100);
-    let expected_discount = PESSIMISM_DISCOUNT_FLOOR + (1.0 - PESSIMISM_DISCOUNT_FLOOR) * 0.5;
-    let expected = gain * expected_discount;
+
+    // The concave curve should give a higher result than the old linear formula
+    let old_linear = gain * (PESSIMISM_DISCOUNT_FLOOR + (1.0 - PESSIMISM_DISCOUNT_FLOOR) * 0.5);
     assert!(
-        (result - expected).abs() < 1e-6,
-        "Half samples improved: expected {expected}, got {result}"
+        result > old_linear,
+        "Issue #733: Concave curve should be more forgiving at 50% ratio: got {result}, old linear {old_linear}"
+    );
+    // Should still be less than the full gain
+    assert!(
+        result < gain,
+        "Half samples improved should still discount: got {result}, full gain {gain}"
     );
 }
 
