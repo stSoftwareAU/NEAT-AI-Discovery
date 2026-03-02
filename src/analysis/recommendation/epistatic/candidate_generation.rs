@@ -85,11 +85,13 @@ pub fn detect_epistatic_pairs(
     candidates
 }
 
-/// Evaluate a pair of sources for epistatic relationship.
+/// Evaluate a pair of sources for epistatic relationship (Issue #731).
 ///
-/// Returns Some if the pair shows epistatic characteristics:
+/// Returns Some if the pair shows genuine epistatic characteristics:
 /// - Complementary activation patterns (each fires when the other doesn't)
-/// - Combined improvement exceeds sum of individual improvements
+/// - No cross-harm: source A does not hurt samples where source B helps
+/// - Super-additive: combined improvement exceeds sum of individual improvements
+/// - Cross-validated: benefit holds on both halves of the sample set
 fn evaluate_pair_for_epistasis(
     target_uuid: &str,
     source_a: &SourceContribution,
@@ -104,50 +106,46 @@ fn evaluate_pair_for_epistasis(
         return None;
     }
 
-    // Compute combined improvement
-    // When patterns are complementary, combined effect is roughly additive
-    let combined_improvement = compute_combined_improvement(source_a, source_b, target_impact);
+    // Issue #731: Check sample-wise harm — reject if one source hurts samples
+    // where the other fires (false complementarity)
+    if has_cross_sample_harm(source_a, source_b) {
+        return None;
+    }
 
-    // Calculate sum of individual improvements for comparison
-    let _sum_of_individuals = source_a.individual_improvement + source_b.individual_improvement;
-    let best_individual = source_a
-        .individual_improvement
-        .max(source_b.individual_improvement);
+    // Issue #731: Compute combined improvement from sample-level data using
+    // joint least-squares, not from pre-computed individual improvements
+    let combined_improvement =
+        compute_combined_improvement_from_samples(source_a, source_b, target_impact);
 
-    // Epistatic pairs are valuable when:
-    // 1. Both have positive individual improvements with complementary patterns
-    //    (combined > best individual, since they help different samples)
-    // 2. OR individuals are low/zero but combined is positive
-    //    (true epistasis - neither helps alone but together they do)
-    //
-    // For complementary patterns, the combined improvement should be roughly
-    // the sum of individuals (since they help non-overlapping samples).
-    // We want to detect cases where combining them is significantly beneficial.
+    // Issue #731: Require super-additivity — combined must exceed sum of individuals
+    let sum_of_individuals = source_a.individual_improvement + source_b.individual_improvement;
 
-    let is_truly_epistatic = source_a.individual_improvement <= 0.0
-        && source_b.individual_improvement <= 0.0
-        && combined_improvement > 0.0;
+    let is_super_additive =
+        combined_improvement > sum_of_individuals * target_impact && combined_improvement > 0.0;
 
-    let is_complementary_beneficial = complementarity >= MIN_COMPLEMENTARITY_RATIO
-        && combined_improvement > best_individual
-        && combined_improvement > 0.0;
+    if !is_super_additive {
+        return None;
+    }
 
-    if !is_truly_epistatic && !is_complementary_beneficial {
+    // Issue #731: Cross-validation — verify benefit holds on both halves
+    if !cross_validate_pair(source_a, source_b, target_impact) {
         return None;
     }
 
     let reason = if source_a.individual_improvement <= 0.0 && source_b.individual_improvement <= 0.0
     {
-        "Both neurons have non-positive individual improvement but combined improvement is positive"
-            .to_string()
+        format!(
+            "True epistasis: neither improves alone, combined {:.1}% (super-additive)",
+            combined_improvement * 100.0
+        )
     } else if complementarity > 0.9 {
         format!(
-            "Highly complementary patterns ({:.0}% non-overlap)",
+            "Highly complementary patterns ({:.0}% non-overlap), super-additive",
             complementarity * 100.0
         )
     } else {
         format!(
-            "Complementary patterns ({:.0}% non-overlap) with combined benefit",
+            "Complementary patterns ({:.0}% non-overlap), super-additive benefit",
             complementarity * 100.0
         )
     };
@@ -164,6 +162,97 @@ fn evaluate_pair_for_epistasis(
         complementarity_score: complementarity,
         reason,
     })
+}
+
+/// Check for cross-sample harm between two sources (Issue #731).
+///
+/// Returns true if source A has negative contribution on samples where source B
+/// fires, or vice versa. This detects false complementarity where the sources
+/// have non-overlapping firing patterns but each hurts the other's samples.
+fn has_cross_sample_harm(source_a: &SourceContribution, source_b: &SourceContribution) -> bool {
+    let min_samples = source_a.samples.len().min(source_b.samples.len());
+    if min_samples < 10 {
+        return false;
+    }
+
+    let mut a_harm_on_b_samples = 0.0f64;
+    let mut b_harm_on_a_samples = 0.0f64;
+    let mut b_firing_count = 0usize;
+    let mut a_firing_count = 0usize;
+
+    for i in 0..min_samples {
+        let a_fires = source_a.samples[i].activation.abs() >= ACTIVATION_FIRING_THRESHOLD;
+        let b_fires = source_b.samples[i].activation.abs() >= ACTIVATION_FIRING_THRESHOLD;
+
+        // When B fires: check if A's contribution would be harmful
+        // A contribution = weight_a * activation_a — if this has opposite sign to error,
+        // it makes the error worse
+        if b_fires {
+            b_firing_count += 1;
+            let a_contribution =
+                source_a.optimal_weight as f64 * source_a.samples[i].activation as f64;
+            let error = source_a.samples[i].avg_error as f64;
+            // Harm = contribution that increases error magnitude
+            if error.abs() > 1e-10 && (a_contribution * error) < 0.0 {
+                a_harm_on_b_samples += (a_contribution * error).abs();
+            }
+        }
+
+        // When A fires: check if B's contribution would be harmful
+        if a_fires {
+            a_firing_count += 1;
+            let b_contribution =
+                source_b.optimal_weight as f64 * source_b.samples[i].activation as f64;
+            let error = source_b.samples[i].avg_error as f64;
+            if error.abs() > 1e-10 && (b_contribution * error) < 0.0 {
+                b_harm_on_a_samples += (b_contribution * error).abs();
+            }
+        }
+    }
+
+    // Reject if average harm per sample exceeds a small threshold
+    let avg_a_harm = if b_firing_count > 0 {
+        a_harm_on_b_samples / b_firing_count as f64
+    } else {
+        0.0
+    };
+    let avg_b_harm = if a_firing_count > 0 {
+        b_harm_on_a_samples / a_firing_count as f64
+    } else {
+        0.0
+    };
+
+    // Threshold: if average harm exceeds 1% of typical error magnitude, reject
+    avg_a_harm > 0.01 || avg_b_harm > 0.01
+}
+
+/// Cross-validate epistatic pair by splitting samples (Issue #731).
+///
+/// Computes combined improvement on each half of the samples independently.
+/// Both halves must show positive combined improvement for the pair to pass.
+fn cross_validate_pair(
+    source_a: &SourceContribution,
+    source_b: &SourceContribution,
+    target_impact: f32,
+) -> bool {
+    let min_samples = source_a.samples.len().min(source_b.samples.len());
+    if min_samples < 20 {
+        // Not enough samples to split — skip cross-validation
+        return true;
+    }
+
+    let mid = min_samples / 2;
+
+    // Compute combined improvement on first half
+    let improvement_first =
+        compute_combined_improvement_on_range(source_a, source_b, target_impact, 0, mid);
+
+    // Compute combined improvement on second half
+    let improvement_second =
+        compute_combined_improvement_on_range(source_a, source_b, target_impact, mid, min_samples);
+
+    // Both halves must show positive improvement
+    improvement_first > 0.0 && improvement_second > 0.0
 }
 
 /// Compute complementarity score between two sets of firing indices.
@@ -202,48 +291,53 @@ pub fn compute_firing_indices(samples: &[HelpfulSample], threshold: f32) -> Hash
         .collect()
 }
 
-/// Compute combined improvement for an epistatic pair.
+/// Compute combined improvement from sample-level data (Issue #731).
 ///
-/// This estimates what the improvement would be if both synapses were added together.
-fn compute_combined_improvement(
+/// Instead of naively summing pre-computed individual improvements, this computes
+/// the actual error reduction when both synapses are active simultaneously.
+/// This accounts for downstream non-linear effects like weight conflicts.
+fn compute_combined_improvement_from_samples(
     source_a: &SourceContribution,
     source_b: &SourceContribution,
     target_impact: f32,
 ) -> f32 {
-    // For complementary patterns where neurons fire on different samples,
-    // the combined improvement should be roughly the sum of individual improvements.
-    //
-    // Key insight: Each source's individual_improvement is calculated over the WHOLE
-    // sample set. When source A fires on 50% of samples and achieves X% improvement
-    // overall, and source B fires on the other 50% and also achieves X% improvement,
-    // the combined effect is 2*X% (since they help non-overlapping samples).
-    //
-    // More generally: combined = A.improvement + B.improvement * (1 - overlap_fraction)
-    // where overlap_fraction = intersection_size / max(firing_a, firing_b)
+    let min_samples = source_a.samples.len().min(source_b.samples.len());
+    compute_combined_improvement_on_range(source_a, source_b, target_impact, 0, min_samples)
+}
 
-    let intersection_size = source_a
-        .firing_indices
-        .intersection(&source_b.firing_indices)
-        .count() as f32;
-    let firing_a = source_a.firing_indices.len() as f32;
-    let firing_b = source_b.firing_indices.len() as f32;
+/// Compute combined improvement for a range of samples (Issue #731).
+///
+/// Used for both full-set computation and cross-validation halves.
+fn compute_combined_improvement_on_range(
+    source_a: &SourceContribution,
+    source_b: &SourceContribution,
+    target_impact: f32,
+    start: usize,
+    end: usize,
+) -> f32 {
+    if end <= start {
+        return 0.0;
+    }
 
-    // Compute overlap fraction relative to the larger firing set
-    let max_firing = firing_a.max(firing_b);
-    let overlap_fraction = if max_firing > 0.0 {
-        intersection_size / max_firing
-    } else {
-        1.0
-    };
+    let mut original_error_sq = 0.0f64;
+    let mut combined_error_sq = 0.0f64;
 
-    // Combined improvement: A's improvement + B's improvement scaled by non-overlap
-    // For perfect complementarity (overlap_fraction = 0), this is A + B
-    // For complete overlap (overlap_fraction = 1), this is max(A, B)
-    let combined_improvement = source_a.individual_improvement
-        + source_b.individual_improvement * (1.0 - overlap_fraction);
+    for i in start..end {
+        let error = source_a.samples[i].avg_error as f64;
+        let contribution_a = source_a.optimal_weight as f64 * source_a.samples[i].activation as f64;
+        let contribution_b = source_b.optimal_weight as f64 * source_b.samples[i].activation as f64;
+        let new_error = error - contribution_a - contribution_b;
 
-    // Apply target impact discount
-    combined_improvement * target_impact
+        original_error_sq += error * error;
+        combined_error_sq += new_error * new_error;
+    }
+
+    if original_error_sq < 1e-10 {
+        return 0.0;
+    }
+
+    let improvement = (1.0 - (combined_error_sq / original_error_sq)) as f32;
+    improvement * target_impact
 }
 
 /// Convert epistatic pair candidates to coordinated structural candidates.

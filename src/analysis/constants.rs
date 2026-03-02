@@ -164,14 +164,13 @@ pub const EXISTING_HIDDEN_TARGET_BOOST: f64 = 1.5;
 ///
 /// Before forming a coordinated pair, each individual operation is pre-screened:
 /// if its `individual_improvement` is below this threshold, it is excluded from
-/// pairing. A value of −0.01 allows mildly negative sources (true epistatic
-/// candidates) while rejecting strongly harmful ones.
+/// pairing. Issue #731 tightened this from −0.01 to 0.0 because production data
+/// showed that even mildly harmful sources (e.g. −0.005) consistently caused
+/// combo-successful failures — the partner could never overcome the damage.
 ///
 /// ## Valid Range
-/// Must be <= 0.0 (negative means harmful). Values below −0.05 provide
-/// insufficient protection; values above −0.001 may over-filter genuine
-/// epistatic pairs.
-pub const MAX_INDIVIDUAL_HARM_FOR_PAIRING: f32 = -0.01;
+/// Must be >= 0.0 to exclude all harmful individual sources from pairing.
+pub const MAX_INDIVIDUAL_HARM_FOR_PAIRING: f32 = 0.0;
 
 // =============================================================================
 // Pessimism Discount (Issue #506)
