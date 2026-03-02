@@ -13,7 +13,8 @@ use std::collections::HashMap;
 
 // Boosting and discount constants
 use crate::analysis::constants::{
-    EXISTING_HIDDEN_TARGET_BOOST, INPUT_SOURCE_BOOST, PESSIMISM_DISCOUNT_FLOOR,
+    EXISTING_HIDDEN_TARGET_BOOST, INPUT_SOURCE_BOOST, PESSIMISM_CURVE_EXPONENT,
+    PESSIMISM_DISCOUNT_FLOOR,
 };
 
 // =============================================================================
@@ -580,9 +581,14 @@ pub(crate) fn compute_synapse_improvement_and_count(
 ///
 /// ## Formula
 ///
+/// Issue #733: Changed from linear to concave (power) curve. The linear formula
+/// was too aggressive for add-neurons candidates, discounting moderate-quality
+/// candidates excessively.
+///
 /// ```text
 /// improved_ratio = improved_count / total_count
-/// discount = PESSIMISM_DISCOUNT_FLOOR + (1 - PESSIMISM_DISCOUNT_FLOOR) × improved_ratio
+/// adjusted_ratio = improved_ratio ^ PESSIMISM_CURVE_EXPONENT
+/// discount = PESSIMISM_DISCOUNT_FLOOR + (1 - PESSIMISM_DISCOUNT_FLOOR) × adjusted_ratio
 /// result = gain × discount
 /// ```
 ///
@@ -594,7 +600,8 @@ pub fn apply_pessimism_discount(gain: f32, improved_count: u32, total_count: u32
         return gain * PESSIMISM_DISCOUNT_FLOOR;
     }
     let improved_ratio = improved_count as f32 / total_count as f32;
-    let discount = PESSIMISM_DISCOUNT_FLOOR + (1.0 - PESSIMISM_DISCOUNT_FLOOR) * improved_ratio;
+    let adjusted_ratio = improved_ratio.powf(PESSIMISM_CURVE_EXPONENT);
+    let discount = PESSIMISM_DISCOUNT_FLOOR + (1.0 - PESSIMISM_DISCOUNT_FLOOR) * adjusted_ratio;
     gain * discount
 }
 
