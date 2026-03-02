@@ -58,7 +58,7 @@ pub mod recommendation;
 pub mod scoring;
 
 // Orchestration sub-modules (Issue #562)
-pub(crate) mod candidate_aggregation;
+pub mod candidate_aggregation;
 pub(crate) mod module_dispatch_specs;
 mod orchestration;
 
