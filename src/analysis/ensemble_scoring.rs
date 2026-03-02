@@ -232,7 +232,19 @@ fn combine_agreeing_candidates(
     // Apply agreement boost to the best raw score.
     // boost = 1.0 + AGREEMENT_BOOST_FACTOR * (n - 1) / n
     // For n=2: 1.15, n=3: 1.20, n=4: 1.225, etc.
-    let boost = 1.0 + AGREEMENT_BOOST_FACTOR * (n - 1.0) / n;
+    //
+    // Issue #732: Cap the boost for multi-operation candidates. Complex coordinated
+    // candidates (multiple operations) have compounding prediction uncertainty, so
+    // the ensemble agreement boost is reduced proportionally to the operation count.
+    let max_ops = group.iter().map(|c| c.operations.len()).max().unwrap_or(1);
+    let base_boost = AGREEMENT_BOOST_FACTOR * (n - 1.0) / n;
+    let capped_boost = if max_ops > 1 {
+        // Scale down boost: 1 op = full boost, 4 ops = ~33% of boost
+        base_boost / (max_ops as f32)
+    } else {
+        base_boost
+    };
+    let boost = 1.0 + capped_boost;
     let ensemble_score = best_raw_gain * boost;
 
     // Use the best-weighted candidate as the template, update its score and comment.

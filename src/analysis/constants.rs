@@ -248,3 +248,36 @@ pub fn cmp_f32_asc(a: &f32, b: &f32) -> std::cmp::Ordering {
 pub fn cmp_f64_desc(a: &f64, b: &f64) -> std::cmp::Ordering {
     b.total_cmp(a)
 }
+
+// =============================================================================
+// Coordinated-Structural Validation (Issue #732)
+// =============================================================================
+
+/// Per-operation compounding uncertainty discount for multi-operation candidates.
+///
+/// Production analysis shows coordinated-structural candidates have a 1.9% success
+/// rate because each operation's prediction uncertainty compounds when combined.
+/// For a candidate with N operations, the discount is:
+///
+/// ```text
+/// discount = COORDINATED_OPERATION_DISCOUNT ^ (N - 1)
+/// ```
+///
+/// With a factor of 0.8, a 4-operation candidate receives 0.8^3 = 0.512 discount,
+/// roughly halving the predicted gain to account for inter-operation interference.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Values below 0.5 may over-discount legitimate candidates.
+/// Values above 0.95 provide insufficient correction.
+pub const COORDINATED_OPERATION_DISCOUNT: f32 = 0.8;
+
+/// Minimum absolute gain required for a multi-operation coordinated candidate.
+///
+/// Single-operation candidates are accepted with any positive gain, but
+/// multi-operation candidates (>= 2 operations) must exceed this threshold
+/// after discounting. This prevents near-zero predictions from generating
+/// candidates that almost never succeed.
+///
+/// ## Valid Range
+/// Must be > 0.0. Values above 1e-4 may filter too aggressively.
+pub const MIN_COORDINATED_MULTI_OP_GAIN: f32 = 1e-5;
