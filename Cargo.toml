@@ -92,6 +92,10 @@ harness = false
 name = "gpu_shader_workgroup"
 harness = false
 
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 # Lint configuration (Issue #675)
 # Selectively enable useful pedantic and nursery lints.
 [lints.clippy]
