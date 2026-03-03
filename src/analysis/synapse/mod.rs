@@ -85,8 +85,7 @@ use crate::analysis::shared::AnalyzeSynapsesResult;
 use crate::analysis::diagnostics::{TargetDiagnostics, require_unique_focus};
 
 use crate::analysis::utils::{
-    build_deadline, deadline_passed, lock_or_bail, log_analysis_start, log_analysis_timeout,
-    order_focus_targets,
+    build_deadline, deadline_passed, log_analysis_start, log_analysis_timeout, order_focus_targets,
 };
 
 use crate::analysis::gpu::{GpuAnalyzer, GpuWorkQueue};
@@ -95,7 +94,8 @@ use super::cache::RecordCache;
 
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 // =============================================================================
 // Core Implementation
@@ -138,15 +138,16 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     );
 
     let total_focus_count = focus_order.len();
-    let completed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let completed_count = Arc::new(AtomicUsize::new(0));
 
     assert!(
         GpuAnalyzer::gpu_is_available(),
         "Discovery logic called without GPU - check_gpu_available should have prevented this"
     );
 
-    // Phase 3: Shared result collections for parallel processing
-    let collectors = SharedResultCollectors::new();
+    // Phase 3: Shared atomic state for parallel processing (lock-free)
+    let metadata = Arc::new(AtomicMetadata::new());
+    let analysis_timed_out = Arc::new(AtomicBool::new(false));
 
     // Phase 4: Compute constant-source threshold
     let constant_source_effect_threshold =
@@ -172,15 +173,16 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         threshold: 0.0,
     });
 
-    // Phase 6: Process each focus neuron in parallel
-    focus_order
+    // Phase 6: Process each focus neuron in parallel — thread-local collection (Issue #744)
+    //
+    // Each thread returns its own TargetAnalysisResults, avoiding mutex contention.
+    // Results are merged in a single-threaded pass after the parallel section.
+    let per_target_results: Vec<Option<target_analysis::TargetAnalysisResults>> = focus_order
         .par_iter()
-        .try_for_each(|target_uuid| -> Result<()> {
-            if *lock_or_bail(&collectors.analysis_timed_out, "analysis_timed_out")?
-                || deadline_passed(&deadline)
-            {
-                *lock_or_bail(&collectors.analysis_timed_out, "analysis_timed_out")? = true;
-                return Ok(());
+        .map(|target_uuid| -> Result<Option<target_analysis::TargetAnalysisResults>> {
+            if analysis_timed_out.load(Ordering::Relaxed) || deadline_passed(&deadline) {
+                analysis_timed_out.store(true, Ordering::Relaxed);
+                return Ok(None);
             }
 
             let target_results = target_analysis::analyse_single_target(
@@ -191,18 +193,27 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                 &ctx,
             )?;
 
-            collectors.merge_target_results(target_results)?;
+            // Update lock-free atomic metadata
+            metadata.merge_atomic(&target_results);
 
             let completed =
-                completed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                completed_count.fetch_add(1, Ordering::Relaxed) + 1;
             crate::watchdog::beat(format!(
                 "synapse analysis → completed {completed}/{total_focus_count} (last target {target_uuid})"
             ));
-            Ok(())
-        })?;
+            Ok(Some(target_results))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    // Phase 7: Collect results and build final output
-    finalise_synapse_results(&FinaliseParams {
+    // Phase 7: Single-threaded merge (fast, no contention)
+    let collectors = MergedResults::from_per_target(
+        per_target_results,
+        analysis_timed_out.load(Ordering::Relaxed),
+        metadata,
+    );
+
+    // Phase 8: Collect results and build final output
+    finalise_synapse_results(FinaliseParams {
         collectors,
         completed_count,
         total_focus_count,
@@ -214,95 +225,98 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     })
 }
 
-/// Shared mutable state collected during parallel target analysis.
-struct SharedResultCollectors {
-    helpful_results: Arc<Mutex<Vec<CandidateSynapseJson>>>,
-    harmful_results: Arc<Mutex<Vec<CandidateSynapseJson>>>,
-    coordinated_structural_results: Arc<Mutex<Vec<crate::CoordinatedStructuralCandidateJson>>>,
-    helpful_fallback: Arc<Mutex<Option<CandidateSynapseJson>>>,
-    analysis_timed_out: Arc<Mutex<bool>>,
-    error_values_for_distribution: Arc<Mutex<Vec<f32>>>,
-    metadata_target_value_seen: Arc<std::sync::atomic::AtomicBool>,
-    metadata_saturation_aware_used: Arc<std::sync::atomic::AtomicBool>,
-    metadata_seen_any_input_with_records: Arc<std::sync::atomic::AtomicBool>,
-    metadata_input_min_with_records: Arc<std::sync::atomic::AtomicUsize>,
-    metadata_input_max_with_records: Arc<std::sync::atomic::AtomicUsize>,
+/// Lock-free atomic metadata collected during parallel target analysis (Issue #744).
+///
+/// These fields use atomics so they can be updated from rayon threads without
+/// mutex contention. The Vec-based collections (helpful, harmful, coordinated,
+/// error values) are collected per-thread and merged afterwards.
+struct AtomicMetadata {
+    target_value_seen: AtomicBool,
+    saturation_aware_used: AtomicBool,
+    seen_any_input_with_records: AtomicBool,
+    input_min_with_records: AtomicUsize,
+    input_max_with_records: AtomicUsize,
 }
 
-impl SharedResultCollectors {
+impl AtomicMetadata {
     fn new() -> Self {
         Self {
-            helpful_results: Arc::new(Mutex::new(Vec::new())),
-            harmful_results: Arc::new(Mutex::new(Vec::new())),
-            coordinated_structural_results: Arc::new(Mutex::new(Vec::new())),
-            helpful_fallback: Arc::new(Mutex::new(None)),
-            analysis_timed_out: Arc::new(Mutex::new(false)),
-            error_values_for_distribution: Arc::new(Mutex::new(Vec::new())),
-            metadata_target_value_seen: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            metadata_saturation_aware_used: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            metadata_seen_any_input_with_records: Arc::new(std::sync::atomic::AtomicBool::new(
-                false,
-            )),
-            metadata_input_min_with_records: Arc::new(std::sync::atomic::AtomicUsize::new(
-                usize::MAX,
-            )),
-            metadata_input_max_with_records: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            target_value_seen: AtomicBool::new(false),
+            saturation_aware_used: AtomicBool::new(false),
+            seen_any_input_with_records: AtomicBool::new(false),
+            input_min_with_records: AtomicUsize::new(usize::MAX),
+            input_max_with_records: AtomicUsize::new(0),
         }
     }
 
-    /// Merge a single target's results into the shared collections.
-    fn merge_target_results(
-        &self,
-        target_results: target_analysis::TargetAnalysisResults,
-    ) -> Result<()> {
-        if !target_results.helpful.is_empty() {
-            lock_or_bail(&self.helpful_results, "helpful_results")?.extend(target_results.helpful);
-        }
-        if !target_results.harmful.is_empty() {
-            lock_or_bail(&self.harmful_results, "harmful_results")?.extend(target_results.harmful);
-        }
-        if !target_results.coordinated.is_empty() {
-            lock_or_bail(
-                &self.coordinated_structural_results,
-                "coordinated_structural_results",
-            )?
-            .extend(target_results.coordinated);
-        }
-        if !target_results.error_values.is_empty() {
-            lock_or_bail(
-                &self.error_values_for_distribution,
-                "error_values_for_distribution",
-            )?
-            .extend(target_results.error_values);
-        }
+    /// Update atomic metadata from a single target's results (lock-free).
+    fn merge_atomic(&self, target_results: &target_analysis::TargetAnalysisResults) {
         if target_results.target_value_seen {
-            self.metadata_target_value_seen
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.target_value_seen.store(true, Ordering::Relaxed);
         }
         if target_results.saturation_aware_used {
-            self.metadata_saturation_aware_used
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.saturation_aware_used.store(true, Ordering::Relaxed);
         }
         if target_results.input_metadata.seen_any {
-            self.metadata_seen_any_input_with_records
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            let _ = self.metadata_input_min_with_records.fetch_min(
-                target_results.input_metadata.min_index,
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            let _ = self.metadata_input_max_with_records.fetch_max(
-                target_results.input_metadata.max_index,
-                std::sync::atomic::Ordering::Relaxed,
-            );
+            self.seen_any_input_with_records
+                .store(true, Ordering::Relaxed);
+            let _ = self
+                .input_min_with_records
+                .fetch_min(target_results.input_metadata.min_index, Ordering::Relaxed);
+            let _ = self
+                .input_max_with_records
+                .fetch_max(target_results.input_metadata.max_index, Ordering::Relaxed);
         }
-        Ok(())
+    }
+}
+
+/// Merged results from all per-target analyses (Issue #744).
+///
+/// Built in a single-threaded pass after the parallel section completes,
+/// avoiding mutex contention entirely during the parallel phase.
+struct MergedResults {
+    helpful_results: Vec<CandidateSynapseJson>,
+    harmful_results: Vec<CandidateSynapseJson>,
+    coordinated_structural_results: Vec<crate::CoordinatedStructuralCandidateJson>,
+    error_values_for_distribution: Vec<f32>,
+    analysis_timed_out: bool,
+    metadata: Arc<AtomicMetadata>,
+}
+
+impl MergedResults {
+    /// Merge per-target results into a single collection (single-threaded, no contention).
+    fn from_per_target(
+        per_target: Vec<Option<target_analysis::TargetAnalysisResults>>,
+        timed_out: bool,
+        metadata: Arc<AtomicMetadata>,
+    ) -> Self {
+        let mut helpful_results = Vec::new();
+        let mut harmful_results = Vec::new();
+        let mut coordinated_structural_results = Vec::new();
+        let mut error_values_for_distribution = Vec::new();
+
+        for result in per_target.into_iter().flatten() {
+            helpful_results.extend(result.helpful);
+            harmful_results.extend(result.harmful);
+            coordinated_structural_results.extend(result.coordinated);
+            error_values_for_distribution.extend(result.error_values);
+        }
+
+        Self {
+            helpful_results,
+            harmful_results,
+            coordinated_structural_results,
+            error_values_for_distribution,
+            analysis_timed_out: timed_out,
+            metadata,
+        }
     }
 }
 
 /// Parameters for the result finalisation phase.
 struct FinaliseParams<'a> {
-    collectors: SharedResultCollectors,
-    completed_count: Arc<std::sync::atomic::AtomicUsize>,
+    collectors: MergedResults,
+    completed_count: Arc<AtomicUsize>,
     total_focus_count: usize,
     diagnostics: Arc<TargetDiagnostics>,
     timing_collector: Arc<super::shared::TimingCollector>,
@@ -311,34 +325,18 @@ struct FinaliseParams<'a> {
     order_map: &'a HashMap<String, usize>,
 }
 
-/// Collect results from shared state, apply post-processing, and build the final output.
-fn finalise_synapse_results(params: &FinaliseParams<'_>) -> Result<AnalyzeSynapsesResult> {
-    let c = &params.collectors;
-    let analysis_timed_out = *lock_or_bail(&c.analysis_timed_out, "analysis_timed_out")?;
-    let mut helpful_results =
-        std::mem::take(&mut *lock_or_bail(&c.helpful_results, "helpful_results")?);
-    let mut harmful_results =
-        std::mem::take(&mut *lock_or_bail(&c.harmful_results, "harmful_results")?);
-    let mut coordinated_structural_results = std::mem::take(&mut *lock_or_bail(
-        &c.coordinated_structural_results,
-        "coordinated_structural_results",
-    )?);
-    let mut helpful_fallback = lock_or_bail(&c.helpful_fallback, "helpful_fallback")?.take();
+/// Collect results from merged state, apply post-processing, and build the final output.
+fn finalise_synapse_results(params: FinaliseParams<'_>) -> Result<AnalyzeSynapsesResult> {
+    let c = params.collectors;
+    let analysis_timed_out = c.analysis_timed_out;
+    let mut helpful_results = c.helpful_results;
+    let mut harmful_results = c.harmful_results;
+    let mut coordinated_structural_results = c.coordinated_structural_results;
+    let error_values = c.error_values_for_distribution;
 
     if analysis_timed_out {
-        let completed = params
-            .completed_count
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let completed = params.completed_count.load(Ordering::Relaxed);
         log_analysis_timeout("synapse", completed, params.total_focus_count);
-    }
-
-    if helpful_results.is_empty()
-        && let Some(candidate) = helpful_fallback.take()
-    {
-        params
-            .diagnostics
-            .mark_candidate_selected(&candidate.to_neuron_uuid);
-        helpful_results.push(candidate);
     }
 
     // Collapse 1-in/1-out hidden neurons into direct synapses (Issue #425)
@@ -359,40 +357,24 @@ fn finalise_synapse_results(params: &FinaliseParams<'_>) -> Result<AnalyzeSynaps
     let no_candidate_reasons = params.diagnostics.no_candidate_summaries();
     params.diagnostics.emit_logs();
 
-    // Build metadata
-    let saw_any_input = c
-        .metadata_seen_any_input_with_records
-        .load(std::sync::atomic::Ordering::Relaxed);
-    let input_min = c
-        .metadata_input_min_with_records
-        .load(std::sync::atomic::Ordering::Relaxed);
-    let input_max = c
-        .metadata_input_max_with_records
-        .load(std::sync::atomic::Ordering::Relaxed);
-
-    let error_vec = std::mem::take(&mut *lock_or_bail(
-        &c.error_values_for_distribution,
-        "error_values_for_distribution",
-    )?);
+    // Build metadata from atomics
+    let m = &c.metadata;
+    let saw_any_input = m.seen_any_input_with_records.load(Ordering::Relaxed);
+    let input_min = m.input_min_with_records.load(Ordering::Relaxed);
+    let input_max = m.input_max_with_records.load(Ordering::Relaxed);
 
     let metadata = post_processing::build_metadata(&post_processing::MetadataParams {
-        target_value_seen: c
-            .metadata_target_value_seen
-            .load(std::sync::atomic::Ordering::Relaxed),
-        saturation_aware_used: c
-            .metadata_saturation_aware_used
-            .load(std::sync::atomic::Ordering::Relaxed),
+        target_value_seen: m.target_value_seen.load(Ordering::Relaxed),
+        saturation_aware_used: m.saturation_aware_used.load(Ordering::Relaxed),
         candidates_found: pp_metrics.candidates_found,
         candidates_returned: pp_metrics.candidates_returned,
         analysis_timed_out,
-        completed_focus_neurons: params
-            .completed_count
-            .load(std::sync::atomic::Ordering::Relaxed),
+        completed_focus_neurons: params.completed_count.load(Ordering::Relaxed),
         total_focus_neurons: params.total_focus_count,
         saw_any_input,
         input_min,
         input_max,
-        error_values: &error_vec,
+        error_values: &error_values,
         timing_collector: &params.timing_collector,
     });
 
