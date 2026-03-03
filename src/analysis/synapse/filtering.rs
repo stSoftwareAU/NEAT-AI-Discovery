@@ -24,7 +24,10 @@ use super::scoring::{
 // =============================================================================
 
 /// Deterministic UUID generator for coordinated structural `addNeuron` operations.
-pub(crate) fn deterministic_coordinated_neuron_uuid(
+///
+/// Hashes component bytes directly using FNV-1a without building an intermediate
+/// `String`, eliminating one allocation per candidate (Issue #743).
+pub fn deterministic_coordinated_neuron_uuid(
     source_uuid: &str,
     target_uuid: &str,
     squash: &str,
@@ -32,14 +35,29 @@ pub(crate) fn deterministic_coordinated_neuron_uuid(
     outgoing_weight: f32,
     bias: f32,
 ) -> String {
-    let key = format!(
-        "replace-synapse-with-neuron|{source_uuid}|{target_uuid}|{squash}|{incoming_weight:.6}|{outgoing_weight:.6}|{bias:.6}"
-    );
-    // FNV-1a 64-bit
+    // FNV-1a 64-bit — hash each component directly with separator bytes
     let mut hash: u64 = 0xcbf29ce484222325;
-    for b in key.as_bytes() {
-        hash ^= *b as u64;
+    for part in &[
+        b"replace-synapse-with-neuron" as &[u8],
+        source_uuid.as_bytes(),
+        target_uuid.as_bytes(),
+        squash.as_bytes(),
+    ] {
+        hash ^= b'|' as u64;
         hash = hash.wrapping_mul(0x100000001b3);
+        for &b in *part {
+            hash ^= b as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    // Hash floats as their bit representation to avoid formatting entirely
+    for val in [incoming_weight, outgoing_weight, bias] {
+        hash ^= b'|' as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+        for b in val.to_bits().to_le_bytes() {
+            hash ^= b as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
     }
     format!("coordinated-hidden-{hash:016x}")
 }
