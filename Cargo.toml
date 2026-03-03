@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.45.0"
+version = "0.46.0"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -90,6 +90,10 @@ harness = false
 
 [[bench]]
 name = "gpu_shader_workgroup"
+harness = false
+
+[[bench]]
+name = "uuid_hashing"
 harness = false
 
 [profile.release]

@@ -45,9 +45,10 @@ pub(crate) use candidate_generation::{
     group_sources_by_locality,
 };
 
+pub use filtering::deterministic_coordinated_neuron_uuid;
 pub(crate) use filtering::{
-    ReplaceSynapseParams, deterministic_coordinated_neuron_uuid,
-    expected_gain_replace_synapse_with_hidden_neuron, truncate_combined_synapse_candidate_sets,
+    ReplaceSynapseParams, expected_gain_replace_synapse_with_hidden_neuron,
+    truncate_combined_synapse_candidate_sets,
 };
 
 pub(crate) use gpu_evaluation::{

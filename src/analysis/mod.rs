@@ -79,8 +79,9 @@ pub use gpu::GpuAnalyzer;
 pub use gpu::supports_unified_memory;
 pub use neuron::analyze_neurons;
 pub use synapse::analyze_synapses;
-// Re-export benchmark helper function for use in benches/
+// Re-export benchmark helper functions for use in benches/
 pub use synapse::analyze_synapses_with_cache_and_gpu_queue;
+pub use synapse::deterministic_coordinated_neuron_uuid;
 
 #[cfg(test)]
 mod mod_tests;
