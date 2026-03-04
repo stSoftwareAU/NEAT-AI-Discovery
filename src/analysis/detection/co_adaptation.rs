@@ -137,7 +137,8 @@ pub fn detect_co_adapted_neurons(
                 continue;
             }
 
-            let correlation = pearson_correlation(&shared);
+            let (vals_a, vals_b): (Vec<f32>, Vec<f32>) = shared.iter().copied().unzip();
+            let correlation = super::stats::pearson_correlation(&vals_a, &vals_b);
 
             if correlation.abs() < CO_ADAPTATION_THRESHOLD {
                 continue;
@@ -168,40 +169,6 @@ pub fn detect_co_adapted_neurons(
     candidates.sort_by(|a, b| b.correlation.abs().total_cmp(&a.correlation.abs()));
 
     candidates
-}
-
-/// Compute Pearson correlation coefficient for paired activation values.
-///
-/// Returns 0.0 if either variable has zero variance (avoids division by zero).
-fn pearson_correlation(pairs: &[(f32, f32)]) -> f32 {
-    let n = pairs.len() as f32;
-    if n < 2.0 {
-        return 0.0;
-    }
-
-    let sum_a: f32 = pairs.iter().map(|(a, _)| a).sum();
-    let sum_b: f32 = pairs.iter().map(|(_, b)| b).sum();
-    let mean_a = sum_a / n;
-    let mean_b = sum_b / n;
-
-    let mut cov = 0.0_f32;
-    let mut var_a = 0.0_f32;
-    let mut var_b = 0.0_f32;
-
-    for &(a, b) in pairs {
-        let da = a - mean_a;
-        let db = b - mean_b;
-        cov += da * db;
-        var_a += da * da;
-        var_b += db * db;
-    }
-
-    let denom = (var_a * var_b).sqrt();
-    if denom < f32::EPSILON {
-        return 0.0;
-    }
-
-    (cov / denom).clamp(-1.0, 1.0)
 }
 
 /// Convert co-adapted pair candidates into coordinated structural candidates.

@@ -33,6 +33,7 @@ pub mod saturation;
 pub mod sentinel_gating;
 pub mod skip_connection;
 pub mod squash_weight_rescale;
+pub mod stats;
 pub mod symmetry_breaking;
 pub mod topology;
 pub mod topology_diversification;

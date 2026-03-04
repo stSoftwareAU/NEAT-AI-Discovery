@@ -119,23 +119,7 @@ pub struct ThresholdEffectCandidate {
     pub estimated_improvement: f32,
 }
 
-/// Compute variance of a slice of f32 values.
-fn compute_variance(values: &[f32]) -> f32 {
-    if values.len() < 2 {
-        return 0.0;
-    }
-    let n = values.len() as f32;
-    let mean: f32 = values.iter().sum::<f32>() / n;
-    values.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / n
-}
-
-/// Compute the mean of a slice of f32 values.
-fn compute_mean(values: &[f32]) -> f32 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    values.iter().sum::<f32>() / values.len() as f32
-}
+use super::stats::{compute_mean, compute_variance};
 
 /// Compute covariance between two equal-length slices.
 fn compute_covariance(x: &[f32], y: &[f32]) -> f32 {

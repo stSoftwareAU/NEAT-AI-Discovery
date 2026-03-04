@@ -181,35 +181,7 @@ pub fn detect_opposing_synapses(
     candidates
 }
 
-/// Compute Pearson correlation coefficient between two vectors.
-fn pearson_correlation(x: &[f32], y: &[f32]) -> f32 {
-    let n = x.len() as f32;
-    if n < 2.0 {
-        return 0.0;
-    }
-
-    let mean_x: f32 = x.iter().sum::<f32>() / n;
-    let mean_y: f32 = y.iter().sum::<f32>() / n;
-
-    let mut cov = 0.0_f32;
-    let mut var_x = 0.0_f32;
-    let mut var_y = 0.0_f32;
-
-    for i in 0..x.len() {
-        let dx = x[i] - mean_x;
-        let dy = y[i] - mean_y;
-        cov += dx * dy;
-        var_x += dx * dx;
-        var_y += dy * dy;
-    }
-
-    let denom = (var_x * var_y).sqrt();
-    if denom < 1e-12 {
-        return 0.0;
-    }
-
-    cov / denom
-}
+use super::stats::pearson_correlation;
 
 /// Convert opposing synapse candidates into coordinated structural candidates.
 ///
