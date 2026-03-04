@@ -10,7 +10,7 @@ No UI changes — backend detection logic only. Verified via test results:
 
 - All 14 existing bimodal tests continue to pass (no regression)
 - 5 new tests added covering the issue's TDD plan
-- `quality.sh` passes cleanly
+- `quality.sh` passes cleanly.
 
 ## Test Plan
 
