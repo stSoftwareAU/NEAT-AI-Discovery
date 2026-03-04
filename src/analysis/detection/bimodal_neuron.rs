@@ -43,6 +43,18 @@ const MIN_GAP_RATIO: f32 = 5.0;
 /// Prevents flagging distributions where one "cluster" has very few points.
 const MIN_CLUSTER_FRACTION: f32 = 0.15;
 
+/// Maximum allowed ratio of within-cluster variance to overall variance (Issue #751).
+///
+/// After detecting a gap, both clusters must have variance below this fraction
+/// of the overall variance. This ensures each cluster is internally coherent
+/// rather than a broad spread of values that happens to sit on one side of a gap.
+///
+/// A value of 0.5 means each cluster's variance must be less than half the
+/// overall variance. True bimodal distributions typically have ratios well
+/// below 0.1, while false positives from skewed unimodal distributions have
+/// ratios near 1.0.
+const MAX_CLUSTER_VARIANCE_RATIO: f32 = 0.5;
+
 /// Result of detecting a bimodal neuron.
 #[derive(Debug, Clone)]
 pub struct BimodalNeuronCandidate {
@@ -200,6 +212,21 @@ fn compute_bimodality(values: &[f32]) -> Option<BimodalityResult> {
     let lower = &values[..best_split_index];
     let upper = &values[best_split_index..];
 
+    // Cluster coherence validation (Issue #751): verify that both clusters
+    // have variance meaningfully lower than the overall variance. This rejects
+    // false positives from skewed unimodal distributions where a large gap
+    // exists but one or both "clusters" are not internally coherent.
+    let overall_var = variance(values);
+    if overall_var > 1e-10 {
+        let lower_var = variance(lower);
+        let upper_var = variance(upper);
+        if lower_var / overall_var > MAX_CLUSTER_VARIANCE_RATIO
+            || upper_var / overall_var > MAX_CLUSTER_VARIANCE_RATIO
+        {
+            return None;
+        }
+    }
+
     Some(BimodalityResult {
         gap_ratio,
         lower_mean: mean(lower),
@@ -211,6 +238,12 @@ fn compute_bimodality(values: &[f32]) -> Option<BimodalityResult> {
 
 fn mean(values: &[f32]) -> f32 {
     values.iter().sum::<f32>() / values.len() as f32
+}
+
+/// Compute population variance of a slice of f32 values.
+fn variance(values: &[f32]) -> f32 {
+    let m = mean(values);
+    values.iter().map(|&v| (v - m) * (v - m)).sum::<f32>() / values.len() as f32
 }
 
 /// Convert bimodal neuron candidates into coordinated structural candidates.
