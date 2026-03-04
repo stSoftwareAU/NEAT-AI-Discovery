@@ -95,23 +95,7 @@ fn noise_signal_threshold_from_env() -> f32 {
     crate::config::noise_signal_threshold(DEFAULT_NOISE_SIGNAL_THRESHOLD)
 }
 
-/// Compute variance of a slice of f32 values.
-fn compute_variance(values: &[f32]) -> f32 {
-    if values.len() < 2 {
-        return 0.0;
-    }
-    let n = values.len() as f32;
-    let mean: f32 = values.iter().sum::<f32>() / n;
-    values.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / n
-}
-
-/// Compute the mean of a slice of f32 values.
-fn compute_mean(values: &[f32]) -> f32 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    values.iter().sum::<f32>() / values.len() as f32
-}
+use super::stats::{compute_mean, compute_variance};
 
 /// Detect neurons with high noise-to-signal ratio.
 ///
