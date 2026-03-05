@@ -385,6 +385,351 @@ unchanged.
 
 ---
 
+## Detection Module Reference
+
+The library contains 38+ detection and recommendation modules, grouped by concern.
+Each module follows the same pipeline: load records → detect pattern → convert to
+coordinated candidates.
+
+### Activation & Neuron State Modules
+
+These modules detect issues with how neurons process activations.
+
+#### Bimodal Neuron Detection (Issue #640)
+
+Detects hidden neurons whose pre-activation distribution is bimodal or multimodal.
+Such neurons effectively serve two distinct input regimes, limiting representational
+capacity. The module analyses the histogram of pre-activation values, identifies
+distinct modes, and recommends splitting the neuron.
+
+**Algorithm**:
+1. Compute a histogram of pre-activation values for each hidden neuron.
+2. Identify local maxima (modes) in the histogram.
+3. If two or more modes are sufficiently separated relative to their widths,
+   flag the neuron as bimodal.
+4. Propose an `addNeuron` candidate to split the neuron's two regimes.
+
+#### Restricted Range Detection (Issue #399)
+
+Detects hidden neurons confined to a narrow sub-range of their activation function's
+output domain. A TANH neuron only producing values in [0.2, 0.4] wastes most of its
+representational capacity. The module compares the observed output range to the
+theoretical range of the activation function.
+
+**Algorithm**:
+1. Compute min/max activation for each hidden neuron.
+2. Compute the theoretical output range for the neuron's squash function.
+3. If the observed range is less than a configured fraction of the theoretical
+   range, flag as restricted.
+4. Propose `changeSquash`, `setBias`, or `setWeight` candidates to expand the
+   effective operating range.
+
+#### Operating Point Analysis (Issue #401)
+
+Analyses hidden neuron pre-activation distributions against the squash function's
+active zone. Detects neurons whose operating point is shifted away from the dynamic
+region, resulting in underutilisation of gradient capacity.
+
+**Algorithm**:
+1. Compute the mean and standard deviation of pre-activation values.
+2. Determine the squash function's "active zone" (region of maximum gradient).
+3. If the mean pre-activation is significantly outside the active zone, flag
+   the neuron.
+4. Propose `setBias` or `setWeight` candidates to shift the operating point.
+
+#### Activation Mismatch Detection (Issue #543)
+
+Detects neurons with poorly matched activation functions. Examples include RELU
+neurons with negative bias (gating out useful signal) and bounded activations
+receiving inputs that never reach the active region.
+
+**Algorithm**:
+1. For each hidden neuron, analyse the relationship between the squash function
+   and the observed pre-activation distribution.
+2. Flag mismatches: e.g., RELU with negative bias where most inputs are negative,
+   bounded activations where inputs cluster far from the active zone.
+3. Propose `changeSquash` or `setBias` to correct the mismatch.
+
+#### Monotonicity Detection (Issue #643)
+
+Detects hidden neurons with non-monotonic activation–error relationships. When
+activations increase but errors both improve and worsen depending on the region,
+the neuron is serving conflicting purposes.
+
+**Algorithm**:
+1. Sort samples by activation value and partition into bins.
+2. Compute mean error for each bin.
+3. Check whether the error curve is monotonically increasing or decreasing.
+4. If the curve reverses direction, flag as non-monotonic.
+5. Propose `addNeuron` (split) or `changeSquash` (reshape) candidates.
+
+#### Error Plateau Detection (Issue #545)
+
+Detects output neurons stuck in error stagnation — high mean error combined with
+low error variance — indicating a local minimum plateau.
+
+**Algorithm**:
+1. Compute mean and variance of error for each output neuron.
+2. Flag neurons where mean absolute error exceeds a threshold AND error variance
+   is below a separate threshold (consistent, significant error).
+3. Propose `changeSquash` or `setBias` to escape the local minimum by altering
+   the error surface.
+
+#### Output Range Compression Detection (Issue #645)
+
+Detects output neurons operating in a compressed sub-range of their activation
+function's domain. An output using TANH but only producing values in [0.1, 0.3]
+wastes most of its output precision.
+
+**Algorithm**:
+1. Compute the observed output range for each output neuron.
+2. Compare against the activation function's full theoretical range.
+3. If the compression ratio exceeds a threshold, flag the neuron.
+4. Propose `changeSquash` to switch to a function matching the actual range.
+
+#### Output Squash Mismatch Detection (Issue #545)
+
+Detects when output neurons use activation functions mismatched to their target
+data range. For example, using HARD_TANH (range [-1, 1]) when targets lie in
+[0, 1] (LOGISTIC would be more appropriate).
+
+**Algorithm**:
+1. Analyse the target data distribution for each output neuron.
+2. Determine the ideal output range from the target distribution.
+3. Compare against the current squash function's output range.
+4. If mismatched, propose `changeSquash` to a function whose range matches.
+
+#### Bias Perturbation Detection (Issue #551)
+
+Identifies neurons in suboptimal activation regimes and recommends large bias
+shifts to escape local minima. Unlike gradient-based bias adjustments, this
+proposes regime-shifting perturbations.
+
+**Algorithm**:
+1. Analyse the neuron's operating regime relative to its activation function.
+2. Identify if the neuron is stuck in a low-gradient region (e.g., deep
+   saturation) where normal training cannot escape.
+3. Compute candidate bias values that would shift the neuron to a different
+   regime (e.g., from saturated to linear region).
+4. Propose `setBias` with the computed perturbation value.
+
+#### Squash + Weight Rescale Detection (Issue #548)
+
+Coordinates activation function changes with compensating weight adjustments.
+When changing a neuron's squash function, downstream weights must be rescaled to
+maintain equivalent signal magnitude.
+
+**Algorithm**:
+1. Identify neurons where a squash change would be beneficial.
+2. Compute the scale factor between the old and new activation function's
+   output ranges.
+3. Generate a coordinated candidate with `changeSquash` and `setWeight`
+   operations applied atomically to preserve the operating point.
+
+### Weight & Synapse Modules
+
+These modules detect issues with synapse weights and connections.
+
+#### Weight Coherence Validation (Issue #437)
+
+Part of the "Brilliant but Brittle" initiative. Contains three sub-detectors:
+
+**Incoherent weight ratios**: Flags neurons where the largest incoming weight
+magnitude is orders of magnitude larger than the smallest, meaning some inputs
+are effectively ignored.
+
+**Near-constant paths**: Flags neuron paths where the product of incoming and
+outgoing weights is so small that the neuron contributes a near-constant signal
+regardless of input.
+
+**Symmetric cancellation**: Flags pairs of synapses with nearly equal magnitude
+but opposite signs feeding the same target, cancelling each other's contribution.
+
+#### Weight Magnitude Reset Detection (Issue #550)
+
+Identifies synapses stuck in local weight minima. Generates exploratory
+`setWeight` candidates with large magnitude changes (double, halve, or negate)
+to jump to a different region of the loss surface.
+
+**Algorithm**:
+1. For each synapse, compute the local gradient and check if the weight has
+   been stable despite ongoing error.
+2. If the gradient is small but error remains, the weight may be in a local
+   minimum.
+3. Generate multiple candidate weights at different magnitudes to explore
+   the loss surface.
+
+#### Weight Polarity Flip Detection (Issue #644)
+
+Detects synapses where the gradient sign is consistently opposite to the weight
+sign. Rather than waiting for many small gradient descent steps to cross zero,
+recommends direct sign inversion.
+
+**Algorithm**:
+1. Compute the mean gradient for each synapse across samples.
+2. Compare the gradient sign to the current weight sign.
+3. If they consistently disagree (e.g., positive weight but negative gradient),
+   propose flipping the weight sign via `setWeight`.
+
+#### Fan-in Polarity Conflict Detection (Issue #641)
+
+Identifies hidden neurons with incoming synapses having conflicting polarities.
+A mix of strong positive and strong negative incoming weights indicates the neuron
+is trying to combine contradictory signals.
+
+**Algorithm**:
+1. For each hidden neuron, partition incoming synapses into positive and
+   negative weight groups.
+2. Compute the aggregate magnitude of each group.
+3. If both groups have significant magnitude and partially cancel, flag the
+   conflict.
+4. Propose splitting the conflicting paths via `addNeuron` and `addSynapse`.
+
+### Structural & Topology Modules
+
+These modules detect structural and topological issues.
+
+#### Topology Diversification Detection (Issue #549)
+
+Detects when the network topology is too simple for the problem complexity.
+Assesses global network capacity (unlike bottleneck detection which finds local
+convergence points).
+
+**Algorithm**:
+1. Compute the network's topological complexity (number of hidden neurons,
+   layers, connectivity density).
+2. Estimate the problem complexity from the error distribution.
+3. If the network is too simple relative to the remaining error, propose
+   adding neurons to increase representational capacity.
+
+#### Skip Connection Detection (Issue #570)
+
+Analyses topological depth and gradient attenuation to identify deep hidden
+neurons that would benefit from residual-style skip connections.
+
+**Algorithm**:
+1. Compute shortest path length from each hidden neuron to the nearest output
+   via reverse BFS.
+2. Estimate gradient attenuation along the path (product of activation
+   derivatives and weight magnitudes).
+3. For deep neurons with significant error and no existing shortcut, propose
+   an `addSynapse` skip connection directly to an output.
+
+#### Symmetry Breaking Detection (Issue #569)
+
+Identifies pairs of hidden neurons with near-identical weight configurations
+and activation functions. Symmetric neurons waste capacity by computing the
+same function.
+
+**Algorithm**:
+1. For each pair of hidden neurons, compare incoming and outgoing weight
+   vectors.
+2. Compute weight similarity (cosine similarity or Euclidean distance).
+3. If similarity exceeds a threshold and both use the same squash function,
+   flag as symmetric.
+4. Propose breaking symmetry via `setBias`, `setWeight`, or `changeSquash`
+   on one of the pair.
+
+#### Co-Adaptation Detection (Issue #571)
+
+Identifies pairs of hidden neurons with highly correlated activations,
+indicating functional redundancy even when weight configurations differ.
+
+**Algorithm**:
+1. Compute Pearson correlation between activation patterns for each pair
+   of hidden neurons across training samples.
+2. If correlation ≥ 0.9, flag the pair as co-adapted.
+3. Propose removing the weaker neuron and rescaling the survivor's weights
+   via `removeNeuron` and `setWeight`.
+
+#### Output Conflict Detection (Issue #639)
+
+Identifies hidden neurons with conflicting per-output error contributions.
+The neuron helps some outputs while simultaneously hurting others.
+
+**Algorithm**:
+1. For each hidden neuron, disaggregate its error contribution per output
+   neuron.
+2. Compute the sign of the error contribution for each output.
+3. If the signs conflict (positive for some outputs, negative for others),
+   flag the neuron.
+4. Propose `addSynapse` or `addNeuron` to specialise the neuron's role.
+
+#### Hard Sample Cluster Detection (Issue #642)
+
+Identifies observation groups consistently high-error across all outputs.
+Finds which input features discriminate hard from easy observations.
+
+**Algorithm**:
+1. Compute per-observation error across all output neurons.
+2. Identify observations with above-average error across most outputs.
+3. Cluster hard observations by input feature similarity.
+4. For each cluster, identify discriminative input features (inputs whose
+   values differ significantly between hard and easy observations).
+5. Propose `addNeuron` and `addSynapse` targeting the discriminative features.
+
+### Range & Input Analysis Modules
+
+These modules analyse input ranges and gating.
+
+#### Bounded Range Detection (Issue #395)
+
+Detects input and hidden neurons with sentinel value clusters at activation
+boundaries. Many datasets use special values (-1, 0, etc.) for missing data,
+which distort the neuron's effective operating range.
+
+**Algorithm**:
+1. Compute a histogram of activation values for each input/hidden neuron.
+2. Identify boundary clusters (values clustered at min or max).
+3. If a boundary cluster contains more than a threshold fraction of samples,
+   flag as bounded range with sentinels.
+4. Propose an `addNeuron` gating structure to suppress sentinel values.
+
+#### Sentinel Gating Detection (Issue #400)
+
+Detects input neurons where sentinel values actively degrade performance.
+Proposes gated neuron structures using STEP activation to mask sentinel regions.
+
+**Algorithm**:
+1. Identify sentinel value clusters in input neuron activations.
+2. Compare error rates for sentinel vs non-sentinel samples.
+3. If sentinel samples have significantly higher error, propose a STEP-gated
+   neuron that outputs 0 for sentinel values and passes through data values.
+
+#### Observation Utilisation Detection (Issue #543)
+
+Detects underutilised input neurons with low effective range. Builds on
+observation range analysis to identify inputs not contributing meaningful
+information.
+
+**Algorithm**:
+1. Compute the effective range of each input (excluding sentinel clusters).
+2. Compare effective range to total observed range.
+3. If the utilisation ratio is below a threshold, propose gating neurons
+   to normalise or amplify the useful signal.
+
+#### Input Sensitivity Detection (Issue #435)
+
+Part of the "Brilliant but Brittle" initiative. Analyses prediction
+sensitivity to input changes via two sub-detectors:
+
+**Dominant input detection**: Identifies inputs with excessive leverage —
+a single input's contribution dominates the output, creating brittleness.
+
+**Threshold effect detection**: Identifies operating points near activation
+function thresholds where small input changes cause disproportionate output
+swings.
+
+### Recommendation & Scoring Modules
+
+#### Sample-Weighted Discovery (Issue #423)
+
+Prioritises high-error samples during discovery by weighting each sample
+proportionally to its absolute error magnitude. Ensures difficult samples
+receive proportional attention rather than being averaged away.
+
+---
+
 ## Discrete Activation Function Handling
 
 The standard discovery algorithm uses a **linear error model** to predict improvement:

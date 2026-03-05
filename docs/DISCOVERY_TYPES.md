@@ -4,33 +4,64 @@ This document is the **single source of truth** for all discovery types used by
 NEAT-AI-Discovery. It covers detection criteria, recommended actions, candidate
 output format, and production success/failure rates.
 
-> **Last updated**: 6 Feb 2026
+> **Last updated**: 6 Mar 2026
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Discovery Type Summary](#discovery-type-summary)
 - [Detailed Descriptions](#detailed-descriptions)
-  - [Saturated Neuron Detection](#saturated-neuron-detection)
-  - [Bottleneck Neuron Detection](#bottleneck-neuron-detection)
-  - [Dead Neuron Detection](#dead-neuron-detection)
-  - [Dormant Synapse Detection](#dormant-synapse-detection)
-  - [Opposing Synapse Detection](#opposing-synapse-detection)
-  - [Output Bias Drift Detection](#output-bias-drift-detection)
-  - [Oscillating Neuron Detection](#oscillating-neuron-detection)
-  - [Unbounded Capping Detection](#unbounded-capping-detection)
-  - [Noise-to-Signal Ratio Detection](#noise-to-signal-ratio-detection)
-  - [Correlated Error Pattern Detection](#correlated-error-pattern-detection)
-  - [Multi-Hop Candidate Analysis](#multi-hop-candidate-analysis)
-  - [Redundant Path Pruning](#redundant-path-pruning)
-  - [Topology-Aware Structure Analysis](#topology-aware-structure-analysis)
-  - [Gradient-Based Synapse Adjustment](#gradient-based-synapse-adjustment)
-  - [Add Neurons](#add-neurons)
-  - [Add Synapses](#add-synapses)
-  - [Remove Low-Impact Neurons](#remove-low-impact-neurons)
-  - [Remove Harmful Synapse](#remove-harmful-synapse)
-  - [Remove Neuron (High Error)](#remove-neuron-high-error)
-  - [Combo Successful](#combo-successful)
+  - Activation & Neuron State
+    - [Saturated Neuron Detection](#saturated-neuron-detection)
+    - [Dead Neuron Detection](#dead-neuron-detection)
+    - [Oscillating Neuron Detection](#oscillating-neuron-detection)
+    - [Bimodal Neuron Detection](#bimodal-neuron-detection)
+    - [Restricted Range Detection](#restricted-range-detection)
+    - [Operating Point Analysis](#operating-point-analysis)
+    - [Unbounded Capping Detection](#unbounded-capping-detection)
+    - [Activation Mismatch Detection](#activation-mismatch-detection)
+    - [Monotonicity Detection](#monotonicity-detection)
+    - [Error Plateau Detection](#error-plateau-detection)
+    - [Output Range Compression Detection](#output-range-compression-detection)
+    - [Output Squash Mismatch Detection](#output-squash-mismatch-detection)
+    - [Activation Function Recommendation](#activation-function-recommendation)
+    - [Bias Perturbation Detection](#bias-perturbation-detection)
+    - [Squash + Weight Rescale Detection](#squash-weight-rescale-detection)
+  - Weight & Synapse
+    - [Dormant Synapse Detection](#dormant-synapse-detection)
+    - [Opposing Synapse Detection](#opposing-synapse-detection)
+    - [Weight Coherence Detection](#weight-coherence-detection)
+    - [Weight Magnitude Reset Detection](#weight-magnitude-reset-detection)
+    - [Weight Polarity Flip Detection](#weight-polarity-flip-detection)
+    - [Noise-to-Signal Ratio Detection](#noise-to-signal-ratio-detection)
+    - [Fan-in Polarity Conflict Detection](#fan-in-polarity-conflict-detection)
+    - [Gradient-Based Synapse Adjustment](#gradient-based-synapse-adjustment)
+  - Structural & Topology
+    - [Bottleneck Neuron Detection](#bottleneck-neuron-detection)
+    - [Correlated Error Pattern Detection](#correlated-error-pattern-detection)
+    - [Redundant Path Pruning](#redundant-path-pruning)
+    - [Topology-Aware Structure Analysis](#topology-aware-structure-analysis)
+    - [Topology Diversification Detection](#topology-diversification-detection)
+    - [Skip Connection Detection](#skip-connection-detection)
+    - [Symmetry Breaking Detection](#symmetry-breaking-detection)
+    - [Co-Adaptation Detection](#co-adaptation-detection)
+    - [Output Conflict Detection](#output-conflict-detection)
+    - [Hard Sample Cluster Detection](#hard-sample-cluster-detection)
+    - [Multi-Hop Candidate Analysis](#multi-hop-candidate-analysis)
+    - [Combo Successful](#combo-successful)
+  - Range & Input Analysis
+    - [Bounded Range Detection](#bounded-range-detection)
+    - [Sentinel Gating Detection](#sentinel-gating-detection)
+    - [Observation Utilisation Detection](#observation-utilisation-detection)
+    - [Input Sensitivity Detection](#input-sensitivity-detection)
+  - Scoring & Recommendation
+    - [Output Bias Drift Detection](#output-bias-drift-detection)
+    - [Sample-Weighted Discovery](#sample-weighted-discovery)
+    - [Add Neurons](#add-neurons)
+    - [Add Synapses](#add-synapses)
+    - [Remove Low-Impact Neurons](#remove-low-impact-neurons)
+    - [Remove Harmful Synapse](#remove-harmful-synapse)
+    - [Remove Neuron (High Error)](#remove-neuron-high-error)
 - [Coordinated Structural Candidates](#coordinated-structural-candidates)
 - [Production Success Rates](#production-success-rates)
 - [Analysis and Recommendations](#analysis-and-recommendations)
@@ -60,28 +91,76 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 
 ## Discovery Type Summary
 
+### Activation & Neuron State
+
 | Discovery Type | Source Module | Issue | Candidate Operations | Status |
 |----------------|--------------|-------|---------------------|--------|
-| [Saturated Neuron](#saturated-neuron-detection) | `saturation.rs` | #342 | `changeSquash`, `setBias` | 🟢 Active |
-| [Bottleneck Neuron](#bottleneck-neuron-detection) | `bottleneck.rs` | #343 | `addNeuron`, `addSynapse` | 🟢 Active |
-| [Dead Neuron](#dead-neuron-detection) | `dead_neuron.rs` | #341 | `removeNeuron` | 🟢 Active |
-| [Dormant Synapse](#dormant-synapse-detection) | `dormant_synapse.rs` | #359 | `removeSynapse` | 🟢 Active |
-| [Opposing Synapse](#opposing-synapse-detection) | `opposing_synapse.rs` | #360 | `removeSynapse`, `setWeight` | 🟢 Active |
-| [Output Bias Drift](#output-bias-drift-detection) | `output_bias_drift.rs` | #361 | `setBias` | 🟢 Active |
-| [Oscillating Neuron](#oscillating-neuron-detection) | `oscillating_neuron.rs` | #358 | `changeSquash`, `setBias` | 🟢 Active |
-| [Unbounded Capping](#unbounded-capping-detection) | `unbounded_capping.rs` | #441 | `changeSquash` | 🟢 Active |
-| [Noise-to-Signal](#noise-to-signal-ratio-detection) | `noise_signal.rs` | #434 | `removeNeuron`, `removeSynapse`, `setWeight` | 🟢 Active |
-| [Activation Recommendation](#activation-function-recommendation) | `activation_recommendation.rs` | #431 | `changeSquash` | 🟢 Active |
-| [Correlated Error](#correlated-error-pattern-detection) | `correlated_error.rs` | #344 | `addNeuron`, `addSynapse` | 🟢 Active |
-| [Multi-Hop](#multi-hop-candidate-analysis) | `multi_hop.rs` | #230 | `addNeuron`, `addSynapse` | 🟢 Active |
-| [Redundant Path](#redundant-path-pruning) | `redundant_path.rs` | #164 | `removeSynapse`, `setWeight` | 🟢 Active |
-| [Topology-Aware Structure](#topology-aware-structure-analysis) | `topology.rs` | #422 | `addSynapse` | 🟢 Active |
-| [Add Neurons](#add-neurons) | `neuron.rs` | — | `addNeuron` | 🟢 Active |
-| [Add Synapses](#add-synapses) | `synapse.rs` | #413 | `addSynapse` | 🟡 Fixed |
-| [Remove Low-Impact](#remove-low-impact-neurons) | `neuron.rs` | — | `removeNeuron` | 🟢 Active |
-| [Remove Harmful Synapse](#remove-harmful-synapse) | `implementation.rs` | #416 | `removeSynapse` | 🟢 Active |
-| [Remove Neuron (Error)](#remove-neuron-high-error) | `focus.rs` | #414 | `removeNeuron` | ⛔ Disabled |
-| [Combo Successful](#combo-successful) | `epistatic.rs` | #415 | Multiple | 🟡 Fixed |
+| [Saturated Neuron](#saturated-neuron-detection) | `detection/saturation.rs` | #342 | `changeSquash`, `setBias` | 🟢 Active |
+| [Dead Neuron](#dead-neuron-detection) | `detection/dead_neuron.rs` | #341 | `removeNeuron` | 🟢 Active |
+| [Oscillating Neuron](#oscillating-neuron-detection) | `detection/oscillating_neuron.rs` | #358 | `changeSquash`, `setBias` | 🟢 Active |
+| [Bimodal Neuron](#bimodal-neuron-detection) | `detection/bimodal_neuron.rs` | #640 | `addNeuron` | 🟢 Active |
+| [Restricted Range](#restricted-range-detection) | `detection/restricted_range.rs` | #399 | `changeSquash`, `setBias`, `setWeight` | 🟢 Active |
+| [Operating Point](#operating-point-analysis) | `detection/operating_point.rs` | #401 | `setBias`, `setWeight` | 🟢 Active |
+| [Unbounded Capping](#unbounded-capping-detection) | `detection/unbounded_capping.rs` | #441 | `changeSquash` | 🟢 Active |
+| [Activation Mismatch](#activation-mismatch-detection) | `detection/activation_mismatch.rs` | #543 | `changeSquash`, `setBias` | 🟢 Active |
+| [Monotonicity](#monotonicity-detection) | `detection/monotonicity.rs` | #643 | `addNeuron`, `changeSquash` | 🟢 Active |
+| [Error Plateau](#error-plateau-detection) | `detection/error_plateau.rs` | #545 | `changeSquash`, `setBias` | 🟢 Active |
+| [Output Range Compression](#output-range-compression-detection) | `detection/output_range_compression.rs` | #645 | `changeSquash` | 🟢 Active |
+| [Output Squash Mismatch](#output-squash-mismatch-detection) | `detection/output_squash_mismatch.rs` | #545 | `changeSquash` | 🟢 Active |
+| [Activation Recommendation](#activation-function-recommendation) | `recommendation/activation_recommendation.rs` | #431 | `changeSquash` | 🟢 Active |
+| [Bias Perturbation](#bias-perturbation-detection) | `detection/bias_perturbation.rs` | #551 | `setBias` | 🟢 Active |
+| [Squash + Weight Rescale](#squash-weight-rescale-detection) | `detection/squash_weight_rescale.rs` | #548 | `changeSquash`, `setWeight` | 🟢 Active |
+
+### Weight & Synapse
+
+| Discovery Type | Source Module | Issue | Candidate Operations | Status |
+|----------------|--------------|-------|---------------------|--------|
+| [Dormant Synapse](#dormant-synapse-detection) | `detection/dormant_synapse.rs` | #359 | `removeSynapse` | 🟢 Active |
+| [Opposing Synapse](#opposing-synapse-detection) | `detection/opposing_synapse.rs` | #360 | `removeSynapse`, `setWeight` | 🟢 Active |
+| [Weight Coherence](#weight-coherence-detection) | `detection/weight_coherence.rs` | #437 | `setWeight`, `removeSynapse` | 🟢 Active |
+| [Weight Magnitude Reset](#weight-magnitude-reset-detection) | `detection/weight_magnitude_reset.rs` | #550 | `setWeight` | 🟢 Active |
+| [Weight Polarity Flip](#weight-polarity-flip-detection) | `detection/weight_polarity_flip.rs` | #644 | `setWeight` | 🟢 Active |
+| [Noise-to-Signal](#noise-to-signal-ratio-detection) | `detection/noise_signal.rs` | #434 | `removeNeuron`, `removeSynapse`, `setWeight` | 🟢 Active |
+| [Fan-in Polarity Conflict](#fan-in-polarity-conflict-detection) | `detection/fanin_polarity_conflict.rs` | #641 | `addNeuron`, `addSynapse` | 🟢 Active |
+| [Gradient Discovery](#gradient-based-synapse-adjustment) | `recommendation/gradient_discovery.rs` | #421 | `setWeight` | 🟢 Active |
+
+### Structural & Topology
+
+| Discovery Type | Source Module | Issue | Candidate Operations | Status |
+|----------------|--------------|-------|---------------------|--------|
+| [Bottleneck Neuron](#bottleneck-neuron-detection) | `detection/bottleneck.rs` | #343 | `addNeuron`, `addSynapse` | 🟢 Active |
+| [Correlated Error](#correlated-error-pattern-detection) | `detection/correlated_error.rs` | #344 | `addNeuron`, `addSynapse` | 🟢 Active |
+| [Redundant Path](#redundant-path-pruning) | `detection/redundant_path.rs` | #164 | `removeSynapse`, `setWeight` | 🟢 Active |
+| [Topology Structure](#topology-aware-structure-analysis) | `detection/topology.rs` | #422 | `addSynapse` | 🟢 Active |
+| [Topology Diversification](#topology-diversification-detection) | `detection/topology_diversification.rs` | #549 | `addNeuron` | 🟢 Active |
+| [Skip Connection](#skip-connection-detection) | `detection/skip_connection.rs` | #570 | `addSynapse` | 🟢 Active |
+| [Symmetry Breaking](#symmetry-breaking-detection) | `detection/symmetry_breaking.rs` | #569 | `setBias`, `setWeight`, `changeSquash` | 🟢 Active |
+| [Co-Adaptation](#co-adaptation-detection) | `detection/co_adaptation.rs` | #571 | `removeNeuron`, `setWeight` | 🟢 Active |
+| [Output Conflict](#output-conflict-detection) | `detection/output_conflict.rs` | #639 | `addSynapse`, `addNeuron` | 🟢 Active |
+| [Hard Sample Cluster](#hard-sample-cluster-detection) | `detection/hard_sample_cluster.rs` | #642 | `addNeuron`, `addSynapse` | 🟢 Active |
+| [Multi-Hop](#multi-hop-candidate-analysis) | `recommendation/multi_hop.rs` | #230 | `addNeuron`, `addSynapse` | 🟢 Active |
+| [Combo Successful](#combo-successful) | `recommendation/epistatic/` | #415 | Multiple | 🟡 Fixed |
+
+### Range & Input Analysis
+
+| Discovery Type | Source Module | Issue | Candidate Operations | Status |
+|----------------|--------------|-------|---------------------|--------|
+| [Bounded Range](#bounded-range-detection) | `detection/bounded_range.rs` | #395 | `addNeuron`, `addSynapse` | 🟢 Active |
+| [Sentinel Gating](#sentinel-gating-detection) | `detection/sentinel_gating.rs` | #400 | `addNeuron`, `addSynapse` | 🟢 Active |
+| [Observation Utilisation](#observation-utilisation-detection) | `detection/observation_utilisation.rs` | #543 | `addNeuron`, `addSynapse` | 🟢 Active |
+| [Input Sensitivity](#input-sensitivity-detection) | `detection/input_sensitivity.rs` | #435 | `setWeight`, `addNeuron`, `setBias` | 🟢 Active |
+
+### Scoring & Recommendation
+
+| Discovery Type | Source Module | Issue | Candidate Operations | Status |
+|----------------|--------------|-------|---------------------|--------|
+| [Output Bias Drift](#output-bias-drift-detection) | `recommendation/output_bias_drift.rs` | #361 | `setBias` | 🟢 Active |
+| [Sample-Weighted](#sample-weighted-discovery) | `recommendation/sample_weighted.rs` | #423 | `setBias` | 🟢 Active |
+| [Add Neurons](#add-neurons) | `neuron/` | — | `addNeuron` | 🟢 Active |
+| [Add Synapses](#add-synapses) | `synapse/` | #413 | `addSynapse` | 🟡 Fixed |
+| [Remove Low-Impact](#remove-low-impact-neurons) | `neuron/` | — | `removeNeuron` | 🟢 Active |
+| [Remove Harmful Synapse](#remove-harmful-synapse) | `synapse/` | #416 | `removeSynapse` | 🟢 Active |
+| [Remove Neuron (Error)](#remove-neuron-high-error) | `focus/` | #414 | `removeNeuron` | ⛔ Disabled |
 
 ### Status Legend
 
@@ -317,6 +396,92 @@ and/or `setBias` operations.
 
 ---
 
+### Bimodal Neuron Detection
+
+**Source**: `src/analysis/detection/bimodal_neuron.rs` (Issue #640)
+
+**Purpose**: Detects hidden neurons whose pre-activation distribution is
+bimodal or multimodal. Such neurons effectively serve two distinct input
+regimes within a single neuron, limiting representational capacity. Splitting
+into separate neurons allows each to specialise on one regime.
+
+**Detection criteria**:
+
+1. **Bimodal distribution**: The pre-activation values cluster into two or
+   more distinct modes (detected via histogram analysis).
+2. **Sufficient separation**: The modes are well-separated relative to their
+   widths.
+3. **Minimum samples**: At least 20 samples for statistical reliability.
+4. **Hidden neurons only**: Input and output neurons are excluded.
+
+**Recommended actions**:
+
+1. **Add neuron**: Split the bimodal neuron by adding a new hidden neuron to
+   handle one of the two activation regimes.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron`
+operations.
+
+---
+
+### Restricted Range Detection
+
+**Source**: `src/analysis/detection/restricted_range.rs` (Issue #399)
+
+**Purpose**: Detects hidden neurons confined to a narrow sub-range of their
+activation function's output domain. A neuron using TANH but only producing
+values in [0.2, 0.4] wastes most of its representational capacity.
+
+**Detection criteria**:
+
+1. **Narrow output range**: The neuron's activation range uses less than a
+   configured fraction of the activation function's full output domain.
+2. **Consistent confinement**: The restriction holds across the majority of
+   training samples.
+3. **Hidden neurons only**: Input and output neurons are excluded.
+
+**Recommended actions**:
+
+1. **Change activation function**: Switch to a function whose output domain
+   better matches the observed operating range.
+2. **Adjust bias**: Shift the operating point to utilise more of the range.
+3. **Adjust weight**: Scale incoming weights to spread the input across the
+   active zone.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`,
+`setBias`, or `setWeight` operations.
+
+---
+
+### Operating Point Analysis
+
+**Source**: `src/analysis/detection/operating_point.rs` (Issue #401)
+
+**Purpose**: Analyses hidden neuron pre-activation distributions against the
+squash function's active zone. Detects neurons whose operating point is
+shifted away from the dynamic region of their activation function, resulting
+in underutilisation of the function's gradient capacity.
+
+**Detection criteria**:
+
+1. **Off-centre operating point**: The mean pre-activation value is
+   significantly offset from the activation function's optimal region.
+2. **Low dynamic range utilisation**: The neuron operates in a flat region
+   of the activation curve.
+3. **Hidden neurons only**: Input and output neurons are excluded.
+
+**Recommended actions**:
+
+1. **Adjust bias**: Shift the neuron's operating point toward the dynamic
+   zone of its activation function.
+2. **Adjust incoming weights**: Scale weights to move the pre-activation
+   distribution into the active zone.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `setBias` or
+`setWeight` operations.
+
+---
+
 ### Unbounded Capping Detection
 
 **Source**: `src/analysis/unbounded_capping.rs` (Issue #441)
@@ -344,6 +509,144 @@ network.
    leak, but caps the positive side).
 3. **Change IDENTITY → HARD_TANH or RELU6**: For high positive activations,
    use RELU6; for mixed activations, use HARD_TANH.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`
+operations.
+
+---
+
+### Activation Mismatch Detection
+
+**Source**: `src/analysis/detection/activation_mismatch.rs` (Issue #543)
+
+**Purpose**: Detects neurons with poorly matched activation functions that
+waste information. Examples include RELU neurons with negative bias (gating
+out useful signal) or bounded activations that are underutilised.
+
+**Detection criteria**:
+
+1. **RELU with negative bias**: The neuron's bias pushes most inputs into the
+   dead zone, wasting the neuron's capacity.
+2. **Bounded activation underutilised**: The neuron uses a bounded function
+   (TANH, LOGISTIC) but its inputs never reach the active region.
+3. **Hidden neurons only**: Input and output neurons are excluded.
+4. **Minimum samples**: At least 20 samples for reliable analysis.
+
+**Recommended actions**:
+
+1. **Change activation function**: Switch to a function that better matches
+   the observed input distribution.
+2. **Adjust bias**: Correct bias offset to restore useful signal flow.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`
+and/or `setBias` operations.
+
+---
+
+### Monotonicity Detection
+
+**Source**: `src/analysis/detection/monotonicity.rs` (Issue #643)
+
+**Purpose**: Detects hidden neurons with non-monotonic activation–error
+relationships. When a neuron's activation increases but the error both
+improves and worsens depending on the region, the neuron is trying to serve
+conflicting purposes and may benefit from being split or having its activation
+changed.
+
+**Detection criteria**:
+
+1. **Non-monotonic relationship**: The activation–error curve reverses
+   direction (positive correlation in some regions, negative in others).
+2. **Sufficient samples**: Enough data points to establish the relationship
+   reliably.
+3. **Hidden neurons only**: Input and output neurons are excluded.
+
+**Recommended actions**:
+
+1. **Add neuron**: Split the neuron to handle different activation regions
+   separately.
+2. **Change activation function**: Switch to a function better suited to the
+   observed relationship.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron` or
+`changeSquash` operations.
+
+---
+
+### Error Plateau Detection
+
+**Source**: `src/analysis/detection/error_plateau.rs` (Issue #545)
+
+**Purpose**: Detects output neurons stuck in error stagnation — high mean
+error combined with low error variance — indicating a local minimum plateau.
+The neuron is consistently wrong by a similar amount but unable to improve
+through normal weight adjustments.
+
+**Detection criteria**:
+
+1. **High mean error**: The output neuron has significant average error.
+2. **Low error variance**: Error is consistent across samples (not noisy).
+3. **Output neurons only**: Only output neurons with direct error
+   measurements are analysed.
+4. **Minimum samples**: At least 20 samples for reliability.
+
+**Recommended actions**:
+
+1. **Change activation function**: Escape the local minimum by changing the
+   output function, altering the error surface.
+2. **Adjust bias**: Shift the operating point to explore different regions.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`
+and/or `setBias` operations.
+
+---
+
+### Output Range Compression Detection
+
+**Source**: `src/analysis/detection/output_range_compression.rs` (Issue #645)
+
+**Purpose**: Detects output neurons operating in a compressed sub-range of
+their activation function's domain, reducing dynamic resolution. An output
+using TANH but only producing values in [0.1, 0.3] is wasting most of its
+output precision.
+
+**Detection criteria**:
+
+1. **Compressed output range**: The neuron's actual output range is a small
+   fraction of the activation function's theoretical range.
+2. **Output neurons only**: Only output neurons are analysed.
+3. **Minimum samples**: At least 20 samples for reliability.
+
+**Recommended actions**:
+
+1. **Change activation function**: Switch to a function whose range better
+   matches the observed output distribution.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`
+operations.
+
+---
+
+### Output Squash Mismatch Detection
+
+**Source**: `src/analysis/detection/output_squash_mismatch.rs` (Issue #545)
+
+**Purpose**: Detects when output neurons use activation functions mismatched
+to their target data range. For example, using HARD_TANH (output range
+[-1, 1]) when the target data lies in [0, 1] (better suited to LOGISTIC).
+
+**Detection criteria**:
+
+1. **Range mismatch**: The activation function's output range does not match
+   the observed target data distribution.
+2. **Output neurons only**: Only output neurons are analysed.
+3. **Minimum samples**: At least 20 samples for reliable distribution
+   analysis.
+
+**Recommended actions**:
+
+1. **Change activation function**: Switch to a function whose output range
+   matches the target data range.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`
 operations.
@@ -406,6 +709,65 @@ through proactive matching of activation to data characteristics.
 
 ---
 
+### Bias Perturbation Detection
+
+**Source**: `src/analysis/detection/bias_perturbation.rs` (Issue #551)
+
+**Purpose**: Identifies neurons in suboptimal activation regimes and
+recommends large bias shifts to escape local minima. Unlike small
+gradient-based bias adjustments, this module proposes regime-shifting
+perturbations that move the neuron's operating point to a fundamentally
+different part of its activation function.
+
+**Detection criteria**:
+
+1. **Suboptimal regime**: The neuron operates in a region of its activation
+   function where the gradient is too small (e.g., deep saturation) or the
+   output is dominated by bias rather than input.
+2. **High error despite stable activation**: The neuron has consistent
+   activation but is contributing to significant error.
+3. **Hidden neurons only**: Input and output neurons are excluded.
+4. **Minimum samples**: At least 20 samples for reliability.
+
+**Recommended actions**:
+
+1. **Set bias**: Apply a large bias shift to move the neuron to a different
+   activation regime (e.g., from saturated to linear region).
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `setBias`
+operations.
+
+---
+
+### Squash + Weight Rescale Detection
+
+**Source**: `src/analysis/detection/squash_weight_rescale.rs` (Issue #548)
+
+**Purpose**: Coordinates activation function changes with compensating
+weight adjustments to preserve the neuron's operating point. When changing
+a neuron's squash function (e.g., TANH → RELU), the downstream weights
+must be rescaled to maintain equivalent signal magnitude, preventing
+disruptive output changes.
+
+**Detection criteria**:
+
+1. **Better activation available**: A different activation function would
+   improve the neuron's signal processing (detected by other modules).
+2. **Downstream synapses exist**: The neuron has outgoing connections that
+   need weight compensation.
+3. **Hidden neurons only**: Input and output neurons are excluded.
+
+**Recommended actions**:
+
+1. **Change activation + adjust weights**: Atomically change the squash
+   function and rescale all downstream synapse weights to preserve the
+   operating point.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`
+and `setWeight` operations applied atomically.
+
+---
+
 ### Noise-to-Signal Ratio Detection
 
 **Source**: `src/analysis/noise_signal.rs` (Issue #434)
@@ -454,6 +816,127 @@ affect outputs.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `removeNeuron`,
 `removeSynapse`, or `setWeight` operations.
+
+---
+
+### Weight Coherence Detection
+
+**Source**: `src/analysis/detection/weight_coherence.rs` (Issue #437)
+
+**Purpose**: Part of the "Brilliant but Brittle" initiative. Validates weight
+configurations for coherence across three sub-detectors: incoherent weight
+ratios, near-constant output paths, and symmetric weight cancellation.
+
+**Detection criteria — Incoherent weight ratios**:
+
+1. **Extreme ratio**: The ratio between a neuron's largest and smallest
+   incoming weight magnitudes exceeds a threshold, meaning some inputs are
+   effectively ignored while others dominate.
+2. **Hidden neurons only**: Input and output neurons are excluded.
+
+**Detection criteria — Near-constant paths**:
+
+1. **Tiny combined weight**: The product of incoming and outgoing weights
+   is so small that the neuron contributes a near-constant signal regardless
+   of input variation.
+
+**Detection criteria — Symmetric cancellation**:
+
+1. **Opposing weights**: Two synapses with nearly equal magnitude but
+   opposite signs feed the same target, cancelling each other's contribution.
+
+**Recommended actions**:
+
+1. **Adjust weights**: Rebalance incoherent weight ratios via `setWeight`.
+2. **Remove synapses**: Prune near-constant or cancelling paths via
+   `removeSynapse`.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `setWeight`
+or `removeSynapse` operations.
+
+---
+
+### Weight Magnitude Reset Detection
+
+**Source**: `src/analysis/detection/weight_magnitude_reset.rs` (Issue #550)
+
+**Purpose**: Identifies synapses stuck in local weight minima — weights that
+are suboptimal but where small gradient steps cannot escape the current
+basin. Generates exploratory `setWeight` candidates with large magnitude
+changes to jump to a different region of the loss surface.
+
+**Detection criteria**:
+
+1. **Stuck weight**: The synapse weight has not changed significantly across
+   recent training iterations despite ongoing error.
+2. **Persistent error**: The synapse's target neuron still has meaningful
+   error that could benefit from weight change.
+3. **Sufficient samples**: At least 20 samples for reliability.
+
+**Recommended actions**:
+
+1. **Reset weight magnitude**: Apply a large weight change to escape the
+   local minimum (e.g., double, halve, or negate the current weight).
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `setWeight`
+operations.
+
+---
+
+### Weight Polarity Flip Detection
+
+**Source**: `src/analysis/detection/weight_polarity_flip.rs` (Issue #644)
+
+**Purpose**: Detects synapses where the gradient sign is consistently
+opposite to the weight sign, indicating the weight should be negated.
+Rather than waiting for many small gradient descent steps to cross zero,
+this module recommends a direct sign inversion.
+
+**Detection criteria**:
+
+1. **Gradient–weight sign disagreement**: The computed gradient consistently
+   indicates the weight should move in the opposite direction (toward sign
+   reversal).
+2. **Sufficient consistency**: The sign disagreement holds across a majority
+   of training samples.
+3. **Meaningful magnitude**: The gradient and weight both have non-trivial
+   magnitude.
+
+**Recommended actions**:
+
+1. **Flip weight polarity**: Negate the synapse weight to align with the
+   gradient direction.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `setWeight`
+operations.
+
+---
+
+### Fan-in Polarity Conflict Detection
+
+**Source**: `src/analysis/detection/fanin_polarity_conflict.rs` (Issue #641)
+
+**Purpose**: Identifies hidden neurons receiving incoming synapses with
+conflicting polarities — a mix of strong positive and strong negative
+weights that partially cancel each other. This wastes representational
+capacity as the neuron tries to combine contradictory signals.
+
+**Detection criteria**:
+
+1. **Mixed polarity fan-in**: The neuron has incoming synapses with both
+   significant positive and significant negative weights.
+2. **Partial cancellation**: The positive and negative contributions
+   substantially offset each other.
+3. **Hidden neurons only**: Input and output neurons are excluded.
+
+**Recommended actions**:
+
+1. **Add neuron**: Split the conflicting inputs by routing positive-weight
+   and negative-weight paths through separate neurons.
+2. **Add synapse**: Add bypass connections for the dominant polarity group.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron`
+and/or `addSynapse` operations.
 
 ---
 
@@ -608,6 +1091,178 @@ complementing existing activation-based discovery.
 
 ---
 
+### Topology Diversification Detection
+
+**Source**: `src/analysis/detection/topology_diversification.rs` (Issue #549)
+
+**Purpose**: Detects when the network topology is too simple for the
+problem complexity and recommends adding neurons to increase the
+dimensionality of the solution space. Unlike bottleneck detection (which
+finds local convergence points), this module assesses global network
+capacity.
+
+**Detection criteria**:
+
+1. **Low topological complexity**: The network has fewer hidden neurons
+   than the problem dimensionality suggests.
+2. **Persistent error**: The network has significant remaining error that
+   cannot be reduced with existing structure.
+3. **Sufficient samples**: At least 20 samples for analysis.
+
+**Recommended actions**:
+
+1. **Add neuron**: Insert a new hidden neuron to increase the network's
+   representational capacity.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron`
+operations.
+
+---
+
+### Skip Connection Detection
+
+**Source**: `src/analysis/detection/skip_connection.rs` (Issue #570)
+
+**Purpose**: Analyses topological depth and gradient attenuation to identify
+deep hidden neurons that would benefit from residual-style skip connections.
+Deep neurons suffer from vanishing gradient effects; a skip connection
+provides a shorter gradient path.
+
+**Detection criteria**:
+
+1. **Deep topology**: The neuron is several hops away from the nearest
+   output neuron.
+2. **Gradient attenuation**: The effective gradient reaching the neuron is
+   significantly reduced by the depth of the path.
+3. **Positive error**: The neuron carries meaningful error worth improving.
+4. **No existing shortcut**: A direct connection to the output does not
+   already exist.
+
+**Recommended actions**:
+
+1. **Add skip synapse**: Connect the deep hidden neuron directly to an
+   output, providing an unattenuated gradient path.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `addSynapse`
+operations.
+
+---
+
+### Symmetry Breaking Detection
+
+**Source**: `src/analysis/detection/symmetry_breaking.rs` (Issue #569)
+
+**Purpose**: Identifies pairs of hidden neurons with near-identical weight
+configurations and activation functions. Symmetric neurons waste network
+capacity by computing effectively the same function. Breaking the symmetry
+allows each neuron to specialise.
+
+**Detection criteria**:
+
+1. **Near-identical weights**: Both neurons have very similar incoming and
+   outgoing synapse weights.
+2. **Same activation**: Both neurons use the same squash function.
+3. **High activation correlation**: Activation patterns are highly
+   correlated across training samples.
+4. **At least 2 hidden neurons**: Cannot detect symmetry with fewer.
+
+**Recommended actions**:
+
+1. **Adjust bias**: Shift one neuron's bias to break the symmetry.
+2. **Adjust weight**: Modify one neuron's incoming weight to differentiate.
+3. **Change activation**: Give one neuron a different squash function.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `setBias`,
+`setWeight`, or `changeSquash` operations.
+
+---
+
+### Co-Adaptation Detection
+
+**Source**: `src/analysis/detection/co_adaptation.rs` (Issue #571)
+
+**Purpose**: Identifies pairs of hidden neurons with highly correlated
+activations, indicating they have co-adapted to compute redundant
+representations. Unlike symmetry breaking (which detects identical weights),
+co-adaptation detects functional redundancy even when weight configurations
+differ.
+
+**Detection criteria**:
+
+1. **High activation correlation**: Pearson correlation ≥ 0.9 between the
+   two neurons' activation patterns across training samples.
+2. **Both hidden neurons**: Only hidden-to-hidden pairs are considered.
+3. **Sufficient samples**: At least 20 samples for statistical reliability.
+
+**Recommended actions**:
+
+1. **Remove neuron**: Remove the weaker of the two co-adapted neurons.
+2. **Adjust weight**: Rescale the survivor's outgoing weights to compensate.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `removeNeuron`
+and/or `setWeight` operations.
+
+---
+
+### Output Conflict Detection
+
+**Source**: `src/analysis/detection/output_conflict.rs` (Issue #639)
+
+**Purpose**: Identifies hidden neurons whose per-output error contributions
+conflict — the neuron helps reduce error for some output neurons while
+simultaneously increasing error for others. Such neurons are serving
+contradictory purposes and should be specialised.
+
+**Detection criteria**:
+
+1. **Conflicting contributions**: The neuron's activation reduces error for
+   some outputs but increases error for others.
+2. **Multiple outputs**: At least 2 output neurons must exist for conflict
+   to be detected.
+3. **Hidden neurons only**: Only hidden neurons are analysed.
+
+**Recommended actions**:
+
+1. **Add synapse**: Add targeted connections to help the conflicted neuron
+   specialise for specific outputs.
+2. **Add neuron**: Split the neuron so each copy can serve different outputs.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `addSynapse`
+and/or `addNeuron` operations.
+
+---
+
+### Hard Sample Cluster Detection
+
+**Source**: `src/analysis/detection/hard_sample_cluster.rs` (Issue #642)
+
+**Purpose**: Identifies observation groups that are consistently high-error
+across all output neurons. These "hard samples" represent input patterns
+that the network has not learned to handle. The module finds which input
+features discriminate hard samples from easy ones and recommends structural
+changes to improve performance on those patterns.
+
+**Detection criteria**:
+
+1. **Consistently high error**: The observation has above-average error
+   across all (or most) output neurons.
+2. **Clustered**: Multiple hard observations share similar input feature
+   patterns.
+3. **Discriminative inputs**: Input neuron activations that distinguish hard
+   from easy observations can be identified.
+
+**Recommended actions**:
+
+1. **Add neuron**: Insert a new hidden neuron targeting the discriminative
+   input features.
+2. **Add synapse**: Connect discriminative inputs to existing neurons that
+   handle the problematic output.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron`
+and/or `addSynapse` operations.
+
+---
+
 ### Gradient-Based Synapse Adjustment
 
 **Source**: `src/analysis/gradient_discovery.rs` (Issue #421)
@@ -651,6 +1306,156 @@ operations.
 
 **Expected improvement**: 25–30% success rate for weight adjustment candidates,
 more accurate than correlation-based methods for predicting improvement direction.
+
+---
+
+### Bounded Range Detection
+
+**Source**: `src/analysis/detection/bounded_range.rs` (Issue #395)
+
+**Purpose**: Detects input and hidden neurons with sentinel value clusters at
+their activation boundaries. Many real-world datasets use special values
+(e.g., -1, 0, NaN-replacements) to indicate missing or invalid data. These
+sentinel values distort the neuron's effective operating range and should be
+gated out.
+
+**Detection criteria**:
+
+1. **Boundary clusters**: A significant fraction of activation values are
+   clustered at the minimum or maximum of the observed range.
+2. **Bimodal distribution**: The activation distribution splits into a
+   sentinel cluster and a data cluster.
+3. **Input or hidden neurons**: Both input and hidden neurons are analysed.
+4. **Minimum samples**: At least 20 samples for reliability.
+
+**Recommended actions**:
+
+1. **Add gating neuron**: Insert a STEP-gated neuron that suppresses the
+   sentinel region, passing through only the data region.
+2. **Add synapse**: Connect the gating neuron to downstream targets.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron`
+and `addSynapse` operations.
+
+---
+
+### Sentinel Gating Detection
+
+**Source**: `src/analysis/detection/sentinel_gating.rs` (Issue #400)
+
+**Purpose**: Detects input neurons where sentinel values actively degrade
+network performance. When sentinel values (e.g., -1 for "missing data") are
+processed as normal inputs, they introduce systematic error. This module
+proposes gated neuron structures using STEP activation to mask sentinel
+regions.
+
+**Detection criteria**:
+
+1. **Sentinel value presence**: The input has a distinct cluster of values
+   at a boundary (e.g., exactly -1 or 0).
+2. **Error correlation**: Samples with sentinel values have higher error
+   than samples with data values.
+3. **Input neurons only**: Only input neurons are analysed.
+4. **Minimum samples**: At least 20 samples for reliability.
+
+**Recommended actions**:
+
+1. **Add gating neuron**: Insert a STEP neuron that outputs 0 for sentinel
+   values and 1 for data values.
+2. **Add synapse**: Connect the gate to the downstream path, effectively
+   multiplying the input by the gate output.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron`
+and `addSynapse` operations.
+
+---
+
+### Observation Utilisation Detection
+
+**Source**: `src/analysis/detection/observation_utilisation.rs` (Issue #543)
+
+**Purpose**: Builds on observation range analysis to detect underutilised
+input neurons. Inputs with low effective range (most values clustered in a
+tiny region) are not contributing meaningful information to the network.
+Proposes gating neurons to improve their utilisation.
+
+**Detection criteria**:
+
+1. **Low effective range**: The input neuron's non-sentinel values span a
+   very narrow range relative to the theoretical range.
+2. **Low utilisation score**: The ratio of effective range to total observed
+   range is below a threshold.
+3. **Input neurons only**: Only input neurons are analysed.
+
+**Recommended actions**:
+
+1. **Add gating neuron**: Insert a neuron that normalises or gates the
+   underutilised input.
+2. **Add synapse**: Connect the processed input to downstream targets.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron`
+and `addSynapse` operations.
+
+---
+
+### Input Sensitivity Detection
+
+**Source**: `src/analysis/detection/input_sensitivity.rs` (Issue #435)
+
+**Purpose**: Part of the "Brilliant but Brittle" initiative. Analyses how
+sensitive predictions are to input changes. Detects two problems: dominant
+inputs with excessive leverage over outputs, and threshold effects where
+small input changes cause disproportionate output swings.
+
+**Detection criteria — Dominant inputs**:
+
+1. **High leverage**: A single input's weight-times-activation accounts for
+   a large fraction of the output neuron's total input.
+2. **Disproportionate influence**: The input's contribution variance is
+   much larger than other inputs.
+
+**Detection criteria — Threshold effects**:
+
+1. **Discontinuous response**: Small input changes near a threshold cause
+   large output changes (e.g., near a STEP function's boundary).
+2. **High local gradient**: The effective gradient at the operating point is
+   much larger than the average gradient.
+
+**Recommended actions**:
+
+1. **Reduce weight**: Dampen dominant inputs via `setWeight`.
+2. **Add neuron**: Insert a smoothing neuron to reduce threshold effects.
+3. **Adjust bias**: Shift the operating point away from thresholds.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `setWeight`,
+`addNeuron`, or `setBias` operations.
+
+---
+
+### Sample-Weighted Discovery
+
+**Source**: `src/analysis/recommendation/sample_weighted.rs` (Issue #423)
+
+**Purpose**: Prioritises high-error samples during discovery analysis by
+weighting each sample proportionally to its absolute error magnitude. This
+ensures that difficult samples receive more attention during candidate
+evaluation, rather than being averaged away by easy samples.
+
+**Detection criteria**:
+
+1. **Error-weighted analysis**: Samples with higher absolute error receive
+   proportionally more weight in the analysis.
+2. **Stratification**: Separates easy (low-error) from hard (high-error)
+   samples to identify neurons that disproportionately affect hard samples.
+3. **Minimum samples**: At least 20 samples for reliable stratification.
+
+**Recommended actions**:
+
+1. **Adjust bias**: Apply bias correction proportional to the weighted mean
+   error (bias_adjustment = -weighted_mean_error × 0.1).
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `setBias`
+operations.
 
 ---
 
