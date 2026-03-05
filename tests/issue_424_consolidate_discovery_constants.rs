@@ -138,7 +138,7 @@ fn test_dead_neuron_detection_uses_centralised_constants() {
             .collect(),
     )];
 
-    let detected = detect_dead_neurons(&creature, &too_few);
+    let detected = detect_dead_neurons(&creature, &too_few, None);
     assert!(
         detected.is_empty(),
         "Should not detect dead neurons with fewer than MIN_DISCOVERY_SAMPLE_COUNT samples"

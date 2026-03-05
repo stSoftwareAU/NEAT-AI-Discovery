@@ -26,10 +26,12 @@
 //! These are emitted as `CoordinatedStructuralCandidateJson` with `AddNeuron` and/or
 //! `AddSynapse` operations.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
+
+use super::topology_cache::CreatureTopologyCache;
 
 // MIN_SAMPLES_FOR_BOTTLENECK moved to constants.rs (Issue #424)
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_BOTTLENECK;
@@ -77,29 +79,17 @@ pub struct BottleneckNeuronCandidate {
 pub fn detect_bottleneck_neurons(
     creature: &CreatureJson,
     neuron_records: &[(String, Vec<DiscoverRecord>)],
+    topo: Option<&CreatureTopologyCache>,
 ) -> Vec<BottleneckNeuronCandidate> {
-    // Build topology maps
-    let mut fan_in_map: HashMap<&str, Vec<&str>> = HashMap::new();
-    let mut fan_out_map: HashMap<&str, Vec<&str>> = HashMap::new();
-
-    for synapse in &creature.synapses {
-        fan_in_map
-            .entry(synapse.to_uuid.as_str())
-            .or_default()
-            .push(synapse.from_uuid.as_str());
-        fan_out_map
-            .entry(synapse.from_uuid.as_str())
-            .or_default()
-            .push(synapse.to_uuid.as_str());
-    }
-
-    // Identify hidden neurons only
-    let hidden_uuids: HashSet<&str> = creature
-        .neurons
-        .iter()
-        .filter(|n| n.neuron_type == "hidden")
-        .map(|n| n.uuid.as_str())
-        .collect();
+    // Use pre-computed cache or build locally.
+    let local_cache;
+    let topo = match topo {
+        Some(t) => t,
+        None => {
+            local_cache = CreatureTopologyCache::new(creature);
+            &local_cache
+        }
+    };
 
     // Build records lookup
     let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
@@ -117,10 +107,9 @@ pub fn detect_bottleneck_neurons(
 
     let mut candidates = Vec::new();
 
-    for uuid in &hidden_uuids {
-        let empty_list: Vec<&str> = Vec::new();
-        let fan_in_list = fan_in_map.get(uuid).unwrap_or(&empty_list);
-        let fan_out_list = fan_out_map.get(uuid).unwrap_or(&empty_list);
+    for uuid in &topo.hidden_uuids {
+        let fan_in_list = topo.fan_in_for(uuid);
+        let fan_out_list = topo.fan_out_for(uuid);
 
         let fan_in = fan_in_list.len();
         let fan_out = fan_out_list.len();
@@ -142,7 +131,7 @@ pub fn detect_bottleneck_neurons(
         }
 
         // Check records
-        let records = match records_map.get(uuid) {
+        let records = match records_map.get(uuid.as_str()) {
             Some(r) if r.len() >= MIN_SAMPLES_FOR_BOTTLENECK => *r,
             _ => continue,
         };
@@ -192,21 +181,15 @@ pub fn detect_bottleneck_neurons(
         }
 
         candidates.push(BottleneckNeuronCandidate {
-            neuron_uuid: uuid.to_string(),
+            neuron_uuid: uuid.clone(),
             fan_in,
             fan_out,
             error_contribution_ratio,
             bottleneck_score,
             estimated_improvement,
             recommended_actions,
-            upstream_uuids: fan_in_list
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            downstream_uuids: fan_out_list
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
+            upstream_uuids: fan_in_list.to_vec(),
+            downstream_uuids: fan_out_list.to_vec(),
         });
     }
 
@@ -242,20 +225,17 @@ fn bottleneck_parallel_neuron_uuid(bottleneck_uuid: &str, index: usize) -> Strin
 pub fn bottleneck_neurons_to_coordinated_candidates(
     candidates: &[BottleneckNeuronCandidate],
     creature: &CreatureJson,
+    topo: Option<&CreatureTopologyCache>,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
-    // Build synapse weight lookup
-    let synapse_weights: HashMap<(&str, &str), f32> = creature
-        .synapses
-        .iter()
-        .map(|s| ((s.from_uuid.as_str(), s.to_uuid.as_str()), s.weight))
-        .collect();
-
-    // Build existing synapse set for checking if bypass already exists
-    let existing_synapses: HashSet<(&str, &str)> = creature
-        .synapses
-        .iter()
-        .map(|s| (s.from_uuid.as_str(), s.to_uuid.as_str()))
-        .collect();
+    // Use pre-computed cache or build locally.
+    let local_cache;
+    let topo = match topo {
+        Some(t) => t,
+        None => {
+            local_cache = CreatureTopologyCache::new(creature);
+            &local_cache
+        }
+    };
 
     let mut results = Vec::new();
 
@@ -302,10 +282,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
                 .upstream_uuids
                 .iter()
                 .map(|u| {
-                    let w = synapse_weights
-                        .get(&(u.as_str(), c.neuron_uuid.as_str()))
-                        .copied()
-                        .unwrap_or(0.1);
+                    let w = topo.synapse_weight(u, &c.neuron_uuid).unwrap_or(0.1);
                     (u.as_str(), w)
                 })
                 .collect();
@@ -323,9 +300,8 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
 
             // Connect the new neuron to all downstream neurons
             for downstream_uuid in &c.downstream_uuids {
-                let existing_weight = synapse_weights
-                    .get(&(c.neuron_uuid.as_str(), downstream_uuid.as_str()))
-                    .copied()
+                let existing_weight = topo
+                    .synapse_weight(&c.neuron_uuid, downstream_uuid)
                     .unwrap_or(0.1);
                 operations.push(CoordinatedStructuralOpJson::AddSynapse {
                     from_neuron_uuid: new_uuid.clone(),
@@ -350,35 +326,23 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
         {
             // Pick the upstream neuron with highest weighted connection to the bottleneck
             let best_upstream = c.upstream_uuids.iter().max_by(|a, b| {
-                let wa = synapse_weights
-                    .get(&(a.as_str(), c.neuron_uuid.as_str()))
-                    .copied()
-                    .unwrap_or(0.0)
-                    .abs();
-                let wb = synapse_weights
-                    .get(&(b.as_str(), c.neuron_uuid.as_str()))
-                    .copied()
-                    .unwrap_or(0.0)
-                    .abs();
+                let wa = topo.synapse_weight(a, &c.neuron_uuid).unwrap_or(0.0).abs();
+                let wb = topo.synapse_weight(b, &c.neuron_uuid).unwrap_or(0.0).abs();
                 wa.total_cmp(&wb)
             });
 
             if let Some(upstream_uuid) = best_upstream {
                 for downstream_uuid in &c.downstream_uuids {
                     // Skip if bypass already exists
-                    if existing_synapses
-                        .contains(&(upstream_uuid.as_str(), downstream_uuid.as_str()))
-                    {
+                    if topo.synapse_exists(upstream_uuid, downstream_uuid) {
                         continue;
                     }
 
-                    let upstream_weight = synapse_weights
-                        .get(&(upstream_uuid.as_str(), c.neuron_uuid.as_str()))
-                        .copied()
+                    let upstream_weight = topo
+                        .synapse_weight(upstream_uuid, &c.neuron_uuid)
                         .unwrap_or(0.1);
-                    let downstream_weight = synapse_weights
-                        .get(&(c.neuron_uuid.as_str(), downstream_uuid.as_str()))
-                        .copied()
+                    let downstream_weight = topo
+                        .synapse_weight(&c.neuron_uuid, downstream_uuid)
                         .unwrap_or(0.1);
                     let bypass_weight = upstream_weight * downstream_weight * 0.5;
 

@@ -26,6 +26,7 @@ const EXPECTED_BENCHMARKS: &[&str] = &[
     "gpu_shader_workgroup",
     "uuid_hashing",
     "squash_normalisation",
+    "topology_cache",
 ];
 
 #[test]

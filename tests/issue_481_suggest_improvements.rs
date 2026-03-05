@@ -228,7 +228,7 @@ fn test_dead_neuron_detection_produces_valid_candidates() {
             .collect(),
     )];
 
-    let detected = detect_dead_neurons(&creature, &records);
+    let detected = detect_dead_neurons(&creature, &records, None);
 
     assert!(
         !detected.is_empty(),

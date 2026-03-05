@@ -17,6 +17,7 @@ mod synapse_specs;
 
 use std::sync::Arc;
 
+use super::detection::topology_cache::CreatureTopologyCache;
 use super::{
     cache, candidate_clustering, candidate_diversity, discovery_dispatch, ensemble_scoring,
     module_weights::ModuleOutcomeTracker, shared, utils,
@@ -27,16 +28,27 @@ use super::{
 /// Each module follows the detect → convert-to-candidates pipeline. The returned
 /// specs are consumed by `run_discovery_modules_parallel` which runs the detection
 /// closures concurrently and merges results sequentially.
+///
+/// Issue #754: A shared `CreatureTopologyCache` is pre-computed once and passed
+/// to all detection modules, eliminating redundant `HashMap` / `HashSet`
+/// construction across 30+ modules.
 pub(crate) fn build_discovery_module_specs(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
+    topo: &Arc<CreatureTopologyCache>,
 ) -> Vec<discovery_dispatch::DiscoveryModuleSpec> {
     let mut modules: Vec<discovery_dispatch::DiscoveryModuleSpec> = Vec::with_capacity(32);
 
-    neuron_specs::append_neuron_specs(&mut modules, creature, hidden_neurons, shared_cache);
+    neuron_specs::append_neuron_specs(&mut modules, creature, hidden_neurons, shared_cache, topo);
     synapse_specs::append_synapse_specs(&mut modules, creature, hidden_neurons, shared_cache);
-    structural_specs::append_structural_specs(&mut modules, creature, hidden_neurons, shared_cache);
+    structural_specs::append_structural_specs(
+        &mut modules,
+        creature,
+        hidden_neurons,
+        shared_cache,
+        topo,
+    );
     scoring_specs::append_scoring_specs(&mut modules, creature, shared_cache);
 
     modules
@@ -51,7 +63,9 @@ pub(crate) fn dispatch_and_merge_discovery_modules(
     max_candidates: Option<usize>,
     diversify: bool,
 ) {
-    let modules = build_discovery_module_specs(creature, hidden_neurons, shared_cache);
+    // Issue #754: Pre-compute topology cache once for all detection modules.
+    let topo = Arc::new(CreatureTopologyCache::new(creature));
+    let modules = build_discovery_module_specs(creature, hidden_neurons, shared_cache, &topo);
     discovery_dispatch::run_discovery_modules_parallel(syn, modules, max_candidates, diversify);
 }
 

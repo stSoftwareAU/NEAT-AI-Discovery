@@ -225,16 +225,17 @@ fn bench_bottleneck_detection(c: &mut Criterion) {
         let (creature, records) = create_bottleneck_creature(count);
 
         group.bench_function(format!("detect_{count}_bottlenecks"), |b| {
-            b.iter(|| detect_bottleneck_neurons(black_box(&creature), black_box(&records)));
+            b.iter(|| detect_bottleneck_neurons(black_box(&creature), black_box(&records), None));
         });
 
-        let candidates = detect_bottleneck_neurons(&creature, &records);
+        let candidates = detect_bottleneck_neurons(&creature, &records, None);
         if !candidates.is_empty() {
             group.bench_function(format!("convert_{count}_bottlenecks"), |b| {
                 b.iter(|| {
                     bottleneck_neurons_to_coordinated_candidates(
                         black_box(&candidates),
                         black_box(&creature),
+                        None,
                     )
                 });
             });

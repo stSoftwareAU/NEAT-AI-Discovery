@@ -254,7 +254,7 @@ fn test_detects_bottleneck_with_high_fan_in() {
             .collect(),
     )];
 
-    let candidates = detect_bottleneck_neurons(&creature, &neuron_records);
+    let candidates = detect_bottleneck_neurons(&creature, &neuron_records, None);
 
     assert!(
         !candidates.is_empty(),
@@ -320,7 +320,7 @@ fn test_does_not_flag_wide_topology() {
         ),
     ];
 
-    let candidates = detect_bottleneck_neurons(&creature, &neuron_records);
+    let candidates = detect_bottleneck_neurons(&creature, &neuron_records, None);
 
     assert!(
         candidates.is_empty(),
@@ -399,7 +399,7 @@ fn test_output_neurons_not_flagged() {
             .collect(),
     )];
 
-    let candidates = detect_bottleneck_neurons(&creature, &neuron_records);
+    let candidates = detect_bottleneck_neurons(&creature, &neuron_records, None);
     assert!(
         candidates.is_empty(),
         "Output neurons should never be flagged as bottlenecks"
@@ -418,7 +418,7 @@ fn test_input_neurons_not_flagged() {
             .collect(),
     )];
 
-    let candidates = detect_bottleneck_neurons(&creature, &neuron_records);
+    let candidates = detect_bottleneck_neurons(&creature, &neuron_records, None);
     assert!(
         candidates.is_empty(),
         "Input neurons should never be flagged"
@@ -437,7 +437,7 @@ fn test_insufficient_samples_not_flagged() {
             .collect(),
     )];
 
-    let candidates = detect_bottleneck_neurons(&creature, &neuron_records);
+    let candidates = detect_bottleneck_neurons(&creature, &neuron_records, None);
     assert!(
         candidates.is_empty(),
         "Too few samples should not trigger detection"
@@ -469,7 +469,7 @@ fn test_candidates_produce_coordinated_operations() {
     };
 
     let creature = bottleneck_creature();
-    let coordinated = bottleneck_neurons_to_coordinated_candidates(&[candidate], &creature);
+    let coordinated = bottleneck_neurons_to_coordinated_candidates(&[candidate], &creature, None);
 
     assert!(
         !coordinated.is_empty(),
@@ -681,7 +681,7 @@ fn test_higher_fan_in_ratio_scores_higher() {
         ),
     ];
 
-    let candidates = detect_bottleneck_neurons(&creature, &neuron_records);
+    let candidates = detect_bottleneck_neurons(&creature, &neuron_records, None);
 
     // hidden-big should be flagged (fan-in=8, fan-out=1), hidden-small should not (fan-in=2)
     assert!(
@@ -723,7 +723,7 @@ fn test_error_contribution_increases_score() {
             .collect(),
     )];
 
-    let candidates = detect_bottleneck_neurons(&creature, &high_error_records);
+    let candidates = detect_bottleneck_neurons(&creature, &high_error_records, None);
 
     assert!(
         !candidates.is_empty(),
@@ -792,7 +792,7 @@ fn test_pass_through_neuron_not_bottleneck() {
             .collect(),
     )];
 
-    let candidates = detect_bottleneck_neurons(&creature, &neuron_records);
+    let candidates = detect_bottleneck_neurons(&creature, &neuron_records, None);
     assert!(
         candidates.is_empty(),
         "Pass-through neuron (fan-in=1) should not be a bottleneck"
@@ -821,7 +821,7 @@ fn test_bypass_synapse_candidate() {
     };
 
     let creature = bottleneck_creature();
-    let coordinated = bottleneck_neurons_to_coordinated_candidates(&[candidate], &creature);
+    let coordinated = bottleneck_neurons_to_coordinated_candidates(&[candidate], &creature, None);
 
     // Should have bypass candidates that add direct connections
     let bypass_candidates: Vec<_> = coordinated
@@ -870,7 +870,7 @@ fn test_parallel_path_candidate() {
     };
 
     let creature = bottleneck_creature();
-    let coordinated = bottleneck_neurons_to_coordinated_candidates(&[candidate], &creature);
+    let coordinated = bottleneck_neurons_to_coordinated_candidates(&[candidate], &creature, None);
 
     // Should have parallel path candidates that add a new neuron
     let parallel_candidates: Vec<_> = coordinated
@@ -904,7 +904,7 @@ fn test_no_records_for_neuron() {
     // No records at all
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![];
 
-    let candidates = detect_bottleneck_neurons(&creature, &neuron_records);
+    let candidates = detect_bottleneck_neurons(&creature, &neuron_records, None);
     assert!(
         candidates.is_empty(),
         "No records should produce no candidates"
@@ -932,7 +932,7 @@ fn test_bottleneck_score_considers_errors() {
             .collect(),
     )];
 
-    let candidates = detect_bottleneck_neurons(&creature, &neuron_records);
+    let candidates = detect_bottleneck_neurons(&creature, &neuron_records, None);
     assert!(!candidates.is_empty(), "Should detect bottleneck");
 
     let c = &candidates[0];

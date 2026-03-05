@@ -312,7 +312,7 @@ fn test_detects_long_path_in_deep_chain() {
         ("h3".into(), make_records("h3", 30, 0.2, 0.1)),
     ];
 
-    let candidates = detect_topology_issues(&creature, &neuron_records);
+    let candidates = detect_topology_issues(&creature, &neuron_records, None);
 
     assert!(
         !candidates.is_empty(),
@@ -338,7 +338,7 @@ fn test_detects_connectivity_imbalance() {
         ("h1".into(), make_records("h1", 30, 0.6, 0.25)),
     ];
 
-    let candidates = detect_topology_issues(&creature, &neuron_records);
+    let candidates = detect_topology_issues(&creature, &neuron_records, None);
 
     let has_imbalance = candidates
         .iter()
@@ -359,7 +359,7 @@ fn test_balanced_topology_no_issues() {
         ("h1".into(), make_records("h1", 30, 0.4, 0.05)),
     ];
 
-    let candidates = detect_topology_issues(&creature, &neuron_records);
+    let candidates = detect_topology_issues(&creature, &neuron_records, None);
 
     assert!(
         candidates.is_empty(),
@@ -377,7 +377,7 @@ fn test_output_neurons_not_flagged() {
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> =
         vec![("output-0".into(), make_records("output-0", 30, 0.5, 0.1))];
 
-    let candidates = detect_topology_issues(&creature, &neuron_records);
+    let candidates = detect_topology_issues(&creature, &neuron_records, None);
 
     let flags_output = candidates.iter().any(|c| c.neuron_uuid == "output-0");
     assert!(
@@ -394,7 +394,7 @@ fn test_input_neurons_not_flagged() {
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> =
         vec![("input-0".into(), make_records("input-0", 30, 1.0, 0.0))];
 
-    let candidates = detect_topology_issues(&creature, &neuron_records);
+    let candidates = detect_topology_issues(&creature, &neuron_records, None);
 
     let flags_input = candidates.iter().any(|c| c.neuron_uuid == "input-0");
     assert!(
@@ -413,7 +413,7 @@ fn test_insufficient_samples_not_flagged() {
         ("h1".into(), make_records("h1", 5, 0.4, 0.15)),
     ];
 
-    let candidates = detect_topology_issues(&creature, &neuron_records);
+    let candidates = detect_topology_issues(&creature, &neuron_records, None);
 
     assert!(
         candidates.is_empty(),
@@ -451,7 +451,7 @@ fn test_empty_network_no_candidates() {
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![];
 
-    let candidates = detect_topology_issues(&creature, &neuron_records);
+    let candidates = detect_topology_issues(&creature, &neuron_records, None);
 
     assert!(
         candidates.is_empty(),
@@ -471,7 +471,7 @@ fn test_candidates_have_positive_improvement() {
         ("h3".into(), make_records("h3", 30, 0.2, 0.1)),
     ];
 
-    let candidates = detect_topology_issues(&creature, &neuron_records);
+    let candidates = detect_topology_issues(&creature, &neuron_records, None);
 
     for c in &candidates {
         assert!(
@@ -495,10 +495,10 @@ fn test_conversion_to_coordinated_candidates() {
         ("h3".into(), make_records("h3", 30, 0.2, 0.1)),
     ];
 
-    let detected = detect_topology_issues(&creature, &neuron_records);
+    let detected = detect_topology_issues(&creature, &neuron_records, None);
     assert!(!detected.is_empty(), "Should detect issues first");
 
-    let coordinated = topology_issues_to_coordinated_candidates(&detected, &creature);
+    let coordinated = topology_issues_to_coordinated_candidates(&detected, &creature, None);
 
     assert!(
         !coordinated.is_empty(),
@@ -533,8 +533,8 @@ fn test_long_path_suggests_skip_connection() {
         ("h3".into(), make_records("h3", 30, 0.2, 0.1)),
     ];
 
-    let detected = detect_topology_issues(&creature, &neuron_records);
-    let coordinated = topology_issues_to_coordinated_candidates(&detected, &creature);
+    let detected = detect_topology_issues(&creature, &neuron_records, None);
+    let coordinated = topology_issues_to_coordinated_candidates(&detected, &creature, None);
 
     // At least one candidate should include addSynapse (skip connection)
     let has_add_synapse = coordinated.iter().any(|c| {
@@ -559,7 +559,7 @@ fn test_candidates_sorted_by_improvement() {
         ("h3".into(), make_records("h3", 30, 0.2, 0.1)),
     ];
 
-    let candidates = detect_topology_issues(&creature, &neuron_records);
+    let candidates = detect_topology_issues(&creature, &neuron_records, None);
 
     for window in candidates.windows(2) {
         assert!(
@@ -576,7 +576,7 @@ fn test_no_hidden_records_no_candidates() {
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![];
 
-    let candidates = detect_topology_issues(&creature, &neuron_records);
+    let candidates = detect_topology_issues(&creature, &neuron_records, None);
 
     assert!(
         candidates.is_empty(),
@@ -665,8 +665,8 @@ fn test_existing_skip_connection_not_duplicated() {
         ("h2".into(), make_records("h2", 30, 0.3, 0.08)),
     ];
 
-    let detected = detect_topology_issues(&creature, &neuron_records);
-    let coordinated = topology_issues_to_coordinated_candidates(&detected, &creature);
+    let detected = detect_topology_issues(&creature, &neuron_records, None);
+    let coordinated = topology_issues_to_coordinated_candidates(&detected, &creature, None);
 
     // If skip connections are suggested, none should duplicate h0→output-0
     for c in &coordinated {

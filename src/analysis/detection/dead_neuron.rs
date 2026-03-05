@@ -27,6 +27,8 @@ use std::collections::{HashMap, HashSet};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
+use super::topology_cache::CreatureTopologyCache;
+
 // MIN_SAMPLES_FOR_DEAD_DETECTION moved to constants.rs (Issue #424)
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DEAD_DETECTION;
 
@@ -70,6 +72,8 @@ pub struct DeadNeuronCandidate {
 /// # Arguments
 /// * `creature` - The creature's network topology (neurons and synapses).
 /// * `neuron_records` - List of `(neuron_uuid, records)` tuples with recorded activations.
+/// * `topo` - Optional pre-computed topology cache (Issue #754). When `None`,
+///   topology maps are built locally (backward-compatible path).
 ///
 /// # Returns
 /// A list of `DeadNeuronCandidate` for neurons that are dead,
@@ -77,31 +81,17 @@ pub struct DeadNeuronCandidate {
 pub fn detect_dead_neurons(
     creature: &CreatureJson,
     neuron_records: &[(String, Vec<DiscoverRecord>)],
+    topo: Option<&CreatureTopologyCache>,
 ) -> Vec<DeadNeuronCandidate> {
-    // Identify hidden neurons only
-    let hidden_uuids: HashSet<&str> = creature
-        .neurons
-        .iter()
-        .filter(|n| n.neuron_type == "hidden")
-        .map(|n| n.uuid.as_str())
-        .collect();
-
-    // Identify output neuron UUIDs
-    let output_uuids: HashSet<&str> = creature
-        .neurons
-        .iter()
-        .filter(|n| n.neuron_type == "output")
-        .map(|n| n.uuid.as_str())
-        .collect();
-
-    // Build fan-out map for finding connected outputs
-    let mut fan_out_map: HashMap<&str, Vec<&str>> = HashMap::new();
-    for synapse in &creature.synapses {
-        fan_out_map
-            .entry(synapse.from_uuid.as_str())
-            .or_default()
-            .push(synapse.to_uuid.as_str());
-    }
+    // Use pre-computed cache or build locally.
+    let local_cache;
+    let topo = match topo {
+        Some(t) => t,
+        None => {
+            local_cache = CreatureTopologyCache::new(creature);
+            &local_cache
+        }
+    };
 
     // Build records lookup
     let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
@@ -111,8 +101,8 @@ pub fn detect_dead_neurons(
 
     let mut candidates = Vec::new();
 
-    for uuid in &hidden_uuids {
-        let Some(records) = records_map.get(uuid) else {
+    for uuid in &topo.hidden_uuids {
+        let Some(records) = records_map.get(uuid.as_str()) else {
             continue;
         };
 
@@ -160,7 +150,7 @@ pub fn detect_dead_neurons(
         }
 
         // Find output neurons reachable from this neuron (BFS)
-        let connected_outputs = find_connected_outputs(uuid, &fan_out_map, &output_uuids);
+        let connected_outputs = find_connected_outputs_cached(uuid, topo);
 
         // Compute removal confidence based on how dead the neuron is
         let confidence = compute_removal_confidence(mean_abs_activation, activation_std_dev, n);
@@ -170,7 +160,7 @@ pub fn detect_dead_neurons(
         let estimated_improvement = confidence * 0.001;
 
         candidates.push(DeadNeuronCandidate {
-            neuron_uuid: uuid.to_string(),
+            neuron_uuid: uuid.clone(),
             mean_abs_activation,
             activation_std_dev,
             sample_count: records.len(),
@@ -186,29 +176,23 @@ pub fn detect_dead_neurons(
     candidates
 }
 
-/// Find output neurons reachable from a given neuron via BFS through the fan-out map.
-fn find_connected_outputs<'a>(
-    start_uuid: &str,
-    fan_out_map: &HashMap<&'a str, Vec<&'a str>>,
-    output_uuids: &HashSet<&str>,
-) -> Vec<String> {
+/// Find output neurons reachable from a given neuron via BFS using the topology cache.
+fn find_connected_outputs_cached(start_uuid: &str, topo: &CreatureTopologyCache) -> Vec<String> {
     let mut visited = HashSet::new();
-    let mut queue = vec![start_uuid];
+    let mut queue = vec![start_uuid.to_string()];
     let mut connected = Vec::new();
 
     while let Some(current) = queue.pop() {
-        if !visited.insert(current.to_string()) {
+        if !visited.insert(current.clone()) {
             continue;
         }
 
-        if let Some(downstream) = fan_out_map.get(current) {
-            for &next in downstream {
-                if output_uuids.contains(next) {
-                    connected.push(next.to_string());
-                }
-                if !visited.contains(next) {
-                    queue.push(next);
-                }
+        for next in topo.fan_out_for(&current) {
+            if topo.output_uuids.contains(next.as_str()) {
+                connected.push(next.clone());
+            }
+            if !visited.contains(next.as_str()) {
+                queue.push(next.clone());
             }
         }
     }

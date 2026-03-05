@@ -137,7 +137,7 @@ fn bottleneck_detection_with_borrowed_lists() {
 
     let neuron_records = vec![("hidden-0".to_string(), records)];
 
-    let candidates = detect_bottleneck_neurons(&creature, &neuron_records);
+    let candidates = detect_bottleneck_neurons(&creature, &neuron_records, None);
 
     // Should detect hidden-0 as a bottleneck (fan-in=4, fan-out=1)
     assert!(
@@ -155,7 +155,7 @@ fn bottleneck_detection_with_borrowed_lists() {
     assert_eq!(c.downstream_uuids.len(), 1);
 
     // Convert to coordinated candidates
-    let coordinated = bottleneck_neurons_to_coordinated_candidates(&candidates, &creature);
+    let coordinated = bottleneck_neurons_to_coordinated_candidates(&candidates, &creature, None);
     assert!(
         !coordinated.is_empty(),
         "Should produce coordinated candidates from bottleneck"
@@ -487,8 +487,8 @@ fn bottleneck_multiple_candidates_correct_uuids() {
         })
         .collect();
 
-    let candidates = detect_bottleneck_neurons(&creature, &neuron_records);
-    let coordinated = bottleneck_neurons_to_coordinated_candidates(&candidates, &creature);
+    let candidates = detect_bottleneck_neurons(&creature, &neuron_records, None);
+    let coordinated = bottleneck_neurons_to_coordinated_candidates(&candidates, &creature, None);
 
     // Verify all operation UUIDs are non-empty and correctly formed
     for cc in &coordinated {

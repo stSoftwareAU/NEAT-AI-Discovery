@@ -26,6 +26,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
+use super::topology_cache::CreatureTopologyCache;
+
 // MIN_SAMPLES_FOR_TOPOLOGY moved to constants.rs (Issue #424)
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_TOPOLOGY;
 
@@ -115,15 +117,19 @@ fn compute_shortest_paths_to_output(creature: &CreatureJson) -> HashMap<String, 
 pub fn detect_topology_issues(
     creature: &CreatureJson,
     neuron_records: &[(String, Vec<DiscoverRecord>)],
+    topo: Option<&CreatureTopologyCache>,
 ) -> Vec<TopologyCandidate> {
-    let hidden_uuids: HashSet<&str> = creature
-        .neurons
-        .iter()
-        .filter(|n| n.neuron_type == "hidden")
-        .map(|n| n.uuid.as_str())
-        .collect();
+    // Use pre-computed cache or build locally.
+    let local_cache;
+    let topo = match topo {
+        Some(t) => t,
+        None => {
+            local_cache = CreatureTopologyCache::new(creature);
+            &local_cache
+        }
+    };
 
-    if hidden_uuids.is_empty() {
+    if topo.hidden_uuids.is_empty() {
         return Vec::new();
     }
 
@@ -134,32 +140,19 @@ pub fn detect_topology_issues(
         .collect();
 
     // Only consider hidden neurons with sufficient samples
-    let qualified_hidden: Vec<&str> = hidden_uuids
+    let qualified_hidden: Vec<&str> = topo
+        .hidden_uuids
         .iter()
-        .filter(|&&uuid| {
+        .filter(|uuid| {
             records_map
-                .get(uuid)
+                .get(uuid.as_str())
                 .is_some_and(|r| r.len() >= MIN_SAMPLES_FOR_TOPOLOGY)
         })
-        .copied()
+        .map(String::as_str)
         .collect();
 
     if qualified_hidden.is_empty() {
         return Vec::new();
-    }
-
-    // Build topology maps
-    let mut fan_in_map: HashMap<&str, Vec<&str>> = HashMap::new();
-    let mut fan_out_map: HashMap<&str, Vec<&str>> = HashMap::new();
-    for s in &creature.synapses {
-        fan_in_map
-            .entry(s.to_uuid.as_str())
-            .or_default()
-            .push(s.from_uuid.as_str());
-        fan_out_map
-            .entry(s.from_uuid.as_str())
-            .or_default()
-            .push(s.to_uuid.as_str());
     }
 
     // Compute shortest path to any output for each neuron
@@ -184,19 +177,6 @@ pub fn detect_topology_issues(
         })
         .collect();
 
-    let output_uuids: HashSet<&str> = creature
-        .neurons
-        .iter()
-        .filter(|n| n.neuron_type == "output")
-        .map(|n| n.uuid.as_str())
-        .collect();
-
-    let existing_synapses: HashSet<(&str, &str)> = creature
-        .synapses
-        .iter()
-        .map(|s| (s.from_uuid.as_str(), s.to_uuid.as_str()))
-        .collect();
-
     let mut candidates = Vec::new();
 
     // --- Detection 1: Long path to output ---
@@ -210,16 +190,22 @@ pub fn detect_topology_issues(
             continue;
         }
 
-        let fan_in = fan_in_map.get(uuid).map_or(0, std::vec::Vec::len);
-        let fan_out = fan_out_map.get(uuid).map_or(0, std::vec::Vec::len);
+        let fan_in = topo.fan_in_for(uuid).len();
+        let fan_out = topo.fan_out_for(uuid).len();
         let mean_err = mean_errors.get(uuid).copied().unwrap_or(0.0);
 
         // Find the best output to connect to (closest that isn't already connected)
-        let skip_target = output_uuids
+        let skip_target = topo
+            .output_uuids
             .iter()
-            .filter(|&&out| !existing_synapses.contains(&(uuid, out)))
-            .min_by_key(|&&out| path_distances.get(out).copied().unwrap_or(usize::MAX))
-            .map(|&out| out.to_string());
+            .filter(|out| !topo.synapse_exists(uuid, out))
+            .min_by_key(|out| {
+                path_distances
+                    .get(out.as_str())
+                    .copied()
+                    .unwrap_or(usize::MAX)
+            })
+            .cloned();
 
         // Estimated improvement: longer paths with higher error benefit more.
         // Scale: excess hops × error × small factor
@@ -248,7 +234,7 @@ pub fn detect_topology_issues(
     let fan_ins: Vec<(&str, usize)> = qualified_hidden
         .iter()
         .map(|&uuid| {
-            let fi = fan_in_map.get(uuid).map_or(0, std::vec::Vec::len);
+            let fi = topo.fan_in_for(uuid).len();
             (uuid, fi)
         })
         .collect();
@@ -271,23 +257,17 @@ pub fn detect_topology_issues(
                     continue;
                 }
 
-                let fan_out = fan_out_map.get(uuid).map_or(0, std::vec::Vec::len);
+                let fan_out = topo.fan_out_for(uuid).len();
                 let mean_err = mean_errors.get(uuid).copied().unwrap_or(0.0);
                 let path_len = path_distances.get(uuid).copied().unwrap_or(0);
 
                 // Find a good source to add a connection from.
                 // Prefer input neurons not already connected to this neuron.
-                let input_uuids: Vec<&str> = creature
-                    .neurons
+                let add_source = topo
+                    .input_uuids
                     .iter()
-                    .filter(|n| n.neuron_type == "input")
-                    .map(|n| n.uuid.as_str())
-                    .collect();
-
-                let add_source = input_uuids
-                    .iter()
-                    .find(|&&inp| !existing_synapses.contains(&(inp, uuid)))
-                    .map(|&inp| inp.to_string());
+                    .find(|inp| !topo.synapse_exists(inp, uuid))
+                    .cloned();
 
                 // Estimated improvement: imbalance ratio × error × factor
                 let imbalance_ratio = max_fan_in as f32 / fi.max(1) as f32;
@@ -325,12 +305,16 @@ pub fn detect_topology_issues(
 pub fn topology_issues_to_coordinated_candidates(
     candidates: &[TopologyCandidate],
     creature: &CreatureJson,
+    topo: Option<&CreatureTopologyCache>,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
-    let existing_synapses: HashSet<(String, String)> = creature
-        .synapses
-        .iter()
-        .map(|s| (s.from_uuid.clone(), s.to_uuid.clone()))
-        .collect();
+    let local_cache;
+    let topo = match topo {
+        Some(t) => t,
+        None => {
+            local_cache = CreatureTopologyCache::new(creature);
+            &local_cache
+        }
+    };
 
     let mut results = Vec::new();
 
@@ -339,7 +323,7 @@ pub fn topology_issues_to_coordinated_candidates(
             "long_path" => {
                 if let Some(target) = &c.skip_target_uuid {
                     // Don't suggest if synapse already exists
-                    if existing_synapses.contains(&(c.neuron_uuid.clone(), target.clone())) {
+                    if topo.synapse_exists(&c.neuron_uuid, target) {
                         continue;
                     }
 
@@ -362,7 +346,7 @@ pub fn topology_issues_to_coordinated_candidates(
             "connectivity_imbalance" => {
                 if let Some(source) = &c.add_source_uuid {
                     // Don't suggest if synapse already exists
-                    if existing_synapses.contains(&(source.clone(), c.neuron_uuid.clone())) {
+                    if topo.synapse_exists(source, &c.neuron_uuid) {
                         continue;
                     }
 
