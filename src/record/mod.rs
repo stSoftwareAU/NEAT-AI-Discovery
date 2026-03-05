@@ -390,7 +390,7 @@ mod tests {
         let mut input = create_test_input();
         input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
 
-        // Create training data with pre-computed neuron_data (simulating TypeScript behavior)
+        // Create training data with pre-computed neuron_data (simulating TypeScript behaviour)
         input.training_data = vec![
             crate::TrainingRecord {
                 input: vec![0.1, 0.2],

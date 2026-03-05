@@ -1262,7 +1262,7 @@ fn analyze_synapses_accepts_positive_improvements_above_threshold() {
     let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
 
     // Positive improvements above threshold should definitely be accepted
-    // This is a regression test to ensure we didn't break existing behavior
+    // This is a regression test to ensure we didn't break existing behaviour
     // Issue #128: Use expected_creature_score_gain (creature-level metric)
     let has_above_threshold = result
         .helpful_synapses

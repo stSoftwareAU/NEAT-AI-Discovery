@@ -242,11 +242,11 @@ pub const PESSIMISM_DISCOUNT_FLOOR: f32 = 0.15;
 ///   with genuine but moderate signal
 /// - Still aggressive at very low ratios (<10%): filters out noise
 ///
-/// With exponent 0.6:
-/// - ratio 0.1 → 0.1^0.6 ≈ 0.251 (aggressive)
-/// - ratio 0.4 → 0.4^0.6 ≈ 0.575 (forgiving vs linear 0.4)
-/// - ratio 0.7 → 0.7^0.6 ≈ 0.802 (forgiving vs linear 0.7)
-/// - ratio 1.0 → 1.0 (unchanged)
+/// With exponent 0.6 and floor 0.15 (discount = 0.15 + 0.85 × ratio^0.6):
+/// - ratio 0.1 → 0.1^0.6 ≈ 0.251 → discount ≈ 0.363 → gain 0.05 × 0.363 ≈ 0.018
+/// - ratio 0.4 → 0.4^0.6 ≈ 0.575 → discount ≈ 0.639 → gain 0.05 × 0.639 ≈ 0.032
+/// - ratio 0.7 → 0.7^0.6 ≈ 0.802 → discount ≈ 0.832 → gain 0.05 × 0.832 ≈ 0.042
+/// - ratio 1.0 → 1.0       → discount = 1.000 → gain 0.05 × 1.000 = 0.050
 ///
 /// ## Valid Range
 /// Must be in (0.0, 1.0]. Values below 0.3 may over-flatten the curve.

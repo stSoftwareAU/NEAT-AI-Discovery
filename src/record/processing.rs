@@ -28,7 +28,7 @@ pub fn process_training_data(
         if let Some(neuron_data) = &training_record.neuron_data {
             // Process each neuron from pre-computed data
             for neuron_info in neuron_data {
-                // Skip input neurons and non-existent neurons (match TypeScript behavior)
+                // Skip input neurons and non-existent neurons (match TypeScript behaviour)
                 let neuron = match input
                     .creature
                     .neurons
