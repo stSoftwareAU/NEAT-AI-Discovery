@@ -87,9 +87,8 @@ pub struct SaturatedNeuronCandidate {
 /// Unbounded functions like RELU and IDENTITY cannot saturate (they have no ceiling).
 /// RELU can have a "dead zone" (all outputs at 0), which is handled separately.
 fn is_bounded_squash(squash: &str) -> bool {
-    let upper = squash.to_ascii_uppercase();
     matches!(
-        upper.as_str(),
+        squash,
         "TANH"
             | "LOGISTIC"
             | "HARD_TANH"
@@ -106,8 +105,7 @@ fn is_bounded_squash(squash: &str) -> bool {
 
 /// Returns whether a squash function can have a dead zone (all zeros).
 fn can_have_dead_zone(squash: &str) -> bool {
-    let upper = squash.to_ascii_uppercase();
-    matches!(upper.as_str(), "RELU" | "LEAKYRELU" | "ELU" | "SELU")
+    matches!(squash, "RELU" | "LEAKYRELU" | "ELU" | "SELU")
 }
 
 /// Detect saturated neurons from their recorded activations.
@@ -221,8 +219,7 @@ fn check_bounded_saturation(squash: &str, mean_activation: f32, activation_std_d
         return false; // Output still varies — not truly saturated
     }
 
-    let upper = squash.to_ascii_uppercase();
-    match upper.as_str() {
+    match squash {
         "TANH" | "BIPOLAR_SIGMOID" => mean_activation.abs() > TANH_SATURATION_THRESHOLD,
         "LOGISTIC" => {
             !(LOGISTIC_LOWER_THRESHOLD..=LOGISTIC_UPPER_THRESHOLD).contains(&mean_activation)
@@ -243,8 +240,7 @@ fn check_bounded_saturation(squash: &str, mean_activation: f32, activation_std_d
 
 /// Compute severity of saturation (0.0 to 1.0).
 fn compute_saturation_severity(squash: &str, mean_activation: f32) -> f32 {
-    let upper = squash.to_ascii_uppercase();
-    match upper.as_str() {
+    match squash {
         "TANH" | "BIPOLAR_SIGMOID" | "SOFTSIGN" | "ISRU" | "ARCTAN" => {
             // How far past the threshold are we? (range: 0.95 to 1.0 → 0.0 to 1.0)
             let excess = (mean_activation.abs() - TANH_SATURATION_THRESHOLD).max(0.0);
@@ -279,11 +275,9 @@ fn recommend_fix(
     mean_activation: f32,
     current_bias: f32,
 ) -> (Option<String>, Option<f32>) {
-    let upper = squash.to_ascii_uppercase();
-
     // Recommend IDENTITY as the replacement for heavily saturated bounded activations.
     // IDENTITY restores full signal flow without bounds.
-    let recommended_squash = match upper.as_str() {
+    let recommended_squash = match squash {
         "TANH" | "LOGISTIC" | "HARD_TANH" | "CLIPPED" | "BIPOLAR_SIGMOID" | "SOFTSIGN" | "ISRU"
         | "ARCTAN" => Some("IDENTITY".to_string()),
         _ => None,
@@ -292,7 +286,7 @@ fn recommend_fix(
     // Compute bias adjustment: move the operating point away from saturation.
     // For positive saturation, reduce bias (shift input toward negative).
     // For negative saturation, increase bias (shift input toward positive).
-    let recommended_bias_delta = match upper.as_str() {
+    let recommended_bias_delta = match squash {
         "TANH" | "HARD_TANH" | "CLIPPED" | "BIPOLAR_SIGMOID" | "SOFTSIGN" | "ISRU" | "ARCTAN" => {
             if mean_activation > 0.0 {
                 // Positive saturation: shift input negative

@@ -186,8 +186,8 @@ fn test_recommends_tanh_for_gaussian_inputs() {
         "Should include TANH for Gaussian"
     );
     assert!(
-        suitability.contains_key("Softplus"),
-        "Should include Softplus for Gaussian"
+        suitability.contains_key("SOFTPLUS"),
+        "Should include SOFTPLUS for Gaussian"
     );
 
     let tanh_score = suitability.get("TANH").unwrap();
@@ -219,7 +219,7 @@ fn test_recommends_relu_for_sparse_inputs() {
     let suitability = classify_activation_suitability(&distribution);
 
     assert!(
-        suitability.contains_key("RELU") || suitability.contains_key("ReLU6"),
+        suitability.contains_key("RELU") || suitability.contains_key("RELU6"),
         "Should include RELU variants for sparse inputs"
     );
 
@@ -324,8 +324,8 @@ fn test_generates_proactive_recommendation() {
     let rec = recommendation.unwrap();
     assert_eq!(rec.current_squash, "RELU");
     assert!(
-        rec.recommended_squash == "TANH" || rec.recommended_squash == "Softplus",
-        "Should recommend TANH or Softplus for Gaussian inputs, got {}",
+        rec.recommended_squash == "TANH" || rec.recommended_squash == "SOFTPLUS",
+        "Should recommend TANH or SOFTPLUS for Gaussian inputs, got {}",
         rec.recommended_squash
     );
     assert!(

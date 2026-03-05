@@ -313,7 +313,17 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 .neurons
                 .iter()
                 .filter(|n| n.neuron_type == "hidden")
-                .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
+                .map(|n| {
+                    // Issue #753: ensure squash is uppercase even for
+                    // programmatically constructed NeuronJson (serde path
+                    // normalises during deserialisation, this covers the rest).
+                    let squash = if n.squash.bytes().all(|b| !b.is_ascii_lowercase()) {
+                        n.squash.clone()
+                    } else {
+                        n.squash.to_ascii_uppercase()
+                    };
+                    (n.uuid.clone(), squash, n.bias)
+                })
                 .collect(),
         );
 

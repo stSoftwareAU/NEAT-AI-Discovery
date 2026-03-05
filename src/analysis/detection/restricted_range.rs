@@ -92,8 +92,7 @@ pub struct RestrictedRangeNeuron {
 /// Returns `None` for unbounded activations (IDENTITY, RELU, etc.) since they
 /// have no fixed output bounds and restricted range detection does not apply.
 fn theoretical_bounds(squash: &str) -> Option<(f32, f32)> {
-    let upper = squash.to_ascii_uppercase();
-    match upper.as_str() {
+    match squash {
         "TANH" | "HARD_TANH" | "CLIPPED" | "BIPOLAR_SIGMOID" | "SOFTSIGN" | "ISRU" => {
             Some((-1.0, 1.0))
         }

@@ -73,15 +73,13 @@ pub struct ActivationMismatchCandidate {
 
 /// Returns whether a squash function belongs to the RELU family (clips at zero).
 fn is_relu_family(squash: &str) -> bool {
-    let upper = squash.to_ascii_uppercase();
-    matches!(upper.as_str(), "RELU" | "RELU6")
+    matches!(squash, "RELU" | "RELU6")
 }
 
 /// Returns the theoretical output range `(min, max)` for bounded activations.
 /// Returns `None` for unbounded activations.
 fn bounded_range(squash: &str) -> Option<(f32, f32)> {
-    let upper = squash.to_ascii_uppercase();
-    match upper.as_str() {
+    match squash {
         "TANH" | "HARD_TANH" | "CLIPPED" | "BIPOLAR" | "BIPOLAR_SIGMOID" => Some((-1.0, 1.0)),
         "LOGISTIC" => Some((0.0, 1.0)),
         "SOFTSIGN" | "ARCTAN" | "ISRU" => Some((-1.0, 1.0)),
@@ -93,9 +91,8 @@ fn bounded_range(squash: &str) -> Option<(f32, f32)> {
 /// Returns whether a squash function is effectively unbounded and should not
 /// be flagged as mismatched.
 fn is_skip_squash(squash: &str) -> bool {
-    let upper = squash.to_ascii_uppercase();
     matches!(
-        upper.as_str(),
+        squash,
         "IDENTITY" | "ELU" | "SELU" | "LEAKYRELU" | "GELU" | "MISH" | "SOFTPLUS" | "BENTIDENTITY"
     )
 }
@@ -281,7 +278,7 @@ mod tests {
     #[test]
     fn test_is_relu_family() {
         assert!(is_relu_family("RELU"));
-        assert!(is_relu_family("ReLU6"));
+        assert!(is_relu_family("RELU6")); // Issue #753: squash pre-normalised to uppercase
         assert!(!is_relu_family("TANH"));
         assert!(!is_relu_family("IDENTITY"));
     }

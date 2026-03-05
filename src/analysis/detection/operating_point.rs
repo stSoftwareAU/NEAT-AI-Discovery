@@ -92,8 +92,7 @@ pub struct OperatingPointIssue {
 /// Returns `None` for unbounded or discrete activations where the concept
 /// of an active zone does not apply.
 fn active_zone(squash: &str) -> Option<(f32, f32)> {
-    let upper = squash.to_ascii_uppercase();
-    match upper.as_str() {
+    match squash {
         // TANH: tanh(x) transitions from ~-0.96 to ~0.96 over x ∈ [-2, 2]
         "TANH" | "HARD_TANH" | "CLIPPED" => Some((-2.0, 2.0)),
         // LOGISTIC: sigmoid transitions from ~0.02 to ~0.98 over x ∈ [-4, 4]

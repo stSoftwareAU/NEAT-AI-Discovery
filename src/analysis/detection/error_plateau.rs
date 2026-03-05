@@ -68,8 +68,6 @@ pub struct ErrorPlateauCandidate {
 /// The goal is to fundamentally change the error landscape by switching to a
 /// qualitatively different activation function.
 fn recommend_plateau_escape(current_squash: &str, records: &[DiscoverRecord]) -> String {
-    let upper = current_squash.to_ascii_uppercase();
-
     // Check if activations are predominantly in a symmetric range
     let has_negative = records.iter().any(|r| r.activation < -0.01);
     let min_activation = records
@@ -82,7 +80,7 @@ fn recommend_plateau_escape(current_squash: &str, records: &[DiscoverRecord]) ->
         .fold(f32::NEG_INFINITY, f32::max);
     let range = max_activation - min_activation;
 
-    match upper.as_str() {
+    match current_squash {
         // Piecewise-linear bounded → smooth bounded
         "HARD_TANH" | "CLIPPED" => "TANH".to_string(),
         // Smooth bounded → different smooth bounded or unbounded
