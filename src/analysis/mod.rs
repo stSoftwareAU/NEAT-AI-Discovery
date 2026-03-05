@@ -13,7 +13,7 @@
 //! ## Core modules (root level)
 //! - `shared.rs` - Common types, result structures, diagnostics
 //! - `synapse/` - Synapse analysis pipeline
-//! - `neuron.rs` - Neuron analysis functions
+//! - `neuron/` - Neuron analysis (evaluation, post-processing, preparation)
 //! - `gpu/` - GPU infrastructure (GpuAnalyzer, GpuWorkQueue)
 //! - `utils/` - Utility functions (memory checks, deadlines)
 //! - `diagnostics/` - Diagnostic tracking and rejection reasons
