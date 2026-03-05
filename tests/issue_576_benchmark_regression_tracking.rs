@@ -27,6 +27,7 @@ const EXPECTED_BENCHMARKS: &[&str] = &[
     "uuid_hashing",
     "squash_normalisation",
     "topology_cache",
+    "bfs_allocation",
 ];
 
 #[test]

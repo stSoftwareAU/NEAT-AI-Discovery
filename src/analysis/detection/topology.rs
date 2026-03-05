@@ -177,7 +177,7 @@ pub fn detect_topology_issues(
         })
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(qualified_hidden.len());
 
     // --- Detection 1: Long path to output ---
     for &uuid in &qualified_hidden {

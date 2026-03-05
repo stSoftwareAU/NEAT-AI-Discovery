@@ -164,7 +164,7 @@ pub fn detect_correlated_error_patterns(
     );
 
     // For each group, compute statistics and find predictive inputs
-    let mut results: Vec<CorrelatedErrorGroup> = Vec::new();
+    let mut results: Vec<CorrelatedErrorGroup> = Vec::with_capacity(groups.len());
 
     for group_indices in &groups {
         let group_uuids: Vec<&str> = group_indices

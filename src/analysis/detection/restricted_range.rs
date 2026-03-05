@@ -137,7 +137,7 @@ pub fn detect_restricted_range_neurons(
         .map(|&(uuid, squash, bias)| (uuid, (squash, bias)))
         .collect();
 
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
         // Only consider hidden neurons

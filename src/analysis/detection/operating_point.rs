@@ -169,7 +169,7 @@ pub fn detect_operating_point_issues(
         .map(|n| (n.uuid.as_str(), (n.squash.as_str(), n.bias)))
         .collect();
 
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
         let Some(&(squash, bias)) = neuron_map.get(uuid.as_str()) else {

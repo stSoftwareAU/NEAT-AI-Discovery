@@ -100,7 +100,7 @@ pub fn detect_opposing_synapses(
         .map(|n| n.uuid.as_str())
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(creature.synapses.len());
 
     for synapse in &creature.synapses {
         // Only analyse synapses targeting output neurons (where error is directly measured)

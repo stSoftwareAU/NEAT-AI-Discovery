@@ -143,7 +143,7 @@ pub fn detect_bias_perturbation_candidates(
     hidden_neurons: &[(String, String, f32)],
     neuron_records: &[(String, Vec<DiscoverRecord>)],
 ) -> Vec<BiasPerturbationCandidate> {
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(hidden_neurons.len());
 
     for (uuid, squash, bias) in hidden_neurons {
         let Some((_id, records)) = neuron_records.iter().find(|(u, _)| u == uuid) else {

@@ -82,7 +82,7 @@ pub fn detect_dormant_synapses(
         .map(|(uuid, records)| (uuid.as_str(), records))
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(creature.synapses.len());
 
     for synapse in &creature.synapses {
         // Skip if weight is not near zero

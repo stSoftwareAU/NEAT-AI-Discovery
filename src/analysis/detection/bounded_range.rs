@@ -87,7 +87,7 @@ pub fn detect_bounded_range_neurons(
         .map(|n| n.uuid.as_str())
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
         if !eligible_uuids.contains(uuid.as_str()) {

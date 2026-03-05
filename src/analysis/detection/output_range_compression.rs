@@ -130,7 +130,7 @@ pub fn detect_output_range_compression(
         .map(|&(uuid, squash, bias)| (uuid, (squash, bias)))
         .collect();
 
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
         // Only consider output neurons

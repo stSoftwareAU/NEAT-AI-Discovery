@@ -120,7 +120,7 @@ pub fn detect_noisy_neurons(
         .map(|n| n.uuid.as_str())
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
         // Only consider hidden neurons
@@ -205,7 +205,7 @@ pub fn detect_noisy_synapses(
         .map(|(uuid, records)| (uuid.as_str(), records))
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(creature.synapses.len());
 
     for synapse in &creature.synapses {
         // Only consider synapses with meaningful weight

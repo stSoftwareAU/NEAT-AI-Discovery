@@ -104,6 +104,10 @@ harness = false
 name = "topology_cache"
 harness = false
 
+[[bench]]
+name = "bfs_allocation"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

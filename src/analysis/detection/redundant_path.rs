@@ -103,7 +103,7 @@ pub fn detect_redundant_paths(
         return Vec::new();
     }
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(valid_paths.len());
 
     // Check pairs for redundancy
     for i in 0..valid_paths.len() {

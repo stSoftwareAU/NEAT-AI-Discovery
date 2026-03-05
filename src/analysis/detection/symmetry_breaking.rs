@@ -125,7 +125,7 @@ pub fn detect_symmetric_neurons(
     all_sources.sort();
     all_sources.dedup();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(eligible_neurons.len());
 
     // Compare all pairs of eligible hidden neurons
     for i in 0..eligible_neurons.len() {

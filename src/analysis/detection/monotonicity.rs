@@ -138,7 +138,7 @@ pub fn detect_non_monotonic_neurons(
         .map(|n| n.uuid.as_str())
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
         if !hidden_uuids.contains(uuid.as_str()) {
