@@ -174,20 +174,83 @@ diagrams, worked examples, and links to research papers — see the
 ## Discovery Types
 
 The library analyses recorded neuron activations and errors to propose mutation
-candidates. Each discovery type targets a specific network pathology:
+candidates. Detection modules are grouped by concern:
+
+### Activation & Neuron State
+
+Modules that detect issues with how neurons process activations.
 
 | Discovery Type | What It Detects | Candidate Operations |
 |----------------|----------------|---------------------|
 | [Saturated Neuron](docs/DISCOVERY_TYPES.md#saturated-neuron-detection) | Neurons stuck at activation bounds | `changeSquash`, `setBias` |
-| [Bottleneck Neuron](docs/DISCOVERY_TYPES.md#bottleneck-neuron-detection) | Information bottlenecks (high fan-in) | `addNeuron`, `addSynapse` |
 | [Dead Neuron](docs/DISCOVERY_TYPES.md#dead-neuron-detection) | Neurons with near-zero activation | `removeNeuron` |
+| [Oscillating Neuron](docs/DISCOVERY_TYPES.md#oscillating-neuron-detection) | Neurons oscillating between ± values | `changeSquash`, `setBias` |
+| [Bimodal Neuron](docs/DISCOVERY_TYPES.md#bimodal-neuron-detection) | Neurons with bimodal pre-activation distribution | `addNeuron` |
+| [Restricted Range](docs/DISCOVERY_TYPES.md#restricted-range-detection) | Neurons confined to narrow activation sub-range | `changeSquash`, `setBias`, `setWeight` |
+| [Operating Point](docs/DISCOVERY_TYPES.md#operating-point-analysis) | Neurons outside their activation's dynamic zone | `setBias`, `setWeight` |
+| [Unbounded Capping](docs/DISCOVERY_TYPES.md#unbounded-capping-detection) | Unbounded activations producing high values | `changeSquash` |
+| [Activation Mismatch](docs/DISCOVERY_TYPES.md#activation-mismatch-detection) | Poorly matched activation functions | `changeSquash`, `setBias` |
+| [Monotonicity](docs/DISCOVERY_TYPES.md#monotonicity-detection) | Non-monotonic activation-error relationships | `addNeuron`, `changeSquash` |
+| [Error Plateau](docs/DISCOVERY_TYPES.md#error-plateau-detection) | Output neurons in error stagnation | `changeSquash`, `setBias` |
+| [Output Range Compression](docs/DISCOVERY_TYPES.md#output-range-compression-detection) | Output neurons in compressed activation sub-range | `changeSquash` |
+| [Output Squash Mismatch](docs/DISCOVERY_TYPES.md#output-squash-mismatch-detection) | Output activation mismatched to target data range | `changeSquash` |
+| [Activation Recommendation](docs/DISCOVERY_TYPES.md#activation-function-recommendation) | Proactive activation function matching | `changeSquash` |
+| [Bias Perturbation](docs/DISCOVERY_TYPES.md#bias-perturbation-detection) | Neurons in suboptimal activation regimes | `setBias` |
+| [Squash + Weight Rescale](docs/DISCOVERY_TYPES.md#squash-weight-rescale-detection) | Coordinated activation change with weight compensation | `changeSquash`, `setWeight` |
+
+### Weight & Synapse
+
+Modules that detect issues with synapse weights and connections.
+
+| Discovery Type | What It Detects | Candidate Operations |
+|----------------|----------------|---------------------|
 | [Dormant Synapse](docs/DISCOVERY_TYPES.md#dormant-synapse-detection) | Synapses with near-zero weight | `removeSynapse` |
 | [Opposing Synapse](docs/DISCOVERY_TYPES.md#opposing-synapse-detection) | Synapses increasing error | `removeSynapse`, `setWeight` |
-| [Output Bias Drift](docs/DISCOVERY_TYPES.md#output-bias-drift-detection) | Output neurons with systematic bias | `setBias` |
-| [Oscillating Neuron](docs/DISCOVERY_TYPES.md#oscillating-neuron-detection) | Neurons oscillating between ± values | `changeSquash`, `setBias` |
+| [Weight Coherence](docs/DISCOVERY_TYPES.md#weight-coherence-detection) | Incoherent weight ratios and cancellation | `setWeight`, `removeSynapse` |
+| [Weight Magnitude Reset](docs/DISCOVERY_TYPES.md#weight-magnitude-reset-detection) | Synapses stuck in local weight minima | `setWeight` |
+| [Weight Polarity Flip](docs/DISCOVERY_TYPES.md#weight-polarity-flip-detection) | Gradient–weight sign disagreement | `setWeight` |
+| [Noise-to-Signal](docs/DISCOVERY_TYPES.md#noise-to-signal-ratio-detection) | High noise-to-signal neurons and synapses | `removeNeuron`, `removeSynapse`, `setWeight` |
+| [Fan-in Polarity Conflict](docs/DISCOVERY_TYPES.md#fan-in-polarity-conflict-detection) | Conflicting positive/negative incoming weights | `addNeuron`, `addSynapse` |
+| [Gradient Discovery](docs/DISCOVERY_TYPES.md#gradient-based-synapse-adjustment) | Gradient-directed weight adjustments | `setWeight` |
+
+### Structural & Topology
+
+Modules that detect structural and topological issues in the network.
+
+| Discovery Type | What It Detects | Candidate Operations |
+|----------------|----------------|---------------------|
+| [Bottleneck Neuron](docs/DISCOVERY_TYPES.md#bottleneck-neuron-detection) | Information bottlenecks (high fan-in) | `addNeuron`, `addSynapse` |
 | [Correlated Error](docs/DISCOVERY_TYPES.md#correlated-error-pattern-detection) | Outputs with shared error patterns | `addNeuron`, `addSynapse` |
-| [Multi-Hop](docs/DISCOVERY_TYPES.md#multi-hop-candidate-analysis) | Deeper structural improvements | `addNeuron`, `addSynapse` |
 | [Redundant Path](docs/DISCOVERY_TYPES.md#redundant-path-pruning) | Duplicate paths to same target | `removeSynapse`, `setWeight` |
+| [Topology Structure](docs/DISCOVERY_TYPES.md#topology-aware-structure-analysis) | Long paths and connectivity imbalance | `addSynapse` |
+| [Topology Diversification](docs/DISCOVERY_TYPES.md#topology-diversification-detection) | Overly simple network topology | `addNeuron` |
+| [Skip Connection](docs/DISCOVERY_TYPES.md#skip-connection-detection) | Deep neurons with attenuated gradients | `addSynapse` |
+| [Symmetry Breaking](docs/DISCOVERY_TYPES.md#symmetry-breaking-detection) | Near-identical weight configurations | `setBias`, `setWeight`, `changeSquash` |
+| [Co-Adaptation](docs/DISCOVERY_TYPES.md#co-adaptation-detection) | Redundant neuron pairs with correlated activations | `removeNeuron`, `setWeight` |
+| [Output Conflict](docs/DISCOVERY_TYPES.md#output-conflict-detection) | Hidden neurons with conflicting per-output contributions | `addSynapse`, `addNeuron` |
+| [Hard Sample Cluster](docs/DISCOVERY_TYPES.md#hard-sample-cluster-detection) | Observation groups consistently high-error | `addNeuron`, `addSynapse` |
+| [Multi-Hop](docs/DISCOVERY_TYPES.md#multi-hop-candidate-analysis) | Deeper structural improvements | `addNeuron`, `addSynapse` |
+| [Epistatic Pairs](docs/DISCOVERY_TYPES.md#combo-successful) | Complementary neuron pair interactions | `addSynapse` |
+
+### Range & Input Analysis
+
+Modules that analyse input ranges and gating.
+
+| Discovery Type | What It Detects | Candidate Operations |
+|----------------|----------------|---------------------|
+| [Bounded Range](docs/DISCOVERY_TYPES.md#bounded-range-detection) | Sentinel value clusters at input boundaries | `addNeuron`, `addSynapse` |
+| [Sentinel Gating](docs/DISCOVERY_TYPES.md#sentinel-gating-detection) | Inputs where sentinel values degrade performance | `addNeuron`, `addSynapse` |
+| [Observation Utilisation](docs/DISCOVERY_TYPES.md#observation-utilisation-detection) | Underutilised inputs with low effective range | `addNeuron`, `addSynapse` |
+| [Input Sensitivity](docs/DISCOVERY_TYPES.md#input-sensitivity-detection) | Excessive input leverage and threshold effects | `setWeight`, `addNeuron`, `setBias` |
+
+### Scoring & Recommendation
+
+Modules that score candidate quality and proactively recommend changes.
+
+| Discovery Type | What It Detects | Candidate Operations |
+|----------------|----------------|---------------------|
+| [Output Bias Drift](docs/DISCOVERY_TYPES.md#output-bias-drift-detection) | Output neurons with systematic bias | `setBias` |
+| [Sample-Weighted](docs/DISCOVERY_TYPES.md#sample-weighted-discovery) | High-error samples needing targeted attention | `setBias` |
 | [Add Neurons](docs/DISCOVERY_TYPES.md#add-neurons) | Beneficial intermediate neurons | `addNeuron` |
 | [Add Synapses](docs/DISCOVERY_TYPES.md#add-synapses) | Beneficial direct connections | `addSynapse` |
 | [Remove Low-Impact](docs/DISCOVERY_TYPES.md#remove-low-impact-neurons) | Neurons below cost of growth | `removeNeuron` |
