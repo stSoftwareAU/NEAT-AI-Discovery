@@ -10,7 +10,8 @@ use std::sync::Arc;
 use super::super::detection::{
     activation_mismatch, bias_perturbation, bimodal_neuron, bottleneck, co_adaptation, dead_neuron,
     monotonicity, noise_signal, operating_point, oscillating_neuron, restricted_range, saturation,
-    squash_weight_rescale, symmetry_breaking, unbounded_capping,
+    squash_weight_rescale, symmetry_breaking, topology_cache::CreatureTopologyCache,
+    unbounded_capping,
 };
 use super::super::recommendation::activation_recommendation;
 use super::super::{cache, discovery_dispatch};
@@ -21,6 +22,7 @@ pub(crate) fn append_neuron_specs(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
+    topo: &Arc<CreatureTopologyCache>,
 ) {
     // Issue #342: Saturated neuron detection
     {
@@ -52,6 +54,7 @@ pub(crate) fn append_neuron_specs(
         let cache = Arc::clone(shared_cache);
         let hidden = Arc::clone(hidden_neurons);
         let creature = Arc::clone(creature);
+        let topo = Arc::clone(topo);
         modules.push(discovery_dispatch::DiscoveryModuleSpec {
             module_name: "bottleneck detection".to_string(),
             phase_name: "bottleneck_detection",
@@ -60,12 +63,16 @@ pub(crate) fn append_neuron_specs(
                     return None;
                 }
                 let records = cache.load_records_for_hidden(&hidden);
-                let detected = bottleneck::detect_bottleneck_neurons(&creature, &records);
+                let detected =
+                    bottleneck::detect_bottleneck_neurons(&creature, &records, Some(&topo));
                 if detected.is_empty() {
                     return None;
                 }
-                let candidates =
-                    bottleneck::bottleneck_neurons_to_coordinated_candidates(&detected, &creature);
+                let candidates = bottleneck::bottleneck_neurons_to_coordinated_candidates(
+                    &detected,
+                    &creature,
+                    Some(&topo),
+                );
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,
@@ -79,6 +86,7 @@ pub(crate) fn append_neuron_specs(
         let cache = Arc::clone(shared_cache);
         let hidden = Arc::clone(hidden_neurons);
         let creature = Arc::clone(creature);
+        let topo = Arc::clone(topo);
         modules.push(discovery_dispatch::DiscoveryModuleSpec {
             module_name: "dead neuron detection".to_string(),
             phase_name: "dead_neuron_detection",
@@ -87,7 +95,7 @@ pub(crate) fn append_neuron_specs(
                     return None;
                 }
                 let records = cache.load_records_for_hidden(&hidden);
-                let detected = dead_neuron::detect_dead_neurons(&creature, &records);
+                let detected = dead_neuron::detect_dead_neurons(&creature, &records, Some(&topo));
                 if detected.is_empty() {
                     return None;
                 }

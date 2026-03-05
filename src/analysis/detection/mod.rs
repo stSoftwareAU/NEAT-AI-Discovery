@@ -36,6 +36,7 @@ pub mod squash_weight_rescale;
 pub mod stats;
 pub mod symmetry_breaking;
 pub mod topology;
+pub mod topology_cache;
 pub mod topology_diversification;
 pub mod unbounded_capping;
 pub mod weight_coherence;

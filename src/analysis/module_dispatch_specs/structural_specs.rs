@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::super::detection::{
     correlated_error, hard_sample_cluster, output_conflict, skip_connection, topology,
-    topology_diversification,
+    topology_cache::CreatureTopologyCache, topology_diversification,
 };
 use super::super::recommendation::multi_hop;
 use super::super::{cache, discovery_dispatch};
@@ -19,6 +19,7 @@ pub(crate) fn append_structural_specs(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
+    topo: &Arc<CreatureTopologyCache>,
 ) {
     // Issue #344: Correlated error detection
     {
@@ -85,6 +86,7 @@ pub(crate) fn append_structural_specs(
         let cache = Arc::clone(shared_cache);
         let hidden = Arc::clone(hidden_neurons);
         let creature = Arc::clone(creature);
+        let topo = Arc::clone(topo);
         modules.push(discovery_dispatch::DiscoveryModuleSpec {
             module_name: "topology structure analysis".to_string(),
             phase_name: "topology_structure_analysis",
@@ -93,12 +95,15 @@ pub(crate) fn append_structural_specs(
                     return None;
                 }
                 let records = cache.load_records_for_all_neurons(&creature);
-                let detected = topology::detect_topology_issues(&creature, &records);
+                let detected = topology::detect_topology_issues(&creature, &records, Some(&topo));
                 if detected.is_empty() {
                     return None;
                 }
-                let candidates =
-                    topology::topology_issues_to_coordinated_candidates(&detected, &creature);
+                let candidates = topology::topology_issues_to_coordinated_candidates(
+                    &detected,
+                    &creature,
+                    Some(&topo),
+                );
                 Some(discovery_dispatch::DiscoveryDetectionResult {
                     detected_count: detected.len(),
                     candidates,

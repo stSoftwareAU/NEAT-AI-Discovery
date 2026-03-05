@@ -34,7 +34,7 @@ fn test_detects_all_zero_activation_neuron() {
         .map(|i| record("hidden-dead", i, 0.0, Some(-5.0)))
         .collect();
 
-    let candidates = detect_dead_neurons(&creature, &[("hidden-dead".to_string(), records)]);
+    let candidates = detect_dead_neurons(&creature, &[("hidden-dead".to_string(), records)], None);
 
     assert_eq!(candidates.len(), 1, "Should detect one dead neuron");
     let c = &candidates[0];
@@ -62,7 +62,7 @@ fn test_detects_near_zero_activation_neuron() {
         .map(|i| record("hidden-tiny", i, 1e-8 * (i as f32), Some(1e-9)))
         .collect();
 
-    let candidates = detect_dead_neurons(&creature, &[("hidden-tiny".to_string(), records)]);
+    let candidates = detect_dead_neurons(&creature, &[("hidden-tiny".to_string(), records)], None);
 
     assert_eq!(candidates.len(), 1, "Should detect near-zero neuron");
     assert!(candidates[0].mean_abs_activation < 1e-6);
@@ -86,7 +86,8 @@ fn test_does_not_flag_active_neuron() {
         })
         .collect();
 
-    let candidates = detect_dead_neurons(&creature, &[("hidden-active".to_string(), records)]);
+    let candidates =
+        detect_dead_neurons(&creature, &[("hidden-active".to_string(), records)], None);
 
     assert!(
         candidates.is_empty(),
@@ -120,7 +121,7 @@ fn test_rarely_active_neuron_not_flagged() {
         })
         .collect();
 
-    let candidates = detect_dead_neurons(&creature, &[("hidden-rare".to_string(), records)]);
+    let candidates = detect_dead_neurons(&creature, &[("hidden-rare".to_string(), records)], None);
 
     assert!(
         candidates.is_empty(),
@@ -143,7 +144,7 @@ fn test_constant_tiny_activation_is_dead() {
         .map(|i| record("hidden-const", i, 1e-8, Some(1e-9)))
         .collect();
 
-    let candidates = detect_dead_neurons(&creature, &[("hidden-const".to_string(), records)]);
+    let candidates = detect_dead_neurons(&creature, &[("hidden-const".to_string(), records)], None);
 
     assert_eq!(
         candidates.len(),
@@ -162,7 +163,7 @@ fn test_output_neurons_not_flagged() {
         .map(|i| record("output-1", i, 0.0, Some(0.0)))
         .collect();
 
-    let candidates = detect_dead_neurons(&creature, &[("output-1".to_string(), records)]);
+    let candidates = detect_dead_neurons(&creature, &[("output-1".to_string(), records)], None);
 
     assert!(
         candidates.is_empty(),
@@ -185,7 +186,7 @@ fn test_insufficient_samples_not_flagged() {
         .map(|i| record("hidden-few", i, 0.0, Some(-5.0)))
         .collect();
 
-    let candidates = detect_dead_neurons(&creature, &[("hidden-few".to_string(), records)]);
+    let candidates = detect_dead_neurons(&creature, &[("hidden-few".to_string(), records)], None);
 
     assert!(
         candidates.is_empty(),
@@ -230,6 +231,7 @@ fn test_mixed_neurons_only_dead_detected() {
             ("dead-2".to_string(), dead_records_2),
             ("alive-1".to_string(), alive_records),
         ],
+        None,
     );
 
     assert_eq!(candidates.len(), 2, "Should detect exactly 2 dead neurons");
@@ -292,7 +294,7 @@ fn test_detects_negative_near_zero_activation() {
         .map(|i| record("hidden-neg", i, -1e-8, Some(-1e-7)))
         .collect();
 
-    let candidates = detect_dead_neurons(&creature, &[("hidden-neg".to_string(), records)]);
+    let candidates = detect_dead_neurons(&creature, &[("hidden-neg".to_string(), records)], None);
 
     assert_eq!(
         candidates.len(),
@@ -320,7 +322,8 @@ fn test_zero_mean_high_variance_not_dead() {
         })
         .collect();
 
-    let candidates = detect_dead_neurons(&creature, &[("hidden-bipolar".to_string(), records)]);
+    let candidates =
+        detect_dead_neurons(&creature, &[("hidden-bipolar".to_string(), records)], None);
 
     assert!(
         candidates.is_empty(),
@@ -343,7 +346,7 @@ fn test_sample_count_recorded() {
         .map(|i| record("hidden-dead", i, 0.0, Some(-5.0)))
         .collect();
 
-    let candidates = detect_dead_neurons(&creature, &[("hidden-dead".to_string(), records)]);
+    let candidates = detect_dead_neurons(&creature, &[("hidden-dead".to_string(), records)], None);
 
     assert_eq!(candidates.len(), 1);
     assert_eq!(
@@ -382,6 +385,7 @@ fn test_connected_outputs_identified() {
             ("hidden-dead".to_string(), dead_records),
             ("hidden-mid".to_string(), mid_records),
         ],
+        None,
     );
 
     assert_eq!(candidates.len(), 1);

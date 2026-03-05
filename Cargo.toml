@@ -100,6 +100,10 @@ harness = false
 name = "squash_normalisation"
 harness = false
 
+[[bench]]
+name = "topology_cache"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
