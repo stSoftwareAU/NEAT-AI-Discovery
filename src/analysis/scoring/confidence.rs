@@ -22,7 +22,7 @@
 
 use serde::Serialize;
 
-use crate::analysis::samples::{EPSILON, HelpfulSample};
+use crate::analysis::samples::HelpfulSample;
 
 /// Minimum sample count for full confidence credit.
 /// Below this, sample confidence is linearly scaled.
@@ -32,8 +32,36 @@ const MIN_CONFIDENT_SAMPLES: f32 = 100.0;
 /// Sources with std dev below this are progressively discounted.
 const MIN_CONFIDENT_STD_DEV: f32 = 0.05;
 
-/// Z-score for 95% confidence interval (approximately 1.96).
-const Z_SCORE_95: f32 = 1.96;
+/// t-distribution critical values for 95% confidence interval (two-tailed).
+///
+/// Each entry is `(degrees_of_freedom, t_critical)`. For df values between
+/// entries, linear interpolation is used. For df above the largest entry,
+/// the normal approximation (1.960) applies.
+const T_CRITICAL_95_TABLE: &[(u32, f32)] = &[
+    (1, 12.706),
+    (2, 4.303),
+    (3, 3.182),
+    (4, 2.776),
+    (5, 2.571),
+    (6, 2.447),
+    (7, 2.365),
+    (8, 2.306),
+    (9, 2.262),
+    (10, 2.228),
+    (15, 2.131),
+    (20, 2.086),
+    (25, 2.060),
+    (30, 2.042),
+    (40, 2.021),
+    (50, 2.009),
+    (60, 2.000),
+    (80, 1.990),
+    (100, 1.984),
+    (120, 1.980),
+];
+
+/// Z-score for 95% confidence interval — used for large df (normal limit).
+const Z_SCORE_95: f32 = 1.960;
 
 // =============================================================================
 // Confidence Calculation Result
@@ -99,12 +127,7 @@ pub fn compute_confidence_metrics(
         (sample_confidence * variance_confidence * model_confidence).powf(1.0 / 3.0);
 
     // Compute confidence interval
-    let confidence_interval = compute_confidence_interval(
-        samples,
-        expected_score_gain,
-        sample_confidence,
-        variance_confidence,
-    );
+    let confidence_interval = compute_confidence_interval(samples, expected_score_gain);
 
     PredictionConfidenceMetrics {
         prediction_confidence: overall_confidence.clamp(0.0, 1.0),
@@ -164,16 +187,45 @@ fn compute_model_fit_confidence(r_squared: f32) -> f32 {
     r_squared.clamp(0.0, 1.0)
 }
 
+/// Look up the t-distribution critical value for a 95% two-tailed confidence
+/// interval given `df` degrees of freedom.
+///
+/// Uses linear interpolation between table entries. For df ≥ 120, returns
+/// the normal approximation (1.960).
+fn t_critical_95(df: usize) -> f32 {
+    if df == 0 {
+        return Z_SCORE_95;
+    }
+    let df = df as u32;
+
+    // Beyond table range, use normal approximation
+    let &(last_df, last_t) = T_CRITICAL_95_TABLE.last().unwrap();
+    if df >= last_df {
+        return if df == last_df { last_t } else { Z_SCORE_95 };
+    }
+
+    // Find the two bracketing entries and interpolate
+    for window in T_CRITICAL_95_TABLE.windows(2) {
+        let (df_lo, t_lo) = window[0];
+        let (df_hi, t_hi) = window[1];
+        if df <= df_lo {
+            return t_lo;
+        }
+        if df < df_hi {
+            let frac = (df - df_lo) as f32 / (df_hi - df_lo) as f32;
+            return t_lo + frac * (t_hi - t_lo);
+        }
+    }
+
+    Z_SCORE_95
+}
+
 /// Compute 95% confidence interval for expected score gain.
 ///
-/// The interval is computed using the standard error formula, adjusted for
-/// sample size and source variance confidence.
-fn compute_confidence_interval(
-    samples: &[HelpfulSample],
-    expected_score_gain: f32,
-    sample_confidence: f32,
-    variance_confidence: f32,
-) -> [f32; 2] {
+/// Uses the t-distribution critical value for `df = n - 1` degrees of freedom,
+/// which properly accounts for small-sample uncertainty without the
+/// unprincipled `1 / confidence_factor` inflation that was used previously.
+fn compute_confidence_interval(samples: &[HelpfulSample], expected_score_gain: f32) -> [f32; 2] {
     if samples.is_empty() {
         return [0.0, 0.0];
     }
@@ -181,7 +233,6 @@ fn compute_confidence_interval(
     let n = samples.len() as f32;
 
     // Compute standard error of the prediction
-    // Based on error variance in the samples
     let error_variance = compute_error_variance(samples);
     let error_std_dev = error_variance.sqrt();
 
@@ -192,18 +243,15 @@ fn compute_confidence_interval(
         error_std_dev
     };
 
-    // Adjust margin based on confidence factors
-    // Lower confidence = wider interval
-    let confidence_factor = (sample_confidence * variance_confidence).max(EPSILON);
-    let adjusted_margin = if confidence_factor > EPSILON {
-        (Z_SCORE_95 * standard_error) / confidence_factor
+    // Use t-distribution critical value for df = n - 1
+    let df = if samples.len() > 1 {
+        samples.len() - 1
     } else {
-        // Very low confidence: use a wide interval
-        expected_score_gain.abs().max(0.1)
+        1
     };
+    let t_crit = t_critical_95(df);
 
-    // Clamp margin to reasonable bounds
-    let margin = adjusted_margin.clamp(0.0, expected_score_gain.abs().max(0.5));
+    let margin = (t_crit * standard_error).clamp(0.0, expected_score_gain.abs().max(0.5));
 
     let lower = expected_score_gain - margin;
     let upper = expected_score_gain + margin;
@@ -430,6 +478,111 @@ mod tests {
         assert!(
             width_high <= width_low,
             "More samples should give narrower CI: low={width_low}, high={width_high}"
+        );
+    }
+
+    #[test]
+    fn test_t_distribution_interval_ratio_10_vs_100_samples() {
+        // With t-distribution, 10 samples (df=9, t≈2.262) should produce an interval
+        // roughly 2–5× wider than 100 samples (df=99, t≈1.984), accounting for both
+        // the t-critical ratio (~1.14) and the √n ratio (√100/√10 ≈ 3.16).
+        let make_samples = |count: usize| -> Vec<HelpfulSample> {
+            (0..count)
+                .map(|i| {
+                    let error = 0.05 + 0.1 * (i as f32 / count as f32);
+                    make_sample(if i % 2 == 0 { 0.3 } else { 0.7 }, error)
+                })
+                .collect()
+        };
+
+        let samples_10 = make_samples(10);
+        let samples_100 = make_samples(100);
+
+        let metrics_10 = compute_confidence_metrics(&samples_10, 0.5, None);
+        let metrics_100 = compute_confidence_metrics(&samples_100, 0.5, None);
+
+        let width_10 = metrics_10.expected_score_gain_confidence_interval[1]
+            - metrics_10.expected_score_gain_confidence_interval[0];
+        let width_100 = metrics_100.expected_score_gain_confidence_interval[1]
+            - metrics_100.expected_score_gain_confidence_interval[0];
+
+        assert!(
+            width_10 > 0.0 && width_100 > 0.0,
+            "Both intervals should have positive width: w10={width_10}, w100={width_100}"
+        );
+
+        let ratio = width_10 / width_100;
+        assert!(
+            (2.0..=5.0).contains(&ratio),
+            "10-sample interval should be ~2-5× wider than 100-sample: ratio={ratio}, w10={width_10}, w100={width_100}"
+        );
+    }
+
+    #[test]
+    fn test_nan_samples_do_not_produce_nan_intervals() {
+        let samples = vec![
+            make_sample(f32::NAN, f32::NAN),
+            make_sample(0.5, 0.1),
+            make_sample(f32::NAN, 0.2),
+            make_sample(0.7, f32::NAN),
+            make_sample(0.3, 0.15),
+        ];
+        let metrics = compute_confidence_metrics(&samples, 0.1, None);
+
+        let [lower, upper] = metrics.expected_score_gain_confidence_interval;
+        assert!(
+            lower.is_finite(),
+            "Lower bound should be finite, got {lower}"
+        );
+        assert!(
+            upper.is_finite(),
+            "Upper bound should be finite, got {upper}"
+        );
+        assert!(
+            metrics.prediction_confidence.is_finite(),
+            "Confidence should be finite, got {}",
+            metrics.prediction_confidence
+        );
+    }
+
+    #[test]
+    fn test_interval_always_contains_point_estimate() {
+        // Test with various sample counts and expected gains
+        for &count in &[5_usize, 10, 25, 50, 100, 500] {
+            for &expected in &[-0.5_f32, -0.1, 0.0, 0.1, 0.5] {
+                let samples: Vec<HelpfulSample> = (0..count)
+                    .map(|i| make_sample(if i % 2 == 0 { 0.2 } else { 0.8 }, 0.1))
+                    .collect();
+                let metrics = compute_confidence_metrics(&samples, expected, None);
+                let [lower, upper] = metrics.expected_score_gain_confidence_interval;
+                assert!(
+                    lower <= expected && upper >= expected,
+                    "Interval [{lower}, {upper}] should contain estimate {expected} (n={count})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_t_critical_lookup_known_values() {
+        // Verify lookup table returns expected t-critical values for 95% CI
+        // df=1: t=12.706, df=9: t≈2.262, df=120+: t≈1.96
+        let t1 = t_critical_95(1);
+        assert!(
+            (t1 - 12.706).abs() < 0.01,
+            "t(df=1) should be ~12.706, got {t1}"
+        );
+
+        let t9 = t_critical_95(9);
+        assert!(
+            (t9 - 2.262).abs() < 0.01,
+            "t(df=9) should be ~2.262, got {t9}"
+        );
+
+        let t_large = t_critical_95(200);
+        assert!(
+            (t_large - 1.96).abs() < 0.01,
+            "t(df=200) should be ~1.96, got {t_large}"
         );
     }
 }
