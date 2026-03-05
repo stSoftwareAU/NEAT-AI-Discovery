@@ -134,7 +134,7 @@ pub fn detect_stuck_synapse_weight_resets(
         .map(|(uuid, records)| (uuid.as_str(), records))
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(creature.synapses.len());
 
     for syn in &creature.synapses {
         // Get source neuron records

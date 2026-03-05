@@ -99,7 +99,7 @@ pub fn detect_dead_neurons(
         .map(|(uuid, records)| (uuid.as_str(), records))
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(topo.hidden_uuids.len());
 
     for uuid in &topo.hidden_uuids {
         let Some(records) = records_map.get(uuid.as_str()) else {
@@ -177,22 +177,27 @@ pub fn detect_dead_neurons(
 }
 
 /// Find output neurons reachable from a given neuron via BFS using the topology cache.
+///
+/// Uses `HashSet<&str>` keyed on borrowed slices from the topology cache to
+/// avoid allocating a new `String` at every BFS step (Issue #755).
 fn find_connected_outputs_cached(start_uuid: &str, topo: &CreatureTopologyCache) -> Vec<String> {
-    let mut visited = HashSet::new();
-    let mut queue = vec![start_uuid.to_string()];
-    let mut connected = Vec::new();
+    let neuron_count = topo.hidden_uuids.len() + topo.output_uuids.len();
+    let mut visited: HashSet<&str> = HashSet::with_capacity(neuron_count);
+    let mut queue: Vec<&str> = Vec::with_capacity(neuron_count);
+    queue.push(start_uuid);
+    let mut connected: Vec<String> = Vec::new();
 
     while let Some(current) = queue.pop() {
-        if !visited.insert(current.clone()) {
+        if !visited.insert(current) {
             continue;
         }
 
-        for next in topo.fan_out_for(&current) {
+        for next in topo.fan_out_for(current) {
             if topo.output_uuids.contains(next.as_str()) {
                 connected.push(next.clone());
             }
             if !visited.contains(next.as_str()) {
-                queue.push(next.clone());
+                queue.push(next.as_str());
             }
         }
     }

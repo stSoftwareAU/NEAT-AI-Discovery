@@ -79,7 +79,7 @@ pub fn detect_observation_ranges(
         .map(|n| n.uuid.as_str())
         .collect();
 
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
         if !input_uuids.contains(uuid.as_str()) {

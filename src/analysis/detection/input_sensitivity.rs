@@ -182,7 +182,7 @@ pub fn detect_dominant_inputs(
             .push((syn.to_uuid.as_str(), syn.weight));
     }
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(input_uuids.len());
 
     // For each input neuron, analyse its sensitivity to each connected output
     for input_uuid in &input_uuids {
@@ -358,7 +358,7 @@ pub fn detect_threshold_effects(
             .push((syn.to_uuid.as_str(), syn.weight));
     }
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(input_uuids.len());
 
     // Check each input -> hidden path for threshold effects
     for input_uuid in &input_uuids {

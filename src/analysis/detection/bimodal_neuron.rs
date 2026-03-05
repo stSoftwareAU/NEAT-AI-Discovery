@@ -93,7 +93,7 @@ pub fn detect_bimodal_neurons(
     neurons: &[(String, String, f32)],
     neuron_records: &[(String, Vec<DiscoverRecord>)],
 ) -> Vec<BimodalNeuronCandidate> {
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(neurons.len());
 
     let records_map: std::collections::HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
         .iter()

@@ -120,7 +120,7 @@ pub fn detect_saturated_neurons(
     neurons: &[(String, String, f32)],
     neuron_records: &[(String, Vec<DiscoverRecord>)],
 ) -> Vec<SaturatedNeuronCandidate> {
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(neurons.len());
 
     // Build a map from uuid to records for quick lookup
     let records_map: std::collections::HashMap<&str, &Vec<DiscoverRecord>> = neuron_records

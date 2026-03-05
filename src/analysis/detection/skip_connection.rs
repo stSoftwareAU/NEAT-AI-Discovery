@@ -227,7 +227,7 @@ pub fn detect_skip_connection_candidates(
         })
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(deep_attenuated.len());
 
     for &(target_uuid, target_depth, target_mean_err) in &deep_attenuated {
         // Find the best shallow source: prefer largest depth gap, not already connected
@@ -282,17 +282,17 @@ pub fn skip_connections_to_coordinated_candidates(
     candidates: &[SkipConnectionCandidate],
     creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
-    let existing_synapses: HashSet<(String, String)> = creature
+    let existing_synapses: HashSet<(&str, &str)> = creature
         .synapses
         .iter()
-        .map(|s| (s.from_uuid.clone(), s.to_uuid.clone()))
+        .map(|s| (s.from_uuid.as_str(), s.to_uuid.as_str()))
         .collect();
 
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(candidates.len());
 
     for c in candidates {
         // Skip if synapse already exists
-        if existing_synapses.contains(&(c.source_uuid.clone(), c.target_uuid.clone())) {
+        if existing_synapses.contains(&(c.source_uuid.as_str(), c.target_uuid.as_str())) {
             continue;
         }
 

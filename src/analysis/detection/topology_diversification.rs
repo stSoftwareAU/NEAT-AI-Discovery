@@ -284,7 +284,7 @@ pub fn detect_topology_diversification_candidates(
         .map(|(uuid, records)| (uuid.as_str(), records))
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(output_neurons.len());
 
     for &output_uuid in &output_neurons {
         // Check sample count

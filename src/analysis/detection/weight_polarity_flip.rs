@@ -116,7 +116,7 @@ pub fn detect_weight_polarity_flip_candidates(
         .map(|n| n.uuid.as_str())
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(creature.synapses.len());
 
     for synapse in &creature.synapses {
         // Only analyse synapses targeting output neurons

@@ -175,7 +175,7 @@ pub fn detect_squash_weight_rescale_candidates(
     hidden_neurons: &[(String, String, f32)],
     neuron_records: &[(String, Vec<DiscoverRecord>)],
 ) -> Vec<SquashWeightRescaleCandidate> {
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(hidden_neurons.len());
 
     for (uuid, current_squash, _bias) in hidden_neurons {
         // Skip aggregate squashes — they cannot be simulated as f(x)

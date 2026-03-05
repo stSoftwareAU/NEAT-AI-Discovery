@@ -162,7 +162,7 @@ pub fn detect_incoherent_weight_ratios(
     records: &[(String, Vec<DiscoverRecord>)],
     config: &WeightCoherenceConfig,
 ) -> Vec<IncoherentWeightRatioCandidate> {
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(creature.neurons.len());
 
     // Build synapse lookup: neuron_uuid -> (incoming_weights, outgoing_weights)
     let mut incoming_weights: HashMap<String, Vec<f32>> = HashMap::new();
@@ -262,7 +262,7 @@ pub fn detect_near_constant_paths(
     records: &[(String, Vec<DiscoverRecord>)],
     config: &WeightCoherenceConfig,
 ) -> Vec<NearConstantPathCandidate> {
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(creature.neurons.len());
 
     // Identify hidden neurons only
     let hidden_neurons: HashMap<String, &str> = creature
@@ -368,7 +368,7 @@ pub fn detect_symmetric_cancellation(
     records: &[(String, Vec<DiscoverRecord>)],
     config: &WeightCoherenceConfig,
 ) -> Vec<SymmetricCancellationCandidate> {
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(creature.synapses.len());
 
     // Build records lookup indexed by obs_index for correlation calculation
     let records_map: HashMap<String, &Vec<DiscoverRecord>> = records

@@ -105,7 +105,7 @@ pub fn detect_bottleneck_neurons(
         .map(|e| e.abs())
         .sum();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(topo.hidden_uuids.len());
 
     for uuid in &topo.hidden_uuids {
         let fan_in_list = topo.fan_in_for(uuid);
@@ -237,7 +237,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
         }
     };
 
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(candidates.len() * 2);
 
     for c in candidates {
         // Candidate 1: Add parallel neuron

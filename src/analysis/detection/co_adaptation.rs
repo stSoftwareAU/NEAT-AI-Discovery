@@ -116,7 +116,7 @@ pub fn detect_co_adapted_neurons(
         })
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(eligible.len());
 
     // Compare all pairs of eligible hidden neurons
     for i in 0..eligible.len() {

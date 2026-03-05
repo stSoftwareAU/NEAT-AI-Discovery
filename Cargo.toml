@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.48.4"
+version = "0.49.0"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -102,6 +102,10 @@ harness = false
 
 [[bench]]
 name = "topology_cache"
+harness = false
+
+[[bench]]
+name = "bfs_allocation"
 harness = false
 
 [profile.release]

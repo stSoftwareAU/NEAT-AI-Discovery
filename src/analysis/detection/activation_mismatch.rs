@@ -115,7 +115,7 @@ pub fn detect_activation_mismatches(
         .map(|(uuid, records)| (uuid.as_str(), records))
         .collect();
 
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(neurons.len());
 
     for (uuid, squash, _bias) in neurons {
         // Skip activations that are already unbounded / not susceptible

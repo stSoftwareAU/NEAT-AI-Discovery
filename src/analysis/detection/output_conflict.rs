@@ -96,7 +96,7 @@ pub fn detect_output_conflict_neurons(
         .map(|n| (n.uuid.as_str(), (n.squash.as_str(), n.bias)))
         .collect();
 
-    let mut results: Vec<OutputConflictNeuron> = Vec::new();
+    let mut results: Vec<OutputConflictNeuron> = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
         // Only analyse hidden neurons
