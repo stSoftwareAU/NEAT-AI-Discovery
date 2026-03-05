@@ -80,8 +80,7 @@ pub struct OutputSquashMismatchCandidate {
 
 /// Returns the theoretical output bounds `(min, max)` for bounded activations.
 fn activation_bounds(squash: &str) -> Option<(f32, f32)> {
-    let upper = squash.to_ascii_uppercase();
-    match upper.as_str() {
+    match squash {
         "HARD_TANH" | "CLIPPED" => Some((-1.0, 1.0)),
         "TANH" | "BIPOLAR_SIGMOID" => Some((-1.0, 1.0)),
         "LOGISTIC" => Some((0.0, 1.0)),
@@ -95,18 +94,16 @@ fn activation_bounds(squash: &str) -> Option<(f32, f32)> {
 
 /// Returns whether a squash function has hard clipping (piecewise linear bounds).
 fn is_hard_clipping(squash: &str) -> bool {
-    let upper = squash.to_ascii_uppercase();
     matches!(
-        upper.as_str(),
+        squash,
         "HARD_TANH" | "CLIPPED" | "RELU" | "RELU6" | "BIPOLAR" | "STEP"
     )
 }
 
 /// Returns whether a squash function is unbounded (output can exceed any finite range).
 fn is_unbounded(squash: &str) -> bool {
-    let upper = squash.to_ascii_uppercase();
     matches!(
-        upper.as_str(),
+        squash,
         "IDENTITY" | "ELU" | "SELU" | "LEAKYRELU" | "SOFTPLUS" | "BENT_IDENTITY" | "BENTIDENTITY"
     )
 }
@@ -159,14 +156,12 @@ fn compute_bound_error_ratio(records: &[DiscoverRecord], lower: f32, upper: f32)
 
 /// Select the best replacement squash function for a bounded activation.
 fn recommend_replacement(current_squash: &str, records: &[DiscoverRecord]) -> (String, f32) {
-    let upper = current_squash.to_ascii_uppercase();
-
     // Check if activations suggest symmetric [-1, 1] range
     let has_negative = records.iter().any(|r| r.activation < -0.01);
     let has_positive = records.iter().any(|r| r.activation > 0.01);
     let symmetric = has_negative && has_positive;
 
-    match upper.as_str() {
+    match current_squash {
         "HARD_TANH" | "CLIPPED" => {
             // HARD_TANH clips hard at ±1 — smooth TANH is the natural replacement
             ("TANH".to_string(), 0.8)

@@ -278,7 +278,7 @@ pub fn classify_activation_suitability(distribution: &InputDistribution) -> Hash
         InputDistributionClass::Gaussian => {
             // Gaussian inputs work well with smooth, symmetric activations
             scores.insert("TANH".to_string(), 0.9);
-            scores.insert("Softplus".to_string(), 0.85);
+            scores.insert("SOFTPLUS".to_string(), 0.85);
             scores.insert("GELU".to_string(), 0.8);
             scores.insert("IDENTITY".to_string(), 0.7);
             scores.insert("ELU".to_string(), 0.75);
@@ -288,10 +288,10 @@ pub fn classify_activation_suitability(distribution: &InputDistribution) -> Hash
         InputDistributionClass::Sparse => {
             // Sparse inputs benefit from activations that preserve zeros
             scores.insert("RELU".to_string(), 0.9);
-            scores.insert("ReLU6".to_string(), 0.85);
+            scores.insert("RELU6".to_string(), 0.85);
             scores.insert("ELU".to_string(), 0.8);
             scores.insert("GELU".to_string(), 0.75);
-            scores.insert("Softplus".to_string(), 0.7);
+            scores.insert("SOFTPLUS".to_string(), 0.7);
             scores.insert("TANH".to_string(), 0.5); // Maps zeros to zeros, but loses sparsity pattern
             scores.insert("IDENTITY".to_string(), 0.6);
         }
@@ -301,7 +301,7 @@ pub fn classify_activation_suitability(distribution: &InputDistribution) -> Hash
             scores.insert("HARD_TANH".to_string(), 0.85);
             scores.insert("TANH".to_string(), 0.8);
             scores.insert("SOFTSIGN".to_string(), 0.75);
-            scores.insert("ArcTan".to_string(), 0.7);
+            scores.insert("ARCTAN".to_string(), 0.7);
             scores.insert("RELU".to_string(), 0.5);
             scores.insert("IDENTITY".to_string(), 0.4); // May amplify out of bounds
         }
@@ -311,7 +311,7 @@ pub fn classify_activation_suitability(distribution: &InputDistribution) -> Hash
             scores.insert("IDENTITY".to_string(), 0.7);
             scores.insert("ELU".to_string(), 0.7);
             scores.insert("GELU".to_string(), 0.7);
-            scores.insert("Softplus".to_string(), 0.65);
+            scores.insert("SOFTPLUS".to_string(), 0.65);
             scores.insert("RELU".to_string(), 0.6);
             scores.insert("LOGISTIC".to_string(), 0.6);
         }
@@ -449,9 +449,7 @@ pub fn analyse_gradient_flow_risk(records: &[DiscoverRecord], squash: &str) -> f
         return 0.0;
     }
 
-    let upper = squash.to_ascii_uppercase();
-
-    match upper.as_str() {
+    match squash {
         "TANH" | "BIPOLAR_SIGMOID" => {
             // TANH saturates for |x| > 3
             let saturated_count = records.iter().filter(|r| r.activation.abs() > 0.95).count();
@@ -532,7 +530,7 @@ pub fn recommend_activation_function(
     }
 
     // Don't recommend same activation
-    if normalise_squash_name(best_squash) == normalise_squash_name(current_squash) {
+    if best_squash == current_squash {
         return None;
     }
 
@@ -555,18 +553,12 @@ pub fn recommend_activation_function(
     })
 }
 
-/// Get the score for an activation function, handling case variations.
+/// Get the score for an activation function.
+///
+/// Squash names are pre-normalised to uppercase at deserialisation (Issue #753),
+/// so a direct HashMap lookup suffices.
 fn get_activation_score(suitability: &HashMap<String, f32>, squash: &str) -> f32 {
-    let normalised = normalise_squash_name(squash);
-    suitability
-        .iter()
-        .find(|(k, _)| normalise_squash_name(k) == normalised)
-        .map_or(0.5, |(_, v)| *v) // Default score for unknown activations
-}
-
-/// Normalise activation function name for comparison.
-fn normalise_squash_name(name: &str) -> String {
-    name.to_ascii_uppercase()
+    suitability.get(squash).copied().unwrap_or(0.5)
 }
 
 /// Generate a human-readable rationale for the recommendation.

@@ -16,7 +16,7 @@ pub use requests::*;
 pub use responses::*;
 pub use session::*;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 // ============================================================================
 // Creature / Neuron / Synapse representations
@@ -37,7 +37,10 @@ pub struct NeuronJson {
     #[serde(rename = "type")]
     pub neuron_type: String,
     /// Activation function. Defaults to "IDENTITY" for constant neurons.
-    #[serde(default = "default_squash")]
+    ///
+    /// Normalised to ASCII uppercase at deserialisation time (Issue #753) so
+    /// downstream detection modules can match without per-neuron allocations.
+    #[serde(default = "default_squash", deserialize_with = "deserialise_squash")]
     pub squash: String,
     #[serde(default)]
     pub bias: f32,
@@ -45,6 +48,23 @@ pub struct NeuronJson {
 
 fn default_squash() -> String {
     "IDENTITY".to_string()
+}
+
+/// Deserialise a squash name and normalise to ASCII uppercase (Issue #753).
+fn deserialise_squash<'de, D>(deserialiser: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserialiser)?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    // Fast path: already uppercase ASCII — avoid allocation.
+    if trimmed.bytes().all(|b| !b.is_ascii_lowercase()) {
+        return Ok(trimmed.to_string());
+    }
+    Ok(trimmed.to_ascii_uppercase())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

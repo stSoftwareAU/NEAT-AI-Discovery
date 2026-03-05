@@ -67,9 +67,8 @@ pub struct UnboundedCappingCandidate {
 
 /// Returns whether a squash function is unbounded (can produce arbitrarily high values).
 fn is_unbounded_squash(squash: &str) -> bool {
-    let upper = squash.to_ascii_uppercase();
     matches!(
-        upper.as_str(),
+        squash,
         "RELU"
             | "IDENTITY"
             | "LEAKYRELU"
@@ -87,8 +86,7 @@ fn is_unbounded_squash(squash: &str) -> bool {
 
 /// Returns the appropriate capping threshold for a given activation function.
 fn get_capping_threshold(squash: &str) -> f32 {
-    let upper = squash.to_ascii_uppercase();
-    match upper.as_str() {
+    match squash {
         // ReLU family: use RELU6 threshold
         "RELU" | "LEAKYRELU" | "ELU" | "SELU" | "GELU" | "SWISH" | "MISH" | "SOFTPLUS" => {
             RELU6_CAP_THRESHOLD
@@ -102,8 +100,7 @@ fn get_capping_threshold(squash: &str) -> f32 {
 
 /// Returns the recommended bounded activation function for a given unbounded activation.
 fn recommend_bounded_squash(squash: &str, mean_activation: f32) -> Option<String> {
-    let upper = squash.to_ascii_uppercase();
-    match upper.as_str() {
+    match squash {
         // ReLU family → RELU6
         "RELU" | "LEAKYRELU" | "ELU" | "SELU" | "GELU" | "SWISH" | "MISH" | "SOFTPLUS" => {
             Some("RELU6".to_string())

@@ -75,8 +75,7 @@ pub struct BiasPerturbationCandidate {
 ///
 /// Returns `None` for unbounded or discrete activations.
 fn active_zone(squash: &str) -> Option<(f32, f32)> {
-    let upper = squash.to_ascii_uppercase();
-    match upper.as_str() {
+    match squash {
         "TANH" | "HARD_TANH" | "CLIPPED" => Some((-2.0, 2.0)),
         "LOGISTIC" => Some((-4.0, 4.0)),
         "SOFTSIGN" => Some((-4.0, 4.0)),

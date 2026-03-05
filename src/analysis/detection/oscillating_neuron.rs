@@ -184,8 +184,7 @@ pub fn detect_oscillating_neurons(
 /// the magnitude regardless of sign. For neurons with bounded oscillation, RELU
 /// clips the negative side.
 fn recommend_squash_for_oscillation(current_squash: &str) -> String {
-    let upper = current_squash.to_ascii_uppercase();
-    match upper.as_str() {
+    match current_squash {
         // For symmetric functions that naturally produce oscillation, use ABSOLUTE
         "TANH" | "IDENTITY" | "SOFTSIGN" | "ARCTAN" | "HARD_TANH" => "ABSOLUTE".to_string(),
         // For other functions, RELU clips negative side

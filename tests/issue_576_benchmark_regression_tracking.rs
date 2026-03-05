@@ -25,6 +25,7 @@ const EXPECTED_BENCHMARKS: &[&str] = &[
     "async_pipeline",
     "gpu_shader_workgroup",
     "uuid_hashing",
+    "squash_normalisation",
 ];
 
 #[test]
