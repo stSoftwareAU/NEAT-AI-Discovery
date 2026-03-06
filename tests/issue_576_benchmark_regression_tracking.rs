@@ -28,6 +28,7 @@ const EXPECTED_BENCHMARKS: &[&str] = &[
     "squash_normalisation",
     "topology_cache",
     "bfs_allocation",
+    "synapse_lookup",
 ];
 
 #[test]

@@ -108,6 +108,10 @@ harness = false
 name = "bfs_allocation"
 harness = false
 
+[[bench]]
+name = "synapse_lookup"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
