@@ -139,43 +139,11 @@ fn compute_activation_correlation(
     complement_samples: &[HelpfulSample],
     n_samples: usize,
 ) -> f64 {
-    if n_samples < 3 {
-        return 0.0;
-    }
-
-    // Compute means
-    let mut sum_primary = 0.0f64;
-    let mut sum_complement = 0.0f64;
-
-    for i in 0..n_samples {
-        sum_primary += primary_samples[i].activation as f64;
-        sum_complement += complement_samples[i].activation as f64;
-    }
-
-    let mean_primary = sum_primary / n_samples as f64;
-    let mean_complement = sum_complement / n_samples as f64;
-
-    // Compute covariance and variances
-    let mut cov = 0.0f64;
-    let mut var_primary = 0.0f64;
-    let mut var_complement = 0.0f64;
-
-    for i in 0..n_samples {
-        let p = primary_samples[i].activation as f64 - mean_primary;
-        let c = complement_samples[i].activation as f64 - mean_complement;
-
-        cov += p * c;
-        var_primary += p * p;
-        var_complement += c * c;
-    }
-
-    // Compute correlation coefficient
-    let denominator = (var_primary * var_complement).sqrt();
-    if denominator < 1e-10 {
-        return 0.0;
-    }
-
-    cov / denominator
+    crate::analysis::detection::stats::pearson_correlation_samples(
+        primary_samples,
+        complement_samples,
+        n_samples,
+    )
 }
 
 /// Evaluate how well a complement source reduces the residual error.

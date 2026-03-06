@@ -240,19 +240,7 @@ pub fn detect_correlated_error_patterns(
 
 /// Compute Pearson correlation between two error vectors indexed by obs_index.
 fn compute_pearson_correlation(errors_a: &HashMap<u32, f32>, errors_b: &HashMap<u32, f32>) -> f32 {
-    let shared: Vec<u32> = errors_a
-        .keys()
-        .filter(|k| errors_b.contains_key(k))
-        .copied()
-        .collect();
-
-    if shared.len() < MIN_SAMPLES_FOR_CORRELATION {
-        return 0.0;
-    }
-
-    let vals_a: Vec<f32> = shared.iter().map(|k| errors_a[k]).collect();
-    let vals_b: Vec<f32> = shared.iter().map(|k| errors_b[k]).collect();
-    super::stats::pearson_correlation(&vals_a, &vals_b)
+    super::stats::pearson_correlation_hashmaps(errors_a, errors_b, MIN_SAMPLES_FOR_CORRELATION)
 }
 
 /// Cluster correlated outputs using complete-linkage clustering.
@@ -423,19 +411,7 @@ fn find_predictive_inputs(
 
 /// Compute Pearson correlation between two f32 vectors indexed by u32 keys.
 fn compute_pearson_correlation_vecs(vec_a: &HashMap<u32, f32>, vec_b: &HashMap<u32, f32>) -> f32 {
-    let shared: Vec<u32> = vec_a
-        .keys()
-        .filter(|k| vec_b.contains_key(k))
-        .copied()
-        .collect();
-
-    if shared.len() < MIN_SAMPLES_FOR_CORRELATION {
-        return 0.0;
-    }
-
-    let vals_a: Vec<f32> = shared.iter().map(|k| vec_a[k]).collect();
-    let vals_b: Vec<f32> = shared.iter().map(|k| vec_b[k]).collect();
-    super::stats::pearson_correlation(&vals_a, &vals_b)
+    super::stats::pearson_correlation_hashmaps(vec_a, vec_b, MIN_SAMPLES_FOR_CORRELATION)
 }
 
 /// Compute mean absolute error across all neurons in the group for shared samples.

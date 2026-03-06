@@ -585,7 +585,7 @@ fn calculate_correlation(
     records2: &[DiscoverRecord],
     min_samples: usize,
 ) -> Option<f32> {
-    // Build lookup by obs_index
+    // Build lookup by obs_index, filtering non-finite activations
     let lookup1: HashMap<u32, f32> = records1
         .iter()
         .filter(|r| r.activation.is_finite())
@@ -598,40 +598,17 @@ fn calculate_correlation(
         .map(|r| (r.obs_index, r.activation))
         .collect();
 
-    // Collect paired values
-    let paired: Vec<(f32, f32)> = lookup1
-        .iter()
-        .filter_map(|(idx, val1)| lookup2.get(idx).map(|val2| (*val1, *val2)))
-        .collect();
-
-    if paired.len() < min_samples {
+    // Check sufficient shared samples before delegating
+    let shared_count = lookup1.keys().filter(|k| lookup2.contains_key(k)).count();
+    if shared_count < min_samples {
         return None;
     }
 
-    // Calculate means
-    let n = paired.len() as f32;
-    let mean1 = paired.iter().map(|(a, _)| a).sum::<f32>() / n;
-    let mean2 = paired.iter().map(|(_, b)| b).sum::<f32>() / n;
-
-    // Calculate correlation components
-    let mut cov = 0.0f32;
-    let mut var1 = 0.0f32;
-    let mut var2 = 0.0f32;
-
-    for (a, b) in &paired {
-        let d1 = a - mean1;
-        let d2 = b - mean2;
-        cov += d1 * d2;
-        var1 += d1 * d1;
-        var2 += d2 * d2;
-    }
-
-    let denom = (var1 * var2).sqrt();
-    if denom <= EPSILON {
-        return None;
-    }
-
-    Some(cov / denom)
+    Some(super::stats::pearson_correlation_hashmaps(
+        &lookup1,
+        &lookup2,
+        min_samples,
+    ))
 }
 
 // =============================================================================
