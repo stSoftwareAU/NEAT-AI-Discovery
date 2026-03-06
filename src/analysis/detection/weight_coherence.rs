@@ -23,6 +23,7 @@
 //! - `min_correlation_for_cancellation`: Minimum correlation to flag symmetric cancellation (default: 0.8)
 
 use super::activation_properties::is_saturating_squash;
+use super::topology_cache::CreatureTopologyCache;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 use std::collections::HashMap;
@@ -162,31 +163,19 @@ pub fn detect_incoherent_weight_ratios(
     creature: &CreatureJson,
     records: &[(String, Vec<DiscoverRecord>)],
     config: &WeightCoherenceConfig,
+    topo: Option<&CreatureTopologyCache>,
 ) -> Vec<IncoherentWeightRatioCandidate> {
     let mut candidates = Vec::with_capacity(creature.neurons.len());
 
-    // Build synapse lookup: neuron_uuid -> (incoming_weights, outgoing_weights)
-    let mut incoming_weights: HashMap<String, Vec<f32>> = HashMap::new();
-    let mut outgoing_weights: HashMap<String, Vec<f32>> = HashMap::new();
-
-    for synapse in &creature.synapses {
-        incoming_weights
-            .entry(synapse.to_uuid.clone())
-            .or_default()
-            .push(synapse.weight);
-        outgoing_weights
-            .entry(synapse.from_uuid.clone())
-            .or_default()
-            .push(synapse.weight);
-    }
-
-    // Identify hidden neurons only
-    let hidden_uuids: std::collections::HashSet<String> = creature
-        .neurons
-        .iter()
-        .filter(|n| n.neuron_type == "hidden")
-        .map(|n| n.uuid.clone())
-        .collect();
+    // Use shared topology cache or build locally for backward compatibility.
+    let local_cache;
+    let topo = match topo {
+        Some(t) => t,
+        None => {
+            local_cache = CreatureTopologyCache::new(creature);
+            &local_cache
+        }
+    };
 
     // Build records lookup
     let records_map: HashMap<String, &Vec<DiscoverRecord>> = records
@@ -194,7 +183,7 @@ pub fn detect_incoherent_weight_ratios(
         .map(|(uuid, recs)| (uuid.clone(), recs))
         .collect();
 
-    for neuron_uuid in &hidden_uuids {
+    for neuron_uuid in &topo.hidden_uuids {
         // Get records for this neuron
         let Some(neuron_records) = records_map.get(neuron_uuid) else {
             continue;
@@ -204,14 +193,20 @@ pub fn detect_incoherent_weight_ratios(
             continue;
         }
 
-        // Calculate incoming and outgoing weight sums
-        let incoming_sum: f32 = incoming_weights
-            .get(neuron_uuid)
-            .map_or(0.0, |weights| weights.iter().map(|w| w.abs()).sum());
+        // Calculate incoming and outgoing weight sums from topology cache
+        let incoming_sum: f32 = topo
+            .fan_in_for(neuron_uuid)
+            .iter()
+            .filter_map(|from_uuid| topo.synapse_weight(from_uuid, neuron_uuid))
+            .map(f32::abs)
+            .sum();
 
-        let outgoing_sum: f32 = outgoing_weights
-            .get(neuron_uuid)
-            .map_or(0.0, |weights| weights.iter().map(|w| w.abs()).sum());
+        let outgoing_sum: f32 = topo
+            .fan_out_for(neuron_uuid)
+            .iter()
+            .filter_map(|to_uuid| topo.synapse_weight(neuron_uuid, to_uuid))
+            .map(f32::abs)
+            .sum();
 
         // Skip if no meaningful weights
         if incoming_sum <= EPSILON || outgoing_sum <= EPSILON {
@@ -262,25 +257,27 @@ pub fn detect_near_constant_paths(
     creature: &CreatureJson,
     records: &[(String, Vec<DiscoverRecord>)],
     config: &WeightCoherenceConfig,
+    topo: Option<&CreatureTopologyCache>,
 ) -> Vec<NearConstantPathCandidate> {
     let mut candidates = Vec::with_capacity(creature.neurons.len());
 
-    // Identify hidden neurons only
-    let hidden_neurons: HashMap<String, &str> = creature
+    // Use shared topology cache or build locally for backward compatibility.
+    let local_cache;
+    let topo = match topo {
+        Some(t) => t,
+        None => {
+            local_cache = CreatureTopologyCache::new(creature);
+            &local_cache
+        }
+    };
+
+    // Build squash lookup for hidden neurons (not available in topology cache).
+    let hidden_squash: HashMap<&str, &str> = creature
         .neurons
         .iter()
-        .filter(|n| n.neuron_type == "hidden")
-        .map(|n| (n.uuid.clone(), n.squash.as_str()))
+        .filter(|n| topo.hidden_uuids.contains(&n.uuid))
+        .map(|n| (n.uuid.as_str(), n.squash.as_str()))
         .collect();
-
-    // Build incoming weights lookup
-    let mut incoming_weights: HashMap<String, Vec<f32>> = HashMap::new();
-    for synapse in &creature.synapses {
-        incoming_weights
-            .entry(synapse.to_uuid.clone())
-            .or_default()
-            .push(synapse.weight);
-    }
 
     // Build records lookup
     let records_map: HashMap<String, &Vec<DiscoverRecord>> = records
@@ -288,7 +285,10 @@ pub fn detect_near_constant_paths(
         .map(|(uuid, recs)| (uuid.clone(), recs))
         .collect();
 
-    for (neuron_uuid, squash) in &hidden_neurons {
+    for neuron_uuid in &topo.hidden_uuids {
+        let Some(&squash) = hidden_squash.get(neuron_uuid.as_str()) else {
+            continue;
+        };
         let Some(neuron_records) = records_map.get(neuron_uuid) else {
             continue;
         };
@@ -314,13 +314,13 @@ pub fn detect_near_constant_paths(
 
         if variance < config.min_activation_variance {
             // Find the largest incoming weight that might cause saturation
-            let causing_weight = incoming_weights.get(neuron_uuid).map_or(0.0, |weights| {
-                weights
-                    .iter()
-                    .map(|w| w.abs())
-                    .max_by(f32::total_cmp)
-                    .unwrap_or(0.0)
-            });
+            let causing_weight = topo
+                .fan_in_for(neuron_uuid)
+                .iter()
+                .filter_map(|from_uuid| topo.synapse_weight(from_uuid, neuron_uuid))
+                .map(f32::abs)
+                .max_by(f32::total_cmp)
+                .unwrap_or(0.0);
 
             // Recommend setBias for saturating activations
             let recommended_action = if is_saturating_squash(squash) && mean.abs() > 0.9 {
@@ -368,8 +368,19 @@ pub fn detect_symmetric_cancellation(
     creature: &CreatureJson,
     records: &[(String, Vec<DiscoverRecord>)],
     config: &WeightCoherenceConfig,
+    topo: Option<&CreatureTopologyCache>,
 ) -> Vec<SymmetricCancellationCandidate> {
     let mut candidates = Vec::with_capacity(creature.synapses.len());
+
+    // Use shared topology cache or build locally for backward compatibility.
+    let local_cache;
+    let topo = match topo {
+        Some(t) => t,
+        None => {
+            local_cache = CreatureTopologyCache::new(creature);
+            &local_cache
+        }
+    };
 
     // Build records lookup indexed by obs_index for correlation calculation
     let records_map: HashMap<String, &Vec<DiscoverRecord>> = records
@@ -377,13 +388,17 @@ pub fn detect_symmetric_cancellation(
         .map(|(uuid, recs)| (uuid.clone(), recs))
         .collect();
 
-    // Group synapses by target neuron
-    let mut synapses_by_target: HashMap<String, Vec<(&str, f32)>> = HashMap::new();
-    for synapse in &creature.synapses {
-        synapses_by_target
-            .entry(synapse.to_uuid.clone())
-            .or_default()
-            .push((&synapse.from_uuid, synapse.weight));
+    // Build synapses by target from topology cache: target → [(from_uuid, weight)]
+    let mut synapses_by_target: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
+    for (to_uuid, from_uuids) in &topo.fan_in {
+        for from_uuid in from_uuids {
+            if let Some(weight) = topo.synapse_weight(from_uuid, to_uuid) {
+                synapses_by_target
+                    .entry(to_uuid.as_str())
+                    .or_default()
+                    .push((from_uuid.as_str(), weight));
+            }
+        }
     }
 
     // Check each target neuron for symmetric cancellation
@@ -434,7 +449,7 @@ pub fn detect_symmetric_cancellation(
                         candidates.push(SymmetricCancellationCandidate {
                             source1_neuron_uuid: source1_uuid.to_string(),
                             source2_neuron_uuid: source2_uuid.to_string(),
-                            target_neuron_uuid: target_uuid.clone(),
+                            target_neuron_uuid: target_uuid.to_string(),
                             weight1: *weight1,
                             weight2: *weight2,
                             correlation: corr,

@@ -41,7 +41,7 @@ pub(crate) fn build_discovery_module_specs(
     let mut modules: Vec<discovery_dispatch::DiscoveryModuleSpec> = Vec::with_capacity(32);
 
     neuron_specs::append_neuron_specs(&mut modules, creature, hidden_neurons, shared_cache, topo);
-    synapse_specs::append_synapse_specs(&mut modules, creature, hidden_neurons, shared_cache);
+    synapse_specs::append_synapse_specs(&mut modules, creature, hidden_neurons, shared_cache, topo);
     structural_specs::append_structural_specs(
         &mut modules,
         creature,
