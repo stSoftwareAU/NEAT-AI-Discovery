@@ -25,6 +25,7 @@
 //! These are emitted as `CoordinatedStructuralCandidateJson` with `ChangeSquash` and/or
 //! `SetBias` operations.
 
+use super::activation_properties::{can_have_dead_zone, is_bounded_squash};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
@@ -80,32 +81,6 @@ pub struct SaturatedNeuronCandidate {
     pub recommended_bias_delta: Option<f32>,
     /// Estimated improvement from fixing the saturation.
     pub estimated_improvement: f32,
-}
-
-/// Returns whether a squash function is bounded and can saturate.
-///
-/// Unbounded functions like RELU and IDENTITY cannot saturate (they have no ceiling).
-/// RELU can have a "dead zone" (all outputs at 0), which is handled separately.
-fn is_bounded_squash(squash: &str) -> bool {
-    matches!(
-        squash,
-        "TANH"
-            | "LOGISTIC"
-            | "HARD_TANH"
-            | "CLIPPED"
-            | "BIPOLAR"
-            | "BIPOLAR_SIGMOID"
-            | "STEP"
-            | "SOFTSIGN"
-            | "ISRU"
-            | "ARCTAN"
-            | "RELU6"
-    )
-}
-
-/// Returns whether a squash function can have a dead zone (all zeros).
-fn can_have_dead_zone(squash: &str) -> bool {
-    matches!(squash, "RELU" | "LEAKYRELU" | "ELU" | "SELU")
 }
 
 /// Detect saturated neurons from their recorded activations.

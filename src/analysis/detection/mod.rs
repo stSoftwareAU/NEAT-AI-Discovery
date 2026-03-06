@@ -5,6 +5,7 @@
 //! and convert them into coordinated structural candidates.
 
 pub mod activation_mismatch;
+pub mod activation_properties;
 pub mod bias_perturbation;
 pub mod bimodal_neuron;
 pub mod bottleneck;
