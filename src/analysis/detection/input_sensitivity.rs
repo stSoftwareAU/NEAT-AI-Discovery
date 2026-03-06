@@ -382,10 +382,10 @@ pub fn detect_threshold_effects(
 
             // Check if this is a steep activation region
             // Steep activations: TANH, LOGISTIC near threshold with large weight
-            let is_steep_activation = matches!(
-                squash.to_uppercase().as_str(),
-                "TANH" | "LOGISTIC" | "HARD_TANH" | "SOFTSIGN"
-            );
+            // Squash strings are normalised to uppercase at load time (Issue #753),
+            // so no allocation needed here (Issue #771).
+            let is_steep_activation =
+                matches!(squash, "TANH" | "LOGISTIC" | "HARD_TANH" | "SOFTSIGN");
 
             if !is_steep_activation {
                 continue;
@@ -458,7 +458,8 @@ pub fn detect_threshold_effects(
             // For TANH: threshold is around value = 0
             // For LOGISTIC: threshold is around value = 0
             let mean_value = compute_mean(&matched_values);
-            let threshold_proximity = match squash.to_uppercase().as_str() {
+            // Squash strings are normalised to uppercase at load time (Issue #753, #771).
+            let threshold_proximity = match squash {
                 "TANH" | "HARD_TANH" | "SOFTSIGN" => {
                     // Threshold at 0, steepest when |value| < 1
                     1.0 / (1.0 + mean_value.abs())

@@ -48,7 +48,8 @@ pub fn is_bounded_squash(squash: &str) -> bool {
 /// whose gradients vanish at extreme input values, causing weight coherence
 /// issues.
 ///
-/// The input is case-insensitive — it is converted to uppercase before matching.
+/// The input is case-insensitive — it uses `eq_ignore_ascii_case` to avoid
+/// String allocations (Issue #771).
 ///
 /// # Examples
 ///
@@ -61,10 +62,12 @@ pub fn is_bounded_squash(squash: &str) -> bool {
 /// assert!(!is_saturating_squash("IDENTITY"));
 /// ```
 pub fn is_saturating_squash(squash: &str) -> bool {
-    matches!(
-        squash.to_uppercase().as_str(),
-        "TANH" | "LOGISTIC" | "SIGMOID" | "HARD_TANH" | "CLIPPED" | "SOFTSIGN"
-    )
+    squash.eq_ignore_ascii_case("TANH")
+        || squash.eq_ignore_ascii_case("LOGISTIC")
+        || squash.eq_ignore_ascii_case("SIGMOID")
+        || squash.eq_ignore_ascii_case("HARD_TANH")
+        || squash.eq_ignore_ascii_case("CLIPPED")
+        || squash.eq_ignore_ascii_case("SOFTSIGN")
 }
 
 /// Returns whether a squash function can have a dead zone (all outputs at zero).
