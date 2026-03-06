@@ -1,5 +1,6 @@
 //! Utility FFI entry points — merge, read, export, and version.
 
+use super::helpers::{ffi_error_literal, panic_to_ffi_json, to_ffi_json};
 use crate::ffi_types::*;
 use crate::log_version_once;
 
@@ -28,14 +29,14 @@ pub unsafe extern "C" fn merge_discovery_parquet(
         // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
-                let error = r#"{"success":false,"error":"Null input pointer"}"#;
-                return CString::new(error).unwrap().into_raw();
+                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
             }
             match CStr::from_ptr(input_json).to_str() {
                 Ok(s) => s,
                 Err(_) => {
-                    let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
-                    return CString::new(error).unwrap().into_raw();
+                    return ffi_error_literal(
+                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
+                    );
                 }
             }
         };
@@ -51,41 +52,18 @@ pub unsafe extern "C" fn merge_discovery_parquet(
                     error_kind,
                     retryable,
                 };
-                serde_json::to_string(&output).unwrap_or_else(|_| {
-                    r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
-                })
+                return to_ffi_json(&output);
             }
         };
 
         match CString::new(json_result) {
             Ok(c_string) => c_string.into_raw(),
             Err(_) => {
-                let error = r#"{"success":false,"error":"Failed to create output string"}"#;
-                CString::new(error).unwrap().into_raw()
+                ffi_error_literal(r#"{"success":false,"error":"Failed to create output string"}"#)
             }
         }
     }))
-    .unwrap_or_else(|panic_info| {
-        // If panic occurred, create a safe error response
-        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "Unknown panic".to_string()
-        };
-        let error_json = format!(
-            "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
-            msg.replace('\\', "\\\\").replace('"', "\\\"")
-        );
-        // This should never fail, but if it does, we return null pointer
-        CString::new(error_json)
-            .unwrap_or_else(|_| {
-                CString::new(r#"{"success":false,"error":"Failed to create panic error string"}"#)
-                    .unwrap()
-            })
-            .into_raw()
-    })
+    .unwrap_or_else(panic_to_ffi_json)
 }
 
 // ============================================================================
@@ -115,14 +93,14 @@ pub unsafe extern "C" fn read_discovery_records_ffi(
         // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
-                let error = r#"{"success":false,"error":"Null input pointer"}"#;
-                return CString::new(error).unwrap().into_raw();
+                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
             }
             match CStr::from_ptr(input_json).to_str() {
                 Ok(s) => s,
                 Err(_) => {
-                    let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
-                    return CString::new(error).unwrap().into_raw();
+                    return ffi_error_literal(
+                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
+                    );
                 }
             }
         };
@@ -138,9 +116,7 @@ pub unsafe extern "C" fn read_discovery_records_ffi(
                     error_kind,
                     retryable,
                 };
-                serde_json::to_string(&output).unwrap_or_else(|_| {
-                    r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
-                })
+                return to_ffi_json(&output);
             }
         };
 
@@ -148,32 +124,11 @@ pub unsafe extern "C" fn read_discovery_records_ffi(
         match CString::new(json_result) {
             Ok(c_string) => c_string.into_raw(),
             Err(_) => {
-                let error = r#"{"success":false,"error":"Failed to create output string"}"#;
-                CString::new(error).unwrap().into_raw()
+                ffi_error_literal(r#"{"success":false,"error":"Failed to create output string"}"#)
             }
         }
     }))
-    .unwrap_or_else(|panic_info| {
-        // If panic occurred, create a safe error response
-        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "Unknown panic".to_string()
-        };
-        let error_json = format!(
-            "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
-            msg.replace('\\', "\\\\").replace('"', "\\\"")
-        );
-        // This should never fail, but if it does, we return null pointer
-        CString::new(error_json)
-            .unwrap_or_else(|_| {
-                CString::new(r#"{"success":false,"error":"Failed to create panic error string"}"#)
-                    .unwrap()
-            })
-            .into_raw()
-    })
+    .unwrap_or_else(panic_to_ffi_json)
 }
 
 // ============================================================================
@@ -222,14 +177,14 @@ pub unsafe extern "C" fn export_visualisation_snapshot(
         // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
-                let error = r#"{"success":false,"error":"Null input pointer"}"#;
-                return CString::new(error).unwrap().into_raw();
+                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
             }
             match CStr::from_ptr(input_json).to_str() {
                 Ok(s) => s,
                 Err(_) => {
-                    let error = r#"{"success":false,"error":"Invalid UTF-8 in input"}"#;
-                    return CString::new(error).unwrap().into_raw();
+                    return ffi_error_literal(
+                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
+                    );
                 }
             }
         };
@@ -246,39 +201,18 @@ pub unsafe extern "C" fn export_visualisation_snapshot(
                     error_kind,
                     retryable,
                 };
-                serde_json::to_string(&output).unwrap_or_else(|_| {
-                    r#"{"success":false,"error":"Failed to serialize error message"}"#.to_string()
-                })
+                return to_ffi_json(&output);
             }
         };
 
         match CString::new(json_result) {
             Ok(c_string) => c_string.into_raw(),
             Err(_) => {
-                let error = r#"{"success":false,"error":"Failed to create output string"}"#;
-                CString::new(error).unwrap().into_raw()
+                ffi_error_literal(r#"{"success":false,"error":"Failed to create output string"}"#)
             }
         }
     }))
-    .unwrap_or_else(|panic_info| {
-        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "Unknown panic".to_string()
-        };
-        let error_json = format!(
-            "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
-            msg.replace('\\', "\\\\").replace('"', "\\\"")
-        );
-        CString::new(error_json)
-            .unwrap_or_else(|_| {
-                CString::new(r#"{"success":false,"error":"Failed to create panic error string"}"#)
-                    .unwrap()
-            })
-            .into_raw()
-    })
+    .unwrap_or_else(panic_to_ffi_json)
 }
 
 // ============================================================================
@@ -330,14 +264,16 @@ pub unsafe extern "C" fn get_calibration_summary(
         // null-terminated C string. We validate null and UTF-8 before use.
         let input_str = unsafe {
             if input_json.is_null() {
-                let error = r#"{"success":false,"calibrationSummary":[],"error":"Null input pointer"}"#;
-                return CString::new(error).unwrap().into_raw();
+                return ffi_error_literal(
+                    r#"{"success":false,"calibrationSummary":[],"error":"Null input pointer"}"#,
+                );
             }
             match CStr::from_ptr(input_json).to_str() {
                 Ok(s) => s,
                 Err(_) => {
-                    let error = r#"{"success":false,"calibrationSummary":[],"error":"Invalid UTF-8 in input"}"#;
-                    return CString::new(error).unwrap().into_raw();
+                    return ffi_error_literal(
+                        r#"{"success":false,"calibrationSummary":[],"error":"Invalid UTF-8 in input"}"#,
+                    );
                 }
             }
         };
@@ -353,39 +289,18 @@ pub unsafe extern "C" fn get_calibration_summary(
                     error_kind,
                     retryable,
                 };
-                serde_json::to_string(&output).unwrap_or_else(|_| {
-                    r#"{"success":false,"calibrationSummary":[],"error":"Failed to serialize error message"}"#.to_string()
-                })
+                return to_ffi_json(&output);
             }
         };
 
         match CString::new(json_result) {
             Ok(c_string) => c_string.into_raw(),
-            Err(_) => {
-                let error = r#"{"success":false,"calibrationSummary":[],"error":"Failed to create output string"}"#;
-                CString::new(error).unwrap().into_raw()
-            }
+            Err(_) => ffi_error_literal(
+                r#"{"success":false,"calibrationSummary":[],"error":"Failed to create output string"}"#,
+            ),
         }
     }))
-    .unwrap_or_else(|panic_info| {
-        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "Unknown panic".to_string()
-        };
-        let error_json = format!(
-            "{{\"success\":false,\"calibrationSummary\":[],\"error\":\"Internal panic caught: {}\"}}",
-            msg.replace('\\', "\\\\").replace('"', "\\\"")
-        );
-        CString::new(error_json)
-            .unwrap_or_else(|_| {
-                CString::new(r#"{"success":false,"calibrationSummary":[],"error":"Failed to create panic error string"}"#)
-                    .unwrap()
-            })
-            .into_raw()
-    })
+    .unwrap_or_else(panic_to_ffi_json)
 }
 
 // ============================================================================
@@ -420,41 +335,16 @@ pub extern "C" fn get_library_version() -> *mut std::ffi::c_char {
                     error_kind,
                     retryable,
                 };
-                serde_json::to_string(&output).unwrap_or_else(|_| {
-                    r#"{"success":false,"version":"","error":"Failed to serialize error message"}"#
-                        .to_string()
-                })
+                return to_ffi_json(&output);
             }
         };
 
         match CString::new(json_result) {
             Ok(c_string) => c_string.into_raw(),
-            Err(_) => {
-                let error =
-                    r#"{"success":false,"version":"","error":"Failed to create output string"}"#;
-                CString::new(error).unwrap().into_raw()
-            }
+            Err(_) => ffi_error_literal(
+                r#"{"success":false,"version":"","error":"Failed to create output string"}"#,
+            ),
         }
     }))
-    .unwrap_or_else(|panic_info| {
-        // If panic occurred, create a safe error response
-        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "Unknown panic".to_string()
-        };
-        let error_json = format!(
-            "{{\"success\":false,\"version\":\"\",\"error\":\"Internal panic caught: {}\"}}",
-            msg.replace('\\', "\\\\").replace('"', "\\\"")
-        );
-        // This should never fail, but if it does, we return null pointer
-        CString::new(error_json)
-            .unwrap_or_else(|_| {
-                CString::new(r#"{"success":false,"version":"","error":"Failed to create panic error string"}"#)
-                    .unwrap()
-            })
-            .into_raw()
-    })
+    .unwrap_or_else(panic_to_ffi_json)
 }
