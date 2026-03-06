@@ -25,455 +25,176 @@ pub(crate) fn append_neuron_specs(
     topo: &Arc<CreatureTopologyCache>,
 ) {
     // Issue #342: Saturated neuron detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "saturation detection".to_string(),
-            phase_name: "saturation_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected = saturation::detect_saturated_neurons(&hidden, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = saturation::saturated_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "saturation detection", "saturation_detection",
+        cache = shared_cache, hidden = hidden_neurons =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| saturation::detect_saturated_neurons(&hidden, &records),
+        convert: |detected| saturation::saturated_neurons_to_coordinated_candidates(&detected),
+    );
 
     // Issue #343: Bottleneck neuron detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        let topo = Arc::clone(topo);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "bottleneck detection".to_string(),
-            phase_name: "bottleneck_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected =
-                    bottleneck::detect_bottleneck_neurons(&creature, &records, Some(&topo));
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = bottleneck::bottleneck_neurons_to_coordinated_candidates(
-                    &detected,
-                    &creature,
-                    Some(&topo),
-                );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "bottleneck detection", "bottleneck_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature, topo = topo =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| bottleneck::detect_bottleneck_neurons(&creature, &records, Some(&topo)),
+        convert: |detected| bottleneck::bottleneck_neurons_to_coordinated_candidates(&detected, &creature, Some(&topo)),
+    );
 
     // Issue #341: Dead neuron detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        let topo = Arc::clone(topo);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "dead neuron detection".to_string(),
-            phase_name: "dead_neuron_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected = dead_neuron::detect_dead_neurons(&creature, &records, Some(&topo));
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = dead_neuron::dead_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "dead neuron detection", "dead_neuron_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature, topo = topo =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| dead_neuron::detect_dead_neurons(&creature, &records, Some(&topo)),
+        convert: |detected| dead_neuron::dead_neurons_to_coordinated_candidates(&detected),
+    );
 
     // Issue #358: Oscillating neuron detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "oscillating neuron detection".to_string(),
-            phase_name: "oscillating_neuron_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected = oscillating_neuron::detect_oscillating_neurons(&hidden, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    oscillating_neuron::oscillating_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "oscillating neuron detection", "oscillating_neuron_detection",
+        cache = shared_cache, hidden = hidden_neurons =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| oscillating_neuron::detect_oscillating_neurons(&hidden, &records),
+        convert: |detected| oscillating_neuron::oscillating_neurons_to_coordinated_candidates(&detected),
+    );
 
     // Issue #399: Restricted activation range detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "restricted range detection".to_string(),
-            phase_name: "restricted_range_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let config = restricted_range::RestrictedRangeConfig::default();
-                let detected =
-                    restricted_range::detect_restricted_range_neurons(&creature, &records, &config);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = restricted_range::restricted_range_to_coordinated_candidates(
-                    &detected, &creature,
-                );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "restricted range detection", "restricted_range_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| {
+            let config = restricted_range::RestrictedRangeConfig::default();
+            restricted_range::detect_restricted_range_neurons(&creature, &records, &config)
+        },
+        convert: |detected| restricted_range::restricted_range_to_coordinated_candidates(&detected, &creature),
+    );
 
     // Issue #401: Hidden neuron operating-point analysis
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "operating point analysis".to_string(),
-            phase_name: "operating_point_analysis",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let config = operating_point::OperatingPointConfig::default();
-                let detected =
-                    operating_point::detect_operating_point_issues(&creature, &records, &config);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = operating_point::operating_point_to_coordinated_candidates(
-                    &detected, &creature,
-                );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "operating point analysis", "operating_point_analysis",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| {
+            let config = operating_point::OperatingPointConfig::default();
+            operating_point::detect_operating_point_issues(&creature, &records, &config)
+        },
+        convert: |detected| operating_point::operating_point_to_coordinated_candidates(&detected, &creature),
+    );
 
     // Issue #441: Unbounded activation capping detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "unbounded capping detection".to_string(),
-            phase_name: "unbounded_capping_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected =
-                    unbounded_capping::detect_unbounded_capping_candidates(&hidden, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    unbounded_capping::unbounded_capping_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "unbounded capping detection", "unbounded_capping_detection",
+        cache = shared_cache, hidden = hidden_neurons =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| unbounded_capping::detect_unbounded_capping_candidates(&hidden, &records),
+        convert: |detected| unbounded_capping::unbounded_capping_to_coordinated_candidates(&detected),
+    );
 
     // Issue #434: Noise-to-signal ratio detection for neurons
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "noisy neuron detection".to_string(),
-            phase_name: "noisy_neuron_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected = noise_signal::detect_noisy_neurons(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = noise_signal::noisy_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "noisy neuron detection", "noisy_neuron_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| noise_signal::detect_noisy_neurons(&creature, &records),
+        convert: |detected| noise_signal::noisy_neurons_to_coordinated_candidates(&detected),
+    );
 
-    // Issue #417: Proactive activation function recommendation
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "activation recommendation".to_string(),
-            phase_name: "activation_recommendation",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
+    // Issue #417: Proactive activation function recommendation (custom logic)
+    discovery_spec!(modules, "activation recommendation", "activation_recommendation",
+        cache = shared_cache, hidden = hidden_neurons =>
+        custom: move || {
+            if hidden.is_empty() {
+                return None;
+            }
+            let records = cache.load_records_for_hidden(&hidden);
+            let mut recommendations = Vec::new();
+            for (uuid, squash, _bias) in hidden.iter() {
+                if let Some(neuron_records) = records.iter().find(|(u, _)| u == uuid)
+                    && let Some(rec) = activation_recommendation::recommend_activation_function(
+                        &neuron_records.1,
+                        squash,
+                    )
+                {
+                    recommendations.push(rec);
                 }
-                let records = cache.load_records_for_hidden(&hidden);
-                let mut recommendations = Vec::new();
-                for (uuid, squash, _bias) in hidden.iter() {
-                    if let Some(neuron_records) = records.iter().find(|(u, _)| u == uuid)
-                        && let Some(rec) = activation_recommendation::recommend_activation_function(
-                            &neuron_records.1,
-                            squash,
-                        )
-                    {
-                        recommendations.push(rec);
-                    }
-                }
-                if recommendations.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    activation_recommendation::recommendations_to_coordinated_candidates(
-                        &recommendations,
-                    );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: recommendations.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+            }
+            if recommendations.is_empty() {
+                return None;
+            }
+            let candidates =
+                activation_recommendation::recommendations_to_coordinated_candidates(
+                    &recommendations,
+                );
+            Some(discovery_dispatch::DiscoveryDetectionResult {
+                detected_count: recommendations.len(),
+                candidates,
+            })
+        },
+    );
 
     // Issue #543: Activation mismatch detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "activation mismatch detection".to_string(),
-            phase_name: "activation_mismatch_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected = activation_mismatch::detect_activation_mismatches(&hidden, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    activation_mismatch::activation_mismatch_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "activation mismatch detection", "activation_mismatch_detection",
+        cache = shared_cache, hidden = hidden_neurons =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| activation_mismatch::detect_activation_mismatches(&hidden, &records),
+        convert: |detected| activation_mismatch::activation_mismatch_to_coordinated_candidates(&detected),
+    );
 
     // Issue #551: Bias perturbation for activation regime shifts (local minimum escape)
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "bias perturbation regime shift detection".to_string(),
-            phase_name: "bias_perturbation_regime_shift_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected =
-                    bias_perturbation::detect_bias_perturbation_candidates(&hidden, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    bias_perturbation::bias_perturbation_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "bias perturbation regime shift detection", "bias_perturbation_regime_shift_detection",
+        cache = shared_cache, hidden = hidden_neurons =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| bias_perturbation::detect_bias_perturbation_candidates(&hidden, &records),
+        convert: |detected| bias_perturbation::bias_perturbation_to_coordinated_candidates(&detected),
+    );
 
     // Issue #569: Symmetry-breaking detection for converged duplicate neurons
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "symmetry breaking detection".to_string(),
-            phase_name: "symmetry_breaking_detection",
-            detect_fn: Box::new(move || {
-                if hidden.len() < 2 {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected = symmetry_breaking::detect_symmetric_neurons(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    symmetry_breaking::symmetric_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "symmetry breaking detection", "symmetry_breaking_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature =>
+        guard_min: hidden 2,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| symmetry_breaking::detect_symmetric_neurons(&creature, &records),
+        convert: |detected| symmetry_breaking::symmetric_neurons_to_coordinated_candidates(&detected),
+    );
 
     // Issue #571: Activation co-adaptation detection for redundant neuron pairs
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "co-adaptation detection".to_string(),
-            phase_name: "co_adaptation_detection",
-            detect_fn: Box::new(move || {
-                if hidden.len() < 2 {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected = co_adaptation::detect_co_adapted_neurons(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    co_adaptation::co_adapted_pairs_to_coordinated_candidates(&detected, &creature);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "co-adaptation detection", "co_adaptation_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature =>
+        guard_min: hidden 2,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| co_adaptation::detect_co_adapted_neurons(&creature, &records),
+        convert: |detected| co_adaptation::co_adapted_pairs_to_coordinated_candidates(&detected, &creature),
+    );
 
-    // Issue #548: Squash + weight rescale detection (coordinated multi-neuron squash exploration)
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "squash weight rescale detection".to_string(),
-            phase_name: "squash_weight_rescale_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected = squash_weight_rescale::detect_squash_weight_rescale_candidates(
-                    &creature, &hidden, &records,
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    squash_weight_rescale::squash_weight_rescale_to_coordinated_candidates(
-                        &detected,
-                    );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    // Issue #548: Squash + weight rescale detection
+    discovery_spec!(modules, "squash weight rescale detection", "squash_weight_rescale_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| squash_weight_rescale::detect_squash_weight_rescale_candidates(&creature, &hidden, &records),
+        convert: |detected| squash_weight_rescale::squash_weight_rescale_to_coordinated_candidates(&detected),
+    );
 
     // Issue #643: Activation-error monotonicity detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "monotonicity detection".to_string(),
-            phase_name: "monotonicity_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected = monotonicity::detect_non_monotonic_neurons(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = monotonicity::non_monotonic_neurons_to_coordinated_candidates(
-                    &detected, &creature,
-                );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "monotonicity detection", "monotonicity_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| monotonicity::detect_non_monotonic_neurons(&creature, &records),
+        convert: |detected| monotonicity::non_monotonic_neurons_to_coordinated_candidates(&detected, &creature),
+    );
 
     // Issue #640: Bimodal neuron detection (pre-activation distribution shape)
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "bimodal neuron detection".to_string(),
-            phase_name: "bimodal_neuron_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let detected = bimodal_neuron::detect_bimodal_neurons(&hidden, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    bimodal_neuron::bimodal_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "bimodal neuron detection", "bimodal_neuron_detection",
+        cache = shared_cache, hidden = hidden_neurons =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| bimodal_neuron::detect_bimodal_neurons(&hidden, &records),
+        convert: |detected| bimodal_neuron::bimodal_neurons_to_coordinated_candidates(&detected),
+    );
 }

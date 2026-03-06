@@ -9,7 +9,14 @@
 //! - `synapse_specs` — synapse-focused dispatch specs
 //! - `structural_specs` — structural discovery specs
 //! - `scoring_specs` — scoring and recommendation specs
+//!
+//! ## `discovery_spec!` macro (Issue #773)
+//!
+//! The `discovery_spec!` macro eliminates the repetitive clone-guard-detect-convert
+//! boilerplate shared by ~33 discovery module specs. See `macros.rs` for details.
 
+#[macro_use]
+mod macros;
 mod neuron_specs;
 mod scoring_specs;
 mod structural_specs;
@@ -249,4 +256,129 @@ pub(crate) fn apply_ensemble_scoring(syn: &mut shared::AnalyzeSynapsesResult) {
         + syn.coordinated_structural_candidates.len();
 
     crate::watchdog::beat("analysis::analyze_all → ensemble scoring finished");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
+
+    fn test_creature() -> CreatureJson {
+        CreatureJson {
+            neurons: vec![
+                NeuronJson {
+                    uuid: "h1".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "TANH".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "o1".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![SynapseJson {
+                from_uuid: "h1".to_string(),
+                to_uuid: "o1".to_string(),
+                weight: 0.5,
+                synapse_type: None,
+            }],
+            input: 1,
+            output: 1,
+        }
+    }
+
+    fn empty_cache() -> cache::RecordCache {
+        cache::RecordCache::with_loader(
+            "test.parquet",
+            Arc::new(
+                |_file: &str, _uuid: &str| -> anyhow::Result<Vec<DiscoverRecord>> { Ok(vec![]) },
+            ),
+        )
+    }
+
+    /// Verify that `build_discovery_module_specs` produces the expected number
+    /// of module specs and that each spec has a non-empty name and phase.
+    #[test]
+    fn test_build_discovery_module_specs_produces_all_modules() {
+        let creature = Arc::new(test_creature());
+        let hidden: Arc<Vec<(String, String, f32)>> =
+            Arc::new(vec![("h1".to_string(), "TANH".to_string(), 0.0)]);
+        let cache = Arc::new(empty_cache());
+        let topo = Arc::new(
+            super::super::detection::topology_cache::CreatureTopologyCache::new(&creature),
+        );
+
+        let specs = build_discovery_module_specs(&creature, &hidden, &cache, &topo);
+
+        // We expect exactly 43 modules across all four spec groups.
+        assert_eq!(
+            specs.len(),
+            43,
+            "Expected 43 discovery module specs, got {}",
+            specs.len()
+        );
+
+        // Every spec must have a non-empty module name and phase name.
+        for (i, spec) in specs.iter().enumerate() {
+            assert!(
+                !spec.module_name.is_empty(),
+                "Module spec {i} has empty module_name"
+            );
+            assert!(
+                !spec.phase_name.is_empty(),
+                "Module spec {i} has empty phase_name"
+            );
+        }
+    }
+
+    /// Verify that all module specs have unique phase names (no duplicates).
+    #[test]
+    fn test_discovery_module_specs_have_unique_phase_names() {
+        let creature = Arc::new(test_creature());
+        let hidden: Arc<Vec<(String, String, f32)>> =
+            Arc::new(vec![("h1".to_string(), "TANH".to_string(), 0.0)]);
+        let cache = Arc::new(empty_cache());
+        let topo = Arc::new(
+            super::super::detection::topology_cache::CreatureTopologyCache::new(&creature),
+        );
+
+        let specs = build_discovery_module_specs(&creature, &hidden, &cache, &topo);
+        let mut phase_names: Vec<&str> = specs.iter().map(|s| s.phase_name).collect();
+        let total = phase_names.len();
+        phase_names.sort();
+        phase_names.dedup();
+        assert_eq!(
+            phase_names.len(),
+            total,
+            "Duplicate phase names found in discovery module specs"
+        );
+    }
+
+    /// Verify that detection closures for empty hidden neurons return None
+    /// (modules with hidden guards should short-circuit).
+    #[test]
+    fn test_discovery_specs_with_empty_hidden_return_none() {
+        let creature = Arc::new(test_creature());
+        let hidden: Arc<Vec<(String, String, f32)>> = Arc::new(vec![]);
+        let cache = Arc::new(empty_cache());
+        let topo = Arc::new(
+            super::super::detection::topology_cache::CreatureTopologyCache::new(&creature),
+        );
+
+        let specs = build_discovery_module_specs(&creature, &hidden, &cache, &topo);
+
+        // With empty hidden neurons and no records, all modules should return None.
+        for spec in specs {
+            let result = (spec.detect_fn)();
+            assert!(
+                result.is_none(),
+                "Module '{}' returned Some with empty hidden neurons and no records",
+                spec.module_name,
+            );
+        }
+    }
 }

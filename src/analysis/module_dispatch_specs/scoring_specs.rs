@@ -21,311 +21,151 @@ pub(crate) fn append_scoring_specs(
     shared_cache: &Arc<cache::RecordCache>,
 ) {
     // Issue #361: Output bias drift detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "output bias drift detection".to_string(),
-            phase_name: "output_bias_drift_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_neuron_types(&creature, &["output"]);
-                let detected = output_bias_drift::detect_output_bias_drift(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    output_bias_drift::output_bias_drift_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "output bias drift detection", "output_bias_drift_detection",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_neuron_types(&creature, &["output"]),
+        detect: |records| output_bias_drift::detect_output_bias_drift(&creature, &records),
+        convert: |detected| output_bias_drift::output_bias_drift_to_coordinated_candidates(&detected),
+    );
 
     // Issue #395: Bounded range detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "bounded range detection".to_string(),
-            phase_name: "bounded_range_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_neuron_types(&creature, &["input", "hidden"]);
-                if records.is_empty() {
-                    return None;
-                }
-                let detected = bounded_range::detect_bounded_range_neurons(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = bounded_range::bounded_range_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "bounded range detection", "bounded_range_detection",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_neuron_types(&creature, &["input", "hidden"]),
+        guard_records,
+        detect: |records| bounded_range::detect_bounded_range_neurons(&creature, &records),
+        convert: |detected| bounded_range::bounded_range_to_coordinated_candidates(&detected),
+    );
 
     // Issue #400: Sentinel value gating
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "sentinel value gating".to_string(),
-            phase_name: "sentinel_value_gating",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_neuron_types(&creature, &["input"]);
-                if records.is_empty() {
-                    return None;
-                }
-                let detected =
-                    sentinel_gating::detect_sentinel_gating_candidates(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = sentinel_gating::sentinel_gating_to_coordinated_candidates(
-                    &detected, &creature,
-                );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "sentinel value gating", "sentinel_value_gating",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_neuron_types(&creature, &["input"]),
+        guard_records,
+        detect: |records| sentinel_gating::detect_sentinel_gating_candidates(&creature, &records),
+        convert: |detected| sentinel_gating::sentinel_gating_to_coordinated_candidates(&detected, &creature),
+    );
 
     // Issue #543: Observation utilisation detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "observation utilisation detection".to_string(),
-            phase_name: "observation_utilisation_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_neuron_types(&creature, &["input"]);
-                if records.is_empty() {
-                    return None;
-                }
-                let detected =
-                    observation_utilisation::detect_underutilised_observations(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    observation_utilisation::observation_utilisation_to_coordinated_candidates(
-                        &detected, &creature,
-                    );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "observation utilisation detection", "observation_utilisation_detection",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_neuron_types(&creature, &["input"]),
+        guard_records,
+        detect: |records| observation_utilisation::detect_underutilised_observations(&creature, &records),
+        convert: |detected| observation_utilisation::observation_utilisation_to_coordinated_candidates(&detected, &creature),
+    );
 
     // Issue #435: Input sensitivity analysis for dominant inputs
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "dominant input detection".to_string(),
-            phase_name: "dominant_input_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_neuron_types(&creature, &["input", "output"]);
-                if records.is_empty() {
-                    return None;
-                }
-                let config = input_sensitivity::InputSensitivityConfig::default();
-                let detected =
-                    input_sensitivity::detect_dominant_inputs(&creature, &records, &config);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    input_sensitivity::dominant_inputs_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "dominant input detection", "dominant_input_detection",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_neuron_types(&creature, &["input", "output"]),
+        guard_records,
+        detect: |records| {
+            let config = input_sensitivity::InputSensitivityConfig::default();
+            input_sensitivity::detect_dominant_inputs(&creature, &records, &config)
+        },
+        convert: |detected| input_sensitivity::dominant_inputs_to_coordinated_candidates(&detected),
+    );
 
     // Issue #435: Input sensitivity analysis for threshold effects
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "threshold effect detection".to_string(),
-            phase_name: "threshold_effect_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_all_neurons(&creature);
-                let config = input_sensitivity::InputSensitivityConfig::default();
-                let detected =
-                    input_sensitivity::detect_threshold_effects(&creature, &records, &config);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    input_sensitivity::threshold_effects_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "threshold effect detection", "threshold_effect_detection",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_all_neurons(&creature),
+        detect: |records| {
+            let config = input_sensitivity::InputSensitivityConfig::default();
+            input_sensitivity::detect_threshold_effects(&creature, &records, &config)
+        },
+        convert: |detected| input_sensitivity::threshold_effects_to_coordinated_candidates(&detected),
+    );
 
     // Issue #423: Sample-weighted discovery — prioritise high-error samples
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "sample-weighted discovery".to_string(),
-            phase_name: "sample_weighted_discovery",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_all_neurons(&creature);
-                if records.is_empty() {
-                    return None;
-                }
-                let config = sample_weighted::SampleWeightedConfig::default();
-                let detected = sample_weighted::detect_high_error_neurons(&records, &config);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    sample_weighted::high_error_neurons_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "sample-weighted discovery", "sample_weighted_discovery",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_all_neurons(&creature),
+        guard_records,
+        detect: |records| {
+            let config = sample_weighted::SampleWeightedConfig::default();
+            sample_weighted::detect_high_error_neurons(&records, &config)
+        },
+        convert: |detected| sample_weighted::high_error_neurons_to_coordinated_candidates(&detected),
+    );
 
     // Issue #421: Gradient-based synapse adjustment — directional improvement hints
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "gradient-based discovery".to_string(),
-            phase_name: "gradient_based_discovery",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_all_neurons(&creature);
-                if records.is_empty() {
-                    return None;
-                }
-                let detected = gradient_discovery::detect_gradient_candidates(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = gradient_discovery::gradient_candidates_to_coordinated(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "gradient-based discovery", "gradient_based_discovery",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_all_neurons(&creature),
+        guard_records,
+        detect: |records| gradient_discovery::detect_gradient_candidates(&creature, &records),
+        convert: |detected| gradient_discovery::gradient_candidates_to_coordinated(&detected),
+    );
 
     // Issue #645: Output range compression detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "output range compression detection".to_string(),
-            phase_name: "output_range_compression_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_neuron_types(&creature, &["output"]);
-                if records.is_empty() {
-                    return None;
-                }
-                let config = output_range_compression::OutputRangeCompressionConfig::default();
-                let detected = output_range_compression::detect_output_range_compression(
-                    &creature, &records, &config,
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    output_range_compression::output_range_compression_to_coordinated_candidates(
-                        &detected, &creature,
-                    );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "output range compression detection", "output_range_compression_detection",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_neuron_types(&creature, &["output"]),
+        guard_records,
+        detect: |records| {
+            let config = output_range_compression::OutputRangeCompressionConfig::default();
+            output_range_compression::detect_output_range_compression(&creature, &records, &config)
+        },
+        convert: |detected| output_range_compression::output_range_compression_to_coordinated_candidates(&detected, &creature),
+    );
 
-    // Issue #545: Output squash mismatch detection (local minimum escape)
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "output squash mismatch detection".to_string(),
-            phase_name: "output_squash_mismatch_detection",
-            detect_fn: Box::new(move || {
-                let output_neurons: Vec<(String, String, f32)> = creature
-                    .neurons
-                    .iter()
-                    .filter(|n| n.neuron_type == "output")
-                    .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
-                    .collect();
-                if output_neurons.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_neuron_types(&creature, &["output"]);
-                let detected = output_squash_mismatch::detect_output_squash_mismatches(
-                    &output_neurons,
-                    &records,
+    // Issue #545: Output squash mismatch detection (local minimum escape, custom logic)
+    discovery_spec!(modules, "output squash mismatch detection", "output_squash_mismatch_detection",
+        cache = shared_cache, creature = creature =>
+        custom: move || {
+            let output_neurons: Vec<(String, String, f32)> = creature
+                .neurons
+                .iter()
+                .filter(|n| n.neuron_type == "output")
+                .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
+                .collect();
+            if output_neurons.is_empty() {
+                return None;
+            }
+            let records = cache.load_records_for_neuron_types(&creature, &["output"]);
+            let detected = output_squash_mismatch::detect_output_squash_mismatches(
+                &output_neurons,
+                &records,
+            );
+            if detected.is_empty() {
+                return None;
+            }
+            let candidates =
+                output_squash_mismatch::output_squash_mismatch_to_coordinated_candidates(
+                    &detected,
                 );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    output_squash_mismatch::output_squash_mismatch_to_coordinated_candidates(
-                        &detected,
-                    );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+            Some(discovery_dispatch::DiscoveryDetectionResult {
+                detected_count: detected.len(),
+                candidates,
+            })
+        },
+    );
 
-    // Issue #545: Error stagnation plateau detection (local minimum escape)
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "error plateau detection".to_string(),
-            phase_name: "error_plateau_detection",
-            detect_fn: Box::new(move || {
-                let output_neurons: Vec<(String, String, f32)> = creature
-                    .neurons
-                    .iter()
-                    .filter(|n| n.neuron_type == "output")
-                    .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
-                    .collect();
-                if output_neurons.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_neuron_types(&creature, &["output"]);
-                let detected = error_plateau::detect_error_plateaus(&output_neurons, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = error_plateau::error_plateaus_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    // Issue #545: Error stagnation plateau detection (local minimum escape, custom logic)
+    discovery_spec!(modules, "error plateau detection", "error_plateau_detection",
+        cache = shared_cache, creature = creature =>
+        custom: move || {
+            let output_neurons: Vec<(String, String, f32)> = creature
+                .neurons
+                .iter()
+                .filter(|n| n.neuron_type == "output")
+                .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
+                .collect();
+            if output_neurons.is_empty() {
+                return None;
+            }
+            let records = cache.load_records_for_neuron_types(&creature, &["output"]);
+            let detected = error_plateau::detect_error_plateaus(&output_neurons, &records);
+            if detected.is_empty() {
+                return None;
+            }
+            let candidates = error_plateau::error_plateaus_to_coordinated_candidates(&detected);
+            Some(discovery_dispatch::DiscoveryDetectionResult {
+                detected_count: detected.len(),
+                candidates,
+            })
+        },
+    );
 }
