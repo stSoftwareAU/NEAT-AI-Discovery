@@ -7,8 +7,9 @@
 use std::sync::Arc;
 
 use super::super::detection::{
-    dormant_synapse, fanin_polarity_conflict, noise_signal, opposing_synapse, weight_coherence,
-    weight_magnitude_reset, weight_polarity_flip,
+    dormant_synapse, fanin_polarity_conflict, noise_signal, opposing_synapse,
+    topology_cache::CreatureTopologyCache, weight_coherence, weight_magnitude_reset,
+    weight_polarity_flip,
 };
 use super::super::{cache, discovery_dispatch};
 
@@ -18,6 +19,7 @@ pub(crate) fn append_synapse_specs(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
+    topo: &Arc<CreatureTopologyCache>,
 ) {
     // Issue #359: Dormant synapse detection
     {
@@ -70,6 +72,7 @@ pub(crate) fn append_synapse_specs(
         let cache = Arc::clone(shared_cache);
         let hidden = Arc::clone(hidden_neurons);
         let creature = Arc::clone(creature);
+        let topo = Arc::clone(topo);
         modules.push(discovery_dispatch::DiscoveryModuleSpec {
             module_name: "weight coherence ratio detection".to_string(),
             phase_name: "weight_coherence_ratio_detection",
@@ -79,8 +82,12 @@ pub(crate) fn append_synapse_specs(
                 }
                 let records = cache.load_records_for_hidden(&hidden);
                 let config = weight_coherence::WeightCoherenceConfig::default();
-                let detected =
-                    weight_coherence::detect_incoherent_weight_ratios(&creature, &records, &config);
+                let detected = weight_coherence::detect_incoherent_weight_ratios(
+                    &creature,
+                    &records,
+                    &config,
+                    Some(&topo),
+                );
                 if detected.is_empty() {
                     return None;
                 }
@@ -99,6 +106,7 @@ pub(crate) fn append_synapse_specs(
         let cache = Arc::clone(shared_cache);
         let hidden = Arc::clone(hidden_neurons);
         let creature = Arc::clone(creature);
+        let topo = Arc::clone(topo);
         modules.push(discovery_dispatch::DiscoveryModuleSpec {
             module_name: "near-constant path detection".to_string(),
             phase_name: "near_constant_path_detection",
@@ -108,8 +116,12 @@ pub(crate) fn append_synapse_specs(
                 }
                 let records = cache.load_records_for_hidden(&hidden);
                 let config = weight_coherence::WeightCoherenceConfig::default();
-                let detected =
-                    weight_coherence::detect_near_constant_paths(&creature, &records, &config);
+                let detected = weight_coherence::detect_near_constant_paths(
+                    &creature,
+                    &records,
+                    &config,
+                    Some(&topo),
+                );
                 if detected.is_empty() {
                     return None;
                 }
@@ -127,14 +139,19 @@ pub(crate) fn append_synapse_specs(
     {
         let cache = Arc::clone(shared_cache);
         let creature = Arc::clone(creature);
+        let topo = Arc::clone(topo);
         modules.push(discovery_dispatch::DiscoveryModuleSpec {
             module_name: "symmetric cancellation detection".to_string(),
             phase_name: "symmetric_cancellation_detection",
             detect_fn: Box::new(move || {
                 let records = cache.load_records_for_all_neurons(&creature);
                 let config = weight_coherence::WeightCoherenceConfig::default();
-                let detected =
-                    weight_coherence::detect_symmetric_cancellation(&creature, &records, &config);
+                let detected = weight_coherence::detect_symmetric_cancellation(
+                    &creature,
+                    &records,
+                    &config,
+                    Some(&topo),
+                );
                 if detected.is_empty() {
                     return None;
                 }

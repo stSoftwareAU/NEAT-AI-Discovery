@@ -65,6 +65,7 @@ fn test_detects_large_incoming_tiny_outgoing() {
         &creature,
         &[("hidden-imbalanced".to_string(), hidden_records)],
         &config,
+        None,
     );
 
     assert!(
@@ -116,6 +117,7 @@ fn test_balanced_weight_ratio_not_flagged() {
         &creature,
         &[("hidden-balanced".to_string(), hidden_records)],
         &config,
+        None,
     );
 
     assert!(
@@ -165,6 +167,7 @@ fn test_detects_near_constant_output_path() {
         &creature,
         &[("hidden-constant".to_string(), hidden_records)],
         &config,
+        None,
     );
 
     assert!(
@@ -213,6 +216,7 @@ fn test_variable_output_not_flagged_as_constant() {
         &creature,
         &[("hidden-variable".to_string(), hidden_records)],
         &config,
+        None,
     );
 
     assert!(
@@ -291,6 +295,7 @@ fn test_detects_symmetric_weight_cancellation() {
             ("output-1".to_string(), output_records),
         ],
         &config,
+        None,
     );
 
     assert!(
@@ -366,6 +371,7 @@ fn test_uncorrelated_opposite_weights_not_flagged() {
             ("output-1".to_string(), output_records),
         ],
         &config,
+        None,
     );
 
     assert!(
@@ -409,6 +415,7 @@ fn test_minimum_samples_required() {
         &creature,
         &[("hidden-1".to_string(), hidden_records)],
         &config,
+        None,
     );
 
     assert!(
@@ -552,12 +559,14 @@ fn test_configurable_ratio_threshold() {
         &creature,
         &[("hidden-1".to_string(), hidden_records.clone())],
         &low_config,
+        None,
     );
 
     let candidates_high = detect_incoherent_weight_ratios(
         &creature,
         &[("hidden-1".to_string(), hidden_records)],
         &high_config,
+        None,
     );
 
     // Lower threshold should detect more (or equal) candidates
@@ -629,6 +638,7 @@ fn test_input_output_excluded_from_ratio_check() {
         &creature,
         &[("input-1".to_string(), input_records)],
         &config,
+        None,
     );
 
     assert!(
@@ -657,7 +667,7 @@ fn test_empty_records_handled() {
     );
 
     let config = WeightCoherenceConfig::default();
-    let candidates = detect_incoherent_weight_ratios(&creature, &[], &config);
+    let candidates = detect_incoherent_weight_ratios(&creature, &[], &config, None);
 
     assert!(
         candidates.is_empty(),
@@ -741,6 +751,7 @@ fn test_detects_amplification_attenuation_pattern() {
         &creature,
         &[("hidden-amplify".to_string(), hidden_records)],
         &config,
+        None,
     );
 
     assert!(

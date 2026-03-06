@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.50.4"
+version = "0.50.6"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -110,6 +110,10 @@ harness = false
 
 [[bench]]
 name = "synapse_lookup"
+harness = false
+
+[[bench]]
+name = "weight_coherence_cache"
 harness = false
 
 [profile.release]
