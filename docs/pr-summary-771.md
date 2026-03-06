@@ -4,7 +4,7 @@ Remove redundant `.to_uppercase()` calls on squash strings that are already norm
 
 **Changes:**
 
-- `input_sensitivity.rs`: Replaced two `.to_uppercase().as_str()` calls with direct `&str` matching, since squash strings from `orchestration.rs` are guaranteed uppercase.
+- `input_sensitivity.rs`: Replaced two `.to_uppercase().as_str()` calls with direct `&str` matching, since squash strings from `orchestration.rs` are guaranteed uppercase
 - `activation_properties.rs`: Replaced `.to_uppercase().as_str()` in `is_saturating_squash()` with `eq_ignore_ascii_case()` to remain case-insensitive (public API) while avoiding String allocations.
 
 ## Evidence
