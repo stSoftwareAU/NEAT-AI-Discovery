@@ -1,5 +1,6 @@
 //! GPU probe FFI entry points.
 
+use super::helpers::{ffi_error_literal, panic_to_ffi_json, to_ffi_json};
 use crate::ffi_types::*;
 use crate::log_version_once;
 
@@ -25,39 +26,16 @@ pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
                     error_kind,
                     retryable,
                 };
-                serde_json::to_string(&output).unwrap_or_else(|_| {
-                    r#"{"success":false,"gpuAvailable":false,"error":"Failed to serialize error message"}"#.to_string()
-                })
+                return to_ffi_json(&output);
             }
         };
 
         match CString::new(json_result) {
             Ok(c_string) => c_string.into_raw(),
-            Err(_) => {
-                let error = r#"{"success":false,"gpuAvailable":false,"error":"Failed to create output string"}"#;
-                CString::new(error).unwrap().into_raw()
-            }
+            Err(_) => ffi_error_literal(
+                r#"{"success":false,"gpuAvailable":false,"error":"Failed to create output string"}"#,
+            ),
         }
     }))
-    .unwrap_or_else(|panic_info| {
-        // If panic occurred, create a safe error response
-        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = panic_info.downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "Unknown panic".to_string()
-        };
-        let error_json = format!(
-            "{{\"success\":false,\"gpuAvailable\":false,\"error\":\"Internal panic caught: {}\"}}",
-            msg.replace('\\', "\\\\").replace('"', "\\\"")
-        );
-        // This should never fail, but if it does, we return null pointer
-        CString::new(error_json)
-            .unwrap_or_else(|_| {
-                CString::new(r#"{"success":false,"gpuAvailable":false,"error":"Failed to create panic error string"}"#)
-                    .unwrap()
-            })
-            .into_raw()
-    })
+    .unwrap_or_else(panic_to_ffi_json)
 }

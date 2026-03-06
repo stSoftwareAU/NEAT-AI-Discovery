@@ -113,7 +113,7 @@ impl GpuAnalyzer {
         let device = self
             .device
             .as_ref()
-            .expect("GPU device must be available - discovery should be disabled without GPU");
+            .context("GPU device unavailable for ReLU analysis")?;
         let queue = self
             .queue
             .as_ref()

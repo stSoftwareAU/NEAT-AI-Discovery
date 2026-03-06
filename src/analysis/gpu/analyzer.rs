@@ -371,7 +371,6 @@ impl GpuAnalyzer {
                 // GPU is required - return an error instead of a CPU-only analyzer.
                 // TypeScript calls check_gpu_available() before discovery, but the GPU
                 // could become unavailable due to race conditions or resource exhaustion.
-                // Returning an error here prevents panics in GPU methods that .expect() on device.
                 anyhow::bail!(
                     "GPU adapter not available. Discovery requires GPU acceleration. \
                      This may indicate a transient GPU resource issue - consider retrying."
@@ -400,7 +399,6 @@ impl GpuAnalyzer {
                     // GPU is required - return an error instead of a CPU-only analyzer.
                     // TypeScript calls check_gpu_available() before discovery, but the GPU
                     // could become unavailable due to race conditions or resource exhaustion.
-                    // Returning an error here prevents panics in GPU methods that .expect() on device.
                     anyhow::bail!(
                         "GPU device creation failed: {e}. Discovery requires GPU acceleration. \
                      This may indicate a transient GPU resource issue - consider retrying."

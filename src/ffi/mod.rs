@@ -18,6 +18,7 @@ pub use utilities::*;
 
 mod analysis;
 mod gpu;
+pub(crate) mod helpers;
 mod recording;
 mod utilities;
 
