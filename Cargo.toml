@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.50.2"
+version = "0.50.4"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -106,6 +106,10 @@ harness = false
 
 [[bench]]
 name = "bfs_allocation"
+harness = false
+
+[[bench]]
+name = "synapse_lookup"
 harness = false
 
 [profile.release]

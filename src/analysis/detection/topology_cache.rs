@@ -24,10 +24,12 @@ pub struct CreatureTopologyCache {
     pub output_uuids: HashSet<String>,
     /// UUIDs of input neurons.
     pub input_uuids: HashSet<String>,
-    /// Set of existing synapse pairs `(from_uuid, to_uuid)`.
-    pub existing_synapses: HashSet<(String, String)>,
-    /// Synapse weights keyed by `(from_uuid, to_uuid)`.
-    pub synapse_weights: HashMap<(String, String), f32>,
+    /// Nested map for zero-copy synapse existence checks: `from_uuid → {to_uuid, …}`.
+    existing_synapse_set: HashMap<String, HashSet<String>>,
+    /// Nested map for zero-copy synapse weight lookups: `from_uuid → (to_uuid → weight)`.
+    synapse_weight_map: HashMap<String, HashMap<String, f32>>,
+    /// Total number of synapses (for diagnostics).
+    synapse_count: usize,
 }
 
 impl CreatureTopologyCache {
@@ -60,8 +62,10 @@ impl CreatureTopologyCache {
         // Build synapse maps in a single pass.
         let mut fan_in: HashMap<String, Vec<String>> = HashMap::with_capacity(neuron_count);
         let mut fan_out: HashMap<String, Vec<String>> = HashMap::with_capacity(neuron_count);
-        let mut existing_synapses = HashSet::with_capacity(synapse_count);
-        let mut synapse_weights = HashMap::with_capacity(synapse_count);
+        let mut existing_synapse_set: HashMap<String, HashSet<String>> =
+            HashMap::with_capacity(neuron_count);
+        let mut synapse_weight_map: HashMap<String, HashMap<String, f32>> =
+            HashMap::with_capacity(neuron_count);
 
         for s in &creature.synapses {
             fan_in
@@ -72,8 +76,14 @@ impl CreatureTopologyCache {
                 .entry(s.from_uuid.clone())
                 .or_default()
                 .push(s.to_uuid.clone());
-            existing_synapses.insert((s.from_uuid.clone(), s.to_uuid.clone()));
-            synapse_weights.insert((s.from_uuid.clone(), s.to_uuid.clone()), s.weight);
+            existing_synapse_set
+                .entry(s.from_uuid.clone())
+                .or_default()
+                .insert(s.to_uuid.clone());
+            synapse_weight_map
+                .entry(s.from_uuid.clone())
+                .or_default()
+                .insert(s.to_uuid.clone(), s.weight);
         }
 
         Self {
@@ -82,8 +92,9 @@ impl CreatureTopologyCache {
             hidden_uuids,
             output_uuids,
             input_uuids,
-            existing_synapses,
-            synapse_weights,
+            existing_synapse_set,
+            synapse_weight_map,
+            synapse_count,
         }
     }
 
@@ -97,17 +108,24 @@ impl CreatureTopologyCache {
         self.fan_out.get(uuid).map_or(&[], |v| v.as_slice())
     }
 
-    /// Check whether a synapse already exists.
+    /// Check whether a synapse already exists (zero heap allocations).
     pub fn synapse_exists(&self, from_uuid: &str, to_uuid: &str) -> bool {
-        self.existing_synapses
-            .contains(&(from_uuid.to_string(), to_uuid.to_string()))
+        self.existing_synapse_set
+            .get(from_uuid)
+            .is_some_and(|targets| targets.contains(to_uuid))
     }
 
-    /// Get a synapse weight (returns `None` if the synapse does not exist).
+    /// Get a synapse weight (zero heap allocations, returns `None` if absent).
     pub fn synapse_weight(&self, from_uuid: &str, to_uuid: &str) -> Option<f32> {
-        self.synapse_weights
-            .get(&(from_uuid.to_string(), to_uuid.to_string()))
+        self.synapse_weight_map
+            .get(from_uuid)
+            .and_then(|targets| targets.get(to_uuid))
             .copied()
+    }
+
+    /// Return the total number of synapses in the cache.
+    pub fn synapse_count(&self) -> usize {
+        self.synapse_count
     }
 }
 
@@ -233,6 +251,6 @@ mod tests {
     fn test_existing_synapses_count() {
         let creature = make_test_creature();
         let cache = CreatureTopologyCache::new(&creature);
-        assert_eq!(cache.existing_synapses.len(), 4);
+        assert_eq!(cache.synapse_count(), 4);
     }
 }
