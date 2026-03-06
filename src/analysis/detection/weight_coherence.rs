@@ -22,6 +22,7 @@
 //! - `min_activation_variance`: Minimum variance to consider output non-constant (default: 0.01)
 //! - `min_correlation_for_cancellation`: Minimum correlation to flag symmetric cancellation (default: 0.8)
 
+use super::activation_properties::is_saturating_squash;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 use std::collections::HashMap;
@@ -568,14 +569,6 @@ pub fn symmetric_cancellation_to_coordinated_candidates(
 // =============================================================================
 // Helper Functions
 // =============================================================================
-
-/// Check if an activation function is a saturating type (bounded output).
-fn is_saturating_squash(squash: &str) -> bool {
-    matches!(
-        squash.to_uppercase().as_str(),
-        "TANH" | "LOGISTIC" | "SIGMOID" | "HARD_TANH" | "CLIPPED" | "SOFTSIGN"
-    )
-}
 
 /// Calculate Pearson correlation between two sets of records.
 ///
