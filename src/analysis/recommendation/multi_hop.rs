@@ -329,40 +329,11 @@ fn compute_activation_error_correlation(
     activations: &HashMap<u32, f32>,
     errors: &HashMap<u32, f32>,
 ) -> f32 {
-    let shared: Vec<u32> = activations
-        .keys()
-        .filter(|k| errors.contains_key(k))
-        .copied()
-        .collect();
-
-    let n = shared.len();
-    if n < MIN_SAMPLES_FOR_CORRELATION {
-        return 0.0;
-    }
-
-    let n_f = n as f32;
-
-    let mean_a: f32 = shared.iter().map(|k| activations[k]).sum::<f32>() / n_f;
-    let mean_e: f32 = shared.iter().map(|k| errors[k]).sum::<f32>() / n_f;
-
-    let mut cov = 0.0_f32;
-    let mut var_a = 0.0_f32;
-    let mut var_e = 0.0_f32;
-
-    for &k in &shared {
-        let da = activations[&k] - mean_a;
-        let de = errors[&k] - mean_e;
-        cov += da * de;
-        var_a += da * da;
-        var_e += de * de;
-    }
-
-    let denom = (var_a * var_e).sqrt();
-    if denom < 1e-10 {
-        return 0.0;
-    }
-
-    cov / denom
+    crate::analysis::detection::stats::pearson_correlation_hashmaps(
+        activations,
+        errors,
+        MIN_SAMPLES_FOR_CORRELATION,
+    )
 }
 
 /// Compute Pearson correlation between two activation vectors indexed by obs_index.
@@ -370,40 +341,11 @@ fn compute_activation_activation_correlation(
     activations_a: &HashMap<u32, f32>,
     activations_b: &HashMap<u32, f32>,
 ) -> f32 {
-    let shared: Vec<u32> = activations_a
-        .keys()
-        .filter(|k| activations_b.contains_key(k))
-        .copied()
-        .collect();
-
-    let n = shared.len();
-    if n < MIN_SAMPLES_FOR_CORRELATION {
-        return 0.0;
-    }
-
-    let n_f = n as f32;
-
-    let mean_a: f32 = shared.iter().map(|k| activations_a[k]).sum::<f32>() / n_f;
-    let mean_b: f32 = shared.iter().map(|k| activations_b[k]).sum::<f32>() / n_f;
-
-    let mut cov = 0.0_f32;
-    let mut var_a = 0.0_f32;
-    let mut var_b = 0.0_f32;
-
-    for &k in &shared {
-        let da = activations_a[&k] - mean_a;
-        let db = activations_b[&k] - mean_b;
-        cov += da * db;
-        var_a += da * da;
-        var_b += db * db;
-    }
-
-    let denom = (var_a * var_b).sqrt();
-    if denom < 1e-10 {
-        return 0.0;
-    }
-
-    cov / denom
+    crate::analysis::detection::stats::pearson_correlation_hashmaps(
+        activations_a,
+        activations_b,
+        MIN_SAMPLES_FOR_CORRELATION,
+    )
 }
 
 /// Compute mean absolute error from an error-by-obs map.

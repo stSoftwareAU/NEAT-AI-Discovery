@@ -113,38 +113,7 @@ pub(crate) fn compute_sample_correlation(
     samples_b: &[HelpfulSample],
 ) -> f64 {
     let n = samples_a.len().min(samples_b.len());
-    if n < 3 {
-        return 0.0;
-    }
-
-    // Compute means
-    let mut sum_a = 0.0f64;
-    let mut sum_b = 0.0f64;
-    for i in 0..n {
-        sum_a += samples_a[i].activation as f64;
-        sum_b += samples_b[i].activation as f64;
-    }
-    let mean_a = sum_a / n as f64;
-    let mean_b = sum_b / n as f64;
-
-    // Compute covariance and variances
-    let mut cov = 0.0f64;
-    let mut var_a = 0.0f64;
-    let mut var_b = 0.0f64;
-    for i in 0..n {
-        let da = samples_a[i].activation as f64 - mean_a;
-        let db = samples_b[i].activation as f64 - mean_b;
-        cov += da * db;
-        var_a += da * da;
-        var_b += db * db;
-    }
-
-    let denominator = (var_a * var_b).sqrt();
-    if denominator < 1e-10 {
-        return 0.0;
-    }
-
-    cov / denominator
+    crate::analysis::detection::stats::pearson_correlation_samples(samples_a, samples_b, n)
 }
 
 /// Check if combining two candidates would cause saturation risk.
