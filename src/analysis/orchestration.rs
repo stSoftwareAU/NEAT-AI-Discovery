@@ -3,6 +3,7 @@
 //! Contains the `analyze_all` entry point and its supporting helpers:
 //! - `choose_deadline_order_synapse_first` — randomised analysis ordering
 //! - `run_optional_analysis` — guarded analysis phase execution
+//! - `dispatch_analyses` — parameterised synapse/neuron dispatch (Issue #774)
 
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -15,7 +16,7 @@ use crate::observability::{
 };
 use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
 
-use super::shared::AnalyzeAllResult;
+use super::shared::{AnalyzeAllResult, AnalyzeNeuronsResult, AnalyzeSynapsesResult};
 use super::{
     cache, candidate_aggregation, module_dispatch_specs, neuron, neuron_fingerprint, synapse, utils,
 };
@@ -54,6 +55,60 @@ pub(crate) fn run_optional_analysis<T>(
     } else {
         crate::watchdog::beat(skipped);
         Ok(None)
+    }
+}
+
+/// Run synapse and neuron analyses in the specified order (Issue #774).
+///
+/// When `synapse_first` is `true`, synapse analysis runs before neuron analysis;
+/// otherwise neuron runs first. This single function replaces the three
+/// near-identical dispatch blocks that previously existed in `analyze_all`.
+fn dispatch_analyses(
+    synapse_first: bool,
+    synapse_input: Option<AnalyzeSynapsesInput>,
+    neuron_input: Option<AnalyzeNeuronsInput>,
+    shared_cache: &Arc<cache::RecordCache>,
+) -> Result<(Option<AnalyzeSynapsesResult>, Option<AnalyzeNeuronsResult>)> {
+    let run_synapse = |si: Option<AnalyzeSynapsesInput>,
+                       cache: &Arc<cache::RecordCache>|
+     -> Result<Option<AnalyzeSynapsesResult>> {
+        run_optional_analysis(
+            si.is_some(),
+            "analysis::analyze_all → synapse analysis starting",
+            "analysis::analyze_all → synapse analysis finished",
+            "analysis::analyze_all → synapse analysis skipped",
+            "synapse_analysis",
+            || {
+                let inner = si.expect("checked is_some");
+                synapse::analyze_synapses_with_cache(&inner, Arc::clone(cache))
+            },
+        )
+    };
+
+    let run_neuron = |ni: Option<AnalyzeNeuronsInput>,
+                      cache: &Arc<cache::RecordCache>|
+     -> Result<Option<AnalyzeNeuronsResult>> {
+        run_optional_analysis(
+            ni.is_some(),
+            "analysis::analyze_all → neuron analysis starting",
+            "analysis::analyze_all → neuron analysis finished",
+            "analysis::analyze_all → neuron analysis skipped",
+            "neuron_analysis",
+            || {
+                let inner = ni.expect("checked is_some");
+                neuron::analyze_neurons_with_cache(&inner, Arc::clone(cache))
+            },
+        )
+    };
+
+    if synapse_first {
+        let synapse_result = run_synapse(synapse_input, shared_cache)?;
+        let neuron_result = run_neuron(neuron_input, shared_cache)?;
+        Ok((synapse_result, neuron_result))
+    } else {
+        let neuron_result = run_neuron(neuron_input, shared_cache)?;
+        let synapse_result = run_synapse(synapse_input, shared_cache)?;
+        Ok((synapse_result, neuron_result))
     }
 }
 
@@ -186,107 +241,35 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Without a deadline, neuron analysis runs first (original behaviour).
     let has_deadline = input.analysis_deadline_ms.is_some();
 
-    let (synapse_result, neuron_result) = if has_deadline {
-        // Deadline-constrained: randomised ordering.
+    // Determine whether synapse analysis should run first (Issue #774).
+    // When deadline-constrained, we randomise ordering so that repeated runs
+    // provide long-run coverage even when an individual run returns partial
+    // results. Without a deadline, neuron analysis runs first (original
+    // behaviour — neuron discovery creates new network structure and may be
+    // considered higher value when time is not constrained).
+    let synapse_first = if has_deadline {
         let now_ms = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .ok()
             .map_or(0, |d| d.as_millis() as u64);
-        let synapse_first = include_synapse
+        let sf = include_synapse
             && include_neuron
             && choose_deadline_order_synapse_first(input.random_seed, now_ms);
 
         if utils::verbose_enabled() {
             tracing::debug!(
                 deadline_ms = input.analysis_deadline_ms.unwrap_or(0),
-                first = if synapse_first { "synapse" } else { "neuron" },
+                first = if sf { "synapse" } else { "neuron" },
                 "deadline set — randomised analysis ordering"
             );
         }
-
-        if synapse_first {
-            let synapse_result = run_optional_analysis(
-                synapse_input.is_some(),
-                "analysis::analyze_all → synapse analysis starting",
-                "analysis::analyze_all → synapse analysis finished",
-                "analysis::analyze_all → synapse analysis skipped",
-                "synapse_analysis",
-                || {
-                    let inner = synapse_input.expect("checked is_some");
-                    synapse::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
-                },
-            )?;
-
-            let neuron_result = run_optional_analysis(
-                neuron_input.is_some(),
-                "analysis::analyze_all → neuron analysis starting",
-                "analysis::analyze_all → neuron analysis finished",
-                "analysis::analyze_all → neuron analysis skipped",
-                "neuron_analysis",
-                || {
-                    let inner = neuron_input.expect("checked is_some");
-                    neuron::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
-                },
-            )?;
-
-            (synapse_result, neuron_result)
-        } else {
-            let neuron_result = run_optional_analysis(
-                neuron_input.is_some(),
-                "analysis::analyze_all → neuron analysis starting",
-                "analysis::analyze_all → neuron analysis finished",
-                "analysis::analyze_all → neuron analysis skipped",
-                "neuron_analysis",
-                || {
-                    let inner = neuron_input.expect("checked is_some");
-                    neuron::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
-                },
-            )?;
-
-            let synapse_result = run_optional_analysis(
-                synapse_input.is_some(),
-                "analysis::analyze_all → synapse analysis starting",
-                "analysis::analyze_all → synapse analysis finished",
-                "analysis::analyze_all → synapse analysis skipped",
-                "synapse_analysis",
-                || {
-                    let inner = synapse_input.expect("checked is_some");
-                    synapse::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
-                },
-            )?;
-
-            (synapse_result, neuron_result)
-        }
+        sf
     } else {
-        // NEURON-FIRST ordering (no deadline - original behaviour):
-        // Neuron discovery is more valuable as it can create new network structure.
-        // With pre-loaded cache, both run fast, but neurons get priority.
-        let neuron_result = run_optional_analysis(
-            neuron_input.is_some(),
-            "analysis::analyze_all → neuron analysis starting",
-            "analysis::analyze_all → neuron analysis finished",
-            "analysis::analyze_all → neuron analysis skipped",
-            "neuron_analysis",
-            || {
-                let inner = neuron_input.expect("checked is_some");
-                neuron::analyze_neurons_with_cache(&inner, Arc::clone(&shared_cache))
-            },
-        )?;
-
-        let synapse_result = run_optional_analysis(
-            synapse_input.is_some(),
-            "analysis::analyze_all → synapse analysis starting",
-            "analysis::analyze_all → synapse analysis finished",
-            "analysis::analyze_all → synapse analysis skipped",
-            "synapse_analysis",
-            || {
-                let inner = synapse_input.expect("checked is_some");
-                synapse::analyze_synapses_with_cache(&inner, Arc::clone(&shared_cache))
-            },
-        )?;
-
-        (synapse_result, neuron_result)
+        false
     };
+
+    let (synapse_result, neuron_result) =
+        dispatch_analyses(synapse_first, synapse_input, neuron_input, &shared_cache)?;
 
     // Post-process: convert certain add-neuron candidates into coordinated-structural replacements.
     let mut synapse_result = synapse_result;
