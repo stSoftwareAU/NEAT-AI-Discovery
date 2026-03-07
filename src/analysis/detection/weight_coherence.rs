@@ -271,24 +271,19 @@ pub fn detect_near_constant_paths(
         }
     };
 
-    // Build squash lookup for hidden neurons (not available in topology cache).
-    let hidden_squash: HashMap<&str, &str> = creature
-        .neurons
-        .iter()
-        .filter(|n| topo.hidden_uuids.contains(&n.uuid))
-        .map(|n| (n.uuid.as_str(), n.squash.as_str()))
-        .collect();
-
     // Build records lookup
     let records_map: HashMap<String, &Vec<DiscoverRecord>> = records
         .iter()
         .map(|(uuid, recs)| (uuid.clone(), recs))
         .collect();
 
-    for neuron_uuid in &topo.hidden_uuids {
-        let Some(&squash) = hidden_squash.get(neuron_uuid.as_str()) else {
+    // Iterate hidden neurons directly to avoid building a separate squash lookup map.
+    for neuron in &creature.neurons {
+        if !topo.hidden_uuids.contains(&neuron.uuid) {
             continue;
-        };
+        }
+        let neuron_uuid = &neuron.uuid;
+        let squash = neuron.squash.as_str();
         let Some(neuron_records) = records_map.get(neuron_uuid) else {
             continue;
         };
@@ -388,21 +383,15 @@ pub fn detect_symmetric_cancellation(
         .map(|(uuid, recs)| (uuid.clone(), recs))
         .collect();
 
-    // Build synapses by target from topology cache: target → [(from_uuid, weight)]
-    let mut synapses_by_target: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
-    for (to_uuid, from_uuids) in &topo.fan_in {
-        for from_uuid in from_uuids {
-            if let Some(weight) = topo.synapse_weight(from_uuid, to_uuid) {
-                synapses_by_target
-                    .entry(to_uuid.as_str())
-                    .or_default()
-                    .push((from_uuid.as_str(), weight));
-            }
-        }
-    }
-
-    // Check each target neuron for symmetric cancellation
-    for (target_uuid, incoming_synapses) in &synapses_by_target {
+    // Iterate fan-in directly to avoid building a separate synapses-by-target map.
+    for (target_uuid, from_uuids) in &topo.fan_in {
+        let incoming_synapses: Vec<(&str, f32)> = from_uuids
+            .iter()
+            .filter_map(|from_uuid| {
+                topo.synapse_weight(from_uuid, target_uuid)
+                    .map(|weight| (from_uuid.as_str(), weight))
+            })
+            .collect();
         if incoming_synapses.len() < 2 {
             continue;
         }
@@ -449,7 +438,7 @@ pub fn detect_symmetric_cancellation(
                         candidates.push(SymmetricCancellationCandidate {
                             source1_neuron_uuid: source1_uuid.to_string(),
                             source2_neuron_uuid: source2_uuid.to_string(),
-                            target_neuron_uuid: target_uuid.to_string(),
+                            target_neuron_uuid: target_uuid.clone(),
                             weight1: *weight1,
                             weight2: *weight2,
                             correlation: corr,
