@@ -22,253 +22,88 @@ pub(crate) fn append_synapse_specs(
     topo: &Arc<CreatureTopologyCache>,
 ) {
     // Issue #359: Dormant synapse detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "dormant synapse detection".to_string(),
-            phase_name: "dormant_synapse_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_synapse_sources(&creature);
-                let detected = dormant_synapse::detect_dormant_synapses(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    dormant_synapse::dormant_synapses_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "dormant synapse detection", "dormant_synapse_detection",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_synapse_sources(&creature),
+        detect: |records| dormant_synapse::detect_dormant_synapses(&creature, &records),
+        convert: |detected| dormant_synapse::dormant_synapses_to_coordinated_candidates(&detected),
+    );
 
     // Issue #360: Opposing synapse detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "opposing synapse detection".to_string(),
-            phase_name: "opposing_synapse_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_all_neurons(&creature);
-                let detected = opposing_synapse::detect_opposing_synapses(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    opposing_synapse::opposing_synapses_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "opposing synapse detection", "opposing_synapse_detection",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_all_neurons(&creature),
+        detect: |records| opposing_synapse::detect_opposing_synapses(&creature, &records),
+        convert: |detected| opposing_synapse::opposing_synapses_to_coordinated_candidates(&detected),
+    );
 
     // Issue #437: Weight coherence validation - incoherent weight ratios
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        let topo = Arc::clone(topo);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "weight coherence ratio detection".to_string(),
-            phase_name: "weight_coherence_ratio_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let config = weight_coherence::WeightCoherenceConfig::default();
-                let detected = weight_coherence::detect_incoherent_weight_ratios(
-                    &creature,
-                    &records,
-                    &config,
-                    Some(&topo),
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    weight_coherence::incoherent_ratios_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "weight coherence ratio detection", "weight_coherence_ratio_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature, topo = topo =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| {
+            let config = weight_coherence::WeightCoherenceConfig::default();
+            weight_coherence::detect_incoherent_weight_ratios(&creature, &records, &config, Some(&topo))
+        },
+        convert: |detected| weight_coherence::incoherent_ratios_to_coordinated_candidates(&detected),
+    );
 
     // Issue #437: Weight coherence validation - near-constant output paths
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        let topo = Arc::clone(topo);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "near-constant path detection".to_string(),
-            phase_name: "near_constant_path_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_hidden(&hidden);
-                let config = weight_coherence::WeightCoherenceConfig::default();
-                let detected = weight_coherence::detect_near_constant_paths(
-                    &creature,
-                    &records,
-                    &config,
-                    Some(&topo),
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    weight_coherence::near_constant_paths_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "near-constant path detection", "near_constant_path_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature, topo = topo =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| {
+            let config = weight_coherence::WeightCoherenceConfig::default();
+            weight_coherence::detect_near_constant_paths(&creature, &records, &config, Some(&topo))
+        },
+        convert: |detected| weight_coherence::near_constant_paths_to_coordinated_candidates(&detected),
+    );
 
     // Issue #437: Weight coherence validation - symmetric weight cancellation
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        let topo = Arc::clone(topo);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "symmetric cancellation detection".to_string(),
-            phase_name: "symmetric_cancellation_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_all_neurons(&creature);
-                let config = weight_coherence::WeightCoherenceConfig::default();
-                let detected = weight_coherence::detect_symmetric_cancellation(
-                    &creature,
-                    &records,
-                    &config,
-                    Some(&topo),
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    weight_coherence::symmetric_cancellation_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "symmetric cancellation detection", "symmetric_cancellation_detection",
+        cache = shared_cache, creature = creature, topo = topo =>
+        records: cache.load_records_for_all_neurons(&creature),
+        detect: |records| {
+            let config = weight_coherence::WeightCoherenceConfig::default();
+            weight_coherence::detect_symmetric_cancellation(&creature, &records, &config, Some(&topo))
+        },
+        convert: |detected| weight_coherence::symmetric_cancellation_to_coordinated_candidates(&detected),
+    );
 
     // Issue #434: Noise-to-signal ratio detection for synapses
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "noisy synapse detection".to_string(),
-            phase_name: "noisy_synapse_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_all_neurons(&creature);
-                let detected = noise_signal::detect_noisy_synapses(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates = noise_signal::noisy_synapses_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "noisy synapse detection", "noisy_synapse_detection",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_all_neurons(&creature),
+        detect: |records| noise_signal::detect_noisy_synapses(&creature, &records),
+        convert: |detected| noise_signal::noisy_synapses_to_coordinated_candidates(&detected),
+    );
 
     // Issue #550: Weight magnitude reset for stuck synapses (local minimum escape)
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "weight magnitude reset detection".to_string(),
-            phase_name: "weight_magnitude_reset_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_all_neurons(&creature);
-                if records.is_empty() {
-                    return None;
-                }
-                let detected =
-                    weight_magnitude_reset::detect_stuck_synapse_weight_resets(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    weight_magnitude_reset::stuck_synapses_to_coordinated_candidates(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "weight magnitude reset detection", "weight_magnitude_reset_detection",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_all_neurons(&creature),
+        guard_records,
+        detect: |records| weight_magnitude_reset::detect_stuck_synapse_weight_resets(&creature, &records),
+        convert: |detected| weight_magnitude_reset::stuck_synapses_to_coordinated_candidates(&detected),
+    );
 
     // Issue #641: Fan-in weight polarity conflict detection
-    {
-        let cache = Arc::clone(shared_cache);
-        let hidden = Arc::clone(hidden_neurons);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "fan-in polarity conflict detection".to_string(),
-            phase_name: "fanin_polarity_conflict_detection",
-            detect_fn: Box::new(move || {
-                if hidden.is_empty() {
-                    return None;
-                }
-                let records = cache.load_records_for_all_neurons(&creature);
-                let detected =
-                    fanin_polarity_conflict::detect_fanin_polarity_conflicts(&creature, &records);
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    fanin_polarity_conflict::fanin_polarity_conflicts_to_coordinated_candidates(
-                        &detected, &creature,
-                    );
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "fan-in polarity conflict detection", "fanin_polarity_conflict_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature =>
+        guard: hidden,
+        records: cache.load_records_for_all_neurons(&creature),
+        detect: |records| fanin_polarity_conflict::detect_fanin_polarity_conflicts(&creature, &records),
+        convert: |detected| fanin_polarity_conflict::fanin_polarity_conflicts_to_coordinated_candidates(&detected, &creature),
+    );
 
     // Issue #644: Weight polarity flip detection (gradient-weight sign disagreement)
-    {
-        let cache = Arc::clone(shared_cache);
-        let creature = Arc::clone(creature);
-        modules.push(discovery_dispatch::DiscoveryModuleSpec {
-            module_name: "weight polarity flip detection".to_string(),
-            phase_name: "weight_polarity_flip_detection",
-            detect_fn: Box::new(move || {
-                let records = cache.load_records_for_all_neurons(&creature);
-                if records.is_empty() {
-                    return None;
-                }
-                let detected = weight_polarity_flip::detect_weight_polarity_flip_candidates(
-                    &creature, &records,
-                );
-                if detected.is_empty() {
-                    return None;
-                }
-                let candidates =
-                    weight_polarity_flip::polarity_flip_candidates_to_coordinated(&detected);
-                Some(discovery_dispatch::DiscoveryDetectionResult {
-                    detected_count: detected.len(),
-                    candidates,
-                })
-            }),
-        });
-    }
+    discovery_spec!(modules, "weight polarity flip detection", "weight_polarity_flip_detection",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_all_neurons(&creature),
+        guard_records,
+        detect: |records| weight_polarity_flip::detect_weight_polarity_flip_candidates(&creature, &records),
+        convert: |detected| weight_polarity_flip::polarity_flip_candidates_to_coordinated(&detected),
+    );
 }
