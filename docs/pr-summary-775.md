@@ -27,4 +27,4 @@ This is a backend refactor with no UI changes. All tests pass and `quality.sh` p
 - `spearman_monotonic_nonlinear` — nonlinear monotonic (x³) returns ~1.0
 - `spearman_with_ties` — tied values still produce correct correlation
 - `spearman_zero_variance_returns_zero` — constant input returns 0.0
-- `spearman_no_monotonic_relationship` — U-shaped data returns near-zero
+- `spearman_no_monotonic_relationship` — U-shaped data returns near-zero.
