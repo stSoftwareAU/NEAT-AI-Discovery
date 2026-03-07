@@ -30,6 +30,7 @@ use std::collections::HashSet;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
+use super::stats::spearman_rank_correlation;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DETECTION;
 
 /// Minimum |rho| below which a neuron is considered non-monotonic.
@@ -49,72 +50,6 @@ pub struct MonotonicityCandidate {
     pub sample_count: usize,
     /// Estimated creature score improvement from restructuring this neuron.
     pub estimated_improvement: f32,
-}
-
-/// Compute Spearman's rank correlation coefficient between two slices.
-///
-/// Returns a value in [-1.0, 1.0] where:
-/// - +1.0 = perfectly monotonically increasing
-/// - -1.0 = perfectly monotonically decreasing
-/// - 0.0 = no monotonic relationship
-fn spearman_rank_correlation(x: &[f32], y: &[f32]) -> f32 {
-    let n = x.len();
-    if n < 2 {
-        return 0.0;
-    }
-
-    let rank_x = compute_ranks(x);
-    let rank_y = compute_ranks(y);
-
-    // Pearson correlation on ranks
-    let n_f = n as f32;
-    let mean_rx: f32 = rank_x.iter().sum::<f32>() / n_f;
-    let mean_ry: f32 = rank_y.iter().sum::<f32>() / n_f;
-
-    let mut cov = 0.0f32;
-    let mut var_x = 0.0f32;
-    let mut var_y = 0.0f32;
-
-    for i in 0..n {
-        let dx = rank_x[i] - mean_rx;
-        let dy = rank_y[i] - mean_ry;
-        cov += dx * dy;
-        var_x += dx * dx;
-        var_y += dy * dy;
-    }
-
-    let denom = (var_x * var_y).sqrt();
-    if denom < 1e-12 {
-        return 0.0;
-    }
-
-    cov / denom
-}
-
-/// Compute fractional ranks for a slice of f32 values.
-/// Ties receive the average of their ranks.
-fn compute_ranks(values: &[f32]) -> Vec<f32> {
-    let n = values.len();
-    let mut indexed: Vec<(usize, f32)> = values.iter().copied().enumerate().collect();
-    indexed.sort_by(|a, b| a.1.total_cmp(&b.1));
-
-    let mut ranks = vec![0.0f32; n];
-    let mut i = 0;
-    while i < n {
-        let mut j = i;
-        // Find all ties
-        while j < n && indexed[j].1.total_cmp(&indexed[i].1) == std::cmp::Ordering::Equal {
-            j += 1;
-        }
-        // Average rank for tied values (1-based)
-        let avg_rank = (i + j) as f32 / 2.0 + 0.5;
-        for item in indexed.iter().take(j).skip(i) {
-            ranks[item.0] = avg_rank;
-        }
-        i = j;
-    }
-
-    ranks
 }
 
 /// Detect neurons with non-monotonic activation-error relationships.
