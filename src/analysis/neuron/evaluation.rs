@@ -12,6 +12,9 @@ use std::time::SystemTime;
 use crate::analysis::diagnostics::NeuronDiagnostics;
 use crate::analysis::gpu::GpuWorkQueue;
 use crate::analysis::samples::{EPSILON, HelpfulSample, compute_source_variance_discount};
+use crate::analysis::scoring::cross_validation::{
+    CrossValidationConfig, compute_cross_validation_score,
+};
 use crate::analysis::shared::TimingScope;
 use crate::analysis::utils::{deadline_passed, lock_or_bail, verbose_enabled};
 
@@ -136,6 +139,9 @@ fn evaluate_relu_split(
             candidate.expected_creature_error_reduction *= source_variance_discount;
             candidate.expected_creature_score_gain *= source_variance_discount;
 
+            // Issue #791: Apply cross-validation brittleness penalty
+            apply_cross_validation_penalty(&mut candidate, samples);
+
             if verbose_enabled() {
                 tracing::trace!(
                     direction = "push UP",
@@ -169,6 +175,9 @@ fn evaluate_relu_split(
             // Issue #130: Apply source variance discount
             candidate.expected_creature_error_reduction *= source_variance_discount;
             candidate.expected_creature_score_gain *= source_variance_discount;
+
+            // Issue #791: Apply cross-validation brittleness penalty
+            apply_cross_validation_penalty(&mut candidate, samples);
 
             if verbose_enabled() {
                 tracing::trace!(
@@ -220,6 +229,9 @@ fn evaluate_activation_specs(
         candidate.expected_creature_error_reduction *= source_variance_discount;
         candidate.expected_creature_score_gain *= source_variance_discount;
 
+        // Issue #791: Apply cross-validation brittleness penalty
+        apply_cross_validation_penalty(&mut candidate, samples);
+
         ctx.diagnostics.mark_candidate_selected(target_uuid);
         let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
         upsert_candidate(&mut map, candidate);
@@ -240,4 +252,34 @@ fn passes_neuron_improved_ratio(candidate: &CandidateNeuronJson) -> bool {
     }
     let improved_ratio = candidate.improved_count as f32 / candidate.total_count as f32;
     improved_ratio >= NEURON_MIN_IMPROVED_RATIO
+}
+
+/// Issue #791: Apply cross-validation brittleness penalty to a neuron candidate.
+///
+/// Splits the samples into k folds and checks whether the candidate's improvement
+/// is consistent across all subsets. Candidates that only improve on specific data
+/// subsets are penalised, reducing their expected score gain.
+///
+/// This addresses the 15% success rate for add-neurons by filtering candidates
+/// that overfit to noise in the discovery samples.
+fn apply_cross_validation_penalty(candidate: &mut CandidateNeuronJson, samples: &[HelpfulSample]) {
+    let config = CrossValidationConfig::default();
+    if let Some(cv_result) = compute_cross_validation_score(samples, &config)
+        && cv_result.brittleness_penalty > 0.0
+    {
+        let penalty_factor = 1.0 - cv_result.brittleness_penalty;
+        candidate.expected_creature_error_reduction *= penalty_factor;
+        candidate.expected_creature_score_gain *= penalty_factor;
+
+        if verbose_enabled() {
+            tracing::trace!(
+                source_uuid = %candidate.source_neuron_uuid,
+                target_uuid = %candidate.target_neuron_uuid,
+                penalty = format_args!("{:.4}", cv_result.brittleness_penalty),
+                variance = format_args!("{:.6}", cv_result.variance.variance),
+                mean_ratio = format_args!("{:.3}", cv_result.variance.mean_improvement_ratio),
+                "Neuron candidate cross-validation brittleness penalty applied"
+            );
+        }
+    }
 }

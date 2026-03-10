@@ -13,8 +13,8 @@ use std::collections::HashMap;
 
 // Boosting and discount constants
 use crate::analysis::constants::{
-    EXISTING_HIDDEN_TARGET_BOOST, INPUT_SOURCE_BOOST, PESSIMISM_CURVE_EXPONENT,
-    PESSIMISM_DISCOUNT_FLOOR,
+    EXISTING_HIDDEN_TARGET_BOOST, INPUT_SOURCE_BOOST, NEURON_PESSIMISM_CURVE_EXPONENT,
+    NEURON_PESSIMISM_DISCOUNT_FLOOR, PESSIMISM_CURVE_EXPONENT, PESSIMISM_DISCOUNT_FLOOR,
 };
 
 // =============================================================================
@@ -602,6 +602,35 @@ pub fn apply_pessimism_discount(gain: f32, improved_count: u32, total_count: u32
     let improved_ratio = improved_count as f32 / total_count as f32;
     let adjusted_ratio = improved_ratio.powf(PESSIMISM_CURVE_EXPONENT);
     let discount = PESSIMISM_DISCOUNT_FLOOR + (1.0 - PESSIMISM_DISCOUNT_FLOOR) * adjusted_ratio;
+    gain * discount
+}
+
+/// Apply a neuron-specific pessimism discount to an expected score gain (Issue #791).
+///
+/// GRQ-sampler analysis shows add-neurons has a 15% success rate (3,812 / 25,812),
+/// indicating the generic pessimism parameters are too generous for neuron candidates.
+/// This function uses neuron-calibrated constants that apply more aggressive
+/// discounting:
+///
+/// - Lower floor (0.10 vs 0.15): stronger base discount at low ratios
+/// - Higher exponent (0.75 vs 0.6): less forgiving at moderate ratios
+///
+/// ## Formula
+///
+/// ```text
+/// improved_ratio = improved_count / total_count
+/// adjusted_ratio = improved_ratio ^ NEURON_PESSIMISM_CURVE_EXPONENT
+/// discount = NEURON_PESSIMISM_DISCOUNT_FLOOR + (1 - NEURON_PESSIMISM_DISCOUNT_FLOOR) × adjusted_ratio
+/// result = gain × discount
+/// ```
+pub fn apply_neuron_pessimism_discount(gain: f32, improved_count: u32, total_count: u32) -> f32 {
+    if total_count == 0 {
+        return gain * NEURON_PESSIMISM_DISCOUNT_FLOOR;
+    }
+    let improved_ratio = improved_count as f32 / total_count as f32;
+    let adjusted_ratio = improved_ratio.powf(NEURON_PESSIMISM_CURVE_EXPONENT);
+    let discount =
+        NEURON_PESSIMISM_DISCOUNT_FLOOR + (1.0 - NEURON_PESSIMISM_DISCOUNT_FLOOR) * adjusted_ratio;
     gain * discount
 }
 
