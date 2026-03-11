@@ -109,6 +109,9 @@ fn issue_134_identity_target_accepts_linear_candidate_sanity_check() {
 
     let arctan_1 = std::f32::consts::FRAC_PI_4;
 
+    // Issue #789: Use 5 observations (not 2) so the improved ratio can exceed the
+    // raised MIN_IMPROVED_RATIO threshold of 0.6. With only 2 samples, 1/2=0.5
+    // would be filtered out.
     let records = vec![
         DiscoverRecord::new(0, "input-0".to_string(), None, arctan_1, Vec::new()),
         DiscoverRecord::new(0, "output-0".to_string(), Some(-10.0), -10.0, vec![2.0]),
@@ -116,6 +119,12 @@ fn issue_134_identity_target_accepts_linear_candidate_sanity_check() {
         // rather than folding the constant source into a `setBias` coordinated candidate (Issue #178).
         DiscoverRecord::new(1, "input-0".to_string(), None, arctan_1 * 0.9, Vec::new()),
         DiscoverRecord::new(1, "output-0".to_string(), Some(10.0), 10.0, vec![-1.0]),
+        DiscoverRecord::new(2, "input-0".to_string(), None, arctan_1 * 1.1, Vec::new()),
+        DiscoverRecord::new(2, "output-0".to_string(), Some(-5.0), -5.0, vec![1.5]),
+        DiscoverRecord::new(3, "input-0".to_string(), None, arctan_1 * 0.8, Vec::new()),
+        DiscoverRecord::new(3, "output-0".to_string(), Some(-8.0), -8.0, vec![1.8]),
+        DiscoverRecord::new(4, "input-0".to_string(), None, arctan_1 * 1.05, Vec::new()),
+        DiscoverRecord::new(4, "output-0".to_string(), Some(-3.0), -3.0, vec![1.2]),
     ];
 
     write_records_to_parquet(&parquet_file, &records).expect("Failed to write parquet");

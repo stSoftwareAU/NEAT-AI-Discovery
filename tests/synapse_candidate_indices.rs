@@ -41,6 +41,8 @@ fn synapse_candidates_populate_from_and_to_indices() {
     // Records designed so input-1 correlates positively with output error:
     // - When error is positive (output should be higher), input-1 is high.
     // - When error is negative (output should be lower), input-1 is low.
+    // Issue #789: Use enough positive-error samples so the improved ratio exceeds
+    // the raised MIN_IMPROVED_RATIO threshold of 0.6.
     let mut records = Vec::new();
     let patterns: &[(f32, f32)] = &[
         (1.0, 1.0),
@@ -51,6 +53,10 @@ fn synapse_candidates_populate_from_and_to_indices() {
         (0.6, 0.85),
         (-0.7, 0.05),
         (-0.9, 0.0),
+        (0.5, 0.7),
+        (0.4, 0.65),
+        (0.9, 0.92),
+        (0.7, 0.88),
     ];
 
     for (obs_index, (error, input_1_activation)) in patterns.iter().copied().enumerate() {

@@ -179,17 +179,17 @@ pub const MAX_INDIVIDUAL_HARM_FOR_PAIRING: f32 = 0.0;
 /// Minimum ratio of improved samples required for a synapse candidate to be accepted.
 ///
 /// Issue #730: The add-synapses module had a 0% success rate because candidates
-/// where more samples worsened than improved were still being proposed. This
-/// threshold requires that at least this fraction of samples must improve before
-/// a candidate is considered viable.
+/// where more samples worsened than improved were still being proposed.
 ///
-/// A ratio of 0.5 means at least half the samples must improve, filtering out
-/// candidates that hurt more than they help.
+/// Issue #789: Raised from 0.5 to 0.6. GRQ-sampler cache data (Issue #787) showed
+/// all 31 candidates that passed the 0.5 threshold still failed ablation testing.
+/// Requiring 60% of samples to improve filters out marginal candidates where the
+/// multi-weight search found a local optimum that does not generalise.
 ///
 /// ## Valid Range
 /// Must be in (0.0, 1.0). Values below 0.3 provide insufficient filtering.
 /// Values above 0.75 may over-filter legitimate candidates.
-pub const MIN_IMPROVED_RATIO: f32 = 0.5;
+pub const MIN_IMPROVED_RATIO: f32 = 0.6;
 
 /// Minimum ratio of improved samples required for a neuron candidate to be accepted.
 ///
@@ -291,6 +291,47 @@ pub const NEURON_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.10;
 /// Must be in (PESSIMISM_CURVE_EXPONENT, 1.0]. Values above 0.9 give
 /// near-linear behaviour.
 pub const NEURON_PESSIMISM_CURVE_EXPONENT: f32 = 0.75;
+
+// =============================================================================
+// Synapse-Specific Pessimism Discount (Issue #789)
+// =============================================================================
+
+/// Minimum pessimism discount floor for synapse candidates (Issue #789).
+///
+/// GRQ-sampler analysis (Issue #787) shows add-synapses has a 0% success rate
+/// (0 / 31) — the worst of all candidate types. The generic pessimism parameters
+/// (PESSIMISM_DISCOUNT_FLOOR = 0.15, PESSIMISM_CURVE_EXPONENT = 0.6) and even the
+/// neuron-specific parameters (0.10, 0.75) are too generous for synapse candidates.
+///
+/// A lower floor applies more aggressive base discounting to synapse predictions,
+/// reducing the expected gain for candidates with marginal improved ratios. This
+/// accounts for the multi-weight search (9 variants) creating selection bias that
+/// overfits to sample data.
+///
+/// ## Valid Range
+/// Must be in (0.0, NEURON_PESSIMISM_DISCOUNT_FLOOR]. Values below 0.02 risk
+/// zeroing-out all synapse candidates.
+pub const SYNAPSE_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.05;
+
+/// Exponent for the synapse-specific pessimism discount curve (Issue #789).
+///
+/// A higher exponent (closer to linear) produces a less forgiving curve at
+/// moderate ratios. With a 0% success rate, synapse candidates need the most
+/// aggressive discounting of all candidate types. The multi-weight search
+/// (9 weight variants) creates selection bias where the best weight for the
+/// sample data does not generalise to the full evaluation.
+///
+/// With exponent 0.85 and floor 0.05 (discount = 0.05 + 0.95 × ratio^0.85):
+/// - ratio 0.1 → 0.1^0.85 ≈ 0.141 → discount ≈ 0.184
+/// - ratio 0.4 → 0.4^0.85 ≈ 0.453 → discount ≈ 0.480
+/// - ratio 0.6 → 0.6^0.85 ≈ 0.641 → discount ≈ 0.659
+/// - ratio 0.7 → 0.7^0.85 ≈ 0.741 → discount ≈ 0.754
+/// - ratio 1.0 → 1.0       → discount = 1.000
+///
+/// ## Valid Range
+/// Must be in (NEURON_PESSIMISM_CURVE_EXPONENT, 1.0]. Values above 0.95 give
+/// near-linear behaviour.
+pub const SYNAPSE_PESSIMISM_CURVE_EXPONENT: f32 = 0.85;
 
 // =============================================================================
 // NaN-safe Floating-Point Comparison Helpers (Issue #483)
