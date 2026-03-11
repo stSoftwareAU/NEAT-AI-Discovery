@@ -38,7 +38,10 @@ mod structural_patterns;
 mod target_analysis;
 
 // Re-export items used by code outside this module (analysis/mod.rs, neuron.rs, implementation_tests).
-pub use scoring::{apply_pessimism_discount, apply_source_type_boost, apply_target_type_boost};
+pub use scoring::{
+    apply_neuron_pessimism_discount, apply_pessimism_discount, apply_source_type_boost,
+    apply_target_type_boost,
+};
 
 pub(crate) use candidate_generation::{
     MIN_GROUP_SIZE_FOR_LOCALITY, build_ordered_neurons, build_samples_for_locality_group,

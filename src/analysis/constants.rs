@@ -254,6 +254,45 @@ pub const PESSIMISM_DISCOUNT_FLOOR: f32 = 0.15;
 pub const PESSIMISM_CURVE_EXPONENT: f32 = 0.6;
 
 // =============================================================================
+// Neuron-Specific Pessimism Discount (Issue #791)
+// =============================================================================
+
+/// Minimum pessimism discount floor for neuron candidates (Issue #791).
+///
+/// GRQ-sampler analysis (Issue #787) shows add-neurons has a 15% success rate
+/// (3,812 / 25,812) — substantially lower than synapse candidates. The generic
+/// pessimism parameters (PESSIMISM_DISCOUNT_FLOOR = 0.15, PESSIMISM_CURVE_EXPONENT
+/// = 0.6) are calibrated for the overall candidate pool and are too generous for
+/// neuron candidates specifically.
+///
+/// A lower floor applies more aggressive base discounting to neuron predictions,
+/// reducing the expected gain for candidates with few samples improving.
+///
+/// ## Valid Range
+/// Must be in (0.0, PESSIMISM_DISCOUNT_FLOOR). Values below 0.05 risk
+/// zeroing-out legitimate neuron candidates.
+pub const NEURON_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.10;
+
+/// Exponent for the neuron-specific pessimism discount curve (Issue #791).
+///
+/// A higher exponent (closer to linear) produces a less forgiving curve at
+/// moderate ratios compared to the generic exponent (0.6). This is appropriate
+/// for neuron candidates because their 15% success rate suggests moderate
+/// improved ratios (30–60%) are less reliable predictors of actual success
+/// than they are for synapse candidates.
+///
+/// With exponent 0.75 and floor 0.10 (discount = 0.10 + 0.90 × ratio^0.75):
+/// - ratio 0.1 → 0.1^0.75 ≈ 0.178 → discount ≈ 0.260
+/// - ratio 0.4 → 0.4^0.75 ≈ 0.506 → discount ≈ 0.555
+/// - ratio 0.7 → 0.7^0.75 ≈ 0.744 → discount ≈ 0.770
+/// - ratio 1.0 → 1.0       → discount = 1.000
+///
+/// ## Valid Range
+/// Must be in (PESSIMISM_CURVE_EXPONENT, 1.0]. Values above 0.9 give
+/// near-linear behaviour.
+pub const NEURON_PESSIMISM_CURVE_EXPONENT: f32 = 0.75;
+
+// =============================================================================
 // NaN-safe Floating-Point Comparison Helpers (Issue #483)
 // =============================================================================
 

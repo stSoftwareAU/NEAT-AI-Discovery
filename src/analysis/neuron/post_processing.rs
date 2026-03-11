@@ -12,7 +12,7 @@ use crate::analysis::cache::RecordCache;
 use crate::analysis::diagnostics::{NeuronDiagnostics, compute_impact_scores_for_discounting};
 use crate::analysis::gpu::GpuAnalyzer;
 use crate::analysis::shared::AnalyzeNeuronsResult;
-use crate::analysis::synapse::apply_pessimism_discount;
+use crate::analysis::synapse::apply_neuron_pessimism_discount;
 use crate::analysis::utils::{
     lock_or_bail, log_analysis_timeout, shuffle_within_top_k, verbose_enabled,
 };
@@ -171,8 +171,10 @@ fn apply_impact_discounting(
         candidate.expected_creature_error_reduction *= impact;
         candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
 
-        // Issue #506: Apply pessimism discount based on improved sample ratio.
-        candidate.expected_creature_score_gain = apply_pessimism_discount(
+        // Issue #791: Apply neuron-specific pessimism discount based on improved sample ratio.
+        // Neuron candidates have a 15% success rate (vs higher synapse rates), so they
+        // use more aggressive discounting parameters (lower floor, higher exponent).
+        candidate.expected_creature_score_gain = apply_neuron_pessimism_discount(
             candidate.expected_creature_score_gain,
             candidate.improved_count,
             candidate.total_count,
