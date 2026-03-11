@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use crate::analysis::constants::{
     EXISTING_HIDDEN_TARGET_BOOST, INPUT_SOURCE_BOOST, NEURON_PESSIMISM_CURVE_EXPONENT,
     NEURON_PESSIMISM_DISCOUNT_FLOOR, PESSIMISM_CURVE_EXPONENT, PESSIMISM_DISCOUNT_FLOOR,
+    SYNAPSE_PESSIMISM_CURVE_EXPONENT, SYNAPSE_PESSIMISM_DISCOUNT_FLOOR,
 };
 
 // =============================================================================
@@ -631,6 +632,38 @@ pub fn apply_neuron_pessimism_discount(gain: f32, improved_count: u32, total_cou
     let adjusted_ratio = improved_ratio.powf(NEURON_PESSIMISM_CURVE_EXPONENT);
     let discount =
         NEURON_PESSIMISM_DISCOUNT_FLOOR + (1.0 - NEURON_PESSIMISM_DISCOUNT_FLOOR) * adjusted_ratio;
+    gain * discount
+}
+
+/// Apply a synapse-specific pessimism discount to an expected score gain (Issue #789).
+///
+/// GRQ-sampler analysis shows add-synapses has a 0% success rate (0 / 31),
+/// indicating both the generic and neuron-specific pessimism parameters are too
+/// generous for synapse candidates. This function uses synapse-calibrated constants
+/// that apply the most aggressive discounting of all candidate types:
+///
+/// - Lowest floor (0.05 vs 0.10 neuron vs 0.15 generic): strongest base discount
+/// - Highest exponent (0.85 vs 0.75 neuron vs 0.6 generic): least forgiving curve
+///
+/// The aggressive discounting accounts for the multi-weight search (9 weight
+/// variants) creating selection bias that overfits to sample data.
+///
+/// ## Formula
+///
+/// ```text
+/// improved_ratio = improved_count / total_count
+/// adjusted_ratio = improved_ratio ^ SYNAPSE_PESSIMISM_CURVE_EXPONENT
+/// discount = SYNAPSE_PESSIMISM_DISCOUNT_FLOOR + (1 - SYNAPSE_PESSIMISM_DISCOUNT_FLOOR) × adjusted_ratio
+/// result = gain × discount
+/// ```
+pub fn apply_synapse_pessimism_discount(gain: f32, improved_count: u32, total_count: u32) -> f32 {
+    if total_count == 0 {
+        return gain * SYNAPSE_PESSIMISM_DISCOUNT_FLOOR;
+    }
+    let improved_ratio = improved_count as f32 / total_count as f32;
+    let adjusted_ratio = improved_ratio.powf(SYNAPSE_PESSIMISM_CURVE_EXPONENT);
+    let discount = SYNAPSE_PESSIMISM_DISCOUNT_FLOOR
+        + (1.0 - SYNAPSE_PESSIMISM_DISCOUNT_FLOOR) * adjusted_ratio;
     gain * discount
 }
 

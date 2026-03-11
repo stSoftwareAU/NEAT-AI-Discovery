@@ -10,7 +10,9 @@ use crate::analysis::utils::{shuffle_within_top_k, verbose_enabled};
 use std::collections::HashMap;
 
 use super::filtering::truncate_combined_synapse_candidate_sets;
-use super::scoring::{apply_pessimism_discount, apply_source_type_boost, apply_target_type_boost};
+use super::scoring::{
+    apply_source_type_boost, apply_synapse_pessimism_discount, apply_target_type_boost,
+};
 use crate::analysis::cache::RecordCache;
 use crate::analysis::samples::EPSILON;
 
@@ -119,10 +121,13 @@ fn apply_impact_to_helpful(
     candidate.expected_creature_error_reduction *= impact;
     candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
 
-    // Issue #506: Apply pessimism discount based on improved sample ratio.
+    // Issue #789: Apply synapse-specific pessimism discount based on improved sample ratio.
     // Raw improvement percentages are neuron-level estimates that do not generalise
     // directly to creature-level score gains (18,500× over-estimation in production).
-    candidate.expected_creature_score_gain = apply_pessimism_discount(
+    // Synapse candidates use the most aggressive discounting because the multi-weight
+    // search (9 variants) creates selection bias that overfits to sample data,
+    // contributing to the 0% success rate observed in GRQ-sampler cache data.
+    candidate.expected_creature_score_gain = apply_synapse_pessimism_discount(
         candidate.expected_creature_score_gain,
         candidate.improved_count,
         candidate.total_count,
@@ -180,8 +185,8 @@ fn apply_impact_to_harmful(
     candidate.expected_creature_error_reduction *= impact;
     candidate.expected_creature_score_gain = candidate.expected_creature_error_reduction;
 
-    // Issue #506: Apply pessimism discount based on improved sample ratio.
-    candidate.expected_creature_score_gain = apply_pessimism_discount(
+    // Issue #789: Apply synapse-specific pessimism discount based on improved sample ratio.
+    candidate.expected_creature_score_gain = apply_synapse_pessimism_discount(
         candidate.expected_creature_score_gain,
         candidate.improved_count,
         candidate.total_count,
