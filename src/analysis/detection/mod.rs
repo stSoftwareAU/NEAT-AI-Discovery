@@ -17,6 +17,7 @@ pub mod dormant_synapse;
 pub mod error_plateau;
 pub mod fanin_polarity_conflict;
 pub mod hard_sample_cluster;
+pub mod high_error_squash_exploration;
 pub mod input_sensitivity;
 pub mod monotonicity;
 pub mod noise_signal;
