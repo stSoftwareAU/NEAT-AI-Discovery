@@ -119,7 +119,11 @@ fn tiny_gain_rejected_for_multi_op_candidate() {
 
 #[test]
 fn reasonable_gain_accepted_for_multi_op_candidate() {
-    let candidate = make_multi_op_candidate(4, 0.001);
+    // Issue #790: Updated gain from 0.001 to 0.01 — the tighter thresholds
+    // (COORDINATED_OPERATION_DISCOUNT 0.65, MIN_COORDINATED_MULTI_OP_GAIN 1e-3)
+    // correctly reject gain 0.001 on a 4-op candidate (0.001 × 0.65^3 = 2.74e-4 < 1e-3).
+    // A genuinely reasonable gain of 0.01 still passes (0.01 × 0.65^3 = 2.74e-3 > 1e-3).
+    let candidate = make_multi_op_candidate(4, 0.01);
     let valid = validate_coordinated_candidate_gain(&candidate);
     assert!(valid, "reasonable gain on multi-op candidate should pass");
 }
