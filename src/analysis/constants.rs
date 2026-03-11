@@ -372,21 +372,25 @@ pub fn cmp_f64_desc(a: &f64, b: &f64) -> std::cmp::Ordering {
 
 /// Per-operation compounding uncertainty discount for multi-operation candidates.
 ///
-/// Production analysis shows coordinated-structural candidates have a 1.9% success
-/// rate because each operation's prediction uncertainty compounds when combined.
+/// Production analysis shows coordinated-structural candidates have a 2.3% success
+/// rate (272 / 12,069 in GRQ-sampler cache, Issue #787) because each operation's
+/// prediction uncertainty compounds when combined.
 /// For a candidate with N operations, the discount is:
 ///
 /// ```text
 /// discount = COORDINATED_OPERATION_DISCOUNT ^ (N - 1)
 /// ```
 ///
-/// With a factor of 0.8, a 4-operation candidate receives 0.8^3 = 0.512 discount,
-/// roughly halving the predicted gain to account for inter-operation interference.
+/// Issue #790: Reduced from 0.8 to 0.65. The 2.3% success rate and near-negligible
+/// actual gains (~2.2e-14) on successful candidates demonstrate that multi-operation
+/// predictions are far less reliable than previously assumed. With 0.65, a 4-operation
+/// candidate receives 0.65^3 ≈ 0.274 discount, more aggressively filtering out
+/// candidates whose compounding uncertainty makes success unlikely.
 ///
 /// ## Valid Range
 /// Must be in (0.0, 1.0). Values below 0.5 may over-discount legitimate candidates.
 /// Values above 0.95 provide insufficient correction.
-pub const COORDINATED_OPERATION_DISCOUNT: f32 = 0.8;
+pub const COORDINATED_OPERATION_DISCOUNT: f32 = 0.65;
 
 /// Minimum absolute gain required for a multi-operation coordinated candidate.
 ///
@@ -395,6 +399,36 @@ pub const COORDINATED_OPERATION_DISCOUNT: f32 = 0.8;
 /// after discounting. This prevents near-zero predictions from generating
 /// candidates that almost never succeed.
 ///
+/// Issue #790: Raised from 1e-5 to 1e-3. GRQ-sampler cache analysis (Issue #787)
+/// shows that successful coordinated candidates achieve only ~2.2e-14 actual gain,
+/// demonstrating an enormous prediction-to-reality gap. The previous threshold of
+/// 1e-5 allowed candidates with negligible predicted improvement through, wasting
+/// ablation testing time. The raised threshold filters out marginal predictions
+/// while still admitting candidates with meaningful expected gains.
+///
 /// ## Valid Range
-/// Must be > 0.0. Values above 1e-4 may filter too aggressively.
-pub const MIN_COORDINATED_MULTI_OP_GAIN: f32 = 1e-5;
+/// Must be > 0.0. Values above 1e-2 may filter too aggressively.
+pub const MIN_COORDINATED_MULTI_OP_GAIN: f32 = 1e-3;
+
+// =============================================================================
+// Coordinated-Structural Pessimism Discount (Issue #790)
+// =============================================================================
+
+/// Flat pessimism discount applied to all coordinated-structural candidates.
+///
+/// GRQ-sampler analysis (Issue #787) shows coordinated-structural candidates have
+/// a 2.3% success rate (272 / 12,069), with successful candidates achieving only
+/// near-negligible score deltas (~2.2e-14). Unlike synapse and neuron candidates
+/// which have per-sample improved_count/total_count ratios, coordinated candidates
+/// combine multiple operations whose individual predictions compound optimistically.
+///
+/// This flat multiplicative discount is applied to all coordinated-structural
+/// candidates during post-processing, analogous to the pessimism discounts applied
+/// to synapse and neuron candidates but using a fixed factor rather than a
+/// ratio-based curve (since coordinated candidates lack per-sample counts).
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Values below 0.05 risk zeroing-out all coordinated
+/// candidates. Values above 0.30 provide insufficient correction given the
+/// 2.3% success rate.
+pub const COORDINATED_PESSIMISM_DISCOUNT: f32 = 0.15;
