@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use super::super::detection::{
     activation_mismatch, bias_perturbation, bimodal_neuron, bottleneck, co_adaptation, dead_neuron,
-    monotonicity, noise_signal, operating_point, oscillating_neuron, restricted_range, saturation,
-    squash_weight_rescale, symmetry_breaking, topology_cache::CreatureTopologyCache,
-    unbounded_capping,
+    high_error_squash_exploration, monotonicity, noise_signal, operating_point, oscillating_neuron,
+    restricted_range, saturation, squash_weight_rescale, symmetry_breaking,
+    topology_cache::CreatureTopologyCache, unbounded_capping,
 };
 use super::super::recommendation::activation_recommendation;
 use super::super::{cache, discovery_dispatch};
@@ -142,6 +142,15 @@ pub(crate) fn append_neuron_specs(
         records: cache.load_records_for_hidden(&hidden),
         detect: |records| activation_mismatch::detect_activation_mismatches(&hidden, &records),
         convert: |detected| activation_mismatch::activation_mismatch_to_coordinated_candidates(&detected),
+    );
+
+    // Issue #788: High-error squash exploration (proactive change-squash volume)
+    discovery_spec!(modules, "high error squash exploration", "high_error_squash_exploration",
+        cache = shared_cache, hidden = hidden_neurons =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| high_error_squash_exploration::detect_high_error_squash_candidates(&hidden, &records),
+        convert: |detected| high_error_squash_exploration::high_error_squash_to_coordinated_candidates(&detected),
     );
 
     // Issue #551: Bias perturbation for activation regime shifts (local minimum escape)
