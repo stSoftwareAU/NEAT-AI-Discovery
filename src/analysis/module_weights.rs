@@ -266,3 +266,35 @@ pub struct DiscoveryModuleStatsJson {
     /// Bayesian success rate (0.0–1.0). 0.5 when no data available.
     pub success_rate: f64,
 }
+
+/// Apply module boost factors to coordinated structural candidate expected gains (Issue #792).
+///
+/// For each candidate, extracts the module name from the comment and multiplies
+/// `expected_creature_score_gain` by the tracker's `module_boost()` for that module.
+/// Candidates from unknown modules or an empty tracker receive a neutral boost (1.0).
+pub fn apply_module_boost_to_candidates(
+    candidates: &mut [crate::CoordinatedStructuralCandidateJson],
+    tracker: &ModuleOutcomeTracker,
+) {
+    if tracker.is_empty() {
+        return;
+    }
+
+    for candidate in candidates.iter_mut() {
+        let module_name = candidate.comment.as_ref().map_or_else(
+            || "unknown".to_string(),
+            |c| {
+                c.split(&[':', '|'][..])
+                    .next()
+                    .unwrap_or("unknown")
+                    .trim()
+                    .to_string()
+            },
+        );
+
+        let boost = tracker.module_boost(&module_name);
+        if (boost - 1.0).abs() > f64::EPSILON {
+            candidate.expected_creature_score_gain *= boost as f32;
+        }
+    }
+}

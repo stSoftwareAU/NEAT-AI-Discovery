@@ -48,6 +48,13 @@ pub struct AnalyzeParallelInput {
     #[serde(default)]
     pub previous_neuron_fingerprints:
         Option<std::collections::HashMap<String, analysis::neuron_fingerprint::NeuronFingerprint>>,
+    /// Historical per-module outcome tracker for adaptive weighting (Issue #792).
+    ///
+    /// When provided, the tracker's success rates influence candidate scoring
+    /// and module statistics in the response metadata. Callers should persist
+    /// the returned tracker and pass it back on subsequent runs.
+    #[serde(default)]
+    pub module_outcome_tracker: Option<analysis::module_weights::ModuleOutcomeTracker>,
 }
 
 /// Internal input structure for synapse analysis (used by analyze_all)
@@ -119,6 +126,12 @@ pub struct AnalyzeAllInput {
     #[serde(default)]
     pub previous_neuron_fingerprints:
         Option<std::collections::HashMap<String, analysis::neuron_fingerprint::NeuronFingerprint>>,
+    /// Historical per-module outcome tracker for adaptive weighting (Issue #792).
+    ///
+    /// When provided, the tracker's success rates influence candidate scoring
+    /// and module statistics in the response metadata.
+    #[serde(default)]
+    pub module_outcome_tracker: Option<analysis::module_weights::ModuleOutcomeTracker>,
 }
 
 #[derive(Debug, Deserialize)]

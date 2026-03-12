@@ -130,6 +130,7 @@ pub unsafe extern "C" fn analyze_parallel(
                     neuron_fingerprints: None,
                     fingerprint_cache_hits: None,
                     fingerprint_cache_misses: None,
+                    module_outcome_tracker: None,
                     error: Some(err_msg),
                     error_kind,
                     retryable,

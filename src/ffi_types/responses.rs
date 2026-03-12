@@ -80,6 +80,13 @@ pub struct AnalyzeParallelOutput {
     /// Number of focus neurons analysed (changed or new fingerprints) (Issue #490).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fingerprint_cache_misses: Option<usize>,
+    /// Updated module outcome tracker for persistence across runs (Issue #792).
+    ///
+    /// Contains historical per-module success rates updated with candidate counts
+    /// from this run. Callers should persist this and pass it back as
+    /// `moduleOutcomeTracker` on the next discovery run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module_outcome_tracker: Option<analysis::module_weights::ModuleOutcomeTracker>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Structured error classification for retry decisions (Issue #651).

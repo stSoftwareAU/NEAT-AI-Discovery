@@ -69,11 +69,18 @@ pub(crate) fn dispatch_and_merge_discovery_modules(
     shared_cache: &Arc<cache::RecordCache>,
     max_candidates: Option<usize>,
     diversify: bool,
+    tracker: &ModuleOutcomeTracker,
 ) {
     // Issue #754: Pre-compute topology cache once for all detection modules.
     let topo = Arc::new(CreatureTopologyCache::new(creature));
     let modules = build_discovery_module_specs(creature, hidden_neurons, shared_cache, &topo);
-    discovery_dispatch::run_discovery_modules_parallel(syn, modules, max_candidates, diversify);
+    discovery_dispatch::run_discovery_modules_parallel(
+        syn,
+        modules,
+        max_candidates,
+        diversify,
+        tracker,
+    );
 }
 
 /// Perform cross-module deduplication on coordinated structural candidates.
@@ -220,7 +227,10 @@ pub(crate) fn apply_diversity_reranking(syn: &mut shared::AnalyzeSynapsesResult)
 /// Groups coordinated structural candidates by their target neuron/synapse,
 /// boosts candidates that multiple modules agree on, and penalises candidates
 /// where modules disagree on the direction of change.
-pub(crate) fn apply_ensemble_scoring(syn: &mut shared::AnalyzeSynapsesResult) {
+pub(crate) fn apply_ensemble_scoring(
+    syn: &mut shared::AnalyzeSynapsesResult,
+    tracker: &ModuleOutcomeTracker,
+) {
     use crate::observability::PhaseTimer;
 
     if syn.coordinated_structural_candidates.is_empty() {
@@ -230,12 +240,11 @@ pub(crate) fn apply_ensemble_scoring(syn: &mut shared::AnalyzeSynapsesResult) {
     crate::watchdog::beat("analysis::analyze_all → ensemble scoring starting");
     let _timer = PhaseTimer::new("ensemble_scoring");
 
-    let tracker = ModuleOutcomeTracker::default();
     let before_count = syn.coordinated_structural_candidates.len();
 
     let result = ensemble_scoring::apply_ensemble_scoring(
         std::mem::take(&mut syn.coordinated_structural_candidates),
-        &tracker,
+        tracker,
     );
 
     syn.coordinated_structural_candidates = result.candidates;

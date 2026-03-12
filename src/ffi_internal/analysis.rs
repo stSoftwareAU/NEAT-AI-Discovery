@@ -31,6 +31,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 neuron_fingerprints: None,
                 fingerprint_cache_hits: None,
                 fingerprint_cache_misses: None,
+                module_outcome_tracker: None,
                 error: Some(typed.to_string()),
                 error_kind: Some(kind),
                 retryable: Some(kind.is_retryable()),
@@ -119,6 +120,11 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 } else {
                     None
                 },
+                module_outcome_tracker: if result.module_outcome_tracker.is_empty() {
+                    None
+                } else {
+                    Some(result.module_outcome_tracker)
+                },
                 error: None,
                 error_kind: None,
                 retryable: None,
@@ -144,6 +150,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 neuron_fingerprints: None,
                 fingerprint_cache_hits: None,
                 fingerprint_cache_misses: None,
+                module_outcome_tracker: None,
                 error: Some(err_msg),
                 error_kind,
                 retryable,
@@ -167,6 +174,7 @@ pub(crate) fn build_analyze_all_input_from_parallel(
         include_neuron_analysis: Some(true),
         random_seed: input.random_seed,
         previous_neuron_fingerprints: input.previous_neuron_fingerprints,
+        module_outcome_tracker: input.module_outcome_tracker,
     }
 }
 

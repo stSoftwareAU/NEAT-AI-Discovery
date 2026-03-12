@@ -111,6 +111,7 @@ fn run_analysis(parquet_file: &str) -> Vec<f32> {
         include_neuron_analysis: Some(false),
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
+        module_outcome_tracker: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");
@@ -198,6 +199,7 @@ fn parallel_discovery_metadata_consistent() {
         include_neuron_analysis: Some(false),
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
+        module_outcome_tracker: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");

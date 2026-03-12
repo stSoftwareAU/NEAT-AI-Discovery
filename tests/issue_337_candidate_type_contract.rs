@@ -314,6 +314,7 @@ fn analyze_parallel_output_contains_all_candidate_fields() {
         neuron_fingerprints: None,
         fingerprint_cache_hits: None,
         fingerprint_cache_misses: None,
+        module_outcome_tracker: None,
         error: None,
         error_kind: None,
         retryable: None,
