@@ -1,7 +1,10 @@
 use crate::analysis::shared;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
-use super::{DiscoveryDetectionResult, DiscoveryModuleSpec, run_discovery_modules_parallel};
+use super::{
+    DiscoveryDetectionResult, DiscoveryModuleSpec, ModuleOutcomeTracker,
+    run_discovery_modules_parallel,
+};
 
 fn empty_synapse_result() -> shared::AnalyzeSynapsesResult {
     shared::AnalyzeSynapsesResult {
@@ -66,7 +69,8 @@ fn parallel_dispatch_merges_candidates_from_multiple_modules() {
         ),
     ];
 
-    run_discovery_modules_parallel(&mut syn, modules, None, false);
+    let tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &tracker);
 
     assert_eq!(
         syn.coordinated_structural_candidates.len(),
@@ -93,7 +97,8 @@ fn parallel_dispatch_handles_mix_of_none_and_some() {
         make_module("returns_more", Some(vec![make_candidate(0.5)])),
     ];
 
-    run_discovery_modules_parallel(&mut syn, modules, None, false);
+    let tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &tracker);
 
     assert_eq!(
         syn.coordinated_structural_candidates.len(),
@@ -120,7 +125,8 @@ fn parallel_dispatch_respects_max_synapse_candidates() {
         make_module("mod_b", Some(vec![make_candidate(1.0)])),
     ];
 
-    run_discovery_modules_parallel(&mut syn, modules, Some(2), false);
+    let tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, Some(2), false, &tracker);
 
     let total = syn.helpful_synapses.len()
         + syn.harmful_synapses.len()
@@ -141,7 +147,8 @@ fn parallel_dispatch_with_empty_modules_is_noop() {
 
     let mut syn = empty_synapse_result();
 
-    run_discovery_modules_parallel(&mut syn, Vec::new(), None, false);
+    let tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, Vec::new(), None, false, &tracker);
 
     assert!(syn.coordinated_structural_candidates.is_empty());
     assert_eq!(syn.metadata.candidates_returned, 0);
@@ -170,7 +177,8 @@ fn parallel_dispatch_preserves_deterministic_ordering() {
             make_module("mod_5", Some(vec![make_candidate(5.0)])),
         ];
 
-        run_discovery_modules_parallel(&mut syn, modules, None, true);
+        let tracker = ModuleOutcomeTracker::new();
+        run_discovery_modules_parallel(&mut syn, modules, None, true, &tracker);
 
         let gains: Vec<f32> = syn
             .coordinated_structural_candidates
@@ -203,7 +211,8 @@ fn parallel_dispatch_single_module_matches_sequential_behaviour() {
         "single",
         Some(vec![make_candidate(1.5), make_candidate(0.7)]),
     )];
-    run_discovery_modules_parallel(&mut syn_parallel, modules, None, false);
+    let tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn_parallel, modules, None, false, &tracker);
 
     // Sequential with one module (using existing run_discovery_module)
     let mut syn_sequential = empty_synapse_result();
@@ -267,7 +276,8 @@ fn parallel_dispatch_filters_zero_gain_candidates() {
         ]),
     )];
 
-    run_discovery_modules_parallel(&mut syn, modules, None, false);
+    let tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &tracker);
 
     assert_eq!(
         syn.coordinated_structural_candidates.len(),
@@ -302,7 +312,8 @@ fn parallel_dispatch_filters_negative_gain_candidates() {
         ]),
     )];
 
-    run_discovery_modules_parallel(&mut syn, modules, None, false);
+    let tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &tracker);
 
     assert_eq!(
         syn.coordinated_structural_candidates.len(),
@@ -327,7 +338,8 @@ fn parallel_dispatch_filters_all_non_positive_returns_empty() {
         Some(vec![make_candidate(0.0), make_candidate(-1.0)]),
     )];
 
-    run_discovery_modules_parallel(&mut syn, modules, None, false);
+    let tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &tracker);
 
     assert!(
         syn.coordinated_structural_candidates.is_empty(),

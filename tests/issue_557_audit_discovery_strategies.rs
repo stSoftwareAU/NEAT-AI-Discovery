@@ -136,6 +136,7 @@ fn all_candidates_have_positive_expected_score_gain() {
         include_neuron_analysis: Some(true),
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
+        module_outcome_tracker: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");
@@ -219,6 +220,7 @@ fn metadata_consistent_after_positive_gain_filtering() {
         include_neuron_analysis: Some(true),
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
+        module_outcome_tracker: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");

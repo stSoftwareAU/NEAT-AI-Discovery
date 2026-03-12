@@ -18,7 +18,8 @@ use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
 
 use super::shared::{AnalyzeAllResult, AnalyzeNeuronsResult, AnalyzeSynapsesResult};
 use super::{
-    cache, candidate_aggregation, module_dispatch_specs, neuron, neuron_fingerprint, synapse, utils,
+    cache, candidate_aggregation, module_dispatch_specs, module_weights, neuron,
+    neuron_fingerprint, synapse, utils,
 };
 
 /// Choose analysis ordering when deadline-constrained.
@@ -175,6 +176,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
+            module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
         });
     }
 
@@ -189,6 +191,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
+            module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
         });
     }
 
@@ -284,6 +287,9 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
     }
 
+    // Issue #792: Resolve the module outcome tracker from input or use a default.
+    let tracker = input.module_outcome_tracker.clone().unwrap_or_default();
+
     // Issue #375 / Issue #419: Discovery module dispatch using parallel pattern.
     if let Some(syn) = synapse_result.as_mut() {
         let max_candidates = input.max_synapse_candidates;
@@ -317,6 +323,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             &shared_cache,
             max_candidates,
             diversify,
+            &tracker,
         );
     }
 
@@ -327,7 +334,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
     // Issue #572: Ensemble candidate scoring — combine predictions across modules.
     if let Some(syn) = synapse_result.as_mut() {
-        module_dispatch_specs::apply_ensemble_scoring(syn);
+        module_dispatch_specs::apply_ensemble_scoring(syn, &tracker);
+    }
+
+    // Issue #792: Apply per-module boost factors to candidate expected gains.
+    if let Some(syn) = synapse_result.as_mut() {
+        module_weights::apply_module_boost_to_candidates(
+            &mut syn.coordinated_structural_candidates,
+            &tracker,
+        );
     }
 
     // Issue #610: Diversity-aware reranking — penalise structurally similar candidates.
@@ -393,5 +408,6 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         neuron_fingerprints: Some(current_fingerprints),
         fingerprint_cache_hits,
         fingerprint_cache_misses,
+        module_outcome_tracker: tracker,
     })
 }

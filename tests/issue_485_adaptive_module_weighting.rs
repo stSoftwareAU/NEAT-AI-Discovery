@@ -306,8 +306,9 @@ fn discovery_module_stats_populated_after_parallel_dispatch() {
         },
     ];
 
+    let tracker = ModuleOutcomeTracker::new();
     neat_ai_discovery::analysis::discovery_dispatch::run_discovery_modules_parallel(
-        &mut syn, modules, None, false,
+        &mut syn, modules, None, false, &tracker,
     );
 
     // Metadata should now contain per-module stats

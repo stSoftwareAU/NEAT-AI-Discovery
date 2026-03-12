@@ -463,6 +463,11 @@ pub struct AnalyzeAllResult {
     pub fingerprint_cache_hits: usize,
     /// Number of focus neurons analysed (changed or new fingerprints) (Issue #490).
     pub fingerprint_cache_misses: usize,
+    /// Updated module outcome tracker for persistence (Issue #792).
+    ///
+    /// Contains the tracker passed in (or a default), updated with candidate counts
+    /// from this run. Callers should persist this and pass it back on subsequent runs.
+    pub module_outcome_tracker: super::module_weights::ModuleOutcomeTracker,
 }
 
 /// Reason why no synapse candidate was found for a target neuron

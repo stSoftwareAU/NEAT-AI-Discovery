@@ -160,6 +160,7 @@ fn async_pipeline_produces_valid_analysis_results() {
         include_neuron_analysis: Some(false),
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
+        module_outcome_tracker: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");
@@ -217,6 +218,7 @@ fn async_pipeline_is_deterministic_with_fixed_seed() {
         include_neuron_analysis: Some(false),
         random_seed: Some(12345),
         previous_neuron_fingerprints: None,
+        module_outcome_tracker: None,
     };
 
     let result1 = analyze_all(&make_input()).expect("Run 1 should succeed");
