@@ -19,6 +19,7 @@ pub mod fanin_polarity_conflict;
 pub mod hard_sample_cluster;
 pub mod high_error_squash_exploration;
 pub mod input_sensitivity;
+pub mod low_impact_neuron;
 pub mod monotonicity;
 pub mod noise_signal;
 pub mod observation_range;
