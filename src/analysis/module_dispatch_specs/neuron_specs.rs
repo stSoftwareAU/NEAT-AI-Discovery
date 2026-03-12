@@ -1,7 +1,7 @@
 //! Neuron-focused discovery module dispatch specs.
 //!
-//! Covers: saturated, bottleneck, dead, oscillating, restricted range,
-//! operating point, unbounded capping, noisy neurons, activation
+//! Covers: saturated, bottleneck, dead, low-impact, oscillating, restricted
+//! range, operating point, unbounded capping, noisy neurons, activation
 //! recommendation, activation mismatch, bimodal neuron, bias perturbation,
 //! symmetry breaking, and co-adaptation detection.
 
@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use super::super::detection::{
     activation_mismatch, bias_perturbation, bimodal_neuron, bottleneck, co_adaptation, dead_neuron,
-    high_error_squash_exploration, monotonicity, noise_signal, operating_point, oscillating_neuron,
-    restricted_range, saturation, squash_weight_rescale, symmetry_breaking,
+    high_error_squash_exploration, low_impact_neuron, monotonicity, noise_signal, operating_point,
+    oscillating_neuron, restricted_range, saturation, squash_weight_rescale, symmetry_breaking,
     topology_cache::CreatureTopologyCache, unbounded_capping,
 };
 use super::super::recommendation::activation_recommendation;
@@ -49,6 +49,15 @@ pub(crate) fn append_neuron_specs(
         records: cache.load_records_for_hidden(&hidden),
         detect: |records| dead_neuron::detect_dead_neurons(&creature, &records, Some(&topo)),
         convert: |detected| dead_neuron::dead_neurons_to_coordinated_candidates(&detected),
+    );
+
+    // Issue #793: Low-impact neuron detection (broader threshold than dead neuron)
+    discovery_spec!(modules, "low impact neuron detection", "low_impact_neuron_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature, topo = topo =>
+        guard: hidden,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| low_impact_neuron::detect_low_impact_neurons(&creature, &records, Some(&topo)),
+        convert: |detected| low_impact_neuron::low_impact_neurons_to_coordinated_candidates(&detected),
     );
 
     // Issue #358: Oscillating neuron detection
