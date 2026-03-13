@@ -26,7 +26,7 @@
 //! - **Variance consistency** — lower std dev relative to mean = higher confidence
 //! - **Sample sufficiency** — more samples = higher confidence (plateaus at 500)
 
-use std::collections::HashMap;
+use super::helpers::build_record_map;
 
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -98,10 +98,7 @@ pub fn detect_low_impact_neurons(
         }
     };
 
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     let mut candidates = Vec::with_capacity(topo.hidden_uuids.len());
 

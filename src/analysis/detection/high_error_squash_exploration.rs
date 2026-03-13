@@ -18,6 +18,7 @@
 //!   `MIN_ERROR_REDUCTION_FRACTION` relative to the current activation
 //! - The neuron's current activation is not IDENTITY (already linear)
 
+use super::helpers::build_record_map;
 use crate::activations::apply_scalar_squash;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 use crate::types::DiscoverRecord;
@@ -92,10 +93,7 @@ pub fn detect_high_error_squash_candidates(
     neurons: &[(String, String, f32)],
     neuron_records: &[(String, Vec<DiscoverRecord>)],
 ) -> Vec<HighErrorSquashCandidate> {
-    let records_map: std::collections::HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     let mut candidates = Vec::new();
 

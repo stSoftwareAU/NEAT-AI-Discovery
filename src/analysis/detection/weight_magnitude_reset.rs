@@ -22,8 +22,7 @@
 //! beyond the local basin. The NEAT-AI validation framework naturally handles
 //! this by only accepting changes that improve the score.
 
-use std::collections::HashMap;
-
+use super::helpers::build_record_map;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -129,10 +128,7 @@ pub fn detect_stuck_synapse_weight_resets(
     neuron_records: &[(String, Vec<DiscoverRecord>)],
 ) -> Vec<StuckSynapseCandidate> {
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     let mut candidates = Vec::with_capacity(creature.synapses.len());
 

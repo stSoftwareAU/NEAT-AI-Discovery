@@ -29,6 +29,8 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 
+use super::helpers::build_record_map;
+
 /// Minimum topological depth from inputs for a neuron to be considered "deep"
 /// and eligible for skip-connection candidates.
 const MIN_DEEP_DEPTH: usize = 3;
@@ -123,10 +125,7 @@ pub fn detect_skip_connection_candidates(
     }
 
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     // Only consider hidden neurons with sufficient samples
     let qualified_hidden: Vec<&str> = hidden_uuids

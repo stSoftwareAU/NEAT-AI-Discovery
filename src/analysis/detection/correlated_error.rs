@@ -27,6 +27,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::helpers::build_record_map;
+
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -97,10 +99,7 @@ pub fn detect_correlated_error_patterns(
         .collect();
 
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     // Collect output neurons that have sufficient records with errors
     let mut output_neurons_with_errors: Vec<&str> = Vec::new();

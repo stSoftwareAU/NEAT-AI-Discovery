@@ -119,6 +119,7 @@ pub struct ThresholdEffectCandidate {
     pub estimated_improvement: f32,
 }
 
+use super::helpers::build_record_map;
 use super::stats::{compute_mean, compute_variance};
 
 /// Compute covariance between two equal-length slices.
@@ -152,10 +153,7 @@ pub fn detect_dominant_inputs(
     config: &InputSensitivityConfig,
 ) -> Vec<DominantInputCandidate> {
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     // Identify input neurons
     let input_uuids: HashSet<&str> = creature
@@ -329,10 +327,7 @@ pub fn detect_threshold_effects(
     config: &InputSensitivityConfig,
 ) -> Vec<ThresholdEffectCandidate> {
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     // Identify input neurons
     let input_uuids: HashSet<&str> = creature

@@ -31,6 +31,7 @@
 //! - Observed activation range covers < `UTILISATION_THRESHOLD` of the theoretical range
 //! - Recommends IDENTITY (no bounds, preserves full signal)
 
+use super::helpers::build_record_map;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
@@ -110,10 +111,7 @@ pub fn detect_activation_mismatches(
     neurons: &[(String, String, f32)],
     neuron_records: &[(String, Vec<DiscoverRecord>)],
 ) -> Vec<ActivationMismatchCandidate> {
-    let records_map: std::collections::HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     let mut candidates = Vec::with_capacity(neurons.len());
 

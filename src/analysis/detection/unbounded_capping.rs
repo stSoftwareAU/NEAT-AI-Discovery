@@ -29,6 +29,7 @@
 //! 3. **Change IDENTITY → HARD_TANH**: Cap activations at ±1.0.
 //! 4. **Optionally adjust weights**: Scale down incoming weights to reduce activation magnitude.
 
+use super::helpers::build_record_map;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
@@ -138,10 +139,7 @@ pub fn detect_unbounded_capping_candidates(
     let mut candidates = Vec::with_capacity(neurons.len());
 
     // Build a map from uuid to records for quick lookup
-    let records_map: std::collections::HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     for (uuid, squash, _bias) in neurons {
         // Skip bounded activations

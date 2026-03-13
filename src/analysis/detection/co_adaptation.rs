@@ -29,6 +29,8 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 
+use super::helpers::build_record_map;
+
 /// Minimum |correlation| to consider a pair co-adapted.
 const CO_ADAPTATION_THRESHOLD: f32 = 0.9;
 
@@ -85,10 +87,7 @@ pub fn detect_co_adapted_neurons(
     }
 
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     // Filter to hidden neurons with sufficient samples
     let eligible: Vec<&str> = hidden_uuids

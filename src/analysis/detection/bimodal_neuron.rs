@@ -30,6 +30,7 @@
 //! When bimodality is detected, we recommend adding a new neuron to split the
 //! bimodal neuron. Each candidate includes bias offsets targeting each mode.
 
+use super::helpers::build_record_map;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
@@ -95,10 +96,7 @@ pub fn detect_bimodal_neurons(
 ) -> Vec<BimodalNeuronCandidate> {
     let mut candidates = Vec::with_capacity(neurons.len());
 
-    let records_map: std::collections::HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     for (uuid, squash, bias) in neurons {
         let Some(records) = records_map.get(uuid.as_str()) else {
