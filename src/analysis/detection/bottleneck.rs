@@ -26,7 +26,7 @@
 //! These are emitted as `CoordinatedStructuralCandidateJson` with `AddNeuron` and/or
 //! `AddSynapse` operations.
 
-use std::collections::HashMap;
+use super::helpers::build_record_map;
 
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -92,10 +92,7 @@ pub fn detect_bottleneck_neurons(
     };
 
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     // Compute total error across all recorded neurons for normalisation
     let total_error: f32 = neuron_records

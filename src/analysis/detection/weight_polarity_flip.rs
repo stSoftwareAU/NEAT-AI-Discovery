@@ -26,6 +26,7 @@
 
 use std::collections::HashMap;
 
+use super::helpers::build_record_map;
 use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT as MIN_SAMPLES_FOR_GRADIENT;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -86,10 +87,7 @@ pub fn detect_weight_polarity_flip_candidates(
     neuron_records: &[(String, Vec<DiscoverRecord>)],
 ) -> Vec<PolarityFlipCandidate> {
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     // Build obs_index → error lookup for each neuron
     let target_error_map: HashMap<&str, HashMap<u32, f32>> = neuron_records

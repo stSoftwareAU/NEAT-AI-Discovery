@@ -95,6 +95,7 @@ fn noise_signal_threshold_from_env() -> f32 {
     crate::config::noise_signal_threshold(DEFAULT_NOISE_SIGNAL_THRESHOLD)
 }
 
+use super::helpers::build_record_map;
 use super::stats::{compute_mean, compute_variance};
 
 /// Detect neurons with high noise-to-signal ratio.
@@ -200,10 +201,7 @@ pub fn detect_noisy_synapses(
     use std::collections::HashMap;
 
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     let mut candidates = Vec::with_capacity(creature.synapses.len());
 

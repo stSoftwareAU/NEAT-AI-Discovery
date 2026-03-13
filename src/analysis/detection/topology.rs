@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
+use super::helpers::build_record_map;
 use super::topology_cache::CreatureTopologyCache;
 
 // MIN_SAMPLES_FOR_TOPOLOGY moved to constants.rs (Issue #424)
@@ -134,10 +135,7 @@ pub fn detect_topology_issues(
     }
 
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     // Only consider hidden neurons with sufficient samples
     let qualified_hidden: Vec<&str> = topo

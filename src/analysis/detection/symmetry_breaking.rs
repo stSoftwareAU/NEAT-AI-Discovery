@@ -26,6 +26,8 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 
+use super::helpers::build_record_map;
+
 /// Minimum cosine similarity to consider two weight vectors as symmetric.
 const COSINE_SIMILARITY_THRESHOLD: f32 = 0.95;
 
@@ -87,10 +89,7 @@ pub fn detect_symmetric_neurons(
     }
 
     // Build records lookup for minimum sample count filtering
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     // Filter to neurons with sufficient samples
     let eligible_neurons: Vec<&&crate::NeuronJson> = hidden_neurons

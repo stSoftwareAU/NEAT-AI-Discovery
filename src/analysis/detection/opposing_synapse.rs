@@ -30,6 +30,7 @@
 
 use std::collections::HashMap;
 
+use super::helpers::build_record_map;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -79,10 +80,7 @@ pub fn detect_opposing_synapses(
     neuron_records: &[(String, Vec<DiscoverRecord>)],
 ) -> Vec<OpposingSynapseCandidate> {
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     // Build a mapping from obs_index to records for target neurons
     let mut target_error_map: HashMap<&str, HashMap<u32, &DiscoverRecord>> = HashMap::new();

@@ -22,7 +22,9 @@
 //! Dead neurons consume GPU resources during both training and inference without contributing
 //! useful information, so removal is the primary recommendation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+
+use super::helpers::build_record_map;
 
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -94,10 +96,7 @@ pub fn detect_dead_neurons(
     };
 
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     let mut candidates = Vec::with_capacity(topo.hidden_uuids.len());
 

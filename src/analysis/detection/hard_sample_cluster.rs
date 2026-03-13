@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
+use super::helpers::build_record_map;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 
 // =============================================================================
@@ -133,10 +134,7 @@ pub fn detect_hard_sample_clusters(
         .collect();
 
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
-        .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
-        .collect();
+    let records_map = build_record_map(neuron_records);
 
     // Step 1: Aggregate per-observation mean absolute error across all output neurons
     let obs_errors = aggregate_obs_errors(&output_uuids, &records_map);
