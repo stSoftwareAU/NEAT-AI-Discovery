@@ -23,8 +23,7 @@ use crate::analysis::shared::{AnalyzeNeuronsResult, TimingScope};
 
 // Import utilities
 use crate::analysis::utils::{
-    build_deadline, deadline_passed, lock_or_bail, log_analysis_start, shuffle_slice,
-    verbose_enabled,
+    build_deadline, deadline_passed, log_analysis_start, shuffle_slice, verbose_enabled,
 };
 
 // Import diagnostics and rejection tracking (Issue #271)
@@ -44,6 +43,7 @@ use super::synapse::{
 
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Analyze neurons for a given input.
@@ -99,7 +99,7 @@ pub(crate) fn analyze_neurons_with_cache(
         "Discovery logic called without GPU - check_gpu_available should have prevented this"
     );
     let gpu_used = true;
-    let analysis_timed_out = Arc::new(Mutex::new(false));
+    let analysis_timed_out = Arc::new(AtomicBool::new(false));
 
     // Mark skipped neurons in diagnostics so they appear with the correct reason
     // instead of misleading reasons like NoEligibleSources.
@@ -161,8 +161,8 @@ pub(crate) fn analyze_neurons_with_cache(
     focus_order_arc
         .par_iter()
         .try_for_each(|target_uuid| -> Result<()> {
-            if *lock_or_bail(&analysis_timed_out, "analysis_timed_out")? || deadline_passed(&deadline) {
-                *lock_or_bail(&analysis_timed_out, "analysis_timed_out")? = true;
+            if analysis_timed_out.load(Ordering::Relaxed) || deadline_passed(&deadline) {
+                analysis_timed_out.store(true, Ordering::Relaxed);
                 return Ok(());
             }
 
@@ -244,7 +244,7 @@ pub(crate) fn analyze_neurons_with_cache(
             )?;
 
             // Check if timed out during pre-filtering
-            if *lock_or_bail(&analysis_timed_out, "analysis_timed_out")? {
+            if analysis_timed_out.load(Ordering::Relaxed) {
                 return Ok(());
             }
 

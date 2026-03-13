@@ -6,6 +6,7 @@
 use crate::{AnalyzeNeuronsInput, CandidateNeuronJson};
 use anyhow::Result;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::analysis::cache::RecordCache;
@@ -19,7 +20,7 @@ use crate::analysis::utils::{
 
 /// Parameters for building the final neuron analysis result.
 pub(crate) struct NeuronResultParams<'a> {
-    pub analysis_timed_out: &'a Arc<Mutex<bool>>,
+    pub analysis_timed_out: &'a Arc<AtomicBool>,
     pub helpful_map: &'a Arc<Mutex<HashMap<u64, CandidateNeuronJson>>>,
     pub completed_count: &'a Arc<std::sync::atomic::AtomicUsize>,
     pub total_focus_count: usize,
@@ -41,7 +42,7 @@ pub(crate) struct NeuronResultParams<'a> {
 pub(crate) fn build_neuron_results(
     params: &NeuronResultParams<'_>,
 ) -> Result<AnalyzeNeuronsResult> {
-    let analysis_timed_out = *lock_or_bail(params.analysis_timed_out, "analysis_timed_out")?;
+    let analysis_timed_out = params.analysis_timed_out.load(Ordering::Relaxed);
     let helpful_map = lock_or_bail(params.helpful_map, "helpful_map")?.clone();
 
     // Log timeout with completion stats (always visible, not just verbose)
