@@ -147,7 +147,13 @@ pub fn apply_scalar_squash(name: &str, x: f32) -> Option<f32> {
             if !x.is_finite() || x >= EXPONENTIAL_CUTOFF {
                 Some(JS_MAX_SAFE_INTEGER)
             } else {
-                Some(((x as f64).exp()) as f32)
+                let result = ((x as f64).exp()) as f32;
+                // Belt-and-suspenders: guard against non-finite f64→f32 cast (Issue #805)
+                Some(if result.is_finite() {
+                    result
+                } else {
+                    JS_MAX_SAFE_INTEGER
+                })
             }
         }
         "GAUSSIAN" => {
@@ -221,7 +227,13 @@ pub fn apply_scalar_squash(name: &str, x: f32) -> Option<f32> {
             } else if x >= SOFTPLUS_CUTOFF {
                 Some(SOFTPLUS_LARGE_THRESHOLD)
             } else {
-                Some(((1.0f64 + (x as f64).exp()).ln()) as f32)
+                let result = ((1.0f64 + (x as f64).exp()).ln()) as f32;
+                // Belt-and-suspenders: guard against non-finite f64→f32 cast (Issue #805)
+                Some(if result.is_finite() {
+                    result
+                } else {
+                    SOFTPLUS_LARGE_THRESHOLD
+                })
             }
         }
         "SOFTSIGN" => Some(x / (1.0 + x.abs())),
@@ -291,7 +303,13 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
             if !x.is_finite() || x >= EXPONENTIAL_CUTOFF {
                 JS_MAX_SAFE_INTEGER
             } else {
-                ((x as f64).exp()) as f32
+                // Belt-and-suspenders: guard against non-finite f64→f32 cast (Issue #805)
+                let result = ((x as f64).exp()) as f32;
+                if result.is_finite() {
+                    result
+                } else {
+                    JS_MAX_SAFE_INTEGER
+                }
             }
         }),
         "GAUSSIAN" => Some(|x| {
@@ -342,7 +360,13 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
             } else if x >= SOFTPLUS_CUTOFF {
                 SOFTPLUS_LARGE_THRESHOLD
             } else {
-                ((1.0f64 + (x as f64).exp()).ln()) as f32
+                // Belt-and-suspenders: guard against non-finite f64→f32 cast (Issue #805)
+                let result = ((1.0f64 + (x as f64).exp()).ln()) as f32;
+                if result.is_finite() {
+                    result
+                } else {
+                    SOFTPLUS_LARGE_THRESHOLD
+                }
             }
         }),
         "SOFTSIGN" => Some(|x| x / (1.0 + x.abs())),
