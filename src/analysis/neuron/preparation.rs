@@ -7,7 +7,8 @@ use crate::AnalyzeNeuronsInput;
 use crate::types::DiscoverRecord;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use crate::analysis::cache::RecordCache;
@@ -20,8 +21,7 @@ use crate::analysis::shared::{
     AnalyzeNeuronsResult, NeuronNoCandidateReason, NeuronNoCandidateSummary,
 };
 use crate::analysis::utils::{
-    OrderedNeuron, deadline_passed, lock_or_bail, order_eligible_sources, parse_input_index,
-    verbose_enabled,
+    OrderedNeuron, deadline_passed, order_eligible_sources, parse_input_index, verbose_enabled,
 };
 
 /// Result of the preparation phase, containing all maps and filtered targets
@@ -163,7 +163,7 @@ pub(crate) fn load_source_records<'a>(
     used_inputs_arc: &Arc<HashSet<String>>,
     cache: &Arc<RecordCache>,
     deadline: &Option<SystemTime>,
-    analysis_timed_out: &Arc<Mutex<bool>>,
+    analysis_timed_out: &Arc<AtomicBool>,
     diagnostics: &Arc<NeuronDiagnostics>,
 ) -> Result<Vec<(&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)>> {
     let mut eligible_sources: Vec<&OrderedNeuron> = ordered_neurons_arc
@@ -204,7 +204,7 @@ pub(crate) fn load_source_records<'a>(
 
     for source in &eligible_sources {
         if deadline_passed(deadline) {
-            *lock_or_bail(analysis_timed_out, "analysis_timed_out")? = true;
+            analysis_timed_out.store(true, Ordering::Relaxed);
             break;
         }
         let source_uuid = source.uuid.as_str();
@@ -238,7 +238,7 @@ pub(crate) fn load_source_records<'a>(
     // Log summary of source loading results for debugging
     let sources_checked =
         sources_to_process.len() + empty_record_sources.len() + load_failure_count as usize;
-    let timed_out_during_loading = *lock_or_bail(analysis_timed_out, "analysis_timed_out")?;
+    let timed_out_during_loading = analysis_timed_out.load(Ordering::Relaxed);
     if verbose_enabled()
         && (sources_to_process.is_empty()
             || load_failure_count > 0

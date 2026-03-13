@@ -6,6 +6,7 @@
 use crate::CandidateNeuronJson;
 use anyhow::Result;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -50,12 +51,12 @@ pub(crate) fn evaluate_neuron_candidates(
     target_uuid: &str,
     ctx: &NeuronEvalContext<'_>,
     deadline: &Option<SystemTime>,
-    analysis_timed_out: &Arc<Mutex<bool>>,
+    analysis_timed_out: &Arc<AtomicBool>,
 ) -> Result<()> {
     for result in work_results {
         // Check deadline before each evaluation batch
         if deadline_passed(deadline) {
-            *lock_or_bail(analysis_timed_out, "analysis_timed_out")? = true;
+            analysis_timed_out.store(true, Ordering::Relaxed);
             break;
         }
 
