@@ -27,7 +27,9 @@ impl GpuWorkQueue {
         if samples.is_empty() {
             // Return a pre-resolved future with empty results
             let (tx, rx) = bounded(1);
-            let _ = tx.send(Ok(Vec::new()));
+            if tx.send(Ok(Vec::new())).is_err() {
+                tracing::trace!("GPU queue: receiver dropped for empty helpful batch");
+            }
             return Ok(GpuFuture {
                 response_rx: rx,
                 timeout: Duration::from_secs(1),

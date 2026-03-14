@@ -27,6 +27,8 @@ events. No behaviour change — only observability is added. Addresses #807.
   receipt in `gpu_thread_loop`
 
 ### submission.rs
+- Replaced 1 bare `let _ = tx.send(...)` pattern (empty helpful batch
+  pre-resolved future) with trace-level logging
 - Added `tracing::debug!` enqueue spans for all 6 submission methods (helpful
   async, helpful blocking, harmful, ReLU, activation, activation batch) with
   sample/batch count fields
