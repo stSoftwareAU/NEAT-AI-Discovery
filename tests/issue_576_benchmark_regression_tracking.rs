@@ -30,6 +30,7 @@ const EXPECTED_BENCHMARKS: &[&str] = &[
     "bfs_allocation",
     "synapse_lookup",
     "weight_coherence_cache",
+    "synapse_preparation",
 ];
 
 #[test]

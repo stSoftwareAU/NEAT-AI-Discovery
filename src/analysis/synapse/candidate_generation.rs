@@ -130,15 +130,18 @@ pub(crate) fn group_sources_by_locality<'a>(
 ///
 /// This uses `TargetMap::build_samples_for_group` to build samples for all
 /// sources in a single pass through the target data.
-pub(crate) fn build_samples_for_locality_group(
-    group: &SampleLocalityGroup<'_>,
+///
+/// Returns `&str` references to source UUIDs from the locality group,
+/// avoiding per-source String allocations in the hot path (Issue #808).
+pub(crate) fn build_samples_for_locality_group<'a>(
+    group: &SampleLocalityGroup<'a>,
     target_map: &TargetMap,
-) -> Vec<(String, Vec<HelpfulSample>, usize)> {
+) -> Vec<(&'a str, Vec<HelpfulSample>, usize)> {
     if group.sources.len() == 1 {
         // Single source - use standard path (no overhead)
         let (source, records) = &group.sources[0];
         let samples = target_map.build_samples_from(records);
-        return vec![(source.uuid.clone(), samples, records.len())];
+        return vec![(source.uuid.as_str(), samples, records.len())];
     }
 
     // Multiple sources - use batched sample building
@@ -154,7 +157,7 @@ pub(crate) fn build_samples_for_locality_group(
         .sources
         .iter()
         .zip(samples_batch)
-        .map(|((source, records), samples)| (source.uuid.clone(), samples, records.len()))
+        .map(|((source, records), samples)| (source.uuid.as_str(), samples, records.len()))
         .collect()
 }
 

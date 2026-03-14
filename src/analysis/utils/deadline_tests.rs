@@ -549,8 +549,8 @@ fn order_eligible_sources_shuffles_deterministically_with_seed() {
     let mut sources1: Vec<&OrderedNeuron> = neurons.iter().collect();
     let mut sources2: Vec<&OrderedNeuron> = neurons.iter().collect();
 
-    order_eligible_sources(&mut sources1, Some(12345), "test", 0, None);
-    order_eligible_sources(&mut sources2, Some(12345), "test", 0, None);
+    order_eligible_sources::<String>(&mut sources1, Some(12345), "test", 0, None);
+    order_eligible_sources::<String>(&mut sources2, Some(12345), "test", 0, None);
 
     let uuids1: Vec<&str> = sources1.iter().map(|n| n.uuid.as_str()).collect();
     let uuids2: Vec<&str> = sources2.iter().map(|n| n.uuid.as_str()).collect();
@@ -568,7 +568,7 @@ fn order_eligible_sources_preserves_all_elements() {
         .collect();
 
     let mut sources: Vec<&OrderedNeuron> = neurons.iter().collect();
-    order_eligible_sources(&mut sources, Some(42), "test", 0, None);
+    order_eligible_sources::<String>(&mut sources, Some(42), "test", 0, None);
 
     let mut uuids: Vec<&str> = sources.iter().map(|n| n.uuid.as_str()).collect();
     uuids.sort();
@@ -583,7 +583,7 @@ fn order_eligible_sources_no_op_for_single_element() {
         index: 0,
     }];
     let mut sources: Vec<&OrderedNeuron> = neurons.iter().collect();
-    order_eligible_sources(&mut sources, Some(42), "test", 0, None);
+    order_eligible_sources::<String>(&mut sources, Some(42), "test", 0, None);
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].uuid, "single");
 }

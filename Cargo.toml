@@ -116,6 +116,10 @@ harness = false
 name = "weight_coherence_cache"
 harness = false
 
+[[bench]]
+name = "synapse_preparation"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

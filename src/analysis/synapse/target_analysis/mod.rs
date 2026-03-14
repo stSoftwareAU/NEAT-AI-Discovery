@@ -37,18 +37,21 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 /// Shared context for per-target analysis, built once in the main pipeline.
-pub(crate) struct TargetAnalysisContext {
+///
+/// Maps that reference input data use `&str` to avoid cloning (Issue #808).
+/// The lifetime `'a` is tied to the `AnalyzeSynapsesInput` reference.
+pub(crate) struct TargetAnalysisContext<'a> {
     pub ordered_neurons: Arc<Vec<OrderedNeuron>>,
     pub order_map: Arc<HashMap<String, usize>>,
     pub neuron_index: Arc<NeuronIndex>,
     pub existing_synapses: Arc<HashSet<(u32, u32)>>,
     pub existing_synapse_weights: Arc<HashMap<(u32, u32), f32>>,
     pub synapses_by_target: Arc<HashMap<u32, Vec<SynapseJson>>>,
-    pub neuron_squash_map: Arc<HashMap<String, String>>,
+    pub neuron_squash_map: Arc<HashMap<&'a str, &'a str>>,
     pub neuron_type_map: Arc<HashMap<String, String>>,
     pub input_neuron_uuids: Arc<HashSet<String>>,
-    pub used_inputs: Arc<HashSet<String>>,
-    pub neuron_bias_map: Arc<HashMap<String, f32>>,
+    pub used_inputs: Arc<HashSet<&'a str>>,
+    pub neuron_bias_map: Arc<HashMap<&'a str, f32>>,
     pub constant_source_effect_threshold: Option<f32>,
     pub diagnostics: Arc<crate::analysis::diagnostics::TargetDiagnostics>,
     pub timing_collector: Arc<crate::analysis::shared::TimingCollector>,
@@ -88,10 +91,14 @@ struct HelpfulWork {
 }
 
 /// Tracking result from sample building for a single source neuron.
-struct SourceWorkResult {
+///
+/// Uses `&str` for `source_uuid` to avoid cloning UUIDs in the hot path
+/// (Issue #808). The reference points to `OrderedNeuron.uuid` which lives
+/// in `ctx.ordered_neurons` (Arc'd) for the duration of analysis.
+struct SourceWorkResult<'a> {
     work: Option<HelpfulWork>,
     had_samples: bool,
-    source_uuid: String,
+    source_uuid: &'a str,
     record_count: usize,
 }
 
