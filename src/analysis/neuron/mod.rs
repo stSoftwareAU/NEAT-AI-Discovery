@@ -253,7 +253,7 @@ pub(crate) fn analyze_neurons_with_cache(
             let target_map_ref = &target_map;
 
             // Issue #221: Sample Locality Optimisation
-            let work_results: Vec<evaluation::NeuronWorkResult> = {
+            let work_results: Vec<evaluation::NeuronWorkResult<'_>> = {
                 let _timing = TimingScope::sample_building(&timing_collector);
 
                 let locality_groups = group_sources_by_locality(&sources_to_process);
@@ -295,7 +295,7 @@ pub(crate) fn analyze_neurons_with_cache(
             for result in &work_results {
                 diagnostics.record_candidate_attempt(target_uuid, !result.samples.is_empty());
                 if result.samples.is_empty() {
-                    diagnostics.record_no_samples(target_uuid, &result.source_uuid);
+                    diagnostics.record_no_samples(target_uuid, result.source_uuid);
                 }
             }
 

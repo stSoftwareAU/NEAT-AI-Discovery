@@ -393,12 +393,12 @@ pub struct OrderedNeuron {
 /// - If `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1` is set, input neurons with NO
 ///   existing outgoing synapses are prioritised (moved to the front) before any other
 ///   ordering is applied (Issue #182).
-pub fn order_eligible_sources(
+pub fn order_eligible_sources<S: std::borrow::Borrow<str> + std::hash::Hash + Eq>(
     eligible_sources: &mut Vec<&OrderedNeuron>,
     seed: Option<u64>,
     context: &str,
     creature_input_count: usize,
-    used_inputs: Option<&HashSet<String>>,
+    used_inputs: Option<&HashSet<S>>,
 ) {
     if eligible_sources.len() <= 1 {
         return;
@@ -413,7 +413,7 @@ pub fn order_eligible_sources(
         // Partition: unused inputs first, then used inputs, then non-inputs
         let (mut unused_inputs, mut others): (Vec<_>, Vec<_>) = eligible_sources
             .drain(..)
-            .partition(|n| parse_input_index(&n.uuid).is_some() && !used.contains(&n.uuid));
+            .partition(|n| parse_input_index(&n.uuid).is_some() && !used.contains(n.uuid.as_str()));
 
         // Issue #467: Within "others", still put used inputs before hidden neurons
         let (mut used_inputs_vec, mut non_inputs): (Vec<_>, Vec<_>) = others

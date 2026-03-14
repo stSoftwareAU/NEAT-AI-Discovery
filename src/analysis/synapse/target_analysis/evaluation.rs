@@ -107,8 +107,8 @@ pub(crate) fn collect_and_process_helpful_results(
 
             let target_squash = ctx
                 .neuron_squash_map
-                .get(&work.target_uuid)
-                .map(std::string::String::as_str);
+                .get(work.target_uuid.as_str())
+                .copied();
 
             if get_target_simulation_fn(&work.samples, target_squash).is_some() {
                 results.saturation_aware_used = true;
@@ -269,7 +269,7 @@ pub(crate) fn collect_and_process_helpful_results(
                         {
                             let old_bias = ctx
                                 .neuron_bias_map
-                                .get(&work.target_uuid)
+                                .get(work.target_uuid.as_str())
                                 .copied()
                                 .unwrap_or(0.0);
                             let new_bias = old_bias + (applied_weight * mean_activation);
@@ -354,7 +354,7 @@ pub(crate) fn collect_and_process_helpful_results(
 /// Issue #568: Process pre-built harmful samples via GPU evaluation.
 pub(crate) fn process_harmful_batch_from_prepared(
     target_uuid: &str,
-    harmful_work: &[PreparedHarmfulWork],
+    harmful_work: &[PreparedHarmfulWork<'_>],
     gpu: &GpuWorkQueue,
     ctx: &TargetAnalysisContext,
     cache: &RecordCache,
@@ -393,8 +393,8 @@ pub(crate) fn process_harmful_batch_from_prepared(
         let confidence_metrics =
             compute_confidence_metrics(&work.samples, neuron_error_improvement, None);
         harmful_candidates.push(CandidateSynapseJson {
-            from_neuron_uuid: work.from_uuid.clone(),
-            to_neuron_uuid: work.to_uuid.clone(),
+            from_neuron_uuid: work.from_uuid.to_string(),
+            to_neuron_uuid: work.to_uuid.to_string(),
             from_neuron_index: None,
             to_neuron_index: None,
             weight: work.weight,

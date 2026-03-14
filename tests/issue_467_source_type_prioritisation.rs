@@ -54,7 +54,7 @@ fn order_eligible_sources_places_input_neurons_before_hidden() {
     let mut sources: Vec<&OrderedNeuron> = neurons.iter().collect();
 
     // Use a fixed seed for determinism
-    order_eligible_sources(&mut sources, Some(42), "test", 3, None);
+    order_eligible_sources::<String>(&mut sources, Some(42), "test", 3, None);
 
     // All input neurons (input-0, input-1, input-2) should appear before any hidden neuron
     let first_hidden_pos = sources
@@ -100,7 +100,7 @@ fn order_eligible_sources_input_first_with_different_seeds() {
 
     for seed in [0u64, 1, 42, 100, 999] {
         let mut sources: Vec<&OrderedNeuron> = neurons.iter().collect();
-        order_eligible_sources(&mut sources, Some(seed), "test-seeds", 4, None);
+        order_eligible_sources::<String>(&mut sources, Some(seed), "test-seeds", 4, None);
 
         // Input neurons should always be at the front
         let input_count = sources
@@ -144,7 +144,7 @@ fn order_eligible_sources_preserves_all_neurons_with_prioritisation() {
     ];
 
     let mut sources: Vec<&OrderedNeuron> = neurons.iter().collect();
-    order_eligible_sources(&mut sources, Some(42), "test-preserve", 2, None);
+    order_eligible_sources::<String>(&mut sources, Some(42), "test-preserve", 2, None);
 
     assert_eq!(
         sources.len(),

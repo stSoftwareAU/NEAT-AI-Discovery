@@ -34,7 +34,7 @@ pub(crate) fn detect_noisy_vs_trusted(
     synapses_by_target: &[SynapseJson],
     cache: &RecordCache,
     target_map: &TargetMap,
-    neuron_squash_map: &HashMap<String, String>,
+    neuron_squash_map: &HashMap<&str, &str>,
 ) -> Option<CoordinatedStructuralCandidateJson> {
     fn activation_mean_and_variance(records: &[DiscoverRecord]) -> Option<(f32, f32)> {
         let mut n = 0.0f32;
@@ -104,9 +104,7 @@ pub(crate) fn detect_noisy_vs_trusted(
     const MEAN_EPS: f32 = 1e-3;
     const MIN_VAR_RATIO: f32 = 10.0;
 
-    let target_squash = neuron_squash_map
-        .get(target_uuid)
-        .map(std::string::String::as_str);
+    let target_squash = neuron_squash_map.get(target_uuid).copied();
 
     let mut best: Option<(IncomingInput<'_>, IncomingInput<'_>, f32)> = None; // (noisy, trusted, gain)
 
