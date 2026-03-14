@@ -31,7 +31,7 @@ use std::collections::{HashMap, HashSet};
 /// Returns `Some(candidate)` if a beneficial noisy-vs-trusted pair is found.
 pub(crate) fn detect_noisy_vs_trusted(
     target_uuid: &str,
-    synapses_by_target: &[SynapseJson],
+    synapses_by_target: &[&SynapseJson],
     cache: &RecordCache,
     target_map: &TargetMap,
     neuron_squash_map: &HashMap<&str, &str>,

@@ -177,9 +177,101 @@ fn bench_per_target_uuid_patterns(c: &mut Criterion) {
     group.finish();
 }
 
+/// Simulate synapses_by_target with cloned SynapseJson objects (baseline).
+fn build_synapses_by_target_cloned(creature: &CreatureJson) {
+    let synapses_by_target: HashMap<&str, Vec<SynapseJson>> =
+        creature
+            .synapses
+            .iter()
+            .fold(HashMap::new(), |mut acc, synapse| {
+                acc.entry(synapse.to_uuid.as_str())
+                    .or_default()
+                    .push(synapse.clone());
+                acc
+            });
+    black_box(&synapses_by_target);
+}
+
+/// Simulate synapses_by_target with borrowed references (optimised).
+fn build_synapses_by_target_borrowed(creature: &CreatureJson) {
+    let synapses_by_target: HashMap<&str, Vec<&SynapseJson>> =
+        creature
+            .synapses
+            .iter()
+            .fold(HashMap::new(), |mut acc, synapse| {
+                acc.entry(synapse.to_uuid.as_str())
+                    .or_default()
+                    .push(synapse);
+                acc
+            });
+    black_box(&synapses_by_target);
+}
+
+/// Simulate neuron_type_map with owned String values (baseline).
+fn build_neuron_type_map_owned(creature: &CreatureJson) {
+    let mut neuron_type_map: HashMap<String, String> = HashMap::new();
+    for i in 0..creature.input {
+        neuron_type_map.insert(format!("input-{i}"), "input".to_string());
+    }
+    for neuron in &creature.neurons {
+        neuron_type_map.insert(neuron.uuid.clone(), neuron.neuron_type.clone());
+    }
+    black_box(&neuron_type_map);
+}
+
+/// Simulate neuron_type_map with borrowed &str values (optimised).
+fn build_neuron_type_map_borrowed(creature: &CreatureJson) {
+    let mut neuron_type_map: HashMap<String, &str> = HashMap::new();
+    for i in 0..creature.input {
+        neuron_type_map.insert(format!("input-{i}"), "input");
+    }
+    for neuron in &creature.neurons {
+        neuron_type_map.insert(neuron.uuid.clone(), neuron.neuron_type.as_str());
+    }
+    black_box(&neuron_type_map);
+}
+
+fn bench_synapses_by_target(c: &mut Criterion) {
+    let mut group = c.benchmark_group("synapse_preparation_synapses_by_target");
+
+    for neuron_count in [50, 200, 500] {
+        let creature = create_test_creature(neuron_count);
+
+        group.bench_function(format!("cloned_{neuron_count}_neurons"), |b| {
+            b.iter(|| build_synapses_by_target_cloned(black_box(&creature)));
+        });
+
+        group.bench_function(format!("borrowed_{neuron_count}_neurons"), |b| {
+            b.iter(|| build_synapses_by_target_borrowed(black_box(&creature)));
+        });
+    }
+
+    group.finish();
+}
+
+fn bench_neuron_type_map(c: &mut Criterion) {
+    let mut group = c.benchmark_group("synapse_preparation_neuron_type_map");
+
+    for neuron_count in [50, 200, 500] {
+        let creature = create_test_creature(neuron_count);
+
+        group.bench_function(format!("owned_{neuron_count}_neurons"), |b| {
+            b.iter(|| build_neuron_type_map_owned(black_box(&creature)));
+        });
+
+        group.bench_function(format!("borrowed_{neuron_count}_neurons"), |b| {
+            b.iter(|| build_neuron_type_map_borrowed(black_box(&creature)));
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_lookup_map_construction,
     bench_per_target_uuid_patterns,
+    bench_synapses_by_target,
+    bench_neuron_type_map,
 );
 criterion_main!(benches);
