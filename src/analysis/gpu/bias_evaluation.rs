@@ -139,6 +139,11 @@ impl GpuAnalyzer {
             .as_ref()
             .context("GPU bias pipeline not initialised")?;
 
+        // Guard against zero or negative step to prevent division-by-zero / UB (Issue #805)
+        if step < f32::EPSILON {
+            return Ok(0.0);
+        }
+
         // Generate bias candidates
         let num_steps = ((max_bias - min_bias) / step).ceil() as i32 + 1;
         let bias_candidates: Vec<f32> = (0..num_steps)
