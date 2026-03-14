@@ -20,6 +20,18 @@ use crate::analysis::gpu::analyzer::{GpuAnalyzer, GpuEvaluator};
 use crate::analysis::samples::{HelpfulSample, ReluStats};
 use crate::observability::{global_gpu_metrics, gpu_metrics_enabled};
 
+/// Return a short label describing the GPU work request variant.
+fn request_label(request: &GpuWorkRequest) -> &'static str {
+    match request {
+        GpuWorkRequest::HelpfulBatch { .. } => "helpful_batch",
+        GpuWorkRequest::HarmfulBatch { .. } => "harmful_batch",
+        GpuWorkRequest::ReluEval { .. } => "relu_eval",
+        GpuWorkRequest::ActivationEval { .. } => "activation_eval",
+        GpuWorkRequest::ActivationBatchEval { .. } => "activation_batch_eval",
+        GpuWorkRequest::Shutdown => "shutdown",
+    }
+}
+
 /// Execute a single GPU work request, returning the result via the embedded
 /// response channel. Returns `Err` only for device-lost errors that should
 /// trigger recovery; normal evaluation errors are sent back to the caller.
@@ -56,7 +68,9 @@ fn execute_request(
                 return Err(anyhow::anyhow!("{e:#}"));
             }
 
-            let _ = response_tx.send(result);
+            if response_tx.send(result).is_err() {
+                tracing::trace!("GPU queue: receiver dropped for helpful batch result");
+            }
         }
         GpuWorkRequest::HarmfulBatch {
             samples_with_weights,
@@ -87,7 +101,9 @@ fn execute_request(
                 return Err(anyhow::anyhow!("{e:#}"));
             }
 
-            let _ = response_tx.send(result);
+            if response_tx.send(result).is_err() {
+                tracing::trace!("GPU queue: receiver dropped for harmful batch result");
+            }
         }
         GpuWorkRequest::ReluEval {
             samples,
@@ -115,7 +131,9 @@ fn execute_request(
                 return Err(anyhow::anyhow!("{e:#}"));
             }
 
-            let _ = response_tx.send(result);
+            if response_tx.send(result).is_err() {
+                tracing::trace!("GPU queue: receiver dropped for ReLU eval result");
+            }
         }
         GpuWorkRequest::ActivationEval {
             samples,
@@ -146,7 +164,9 @@ fn execute_request(
                 return Err(anyhow::anyhow!("{e:#}"));
             }
 
-            let _ = response_tx.send(result);
+            if response_tx.send(result).is_err() {
+                tracing::trace!("GPU queue: receiver dropped for activation eval result");
+            }
         }
         GpuWorkRequest::ActivationBatchEval {
             samples,
@@ -175,7 +195,9 @@ fn execute_request(
                 return Err(anyhow::anyhow!("{e:#}"));
             }
 
-            let _ = response_tx.send(result);
+            if response_tx.send(result).is_err() {
+                tracing::trace!("GPU queue: receiver dropped for activation batch eval result");
+            }
         }
         GpuWorkRequest::Shutdown => {
             // Handled by caller
@@ -200,15 +222,20 @@ impl GpuWorkQueue {
     pub(super) fn gpu_thread_loop(mut analyzer: GpuAnalyzer, work_rx: Receiver<GpuWorkRequest>) {
         let track_metrics = gpu_metrics_enabled();
         let retry_limit = get_gpu_retry_limit();
+        tracing::debug!("GPU thread loop started — waiting for work");
 
         while let Ok(request) = work_rx.recv() {
             if matches!(request, GpuWorkRequest::Shutdown) {
+                tracing::debug!("GPU thread received shutdown request");
                 break;
             }
 
+            let label = request_label(&request);
+            tracing::debug!(request_type = label, "GPU queue: dequeued work item");
+
             match execute_request(&analyzer, &request, track_metrics) {
                 Ok(()) => {
-                    // Success — nothing to do
+                    tracing::debug!(request_type = label, "GPU queue: work item completed");
                 }
                 Err(device_err) => {
                     // Device-lost detected — attempt recovery
@@ -293,19 +320,46 @@ impl GpuWorkQueue {
 fn send_error_to_request(request: &GpuWorkRequest, error_msg: &str) {
     match request {
         GpuWorkRequest::HelpfulBatch { response_tx, .. } => {
-            let _ = response_tx.send(Err(anyhow::anyhow!("{error_msg}")));
+            if response_tx
+                .send(Err(anyhow::anyhow!("{error_msg}")))
+                .is_err()
+            {
+                tracing::trace!("GPU queue: receiver dropped for helpful batch error response");
+            }
         }
         GpuWorkRequest::HarmfulBatch { response_tx, .. } => {
-            let _ = response_tx.send(Err(anyhow::anyhow!("{error_msg}")));
+            if response_tx
+                .send(Err(anyhow::anyhow!("{error_msg}")))
+                .is_err()
+            {
+                tracing::trace!("GPU queue: receiver dropped for harmful batch error response");
+            }
         }
         GpuWorkRequest::ReluEval { response_tx, .. } => {
-            let _ = response_tx.send(Err(anyhow::anyhow!("{error_msg}")));
+            if response_tx
+                .send(Err(anyhow::anyhow!("{error_msg}")))
+                .is_err()
+            {
+                tracing::trace!("GPU queue: receiver dropped for ReLU eval error response");
+            }
         }
         GpuWorkRequest::ActivationEval { response_tx, .. } => {
-            let _ = response_tx.send(Err(anyhow::anyhow!("{error_msg}")));
+            if response_tx
+                .send(Err(anyhow::anyhow!("{error_msg}")))
+                .is_err()
+            {
+                tracing::trace!("GPU queue: receiver dropped for activation eval error response");
+            }
         }
         GpuWorkRequest::ActivationBatchEval { response_tx, .. } => {
-            let _ = response_tx.send(Err(anyhow::anyhow!("{error_msg}")));
+            if response_tx
+                .send(Err(anyhow::anyhow!("{error_msg}")))
+                .is_err()
+            {
+                tracing::trace!(
+                    "GPU queue: receiver dropped for activation batch eval error response"
+                );
+            }
         }
         GpuWorkRequest::Shutdown => {}
     }
@@ -343,5 +397,154 @@ impl GpuEvaluator for GpuWorkQueue {
     ) -> Result<Vec<(f32, f32, f32, u32)>> {
         // Uses None deadline = maximum timeout (5 minutes)
         self.evaluate_activations_batched_gpu(samples.to_vec(), activation_configs.to_vec(), &None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::samples::{HarmfulStats, HelpfulStats};
+    use crossbeam_channel::bounded;
+
+    /// Verify that `send_error_to_request` does not panic when the receiver has
+    /// been dropped (e.g., caller timed out). Each variant is tested.
+    #[test]
+    fn test_send_error_to_request_handles_dropped_helpful_receiver() {
+        let (tx, rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        drop(rx);
+        let request = GpuWorkRequest::HelpfulBatch {
+            samples: vec![],
+            response_tx: tx,
+        };
+        // Must not panic — the receiver is gone
+        send_error_to_request(&request, "test error");
+    }
+
+    #[test]
+    fn test_send_error_to_request_handles_dropped_harmful_receiver() {
+        let (tx, rx) = bounded::<Result<Vec<HarmfulStats>>>(1);
+        drop(rx);
+        let request = GpuWorkRequest::HarmfulBatch {
+            samples_with_weights: vec![],
+            response_tx: tx,
+        };
+        send_error_to_request(&request, "test error");
+    }
+
+    #[test]
+    fn test_send_error_to_request_handles_dropped_relu_receiver() {
+        let (tx, rx) = bounded::<Result<(ReluStats, ReluStats, f32)>>(1);
+        drop(rx);
+        let request = GpuWorkRequest::ReluEval {
+            samples: vec![],
+            threshold: 0.0,
+            response_tx: tx,
+        };
+        send_error_to_request(&request, "test error");
+    }
+
+    #[test]
+    fn test_send_error_to_request_handles_dropped_activation_receiver() {
+        let (tx, rx) = bounded::<Result<(f32, f32, f32, u32)>>(1);
+        drop(rx);
+        let request = GpuWorkRequest::ActivationEval {
+            samples: vec![],
+            activation_type: 0,
+            orientation: 1.0,
+            scale: 1.0,
+            response_tx: tx,
+        };
+        send_error_to_request(&request, "test error");
+    }
+
+    #[test]
+    fn test_send_error_to_request_handles_dropped_activation_batch_receiver() {
+        let (tx, rx) = bounded::<Result<Vec<(f32, f32, f32, u32)>>>(1);
+        drop(rx);
+        let request = GpuWorkRequest::ActivationBatchEval {
+            samples: vec![],
+            activation_configs: vec![],
+            response_tx: tx,
+        };
+        send_error_to_request(&request, "test error");
+    }
+
+    /// Verify that `send_error_to_request` succeeds when the receiver is still
+    /// alive — the error message is delivered correctly.
+    #[test]
+    fn test_send_error_to_request_delivers_error_when_receiver_alive() {
+        let (tx, rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        let request = GpuWorkRequest::HelpfulBatch {
+            samples: vec![],
+            response_tx: tx,
+        };
+        send_error_to_request(&request, "recovery failed");
+        let result = rx.recv().expect("should receive error");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("recovery failed"));
+    }
+
+    /// Verify that `send_error_to_request` is a no-op for the Shutdown variant.
+    #[test]
+    fn test_send_error_to_request_noop_for_shutdown() {
+        let request = GpuWorkRequest::Shutdown;
+        // Must not panic
+        send_error_to_request(&request, "should be ignored");
+    }
+
+    /// Verify that `request_label` returns correct labels for all variants.
+    #[test]
+    fn test_request_label_returns_correct_labels() {
+        let (tx, _rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        assert_eq!(
+            request_label(&GpuWorkRequest::HelpfulBatch {
+                samples: vec![],
+                response_tx: tx,
+            }),
+            "helpful_batch"
+        );
+
+        let (tx, _rx) = bounded::<Result<Vec<HarmfulStats>>>(1);
+        assert_eq!(
+            request_label(&GpuWorkRequest::HarmfulBatch {
+                samples_with_weights: vec![],
+                response_tx: tx,
+            }),
+            "harmful_batch"
+        );
+
+        let (tx, _rx) = bounded::<Result<(ReluStats, ReluStats, f32)>>(1);
+        assert_eq!(
+            request_label(&GpuWorkRequest::ReluEval {
+                samples: vec![],
+                threshold: 0.0,
+                response_tx: tx,
+            }),
+            "relu_eval"
+        );
+
+        let (tx, _rx) = bounded::<Result<(f32, f32, f32, u32)>>(1);
+        assert_eq!(
+            request_label(&GpuWorkRequest::ActivationEval {
+                samples: vec![],
+                activation_type: 0,
+                orientation: 1.0,
+                scale: 1.0,
+                response_tx: tx,
+            }),
+            "activation_eval"
+        );
+
+        let (tx, _rx) = bounded::<Result<Vec<(f32, f32, f32, u32)>>>(1);
+        assert_eq!(
+            request_label(&GpuWorkRequest::ActivationBatchEval {
+                samples: vec![],
+                activation_configs: vec![],
+                response_tx: tx,
+            }),
+            "activation_batch_eval"
+        );
+
+        assert_eq!(request_label(&GpuWorkRequest::Shutdown), "shutdown");
     }
 }
