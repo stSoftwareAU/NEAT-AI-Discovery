@@ -38,6 +38,10 @@ impl GpuWorkQueue {
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
 
+        tracing::debug!(
+            batch_count = samples.len(),
+            "GPU queue: enqueuing helpful batch"
+        );
         match self.work_tx.send_timeout(
             GpuWorkRequest::HelpfulBatch {
                 samples,
@@ -87,6 +91,10 @@ impl GpuWorkQueue {
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
 
+        tracing::debug!(
+            batch_count = samples.len(),
+            "GPU queue: enqueuing helpful batch (blocking)"
+        );
         // Send the work request with timeout to prevent deadlock if GPU thread is hung
         // If the channel is full (GPU not processing), this will timeout instead of blocking forever
         match self.work_tx.send_timeout(
@@ -137,6 +145,10 @@ impl GpuWorkQueue {
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
 
+        tracing::debug!(
+            batch_count = samples_with_weights.len(),
+            "GPU queue: enqueuing harmful batch"
+        );
         // Send with timeout to prevent deadlock if GPU thread is hung
         match self.work_tx.send_timeout(
             GpuWorkRequest::HarmfulBatch {
@@ -191,6 +203,10 @@ impl GpuWorkQueue {
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
 
+        tracing::debug!(
+            sample_count = samples.len(),
+            "GPU queue: enqueuing ReLU eval"
+        );
         // Send with timeout to prevent deadlock if GPU thread is hung
         match self.work_tx.send_timeout(
             GpuWorkRequest::ReluEval {
@@ -244,6 +260,11 @@ impl GpuWorkQueue {
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
 
+        tracing::debug!(
+            sample_count = samples.len(),
+            activation_type,
+            "GPU queue: enqueuing activation eval"
+        );
         // Send with timeout to prevent deadlock if GPU thread is hung
         match self.work_tx.send_timeout(
             GpuWorkRequest::ActivationEval {
@@ -312,6 +333,11 @@ impl GpuWorkQueue {
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
 
+        tracing::debug!(
+            sample_count = samples.len(),
+            config_count = activation_configs.len(),
+            "GPU queue: enqueuing activation batch eval"
+        );
         // Send with timeout to prevent deadlock if GPU thread is hung
         match self.work_tx.send_timeout(
             GpuWorkRequest::ActivationBatchEval {
