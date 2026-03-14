@@ -12,6 +12,10 @@ use neat_ai_discovery::analysis::utils::variant_generation::{
     SYNAPSE_CONSERVATIVE_CONFIG, SYNAPSE_GENTLE_NUDGE_CONFIG, SYNAPSE_MICRO_NUDGE_CONFIG,
     SynapseVariantConfig, make_neuron_variant, make_synapse_variant,
 };
+use neat_ai_discovery::analysis::utils::{
+    filter_candidates_to_sensible_ranges, pair_extreme_candidates_with_conservative_variants,
+    pair_synapse_candidates_with_weight_variants,
+};
 use neat_ai_discovery::{CandidateNeuronJson, CandidateSynapseJson};
 
 /// Helper to build a test add-neuron candidate.
@@ -398,5 +402,193 @@ fn custom_synapse_config_produces_expected_variant() {
     assert_eq!(
         variant.comment.as_deref().unwrap_or(""),
         "Custom synapse variant"
+    );
+}
+
+// =========================================================================
+// filter_candidates_to_sensible_ranges tests
+// =========================================================================
+
+#[test]
+fn filter_sensible_ranges_passes_candidates_within_bounds() {
+    let candidate = make_test_neuron_candidate(5.0, 0.05, 3.0);
+    let result = filter_candidates_to_sensible_ranges(vec![candidate]);
+
+    assert_eq!(
+        result.len(),
+        1,
+        "candidate within bounds should pass through"
+    );
+    assert!(
+        (result[0].incoming_weight - 5.0).abs() < 1e-6,
+        "should preserve incoming weight"
+    );
+}
+
+#[test]
+fn filter_sensible_ranges_rejects_excessive_incoming_weight() {
+    let candidate = make_test_neuron_candidate(25.0, 0.05, 3.0);
+    let result = filter_candidates_to_sensible_ranges(vec![candidate]);
+
+    assert!(
+        result.is_empty(),
+        "incoming weight > 20.0 should be filtered out"
+    );
+}
+
+#[test]
+fn filter_sensible_ranges_rejects_excessive_bias() {
+    let candidate = make_test_neuron_candidate(5.0, 0.05, 15.0);
+    let result = filter_candidates_to_sensible_ranges(vec![candidate]);
+
+    assert!(result.is_empty(), "bias > 10.0 should be filtered out");
+}
+
+#[test]
+fn filter_sensible_ranges_rejects_excessive_outgoing_weight() {
+    let candidate = make_test_neuron_candidate(5.0, 0.5, 3.0);
+    let result = filter_candidates_to_sensible_ranges(vec![candidate]);
+
+    assert!(
+        result.is_empty(),
+        "outgoing weight > 0.1 should be filtered out"
+    );
+}
+
+#[test]
+fn filter_sensible_ranges_rejects_nan_values() {
+    let mut candidate = make_test_neuron_candidate(5.0, 0.05, 3.0);
+    candidate.incoming_weight = f32::NAN;
+    let result = filter_candidates_to_sensible_ranges(vec![candidate]);
+
+    assert!(
+        result.is_empty(),
+        "NaN incoming weight should be filtered out"
+    );
+}
+
+#[test]
+fn filter_sensible_ranges_rejects_infinity() {
+    let mut candidate = make_test_neuron_candidate(5.0, 0.05, 3.0);
+    candidate.outgoing_weight = f32::INFINITY;
+    let result = filter_candidates_to_sensible_ranges(vec![candidate]);
+
+    assert!(
+        result.is_empty(),
+        "infinite outgoing weight should be filtered out"
+    );
+}
+
+#[test]
+fn filter_sensible_ranges_accepts_boundary_values() {
+    // Exactly at the limits: incoming=20.0, bias=10.0, outgoing=0.1
+    let candidate = make_test_neuron_candidate(20.0, 0.1, 10.0);
+    let result = filter_candidates_to_sensible_ranges(vec![candidate]);
+
+    assert_eq!(
+        result.len(),
+        1,
+        "candidates exactly at the boundary should pass"
+    );
+}
+
+#[test]
+fn filter_sensible_ranges_keeps_valid_from_mixed_list() {
+    let good = make_test_neuron_candidate(5.0, 0.05, 3.0);
+    let bad_incoming = make_test_neuron_candidate(25.0, 0.05, 3.0);
+    let bad_bias = make_test_neuron_candidate(5.0, 0.05, 15.0);
+    let also_good = make_test_neuron_candidate(10.0, 0.08, 7.0);
+
+    let result =
+        filter_candidates_to_sensible_ranges(vec![good, bad_incoming, bad_bias, also_good]);
+
+    assert_eq!(result.len(), 2, "should keep only the 2 valid candidates");
+}
+
+#[test]
+fn filter_sensible_ranges_returns_empty_for_empty_input() {
+    let result = filter_candidates_to_sensible_ranges(vec![]);
+    assert!(result.is_empty(), "empty input should yield empty output");
+}
+
+#[test]
+fn filter_sensible_ranges_handles_negative_values_within_bounds() {
+    let candidate = make_test_neuron_candidate(-15.0, -0.08, -8.0);
+    let result = filter_candidates_to_sensible_ranges(vec![candidate]);
+
+    assert_eq!(result.len(), 1, "negative values within bounds should pass");
+}
+
+// =========================================================================
+// Pairing function integration tests (Issue #806)
+// =========================================================================
+
+#[test]
+fn pair_extreme_neuron_zero_limit_returns_empty() {
+    let candidate = make_test_neuron_candidate(200.0, 0.1, 50.0);
+    let result = pair_extreme_candidates_with_conservative_variants(vec![candidate], Some(0));
+
+    assert!(result.is_empty(), "zero limit should return empty");
+}
+
+#[test]
+fn pair_extreme_neuron_non_extreme_passes_through_unmodified() {
+    // Incoming=1.0, bias=0.5 are both within conservative clamps (2.0, 1.0)
+    let candidate = make_test_neuron_candidate(1.0, 0.05, 0.5);
+    let result = pair_extreme_candidates_with_conservative_variants(vec![candidate.clone()], None);
+
+    assert_eq!(
+        result.len(),
+        1,
+        "non-extreme candidate should not be paired"
+    );
+    assert!(
+        (result[0].incoming_weight - candidate.incoming_weight).abs() < 1e-6,
+        "non-extreme candidate should be unchanged"
+    );
+}
+
+#[test]
+fn pair_synapse_zero_limit_returns_empty() {
+    let candidate = make_test_synapse_candidate(0.08, 0.1);
+    let result = pair_synapse_candidates_with_weight_variants(vec![candidate], Some(0));
+
+    assert!(result.is_empty(), "zero limit should return empty");
+}
+
+#[test]
+fn pair_synapse_empty_input_returns_empty() {
+    let result = pair_synapse_candidates_with_weight_variants(vec![], None);
+
+    assert!(result.is_empty(), "empty input should return empty");
+}
+
+#[test]
+fn pair_synapse_generates_variants_with_no_limit() {
+    let candidate = make_test_synapse_candidate(0.08, 0.1);
+    let result = pair_synapse_candidates_with_weight_variants(vec![candidate], None);
+
+    // Original + up to 3 variants (conservative, gentle nudge, micro-nudge)
+    assert!(
+        result.len() >= 2,
+        "should generate at least one variant, got {}",
+        result.len()
+    );
+    assert!(
+        result.len() <= 4,
+        "should generate at most 3 variants + original, got {}",
+        result.len()
+    );
+}
+
+#[test]
+fn pair_synapse_limit_truncates_variants() {
+    let candidate = make_test_synapse_candidate(0.08, 0.1);
+    let result = pair_synapse_candidates_with_weight_variants(vec![candidate], Some(2));
+
+    assert!(
+        result.len() <= 2,
+        "should respect max_candidates limit of 2, got {}",
+        result.len()
     );
 }
