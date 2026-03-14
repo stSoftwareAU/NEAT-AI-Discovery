@@ -277,7 +277,7 @@ pub(crate) fn build_existing_edge_work(
 /// It is called while the helpful GPU batch is being processed, overlapping CPU and GPU.
 /// (Issue #568)
 pub(crate) fn prepare_harmful_samples<'a>(
-    existing_synapses: &'a [SynapseJson],
+    existing_synapses: &[&'a SynapseJson],
     cache: &RecordCache,
     target_map_ref: &TargetMap,
 ) -> Vec<PreparedHarmfulWork<'a>> {

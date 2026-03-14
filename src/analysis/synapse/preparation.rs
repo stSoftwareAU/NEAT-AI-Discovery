@@ -29,9 +29,9 @@ pub(crate) struct CreatureLookups<'a> {
     pub neuron_index: NeuronIndex,
     pub existing_synapses: HashSet<(u32, u32)>,
     pub existing_synapse_weights: HashMap<(u32, u32), f32>,
-    pub synapses_by_target: HashMap<u32, Vec<SynapseJson>>,
+    pub synapses_by_target: HashMap<u32, Vec<&'a SynapseJson>>,
     pub neuron_squash_map: HashMap<&'a str, &'a str>,
-    pub neuron_type_map: HashMap<String, String>,
+    pub neuron_type_map: HashMap<String, &'a str>,
     pub input_neuron_uuids: HashSet<String>,
     pub used_inputs: HashSet<&'a str>,
     pub neuron_bias_map: HashMap<&'a str, f32>,
@@ -88,11 +88,11 @@ pub(crate) fn build_creature_lookups<'a>(input: &'a AnalyzeSynapsesInput) -> Cre
         })
         .collect();
 
-    let synapses_by_target: HashMap<u32, Vec<SynapseJson>> = input
+    let synapses_by_target: HashMap<u32, Vec<&SynapseJson>> = input
         .creature
         .synapses
         .iter()
-        .map(|synapse| (neuron_index.intern(&synapse.to_uuid), synapse.clone()))
+        .map(|synapse| (neuron_index.intern(&synapse.to_uuid), synapse))
         .fold(HashMap::new(), |mut acc, (key, val)| {
             acc.entry(key).or_default().push(val);
             acc
@@ -105,13 +105,13 @@ pub(crate) fn build_creature_lookups<'a>(input: &'a AnalyzeSynapsesInput) -> Cre
         .map(|n| (n.uuid.as_str(), n.squash.as_str()))
         .collect();
 
-    // Build comprehensive neuron type map
-    let mut neuron_type_map: HashMap<String, String> = HashMap::new();
+    // Build comprehensive neuron type map (Issue #808: borrow type values from input)
+    let mut neuron_type_map: HashMap<String, &str> = HashMap::new();
     for input_index in 0..input.creature.input {
-        neuron_type_map.insert(format!("input-{input_index}"), "input".to_string());
+        neuron_type_map.insert(format!("input-{input_index}"), "input");
     }
     for neuron in &input.creature.neurons {
-        neuron_type_map.insert(neuron.uuid.clone(), neuron.neuron_type.clone());
+        neuron_type_map.insert(neuron.uuid.clone(), neuron.neuron_type.as_str());
     }
 
     let input_neuron_uuids: HashSet<String> = (0..input.creature.input)
@@ -269,14 +269,8 @@ mod tests {
 
         // Type map should have inputs + neurons
         assert_eq!(lookups.neuron_type_map.len(), 4);
-        assert_eq!(
-            lookups.neuron_type_map.get("input-0"),
-            Some(&"input".to_string())
-        );
-        assert_eq!(
-            lookups.neuron_type_map.get("hidden-1"),
-            Some(&"hidden".to_string())
-        );
+        assert_eq!(lookups.neuron_type_map.get("input-0"), Some(&"input"));
+        assert_eq!(lookups.neuron_type_map.get("hidden-1"), Some(&"hidden"));
 
         // Input neuron UUIDs
         assert_eq!(lookups.input_neuron_uuids.len(), 2);

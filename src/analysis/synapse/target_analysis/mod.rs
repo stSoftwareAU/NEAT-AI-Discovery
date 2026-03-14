@@ -46,9 +46,9 @@ pub(crate) struct TargetAnalysisContext<'a> {
     pub neuron_index: Arc<NeuronIndex>,
     pub existing_synapses: Arc<HashSet<(u32, u32)>>,
     pub existing_synapse_weights: Arc<HashMap<(u32, u32), f32>>,
-    pub synapses_by_target: Arc<HashMap<u32, Vec<SynapseJson>>>,
+    pub synapses_by_target: Arc<HashMap<u32, Vec<&'a SynapseJson>>>,
     pub neuron_squash_map: Arc<HashMap<&'a str, &'a str>>,
-    pub neuron_type_map: Arc<HashMap<String, String>>,
+    pub neuron_type_map: Arc<HashMap<String, &'a str>>,
     pub input_neuron_uuids: Arc<HashSet<String>>,
     pub used_inputs: Arc<HashSet<&'a str>>,
     pub neuron_bias_map: Arc<HashMap<&'a str, f32>>,
@@ -186,8 +186,8 @@ pub(crate) fn analyse_single_target(
         })?;
 
     let input_count = ctx.input_neuron_uuids.len();
-    let is_input_neuron = target_neuron_type == "input";
-    let is_constant_neuron = target_neuron_type == "constant";
+    let is_input_neuron = *target_neuron_type == "input";
+    let is_constant_neuron = *target_neuron_type == "constant";
 
     if is_input_neuron || is_constant_neuron {
         return Ok(results);
@@ -201,7 +201,7 @@ pub(crate) fn analyse_single_target(
             neuron.index < target_index
                 && {
                     match ctx.neuron_type_map.get(&neuron.uuid) {
-                        Some(neuron_type) => neuron_type != "constant",
+                        Some(neuron_type) => *neuron_type != "constant",
                         None => {
                             tracing::warn!(
                                 neuron_uuid = %neuron.uuid,
@@ -231,7 +231,7 @@ pub(crate) fn analyse_single_target(
                     && ctx
                         .neuron_type_map
                         .get(&n.uuid)
-                        .is_some_and(|t| t == "constant")
+                        .is_some_and(|t| *t == "constant")
             })
             .count();
         let input_neurons_before_index = ctx
