@@ -42,21 +42,31 @@ impl GpuWorkQueue {
 
         // Spawn dedicated GPU thread - analyzer is created INSIDE this thread
         let thread_handle = thread::spawn(move || {
+            tracing::debug!("GPU thread started — initialising GpuAnalyzer");
             // Create analyzer on THIS thread to avoid wgpu thread-local state issues
             match GpuAnalyzer::new() {
                 Ok(analyzer) => {
+                    tracing::debug!("GPU thread initialisation succeeded");
                     // Signal successful initialisation
-                    let _ = init_tx.send(Ok(()));
+                    if init_tx.send(Ok(())).is_err() {
+                        tracing::trace!("GPU queue: init receiver dropped before success signal");
+                    }
                     // Run the main loop
                     Self::gpu_thread_loop(analyzer, work_rx);
                 }
                 Err(e) => {
+                    tracing::debug!("GPU thread initialisation failed");
                     // Signal initialisation failure
-                    let _ = init_tx.send(Err(e));
+                    if init_tx.send(Err(e)).is_err() {
+                        tracing::trace!("GPU queue: init receiver dropped before failure signal");
+                    }
                 }
             }
             // Always signal exit, even if initialisation failed or loop panicked
-            let _ = exit_tx.send(());
+            if exit_tx.send(()).is_err() {
+                tracing::trace!("GPU queue: exit receiver dropped");
+            }
+            tracing::debug!("GPU thread exiting");
         });
 
         // Wait for initialisation to complete with timeout
@@ -94,9 +104,14 @@ impl GpuWorkQueue {
         // 2 seconds is generous - if the GPU thread is responsive, it should drain
         // items much faster. If this times out, proceed to exit_rx timeout in Drop.
         let shutdown_send_timeout = Duration::from_secs(2);
-        let _ = self
+        tracing::debug!("GPU queue: requesting shutdown");
+        if self
             .work_tx
-            .send_timeout(GpuWorkRequest::Shutdown, shutdown_send_timeout);
+            .send_timeout(GpuWorkRequest::Shutdown, shutdown_send_timeout)
+            .is_err()
+        {
+            tracing::trace!("GPU queue: shutdown send failed — GPU thread may be unresponsive");
+        }
     }
 }
 
