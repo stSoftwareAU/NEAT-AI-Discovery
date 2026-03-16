@@ -1,0 +1,48 @@
+//! General analysis pipeline integration tests.
+
+#[path = "../common/mod.rs"]
+mod common;
+
+mod analysis_timeout;
+mod creature_level_metrics;
+mod early_termination;
+mod exploratory_ablation_candidates;
+mod extreme_candidate_pairing;
+mod fixed_vs_optimised_params;
+mod impact_caching;
+mod impact_calculation_production;
+mod impact_squash;
+mod issue_199_dynamic_constant_source_threshold;
+mod issue_201_batched_activation;
+mod issue_204_activation_frequency_ranking;
+mod issue_206_gradient_flow_analysis;
+mod issue_221_sample_locality;
+mod issue_224_candidate_clustering;
+mod issue_337_candidate_type_contract;
+mod issue_340_discovery_categories;
+mod issue_419_parallel_discovery_execution;
+mod issue_424_consolidate_discovery_constants;
+mod issue_467_source_type_prioritisation;
+mod issue_468_target_type_prioritisation;
+mod issue_481_nan_safe_sorting;
+mod issue_481_suggest_improvements;
+mod issue_483_nan_safe_sorting;
+mod issue_485_adaptive_module_weighting;
+mod issue_489_cross_module_deduplication;
+mod issue_490_incremental_analysis;
+mod issue_508_prescreen_individual_operations;
+mod issue_527_diagnostic_tracking;
+mod issue_557_audit_discovery_strategies;
+mod issue_568_async_pipeline;
+mod issue_603_adaptive_module_timeout;
+mod issue_610_candidate_diversity_enforcement;
+mod issue_611_end_to_end_discovery_pipeline;
+mod issue_612_stress_tests_large_creature_analysis;
+mod issue_733_add_neurons_pessimism_tuning;
+mod issue_791_improve_add_neurons_prediction;
+mod issue_792_adaptive_module_wiring;
+mod issue_806_dry_variant_generation;
+mod split_error_all_activations;
+mod split_error_fallback_candidates;
+mod target_map_optimization;
+mod zero_weight_impact;
