@@ -214,7 +214,7 @@ fn test_candidates_generated_for_co_adapted_pair() {
 
 /// Neurons with fewer samples than the minimum threshold should be skipped.
 #[test]
-fn test_insufficient_samples_skipped() {
+fn test_co_adaptation_insufficient_samples_skipped() {
     let creature = make_creature(
         vec![
             neuron("in-0", "input", "IDENTITY"),
@@ -246,7 +246,7 @@ fn test_insufficient_samples_skipped() {
 
 /// A network with only one hidden neuron cannot have co-adapted pairs.
 #[test]
-fn test_single_hidden_neuron_no_candidates() {
+fn test_co_adaptation_single_hidden_neuron_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("in-0", "input", "IDENTITY"),

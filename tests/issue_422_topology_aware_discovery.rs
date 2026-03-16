@@ -370,7 +370,7 @@ fn test_balanced_topology_no_issues() {
 
 /// Test 4: Output neurons are never flagged as topology issues.
 #[test]
-fn test_output_neurons_not_flagged() {
+fn test_topology_discovery_output_neurons_not_flagged() {
     let creature = deep_chain_creature();
 
     // Only provide records for the output neuron
@@ -388,7 +388,7 @@ fn test_output_neurons_not_flagged() {
 
 /// Test 5: Input neurons are never flagged.
 #[test]
-fn test_input_neurons_not_flagged() {
+fn test_topology_discovery_input_neurons_not_flagged() {
     let creature = deep_chain_creature();
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> =
@@ -405,7 +405,7 @@ fn test_input_neurons_not_flagged() {
 
 /// Test 6: Insufficient samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_not_flagged() {
+fn test_topology_discovery_insufficient_samples_not_flagged() {
     let creature = deep_chain_creature();
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![
@@ -461,7 +461,7 @@ fn test_empty_network_no_candidates() {
 
 /// Test 8: Candidates have positive estimated improvement.
 #[test]
-fn test_candidates_have_positive_improvement() {
+fn test_topology_discovery_candidates_have_positive_improvement() {
     let creature = deep_chain_with_error_creature();
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![
@@ -485,7 +485,7 @@ fn test_candidates_have_positive_improvement() {
 
 /// Test 9: Topology candidates convert to valid coordinated structural candidates.
 #[test]
-fn test_conversion_to_coordinated_candidates() {
+fn test_topology_discovery_conversion_to_coordinated_candidates() {
     let creature = deep_chain_with_error_creature();
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![
@@ -549,7 +549,7 @@ fn test_long_path_suggests_skip_connection() {
 
 /// Test 11: Candidates are sorted by estimated improvement (best first).
 #[test]
-fn test_candidates_sorted_by_improvement() {
+fn test_topology_discovery_candidates_sorted_by_improvement() {
     let creature = deep_chain_with_error_creature();
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![
@@ -586,7 +586,7 @@ fn test_no_hidden_records_no_candidates() {
 
 /// Test 13: Network with skip connection already present should not suggest duplicate.
 #[test]
-fn test_existing_skip_connection_not_duplicated() {
+fn test_topology_discovery_existing_skip_connection_not_duplicated() {
     // Deep chain with existing skip: input-0 → h0 → h1 → h2 → output-0
     // Plus skip: h0 → output-0 already exists
     let creature = CreatureJson {

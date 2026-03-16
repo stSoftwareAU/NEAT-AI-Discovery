@@ -386,7 +386,7 @@ fn test_uncorrelated_opposite_weights_not_flagged() {
 
 /// Detection requires minimum samples for statistical reliability.
 #[test]
-fn test_minimum_samples_required() {
+fn test_weight_coherence_minimum_samples_required() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -582,7 +582,7 @@ fn test_configurable_ratio_threshold() {
 
 /// Candidates should include diagnostic comments explaining the detection.
 #[test]
-fn test_candidate_includes_diagnostic_comment() {
+fn test_weight_coherence_candidate_includes_diagnostic_comment() {
     let candidate = IncoherentWeightRatioCandidate {
         neuron_uuid: "hidden-imbalanced".to_string(),
         incoming_weight_sum: 50.0,
@@ -653,7 +653,7 @@ fn test_input_output_excluded_from_ratio_check() {
 
 /// Empty records should be handled without panicking.
 #[test]
-fn test_empty_records_handled() {
+fn test_weight_coherence_empty_records_handled() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

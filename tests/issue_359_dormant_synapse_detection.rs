@@ -84,7 +84,7 @@ fn make_records(neuron_uuid: &str, count: u32, activation: f32) -> Vec<DiscoverR
 // Test 1: Synapse with near-zero weight is detected as dormant.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_detects_near_zero_weight_synapse() {
+fn test_dormant_synapse_detects_near_zero_weight_synapse() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -119,7 +119,7 @@ fn test_detects_near_zero_weight_synapse() {
 // Test 2: Active synapse with meaningful weight is NOT flagged.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_active_synapse_not_flagged() {
+fn test_dormant_synapse_active_synapse_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -153,7 +153,7 @@ fn test_active_synapse_not_flagged() {
 // Test 3: Sole connection to target is NOT flagged even if dormant.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_sole_connection_not_flagged() {
+fn test_dormant_synapse_sole_connection_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -178,7 +178,7 @@ fn test_sole_connection_not_flagged() {
 // Test 4: Insufficient samples should not trigger detection.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_insufficient_samples_not_flagged() {
+fn test_dormant_synapse_insufficient_samples_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -206,7 +206,7 @@ fn test_insufficient_samples_not_flagged() {
 // Test 5: Dormant synapse candidates produce correct coordinated removal operations.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_candidates_produce_coordinated_removal_operations() {
+fn test_dormant_synapse_candidates_produce_coordinated_removal_operations() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -257,7 +257,7 @@ fn test_candidates_produce_coordinated_removal_operations() {
 // Test 6: Multiple dormant synapses are all detected.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_multiple_dormant_synapses_detected() {
+fn test_dormant_synapse_multiple_dormant_synapses_detected() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -292,7 +292,7 @@ fn test_multiple_dormant_synapses_detected() {
 // Test 7: Other fan-in count is correctly recorded.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_other_fan_in_count_correct() {
+fn test_dormant_synapse_other_fan_in_count_correct() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -322,7 +322,7 @@ fn test_other_fan_in_count_correct() {
 // Test 8: Empty synapse list produces no candidates.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_empty_synapses_no_candidates() {
+fn test_dormant_synapse_empty_synapses_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -345,7 +345,7 @@ fn test_empty_synapses_no_candidates() {
 // Test 9: Missing source neuron records are handled gracefully.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_missing_source_records_handled() {
+fn test_dormant_synapse_missing_source_records_handled() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -523,7 +523,7 @@ fn test_low_activation_does_not_make_active_synapse_dormant() {
 // Test 13: Candidates are sorted by estimated improvement (best first).
 // ---------------------------------------------------------------------------
 #[test]
-fn test_candidates_sorted_by_estimated_improvement() {
+fn test_dormant_synapse_candidates_sorted_by_estimated_improvement() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -566,7 +566,7 @@ fn test_candidates_sorted_by_estimated_improvement() {
 // Test 14: All estimated improvements are positive.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_estimated_improvement_always_positive() {
+fn test_dormant_synapse_estimated_improvement_always_positive() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -607,7 +607,7 @@ fn test_estimated_improvement_always_positive() {
 // Test 15: Coordinated candidate comment includes diagnostic information.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_coordinated_candidate_comment_includes_diagnostics() {
+fn test_dormant_synapse_coordinated_candidate_comment_includes_diagnostics() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -704,7 +704,7 @@ fn test_dormant_to_one_target_active_to_another() {
 // Test 17: Exactly minimum sample count (20) is accepted.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_exactly_minimum_samples_accepted() {
+fn test_dormant_synapse_exactly_minimum_samples_accepted() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -781,7 +781,7 @@ fn test_negative_near_zero_weight_detected() {
 // Test 19: Coordinated candidates are sorted by expected score gain.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_coordinated_candidates_sorted_by_score_gain() {
+fn test_dormant_synapse_coordinated_candidates_sorted_by_score_gain() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -824,7 +824,7 @@ fn test_coordinated_candidates_sorted_by_score_gain() {
 // Test 20: Nineteen samples (just below minimum) is rejected.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_nineteen_samples_below_minimum_rejected() {
+fn test_dormant_synapse_nineteen_samples_below_minimum_rejected() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -859,7 +859,7 @@ fn test_nineteen_samples_below_minimum_rejected() {
 // Test 21: Empty records list produces no candidates.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_empty_records_no_candidates() {
+fn test_dormant_synapse_empty_records_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -968,7 +968,7 @@ fn test_varying_activations_correct_mean_contribution() {
 // Test 24: Conversion of empty candidates produces empty results.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_empty_candidates_conversion() {
+fn test_dormant_synapse_empty_candidates_conversion() {
     let coordinated = dormant_synapses_to_coordinated_candidates(&[]);
     assert!(
         coordinated.is_empty(),

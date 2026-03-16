@@ -207,7 +207,7 @@ fn test_unbounded_activations_not_flagged() {
 
 /// Test 8: Neuron with too few samples should not be flagged.
 #[test]
-fn test_insufficient_samples_not_flagged() {
+fn test_saturated_neuron_insufficient_samples_not_flagged() {
     // Only 5 samples — not enough to be confident about saturation
     let records: Vec<DiscoverRecord> = (0..5)
         .map(|i| record("few-samples", i, 0.999, Some(10.0)))
@@ -226,7 +226,7 @@ fn test_insufficient_samples_not_flagged() {
 
 /// Test 9: Candidates produce correct coordinated structural operations.
 #[test]
-fn test_candidates_produce_coordinated_operations() {
+fn test_saturated_neuron_candidates_produce_coordinated_operations() {
     let candidate = SaturatedNeuronCandidate {
         neuron_uuid: "hidden-17".to_string(),
         current_squash: "TANH".to_string(),
@@ -301,7 +301,7 @@ fn test_mixed_neurons_only_saturated_detected() {
 
 /// Test 11: Input neurons should not be flagged (they are not computation nodes).
 #[test]
-fn test_input_neurons_excluded() {
+fn test_saturated_neuron_input_neurons_excluded() {
     // Input neurons are excluded by the caller — they should not be passed to detect.
     // But if they are, IDENTITY squash means they are not bounded so not flagged.
     let records: Vec<DiscoverRecord> = (0..100)

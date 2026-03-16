@@ -122,7 +122,7 @@ fn make_opposing_records(
 // Test 1: Synapse with strong positive contribution–error correlation is detected.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_detects_opposing_synapse() {
+fn test_opposing_synapse_detects_opposing_synapse() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -154,7 +154,7 @@ fn test_detects_opposing_synapse() {
 // Test 2: Helpful synapse (negative contribution–error correlation) is NOT flagged.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_helpful_synapse_not_flagged() {
+fn test_opposing_synapse_helpful_synapse_not_flagged() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -182,7 +182,7 @@ fn test_helpful_synapse_not_flagged() {
 // Test 3: Hidden-to-hidden synapses are not analysed (only output targets).
 // ---------------------------------------------------------------------------
 #[test]
-fn test_hidden_target_synapses_not_analysed() {
+fn test_opposing_synapse_hidden_target_synapses_not_analysed() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input"),
@@ -237,7 +237,7 @@ fn test_hidden_target_synapses_not_analysed() {
 // Test 4: Insufficient samples should not trigger detection.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_insufficient_samples_not_flagged() {
+fn test_opposing_synapse_insufficient_samples_not_flagged() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -269,7 +269,7 @@ fn test_insufficient_samples_not_flagged() {
 // Test 5: Strongly opposing synapse (correlation > 0.5) recommends removal.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_strongly_opposing_recommends_removal() {
+fn test_opposing_synapse_strongly_opposing_recommends_removal() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -363,7 +363,7 @@ fn test_moderately_opposing_recommends_weight_flip() {
 // Test 7: Coordinated candidate conversion produces correct operations.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_coordinated_candidate_conversion() {
+fn test_opposing_synapse_coordinated_candidate_conversion() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -402,7 +402,7 @@ fn test_coordinated_candidate_conversion() {
 // Test 8: Empty synapse list produces no candidates.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_empty_synapses_no_candidates() {
+fn test_opposing_synapse_empty_synapses_no_candidates() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![], // No synapses
@@ -424,7 +424,7 @@ fn test_empty_synapses_no_candidates() {
 // Test 9: Missing source neuron records are handled gracefully.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_missing_source_records_handled() {
+fn test_opposing_synapse_missing_source_records_handled() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -600,7 +600,7 @@ fn test_multiple_opposing_synapses_detected() {
 // Test 14: Candidates are sorted by estimated improvement (best first).
 // ---------------------------------------------------------------------------
 #[test]
-fn test_candidates_sorted_by_estimated_improvement() {
+fn test_opposing_synapse_candidates_sorted_by_estimated_improvement() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input"),
@@ -659,7 +659,7 @@ fn test_candidates_sorted_by_estimated_improvement() {
 // Test 15: All estimated improvements are positive.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_estimated_improvement_always_positive() {
+fn test_opposing_synapse_estimated_improvement_always_positive() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -689,7 +689,7 @@ fn test_estimated_improvement_always_positive() {
 // Test 16: Coordinated candidate comment includes diagnostic information.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_coordinated_candidate_comment_includes_diagnostics() {
+fn test_opposing_synapse_coordinated_candidate_comment_includes_diagnostics() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -736,7 +736,7 @@ fn test_coordinated_candidate_comment_includes_diagnostics() {
 // Test 17: Exactly minimum sample count (20) is accepted.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_exactly_minimum_samples_accepted() {
+fn test_opposing_synapse_exactly_minimum_samples_accepted() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -764,7 +764,7 @@ fn test_exactly_minimum_samples_accepted() {
 // Test 18: Nineteen samples (just below minimum) is rejected.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_nineteen_samples_below_minimum_rejected() {
+fn test_opposing_synapse_nineteen_samples_below_minimum_rejected() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -791,7 +791,7 @@ fn test_nineteen_samples_below_minimum_rejected() {
 // Test 19: Empty records list produces no candidates.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_empty_records_no_candidates() {
+fn test_opposing_synapse_empty_records_no_candidates() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -809,7 +809,7 @@ fn test_empty_records_no_candidates() {
 // Test 20: Coordinated candidates sorted by expected score gain.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_coordinated_candidates_sorted_by_score_gain() {
+fn test_opposing_synapse_coordinated_candidates_sorted_by_score_gain() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input"),
@@ -904,7 +904,7 @@ fn test_negative_weight_opposing_synapse_detected() {
 // Test 22: Each coordinated candidate has exactly one operation.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_each_candidate_has_one_operation() {
+fn test_opposing_synapse_each_candidate_has_one_operation() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input"),
@@ -963,7 +963,7 @@ fn test_each_candidate_has_one_operation() {
 // Test 23: Empty candidates conversion produces empty results.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_empty_candidates_conversion() {
+fn test_opposing_synapse_empty_candidates_conversion() {
     let coordinated = opposing_synapses_to_coordinated_candidates(&[]);
     assert!(
         coordinated.is_empty(),

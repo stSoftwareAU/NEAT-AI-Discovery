@@ -126,7 +126,7 @@ fn test_low_sign_change_frequency_excluded() {
 
 /// Test 5: Insufficient samples (below minimum) are NOT detected.
 #[test]
-fn test_insufficient_samples_excluded() {
+fn test_oscillating_neuron_insufficient_samples_excluded() {
     let neurons = vec![("few".to_string(), "TANH".to_string(), 0.0)];
     let records: Vec<DiscoverRecord> = (0..5)
         .map(|i| {
@@ -204,7 +204,7 @@ fn test_unbalanced_sign_distribution_excluded() {
 
 /// Test 8: Multiple neurons — only oscillating ones detected.
 #[test]
-fn test_mixed_neurons_filters_correctly() {
+fn test_oscillating_neuron_mixed_neurons_filters_correctly() {
     let neurons = vec![
         ("osc-mix".to_string(), "TANH".to_string(), 0.0),
         ("stable-mix".to_string(), "RELU".to_string(), 0.0),
@@ -317,7 +317,7 @@ fn test_bias_adjustment_for_imbalanced_oscillation() {
 
 /// Test 11: Candidates are sorted by estimated improvement (best first).
 #[test]
-fn test_candidates_sorted_by_improvement() {
+fn test_oscillating_neuron_candidates_sorted_by_improvement() {
     let neurons = vec![
         ("osc-small".to_string(), "TANH".to_string(), 0.0),
         ("osc-large".to_string(), "TANH".to_string(), 0.0),
@@ -392,7 +392,7 @@ fn test_irregular_oscillation_detected() {
 
 /// Test 13: Empty records produce no candidates.
 #[test]
-fn test_empty_records_no_candidates() {
+fn test_oscillating_neuron_empty_records_no_candidates() {
     let neurons = vec![("empty".to_string(), "TANH".to_string(), 0.0)];
     let records: Vec<DiscoverRecord> = vec![];
 
@@ -406,7 +406,7 @@ fn test_empty_records_no_candidates() {
 
 /// Test 14: Neuron not in records produces no candidate.
 #[test]
-fn test_missing_neuron_records_no_candidate() {
+fn test_oscillating_neuron_missing_neuron_records_no_candidate() {
     let neurons = vec![("missing".to_string(), "TANH".to_string(), 0.0)];
     // No records for this neuron
     let candidates = detect_oscillating_neurons(&neurons, &[]);
@@ -476,7 +476,7 @@ fn test_balanced_oscillation_no_set_bias() {
 
 /// Test 17: Estimated improvement is positive for detected neurons.
 #[test]
-fn test_estimated_improvement_positive() {
+fn test_oscillating_neuron_estimated_improvement_positive() {
     let neurons = vec![("osc-imp".to_string(), "TANH".to_string(), 0.0)];
     let records: Vec<DiscoverRecord> = (0..100)
         .map(|i| {

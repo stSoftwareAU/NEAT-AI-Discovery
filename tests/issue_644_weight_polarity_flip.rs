@@ -348,7 +348,7 @@ fn test_near_zero_weight_not_flagged() {
 
 /// Empty records should produce no candidates.
 #[test]
-fn test_empty_records_no_candidates() {
+fn test_weight_polarity_flip_empty_records_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-0", "input", "IDENTITY"),
@@ -368,7 +368,7 @@ fn test_empty_records_no_candidates() {
 
 /// Insufficient samples should produce no candidates.
 #[test]
-fn test_insufficient_samples_no_candidates() {
+fn test_weight_polarity_flip_insufficient_samples_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-0", "input", "IDENTITY"),
@@ -475,7 +475,7 @@ fn test_flip_is_distinct_from_gradient_delta() {
 
 /// Candidates should be sorted by estimated improvement (best first).
 #[test]
-fn test_candidates_sorted_by_improvement() {
+fn test_weight_polarity_flip_candidates_sorted_by_improvement() {
     let creature = make_creature(
         vec![
             neuron("input-0", "input", "IDENTITY"),

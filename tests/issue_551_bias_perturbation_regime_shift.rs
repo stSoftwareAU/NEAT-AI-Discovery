@@ -266,7 +266,7 @@ fn test_multiple_suboptimal_neurons_produce_candidates() {
 // =============================================================================
 
 #[test]
-fn test_insufficient_samples_returns_empty() {
+fn test_bias_perturbation_insufficient_samples_returns_empty() {
     let hidden_neurons = vec![hidden_neuron("h1", "TANH", 5.0)];
 
     // Only 5 samples — below MIN_DISCOVERY_SAMPLE_COUNT

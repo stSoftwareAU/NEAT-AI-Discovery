@@ -225,7 +225,7 @@ fn test_small_weight_synapse_not_flagged() {
 
 /// Detection requires minimum samples for statistical reliability.
 #[test]
-fn test_minimum_samples_required() {
+fn test_noise_signal_minimum_samples_required() {
     let creature = make_creature(
         vec![
             neuron("hidden-noisy", "hidden", "RELU"),
@@ -581,7 +581,7 @@ fn test_setweight_recommendation_for_noise_reduction() {
 
 /// Candidates include diagnostic comments explaining the detection.
 #[test]
-fn test_candidate_includes_diagnostic_comment() {
+fn test_noise_signal_candidate_includes_diagnostic_comment() {
     let candidate = NoisyNeuronCandidate {
         neuron_uuid: "hidden-noisy".to_string(),
         noise_to_signal_ratio: 3.5,

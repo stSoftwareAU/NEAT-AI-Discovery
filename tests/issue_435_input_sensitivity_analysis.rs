@@ -315,7 +315,7 @@ fn test_zero_variance_input_handled() {
 
 /// Detection requires minimum samples for statistical reliability.
 #[test]
-fn test_minimum_samples_required() {
+fn test_input_sensitivity_minimum_samples_required() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -591,7 +591,7 @@ fn test_configurable_sensitivity_threshold() {
 
 /// Candidates should include diagnostic comments explaining the detection.
 #[test]
-fn test_candidate_includes_diagnostic_comment() {
+fn test_input_sensitivity_candidate_includes_diagnostic_comment() {
     let candidate = DominantInputCandidate {
         input_neuron_uuid: "input-dominant".to_string(),
         target_neuron_uuid: "output-1".to_string(),
@@ -734,7 +734,7 @@ fn test_hidden_neurons_excluded_from_dominant_detection() {
 
 /// Empty records should be handled without panicking.
 #[test]
-fn test_empty_records_handled() {
+fn test_input_sensitivity_empty_records_handled() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

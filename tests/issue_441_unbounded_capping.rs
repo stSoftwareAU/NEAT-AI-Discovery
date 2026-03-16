@@ -187,7 +187,7 @@ fn test_identity_spiking_detected() {
 
 /// Test: Output neurons should NOT be detected (even if spiking)
 #[test]
-fn test_output_neurons_excluded() {
+fn test_unbounded_capping_output_neurons_excluded() {
     let neurons = vec![hidden("hidden-1", "RELU"), output("output-0", "RELU")];
 
     let creature = make_creature(neurons, vec![synapse("hidden-1", "output-0", 1.0)]);
@@ -287,7 +287,7 @@ fn test_bounded_activations_excluded() {
 
 /// Test: Conversion to coordinated structural candidates
 #[test]
-fn test_conversion_to_coordinated_candidates() {
+fn test_unbounded_capping_conversion_to_coordinated_candidates() {
     let neurons = vec![hidden("hidden-1", "RELU"), output("output-0", "IDENTITY")];
 
     let creature = make_creature(neurons, vec![synapse("hidden-1", "output-0", 1.0)]);
@@ -337,7 +337,7 @@ fn test_conversion_to_coordinated_candidates() {
 
 /// Test: Insufficient samples should not trigger detection
 #[test]
-fn test_insufficient_samples_skipped() {
+fn test_unbounded_capping_insufficient_samples_skipped() {
     let neurons = vec![hidden("hidden-1", "RELU"), output("output-0", "IDENTITY")];
 
     let creature = make_creature(neurons, vec![synapse("hidden-1", "output-0", 1.0)]);

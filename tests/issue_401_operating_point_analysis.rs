@@ -130,7 +130,7 @@ fn test_well_placed_tanh_not_flagged() {
 
 /// Output neurons should be excluded from operating-point analysis.
 #[test]
-fn test_output_neurons_excluded() {
+fn test_operating_point_output_neurons_excluded() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -155,7 +155,7 @@ fn test_output_neurons_excluded() {
 
 /// Input neurons should be excluded from operating-point analysis.
 #[test]
-fn test_input_neurons_excluded() {
+fn test_operating_point_input_neurons_excluded() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "LOGISTIC"),
@@ -180,7 +180,7 @@ fn test_input_neurons_excluded() {
 
 /// Neurons with fewer than min_samples should not be flagged.
 #[test]
-fn test_insufficient_samples_skipped() {
+fn test_operating_point_insufficient_samples_skipped() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -244,7 +244,7 @@ fn test_records_without_value_skipped() {
 /// Unbounded activations (IDENTITY, RELU) have no fixed active zone,
 /// so they should not be flagged by this module.
 #[test]
-fn test_unbounded_activations_excluded() {
+fn test_operating_point_unbounded_activations_excluded() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -352,7 +352,7 @@ fn test_multiple_neurons_only_poorly_placed_detected() {
 
 /// Candidate generation should produce setBias, changeSquash, and setWeight candidates.
 #[test]
-fn test_candidate_generation_includes_expected_operations() {
+fn test_operating_point_candidate_generation_includes_expected_operations() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -420,7 +420,7 @@ fn test_candidate_generation_includes_expected_operations() {
 
 /// Configurable utilisation threshold should work.
 #[test]
-fn test_configurable_utilisation_threshold() {
+fn test_operating_point_configurable_utilisation_threshold() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

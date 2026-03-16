@@ -119,7 +119,7 @@ fn test_tanh_output_with_tanh_targets_no_detection() {
 // =============================================================================
 
 #[test]
-fn test_insufficient_samples_returns_empty() {
+fn test_squash_mismatch_insufficient_samples_returns_empty() {
     let outputs = vec![output_neuron("output-1", "HARD_TANH")];
 
     // Only 5 records — below MIN_DISCOVERY_SAMPLE_COUNT (20)
@@ -166,7 +166,7 @@ fn test_hidden_neurons_are_ignored() {
 // =============================================================================
 
 #[test]
-fn test_coordinated_candidate_conversion() {
+fn test_squash_mismatch_coordinated_candidate_conversion() {
     let outputs = vec![output_neuron("output-1", "HARD_TANH")];
 
     let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(

@@ -32,7 +32,7 @@ fn record(neuron_uuid: &str, obs_index: u32, activation: f32) -> DiscoverRecord 
 
 /// Test 1: Synapse with near-zero weight is detected as dormant.
 #[test]
-fn test_detects_near_zero_weight_synapse() {
+fn test_dormant_synapse_356_detects_near_zero_weight_synapse() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -65,7 +65,7 @@ fn test_detects_near_zero_weight_synapse() {
 
 /// Test 2: Synapse with meaningful weight is NOT flagged.
 #[test]
-fn test_active_synapse_not_flagged() {
+fn test_dormant_synapse_356_active_synapse_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -97,7 +97,7 @@ fn test_active_synapse_not_flagged() {
 
 /// Test 3: Sole connection to target is NOT flagged even if dormant.
 #[test]
-fn test_sole_connection_not_flagged() {
+fn test_dormant_synapse_356_sole_connection_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -120,7 +120,7 @@ fn test_sole_connection_not_flagged() {
 
 /// Test 4: Insufficient samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_not_flagged() {
+fn test_dormant_synapse_356_insufficient_samples_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -145,7 +145,7 @@ fn test_insufficient_samples_not_flagged() {
 
 /// Test 5: Dormant synapse candidates produce correct coordinated removal operations.
 #[test]
-fn test_candidates_produce_coordinated_removal_operations() {
+fn test_dormant_synapse_356_candidates_produce_coordinated_removal_operations() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -194,7 +194,7 @@ fn test_candidates_produce_coordinated_removal_operations() {
 
 /// Test 6: Multiple dormant synapses are all detected.
 #[test]
-fn test_multiple_dormant_synapses_detected() {
+fn test_dormant_synapse_356_multiple_dormant_synapses_detected() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -227,7 +227,7 @@ fn test_multiple_dormant_synapses_detected() {
 
 /// Test 7: Other fan-in count is correctly recorded.
 #[test]
-fn test_other_fan_in_count_correct() {
+fn test_dormant_synapse_356_other_fan_in_count_correct() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
