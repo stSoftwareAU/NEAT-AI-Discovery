@@ -1,0 +1,45 @@
+//! Pattern detection integration tests (neuron, synapse, and structural patterns).
+
+#[path = "../common/mod.rs"]
+mod common;
+
+mod issue_341_dead_neuron_detection;
+mod issue_342_saturated_neuron_detection;
+mod issue_343_bottleneck_neuron_detection;
+mod issue_344_correlated_error_detection;
+mod issue_356_dormant_synapse_detection;
+mod issue_356_opposing_synapse_detection;
+mod issue_356_oscillating_neuron_detection;
+mod issue_356_output_bias_drift_detection;
+mod issue_358_oscillating_neuron_detection;
+mod issue_359_dormant_synapse_detection;
+mod issue_360_opposing_synapse_detection;
+mod issue_361_output_bias_drift_detection;
+mod issue_395_bounded_range_detection;
+mod issue_398_observation_range_detection;
+mod issue_399_restricted_range_detection;
+mod issue_400_sentinel_value_gating;
+mod issue_401_operating_point_analysis;
+mod issue_434_noise_signal_ratio_detection;
+mod issue_435_input_sensitivity_analysis;
+mod issue_437_weight_coherence_validation;
+mod issue_441_unbounded_capping;
+mod issue_543_activation_mismatch;
+mod issue_543_observation_utilisation;
+mod issue_545_error_plateau;
+mod issue_545_output_squash_mismatch;
+mod issue_547_error_plateau_structural;
+mod issue_569_symmetry_breaking;
+mod issue_571_co_adaptation_detection;
+mod issue_639_output_conflict_detection;
+mod issue_640_bimodal_neuron_detection;
+mod issue_641_fanin_polarity_conflict;
+mod issue_642_hard_sample_cluster_detection;
+mod issue_643_activation_error_monotonicity;
+mod issue_644_weight_polarity_flip;
+mod issue_645_output_range_compression;
+mod issue_751_bimodal_cluster_coherence;
+mod issue_770_weight_coherence_topology_cache;
+mod issue_793_low_impact_neuron_detection;
+mod issue_804_detection_helpers;
+mod saturation_detection;
