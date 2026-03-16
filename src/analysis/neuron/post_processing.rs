@@ -5,9 +5,10 @@
 
 use crate::{AnalyzeNeuronsInput, CandidateNeuronJson};
 use anyhow::Result;
+use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 
 use crate::analysis::cache::RecordCache;
 use crate::analysis::diagnostics::{NeuronDiagnostics, compute_impact_scores_for_discounting};

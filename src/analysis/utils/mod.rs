@@ -19,35 +19,26 @@ pub mod variant_generation;
 // Mutex helpers — graceful handling of poisoned mutexes (Issue #525)
 // ============================================================================
 
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
-/// Lock a mutex, returning an `anyhow::Error` instead of panicking if poisoned.
+/// Lock a mutex, returning the guard wrapped in `Ok`.
 ///
-/// In an FFI library a panic unwinds into the calling process (Deno / NEAT-AI)
-/// and causes an unexpected abort. This helper converts a `PoisonError` into a
-/// recoverable `anyhow::Error` that propagates to the JSON `success: false`
-/// boundary.
-///
-/// The `context` parameter is included in the error message for diagnostics.
+/// `parking_lot::Mutex` does not poison on thread panic, so this helper always
+/// succeeds. The `_context` parameter is retained for API compatibility with
+/// call sites that pass a diagnostic label.
 pub fn lock_or_bail<'a, T>(
     mutex: &'a Mutex<T>,
-    context: &str,
-) -> anyhow::Result<std::sync::MutexGuard<'a, T>> {
-    mutex.lock().map_err(|_| {
-        anyhow::anyhow!("Mutex poisoned ({context}): a thread panicked while holding this lock")
-    })
+    _context: &str,
+) -> anyhow::Result<parking_lot::MutexGuard<'a, T>> {
+    Ok(mutex.lock())
 }
 
-/// Consume a mutex and return its inner value, or an error if poisoned.
+/// Consume a mutex and return its inner value.
 ///
-/// Equivalent to `Mutex::into_inner().unwrap()` but returns an error instead
-/// of panicking.
-pub fn into_inner_or_bail<T>(mutex: Mutex<T>, context: &str) -> anyhow::Result<T> {
-    mutex.into_inner().map_err(|_| {
-        anyhow::anyhow!(
-            "Mutex poisoned on into_inner ({context}): a thread panicked while holding this lock"
-        )
-    })
+/// `parking_lot::Mutex` does not poison, so this always succeeds. The
+/// `_context` parameter is retained for API compatibility.
+pub fn into_inner_or_bail<T>(mutex: Mutex<T>, _context: &str) -> anyhow::Result<T> {
+    Ok(mutex.into_inner())
 }
 
 // Re-export key memory functions for convenience
