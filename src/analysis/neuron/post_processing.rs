@@ -30,7 +30,7 @@ pub(crate) struct NeuronResultParams<'a> {
     pub neuron_type_map: &'a HashMap<String, String>,
     pub input: &'a AnalyzeNeuronsInput,
     pub cache: &'a Arc<RecordCache>,
-    pub error_values_for_distribution: &'a Arc<Mutex<Vec<f32>>>,
+    pub error_values_for_distribution: &'a [f32],
     pub timing_collector: &'a Arc<crate::analysis::shared::TimingCollector>,
     pub diagnostics: &'a Arc<NeuronDiagnostics>,
     pub gpu_used: bool,
@@ -108,13 +108,11 @@ pub(crate) fn build_neuron_results(
     params.diagnostics.emit_logs();
 
     // Issue #486 / #192: Compute error distribution from collected target neuron error samples.
-    let error_distribution = {
-        let error_values = std::mem::take(&mut *lock_or_bail(
+    // Issue #834: Error values are now collected lock-free via Rayon fold/reduce.
+    let error_distribution =
+        crate::analysis::scoring::error_distribution::ErrorDistribution::from_errors(
             params.error_values_for_distribution,
-            "error_values_for_distribution",
-        )?);
-        crate::analysis::scoring::error_distribution::ErrorDistribution::from_errors(&error_values)
-    };
+        );
 
     Ok(AnalyzeNeuronsResult {
         helpful_neurons: helpful_results,

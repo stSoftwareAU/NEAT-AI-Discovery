@@ -145,8 +145,7 @@ pub(crate) fn analyze_neurons_with_cache(
 
     let used_inputs_arc = Arc::new(prep.used_inputs);
 
-    // Issue #486 / #192: Collect error values from focus target neurons for distribution analysis.
-    let error_values_for_distribution = Arc::new(Mutex::new(Vec::<f32>::new()));
+    // Issue #486 / #192: Error values collected lock-free via Rayon fold/reduce (Issue #834).
 
     // Create a shared GPU work queue ONCE before the parallel loop.
     // This eliminates the overhead of creating multiple GPU devices (one per thread).
@@ -159,12 +158,16 @@ pub(crate) fn analyze_neurons_with_cache(
     // complete its upstream evaluation rather than abandoning it mid-stream. This
     // gives us "vertical" timeout behaviour where some neurons complete fully even
     // if later targets are skipped when the deadline is reached.
-    focus_order_arc
+    // Issue #834: Use Rayon fold/reduce to collect error values lock-free.
+    // Each thread accumulates its own Vec<f32>, merged after the parallel loop.
+    let error_values_for_distribution: Vec<f32> = focus_order_arc
         .par_iter()
-        .try_for_each(|target_uuid| -> Result<()> {
+        .try_fold(
+            Vec::<f32>::new,
+            |mut error_acc, target_uuid| -> Result<Vec<f32>> {
             if analysis_timed_out.load(Ordering::Relaxed) || deadline_passed(&deadline) {
                 analysis_timed_out.store(true, Ordering::Relaxed);
-                return Ok(());
+                return Ok(error_acc);
             }
 
             crate::watchdog::beat(format!(
@@ -181,24 +184,24 @@ pub(crate) fn analyze_neurons_with_cache(
                     if cfg!(debug_assertions) {
                         tracing::error!(target_uuid = %target_uuid, error = %err, "Failed to load target neuron records");
                     }
-                    return Ok(());
+                    return Ok(error_acc);
                 }
             };
             if target_records_arc.is_empty() {
                 diagnostics.set_target_record_count(target_uuid, 0);
-                return Ok(());
+                return Ok(error_acc);
             }
             let target_records = target_records_arc.as_ref();
             diagnostics.set_target_record_count(target_uuid, target_records.len());
 
-            // Issue #486 / #192: Collect error values for distribution analysis
+            // Issue #486 / #192: Collect error values for distribution analysis (lock-free)
             {
                 let errors: Vec<f32> = target_records
                     .iter()
                     .flat_map(|r| r.errors.iter().filter(|e| e.is_finite()).copied())
                     .collect();
                 if !errors.is_empty() {
-                    error_values_for_distribution.lock().extend(errors);
+                    error_acc.extend(errors);
                 }
             }
 
@@ -225,7 +228,7 @@ pub(crate) fn analyze_neurons_with_cache(
 
             let target_index = match order_map_arc.get(target_uuid.as_str()) {
                 Some(index) => *index,
-                None => return Ok(()),
+                None => return Ok(error_acc),
             };
 
             // Phase 1: Pre-filter sources and collect their records
@@ -243,7 +246,7 @@ pub(crate) fn analyze_neurons_with_cache(
 
             // Check if timed out during pre-filtering
             if analysis_timed_out.load(Ordering::Relaxed) {
-                return Ok(());
+                return Ok(error_acc);
             }
 
             // Phase 2: Build samples in parallel using CPU
@@ -322,7 +325,11 @@ pub(crate) fn analyze_neurons_with_cache(
             crate::watchdog::beat(format!(
                 "neuron analysis → completed {completed}/{total_focus_count} (last target {target_uuid})"
             ));
-            Ok(())
+            Ok(error_acc)
+        })
+        .try_reduce(Vec::new, |mut a, b| {
+            a.extend(b);
+            Ok(a)
         })?;
 
     // Post-processing: impact discounting, sorting, filtering, result assembly
@@ -336,7 +343,7 @@ pub(crate) fn analyze_neurons_with_cache(
         neuron_type_map: &prep.neuron_type_map,
         input,
         cache: &cache,
-        error_values_for_distribution: &error_values_for_distribution,
+        error_values_for_distribution: &error_values_for_distribution[..],
         timing_collector: &timing_collector,
         diagnostics: &diagnostics,
         gpu_used,
