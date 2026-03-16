@@ -122,7 +122,10 @@ impl TimingCollector {
         if !self.enabled {
             return;
         }
-        let mut timings = self.shader_timings.lock();
+        let mut timings = super::utils::lock_contention::traced_lock_default(
+            &self.shader_timings,
+            "shader_timings",
+        );
         let entry = timings.entry(shader_name.to_string()).or_insert((0, 0));
         entry.0 += 1;
         entry.1 += duration_ns;
@@ -165,7 +168,10 @@ impl TimingCollector {
 
         let total_analysis_ms = self.start_time.elapsed().as_secs_f64() * 1000.0;
 
-        let shader_timings_lock = self.shader_timings.lock();
+        let shader_timings_lock = super::utils::lock_contention::traced_lock_default(
+            &self.shader_timings,
+            "shader_timings_finalize",
+        );
         let mut shader_timings = HashMap::new();
         let mut total_shader_ns: u64 = 0;
 
