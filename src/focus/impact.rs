@@ -9,7 +9,7 @@ use crate::{CreatureJson, NeuronJson, SynapseJson};
 use anyhow::Result;
 use rayon::prelude::*;
 
-use parking_lot::Mutex;
+use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
 /// Categorise squash functions for impact calculation.
@@ -510,16 +510,15 @@ fn compute_impacts_internal_with_stats(
     // contribution to the final output. This is useful for visualisation/debugging.
     let all_neurons: Vec<&NeuronJson> = creature.neurons.iter().collect();
 
-    // Use a shared cache protected by a mutex for thread-safe updates
-    let shared_cache: Mutex<HashMap<String, f32>> = Mutex::new(HashMap::new());
+    // Issue #835: Use DashMap for lock-free concurrent reads during recursive
+    // impact computation. This eliminates the Mutex contention that occurred when
+    // many parallel threads repeatedly acquired the lock on every recursive call.
+    let shared_cache: DashMap<String, f32> = DashMap::new();
 
     all_neurons.par_iter().for_each(|neuron| {
         // Check if already computed (another thread might have done it).
-        {
-            let cache = shared_cache.lock();
-            if cache.contains_key(&neuron.uuid) {
-                return;
-            }
+        if shared_cache.contains_key(&neuron.uuid) {
+            return;
         }
 
         // Compute with a local visiting set (cycle detection is per-path)
@@ -530,26 +529,22 @@ fn compute_impacts_internal_with_stats(
             compute_impact_with_shared_cache(&neuron.uuid, &ctx, &shared_cache, &mut visiting);
 
         // Store result
-        let mut cache = shared_cache.lock();
-        cache.insert(neuron.uuid.clone(), impact);
+        shared_cache.insert(neuron.uuid.clone(), impact);
     });
 
-    Ok(shared_cache.into_inner())
+    Ok(shared_cache.into_iter().collect())
 }
 
 /// Compute impact with a shared cache for parallel execution.
 fn compute_impact_with_shared_cache(
     uuid: &str,
     ctx: &ImpactContext,
-    shared_cache: &Mutex<HashMap<String, f32>>,
+    shared_cache: &DashMap<String, f32>,
     visiting: &mut HashSet<String>,
 ) -> f32 {
-    // Check cache first.
-    {
-        let cache = shared_cache.lock();
-        if let Some(&value) = cache.get(uuid) {
-            return value;
-        }
+    // Check cache first (lock-free read via DashMap sharding).
+    if let Some(value) = shared_cache.get(uuid) {
+        return *value;
     }
 
     if !visiting.insert(uuid.to_string()) {
@@ -630,11 +625,8 @@ fn compute_impact_with_shared_cache(
 
     visiting.remove(uuid);
 
-    // Cache the result.
-    {
-        let mut cache = shared_cache.lock();
-        cache.insert(uuid.to_string(), impact);
-    }
+    // Cache the result (lock-free write via DashMap sharding).
+    shared_cache.insert(uuid.to_string(), impact);
 
     impact
 }
