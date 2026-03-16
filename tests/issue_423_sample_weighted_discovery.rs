@@ -187,7 +187,7 @@ fn test_low_error_neurons_not_flagged() {
 
 /// Detection needs a minimum number of samples.
 #[test]
-fn test_insufficient_samples_returns_empty() {
+fn test_sample_weighted_insufficient_samples_returns_empty() {
     let records = vec![(
         "neuron-a".to_string(),
         make_records("neuron-a", &[0.9, 0.8]),
@@ -277,7 +277,7 @@ fn test_stratify_empty_records() {
 /// Detected high-error neurons should convert to valid coordinated candidates
 /// with positive expected improvement and appropriate comments.
 #[test]
-fn test_candidates_have_positive_improvement() {
+fn test_sample_weighted_candidates_have_positive_improvement() {
     let high_error_records = make_records(
         "problem-neuron",
         &[
@@ -319,7 +319,7 @@ fn test_candidates_have_positive_improvement() {
 
 /// Candidates should be sorted by expected improvement (best first).
 #[test]
-fn test_candidates_sorted_by_improvement() {
+fn test_sample_weighted_candidates_sorted_by_improvement() {
     // Create multiple neurons with varying error levels
     let records = vec![
         (

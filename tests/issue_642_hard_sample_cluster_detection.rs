@@ -210,7 +210,7 @@ fn test_uniform_error_no_clusters() {
 
 /// Test 4: Insufficient samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_no_detection() {
+fn test_hard_sample_cluster_insufficient_samples_no_detection() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -392,7 +392,7 @@ fn test_dominant_inputs_identified() {
 
 /// Test 8: Estimated improvement is positive for detected clusters.
 #[test]
-fn test_estimated_improvement_positive() {
+fn test_hard_sample_cluster_estimated_improvement_positive() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

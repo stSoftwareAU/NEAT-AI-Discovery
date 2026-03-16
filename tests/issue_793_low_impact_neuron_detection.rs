@@ -237,7 +237,7 @@ fn test_output_and_input_neurons_excluded() {
 
 /// Test 7: Candidates convert to coordinated structural RemoveNeuron operations.
 #[test]
-fn test_candidates_produce_coordinated_removal_operations() {
+fn test_low_impact_neuron_candidates_produce_coordinated_removal_operations() {
     let candidate = LowImpactNeuronCandidate {
         neuron_uuid: "hidden-low".to_string(),
         mean_abs_activation: 5e-5,
@@ -327,7 +327,7 @@ fn test_mixed_network_only_low_impact_detected() {
 
 /// Test 9: Too few samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_not_detected() {
+fn test_low_impact_neuron_insufficient_samples_not_detected() {
     let creature = make_creature(
         vec![
             neuron("hidden-few", "hidden", "RELU"),

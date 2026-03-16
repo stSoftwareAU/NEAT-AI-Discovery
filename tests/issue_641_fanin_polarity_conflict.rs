@@ -260,7 +260,7 @@ fn test_candidate_proposes_add_neuron_split() {
 // =============================================================================
 
 #[test]
-fn test_insufficient_samples_no_candidates() {
+fn test_fanin_polarity_insufficient_samples_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("in-0", "input", "IDENTITY"),
@@ -296,7 +296,7 @@ fn test_insufficient_samples_no_candidates() {
 // =============================================================================
 
 #[test]
-fn test_empty_records_no_candidates() {
+fn test_fanin_polarity_empty_records_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("in-0", "input", "IDENTITY"),

@@ -248,7 +248,7 @@ fn test_healthy_network_no_candidates() {
 // =============================================================================
 
 #[test]
-fn test_estimated_improvement_positive() {
+fn test_error_plateau_structural_estimated_improvement_positive() {
     let outputs = vec![output_neuron("output-1", "HARD_TANH")];
 
     let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(

@@ -196,7 +196,7 @@ fn test_single_output_skips() {
 
 /// Test 4: Insufficient samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_no_detection() {
+fn test_correlated_error_insufficient_samples_no_detection() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -229,7 +229,7 @@ fn test_insufficient_samples_no_detection() {
 /// Test 5: Correlated error group produces coordinated structural candidate
 /// with AddNeuron and AddSynapse operations.
 #[test]
-fn test_candidates_produce_coordinated_operations() {
+fn test_correlated_error_candidates_produce_coordinated_operations() {
     let group = CorrelatedErrorGroup {
         output_neuron_uuids: vec![
             "output-1".to_string(),
@@ -504,7 +504,7 @@ fn test_shared_error_sample_count() {
 
 /// Test 10: Estimated improvement is positive for detected groups.
 #[test]
-fn test_estimated_improvement_positive() {
+fn test_correlated_error_estimated_improvement_positive() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

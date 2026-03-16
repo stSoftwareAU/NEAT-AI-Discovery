@@ -231,7 +231,7 @@ fn test_different_squash_prevents_detection() {
 // =============================================================================
 
 #[test]
-fn test_single_hidden_neuron_no_candidates() {
+fn test_symmetry_breaking_single_hidden_neuron_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-0", "input", "IDENTITY"),
@@ -266,7 +266,7 @@ fn test_single_hidden_neuron_no_candidates() {
 // =============================================================================
 
 #[test]
-fn test_no_hidden_neurons_no_candidates() {
+fn test_symmetry_breaking_no_hidden_neurons_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-0", "input", "IDENTITY"),
@@ -331,7 +331,7 @@ fn test_coordinated_candidates_include_perturbations() {
 // =============================================================================
 
 #[test]
-fn test_insufficient_samples_returns_empty() {
+fn test_symmetry_breaking_insufficient_samples_returns_empty() {
     let creature = symmetric_creature();
 
     // Only 5 samples — below MIN_DISCOVERY_SAMPLE_COUNT

@@ -211,7 +211,7 @@ fn test_no_candidates_when_fully_connected() {
 
 /// Test 3: Insufficient samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_no_candidates() {
+fn test_multi_hop_insufficient_samples_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -248,7 +248,7 @@ fn test_insufficient_samples_no_candidates() {
 
 /// Test 4: Empty records produce no candidates.
 #[test]
-fn test_empty_records_no_candidates() {
+fn test_multi_hop_empty_records_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -267,7 +267,7 @@ fn test_empty_records_no_candidates() {
 
 /// Test 5: Estimated improvement is positive for detected candidates.
 #[test]
-fn test_estimated_improvement_positive() {
+fn test_multi_hop_estimated_improvement_positive() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -348,7 +348,7 @@ fn test_estimated_improvement_positive() {
 /// Test 6: Multi-hop candidates produce valid coordinated structural candidates
 /// with AddNeuron and AddSynapse operations.
 #[test]
-fn test_candidates_produce_coordinated_operations() {
+fn test_multi_hop_candidates_produce_coordinated_operations() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -455,7 +455,7 @@ fn test_candidate_path_depth_bounded() {
 
 /// Test 8: Multi-hop candidates are sorted by estimated improvement.
 #[test]
-fn test_candidates_sorted_by_improvement() {
+fn test_multi_hop_candidates_sorted_by_improvement() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -522,7 +522,7 @@ fn test_candidates_sorted_by_improvement() {
 
 /// Test 9: Network with no hidden neurons produces no multi-hop candidates.
 #[test]
-fn test_no_hidden_neurons_no_candidates() {
+fn test_multi_hop_no_hidden_neurons_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

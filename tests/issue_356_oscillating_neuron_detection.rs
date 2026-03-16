@@ -118,7 +118,7 @@ fn test_low_sign_change_frequency_not_flagged() {
 
 /// Test 5: Insufficient samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_not_flagged() {
+fn test_oscillating_neuron_356_insufficient_samples_not_flagged() {
     let neurons = vec![("hidden-few".to_string(), "TANH".to_string(), 0.0)];
 
     let records: Vec<DiscoverRecord> = (0..5)

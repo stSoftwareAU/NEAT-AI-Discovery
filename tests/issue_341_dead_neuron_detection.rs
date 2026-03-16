@@ -156,7 +156,7 @@ fn test_constant_tiny_activation_is_dead() {
 
 /// Test 6: Output neurons should never be flagged as dead.
 #[test]
-fn test_output_neurons_not_flagged() {
+fn test_dead_neuron_output_neurons_not_flagged() {
     let creature = make_creature(vec![neuron("output-1", "output", "IDENTITY")], vec![]);
 
     let records: Vec<DiscoverRecord> = (0..100)
@@ -173,7 +173,7 @@ fn test_output_neurons_not_flagged() {
 
 /// Test 7: Too few samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_not_flagged() {
+fn test_dead_neuron_insufficient_samples_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("hidden-few", "hidden", "RELU"),
@@ -242,7 +242,7 @@ fn test_mixed_neurons_only_dead_detected() {
 
 /// Test 9: Dead neuron candidates produce correct coordinated structural operations.
 #[test]
-fn test_candidates_produce_coordinated_removal_operations() {
+fn test_dead_neuron_candidates_produce_coordinated_removal_operations() {
     let candidate = DeadNeuronCandidate {
         neuron_uuid: "hidden-dead".to_string(),
         mean_abs_activation: 1e-8,

@@ -112,7 +112,7 @@ fn test_no_detection_for_low_error() {
 // =============================================================================
 
 #[test]
-fn test_insufficient_samples_returns_empty() {
+fn test_error_plateau_insufficient_samples_returns_empty() {
     let outputs = vec![output_neuron("output-1", "HARD_TANH")];
 
     let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
@@ -135,7 +135,7 @@ fn test_insufficient_samples_returns_empty() {
 // =============================================================================
 
 #[test]
-fn test_coordinated_candidate_conversion() {
+fn test_error_plateau_coordinated_candidate_conversion() {
     let outputs = vec![output_neuron("output-1", "HARD_TANH")];
 
     let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(

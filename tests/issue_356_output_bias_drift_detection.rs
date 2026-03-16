@@ -60,7 +60,7 @@ fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
 
 /// Test 1: Output neuron with predominantly positive errors is detected.
 #[test]
-fn test_detects_positive_bias_drift() {
+fn test_output_bias_drift_356_detects_positive_bias_drift() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -96,7 +96,7 @@ fn test_detects_positive_bias_drift() {
 
 /// Test 2: Output neuron with predominantly negative errors is detected.
 #[test]
-fn test_detects_negative_bias_drift() {
+fn test_output_bias_drift_356_detects_negative_bias_drift() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -127,7 +127,7 @@ fn test_detects_negative_bias_drift() {
 
 /// Test 3: Output neuron with balanced errors is NOT flagged.
 #[test]
-fn test_balanced_errors_not_flagged() {
+fn test_output_bias_drift_356_balanced_errors_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -184,7 +184,7 @@ fn test_hidden_neuron_not_flagged() {
 
 /// Test 5: Insufficient samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_not_flagged() {
+fn test_output_bias_drift_356_insufficient_samples_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -208,7 +208,7 @@ fn test_insufficient_samples_not_flagged() {
 
 /// Test 6: Very small errors (noise) are NOT flagged.
 #[test]
-fn test_noise_level_errors_not_flagged() {
+fn test_output_bias_drift_356_noise_level_errors_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -277,7 +277,7 @@ fn test_candidates_produce_coordinated_set_bias_operations() {
 
 /// Test 8: Multiple output neurons — only biased ones are detected.
 #[test]
-fn test_multiple_outputs_only_biased_detected() {
+fn test_output_bias_drift_356_multiple_outputs_only_biased_detected() {
     let creature = CreatureJson {
         neurons: vec![
             neuron("input-1", "input", 0.0),
@@ -322,7 +322,7 @@ fn test_multiple_outputs_only_biased_detected() {
 
 /// Test 9: Current bias is correctly recorded.
 #[test]
-fn test_current_bias_recorded() {
+fn test_output_bias_drift_356_current_bias_recorded() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
