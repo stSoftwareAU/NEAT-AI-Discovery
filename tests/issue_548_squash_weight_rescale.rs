@@ -400,7 +400,7 @@ fn test_aggregate_squash_skipped() {
 // =============================================================================
 
 #[test]
-fn test_insufficient_samples_no_candidates() {
+fn test_squash_weight_rescale_insufficient_samples_no_candidates() {
     let creature = make_creature(
         vec![
             input_neuron("input-1"),

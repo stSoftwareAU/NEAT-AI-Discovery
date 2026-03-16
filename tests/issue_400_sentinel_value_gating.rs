@@ -429,7 +429,7 @@ fn test_detects_sentinel_at_zero() {
 // Test 9: Output neurons are excluded from sentinel gating.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_output_neurons_excluded() {
+fn test_sentinel_gating_output_neurons_excluded() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

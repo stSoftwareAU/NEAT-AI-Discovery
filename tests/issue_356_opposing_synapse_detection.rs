@@ -59,7 +59,7 @@ fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
 
 /// Test 1: Synapse with strong positive contribution–error correlation is detected.
 #[test]
-fn test_detects_opposing_synapse() {
+fn test_opposing_synapse_356_detects_opposing_synapse() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -104,7 +104,7 @@ fn test_detects_opposing_synapse() {
 
 /// Test 2: Helpful synapse (negative contribution–error correlation) is NOT flagged.
 #[test]
-fn test_helpful_synapse_not_flagged() {
+fn test_opposing_synapse_356_helpful_synapse_not_flagged() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -143,7 +143,7 @@ fn test_helpful_synapse_not_flagged() {
 
 /// Test 3: Hidden-to-hidden synapses are not analysed (only output targets).
 #[test]
-fn test_hidden_target_synapses_not_analysed() {
+fn test_opposing_synapse_356_hidden_target_synapses_not_analysed() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input"),
@@ -199,7 +199,7 @@ fn test_hidden_target_synapses_not_analysed() {
 
 /// Test 4: Insufficient samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_not_flagged() {
+fn test_opposing_synapse_356_insufficient_samples_not_flagged() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],
@@ -228,7 +228,7 @@ fn test_insufficient_samples_not_flagged() {
 
 /// Test 5: Strongly opposing synapse recommends removal.
 #[test]
-fn test_strongly_opposing_recommends_removal() {
+fn test_opposing_synapse_356_strongly_opposing_recommends_removal() {
     let creature = make_creature(
         vec![neuron("input-1", "input"), neuron("output-1", "output")],
         vec![synapse("input-1", "output-1", 0.5)],

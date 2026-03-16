@@ -331,7 +331,7 @@ fn test_does_not_flag_wide_topology() {
 
 /// Test 3: Output neurons are never flagged as bottlenecks (they are natural convergence points).
 #[test]
-fn test_output_neurons_not_flagged() {
+fn test_bottleneck_output_neurons_not_flagged() {
     // Even though output neurons may have high fan-in, they are expected convergence points
     let creature = CreatureJson {
         neurons: vec![
@@ -408,7 +408,7 @@ fn test_output_neurons_not_flagged() {
 
 /// Test 4: Input neurons are never flagged.
 #[test]
-fn test_input_neurons_not_flagged() {
+fn test_bottleneck_input_neurons_not_flagged() {
     let creature = bottleneck_creature();
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
@@ -427,7 +427,7 @@ fn test_input_neurons_not_flagged() {
 
 /// Test 5: Insufficient samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_not_flagged() {
+fn test_bottleneck_insufficient_samples_not_flagged() {
     let creature = bottleneck_creature();
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
@@ -446,7 +446,7 @@ fn test_insufficient_samples_not_flagged() {
 
 /// Test 6: Candidates produce correct coordinated structural operations.
 #[test]
-fn test_candidates_produce_coordinated_operations() {
+fn test_bottleneck_candidates_produce_coordinated_operations() {
     let candidate = BottleneckNeuronCandidate {
         neuron_uuid: "hidden-bottleneck".to_string(),
         fan_in: 5,

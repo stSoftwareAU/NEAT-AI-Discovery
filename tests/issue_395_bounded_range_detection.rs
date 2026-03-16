@@ -172,7 +172,7 @@ fn test_detects_hidden_neuron_with_boundary_cluster() {
 // Test 5: Insufficient samples → no detection.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_insufficient_samples_not_detected() {
+fn test_bounded_range_insufficient_samples_not_detected() {
     let creature = make_creature(
         vec![
             neuron("input-obs", "input", "IDENTITY"),
@@ -255,7 +255,7 @@ fn test_detects_cluster_at_zero_sentinel() {
 // Test 8: Coordinated candidate conversion produces valid operations.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_coordinated_candidate_conversion() {
+fn test_bounded_range_coordinated_candidate_conversion() {
     let candidates = vec![BoundedRangeCandidate {
         neuron_uuid: "input-obs".to_string(),
         boundary_value: -1.0,
@@ -340,7 +340,7 @@ fn test_multiple_neurons_only_boundary_clustered_detected() {
 // Test 10: Output neurons are excluded from bounded range detection.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_output_neurons_excluded() {
+fn test_bounded_range_output_neurons_excluded() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

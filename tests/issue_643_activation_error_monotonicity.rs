@@ -252,7 +252,7 @@ fn test_input_output_neurons_excluded() {
 
 /// Test 6: Insufficient samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_no_detection() {
+fn test_activation_monotonicity_insufficient_samples_no_detection() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -390,7 +390,7 @@ fn test_multiple_neurons_only_non_monotonic_flagged() {
 
 /// Test 9: Estimated improvement is positive for detected non-monotonic neurons.
 #[test]
-fn test_estimated_improvement_positive() {
+fn test_activation_monotonicity_estimated_improvement_positive() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -438,7 +438,7 @@ fn test_estimated_improvement_positive() {
 
 /// Test 10: Empty records produce no detections.
 #[test]
-fn test_empty_records_no_detections() {
+fn test_activation_monotonicity_empty_records_no_detections() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

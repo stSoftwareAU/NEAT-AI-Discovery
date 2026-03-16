@@ -207,7 +207,7 @@ fn test_empty_candidates_passthrough() {
 
 /// Test 8: Single candidate passes through unchanged.
 #[test]
-fn test_single_candidate_passthrough() {
+fn test_candidate_diversity_single_candidate_passthrough() {
     let candidates = vec![remove_synapse_candidate("input-1", "output-0", 0.10)];
 
     let config = DiversityConfig::default();

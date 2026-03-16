@@ -325,7 +325,7 @@ fn test_gradient_to_coordinated_candidates() {
 
 /// Empty records should produce no candidates.
 #[test]
-fn test_empty_records_no_candidates() {
+fn test_gradient_discovery_empty_records_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-0", "input", "IDENTITY"),
@@ -345,7 +345,7 @@ fn test_empty_records_no_candidates() {
 
 /// Insufficient samples should produce no candidates.
 #[test]
-fn test_insufficient_samples_no_candidates() {
+fn test_gradient_discovery_insufficient_samples_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-0", "input", "IDENTITY"),
@@ -536,7 +536,7 @@ fn test_improvement_scales_with_gradient() {
 
 /// Candidates should be sorted by estimated improvement (best first).
 #[test]
-fn test_candidates_sorted_by_improvement() {
+fn test_gradient_discovery_candidates_sorted_by_improvement() {
     let creature = make_creature(
         vec![
             neuron("input-0", "input", "IDENTITY"),

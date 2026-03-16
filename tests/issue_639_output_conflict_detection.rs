@@ -163,7 +163,7 @@ fn test_only_hidden_neurons_analysed() {
 
 /// Test 4: Insufficient samples produce no detections.
 #[test]
-fn test_insufficient_samples_no_detection() {
+fn test_output_conflict_insufficient_samples_no_detection() {
     let creature = two_output_creature();
 
     // Only 5 samples — below minimum threshold
@@ -212,7 +212,7 @@ fn test_single_output_no_detection() {
 
 /// Test 6: Produces valid coordinated structural candidates.
 #[test]
-fn test_produces_valid_coordinated_candidates() {
+fn test_output_conflict_produces_valid_coordinated_candidates() {
     let creature = two_output_creature();
 
     let detected = vec![OutputConflictNeuron {
@@ -372,7 +372,7 @@ fn test_results_sorted_by_severity() {
 
 /// Test 10: Empty records produce no detections.
 #[test]
-fn test_empty_records_no_detections() {
+fn test_output_conflict_empty_records_no_detections() {
     let creature = two_output_creature();
 
     let detected = detect_output_conflict_neurons(&creature, &[]);

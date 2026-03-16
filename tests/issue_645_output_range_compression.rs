@@ -173,7 +173,7 @@ fn test_hidden_neurons_excluded() {
 
 /// Test 4: Insufficient samples should not trigger detection.
 #[test]
-fn test_insufficient_samples_no_detection() {
+fn test_output_range_compression_insufficient_samples_no_detection() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY", 0.0),
@@ -233,7 +233,7 @@ fn test_unbounded_activation_excluded() {
 
 /// Test 6: Produces valid coordinated candidates (setBias+setWeight or changeSquash).
 #[test]
-fn test_produces_valid_coordinated_candidates() {
+fn test_output_range_compression_produces_valid_coordinated_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY", 0.0),
@@ -427,7 +427,7 @@ fn test_dead_output_excluded() {
 
 /// Test 11: Empty records produce no detections.
 #[test]
-fn test_empty_records_no_detections() {
+fn test_output_range_compression_empty_records_no_detections() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY", 0.0),

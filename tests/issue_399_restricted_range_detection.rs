@@ -117,7 +117,7 @@ fn test_does_not_flag_neuron_using_full_range() {
 // Test 3: Unbounded activations (IDENTITY, RELU) are excluded.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_unbounded_activations_excluded() {
+fn test_restricted_range_unbounded_activations_excluded() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -157,7 +157,7 @@ fn test_unbounded_activations_excluded() {
 // Test 4: Output neurons are excluded.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_output_neurons_excluded() {
+fn test_restricted_range_output_neurons_excluded() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -183,7 +183,7 @@ fn test_output_neurons_excluded() {
 // Test 5: Insufficient samples are skipped.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_insufficient_samples_skipped() {
+fn test_restricted_range_insufficient_samples_skipped() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -243,7 +243,7 @@ fn test_dead_neurons_excluded() {
 // Test 7: Candidate generation includes changeSquash, setBias, setWeight.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_candidate_generation_includes_expected_operations() {
+fn test_restricted_range_candidate_generation_includes_expected_operations() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -310,7 +310,7 @@ fn test_candidate_generation_includes_expected_operations() {
 // Test 8: Configurable utilisation threshold.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_configurable_utilisation_threshold() {
+fn test_restricted_range_configurable_utilisation_threshold() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

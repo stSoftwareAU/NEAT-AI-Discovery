@@ -174,7 +174,7 @@ fn test_uniform_distribution_full_range_effective() {
 // Test 4: Insufficient samples — no detection.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_insufficient_samples_no_detection() {
+fn test_observation_range_insufficient_samples_no_detection() {
     let creature = make_creature(
         vec![
             neuron("input-obs", "input", "IDENTITY"),
@@ -240,7 +240,7 @@ fn test_utilisation_ratio_computed_correctly() {
 // Test 6: Output neurons are excluded (only input observations analysed).
 // ---------------------------------------------------------------------------
 #[test]
-fn test_output_neurons_excluded() {
+fn test_observation_range_output_neurons_excluded() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

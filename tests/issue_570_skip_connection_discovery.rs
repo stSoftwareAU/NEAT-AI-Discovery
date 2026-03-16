@@ -374,7 +374,7 @@ fn test_candidates_prioritise_largest_depth_gaps() {
 
 /// Test 4: Candidates have positive estimated improvement.
 #[test]
-fn test_candidates_have_positive_improvement() {
+fn test_skip_connection_candidates_have_positive_improvement() {
     let creature = deep_network_creature();
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![
@@ -450,7 +450,7 @@ fn test_coordinated_candidates_use_conservative_weights() {
 
 /// Test 6: Existing skip connections are not duplicated.
 #[test]
-fn test_existing_skip_connection_not_duplicated() {
+fn test_skip_connection_existing_skip_connection_not_duplicated() {
     // Deep chain with an existing skip: input-0 → h0 directly connected
     let mut creature = deep_network_creature();
     // Add an existing skip: input-0 → h4
@@ -486,7 +486,7 @@ fn test_existing_skip_connection_not_duplicated() {
 
 /// Test 7: Empty network (no hidden neurons) produces no candidates.
 #[test]
-fn test_no_hidden_neurons_no_candidates() {
+fn test_skip_connection_no_hidden_neurons_no_candidates() {
     let creature = CreatureJson {
         neurons: vec![
             NeuronJson {
@@ -523,7 +523,7 @@ fn test_no_hidden_neurons_no_candidates() {
 
 /// Test 8: Insufficient samples do not trigger detection.
 #[test]
-fn test_insufficient_samples_no_candidates() {
+fn test_skip_connection_insufficient_samples_no_candidates() {
     let creature = deep_network_creature();
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![
@@ -611,7 +611,7 @@ fn test_source_is_shallow_neuron() {
 
 /// Test 12: Candidates are sorted by estimated improvement (best first).
 #[test]
-fn test_candidates_sorted_by_improvement() {
+fn test_skip_connection_candidates_sorted_by_improvement() {
     let creature = deep_network_creature();
 
     let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![

@@ -181,7 +181,7 @@ fn test_empty_input() {
 
 /// Test 6: Single candidate passes through unchanged.
 #[test]
-fn test_single_candidate_passthrough() {
+fn test_cross_module_dedup_single_candidate_passthrough() {
     let candidates = vec![change_squash_candidate(
         "neuron-5",
         "TANH",

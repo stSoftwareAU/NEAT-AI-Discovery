@@ -194,7 +194,7 @@ fn test_no_detection_for_low_error_direct_path() {
 // =============================================================================
 
 #[test]
-fn test_insufficient_samples_returns_empty() {
+fn test_topology_diversification_insufficient_samples_returns_empty() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),

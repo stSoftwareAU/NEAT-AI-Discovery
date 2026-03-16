@@ -93,7 +93,7 @@ fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
 // Test 1: Output neuron with predominantly positive errors is detected.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_detects_positive_bias_drift() {
+fn test_output_bias_drift_detects_positive_bias_drift() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -127,7 +127,7 @@ fn test_detects_positive_bias_drift() {
 // Test 2: Output neuron with predominantly negative errors is detected.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_detects_negative_bias_drift() {
+fn test_output_bias_drift_detects_negative_bias_drift() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -159,7 +159,7 @@ fn test_detects_negative_bias_drift() {
 // Test 3: Output neuron with balanced errors is NOT flagged.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_balanced_errors_not_flagged() {
+fn test_output_bias_drift_balanced_errors_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -241,7 +241,7 @@ fn test_input_neuron_excluded() {
 // Test 6: Insufficient samples should not trigger detection.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_insufficient_samples_not_flagged() {
+fn test_output_bias_drift_insufficient_samples_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -266,7 +266,7 @@ fn test_insufficient_samples_not_flagged() {
 // Test 7: Very small errors (noise level) are NOT flagged.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_noise_level_errors_not_flagged() {
+fn test_output_bias_drift_noise_level_errors_not_flagged() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -292,7 +292,7 @@ fn test_noise_level_errors_not_flagged() {
 // Test 8: Coordinated candidate conversion produces correct SetBias operations.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_coordinated_candidate_conversion() {
+fn test_output_bias_drift_coordinated_candidate_conversion() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -337,7 +337,7 @@ fn test_coordinated_candidate_conversion() {
 // Test 9: Multiple output neurons — only biased ones are detected.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_multiple_outputs_only_biased_detected() {
+fn test_output_bias_drift_multiple_outputs_only_biased_detected() {
     let creature = CreatureJson {
         neurons: vec![
             neuron("input-1", "input", 0.0),
@@ -384,7 +384,7 @@ fn test_multiple_outputs_only_biased_detected() {
 // Test 10: Current bias is correctly recorded in candidate.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_current_bias_recorded() {
+fn test_output_bias_drift_current_bias_recorded() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -479,7 +479,7 @@ fn test_positive_error_fraction_computed_correctly() {
 // Test 13: Candidates are sorted by estimated improvement (best first).
 // ---------------------------------------------------------------------------
 #[test]
-fn test_candidates_sorted_by_estimated_improvement() {
+fn test_output_bias_drift_candidates_sorted_by_estimated_improvement() {
     let creature = CreatureJson {
         neurons: vec![
             neuron("input-1", "input", 0.0),
@@ -531,7 +531,7 @@ fn test_candidates_sorted_by_estimated_improvement() {
 // Test 14: Estimated improvement is always positive.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_estimated_improvement_always_positive() {
+fn test_output_bias_drift_estimated_improvement_always_positive() {
     let creature = CreatureJson {
         neurons: vec![
             neuron("input-1", "input", 0.0),
@@ -584,7 +584,7 @@ fn test_estimated_improvement_always_positive() {
 // Test 15: Coordinated candidate comment includes diagnostics.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_coordinated_candidate_comment_includes_diagnostics() {
+fn test_output_bias_drift_coordinated_candidate_comment_includes_diagnostics() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -628,7 +628,7 @@ fn test_coordinated_candidate_comment_includes_diagnostics() {
 // Test 16: Exactly minimum sample count (20) is accepted.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_exactly_minimum_samples_accepted() {
+fn test_output_bias_drift_exactly_minimum_samples_accepted() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -651,7 +651,7 @@ fn test_exactly_minimum_samples_accepted() {
 // Test 17: Nineteen samples (below minimum) is rejected.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_nineteen_samples_below_minimum_rejected() {
+fn test_output_bias_drift_nineteen_samples_below_minimum_rejected() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -778,7 +778,7 @@ fn test_mean_error_at_noise_threshold_boundary() {
 // Test 21: Empty records produce no candidates.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_empty_records_no_candidates() {
+fn test_output_bias_drift_empty_records_no_candidates() {
     let creature = make_creature(
         vec![
             neuron("input-1", "input", 0.0),
@@ -874,7 +874,7 @@ fn test_set_bias_value_is_current_plus_delta() {
 // Test 24: Each coordinated candidate has exactly one operation.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_each_candidate_has_one_operation() {
+fn test_output_bias_drift_each_candidate_has_one_operation() {
     let creature = CreatureJson {
         neurons: vec![
             neuron("input-1", "input", 0.0),
@@ -920,7 +920,7 @@ fn test_each_candidate_has_one_operation() {
 // Test 25: Empty candidates conversion produces empty results.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_empty_candidates_conversion() {
+fn test_output_bias_drift_empty_candidates_conversion() {
     let coordinated = output_bias_drift_to_coordinated_candidates(&[]);
     assert!(
         coordinated.is_empty(),
@@ -932,7 +932,7 @@ fn test_empty_candidates_conversion() {
 // Test 26: Coordinated candidates sorted by expected score gain.
 // ---------------------------------------------------------------------------
 #[test]
-fn test_coordinated_candidates_sorted_by_score_gain() {
+fn test_output_bias_drift_coordinated_candidates_sorted_by_score_gain() {
     let creature = CreatureJson {
         neurons: vec![
             neuron("input-1", "input", 0.0),

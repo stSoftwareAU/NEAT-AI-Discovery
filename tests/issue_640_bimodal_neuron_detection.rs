@@ -103,7 +103,7 @@ fn test_none_values_skipped() {
 
 /// Test 4: Insufficient samples are excluded.
 #[test]
-fn test_insufficient_samples_excluded() {
+fn test_bimodal_neuron_insufficient_samples_excluded() {
     let neurons = vec![("few".to_string(), "TANH".to_string(), 0.0)];
     let records: Vec<DiscoverRecord> = (0..5)
         .map(|i| {
@@ -208,7 +208,7 @@ fn test_overlapping_clusters_not_detected() {
 
 /// Test 8: Multiple neurons — only bimodal ones detected.
 #[test]
-fn test_mixed_neurons_filters_correctly() {
+fn test_bimodal_neuron_mixed_neurons_filters_correctly() {
     let neurons = vec![
         ("bimodal-mix".to_string(), "TANH".to_string(), 0.0),
         ("unimodal-mix".to_string(), "RELU".to_string(), 0.0),
@@ -243,7 +243,7 @@ fn test_mixed_neurons_filters_correctly() {
 
 /// Test 9: Candidates are sorted by estimated improvement (best first).
 #[test]
-fn test_candidates_sorted_by_improvement() {
+fn test_bimodal_neuron_candidates_sorted_by_improvement() {
     let neurons = vec![
         ("bimodal-small".to_string(), "TANH".to_string(), 0.0),
         ("bimodal-large".to_string(), "TANH".to_string(), 0.0),
@@ -288,7 +288,7 @@ fn test_candidates_sorted_by_improvement() {
 
 /// Test 10: Empty records produce no candidates.
 #[test]
-fn test_empty_records_no_candidates() {
+fn test_bimodal_neuron_empty_records_no_candidates() {
     let neurons = vec![("empty".to_string(), "TANH".to_string(), 0.0)];
     let records: Vec<DiscoverRecord> = vec![];
 
@@ -302,7 +302,7 @@ fn test_empty_records_no_candidates() {
 
 /// Test 11: Missing neuron records produce no candidate.
 #[test]
-fn test_missing_neuron_records_no_candidate() {
+fn test_bimodal_neuron_missing_neuron_records_no_candidate() {
     let neurons = vec![("missing".to_string(), "TANH".to_string(), 0.0)];
     let candidates = detect_bimodal_neurons(&neurons, &[]);
 
@@ -338,7 +338,7 @@ fn test_partial_none_values_still_detects() {
 
 /// Test 13: Estimated improvement is positive for detected neurons.
 #[test]
-fn test_estimated_improvement_positive() {
+fn test_bimodal_neuron_estimated_improvement_positive() {
     let neurons = vec![("bimodal-imp".to_string(), "TANH".to_string(), 0.0)];
     let records: Vec<DiscoverRecord> = (0..100)
         .map(|i| {

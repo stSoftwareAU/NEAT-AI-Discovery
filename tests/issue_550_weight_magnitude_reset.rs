@@ -303,7 +303,7 @@ fn test_no_candidates_for_healthy_synapses() {
 // =============================================================================
 
 #[test]
-fn test_insufficient_samples_no_candidates() {
+fn test_weight_magnitude_reset_insufficient_samples_no_candidates() {
     let creature = make_creature(
         vec![
             input_neuron("input-1"),
