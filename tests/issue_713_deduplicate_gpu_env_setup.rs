@@ -6,22 +6,33 @@
 
 use neat_ai_discovery::analysis::utils::platform;
 
-/// The canonical functions in `platform.rs` must be callable without panicking.
+/// Smoke test: `suppress_mesa_warnings_if_requested` is a one-time, idempotent
+/// environment variable setter guarded by `Once`. On non-Linux it is a no-op.
+/// There is no return value or queryable state — the only contract is that
+/// repeated calls do not panic.
 #[test]
 fn platform_suppress_mesa_warnings_does_not_panic() {
     platform::suppress_mesa_warnings_if_requested();
+    // Idempotent — second call must also succeed
+    platform::suppress_mesa_warnings_if_requested();
 }
 
-/// The canonical `ensure_xdg_runtime_dir` must be callable without panicking.
+/// Smoke test: `ensure_xdg_runtime_dir` is a one-time environment setup
+/// guarded by `Once`. On non-Linux it is a no-op. There is no return value
+/// or queryable state — the only contract is that repeated calls do not panic.
 #[test]
 fn platform_ensure_xdg_runtime_dir_does_not_panic() {
     platform::ensure_xdg_runtime_dir();
+    // Idempotent — second call must also succeed
+    platform::ensure_xdg_runtime_dir();
 }
 
-/// The re-exported functions via `utils` must resolve to the same canonical functions.
+/// Smoke test: verifies that the `utils` module re-exports resolve to the
+/// same canonical platform functions without panicking. The functions are
+/// environment-variable setters with no return value, so a no-panic check
+/// is the strongest available contract.
 #[test]
 fn utils_reexports_resolve_to_platform() {
-    // These call the re-exported versions from utils::mod.rs
     neat_ai_discovery::analysis::utils::suppress_mesa_warnings_if_requested();
     neat_ai_discovery::analysis::utils::ensure_xdg_runtime_dir();
 }

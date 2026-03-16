@@ -567,9 +567,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn phase_timer_creates_without_panic() {
+    fn phase_timer_records_non_zero_elapsed() {
         let timer = PhaseTimer::new("test_phase");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let elapsed = timer.elapsed_ms();
         drop(timer);
+        assert!(
+            elapsed >= 1,
+            "PhaseTimer should record non-zero elapsed time, got {elapsed}ms"
+        );
     }
 
     #[test]
@@ -605,9 +611,22 @@ mod tests {
     }
 
     #[test]
-    fn profile_mode_default() {
-        // Without env var, should be None
-        // Note: this test might be affected by other tests setting the env var
-        // since OnceLock caches the value
+    fn profile_data_to_json_includes_timing_structure() {
+        let profile = ProfileData::new();
+        let json = profile.to_json();
+
+        // The JSON output must always contain top-level keys
+        assert!(
+            json["timing"].is_object(),
+            "JSON should contain a 'timing' object"
+        );
+        assert!(
+            json["timing"]["totalMs"].is_number(),
+            "timing should include totalMs"
+        );
+        assert!(
+            json["timing"]["phases"].is_object(),
+            "timing should include phases"
+        );
     }
 }

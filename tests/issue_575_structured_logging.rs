@@ -8,24 +8,31 @@ use neat_ai_discovery::observability;
 
 #[test]
 fn init_tracing_is_idempotent() {
-    // Calling init_tracing multiple times must not panic.
+    // Smoke test: init_tracing sets a global tracing subscriber via try_init().
+    // The only observable contract is that repeated calls do not panic — there is
+    // no return value or queryable state to assert on.
     observability::init_tracing();
     observability::init_tracing();
     observability::init_tracing();
 }
 
 #[test]
-fn phase_timer_uses_tracing_without_panic() {
+fn phase_timer_records_elapsed_time() {
     observability::init_tracing();
 
-    // Create and drop a PhaseTimer — should emit a tracing event (not panic).
     let timer = observability::PhaseTimer::new("test_tracing_phase");
-    std::thread::sleep(std::time::Duration::from_millis(1));
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let elapsed = timer.elapsed_ms();
     drop(timer);
+
+    assert!(
+        elapsed >= 1,
+        "PhaseTimer should record non-zero elapsed time after sleep, got {elapsed}ms"
+    );
 }
 
 #[test]
-fn gpu_metrics_report_uses_tracing_without_panic() {
+fn gpu_metrics_tracks_recorded_values() {
     observability::init_tracing();
 
     let metrics = observability::GpuMetrics::new();
@@ -33,19 +40,53 @@ fn gpu_metrics_report_uses_tracing_without_panic() {
     metrics.record_gpu_busy_us(1000);
     metrics.record_queue_wait_us(200);
 
-    // report() now uses tracing::info! instead of eprintln! — must not panic.
+    assert_eq!(metrics.batch_count(), 1, "should record one batch");
+    assert_eq!(
+        metrics.total_samples_processed(),
+        42,
+        "should record 42 samples"
+    );
+    assert_eq!(
+        metrics.total_gpu_busy_us(),
+        1000,
+        "should record 1000µs GPU busy time"
+    );
+    assert_eq!(
+        metrics.total_queue_wait_us(),
+        200,
+        "should record 200µs queue wait time"
+    );
+
+    // Utilisation = 1000 / (1000 + 200) ≈ 83.3%
+    let utilisation = metrics.utilisation_percent();
+    assert!(
+        (utilisation - 83.3).abs() < 1.0,
+        "utilisation should be ~83.3%, got {utilisation:.1}%"
+    );
+
+    // report() emits tracing output — verify it does not panic
     metrics.report();
 }
 
 #[test]
-fn profile_data_report_uses_tracing_without_panic() {
+fn profile_data_records_phases_and_produces_valid_json() {
     observability::init_tracing();
 
     let mut profile = observability::ProfileData::new();
     profile.record_phase("test_phase", 100);
     profile.set_gpu_batch_count(5);
 
-    // report() now uses tracing::info! instead of eprintln! — must not panic.
+    let json = profile.to_json();
+    assert_eq!(
+        json["timing"]["phases"]["test_phase"], 100,
+        "recorded phase should appear in JSON output"
+    );
+    assert_eq!(
+        json["gpu"]["batchCount"], 5,
+        "GPU batch count should appear in JSON output"
+    );
+
+    // report() emits tracing output — verify it does not panic
     profile.report();
 }
 
