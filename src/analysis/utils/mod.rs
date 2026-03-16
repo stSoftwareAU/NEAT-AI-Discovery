@@ -11,6 +11,7 @@
 //! - `variant_generation` - Parameterised candidate variant generation (Issue #806)
 
 pub mod deadline;
+pub mod lock_contention;
 pub mod memory;
 pub mod platform;
 pub mod variant_generation;
@@ -24,13 +25,13 @@ use parking_lot::Mutex;
 /// Lock a mutex, returning the guard wrapped in `Ok`.
 ///
 /// `parking_lot::Mutex` does not poison on thread panic, so this helper always
-/// succeeds. The `_context` parameter is retained for API compatibility with
-/// call sites that pass a diagnostic label.
+/// succeeds. The `context` parameter is used as a diagnostic label for lock
+/// contention tracing when verbose mode is enabled (Issue #837).
 pub fn lock_or_bail<'a, T>(
     mutex: &'a Mutex<T>,
-    _context: &str,
+    context: &str,
 ) -> anyhow::Result<parking_lot::MutexGuard<'a, T>> {
-    Ok(mutex.lock())
+    Ok(lock_contention::traced_lock_default(mutex, context))
 }
 
 /// Consume a mutex and return its inner value.
@@ -65,6 +66,9 @@ pub use deadline::{
 // Re-export deadline override for tests
 #[cfg(test)]
 pub use deadline::deadline_override;
+
+// Re-export lock contention tracing functions (Issue #837)
+pub use lock_contention::{DEFAULT_LOCK_WAIT_THRESHOLD, traced_lock, traced_lock_default};
 
 // Re-export variant generation functions for backward compatibility (Issue #806)
 pub(crate) use variant_generation::sensible_bias_abs_max_for_squash;
