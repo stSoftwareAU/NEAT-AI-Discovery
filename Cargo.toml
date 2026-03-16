@@ -120,6 +120,10 @@ harness = false
 name = "synapse_preparation"
 harness = false
 
+[[bench]]
+name = "error_collection"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
