@@ -16,4 +16,5 @@ mod issue_718_bug_comment_error_handling;
 mod issue_754_topology_cache;
 mod issue_769_zero_alloc_synapse_lookup;
 mod issue_776_hashset_hashmap_iteration;
+mod issue_836_deadlock_abort;
 mod observability;
