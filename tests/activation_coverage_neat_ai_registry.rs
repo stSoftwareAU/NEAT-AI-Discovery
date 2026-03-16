@@ -1,175 +1,172 @@
-use std::collections::BTreeSet;
-use std::fs;
-use std::path::PathBuf;
+//! Behavioural tests for activation function coverage (Issue #813).
+//!
+//! Verifies that every known scalar activation function produces finite,
+//! sensible outputs and that aggregate squash names are handled correctly.
+//! Converted from a file-reading cross-repo check to a behavioural test
+//! that exercises the public API directly.
 
-fn extract_import_path(line: &str) -> Option<String> {
-    // Example:
-    // import { Softplus } from "./types/Softplus.ts";
-    // import { HYPOT } from "../../deprecated/HYPOT.ts";
-    let from_idx = line.find(" from ")?;
-    let first_quote = line[from_idx..].find('"')? + from_idx;
-    let rest = &line[(first_quote + 1)..];
-    let second_quote = rest.find('"')?;
-    Some(rest[..second_quote].to_string())
-}
+/// All known scalar squash names (including aliases).
+const ALL_SCALAR_NAMES: &[&str] = &[
+    "ABSOLUTE",
+    "ARCTAN",
+    "BENT_IDENTITY",
+    "BIPOLAR",
+    "BIPOLAR_SIGMOID",
+    "COMPLEMENT",
+    "INVERSE", // alias for COMPLEMENT
+    "COSINE",
+    "CUBE",
+    "ELU",
+    "EXPONENTIAL",
+    "GAUSSIAN",
+    "GELU",
+    "HARD_TANH",
+    "CLIPPED", // alias for HARD_TANH
+    "IDENTITY",
+    "ISRU",
+    "LEAKYRELU",
+    "LOGISTIC",
+    "LOGSIGMOID",
+    "MISH",
+    "RELU",
+    "RELU6",
+    "SELU",
+    "SINE",
+    "SINUSOID", // alias for SINE
+    "SOFTPLUS",
+    "SOFTSIGN",
+    "SQRT",
+    "SQUARE",
+    "STDINVERSE",
+    "STEP",
+    "SWISH",
+    "TAN",
+    "TANH",
+];
 
-fn extract_activation_name(ts_source: &str) -> Option<String> {
-    // Handles:
-    // public static readonly NAME = "Softplus";
-    // public static NAME = "Cosine";
-    // public static readonly NAME = "BIPOLAR_SIGMOID";
-    // public static NAME = "StdInverse";
-    //
-    // We intentionally keep this simple to avoid adding a regex crate.
-    let needle = "NAME";
-    for line in ts_source.lines() {
-        if !line.contains(needle) || !line.contains('=') || !line.contains('"') {
-            continue;
-        }
-        // Find the first occurrence of `NAME = "..."`.
-        //
-        // Important: do NOT use `?` in this loop, because a malformed line should not
-        // cause the entire function to return `None`. We want to keep scanning until
-        // we find a valid `NAME = "..."` declaration. (See regression test below.)
-        let Some(name_pos) = line.find("NAME") else {
-            continue;
-        };
-
-        // Only parse '=' that occurs *after* NAME. (Some comment lines may contain both,
-        // but in a different order, eg `// x = "5" NAME`.)
-        let after_name = &line[(name_pos + "NAME".len())..];
-        let Some(eq_pos) = after_name.find('=') else {
-            continue;
-        };
-
-        let after_eq = after_name[(eq_pos + 1)..].trim_start();
-        if !after_eq.starts_with('"') {
-            continue;
-        }
-
-        let after_quote = &after_eq[1..];
-        let Some(end_quote) = after_quote.find('"') else {
-            continue;
-        };
-
-        let value = after_quote[..end_quote].trim();
-        if !value.is_empty() {
-            return Some(value.to_string());
-        }
-    }
-    None
-}
-
-fn activations_ts_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../NEAT-AI/src/methods/activations/Activations.ts")
-}
+/// All known aggregate squash names.
+const ALL_AGGREGATE_NAMES: &[&str] = &["IF", "MAXIMUM", "MINIMUM", "MEAN", "HYPOT", "HYPOTV2"];
 
 #[test]
-fn discovery_knows_all_neat_ai_activation_names() {
-    let activations_ts = activations_ts_path();
-    if !activations_ts.exists() {
-        eprintln!(
-            "Skipping: sibling NEAT-AI repo not found at {}",
-            activations_ts.display()
+fn all_scalar_squashes_are_recognised_and_computable() {
+    for name in ALL_SCALAR_NAMES {
+        assert!(
+            neat_ai_discovery::activations::is_known_squash_name(name),
+            "Scalar squash '{name}' must be recognised"
         );
-        return;
-    }
+        assert!(
+            !neat_ai_discovery::activations::is_aggregate_squash(name),
+            "Scalar squash '{name}' must not be flagged as aggregate"
+        );
 
-    let base_dir = activations_ts
-        .parent()
-        .expect("Activations.ts must have a parent directory");
-    let source = fs::read_to_string(&activations_ts).expect("Failed to read Activations.ts");
-
-    let mut names: BTreeSet<String> = BTreeSet::new();
-
-    // Gather activation files from imports and read each NAME constant.
-    for line in source.lines() {
-        let line = line.trim();
-        if !line.starts_with("import ") || !line.contains(" from ") {
-            continue;
-        }
-        let import_path = match extract_import_path(line) {
-            Some(path) => path,
-            None => continue,
-        };
-
-        // Only consider local TS files.
-        if !import_path.ends_with(".ts") {
-            continue;
-        }
-
-        // Resolve relative to Activations.ts directory.
-        let file_path = base_dir.join(import_path);
-        if !file_path.exists() {
-            // Some imports may be resolved differently in Deno; ignore missing files.
-            continue;
-        }
-
-        let file_source =
-            fs::read_to_string(&file_path).expect("Failed to read imported activation file");
-        if let Some(name) = extract_activation_name(&file_source) {
-            names.insert(name);
-        }
-    }
-
-    // NEAT-AI registry aliases (see `Activations.ts`).
-    names.insert("CLIPPED".to_string());
-    names.insert("RELU".to_string());
-    names.insert("INVERSE".to_string());
-    names.insert("SINUSOID".to_string());
-
-    assert!(
-        !names.is_empty(),
-        "Expected to discover activation names from NEAT-AI imports, but found none"
-    );
-
-    let mut unknown: Vec<String> = Vec::new();
-    let mut not_scalar_but_expected_scalar: Vec<String> = Vec::new();
-
-    for name in &names {
-        if !neat_ai_discovery::activations::is_known_squash_name(name) {
-            unknown.push(name.clone());
-            continue;
-        }
-
-        let is_aggregate = neat_ai_discovery::activations::is_aggregate_squash(name);
-        let applied = neat_ai_discovery::activations::apply_scalar_squash(name, 0.123);
-
-        if is_aggregate {
-            assert!(
-                applied.is_none(),
-                "Aggregate squash {name} must not be treated as a scalar f(x)"
-            );
-        } else if applied.is_none() {
-            not_scalar_but_expected_scalar.push(name.clone());
-        }
-    }
-
-    if !unknown.is_empty() {
-        panic!("Discovery does not recognise these NEAT-AI activation names: {unknown:?}");
-    }
-
-    if !not_scalar_but_expected_scalar.is_empty() {
-        panic!(
-            "Discovery recognises these squashes but cannot compute a scalar f(x) for them: {not_scalar_but_expected_scalar:?}"
+        let result = neat_ai_discovery::activations::apply_scalar_squash(name, 0.5);
+        assert!(
+            result.is_some(),
+            "Scalar squash '{name}' must return Some from apply_scalar_squash"
         );
     }
 }
 
 #[test]
-fn extract_activation_name_skips_malformed_lines_and_keeps_scanning() {
-    // Regression test (24-Dec-2025):
-    // A line may contain `NAME`, `=` and quotes but still be malformed for our parser,
-    // for example when '=' appears before 'NAME'. The extractor must not stop early;
-    // it should keep scanning until it finds a valid `NAME = "..."` declaration.
-    let ts_source = r#"
-// x = "5" NAME
-public static readonly NAME = "Softplus";
-"#;
+fn all_aggregate_squashes_are_recognised_but_not_scalar() {
+    for name in ALL_AGGREGATE_NAMES {
+        assert!(
+            neat_ai_discovery::activations::is_known_squash_name(name),
+            "Aggregate squash '{name}' must be recognised"
+        );
+        assert!(
+            neat_ai_discovery::activations::is_aggregate_squash(name),
+            "Aggregate squash '{name}' must be flagged as aggregate"
+        );
 
+        let result = neat_ai_discovery::activations::apply_scalar_squash(name, 0.5);
+        assert!(
+            result.is_none(),
+            "Aggregate squash '{name}' must return None from apply_scalar_squash"
+        );
+    }
+}
+
+#[test]
+fn scalar_squashes_produce_finite_results_for_typical_inputs() {
+    let test_inputs: &[f32] = &[-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0];
+
+    for name in ALL_SCALAR_NAMES {
+        for &x in test_inputs {
+            if let Some(y) = neat_ai_discovery::activations::apply_scalar_squash(name, x) {
+                assert!(
+                    y.is_finite(),
+                    "apply_scalar_squash('{name}', {x}) returned non-finite {y}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn identity_squash_returns_input_unchanged() {
+    let inputs: &[f32] = &[-10.0, -1.0, 0.0, 0.5, 1.0, 42.0];
+    for &x in inputs {
+        let y = neat_ai_discovery::activations::apply_scalar_squash("IDENTITY", x).unwrap();
+        assert!(
+            (y - x).abs() < f32::EPSILON,
+            "IDENTITY({x}) should be {x}, got {y}"
+        );
+    }
+}
+
+#[test]
+fn relu_squash_clamps_negative_to_zero() {
     assert_eq!(
-        extract_activation_name(ts_source),
-        Some("Softplus".to_string())
+        neat_ai_discovery::activations::apply_scalar_squash("RELU", -5.0),
+        Some(0.0)
+    );
+    assert_eq!(
+        neat_ai_discovery::activations::apply_scalar_squash("RELU", 0.0),
+        Some(0.0)
+    );
+    assert_eq!(
+        neat_ai_discovery::activations::apply_scalar_squash("RELU", 3.0),
+        Some(3.0)
+    );
+}
+
+#[test]
+fn alias_pairs_produce_identical_results() {
+    let test_inputs: &[f32] = &[-1.0, 0.0, 0.5, 1.0];
+    let alias_pairs: &[(&str, &str)] = &[
+        ("INVERSE", "COMPLEMENT"),
+        ("CLIPPED", "HARD_TANH"),
+        ("SINUSOID", "SINE"),
+    ];
+
+    for (alias, canonical) in alias_pairs {
+        for &x in test_inputs {
+            let a = neat_ai_discovery::activations::apply_scalar_squash(alias, x);
+            let b = neat_ai_discovery::activations::apply_scalar_squash(canonical, x);
+            assert_eq!(a, b, "{alias}({x}) != {canonical}({x}): {a:?} vs {b:?}");
+        }
+    }
+}
+
+#[test]
+fn case_insensitive_name_recognition() {
+    // Names should be recognised regardless of case
+    assert!(neat_ai_discovery::activations::is_known_squash_name("relu"));
+    assert!(neat_ai_discovery::activations::is_known_squash_name("Relu"));
+    assert!(neat_ai_discovery::activations::is_known_squash_name("RELU"));
+    assert!(neat_ai_discovery::activations::is_known_squash_name(
+        "Softplus"
+    ));
+    assert!(neat_ai_discovery::activations::is_known_squash_name("tanh"));
+}
+
+#[test]
+fn unknown_name_is_not_recognised() {
+    assert!(!neat_ai_discovery::activations::is_known_squash_name(
+        "NOT_A_REAL_SQUASH"
+    ));
+    assert!(
+        neat_ai_discovery::activations::apply_scalar_squash("NOT_A_REAL_SQUASH", 1.0).is_none()
     );
 }
