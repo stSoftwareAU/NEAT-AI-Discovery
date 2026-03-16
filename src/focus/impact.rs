@@ -9,8 +9,8 @@ use crate::{CreatureJson, NeuronJson, SynapseJson};
 use anyhow::Result;
 use rayon::prelude::*;
 
+use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
 
 /// Categorise squash functions for impact calculation.
 /// See docs/IMPACT_CALCULATION.md for detailed explanation.
@@ -515,12 +515,8 @@ fn compute_impacts_internal_with_stats(
 
     all_neurons.par_iter().for_each(|neuron| {
         // Check if already computed (another thread might have done it).
-        // Issue #525: Recover from poisoned mutex instead of panicking.
         {
-            let cache = match shared_cache.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
+            let cache = shared_cache.lock();
             if cache.contains_key(&neuron.uuid) {
                 return;
             }
@@ -534,16 +530,11 @@ fn compute_impacts_internal_with_stats(
             compute_impact_with_shared_cache(&neuron.uuid, &ctx, &shared_cache, &mut visiting);
 
         // Store result
-        let mut cache = match shared_cache.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut cache = shared_cache.lock();
         cache.insert(neuron.uuid.clone(), impact);
     });
 
-    Ok(shared_cache
-        .into_inner()
-        .unwrap_or_else(std::sync::PoisonError::into_inner))
+    Ok(shared_cache.into_inner())
 }
 
 /// Compute impact with a shared cache for parallel execution.
@@ -553,12 +544,9 @@ fn compute_impact_with_shared_cache(
     shared_cache: &Mutex<HashMap<String, f32>>,
     visiting: &mut HashSet<String>,
 ) -> f32 {
-    // Check cache first. Issue #525: recover from poisoned mutex.
+    // Check cache first.
     {
-        let cache = match shared_cache.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let cache = shared_cache.lock();
         if let Some(&value) = cache.get(uuid) {
             return value;
         }
@@ -642,12 +630,9 @@ fn compute_impact_with_shared_cache(
 
     visiting.remove(uuid);
 
-    // Cache the result. Issue #525: recover from poisoned mutex.
+    // Cache the result.
     {
-        let mut cache = match shared_cache.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut cache = shared_cache.lock();
         cache.insert(uuid.to_string(), impact);
     }
 

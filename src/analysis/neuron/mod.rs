@@ -41,10 +41,11 @@ use super::synapse::{
     group_sources_by_locality,
 };
 
+use parking_lot::Mutex;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 
 /// Analyze neurons for a given input.
 /// This is the public entry point for neuron analysis.
@@ -197,10 +198,7 @@ pub(crate) fn analyze_neurons_with_cache(
                     .flat_map(|r| r.errors.iter().filter(|e| e.is_finite()).copied())
                     .collect();
                 if !errors.is_empty() {
-                    error_values_for_distribution
-                        .lock()
-                        .map_err(|_| anyhow::anyhow!("Mutex poisoned (error_values_for_distribution)"))?
-                        .extend(errors);
+                    error_values_for_distribution.lock().extend(errors);
                 }
             }
 

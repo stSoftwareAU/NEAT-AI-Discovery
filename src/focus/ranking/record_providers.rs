@@ -7,9 +7,10 @@ use crate::analysis::utils::lock_or_bail;
 use crate::parquet_format::read_records_from_parquet;
 use crate::types::DiscoverRecord;
 use anyhow::{Context, Result, anyhow};
+use parking_lot::Mutex;
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Provides access to recorded discovery data without assuming an in-memory HashMap.
 /// Implementations may pre-load all records or stream them on demand with bounded caching.
@@ -143,11 +144,7 @@ impl RecordProvider for LazyRecordProvider {
     }
 
     fn len(&self) -> usize {
-        // len() is diagnostic-only; recover data from a poisoned mutex if needed
-        match self.cache.lock() {
-            Ok(cache) => cache.entries.len(),
-            Err(poisoned) => poisoned.into_inner().entries.len(),
-        }
+        self.cache.lock().entries.len()
     }
 }
 
