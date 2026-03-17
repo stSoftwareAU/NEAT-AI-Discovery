@@ -1,27 +1,35 @@
-# Add Neuron Discovery
+# 🧠 Add Neuron Discovery
 
 [Back to Discovery Index](README.md) | **Source:** [`src/analysis/neuron.rs`](../../src/analysis/neuron.rs)
 
 ---
 
-## The Problem
+## 🔍 The Problem
 
 A creature's network may lack **intermediate computation** between its inputs
-and outputs. Some functions cannot be learned with direct connections alone —
+and outputs. Some functions cannot be learnt with direct connections alone —
 they need a hidden neuron to transform the signal first.
 
+```mermaid
+graph LR
+    subgraph without["Without Intermediate Neuron"]
+        I1[Input]:::input -->|"w"| O1[Output]:::output
+    end
+
+    subgraph with["With Intermediate Neuron"]
+        I2[Input]:::input -->|"w_in"| H[Hidden<br/>RELU]:::newNeuron -->|"w_out"| O2[Output]:::output
+    end
+
+    classDef input fill:#4a9eff,stroke:#333,color:#fff
+    classDef output fill:#2ecc71,stroke:#333,color:#fff
+    classDef newNeuron fill:#9b59b6,stroke:#333,color:#fff
 ```
-  Without intermediate neuron:       With intermediate neuron:
 
-  Input ──(w)──→ Output              Input ──(w_in)──→ [Hidden] ──(w_out)──→ Output
-                                                        RELU
-  Can only learn:                    Can learn:
-  output = w * input                 output = w_out * RELU(w_in * input + bias)
+> [!NOTE]
+> 🔑 **Without** the hidden neuron the network can only learn `output = w * input` (linear).
+> **With** the hidden neuron it can learn `output = w_out * RELU(w_in * input + bias)` (non-linear).
 
-  Linear only!                       Non-linear functions!
-```
-
-### Why It Hurts the Creature's Score
+### ⚠️ Why It Hurts the Creature's Score
 
 - The network cannot represent **non-linear relationships** between certain
   inputs and outputs.
@@ -29,127 +37,124 @@ they need a hidden neuron to transform the signal first.
   connections can produce the needed transformation.
 - The creature has hit the limits of its current topology.
 
----
-
-## How We Detect It
-
-```
-  ┌────────────────────────────────────────────────────────────┐
-  │  For each target neuron T (primarily outputs):             │
-  │                                                            │
-  │  1. Enumerate all upstream neurons S not directly          │
-  │     connected to T                                         │
-  │                                                            │
-  │  2. Match samples: S's activation with T's error           │
-  │     (by observation index, minimum 10 samples)             │
-  │                                                            │
-  │  3. For each candidate activation function:                │
-  │     ┌──────────────────────────────────────────────────┐   │
-  │     │  RELU, TANH, LOGISTIC, IDENTITY, ABSOLUTE, etc.  │   │
-  │     │                                                  │   │
-  │     │  a. Compute: activated = squash(w_in * S + bias)  │   │
-  │     │  b. Optimal w_out via least squares:              │   │
-  │     │     w_out = Σ(error * activated) / Σ(activated²) │   │
-  │     │  c. Optimal bias via grid search (GPU-accelerated)│   │
-  │     │  d. Expected improvement = reduction in MSE       │   │
-  │     └──────────────────────────────────────────────────┘   │
-  │                                                            │
-  │  4. Select the activation function with best improvement   │
-  │  5. Apply source variance discount + impact discount       │
-  └────────────────────────────────────────────────────────────┘
-```
-
-### GPU-Accelerated Evaluation
-
-```
-  ┌─────────────────────────────────────────────────────────────┐
-  │                    GPU Compute Shaders                       │
-  │                                                             │
-  │  ┌─────────┐    ┌─────────────┐    ┌──────────────────┐    │
-  │  │ Source   │    │ Activation  │    │ Weight + Bias     │    │
-  │  │ samples  │───→│ functions   │───→│ grid search       │    │
-  │  │ (batch)  │    │ (parallel)  │    │ (parallel)        │    │
-  │  └─────────┘    └─────────────┘    └──────────────────┘    │
-  │                                             │               │
-  │                                    ┌────────▼──────────┐    │
-  │                                    │ Best improvement   │    │
-  │                                    │ per candidate      │    │
-  │                                    └───────────────────┘    │
-  └─────────────────────────────────────────────────────────────┘
-
-  Evaluating thousands of source × activation × bias combinations
-  in parallel on the GPU makes this analysis feasible within the
-  discovery deadline.
-```
+> [!WARNING]
+> 🚧 Once a creature reaches this topological ceiling, **no weight-only optimisation** can overcome the deficit — structural change is required.
 
 ---
 
-## How We Fix It
+## 🔬 How We Detect It
+
+```mermaid
+flowchart TD
+    A["For each target neuron T<br/>(primarily outputs)"]:::process --> B["Enumerate all upstream neurons S<br/>not directly connected to T"]:::process
+    B --> C["Match samples: S's activation<br/>with T's error<br/>(minimum 10 samples)"]:::process
+    C --> D{"For each candidate<br/>activation function"}:::decision
+    D --> E["RELU, TANH, LOGISTIC,<br/>IDENTITY, ABSOLUTE, etc."]:::process
+    E --> F["a. Compute:<br/>activated = squash(w_in × S + bias)"]:::process
+    F --> G["b. Optimal w_out via least squares:<br/>w_out = Σ(error × activated) / Σ(activated²)"]:::process
+    G --> H["c. Optimal bias via<br/>grid search (GPU-accelerated)"]:::process
+    H --> I["d. Expected improvement =<br/>reduction in MSE"]:::process
+    I --> D
+    D --> J["Select activation function<br/>with best improvement"]:::process
+    J --> K["Apply source variance discount<br/>+ impact discount"]:::process
+
+    classDef process fill:#e3f2fd,stroke:#1565c0,color:#000
+    classDef decision fill:#fff3e0,stroke:#f57c00,color:#000
+```
+
+> [!TIP]
+> 🎯 The algorithm tries every combination of source neuron and activation function to find the hidden neuron that would **most reduce** the target's error.
+
+### 🖥️ GPU-Accelerated Evaluation
+
+```mermaid
+flowchart LR
+    subgraph gpu["GPU Compute Shaders"]
+        A["Source<br/>samples<br/>(batch)"]:::input --> B["Activation<br/>functions<br/>(parallel)"]:::process
+        B --> C["Weight + Bias<br/>grid search<br/>(parallel)"]:::process
+        C --> D["Best improvement<br/>per candidate"]:::output
+    end
+
+    classDef input fill:#4a9eff,stroke:#333,color:#fff
+    classDef process fill:#e3f2fd,stroke:#1565c0,color:#000
+    classDef output fill:#2ecc71,stroke:#333,color:#fff
+```
+
+> [!NOTE]
+> ⚡ Evaluating thousands of source × activation × bias combinations in parallel on the GPU makes this analysis feasible within the discovery deadline.
+
+---
+
+## 🛠️ How We Fix It
 
 Insert a new hidden neuron between a source and target:
 
-```
-  BEFORE                              AFTER
-  ┌───┐               ┌───┐          ┌───┐         ┌─────┐         ┌───┐
-  │ S │               │ T │          │ S │─(w_in)─→│H_new│─(w_out)→│ T │
-  └───┘               └───┘          └───┘         │RELU │         └───┘
-  (not connected)                                  │b=0.1│
-                                                   └─────┘
+```mermaid
+graph LR
+    subgraph before["Before"]
+        S1["S (Source)"]:::input
+        T1["T (Target)"]:::output
+        S1 -.- |"not connected"| T1
+    end
 
-  The new neuron transforms S's signal through RELU
-  before feeding it to T, enabling non-linear mapping.
+    subgraph after["After"]
+        S2["S (Source)"]:::input -->|"w_in"| H["H_new<br/>RELU<br/>b=0.1"]:::newNeuron -->|"w_out"| T2["T (Target)"]:::output
+    end
+
+    classDef input fill:#4a9eff,stroke:#333,color:#fff
+    classDef output fill:#2ecc71,stroke:#333,color:#fff
+    classDef newNeuron fill:#9b59b6,stroke:#333,color:#fff
 ```
+
+> [!TIP]
+> 🔗 The new neuron transforms S's signal through RELU before feeding it to T, enabling **non-linear mapping**.
 
 | Candidate | Operation | Detail |
 |-----------|-----------|--------|
 | **Add neuron** | `addNeuron` | Includes incoming weight, outgoing weight (capped at ±0.1), bias, and activation function |
 
-### Parameter Constraints
+### 🔒 Parameter Constraints
 
-```
-  ┌──────────────────────────────────────────┐
-  │  |incoming weight|  <= 20                │
-  │  |outgoing weight|  <= 0.1               │
-  │  |bias|             <= 10                │
-  │  weight ratio: in/out >= 50 (when in>1)  │
-  │                                          │
-  │  IDENTITY with |bias| < 0.01 filtered    │
-  │  (redundant with direct synapse)         │
-  └──────────────────────────────────────────┘
-```
+| Parameter | Constraint |
+|-----------|-----------|
+| \|incoming weight\| | ≤ 20 |
+| \|outgoing weight\| | ≤ 0.1 |
+| \|bias\| | ≤ 10 |
+| Weight ratio (in/out) | ≥ 50 (when in > 1) |
+| IDENTITY with \|bias\| < 0.01 | Filtered out (redundant with direct synapse) |
 
----
-
-## Example
-
-```
-  Output O1 has persistent error that no weight adjustment can fix.
-
-  Analysis finds: Input I3's activation correlates with O1's error
-  pattern, but the relationship is non-linear.
-
-  Best candidate:
-  - Source: I3
-  - Activation: RELU
-  - Incoming weight: 1.2
-  - Bias: -0.3
-  - Outgoing weight: 0.08
-
-  New neuron H_new:
-  output = 0.08 * RELU(1.2 * I3 - 0.3)
-
-  This creates a threshold detector:
-  - When I3 < 0.25: output = 0 (RELU cuts off)
-  - When I3 > 0.25: output scales linearly
-  → captures the non-linear boundary O1 needs
-
-  Production success rate: 5.9% (556 successes from 9,500 candidates)
-  This is the highest-volume discovery type.
-```
+> [!CAUTION]
+> 🚫 The outgoing weight is deliberately capped at a small magnitude (±0.1) to prevent the newly added neuron from **destabilising** the existing network.
 
 ---
 
-## References
+## 📝 Example
+
+> **Scenario:** Output O1 has persistent error that no weight adjustment can fix.
+>
+> **Analysis finds:** Input I3's activation correlates with O1's error pattern, but the relationship is non-linear.
+>
+> **Best candidate:**
+> - **Source:** I3
+> - **Activation:** RELU
+> - **Incoming weight:** 1.2
+> - **Bias:** -0.3
+> - **Outgoing weight:** 0.08
+>
+> **New neuron H_new:**
+> `output = 0.08 × RELU(1.2 × I3 − 0.3)`
+>
+> **This creates a threshold detector:**
+> - When I3 < 0.25 → output = 0 (RELU cuts off)
+> - When I3 > 0.25 → output scales linearly
+> - Captures the non-linear boundary O1 needs
+>
+> 📊 **Production success rate:** 5.9% (556 successes from 9,500 candidates).
+> This is the **highest-volume** discovery type.
+
+---
+
+## 📚 References
 
 - **Universal approximation theorem** —
   [Wikipedia](https://en.wikipedia.org/wiki/Universal_approximation_theorem):
