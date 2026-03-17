@@ -1,9 +1,9 @@
-# Benchmark Regression Tracking
+# 📊 Benchmark Regression Tracking
 
 This document describes the benchmark comparison workflow for detecting
 performance regressions using Criterion.
 
-## Overview
+## 🔍 Overview
 
 The project includes 12 Criterion benchmark suites in `benches/`. The
 `benchmark_compare.sh` script automates baseline saving and regression
@@ -12,7 +12,7 @@ detection by leveraging Criterion's built-in comparison features.
 Baselines are machine-specific — each developer or CI runner saves their own
 baseline locally in `target/criterion/`.
 
-## Quick Start
+## 🚀 Quick Start
 
 ```bash
 # 1. Save a baseline (run all benchmarks and record timings)
@@ -24,7 +24,7 @@ baseline locally in `target/criterion/`.
 ./benchmark_compare.sh
 ```
 
-## Commands
+## ⌨️ Commands
 
 | Command | Description |
 |---------|-------------|
@@ -35,14 +35,14 @@ baseline locally in `target/criterion/`.
 | `./benchmark_compare.sh --list` | List all available benchmark suites |
 | `./benchmark_compare.sh --help` | Show usage information |
 
-## Environment Variables
+## 🌍 Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BENCHMARK_THRESHOLD` | `5` | Regression threshold percentage |
 | `BENCHMARK_BASELINE` | `saved` | Baseline name for Criterion |
 
-## Benchmark Suites
+## 🧪 Benchmark Suites
 
 The following suites are defined in `Cargo.toml`:
 
@@ -64,9 +64,9 @@ The following suites are defined in `Cargo.toml`:
 **Note:** Most benchmarks require a GPU. Suites that cannot initialise a GPU
 are automatically skipped.
 
-## Workflow
+## 🔄 Workflow
 
-### Initial Setup
+### 🏁 Initial Setup
 
 Save a baseline on your machine before making performance-sensitive changes:
 
@@ -76,7 +76,7 @@ Save a baseline on your machine before making performance-sensitive changes:
 
 This runs all 12 benchmark suites and stores results in `target/criterion/`.
 
-### Detecting Regressions
+### 🔎 Detecting Regressions
 
 After making changes, compare against the baseline:
 
@@ -91,7 +91,7 @@ The script reports:
 
 The exit code is **1** if any regressions are detected, **0** otherwise.
 
-### Updating the Baseline
+### 🔄 Updating the Baseline
 
 After intentional performance changes (e.g., trading speed for correctness),
 update the baseline:
@@ -100,7 +100,7 @@ update the baseline:
 ./benchmark_compare.sh --save-baseline
 ```
 
-### Interpreting Results
+### 📈 Interpreting Results
 
 Criterion reports the **median** change with confidence intervals. A result
 like `[-2.3% -1.2% +0.1%]` means:
@@ -112,7 +112,7 @@ like `[-2.3% -1.2% +0.1%]` means:
 The comparison script uses the **point estimate** (middle value) to determine
 whether the threshold has been exceeded.
 
-### Single Suite Comparison
+### 🎯 Single Suite Comparison
 
 To focus on a specific benchmark:
 
@@ -120,7 +120,7 @@ To focus on a specific benchmark:
 ./benchmark_compare.sh --bench synapse_counts
 ```
 
-### Running Individual Benchmarks Manually
+### 🛠️ Running Individual Benchmarks Manually
 
 You can also run Criterion benchmarks directly:
 
@@ -135,7 +135,7 @@ cargo bench --bench synapse_counts -- --baseline saved
 cargo bench --bench synapse_counts -- --save-baseline saved
 ```
 
-## CI Integration
+## 🔗 CI Integration
 
 The `benchmark_compare.sh` script can be integrated into CI by:
 

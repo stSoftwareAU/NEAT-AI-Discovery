@@ -1,4 +1,4 @@
-# Discovery Types
+# 🧬 Discovery Types
 
 This document is the **single source of truth** for all discovery types used by
 NEAT-AI-Discovery. It covers detection criteria, recommended actions, candidate
@@ -6,7 +6,7 @@ output format, and production success/failure rates.
 
 > **Last updated**: 6 Mar 2026
 
-## Table of Contents
+## 📑 Table of Contents
 
 - [Overview](#overview)
 - [Discovery Type Summary](#discovery-type-summary)
@@ -69,7 +69,7 @@ output format, and production success/failure rates.
 
 ---
 
-## Overview
+## 🔍 Overview
 
 Discovery types represent different mutation strategies that NEAT-AI-Discovery
 suggests to improve a creature's score. The Rust library analyses recorded neuron
@@ -78,20 +78,31 @@ through ablation testing.
 
 The workflow is:
 
-```
-NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
-─────────────────────────         ────────────────────
-  Analyse recordings      ──▶     Receive candidates
-  Propose candidates              Apply mutation to clone
-  Predict improvement             Re-score against full training set
-                                  Record success/failure
+```mermaid
+graph LR
+    subgraph Rust["🦀 NEAT-AI-Discovery (Rust)"]
+        direction TB
+        R1["📊 Analyse recordings"]
+        R2["💡 Propose candidates"]
+        R3["📈 Predict improvement"]
+    end
+    subgraph TS["🟦 NEAT-AI (TypeScript)"]
+        direction TB
+        T1["📥 Receive candidates"]
+        T2["🧬 Apply mutation to clone"]
+        T3["🏋️ Re-score against full training set"]
+        T4["📝 Record success/failure"]
+    end
+    Rust -->|"candidates"| TS
+    style Rust fill:#fdf2e9,stroke:#e67e22,color:#333
+    style TS fill:#eaf2f8,stroke:#3498db,color:#333
 ```
 
 ---
 
-## Discovery Type Summary
+## 📋 Discovery Type Summary
 
-### Activation & Neuron State
+### 🧠 Activation & Neuron State
 
 | Discovery Type | Source Module | Issue | Candidate Operations | Status |
 |----------------|--------------|-------|---------------------|--------|
@@ -111,7 +122,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Bias Perturbation](#bias-perturbation-detection) | `detection/bias_perturbation.rs` | #551 | `setBias` | 🟢 Active |
 | [Squash + Weight Rescale](#squash-weight-rescale-detection) | `detection/squash_weight_rescale.rs` | #548 | `changeSquash`, `setWeight` | 🟢 Active |
 
-### Weight & Synapse
+### ⚖️ Weight & Synapse
 
 | Discovery Type | Source Module | Issue | Candidate Operations | Status |
 |----------------|--------------|-------|---------------------|--------|
@@ -124,7 +135,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Fan-in Polarity Conflict](#fan-in-polarity-conflict-detection) | `detection/fanin_polarity_conflict.rs` | #641 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Gradient Discovery](#gradient-based-synapse-adjustment) | `recommendation/gradient_discovery.rs` | #421 | `setWeight` | 🟢 Active |
 
-### Structural & Topology
+### 🏗️ Structural & Topology
 
 | Discovery Type | Source Module | Issue | Candidate Operations | Status |
 |----------------|--------------|-------|---------------------|--------|
@@ -141,7 +152,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Multi-Hop](#multi-hop-candidate-analysis) | `recommendation/multi_hop.rs` | #230 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Combo Successful](#combo-successful) | `recommendation/epistatic/` | #415 | Multiple | 🟡 Fixed |
 
-### Range & Input Analysis
+### 📐 Range & Input Analysis
 
 | Discovery Type | Source Module | Issue | Candidate Operations | Status |
 |----------------|--------------|-------|---------------------|--------|
@@ -150,7 +161,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Observation Utilisation](#observation-utilisation-detection) | `detection/observation_utilisation.rs` | #543 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Input Sensitivity](#input-sensitivity-detection) | `detection/input_sensitivity.rs` | #435 | `setWeight`, `addNeuron`, `setBias` | 🟢 Active |
 
-### Scoring & Recommendation
+### 💡 Scoring & Recommendation
 
 | Discovery Type | Source Module | Issue | Candidate Operations | Status |
 |----------------|--------------|-------|---------------------|--------|
@@ -162,7 +173,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 | [Remove Harmful Synapse](#remove-harmful-synapse) | `synapse/` | #416 | `removeSynapse` | 🟢 Active |
 | [Remove Neuron (Error)](#remove-neuron-high-error) | `focus/` | #414 | `removeNeuron` | ⛔ Disabled |
 
-### Status Legend
+### 🏷️ Status Legend
 
 | Status | Meaning |
 |--------|---------|
@@ -175,7 +186,7 @@ NEAT-AI-Discovery (Rust)          NEAT-AI (TypeScript)
 
 ---
 
-## Detailed Descriptions
+## 📖 Detailed Descriptions
 
 ### Saturated Neuron Detection
 
@@ -1034,14 +1045,17 @@ weight.
    of both weights).
 
 **Example scenario**:
+```mermaid
+graph LR
+    I0["🔵 input-0<br/><i>linear ramp</i>"] -->|"w=0.5"| O["🎯 output-0"]
+    I1["🔵 input-1<br/><i>identical ramp</i>"] -.->|"w=0.3 ❌ remove"| O
+    style I0 fill:#2ecc71,stroke:#333,color:#fff
+    style I1 fill:#e74c3c,stroke:#333,color:#fff
+    style O fill:#3498db,stroke:#333,color:#fff
 ```
-input-0 ──(w=0.5)──→ output-0   (activation pattern: linear ramp)
-input-1 ──(w=0.3)──→ output-0   (activation pattern: identical linear ramp)
 
-Detected: correlation = 0.99 → redundant
-Result:   removeSynapse(input-1 → output-0)
-          setWeight(input-0 → output-0, weight=0.8)
-```
+> **Detected**: correlation = 0.99 → redundant
+> **Result**: `removeSynapse(input-1 → output-0)` + `setWeight(input-0 → output-0, weight=0.8)`
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `removeSynapse`
 and `setWeight` operations.
@@ -1692,7 +1706,7 @@ candidate filtering.
 
 ---
 
-## Coordinated Structural Candidates
+## 🧬 Coordinated Structural Candidates
 
 Most discovery types emit their candidates as `coordinatedStructuralCandidates`,
 which group dependent edits into a single atomic candidate. NEAT-AI evaluates
@@ -1736,7 +1750,7 @@ All 7 operation types are implemented in NEAT-AI's
 
 ---
 
-## Production Success Rates
+## 📊 Production Success Rates
 
 | Discovery Type | Successes | Failures | Success Rate | Status |
 |----------------|-----------|----------|--------------|--------|
@@ -1755,9 +1769,9 @@ All 7 operation types are implemented in NEAT-AI's
 
 ---
 
-## Analysis and Recommendations
+## 🔬 Analysis and Recommendations
 
-### What is Working
+### ✅ What is Working
 
 1. **add-neurons** (5.9% success rate, 556 successes) — Our primary source of
    successful discoveries. The gentle nudge variants with tight outgoing weights
@@ -1770,17 +1784,17 @@ All 7 operation types are implemented in NEAT-AI's
    but previously very rarely suggested. Issue #417 addressed this by lowering
    detection thresholds and integrating proactive activation recommendations.
 
-### What Needs Investigation
+### 🔍 What Needs Investigation
 
 1. *(None currently — previous items addressed by Issues #413–#417.)*
 
-### What is Not Working
+### ❌ What is Not Working
 
 1. **remove-neuron (high error)** — ⛔ **DISABLED (Issue #414)**. High error
    neurons are often handling difficult samples, not causing harm. Error
    magnitude does not translate to score impact.
 
-### What Was Fixed
+### 🔧 What Was Fixed
 
 1. **combo-successful** — 🟡 **FIXED (Issue #415)**. Interference detection was
    added to filter out incompatible candidate pairs before proposing them as
@@ -1826,7 +1840,7 @@ All 7 operation types are implemented in NEAT-AI's
      the analysis pipeline to recommend activation changes based on input
      distribution analysis before problems occur
 
-### Recommended Actions
+### 🎯 Recommended Actions
 
 | Priority | Action | Rationale |
 |----------|--------|-----------|
@@ -1840,7 +1854,7 @@ All 7 operation types are implemented in NEAT-AI's
 
 ---
 
-## Related Documentation
+## 📚 Related Documentation
 
 - [Impact Calculation](IMPACT_CALCULATION.md) — How neuron impact is computed
 - [Analysis Deep Dive](ANALYSIS_DEEP_DIVE.md) — Detailed analysis workflow and
