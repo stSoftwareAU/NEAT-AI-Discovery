@@ -1,10 +1,10 @@
-# Output Squash Mismatch
+# 🔧 Output Squash Mismatch
 
 [Back to Discovery Index](README.md) | **Source:** [`src/analysis/detection/output_squash_mismatch.rs`](../../src/analysis/detection/output_squash_mismatch.rs) | **Issue:** [#545](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/545)
 
 ---
 
-## The Problem
+## 🔍 The Problem
 
 An **output squash mismatch** occurs when an output neuron's activation
 function is fundamentally incompatible with the target data distribution.
@@ -13,29 +13,27 @@ itself prevents the neuron from reaching the correct output values.
 
 Four distinct mismatch patterns exist:
 
-```
-  1. Clipping: Bounded squash clips activations at limits
-  ─────────────────────────────────────────────────────
-  Target: [0.0, 2.5]    LOGISTIC output: [0, 1]
-  15%+ of samples hit the ceiling → systematic clipping error
-
-  2. Range mismatch: All outputs are positive but targets need negative
-  ────────────────────────────────────────────────────────────────────
-  LOGISTIC: [0, 1] but targets include negative values
-  The neuron literally cannot produce the needed outputs
-
-  3. Unbounded mismatch: Outputs fly far outside expected range
-  ─────────────────────────────────────────────────────────────
-  IDENTITY outputs: [-50, +80] but targets are in [-1, +1]
-  25%+ of samples are wildly out of range
-
-  4. Pre-activation simulation: A different squash would reduce error
-  ──────────────────────────────────────────────────────────────────
-  Simulating TANH on the same pre-activation values reduces
-  error by >= 15% compared to current activation
+```mermaid
+graph TD
+    subgraph P1["✂️ 1. Clipping"]
+        C1["Target: [0.0, 2.5]<br/>LOGISTIC: [0, 1]<br/><i>15%+ hit the ceiling</i>"]
+    end
+    subgraph P2["🚫 2. Range Mismatch"]
+        C2["LOGISTIC: [0, 1]<br/>targets include negatives<br/><i>impossible to produce!</i>"]
+    end
+    subgraph P3["💥 3. Unbounded Mismatch"]
+        C3["IDENTITY: [−50, +80]<br/>targets: [−1, +1]<br/><i>25%+ wildly out of range</i>"]
+    end
+    subgraph P4["🔬 4. Pre-activation Simulation"]
+        C4["A different squash<br/>reduces error by >= 15%"]
+    end
+    style C1 fill:#fce4ec,stroke:#c62828,color:#000
+    style C2 fill:#fce4ec,stroke:#c62828,color:#000
+    style C3 fill:#fce4ec,stroke:#c62828,color:#000
+    style C4 fill:#fff3e0,stroke:#f57c00,color:#000
 ```
 
-### Why It Hurts the Creature's Score
+### ⚠️ Why It Hurts the Creature's Score
 
 - **Impossible targets**: The activation function physically cannot produce
   the output values needed, guaranteeing minimum error above zero.
@@ -46,50 +44,50 @@ Four distinct mismatch patterns exist:
 
 ---
 
-## How We Detect It
+## 🔬 How We Detect It
 
+```mermaid
+flowchart TD
+    A["🔍 For each output neuron"] --> B{"📏 Mean |error| >= 0.05?<br/>Sufficient samples?"}
+    B -->|"No"| Z["✅ Not applicable"]
+    B -->|"Yes"| C["🧪 Try each strategy in order"]
+    C --> S1{"✂️ Strategy 1 — Clipping?<br/>>= 15% at saturation bounds<br/>bound error > 1.5× centre error"}
+    S1 -->|"Yes"| R["🔧 Mismatch detected"]
+    S1 -->|"No"| S2{"🚫 Strategy 2 — Range?<br/>All-positive activations<br/>> 30% above-average error"}
+    S2 -->|"Yes"| R
+    S2 -->|"No"| S3{"💥 Strategy 3 — Unbounded?<br/>Unbounded squash<br/>> 25% outside ±1.05<br/>out-of-range error > 1.2× mean"}
+    S3 -->|"Yes"| R
+    S3 -->|"No"| S4{"🔬 Strategy 4 — Simulation?<br/>Any candidate squash<br/>reduces error >= 15%"}
+    S4 -->|"Yes"| R
+    S4 -->|"No"| Z
+    style A fill:#e3f2fd,stroke:#1565c0,color:#000
+    style B fill:#fff3e0,stroke:#f57c00,color:#000
+    style C fill:#e3f2fd,stroke:#1565c0,color:#000
+    style S1 fill:#fff3e0,stroke:#f57c00,color:#000
+    style S2 fill:#fff3e0,stroke:#f57c00,color:#000
+    style S3 fill:#fff3e0,stroke:#f57c00,color:#000
+    style S4 fill:#fff3e0,stroke:#f57c00,color:#000
+    style R fill:#fce4ec,stroke:#c62828,color:#000
+    style Z fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
-  ┌────────────────────────────────────────────────────────────────┐
-  │  For each output neuron:                                       │
-  │                                                                │
-  │  Prerequisites:                                                │
-  │  • Mean |error| >= 0.05                                        │
-  │  • Sufficient samples available                                │
-  │                                                                │
-  │  Strategy 1 — Clipping:                                        │
-  │  • >= 15% of activations at saturation bounds                  │
-  │  • Bound error > 1.5× centre error (or hard-clipping squash)  │
-  │                                                                │
-  │  Strategy 2 — Range mismatch:                                  │
-  │  • All-positive activations (min > -0.05)                      │
-  │  • > 30% of samples have above-average error                  │
-  │                                                                │
-  │  Strategy 3 — Unbounded mismatch:                              │
-  │  • Unbounded squash function                                   │
-  │  • > 25% of activations outside ±1.05                          │
-  │  • Out-of-range error > 1.2× overall mean error                │
-  │                                                                │
-  │  Strategy 4 — Pre-activation comparison:                       │
-  │  • Simulate all candidate squashes on pre-activation values    │
-  │  • If any reduces error by >= 15% → recommend it               │
-  │                                                                │
-  │  First matching strategy wins.                                 │
-  └────────────────────────────────────────────────────────────────┘
-```
+
+> First matching strategy wins.
 
 ---
 
-## How We Fix It
+## 🛠️ How We Fix It
 
-```
-  BEFORE (LOGISTIC, targets need [-1,+1])  AFTER (TANH, symmetric range)
-  ┌─────┐    ┌──────────┐    ┌─────┐      ┌─────┐    ┌──────────┐    ┌─────┐
-  │ H1  │───→│ O1       │    │ tgt │      │ H1  │───→│ O1       │    │ tgt │
-  │     │    │ LOGISTIC │    │     │      │     │    │ TANH     │    │     │
-  │     │    │ [0, +1]  │    │[-1,1]│     │     │    │ [-1,+1]  │    │[-1,1]│
-  └─────┘    │ can't go │    └─────┘      └─────┘    │ full     │    └─────┘
-             │ negative!│                            │ range!   │
-             └──────────┘                            └──────────┘
+```mermaid
+graph LR
+    subgraph Before["❌ Before — LOGISTIC, targets need [−1,+1]"]
+        BH1["🔧 O1<br/>LOGISTIC<br/>[0, +1]<br/><i>can't go negative!</i>"]
+    end
+    subgraph After["✅ After — TANH, symmetric range"]
+        AH1["✨ O1<br/>TANH<br/>[−1, +1]<br/><i>full range!</i>"]
+    end
+    Before -->|"changeSquash"| After
+    style BH1 fill:#e74c3c,stroke:#333,color:#fff
+    style AH1 fill:#2ecc71,stroke:#333,color:#fff
 ```
 
 | Strategy | Candidate | Operation | Typical Recommendation |
@@ -101,29 +99,29 @@ Four distinct mismatch patterns exist:
 
 ---
 
-## Example
+## 📝 Example
 
-```
-  Output neuron O1: LOGISTIC, bias = 0.5
-  Target data range: [-0.8, +1.2]
-
-  Strategy 2 triggers:
-    All activations are positive (LOGISTIC range: [0, 1])
-    Activation min = 0.12 (> -0.05)
-    42% of samples have above-average error
-    The neuron cannot output negative values to match negative targets
-
-  Candidate: Change to TANH
-    TANH range: [-1, +1] — covers the negative target values
-    Estimated improvement: 0.15
-
-  After fix: O1 can now produce negative outputs,
-  allowing it to match the full target distribution.
-```
+> **Output neuron O1:** LOGISTIC, bias = 0.5
+> Target data range: [−0.8, +1.2]
+>
+> **Strategy 2 triggers:**
+>
+> | Check | Result |
+> |-------|--------|
+> | Activation min | 0.12 (> −0.05 → all positive) |
+> | Samples with above-average error | 42% (> 30%) |
+> | Problem | Neuron cannot output negative values to match negative targets |
+>
+> **Candidate:** Change to TANH
+> TANH range: [−1, +1] — covers the negative target values
+> Estimated improvement: **0.15**
+>
+> After fix: O1 can now produce negative outputs,
+> allowing it to match the full target distribution ✅
 
 ---
 
-## References
+## 📚 References
 
 - **Source module**: [`src/analysis/detection/output_squash_mismatch.rs`](../../src/analysis/detection/output_squash_mismatch.rs)
 - **DISCOVERY_TYPES.md**: [Technical reference](../DISCOVERY_TYPES.md)

@@ -1,10 +1,10 @@
-# Unbounded Capping Detection
+# 🚀 Unbounded Capping Detection
 
 [Back to Discovery Index](README.md) | **Source:** [`src/analysis/detection/unbounded_capping.rs`](../../src/analysis/detection/unbounded_capping.rs) | **Issue:** [#441](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/441)
 
 ---
 
-## The Problem
+## 🔍 The Problem
 
 Neurons with **unbounded activation functions** (RELU, IDENTITY, LEAKYRELU,
 etc.) can produce arbitrarily large outputs. When these neurons consistently
@@ -12,21 +12,18 @@ etc.) can produce arbitrarily large outputs. When these neurons consistently
 inject disproportionate signal magnitudes into the network, overwhelming
 downstream neurons and introducing noise.
 
-```
-  Input layer       Hidden layer          Output layer
-  ┌─────┐          ┌──────────────┐
-  │ I1  │────────→ │ H1           │──────→┌─────┐
-  │     │          │ RELU         │       │ O1  │
-  └─────┘          │ activations: │       │     │
-                   │ 12, 45, 8,   │       │ Overwhelmed
-                   │ 67, 23, 91.. │       │ by huge
-                   └──────────────┘       │ inputs!
-                        ↑                 └─────┘
-                   Spiking above 6.0
-                   in 60% of samples
+```mermaid
+graph LR
+    I1["🔵 I1"] --> H1["🚀 H1<br/>RELU<br/>activations:<br/>12, 45, 8, 67, 23, 91…<br/><i>spiking above 6.0<br/>in 60% of samples</i>"]
+    H1 -->|"huge values!"| O1["🎯 O1<br/><i>overwhelmed!</i>"]
+    style I1 fill:#4a9eff,stroke:#333,color:#fff
+    style H1 fill:#e74c3c,stroke:#333,color:#fff
+    style O1 fill:#f39c12,stroke:#333,color:#fff
 ```
 
-### Why It Hurts the Creature's Score
+> 🚀 **Spiking out of control!** Unbounded activations push massive values into downstream neurons, drowning out other signals.
+
+### ⚠️ Why It Hurts the Creature's Score
 
 - **Downstream saturation**: Large values push receiving neurons into
   saturation, reducing their discrimination ability.
@@ -37,21 +34,26 @@ downstream neurons and introducing noise.
 
 ---
 
-## How We Detect It
+## 🔬 How We Detect It
 
-```
-  ┌────────────────────────────────────────────────────────────────┐
-  │  For each hidden neuron:                                       │
-  │                                                                │
-  │  1. Uses an unbounded activation function                      │
-  │     (RELU, IDENTITY, LEAKYRELU, SOFTPLUS, ELU, SELU,          │
-  │      SWISH, MISH, GELU, EXPONENTIAL, SQUARE, CUBE)            │
-  │  2. Collect activation samples (minimum 20)                    │
-  │  3. Check max activation exceeds capping threshold             │
-  │     (RELU family: > 6.0, IDENTITY: > 1.0)                     │
-  │  4. At least 30% of samples exceed the threshold               │
-  │  5. If all checks pass → unbounded capping candidate           │
-  └────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A["🔍 For each hidden neuron"] --> B{"🧪 Unbounded activation?<br/>(RELU, IDENTITY, LEAKYRELU,<br/>SOFTPLUS, ELU, SELU, SWISH,<br/>MISH, GELU, EXPONENTIAL,<br/>SQUARE, CUBE)"}
+    B -->|"No"| Z["🛡️ Not applicable"]
+    B -->|"Yes"| C["📊 Collect activation samples<br/><i>minimum 20</i>"]
+    C --> D{"📏 Max exceeds threshold?<br/>(RELU family: > 6.0<br/>IDENTITY: > 1.0)"}
+    D -->|"No"| G["✅ Normal range"]
+    D -->|"Yes"| E{"📊 >= 30% above threshold?"}
+    E -->|"Yes"| F["🚀 Unbounded capping candidate"]
+    E -->|"No"| G
+    style A fill:#e3f2fd,stroke:#1565c0,color:#000
+    style B fill:#fff3e0,stroke:#f57c00,color:#000
+    style C fill:#e3f2fd,stroke:#1565c0,color:#000
+    style D fill:#fff3e0,stroke:#f57c00,color:#000
+    style E fill:#fff3e0,stroke:#f57c00,color:#000
+    style F fill:#fce4ec,stroke:#c62828,color:#000
+    style G fill:#e8f5e9,stroke:#2e7d32,color:#000
+    style Z fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
 
 The 30% threshold ensures we only flag consistent spiking, not occasional
@@ -59,18 +61,27 @@ outliers.
 
 ---
 
-## How We Fix It
+## 🛠️ How We Fix It
 
 The fix replaces the unbounded activation with a bounded version that caps
 extreme values while preserving the function's character in the normal range:
 
-```
-  BEFORE (RELU, unbounded)               AFTER (RELU6, capped at 6)
-  ┌─────┐    ┌────────┐    ┌─────┐      ┌─────┐    ┌────────┐    ┌─────┐
-  │ I1  │───→│ H1     │───→│ O1  │      │ I1  │───→│ H1     │───→│ O1  │
-  │     │    │ RELU   │    │     │      │     │    │ RELU6  │    │     │
-  │     │    │ →91!   │    │     │      │     │    │ →6 max │    │     │
-  └─────┘    └────────┘    └─────┘      └─────┘    └────────┘    └─────┘
+```mermaid
+graph LR
+    subgraph Before["❌ Before — RELU, unbounded"]
+        BI1["🔵 I1"] --> BH1["🚀 H1<br/>RELU<br/>→ 91!"]
+        BH1 --> BO1["🎯 O1"]
+    end
+    subgraph After["✅ After — RELU6, capped at 6"]
+        AI1["🔵 I1"] --> AH1["✨ H1<br/>RELU6<br/>→ 6 max"]
+        AH1 --> AO1["🎯 O1"]
+    end
+    style BI1 fill:#4a9eff,stroke:#333,color:#fff
+    style BH1 fill:#e74c3c,stroke:#333,color:#fff
+    style BO1 fill:#2ecc71,stroke:#333,color:#fff
+    style AI1 fill:#4a9eff,stroke:#333,color:#fff
+    style AH1 fill:#2ecc71,stroke:#333,color:#fff
+    style AO1 fill:#2ecc71,stroke:#333,color:#fff
 ```
 
 | Current Squash | Recommended | Rationale |
@@ -87,25 +98,26 @@ extreme values while preserving the function's character in the normal range:
 
 ---
 
-## Example
+## 📝 Example
 
-```
-  A creature has 40 hidden neurons. Discovery finds:
-
-  Neuron H22: RELU
-    Max activation: 91.3
-    Fraction above 6.0: 62%
-    → Consistently spiking, overwhelming downstream neurons
-
-  Fix: Change RELU → RELU6
-  → Activations capped at 6.0
-  → Downstream neurons receive manageable signal magnitudes
-  → Network stability improves
-```
+> A creature has 40 hidden neurons. Discovery finds:
+>
+> **Neuron H22:** RELU
+>
+> | Metric | Value |
+> |--------|-------|
+> | Max activation | 91.3 |
+> | Fraction above 6.0 | 62% |
+>
+> → Consistently spiking, overwhelming downstream neurons
+>
+> **Fix:** Change RELU → RELU6
+> → Activations capped at 6.0, downstream neurons receive manageable signal magnitudes,
+> network stability improves ✅
 
 ---
 
-## References
+## 📚 References
 
 - **Source module**: [`src/analysis/detection/unbounded_capping.rs`](../../src/analysis/detection/unbounded_capping.rs)
 - **DISCOVERY_TYPES.md**: [Unbounded Capping Detection](../DISCOVERY_TYPES.md#unbounded-capping-detection)
