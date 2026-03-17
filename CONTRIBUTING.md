@@ -1,4 +1,4 @@
-# Contributing to NEAT-AI-Discovery
+# 🤝 Contributing to NEAT-AI-Discovery
 
 Thank you for your interest in contributing to NEAT-AI-Discovery! This guide
 covers everything you need to get started.
@@ -8,9 +8,9 @@ covers everything you need to get started.
 
 ---
 
-## Getting Started
+## 🚀 Getting Started
 
-### Prerequisites
+### 📋 Prerequisites
 
 **User-installable (automatically handled by `scripts/runlib.sh`):**
 - Rust (latest stable version)
@@ -28,7 +28,7 @@ covers everything you need to get started.
 Linux). There is no CPU fallback. GPU-dependent tests are skipped automatically
 on machines without a GPU.
 
-### Building
+### 🔨 Building
 
 ```bash
 ./scripts/runlib.sh
@@ -38,7 +38,7 @@ This script installs Rust and Cargo if missing (no sudo required), builds the
 library in release mode, installs it to `~/.cargo/lib/` with version tracking,
 and signs it on macOS for FFI compatibility.
 
-### Running Tests
+### 🧪 Running Tests
 
 ```bash
 # Run all tests (unit + integration)
@@ -60,9 +60,9 @@ run concurrently with each other. All other tests run in parallel (`--test-threa
 
 ---
 
-## Development Workflow
+## 💻 Development Workflow
 
-### Test-Driven Development (TDD)
+### 🔴🟢🔵 Test-Driven Development (TDD)
 
 We follow strict TDD:
 
@@ -70,7 +70,7 @@ We follow strict TDD:
 2. **Implement the feature** to make the test pass.
 3. **Refactor** if needed while keeping tests green.
 
-### Quality Gate
+### ✅ Quality Gate
 
 **Always run `./quality.sh` before committing.** CI treats warnings as errors.
 For the full list of checks performed by `./quality.sh` and details of the CI
@@ -81,7 +81,7 @@ pipeline, see [AGENTS.md — Quality Gate](AGENTS.md#5-quality-gate).
 
 ---
 
-## Code Style
+## 🎨 Code Style
 
 For the full coding conventions — Australian English requirements, formatting,
 linting, coding principles, and Rust best practices — see
@@ -89,7 +89,7 @@ linting, coding principles, and Rust best practices — see
 
 ---
 
-## Testing Guidelines
+## 🧪 Testing Guidelines
 
 For the full testing philosophy — TDD workflow, unit tests vs benchmarks, test
 organisation, and test outcomes vs implementation — see
@@ -97,9 +97,9 @@ organisation, and test outcomes vs implementation — see
 
 ---
 
-## Pull Request Process
+## 📬 Pull Request Process
 
-### PR Summary File
+### 📝 PR Summary File
 
 Every PR must include a summary file at `docs/archive/pr-summaries/pr-summary-<ISSUE>.md`
 containing the following sections.
@@ -109,19 +109,19 @@ containing the following sections.
    changes, or test references for bug fixes
 3. **Test Plan** — list of tests added or modified
 
-### Commit Messages
+### 💬 Commit Messages
 
 - Reference the issue number (e.g., `Add CONTRIBUTING.md (#372)`)
 - Keep the first line concise (under 72 characters)
 - Use the imperative mood ("Add feature" not "Added feature")
 
-### Version Management
+### 🔢 Version Management
 
 Do not manually bump versions. CI increments `Cargo.toml` patch versions when
 `src/` changes are detected. Call `get_library_version()` to confirm what a
 worker has loaded.
 
-### Deployment Checklist
+### 🚀 Deployment Checklist
 
 1. Run `./quality.sh` in this repository
 2. If changes affect NEAT-AI integration, also run `./quality.sh` in the
@@ -130,14 +130,14 @@ worker has loaded.
 
 ---
 
-## Project Structure
+## 🏗️ Project Structure
 
 For the full source layout with all files and directory descriptions, see
 [AGENTS.md — Architecture](AGENTS.md#2-architecture).
 
 ---
 
-## Further Reading
+## 📚 Further Reading
 
 See the [Additional Documentation](README.md#additional-documentation) table in
 README.md for a comprehensive index of all project documentation.

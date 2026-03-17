@@ -18,7 +18,7 @@ larger.
 Controllers call into the library via Deno FFI to power `Creature.discoveryDir()`
 workflows.
 
-## Project Mission
+## 🎯 Project Mission
 
 **The sole goal of this library is to discover changes that improve the creature's
 score — as fast as possible.**
@@ -44,7 +44,7 @@ Everything in this repository serves that objective:
 > **In short:** discover score-improving mutations, use GPU/SIMD to do it quickly,
 > and reuse the candidate types that NEAT-AI already understands.
 
-## TL;DR
+## ⚡ TL;DR
 
 - **This library finds candidates, it does not "auto-fix" creatures**: NEAT-AI validates candidates by rescoring on the full training set.
 - **GPU required**: discovery is skipped when no compatible GPU is available (see `check_gpu_available()`).
@@ -52,7 +52,7 @@ Everything in this repository serves that objective:
 - **Preferred recording API**: streaming (`start_discovery_session` → `append_discovery_records` → `finish_discovery_session`) to avoid JS/V8 string limits.
 - **Free FFI results**: every FFI call returning a `char*` must be freed with `free_discovery_result()`.
 
-## Quick Start
+## 🚀 Quick Start
 
 1. Install prerequisites (`rustup`, `cargo`, build tools, and `jq`). The
    `scripts/runlib.sh` helper will guide you if anything is missing.
@@ -81,7 +81,7 @@ Everything in this repository serves that objective:
    ./quality.sh
    ```
 
-## FFI API Summary
+## 🔌 FFI API Summary
 
 The library exposes a Deno FFI-friendly symbol set. The authoritative list lives in
 `src/lib.rs` as `#[no_mangle] pub extern "C"` functions.
@@ -99,7 +99,7 @@ The library exposes a Deno FFI-friendly symbol set. The authoritative list lives
 For the full JSON interface specification and streaming API details, see
 [docs/FFI_API.md](docs/FFI_API.md).
 
-## GPU Requirement
+## 🖥️ GPU Requirement
 
 **This library requires a GPU.** There is no CPU fallback. If no compatible GPU is
 available, discovery is simply skipped — NEAT-AI continues training without the
@@ -125,58 +125,63 @@ the discovery optimisation is skipped.
 For GPU performance tuning, troubleshooting, and debugging, see
 [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md).
 
-## Discovery → Evolution Pipeline
+## 🔬 Discovery → Evolution Pipeline
 
 The discovery process works as follows:
 
-```
-┌───────────────────────────────────────────────────────────────────────┐
-│  RUST (this library)                                                  │
-│  1. Find ALL candidates with positive expected improvement            │
-│  2. Apply impact discounting (creature-level predictions)             │
-│  3. Sort by expected improvement (best first)                         │
-│  4. Randomise within top-K under deadlines to avoid starvation        │
-│  5. Return candidates (optionally limited by max_candidates)          │
-└───────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌───────────────────────────────────────────────────────────────────────┐
-│  TYPESCRIPT (NEAT-AI)                                                 │
-│  1. Receive candidates from Rust (e.g., 100 candidates)               │
-│  2. Select top N based on available CPUs (e.g., 10-20)                │
-│  3. Re-score each candidate IN PARALLEL (apply mutation, measure)     │
-│  4. Keep candidates that ACTUALLY improve the creature's score        │
-│  5. Return improved creatures to population                           │
-└───────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌───────────────────────────────────────────────────────────────────────┐
-│  EVOLUTION                                                            │
-│  • Improved creatures compete in the population                       │
-│  • Natural selection breeds out unsuccessful mutations                │
-│  • No manual filtering needed — evolution handles it                  │
-└───────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph RUST["🦀 Rust — this library"]
+        R1["1. Find ALL candidates with positive expected improvement"]
+        R2["2. Apply impact discounting — creature-level predictions"]
+        R3["3. Sort by expected improvement — best first"]
+        R4["4. Randomise within top-K under deadlines to avoid starvation"]
+        R5["5. Return candidates — optionally limited by max_candidates"]
+        R1 --> R2 --> R3 --> R4 --> R5
+    end
+
+    subgraph TS["📘 TypeScript — NEAT-AI"]
+        T1["1. Receive candidates from Rust — e.g. 100 candidates"]
+        T2["2. Select top N based on available CPUs — e.g. 10–20"]
+        T3["3. Re-score each candidate IN PARALLEL — apply mutation, measure"]
+        T4["4. Keep candidates that ACTUALLY improve the creature's score"]
+        T5["5. Return improved creatures to population"]
+        T1 --> T2 --> T3 --> T4 --> T5
+    end
+
+    subgraph EVO["🧬 Evolution"]
+        E1["Improved creatures compete in the population"]
+        E2["Natural selection breeds out unsuccessful mutations"]
+        E3["No manual filtering needed — evolution handles it"]
+        E1 --> E2 --> E3
+    end
+
+    RUST --> TS --> EVO
+
+    style RUST fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#000
+    style TS fill:#fff3e0,stroke:#FF9800,stroke-width:2px,color:#000
+    style EVO fill:#e8f5e9,stroke:#4CAF50,stroke-width:2px,color:#000
 ```
 
-**Key principle**: Rust finds structural improvements that reduce error. TypeScript
-validates by measuring actual score. Evolution does the rest.
+**Key principle**: 🦀 Rust finds structural improvements that reduce error. 📘 TypeScript
+validates by measuring actual score. 🧬 Evolution does the rest.
 
 For detailed analysis workflow, coordinated structural discovery, discrete
 activation function handling, and detection algorithms, see
 [docs/ANALYSIS_DEEP_DIVE.md](docs/ANALYSIS_DEEP_DIVE.md).
 
-## Discovery Scenarios
+## 🗺️ Discovery Scenarios
 
 For a **visual, beginner-friendly overview** of every discovery scenario — with
 diagrams, worked examples, and links to research papers — see the
 [Discovery Scenarios Guide](docs/discoveries/README.md).
 
-## Discovery Types
+## 🔍 Discovery Types
 
 The library analyses recorded neuron activations and errors to propose mutation
 candidates. Detection modules are grouped by concern:
 
-### Activation & Neuron State
+### ⚡ Activation & Neuron State
 
 Modules that detect issues with how neurons process activations.
 
@@ -198,7 +203,7 @@ Modules that detect issues with how neurons process activations.
 | [Bias Perturbation](docs/DISCOVERY_TYPES.md#bias-perturbation-detection) | Neurons in suboptimal activation regimes | `setBias` |
 | [Squash + Weight Rescale](docs/DISCOVERY_TYPES.md#squash-weight-rescale-detection) | Coordinated activation change with weight compensation | `changeSquash`, `setWeight` |
 
-### Weight & Synapse
+### ⚖️ Weight & Synapse
 
 Modules that detect issues with synapse weights and connections.
 
@@ -213,7 +218,7 @@ Modules that detect issues with synapse weights and connections.
 | [Fan-in Polarity Conflict](docs/DISCOVERY_TYPES.md#fan-in-polarity-conflict-detection) | Conflicting positive/negative incoming weights | `addNeuron`, `addSynapse` |
 | [Gradient Discovery](docs/DISCOVERY_TYPES.md#gradient-based-synapse-adjustment) | Gradient-directed weight adjustments | `setWeight` |
 
-### Structural & Topology
+### 🏗️ Structural & Topology
 
 Modules that detect structural and topological issues in the network.
 
@@ -232,7 +237,7 @@ Modules that detect structural and topological issues in the network.
 | [Multi-Hop](docs/DISCOVERY_TYPES.md#multi-hop-candidate-analysis) | Deeper structural improvements | `addNeuron`, `addSynapse` |
 | [Epistatic Pairs](docs/DISCOVERY_TYPES.md#combo-successful) | Complementary neuron pair interactions | `addSynapse` |
 
-### Range & Input Analysis
+### 📊 Range & Input Analysis
 
 Modules that analyse input ranges and gating.
 
@@ -243,7 +248,7 @@ Modules that analyse input ranges and gating.
 | [Observation Utilisation](docs/DISCOVERY_TYPES.md#observation-utilisation-detection) | Underutilised inputs with low effective range | `addNeuron`, `addSynapse` |
 | [Input Sensitivity](docs/DISCOVERY_TYPES.md#input-sensitivity-detection) | Excessive input leverage and threshold effects | `setWeight`, `addNeuron`, `setBias` |
 
-### Scoring & Recommendation
+### 🏆 Scoring & Recommendation
 
 Modules that score candidate quality and proactively recommend changes.
 
@@ -261,9 +266,9 @@ success rates, see [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md).
 For impact calculation details, see
 [docs/IMPACT_CALCULATION.md](docs/IMPACT_CALCULATION.md).
 
-## Configuration
+## ⚙️ Configuration
 
-### Environment Variables
+### 🔧 Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -286,7 +291,7 @@ For impact calculation details, see
 | `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` | off | Stall watchdog timeout |
 | `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` | 2 | Delay between dump and abort |
 
-## Troubleshooting
+## 🛠️ Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
@@ -302,7 +307,7 @@ For impact calculation details, see
 
 For detailed troubleshooting steps, see [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md).
 
-## Using the Library with NEAT-AI
+## 🔗 Using the Library with NEAT-AI
 
 1. Place the compiled artefact where Deno can load it:
    - Copy `libneat_ai_discovery.*` into `~/.cargo/lib`, **or**
@@ -328,7 +333,7 @@ cd /path/to/NEAT-AI
 If the script reports that discovery is enabled, you are ready to schedule
 `Creature.discoveryDir()` jobs against your sampled datasets.
 
-## Development
+## 💻 Development
 
 For prerequisites, building, testing, code style, and the full development
 workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -356,7 +361,7 @@ cargo +nightly fuzz run fuzz_ffi_deserialisation -- -max_total_time=60
 cargo +nightly fuzz run fuzz_ffi_entry_points -- -max_total_time=60
 ```
 
-### Fuzz Testing
+### 🔀 Fuzz Testing
 
 The `fuzz/` directory contains [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html)
 targets that exercise the FFI JSON boundary with arbitrary inputs. This helps
@@ -396,7 +401,7 @@ cargo +nightly fuzz list
 Crash-reproducing inputs (if any) are saved to `fuzz/artifacts/`. The fuzzer
 corpus is stored in `fuzz/corpus/` and grows over successive runs.
 
-## Why Use This Library?
+## 💡 Why Use This Library?
 
 - **Production-ready discovery** — Handles millions of observations without the
   memory blow-outs that limit the TypeScript implementation.
@@ -444,7 +449,7 @@ functional behaviour.
 
 </details>
 
-## Cross-Platform Support
+## 🌏 Cross-Platform Support
 
 The library must work on:
 - **macOS** (primary target)
@@ -453,7 +458,7 @@ The library must work on:
 
 All dependencies build automatically on remote, unattended machines.
 
-## Distributed Build & Versioning
+## 📦 Distributed Build & Versioning
 
 - Versions are managed in `Cargo.toml` and automatically incremented by CI when
   `src/` changes are detected.
@@ -462,7 +467,7 @@ All dependencies build automatically on remote, unattended machines.
   `~/.cargo/lib/.neat_ai_discovery.version`.
 - Do not manually edit version numbers; CI handles patch bumps.
 
-## Additional Documentation
+## 📚 Additional Documentation
 
 | Document | Description |
 |----------|-------------|
@@ -478,7 +483,7 @@ All dependencies build automatically on remote, unattended machines.
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark regression tracking and comparison workflow |
 | [CodeWiki](https://codewiki.google/github.com/stsoftwareau/neat-ai-discovery) | AI-powered documentation and code exploration |
 
-## License
+## 📄 Licence
 
 This project is licensed under the terms of the Apache License 2.0. For the full
 license text, please see [LICENSE](./LICENSE).
