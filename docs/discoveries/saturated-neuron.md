@@ -1,37 +1,37 @@
-# Saturated Neuron Detection
+# 🫠 Saturated Neuron Detection
 
 [Back to Discovery Index](README.md) | **Source:** [`src/analysis/saturation.rs`](../../src/analysis/saturation.rs) | **Issue:** [#342](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/342)
 
 ---
 
-## The Problem
+## 🔍 The Problem
 
 A **saturated neuron** is a hidden neuron whose activation is stuck at the
 extreme end of its activation function's range. The neuron outputs nearly the
 same value for every input, so it cannot transmit useful information to
 downstream neurons.
 
+```mermaid
+graph LR
+    subgraph Saturated["🫠 Saturated Neuron"]
+        I1["🔵 I1"] -->|"w=3.0"| H1["🫠 H1<br/>TANH<br/>output ≈ 0.99<br/><i>always</i>"]
+        I2["🔵 I2"] -->|"w=2.5"| H1
+        H1 -->|"flat signal"| O1["🎯 O1"]
+    end
+    style I1 fill:#4a9eff,stroke:#333,color:#fff
+    style I2 fill:#4a9eff,stroke:#333,color:#fff
+    style H1 fill:#e74c3c,stroke:#333,color:#fff
+    style O1 fill:#2ecc71,stroke:#333,color:#fff
 ```
-  Activation
-       1.0 ┤ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  ← ceiling
-            │                    ╭────────────────────────  ← neuron stuck here
-            │                 ╭──╯
-            │              ╭──╯
-       0.0 ┤─────────────╱─────────────────────────────────
-            │          ╭──╯
-            │       ╭──╯
-            │  ─────╯
-      -1.0 ┤ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  ← floor
-            └──────────────────────────────────────────────
-                                Input
-```
+
+> 🫠 **Stuck at the ceiling!** The neuron is pinned near +1.0 — it outputs the same value regardless of input.
 
 Bounded activation functions like **TANH**, **LOGISTIC**, and **HARD_TANH** have
 natural ceilings and floors. When a neuron's weighted input sum pushes it
 permanently past the inflection point, the gradient approaches zero and learning
 stalls — the classic **vanishing gradient** problem.
 
-### Why It Hurts the Creature's Score
+### ⚠️ Why It Hurts the Creature's Score
 
 - The neuron becomes effectively **constant**, contributing no input-dependent
   signal.
@@ -40,49 +40,53 @@ stalls — the classic **vanishing gradient** problem.
 
 ---
 
-## How We Detect It
+## 🔬 How We Detect It
 
-```
-  For each hidden neuron with a bounded activation function:
-
-  ┌─────────────────────────────────────────────────────────┐
-  │  1. Collect activation samples (minimum 20)             │
-  │  2. Compute mean activation and standard deviation      │
-  │  3. Check: is |mean| near the function's bound?         │
-  │     • TANH:      |mean| > 0.95                          │
-  │     • LOGISTIC:  mean > 0.95 or mean < 0.05             │
-  │     • HARD_TANH: |mean| > 0.99                          │
-  │  4. Check: is std deviation very low? (< 0.05)          │
-  │  5. If both → neuron is saturated                       │
-  └─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A["🔍 For each hidden neuron<br/>with bounded activation"] --> B["📊 Collect activation samples<br/><i>minimum 20</i>"]
+    B --> C["📐 Compute mean & std deviation"]
+    C --> D{"🧪 Near activation bound?"}
+    D -->|"TANH: |mean| > 0.95<br/>LOGISTIC: mean > 0.95 or < 0.05<br/>HARD_TANH: |mean| > 0.99"| E{"📏 Std dev < 0.05?"}
+    D -->|"No"| G["✅ Not saturated"]
+    E -->|"Yes"| F["🫠 Neuron is saturated"]
+    E -->|"No"| G
+    style A fill:#e3f2fd,stroke:#1565c0,color:#000
+    style B fill:#e3f2fd,stroke:#1565c0,color:#000
+    style C fill:#e3f2fd,stroke:#1565c0,color:#000
+    style D fill:#fff3e0,stroke:#f57c00,color:#000
+    style E fill:#fff3e0,stroke:#f57c00,color:#000
+    style F fill:#fce4ec,stroke:#c62828,color:#000
+    style G fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
 
 A **saturation severity score** (0.0 to 1.0) measures how far past the
 threshold the neuron is operating. Higher severity means the neuron is more
 firmly stuck.
 
-### Special Case: RELU Dead Zone
+### 🧊 Special Case: RELU Dead Zone
 
 RELU neurons with both mean and standard deviation near zero are also detected
 as a form of saturation — the neuron is stuck at zero.
 
 ---
 
-## How We Fix It
+## 🛠️ How We Fix It
 
 The library proposes **coordinated structural candidates** — multiple operations
 applied together atomically:
 
-```
-  BEFORE                              AFTER
-  ┌──────────┐                        ┌──────────┐
-  │  Neuron   │                        │  Neuron   │
-  │  TANH     │  ──── changeSquash ──→ │  IDENTITY │
-  │  bias=2.5 │  ──── setBias ──────→  │  bias=0.0 │
-  └──────────┘                        └──────────┘
-       │                                    │
-   Output: ~0.99                       Output: varies
-   (constant)                          (useful signal)
+```mermaid
+graph LR
+    subgraph Before["❌ Before"]
+        BH1["🫠 H1<br/>TANH<br/>bias = 2.5<br/>output ≈ 0.99"]
+    end
+    subgraph After["✅ After"]
+        AH1["✨ H1<br/>IDENTITY<br/>bias = 0.0<br/>output varies"]
+    end
+    Before -->|"changeSquash + setBias"| After
+    style BH1 fill:#e74c3c,stroke:#333,color:#fff
+    style AH1 fill:#2ecc71,stroke:#333,color:#fff
 ```
 
 | Candidate | Operation | Purpose |
@@ -93,26 +97,28 @@ applied together atomically:
 
 ---
 
-## Example
+## 📝 Example
 
+```mermaid
+graph LR
+    I1["🔵 I1"] -->|"w=3.0"| H1["🫠 H1<br/>TANH<br/>bias=1.0"]
+    I2["🔵 I2"] -->|"w=2.5"| H1
+    H1 --> O1["🎯 O1"]
+    style I1 fill:#4a9eff,stroke:#333,color:#fff
+    style I2 fill:#4a9eff,stroke:#333,color:#fff
+    style H1 fill:#e74c3c,stroke:#333,color:#fff
+    style O1 fill:#2ecc71,stroke:#333,color:#fff
 ```
-  Input layer        Hidden layer         Output layer
-  ┌─────┐           ┌──────────┐         ┌─────┐
-  │ I1  │──(w=3.0)─→│  H1      │────────→│ O1  │
-  │     │           │  TANH    │         │     │
-  │ I2  │──(w=2.5)─→│  bias=1.0│         └─────┘
-  └─────┘           └──────────┘
 
-  H1 receives weighted sum ≈ 6.5 on average
-  TANH(6.5) ≈ 0.9999 → saturated!
-
-  Fix: Change H1 to IDENTITY, shift bias
-  Now H1 passes a linearly scaled signal → output can differentiate inputs
-```
+> H1 receives weighted sum ≈ 6.5 on average.
+> TANH(6.5) ≈ 0.9999 → **saturated!**
+>
+> **Fix:** Change H1 to IDENTITY, shift bias.
+> Now H1 passes a linearly scaled signal → output can differentiate inputs ✅
 
 ---
 
-## References
+## 📚 References
 
 - **Vanishing gradient problem** —
   [Wikipedia](https://en.wikipedia.org/wiki/Vanishing_gradient_problem):
