@@ -5,9 +5,10 @@
 
 use crate::CandidateNeuronJson;
 use anyhow::Result;
+use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use crate::analysis::diagnostics::NeuronDiagnostics;
@@ -25,8 +26,12 @@ use crate::analysis::synapse::{
 
 /// Work result from sample building phase, containing samples for a single
 /// source neuron.
-pub(crate) struct NeuronWorkResult {
-    pub source_uuid: String,
+///
+/// Uses `&str` for `source_uuid` to avoid cloning UUIDs in the hot path
+/// (Issue #808). The reference points to `OrderedNeuron.uuid` from the
+/// locality group's borrowed source neurons.
+pub(crate) struct NeuronWorkResult<'a> {
+    pub source_uuid: &'a str,
     pub samples: Vec<HelpfulSample>,
 }
 
@@ -47,7 +52,7 @@ pub(crate) struct NeuronEvalContext<'a> {
 /// This handles both ReLU split evaluation and batched activation spec
 /// evaluation, applying source variance discounting.
 pub(crate) fn evaluate_neuron_candidates(
-    work_results: &[NeuronWorkResult],
+    work_results: &[NeuronWorkResult<'_>],
     target_uuid: &str,
     ctx: &NeuronEvalContext<'_>,
     deadline: &Option<SystemTime>,
@@ -80,7 +85,7 @@ pub(crate) fn evaluate_neuron_candidates(
 
         // ReLU evaluation: split by TARGET neuron's error sign.
         evaluate_relu_split(
-            &result.source_uuid,
+            result.source_uuid,
             target_uuid,
             &result.samples,
             target_squash,
@@ -90,7 +95,7 @@ pub(crate) fn evaluate_neuron_candidates(
 
         // Issue #201: Evaluate all activation specs in a single batched GPU call
         evaluate_activation_specs(
-            &result.source_uuid,
+            result.source_uuid,
             target_uuid,
             &result.samples,
             target_squash,

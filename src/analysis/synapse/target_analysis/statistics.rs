@@ -161,7 +161,7 @@ pub(crate) fn build_helpful_work_items(
     target_map_ref: &TargetMap,
     ctx: &TargetAnalysisContext,
 ) -> Vec<HelpfulWork> {
-    let source_results: Vec<SourceWorkResult> = {
+    let source_results: Vec<SourceWorkResult<'_>> = {
         let _timing = TimingScope::sample_building(&ctx.timing_collector);
 
         let locality_groups = group_sources_by_locality(sources_to_process);
@@ -194,7 +194,7 @@ pub(crate) fn build_helpful_work_items(
                         let had_samples = !samples.is_empty();
                         let work = if had_samples {
                             Some(HelpfulWork {
-                                source_uuid: source_uuid.clone(),
+                                source_uuid: source_uuid.to_string(),
                                 target_uuid: target_uuid.to_string(),
                                 samples,
                                 existing_weight: None,
@@ -214,28 +214,19 @@ pub(crate) fn build_helpful_work_items(
             .collect()
     };
 
-    // Extract work batch and batch diagnostics updates
+    // Extract work batch and update diagnostics directly (Issue #808:
+    // use &str source_uuid to avoid intermediate String allocations)
     let mut helpful_work_batch: Vec<HelpfulWork> = Vec::new();
-    let mut diagnostics_updates: Vec<(String, String, bool, usize)> = Vec::new();
 
     for result in source_results {
+        ctx.diagnostics
+            .record_candidate_attempt(target_uuid, result.had_samples);
+        if !result.had_samples {
+            ctx.diagnostics
+                .record_no_samples(target_uuid, result.source_uuid, result.record_count);
+        }
         if let Some(work) = result.work {
             helpful_work_batch.push(work);
-        }
-        diagnostics_updates.push((
-            target_uuid.to_string(),
-            result.source_uuid,
-            result.had_samples,
-            result.record_count,
-        ));
-    }
-
-    for (target, source, had_samples, record_count) in diagnostics_updates {
-        ctx.diagnostics
-            .record_candidate_attempt(&target, had_samples);
-        if !had_samples {
-            ctx.diagnostics
-                .record_no_samples(&target, &source, record_count);
         }
     }
 
@@ -285,11 +276,11 @@ pub(crate) fn build_existing_edge_work(
 /// This function loads records from cache and builds samples, which is pure CPU work.
 /// It is called while the helpful GPU batch is being processed, overlapping CPU and GPU.
 /// (Issue #568)
-pub(crate) fn prepare_harmful_samples(
-    existing_synapses: &[SynapseJson],
+pub(crate) fn prepare_harmful_samples<'a>(
+    existing_synapses: &[&'a SynapseJson],
     cache: &RecordCache,
     target_map_ref: &TargetMap,
-) -> Vec<PreparedHarmfulWork> {
+) -> Vec<PreparedHarmfulWork<'a>> {
     let mut harmful_work = Vec::with_capacity(existing_synapses.len());
 
     for synapse in existing_synapses {
@@ -307,8 +298,8 @@ pub(crate) fn prepare_harmful_samples(
         }
 
         harmful_work.push(PreparedHarmfulWork {
-            from_uuid: synapse.from_uuid.clone(),
-            to_uuid: synapse.to_uuid.clone(),
+            from_uuid: synapse.from_uuid.as_str(),
+            to_uuid: synapse.to_uuid.as_str(),
             weight: synapse.weight,
             samples,
         });
@@ -318,9 +309,12 @@ pub(crate) fn prepare_harmful_samples(
 }
 
 /// Pre-built harmful synapse work item for CPU/GPU overlap (Issue #568).
-pub(crate) struct PreparedHarmfulWork {
-    pub from_uuid: String,
-    pub to_uuid: String,
+///
+/// Uses `&str` references to synapse UUIDs from `ctx.synapses_by_target`
+/// to avoid cloning in the per-target hot path (Issue #808).
+pub(crate) struct PreparedHarmfulWork<'a> {
+    pub from_uuid: &'a str,
+    pub to_uuid: &'a str,
     pub weight: f32,
     pub samples: Vec<HelpfulSample>,
 }

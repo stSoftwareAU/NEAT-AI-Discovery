@@ -70,7 +70,7 @@ pub struct AnalysisTiming {
 // Timing Collector (Issue #195)
 // =============================================================================
 
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
@@ -122,14 +122,10 @@ impl TimingCollector {
         if !self.enabled {
             return;
         }
-        let Ok(mut timings) = self.shader_timings.lock() else {
-            tracing::warn!(
-                mutex = "shader_timings",
-                action = "skipping timing record",
-                "Mutex poisoned"
-            );
-            return;
-        };
+        let mut timings = super::utils::lock_contention::traced_lock_default(
+            &self.shader_timings,
+            "shader_timings",
+        );
         let entry = timings.entry(shader_name.to_string()).or_insert((0, 0));
         entry.0 += 1;
         entry.1 += duration_ns;
@@ -172,14 +168,10 @@ impl TimingCollector {
 
         let total_analysis_ms = self.start_time.elapsed().as_secs_f64() * 1000.0;
 
-        let Ok(shader_timings_lock) = self.shader_timings.lock() else {
-            tracing::warn!(
-                mutex = "shader_timings",
-                action = "returning partial timing data",
-                "Mutex poisoned"
-            );
-            return None;
-        };
+        let shader_timings_lock = super::utils::lock_contention::traced_lock_default(
+            &self.shader_timings,
+            "shader_timings_finalize",
+        );
         let mut shader_timings = HashMap::new();
         let mut total_shader_ns: u64 = 0;
 

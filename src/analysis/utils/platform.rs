@@ -93,15 +93,23 @@ pub fn ensure_xdg_runtime_dir() {
 mod tests {
     use super::*;
 
+    /// Smoke test: `suppress_mesa_warnings_if_requested` is a one-time
+    /// environment variable setter guarded by `Once`. On non-Linux it is a
+    /// no-op. There is no return value or queryable state — the only
+    /// contract is that repeated calls do not panic.
     #[test]
     fn test_suppress_mesa_warnings_does_not_panic() {
-        // Just verify the function doesn't panic on any platform
+        suppress_mesa_warnings_if_requested();
         suppress_mesa_warnings_if_requested();
     }
 
+    /// Smoke test: `ensure_xdg_runtime_dir` is a one-time environment setup
+    /// guarded by `Once`. On non-Linux it is a no-op. There is no return
+    /// value or queryable state — the only contract is that repeated calls
+    /// do not panic.
     #[test]
     fn test_ensure_xdg_runtime_dir_does_not_panic() {
-        // Just verify the function doesn't panic on any platform
+        ensure_xdg_runtime_dir();
         ensure_xdg_runtime_dir();
     }
 }

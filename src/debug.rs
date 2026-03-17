@@ -7,7 +7,7 @@
 //! # Usage
 //!
 //! Call `init_debug_handlers()` early in your program to enable both features.
-//! On deadlock, the program will panic with backtrace information.
+//! On deadlock, the program will abort after printing backtrace information.
 //! On SIGUSR1 (kill -USR1), thread backtraces are printed to stderr without exiting.
 //!
 //! # Example
@@ -17,7 +17,7 @@
 //! neat_ai_discovery::debug::init_debug_handlers();
 //!
 //! // Now you can send kill -USR1 <pid> to dump threads
-//! // And deadlocks will be detected and panic
+//! // And deadlocks will be detected and abort the process
 //! ```
 
 use std::sync::OnceLock;
@@ -32,7 +32,10 @@ static DEBUG_HANDLERS_INITIALISED: OnceLock<()> = OnceLock::new();
 static VERBOSE_MODE: AtomicBool = AtomicBool::new(false);
 
 /// Interval between deadlock checks (in seconds).
-const DEADLOCK_CHECK_INTERVAL_SECS: u64 = 10;
+///
+/// Kept short (5 s) so that deadlocks are detected quickly without adding
+/// meaningful overhead — the check itself is very cheap.
+const DEADLOCK_CHECK_INTERVAL_SECS: u64 = 5;
 
 /// Initialise debug handlers for deadlock detection and signal-based thread dumps.
 ///
@@ -40,8 +43,8 @@ const DEADLOCK_CHECK_INTERVAL_SECS: u64 = 10;
 ///
 /// # Features
 ///
-/// 1. **Deadlock Detection**: A background thread checks for deadlocks every 10 seconds.
-///    If a deadlock is detected, the program panics with full backtrace information.
+/// 1. **Deadlock Detection**: A background thread checks for deadlocks every 5 seconds.
+///    If a deadlock is detected, the program prints diagnostics and aborts.
 ///
 /// 2. **SIGUSR1 Handler (Unix only)**: Sending `kill -USR1 <pid>` prints all
 ///    thread backtraces to stderr without terminating the process.
@@ -71,7 +74,12 @@ pub fn init_debug_handlers() {
 /// Start background thread for deadlock detection.
 ///
 /// Uses `parking_lot::deadlock::check_deadlock()` to detect deadlocks.
-/// When a deadlock is found, prints full information and panics.
+/// When a deadlock is found, prints full information to stderr, flushes it,
+/// and calls `std::process::abort()` to terminate the process immediately.
+///
+/// We use `abort()` rather than `panic!()` because most FFI entrypoints wrap
+/// calls in `catch_unwind()`, which would swallow a panic and keep the worker
+/// alive with permanently deadlocked threads.
 fn start_deadlock_detector() {
     thread::Builder::new()
         .name("deadlock-detector".to_string())
@@ -103,16 +111,21 @@ fn start_deadlock_detector() {
                 }
 
                 eprintln!("{}", "=".repeat(80));
-                eprintln!("PANICKING due to deadlock. See above for thread backtraces.");
-                eprintln!("{}\n", "=".repeat(80));
-
-                // Panic to abort the program - this allows the error to propagate
-                panic!(
-                    "Deadlock detected! {} deadlock(s) involving {} total threads. \
-                     See stderr for full backtrace information.",
+                eprintln!(
+                    "ABORTING due to deadlock — {} deadlock(s) involving {} total threads. \
+                     See above for thread backtraces.",
                     deadlocks.len(),
                     deadlocks.iter().map(std::vec::Vec::len).sum::<usize>()
                 );
+                eprintln!("{}\n", "=".repeat(80));
+
+                // Flush stderr so the diagnostic output is not lost before we abort.
+                let _ = std::io::Write::flush(&mut std::io::stderr());
+
+                // We intentionally use abort() rather than panic!() because most FFI
+                // entrypoints use catch_unwind(), which would swallow a panic and keep
+                // the worker alive with permanently deadlocked threads.
+                std::process::abort();
             }
         })
         .expect("Failed to spawn deadlock detector thread");
@@ -478,6 +491,21 @@ mod tests {
         let ts = chrono_lite_timestamp();
         assert!(!ts.is_empty());
         assert!(ts.contains("UTC") || ts.contains("unknown"));
+    }
+
+    #[test]
+    fn test_deadlock_check_interval_is_short() {
+        // The deadlock check interval should be short enough for fast detection
+        // but not so short as to waste CPU cycles.
+        let interval = DEADLOCK_CHECK_INTERVAL_SECS;
+        assert!(
+            interval <= 5,
+            "Deadlock check interval should be at most 5 seconds for fast detection, got {interval}"
+        );
+        assert!(
+            interval >= 1,
+            "Deadlock check interval should be at least 1 second to avoid wasting CPU, got {interval}"
+        );
     }
 
     #[test]

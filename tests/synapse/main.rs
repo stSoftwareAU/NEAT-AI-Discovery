@@ -1,0 +1,28 @@
+//! Synapse analysis pipeline integration tests.
+
+#[path = "../common/mod.rs"]
+mod common;
+
+mod analyze_all_deadline_prioritises_synapses;
+mod coordinated_structural_collapse_neuron_to_synapse;
+mod coordinated_structural_mercury_digital;
+mod coordinated_structural_noisy_vs_trusted_inputs;
+mod coordinated_structural_replace_synapse_with_relu;
+mod issue_208_synapse_counts;
+mod issue_413_add_synapse_prediction_accuracy;
+mod issue_416_harmful_synapse_threshold;
+mod issue_510_coordinated_structural_weight_variants;
+mod issue_513_synapse_weight_variants;
+mod issue_522_synapse_post_processing;
+mod issue_522_synapse_scoring;
+mod issue_522_synapse_structural_patterns;
+mod issue_730_synapse_prediction_calibration;
+mod issue_731_combo_successful_filtering;
+mod issue_732_coordinated_structural_success_rate;
+mod issue_789_improve_add_synapses_success_rate;
+mod issue_790_reduce_coordinated_structural_false_positives;
+mod sample_matching;
+mod sensible_range_filtering;
+mod source_variance_discounting;
+mod synapse_candidate_indices;
+mod synapse_impact_discounting;
