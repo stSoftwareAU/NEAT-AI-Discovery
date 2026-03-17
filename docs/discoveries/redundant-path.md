@@ -1,27 +1,28 @@
-# Redundant Path Pruning
+# 🔀 Redundant Path Pruning
 
 [Back to Discovery Index](README.md) | **Source:** [`src/analysis/redundant_path.rs`](../../src/analysis/redundant_path.rs) | **Issue:** [#164](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/164)
 
 ---
 
-## The Problem
+## 🔍 The Problem
 
 **Redundant paths** occur when two synapses feeding the same target neuron carry
 effectively the same signal. The network wastes two connections to transmit
 information that one could handle.
 
-```
-  Source A ──(w=+0.4)──→┌────────┐
-                         │ Target │
-  Source B ──(w=+0.3)──→│   T    │
-                         └────────┘
-
-  If A and B activations are highly correlated (r >= 0.85):
-  Both synapses carry ~the same information
-  → one is redundant
+```mermaid
+graph LR
+    A["🧠 Source A"] -->|"w = +0.4"| T["🧠 Target T"]
+    B["🧠 Source B"] -->|"w = +0.3"| T
+    style A fill:#9b59b6,stroke:#333,color:#fff
+    style B fill:#9b59b6,stroke:#333,color:#fff
+    style T fill:#e74c3c,stroke:#333,color:#fff
 ```
 
-### Why It Hurts the Creature's Score
+> 🔀 If A and B activations are highly correlated (r ≥ 0.85):
+> both synapses carry ~the same information → **one is redundant**.
+
+### ⚠️ Why It Hurts the Creature's Score
 
 - **Structural complexity**: Two synapses where one would suffice increases
   the creature's complexity cost.
@@ -32,71 +33,66 @@ information that one could handle.
 
 ---
 
-## How We Detect It
+## 🔬 How We Detect It
 
-```
-  ┌────────────────────────────────────────────────────────────┐
-  │  For each target neuron T:                                 │
-  │                                                            │
-  │  1. Collect all existing source synapses with recorded     │
-  │     activation samples (minimum 30 matched samples)        │
-  │                                                            │
-  │  2. Compute pairwise |Pearson correlation| of source       │
-  │     activations                                            │
-  │                                                            │
-  │  3. For each pair where |correlation| >= 0.85:             │
-  │     ┌──────────────────────────────────────────────────┐   │
-  │     │  Weaker synapse (by |weight|) = prune candidate  │   │
-  │     │  Stronger synapse = survivor                     │   │
-  │     │                                                  │   │
-  │     │  New survivor weight = keep_weight + prune_weight│   │
-  │     │  (absorbs both contributions)                    │   │
-  │     └──────────────────────────────────────────────────┘   │
-  │                                                            │
-  │  4. Estimate improvement by comparing MSE:                 │
-  │     original two-path vs renormalised single-path          │
-  │     + structural simplification bonus                      │
-  └────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A["🔍 For each target neuron T"] --> B["📊 Collect source synapses<br/>with activation samples<br/><i>minimum 30 matched samples</i>"]
+    B --> C["📈 Compute pairwise<br/>|Pearson correlation|<br/>of source activations"]
+    C --> D{"🧪 |correlation| ≥ 0.85?"}
+    D -->|No| Z["✅ Sources are independent"]
+    D -->|Yes| E["🔀 Redundant pair found!"]
+    E --> F["⚖️ Weaker synapse (by |weight|)<br/>= prune candidate"]
+    F --> G["📐 New survivor weight<br/>= keep_weight + prune_weight"]
+    G --> H["📊 Estimate improvement:<br/>MSE original vs renormalised<br/>+ structural bonus"]
+    style A fill:#e3f2fd,stroke:#1565c0,color:#000
+    style B fill:#e3f2fd,stroke:#1565c0,color:#000
+    style C fill:#e3f2fd,stroke:#1565c0,color:#000
+    style D fill:#fff3e0,stroke:#f57c00,color:#000
+    style E fill:#fce4ec,stroke:#c62828,color:#000
+    style F fill:#fce4ec,stroke:#c62828,color:#000
+    style G fill:#e3f2fd,stroke:#1565c0,color:#000
+    style H fill:#e3f2fd,stroke:#1565c0,color:#000
+    style Z fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
 
-### Correlation Threshold
+### 📏 Correlation Threshold
 
-```
-  |Pearson r|:
+| |Pearson r| Range | Interpretation |
+|-------------------|----------------|
+| 0.0 – 0.5 | 🟢 Unrelated signals |
+| 0.5 – 0.85 | 🟡 Different enough to keep |
+| **0.85 – 1.0** | 🔴 **REDUNDANT** (threshold) |
 
-  0.0 ─── 0.5 ─── 0.85 ─── 1.0
-   │        │        │        │
-   │        │        │        └─ Identical signals
-   │        │        └────────── REDUNDANT (threshold)
-   │        └─────────────────── Different enough to keep
-   └──────────────────────────── Unrelated signals
-
-  Note: Uses ABSOLUTE correlation — both positively correlated
-  (r ≈ +1.0) and anti-correlated (r ≈ -1.0) signals count as
-  redundant (they carry the same information, just inverted).
-```
+> **Note:** Uses **absolute** correlation — both positively correlated
+> (r ≈ +1.0) and anti-correlated (r ≈ −1.0) signals count as
+> redundant (they carry the same information, just inverted).
 
 ---
 
-## How We Fix It
+## 🛠️ How We Fix It
 
 Remove the weaker synapse and renormalise the survivor:
 
+```mermaid
+graph LR
+    subgraph Before["❌ Before"]
+        BA["🧠 A"] -->|"w = +0.4"| BT["🧠 T"]
+        BB["🧠 B"] -->|"w = +0.3 🔀"| BT
+    end
+    subgraph After["✅ After"]
+        AA["🧠 A"] -->|"w = +0.7 ⚖️"| AT["🧠 T"]
+        AB["🧠 B"]
+    end
+    style BA fill:#9b59b6,stroke:#333,color:#fff
+    style BB fill:#9b59b6,stroke:#333,color:#fff
+    style BT fill:#e74c3c,stroke:#333,color:#fff
+    style AA fill:#9b59b6,stroke:#333,color:#fff
+    style AB fill:#9b59b6,stroke:#333,color:#fff
+    style AT fill:#2ecc71,stroke:#333,color:#fff
 ```
-  BEFORE                              AFTER
-  ┌───┐                               ┌───┐
-  │ A │──(w=+0.4)──→┌───┐             │ A │──(w=+0.7)──→┌───┐
-  └───┘              │ T │             └───┘    ↑        │ T │
-  ┌───┐              │   │                     │        │   │
-  │ B │──(w=+0.3)──→└───┘             ┌───┐   │        └───┘
-  └───┘  ↑                            │ B │   combined
-         weaker                       └───┘   weight
-         (removed)                    (disconnected
-                                       from T)
 
-  Survivor weight = 0.4 + 0.3 = 0.7
-  Signal to T is approximately preserved but simpler.
-```
+> Survivor weight = 0.4 + 0.3 = **0.7** — signal to T is approximately preserved but simpler. ✅
 
 | Candidate | Operation | Detail |
 |-----------|-----------|--------|
@@ -105,29 +101,29 @@ Remove the weaker synapse and renormalise the survivor:
 
 ---
 
-## Example
+## 📝 Example
 
-```
-  Target hidden neuron H5 has two inputs:
-
-  Synapse I2 → H5: weight = +0.45
-  Synapse I7 → H5: weight = +0.22
-
-  Activation correlation between I2 and I7: |r| = 0.91
-
-  Since 0.91 >= 0.85 and I7 has the smaller |weight|:
-
-  Fix:
-  1. removeSynapse I7 → H5
-  2. setWeight I2 → H5 to 0.45 + 0.22 = 0.67
-
-  MSE comparison shows the single-path produces nearly identical
-  output with one fewer synapse.
-```
+> Target hidden neuron H5 has two inputs:
+>
+> | Synapse | Weight |
+> |---------|--------|
+> | I2 → H5 | +0.45 |
+> | I7 → H5 | +0.22 |
+>
+> Activation correlation between I2 and I7: **|r| = 0.91**
+>
+> Since 0.91 ≥ 0.85 and I7 has the smaller |weight|:
+>
+> **Fix:**
+> 1. `removeSynapse` I7 → H5
+> 2. `setWeight` I2 → H5 to 0.45 + 0.22 = **0.67**
+>
+> MSE comparison shows the single-path produces nearly identical
+> output with one fewer synapse. ✅
 
 ---
 
-## References
+## 📚 References
 
 - **Feature redundancy** —
   [Wikipedia](https://en.wikipedia.org/wiki/Feature_selection#Redundancy):
