@@ -52,8 +52,8 @@ flowchart TD
     subgraph NeuronDetection["📡 Noisy Neuron Detection"]
         NA["🔍 For each hidden neuron"] --> NB["📊 Collect activation + error samples<br/><i>minimum 20</i>"]
         NB --> NC["📐 Compute activation variance<br/><i>(signal)</i>"]
-        NC --> ND["📐 Compute error variance<br/><i>(noise)</i>"]
-        ND --> NE{"activation variance < 1e-8?"}
+        NC --> NERR["📐 Compute error variance<br/><i>(noise)</i>"]
+        NERR --> NE{"activation variance < 1e-8?"}
         NE -->|Yes| NF["⏭️ Skip — constant neuron"]
         NE -->|No| NG["📊 ratio = error_var / activation_var"]
         NG --> NH{"ratio > 2.0?"}
@@ -63,7 +63,7 @@ flowchart TD
     style NA fill:#e3f2fd,stroke:#1565c0,color:#000
     style NB fill:#e3f2fd,stroke:#1565c0,color:#000
     style NC fill:#e3f2fd,stroke:#1565c0,color:#000
-    style ND fill:#e3f2fd,stroke:#1565c0,color:#000
+    style NERR fill:#e3f2fd,stroke:#1565c0,color:#000
     style NE fill:#fff3e0,stroke:#f57c00,color:#000
     style NF fill:#e8f5e9,stroke:#2e7d32,color:#000
     style NG fill:#e3f2fd,stroke:#1565c0,color:#000
