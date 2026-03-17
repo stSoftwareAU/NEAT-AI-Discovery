@@ -51,13 +51,13 @@ Where:
 
 ### Example: Simple Chain
 
-```
-    ┌─────────┐    w=0.5     ┌─────────┐    w=1.0     ┌──────────┐
-    │ input-0 │─────────────▶│ hidden-1│─────────────▶│ output-0 │
-    └─────────┘              └─────────┘              └──────────┘
-         │                        │                        │
-   (not computed)            impact=1.0              impact=1.0
-                            (1.0/1.0 × 1.0)
+```mermaid
+graph LR
+    A["🔵 input-0<br/><i>(not computed)</i>"] -->|"w=0.5"| B["🧠 hidden-1<br/>impact=1.0<br/><i>(1.0/1.0 × 1.0)</i>"]
+    B -->|"w=1.0"| C["🎯 output-0<br/>impact=1.0"]
+    style A fill:#4a9eff,stroke:#333,color:#fff
+    style B fill:#9b59b6,stroke:#333,color:#fff
+    style C fill:#2ecc71,stroke:#333,color:#fff
 ```
 
 - **output-0** 🎯: impact = 1.0 (it's an output)
@@ -67,32 +67,31 @@ Where:
 
 ### Example: Branching Network
 
+```mermaid
+graph LR
+    A["🔵 input-0"] -->|"w=0.3"| B["🧠 hidden-1<br/>impact=0.3"]
+    A -->|"w=0.7"| C["🎯 output-0<br/>impact=1.0<br/>total_inbound=1.0"]
+    B -->|"w=0.3"| C
+    style A fill:#4a9eff,stroke:#333,color:#fff
+    style B fill:#9b59b6,stroke:#333,color:#fff
+    style C fill:#2ecc71,stroke:#333,color:#fff
 ```
-                          ┌─────────┐
-                    w=0.3 │ hidden-1│─────────┐
-                 ┌───────▶└─────────┘         │w=0.3
-    ┌─────────┐  │                            │
-    │ input-0 │──┤                            ▼
-    └─────────┘  │                       ┌──────────┐
-                 │              w=0.7    │ output-0 │ impact=1.0
-                 └─────────────────────▶│          │ total_inbound=1.0
-                                        └──────────┘
 
 hidden-1 impact = |0.3| / 1.0 × 1.0 = 0.3
 
 When both hidden-1 and input-0 connect to output-0:
 
-    ┌─────────┐
-    │ input-0 │──┬───────────────────────────────────────┐
-    └─────────┘  │                                       │w=0.7
-                 │w=1.0   ┌─────────┐      w=0.3         ▼
-                 └───────▶│ hidden-1│───────────────▶┌──────────┐
-                          └─────────┘                │ output-0 │
-                                                     └──────────┘
-                                                total_inbound = 1.0
+```mermaid
+graph LR
+    A["🔵 input-0"] -->|"w=1.0"| B["🧠 hidden-1"]
+    A -->|"w=0.7"| C["🎯 output-0<br/>total_inbound=1.0"]
+    B -->|"w=0.3"| C
+    style A fill:#4a9eff,stroke:#333,color:#fff
+    style B fill:#9b59b6,stroke:#333,color:#fff
+    style C fill:#2ecc71,stroke:#333,color:#fff
+```
 
 hidden-1 impact = |0.3| / |0.3+0.7| × 1.0 = 0.3
-```
 
 ---
 
@@ -102,19 +101,16 @@ hidden-1 impact = |0.3| / |0.3+0.7| × 1.0 = 0.3
 
 When a neuron connects to multiple outputs, its impact is the **SUM** of all paths:
 
+```mermaid
+graph LR
+    H["🧠 hub<br/>impact=2.0"] -->|"w=1.0"| O0["🎯 output-0<br/>impact=1.0"]
+    H -->|"w=1.0"| O1["🎯 output-1<br/>impact=1.0"]
+    style H fill:#e67e22,stroke:#333,color:#fff
+    style O0 fill:#2ecc71,stroke:#333,color:#fff
+    style O1 fill:#2ecc71,stroke:#333,color:#fff
 ```
-                               ┌──────────┐
-                         w=1.0 │ output-0 │ impact=1.0
-                    ┌─────────▶└──────────┘
-    ┌─────────┐     │
-    │   hub   │─────┤
-    └─────────┘     │
-                    │    w=1.0 ┌──────────┐
-                    └─────────▶│ output-1 │ impact=1.0
-                               └──────────┘
 
 hub impact = (1.0/1.0 × 1.0) + (1.0/1.0 × 1.0) = 2.0
-```
 
 ⚡⚡ This reflects that removing 'hub' affects TWO outputs!
 
@@ -122,22 +118,30 @@ hub impact = (1.0/1.0 × 1.0) + (1.0/1.0 × 1.0) = 2.0
 
 Impact dilutes as you go deeper into the network:
 
+```mermaid
+graph LR
+    A["🔵 input-0"] -->|"w=1.0"| B["🧠 layer-1<br/>impact=1.0"]
+    B -->|"w=1.0"| C["🧠 layer-2<br/>impact=1.0"]
+    C -->|"w=1.0"| D["🎯 output-0<br/>impact=1.0"]
+    style A fill:#4a9eff,stroke:#333,color:#fff
+    style B fill:#9b59b6,stroke:#333,color:#fff
+    style C fill:#9b59b6,stroke:#333,color:#fff
+    style D fill:#2ecc71,stroke:#333,color:#fff
 ```
-    ┌─────────┐  w=1.0  ┌─────────┐  w=1.0  ┌─────────┐  w=1.0  ┌──────────┐
-    │ input-0 │────────▶│ layer-1 │────────▶│ layer-2 │────────▶│ output-0 │
-    └─────────┘         └─────────┘         └─────────┘         └──────────┘
-                             │                  │                    │
-                        impact=1.0          impact=1.0           impact=1.0
 
-    But if layer-2 has many inputs:
+But if layer-2 has many inputs (99 other synapses):
 
-    ┌─────────┐  w=1.0  ┌─────────┐  w=0.01  ┌─────────┐  w=1.0  ┌──────────┐
-    │ input-0 │────────▶│ layer-1 │─────────▶│ layer-2 │────────▶│ output-0 │
-    └─────────┘         └─────────┘          └─────────┘         └──────────┘
-                             │     (99 other │     │                  │
-                             │     synapses) │     │                  │
-                        impact=0.01      total=1.0 │             impact=1.0
-                    (0.01/1.0 × 1.0)         impact=1.0
+```mermaid
+graph LR
+    A["🔵 input-0"] -->|"w=1.0"| B["🧠 layer-1<br/>impact=0.01<br/><i>(0.01/1.0 × 1.0)</i>"]
+    B -->|"w=0.01"| C["🧠 layer-2<br/>impact=1.0<br/>total=1.0"]
+    C -->|"w=1.0"| D["🎯 output-0<br/>impact=1.0"]
+    E["⋯ 99 other<br/>synapses"] -.->|"w=..."| C
+    style A fill:#4a9eff,stroke:#333,color:#fff
+    style B fill:#9b59b6,stroke:#333,color:#fff
+    style C fill:#9b59b6,stroke:#333,color:#fff
+    style D fill:#2ecc71,stroke:#333,color:#fff
+    style E fill:#95a5a6,stroke:#333,color:#fff
 ```
 
 ---
@@ -150,40 +154,55 @@ The impact calculation is **squash-aware** to handle special activation function
 
 **STEP** and **BIPOLAR** are threshold (binary) functions:
 
+```mermaid
+---
+config:
+  themeVariables:
+    fontSize: 14px
+---
+graph TD
+    subgraph STEP["🎚️ STEP(x)"]
+        direction TB
+        S1["Output = 0 when x &lt; 0"]
+        S2["Output = 1 when x ≥ 0"]
+        S1 --- S2
+    end
+    subgraph BIPOLAR["🎚️ BIPOLAR(x)"]
+        direction TB
+        B1["Output = −1 when x &lt; 0"]
+        B2["Output = +1 when x ≥ 0"]
+        B1 --- B2
+    end
+    style STEP fill:#fff3cd,stroke:#f0ad4e,color:#333
+    style BIPOLAR fill:#fff3cd,stroke:#f0ad4e,color:#333
+    style S1 fill:#e74c3c,stroke:#333,color:#fff
+    style S2 fill:#2ecc71,stroke:#333,color:#fff
+    style B1 fill:#e74c3c,stroke:#333,color:#fff
+    style B2 fill:#2ecc71,stroke:#333,color:#fff
 ```
-STEP(x):                          BIPOLAR(x):
-    output                            output
-       │                                 │
-     1 ├────────────                   1 ├────────────
-       │            │                    │            │
-       │            │                    │            │
-       ├────────────┴─────▶ x     -1 ├───┘            │
-     0 │                             └────────────────┴─────▶ x
-       │                                           threshold=0
-```
+
+> **Key insight**: These are binary threshold functions — the output jumps discontinuously at threshold = 0.
 
 #### ⚠️ The Problem
 
 With threshold functions, **tiny signals can have HUGE effects**:
 
+```mermaid
+graph LR
+    A["🧠 hidden-a<br/>activation=0.000_001"] -->|"w=0.000_001"| B["🧠 hidden-b"]
+    B -->|"w=0.000_002"| C["🎚️ STEP/BIPOLAR<br/>output-0"]
+    style A fill:#9b59b6,stroke:#333,color:#fff
+    style B fill:#9b59b6,stroke:#333,color:#fff
+    style C fill:#e74c3c,stroke:#333,color:#fff
 ```
-    ┌──────────┐  w=0.000_001  ┌──────────┐  w=0.000_002  ┌─────────────┐
-    │ hidden-a │──────────────▶│ hidden-b │──────────────▶│ STEP/BIPOLAR│
-    └──────────┘               └──────────┘               │  output-0   │
-    activation=0.000_001                                  └─────────────┘
 
-    OLD impact calculation:
-    contribution = 0.000_001 × 0.000_002 ≈ 0 (negligible!)
-
-    BUT ACTUAL EFFECT:
-    If hidden-b's input sum is at -0.000_001 (just below threshold 0):
-    - Before: output = 0 (or -1 for BIPOLAR)
-    - After adding synapse: input = -0.000_001 + 0.000_001×0.000_002 ≈ 0
-    - After: Could flip to output = 1!
-
-    Impact on score: Δoutput = 1.0 (or 2.0 for BIPOLAR -1→1)
-    Calculated impact: ≈ 0
-```
+> **OLD impact calculation**: contribution = 0.000_001 × 0.000_002 ≈ 0 (negligible!)
+>
+> **BUT ACTUAL EFFECT**: If hidden-b's input sum is at −0.000_001 (just below threshold 0):
+> - **Before**: output = 0 (or −1 for BIPOLAR)
+> - **After adding synapse**: input ≈ 0 — could flip to output = 1!
+> - **Impact on score**: Δoutput = 1.0 (or 2.0 for BIPOLAR −1 → 1)
+> - **Calculated impact**: ≈ 0
 
 🚨 **ERROR: Off by ~1,000,000x**
 
@@ -215,13 +234,24 @@ Where:
 **MINIMUM** and **MAXIMUM** are selection functions - they don't sum inputs, they
 select one:
 
-```
-MINIMUM:                              MAXIMUM:
-┌────────────────┐                   ┌────────────────┐
-│   synapse-1 ───┤                   │   synapse-1 ───┤
-│   synapse-2 ───┤───▶ min(all)      │   synapse-2 ───┤───▶ max(all)
-│   synapse-3 ───┤                   │   synapse-3 ───┤
-└────────────────┘                   └────────────────┘
+```mermaid
+graph LR
+    subgraph MIN["🏆 MINIMUM"]
+        direction LR
+        MS1["synapse-1"] --> MOUT["min(all)"]
+        MS2["synapse-2"] --> MOUT
+        MS3["synapse-3"] --> MOUT
+    end
+    subgraph MAX["🏆 MAXIMUM"]
+        direction LR
+        XS1["synapse-1"] --> XOUT["max(all)"]
+        XS2["synapse-2"] --> XOUT
+        XS3["synapse-3"] --> XOUT
+    end
+    style MOUT fill:#3498db,stroke:#333,color:#fff
+    style XOUT fill:#e67e22,stroke:#333,color:#fff
+    style MIN fill:#eaf2f8,stroke:#3498db,color:#333
+    style MAX fill:#fdf2e9,stroke:#e67e22,color:#333
 ```
 
 #### ⚠️ The Problem
@@ -229,37 +259,32 @@ MINIMUM:                              MAXIMUM:
 The old impact calculation assumed **summing** of inputs and normalised by
 total weight:
 
+Old formula: `impact = |weight| / Σ|weights| × child_impact`
+
+For MINIMUM/MAXIMUM, only ONE synapse "wins" at any time.
+The others contribute NOTHING to the output!
+
+```mermaid
+graph LR
+    A["🧠 hidden-a"] -->|"w=0.1"| M["🏆 MINIMUM<br/>output"]
+    B["🧠 hidden-b"] -->|"w=0.5"| M
+    C["🧠 hidden-c"] -->|"w=10.0"| M
+    style A fill:#2ecc71,stroke:#333,color:#fff
+    style B fill:#9b59b6,stroke:#333,color:#fff
+    style C fill:#e74c3c,stroke:#333,color:#fff
+    style M fill:#3498db,stroke:#333,color:#fff
 ```
-    Old formula: impact = |weight| / Σ|weights| × child_impact
 
-    For MINIMUM/MAXIMUM, only ONE synapse "wins" at any time.
-    The others contribute NOTHING to the output!
-
-    Example:
-    ┌──────────┐  w=0.1
-    │ hidden-a │────────────┐
-    └──────────┘            │
-                            │
-    ┌──────────┐  w=0.5     ▼
-    │ hidden-b │───────▶┌─────────────┐
-    └──────────┘        │   MINIMUM   │
-                        │   output    │
-    ┌──────────┐  w=10.0│             │
-    │ hidden-c │───────▶└─────────────┘
-    └──────────┘
-
-    OLD calculation (WRONG for MINIMUM):
-    hidden-a impact = 0.1 / (0.1+0.5+10.0) × 1.0 = 0.0094 (~1%)
-    hidden-b impact = 0.5 / 10.6 × 1.0 = 0.047 (~5%)
-    hidden-c impact = 10.0 / 10.6 × 1.0 = 0.94 (~94%)
-
-    ACTUAL behaviour (MINIMUM):
-    If hidden-a×0.1 = 0.01, hidden-b×0.5 = 0.25, hidden-c×10.0 = 5.0:
-    - MINIMUM selects 0.01 (hidden-a's contribution)
-    - Output = 0.01
-    - hidden-a has 100% impact on output!
-    - hidden-b, hidden-c have 0% impact!
-```
+> **OLD calculation (WRONG for MINIMUM):**
+> - hidden-a impact = 0.1 / (0.1+0.5+10.0) × 1.0 = 0.0094 (~1%)
+> - hidden-b impact = 0.5 / 10.6 × 1.0 = 0.047 (~5%)
+> - hidden-c impact = 10.0 / 10.6 × 1.0 = 0.94 (~94%)
+>
+> **ACTUAL behaviour (MINIMUM):**
+> If hidden-a×0.1 = 0.01, hidden-b×0.5 = 0.25, hidden-c×10.0 = 5.0:
+> - MINIMUM selects 0.01 (hidden-a's contribution)
+> - Output = 0.01 — **hidden-a has 100% impact!**
+> - hidden-b, hidden-c have **0% impact!**
 
 🚨 **ERROR: Completely inverted!**
 
@@ -310,26 +335,28 @@ This captures that a neuron with:
 
 ### Example
 
+```mermaid
+graph LR
+    D["💤 dormant<br/>activation ≈ 0"] -->|"w=0.001"| O1["🎯 output-0"]
+    style D fill:#95a5a6,stroke:#333,color:#fff
+    style O1 fill:#2ecc71,stroke:#333,color:#fff
 ```
-    ┌─────────────┐  w=0.001  ┌──────────┐
-    │   dormant   │──────────▶│ output-0 │
-    │ activation≈0│           └──────────┘
-    └─────────────┘
-    structural_impact = 0.001
-    mean_activation = 0.0001
-    activation_weighted_impact = 0.001 × 0.0001 = 1e-7
-```
+
+> **structural_impact** = 0.001 | **mean_activation** = 0.0001
+> **activation_weighted_impact** = 0.001 × 0.0001 = **1e-7**
+
 ✅ **REMOVAL CANDIDATE** (💤 dormant neuron)
 
+```mermaid
+graph LR
+    A["⚡ active<br/>activation ≈ 1e5"] -->|"w=0.001"| O2["🎯 output-0"]
+    style A fill:#e67e22,stroke:#333,color:#fff
+    style O2 fill:#2ecc71,stroke:#333,color:#fff
 ```
-    ┌────────────────┐  w=0.001  ┌──────────┐
-    │     active     │──────────▶│ output-0 │
-    │ activation≈1e5 │           └──────────┘
-    └────────────────┘
-    structural_impact = 0.001
-    mean_activation = 1e5
-    activation_weighted_impact = 0.001 × 1e5 = 100
-```
+
+> **structural_impact** = 0.001 | **mean_activation** = 1e5
+> **activation_weighted_impact** = 0.001 × 1e5 = **100**
+
 ❌ **NOT A REMOVAL CANDIDATE** (⚡ active neuron)
 
 ### Removal Threshold (`costOfGrowth`)
