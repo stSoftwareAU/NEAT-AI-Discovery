@@ -469,12 +469,13 @@ All dependencies build automatically on remote, unattended machines.
 | [docs/discoveries/](docs/discoveries/README.md) | Visual discovery scenario guides with diagrams and examples |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development guidelines for contributors |
 | [CHANGELOG.md](CHANGELOG.md) | Version-by-version history of changes |
-| [AGENTS.md](AGENTS.md) | Coding guidelines for AI agents |
+| [AGENTS.md](AGENTS.md) | Coding guidelines and invariants for AI agents |
 | [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md) | All discovery types with success/failure rates |
 | [docs/IMPACT_CALCULATION.md](docs/IMPACT_CALCULATION.md) | Neuron impact calculation details |
 | [docs/ANALYSIS_DEEP_DIVE.md](docs/ANALYSIS_DEEP_DIVE.md) | Detailed analysis workflow and detection algorithms |
 | [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) | GPU performance tuning, troubleshooting, and debugging |
 | [docs/FFI_API.md](docs/FFI_API.md) | Full FFI API reference and JSON interface |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark regression tracking and comparison workflow |
 | [CodeWiki](https://codewiki.google/github.com/stsoftwareau/neat-ai-discovery) | AI-powered documentation and code exploration |
 
 ## License

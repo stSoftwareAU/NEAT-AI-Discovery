@@ -7,27 +7,9 @@ repository. For user-facing documentation, see [README.md](README.md).
 
 ## 1. Project Overview
 
-**NEAT-AI-Discovery** is a high-performance Rust companion library for
-[stSoftwareAU/NEAT-AI](https://github.com/stSoftwareAU/NEAT-AI). It records
-neuron activations and errors during discovery runs, then analyses the captured
-samples to recommend **mutation candidates** (add/remove/modify) that are likely
-to improve the creature's score.
-
-### Sole Mission
-
-> **Discover changes that improve the creature's score — as fast as possible.**
-
-1. **Improve the creature's score.** Only return candidates with a positive
-   expected improvement.
-2. **Discover improvements as fast as possible.** Leverage GPU compute shaders
-   and SIMD so large creatures can be analysed in seconds.
-3. **Minimise changes to NEAT-AI.** Reuse existing candidate types whenever
-   possible (see [Candidate Types](#11-candidate-types) below).
-
-This library does **not** directly "fix" a creature. NEAT-AI validates each
-candidate by cloning the creature, applying the mutation, and re-scoring against
-the full training set. Only candidates that measurably improve the score are
-admitted back into the population.
+For the full project description, mission statement, and user-facing
+documentation, see [README.md](README.md). The sections below cover
+agent-specific conventions and invariants.
 
 ---
 
@@ -455,54 +437,22 @@ This script:
 
 ## 7. FFI Contract
 
-The library exposes a Deno FFI-friendly symbol set. The authoritative list of
-exported symbols lives in `src/lib.rs` as `#[no_mangle] pub extern "C"`
-functions.
+For the full FFI API reference, exported symbols, JSON interface specification,
+and streaming recording API, see [docs/FFI_API.md](docs/FFI_API.md).
 
-### Key Symbols
-
-| Category | Symbols |
-|----------|---------|
-| **GPU probe** | `check_gpu_available()` |
-| **Version probe** | `get_library_version()` |
-| **Recording (streaming)** | `start_discovery_session`, `append_discovery_records`, `finish_discovery_session`, `cancel_discovery_session` |
-| **Recording (single-call)** | `record_discovery` (avoid for large runs) |
-| **Analysis** | `rank_focus_neurons`, `analyze_parallel` |
-| **Utilities** | `merge_discovery_parquet`, `read_discovery_records_ffi`, `export_visualisation_snapshot` |
-| **Memory management** | `free_discovery_result` |
-
-### Memory Management
+### Key Invariant — Memory Management
 
 Every FFI call returning a `char*` **must** be freed with
 `free_discovery_result()`. Failure to do so will leak memory.
-
-### JSON Interface
-
-All FFI functions accept and return JSON strings. See
-[README.md — JSON Interface](README.md#json-interface) for the full input/output
-format specification.
 
 ---
 
 ## 8. GPU Requirement
 
-**This library requires a GPU.** There is no CPU fallback.
-
-- **macOS**: Metal (should always be available)
-- **Linux**: Vulkan only (no OpenGL/EGL probe to avoid panics)
-
-### Minimum System Requirements
-
-| Requirement | Minimum | Reason |
-|-------------|---------|--------|
-| **Total RAM** | 4 GB | GPU operations require staging buffers |
-| **Available RAM** | 1 GB | Prevents hangs from memory pressure |
-| **GPU** | Metal (macOS) or Vulkan (Linux) | Required for compute shaders |
-
-If no compatible GPU is available, discovery is simply skipped — NEAT-AI
-continues training without the discovery phase. See
-[README.md — GPU Requirement](README.md#gpu-requirement) for full details
-including memory checks and streaming parquet loading.
+**This library requires a GPU.** There is no CPU fallback. See
+[README.md — GPU Requirement](README.md#gpu-requirement) for system requirements
+and [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) for performance tuning and
+troubleshooting.
 
 ---
 
@@ -617,7 +567,5 @@ cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_fo
 
 ## 13. Further Reading
 
-- [README.md](README.md) — User-facing documentation, FFI API, troubleshooting
-- [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md) — Discovery type reference
-- [docs/IMPACT_CALCULATION.md](docs/IMPACT_CALCULATION.md) — Impact scoring algorithm
-- [CHANGELOG.md](CHANGELOG.md) — Version-by-version history
+See the [Additional Documentation](README.md#additional-documentation) table in
+README.md for a comprehensive index of all project documentation.
