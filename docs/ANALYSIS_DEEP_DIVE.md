@@ -1,4 +1,4 @@
-# Analysis Deep Dive
+# 🔬 Analysis Deep Dive
 
 This document contains detailed analysis workflow information, discovery detection
 algorithms, and implementation notes extracted from the main README. For a high-level
@@ -6,7 +6,7 @@ overview, see [README.md](../README.md).
 
 ---
 
-## Analysis Workflow Details
+## ⚙️ Analysis Workflow Details
 
 - Call `analyze_parallel` with your chosen focus targets. Passing a single focus
   neuron where practical keeps diagnostics easy to map back to the Deno request
@@ -73,7 +73,7 @@ overview, see [README.md](../README.md).
 
 ---
 
-## Coordinated Structural Discovery (Issue #165)
+## 🧬 Coordinated Structural Discovery (Issue #165)
 
 Some beneficial structural changes are **epistatic**: no single add/remove operation improves score in isolation, but a *group* of edits does. This often shows up on **neutral plateaus** where different parameterisations produce near-identical outputs, and the signal is in second-order effects (error variance, correlation, redundancy) rather than direct score gradients.
 
@@ -89,7 +89,7 @@ To support this, the Rust analysis can return **grouped candidates** via `coordi
 - **Weight changes**: Existing synapse weight adjustments are represented as a single `setWeight` operation (Issue #180), directly expressing the intent to modify the weight.
 - **Candidate budgets**: `maxSynapseCandidates` is a **global cap** across `helpfulSynapses + harmfulSynapses + coordinatedStructuralCandidates`. If you set `maxSynapseCandidates: 0`, coordinated structural candidates will also be truncated to zero.
 
-### Epistatic Neuron Pair Pre-Detection (Issue #202)
+### 🧪 Epistatic Neuron Pair Pre-Detection (Issue #202)
 
 During synapse analysis, the library proactively detects **epistatic neuron pairs** - cases where two source neurons targeting the same output would provide better improvement when added together than either would alone. This addresses the "neutral plateau" problem where individual operations appear to have little benefit.
 
@@ -104,7 +104,7 @@ During synapse analysis, the library proactively detects **epistatic neuron pair
 
 **Output**: Epistatic pair candidates appear as entries in `coordinatedStructuralCandidates` with two `addSynapse` operations and a comment indicating the epistatic relationship.
 
-### Example: "noisy vs trusted" inputs (thermometer pattern)
+### 🌡️ Example: "noisy vs trusted" inputs (thermometer pattern)
 
 If two inputs feed the same target with the same starting weight, but one input is much noisier (higher activation variance), a coordinated candidate may:
 
@@ -114,7 +114,7 @@ If two inputs feed the same target with the same starting weight, but one input 
 
 This preserves (or improves) behaviour while reducing variance and redundancy, and avoids the "single edit looks bad" trap during ablation.
 
-### Redundant Path Pruning with Renormalisation (Issue #164)
+### ✂️ Redundant Path Pruning with Renormalisation (Issue #164)
 
 When two existing subnetworks (paths) feeding the same output compute effectively the same
 thing, one can be pruned and the other's weight scaled to compensate. This reduces network
@@ -135,7 +135,7 @@ complexity without degrading fitness.
 `removeSynapse` operation (for the pruned path) and a `setWeight` operation (for the
 renormalised survivor). No new operation types are needed.
 
-### Saturated Neuron Detection (Issue #342)
+### 🔴 Saturated Neuron Detection (Issue #342)
 
 Neurons using bounded activation functions (e.g., TANH, LOGISTIC) can become saturated when
 their input is consistently very large or very small. A TANH neuron with input always > 5
@@ -166,7 +166,7 @@ useful signal propagation and wastes gradient capacity.
 **Output**: Saturation candidates appear in `coordinatedStructuralCandidates` with
 `changeSquash` and/or `setBias` operations.
 
-### Bottleneck Neuron Detection (Issue #343)
+### 🚧 Bottleneck Neuron Detection (Issue #343)
 
 In evolved NEAT networks, structural mutations can create bottleneck neurons where many
 input signals converge through a single hidden neuron before reaching outputs. This limits
@@ -192,7 +192,7 @@ range must encode all upstream information.
 **Output**: Bottleneck candidates appear in `coordinatedStructuralCandidates` with
 `addNeuron` and/or `addSynapse` operations.
 
-### Dead Neuron Detection (Issue #341)
+### 💀 Dead Neuron Detection (Issue #341)
 
 As NEAT networks evolve, some neurons may become dead through weight changes that push
 their inputs to always land in the zero region of their activation function (e.g., RELU
@@ -213,7 +213,7 @@ training and inference without contributing useful information to the network's 
 **Output**: Dead neuron candidates appear in `coordinatedStructuralCandidates` with
 `removeNeuron` operations.
 
-### Correlated Error Pattern Detection (Issue #344)
+### 📈 Correlated Error Pattern Detection (Issue #344)
 
 When multiple output neurons consistently err in the same direction on the same samples,
 it suggests a missing input feature or hidden representation that would benefit all of them.
@@ -232,7 +232,7 @@ there is nothing to correlate.
 **Output**: Correlated error groups appear in `coordinatedStructuralCandidates` with
 `addNeuron` and `addSynapse` operations.
 
-### Multi-Hop Candidate Analysis (Issue #230)
+### 🔗 Multi-Hop Candidate Analysis (Issue #230)
 
 Current discovery considers single-hop improvements (adding one synapse or neuron). For deep
 networks, multi-hop improvements (adding a path of 2-3 connections) may be more effective.
@@ -257,7 +257,7 @@ directly connected, then recommends bypass synapses or relay neurons.
 **Output**: Multi-hop candidates appear in `coordinatedStructuralCandidates` with `addNeuron`
 and/or `addSynapse` operations.
 
-### Oscillating Neuron Detection (Issue #358)
+### 🔀 Oscillating Neuron Detection (Issue #358)
 
 Identifies hidden neurons whose activations frequently change sign across training samples.
 An oscillating neuron is fighting between two contradictory functions — it activates
@@ -279,7 +279,7 @@ wastes representational capacity and can be stabilised by changing the activatio
 **Output**: Oscillating neuron candidates appear in `coordinatedStructuralCandidates` with
 `changeSquash` and optionally `setBias` operations.
 
-### Dormant Synapse Detection (Issue #359)
+### 💤 Dormant Synapse Detection (Issue #359)
 
 Identifies synapses with near-zero weights that contribute negligible signal to their
 target neuron. Dormant synapses waste computation during both forward pass and discovery
@@ -295,7 +295,7 @@ analysis without providing meaningful information flow.
 **Output**: Dormant synapse candidates appear in `coordinatedStructuralCandidates` with
 `removeSynapse` operations.
 
-### Opposing Synapse Detection (Issue #360)
+### ⚔️ Opposing Synapse Detection (Issue #360)
 
 Identifies synapses whose contribution consistently works against error reduction. When a
 synapse's contribution (weight × source_activation) correlates positively with the target
@@ -319,7 +319,7 @@ wrong direction.
 **Output**: Opposing synapse candidates appear in `coordinatedStructuralCandidates` with
 `removeSynapse` or `setWeight` operations.
 
-### Output Bias Drift Detection (Issue #361)
+### 📏 Output Bias Drift Detection (Issue #361)
 
 Identifies output neurons with a consistent error sign bias — neurons whose errors are
 predominantly positive (predicting too low) or predominantly negative (predicting too
@@ -335,7 +335,7 @@ needs adjustment.
 **Output**: Bias drift candidates appear in `coordinatedStructuralCandidates` with
 `setBias` operations.
 
-### Candidate Clustering for Redundancy Reduction (Issue #224)
+### 🗂️ Candidate Clustering for Redundancy Reduction (Issue #224)
 
 When discovery returns many similar candidates (e.g., multiple synapses from the same source
 region targeting the same neuron), the controller would otherwise evaluate each independently,
@@ -385,13 +385,13 @@ unchanged.
 
 ---
 
-## Detection Module Reference
+## 📖 Detection Module Reference
 
 The library contains 38+ detection and recommendation modules, grouped by concern.
 Each module follows the same pipeline: load records → detect pattern → convert to
 coordinated candidates.
 
-### Activation & Neuron State Modules
+### 🧠 Activation & Neuron State Modules
 
 These modules detect issues with how neurons process activations.
 
@@ -526,7 +526,7 @@ maintain equivalent signal magnitude.
 3. Generate a coordinated candidate with `changeSquash` and `setWeight`
    operations applied atomically to preserve the operating point.
 
-### Weight & Synapse Modules
+### ⚖️ Weight & Synapse Modules
 
 These modules detect issues with synapse weights and connections.
 
@@ -585,7 +585,7 @@ is trying to combine contradictory signals.
    conflict.
 4. Propose splitting the conflicting paths via `addNeuron` and `addSynapse`.
 
-### Structural & Topology Modules
+### 🏗️ Structural & Topology Modules
 
 These modules detect structural and topological issues.
 
@@ -668,7 +668,7 @@ Finds which input features discriminate hard from easy observations.
    values differ significantly between hard and easy observations).
 5. Propose `addNeuron` and `addSynapse` targeting the discriminative features.
 
-### Range & Input Analysis Modules
+### 📐 Range & Input Analysis Modules
 
 These modules analyse input ranges and gating.
 
@@ -720,7 +720,7 @@ a single input's contribution dominates the output, creating brittleness.
 function thresholds where small input changes cause disproportionate output
 swings.
 
-### Recommendation & Scoring Modules
+### 💡 Recommendation & Scoring Modules
 
 #### Sample-Weighted Discovery (Issue #423)
 
@@ -730,7 +730,7 @@ receive proportional attention rather than being averaged away.
 
 ---
 
-## Discrete Activation Function Handling
+## 🎚️ Discrete Activation Function Handling
 
 The standard discovery algorithm uses a **linear error model** to predict improvement:
 
@@ -746,7 +746,7 @@ activation functions**, this model fails because:
 2. Or cause a **binary flip** (massive discrete output change)
 3. Or are in a flat/saturated region where the gradient is zero
 
-### Threshold-crossing model for STEP/BIPOLAR
+### 🎯 Threshold-crossing model for STEP/BIPOLAR
 
 **STEP** and **BIPOLAR** neurons now use a specialised **threshold-crossing model**
 instead of the standard linear error model:
@@ -762,7 +762,7 @@ The threshold-crossing model:
 - Counts "helpful flips" (error-reducing) vs "harmful flips" (error-increasing)
 - Returns candidates where net helpful flips exceed the improvement threshold
 
-### HARD_TANH saturation-aware model
+### 📊 HARD_TANH saturation-aware model
 
 For **HARD_TANH** target neurons, the library uses a **saturation-aware model**
 instead of the linear approximation. This is critical for accurate predictions
@@ -778,7 +778,7 @@ The saturation-aware model:
 - Computes `new_output = clamp(value + contribution, -1, 1)`
 - Calculates error reduction against the actual clamped output
 
-### GPU-accelerated target activation simulation
+### 🚀 GPU-accelerated target activation simulation
 
 The library performs GPU-accelerated sample matching to build candidate evaluation
 datasets. The GPU matching shader passes through **both** `target_value` (pre-activation
@@ -802,7 +802,7 @@ using the linear approximation.
 **Linear fallback**: If `target_value` or `target_activation` data is missing
 (e.g., older Parquet files), the library falls back to the linear model.
 
-### All other activations
+### 🔄 All other activations
 
 All other activation functions (including IDENTITY, INVERSE, IF, MAXIMUM,
 MINIMUM, ReLU6, Softplus, GELU, SELU, ELU, etc.) use the **standard linear
@@ -816,7 +816,7 @@ neuron, we look at:
 2. **Observed activations** from potential source neurons
 3. **Correlation** between them (when source is high, is error positive?)
 
-### Split-error ReLU evaluation (complementary pairs)
+### ✂️ Split-error ReLU evaluation (complementary pairs)
 
 When target errors are split roughly 50/50 between positive (output should be higher)
 and negative (output should be lower), no single ReLU can improve all samples.
@@ -836,7 +836,7 @@ The candidate map uses a key that includes:
 
 This ensures complementary pairs are kept as separate entries.
 
-### Bias-aware neuron improvement calculation
+### ⚖️ Bias-aware neuron improvement calculation
 
 When evaluating neuron candidates (add-neurons), the **bias parameter** is critical
 for accurate improvement predictions. The bias shifts the activation threshold:
@@ -850,7 +850,7 @@ for accurate improvement predictions. The bias shifts the activation threshold:
 The improvement calculation includes the proposed bias when evaluating neuron
 candidates.
 
-### Sensible parameter ranges (add-neurons)
+### 📏 Sensible parameter ranges (add-neurons)
 
 As a production guard rail, add-neuron candidates are only returned when
 their parameters are within sensible bounds:
@@ -859,7 +859,7 @@ their parameters are within sensible bounds:
 - **bias**: |b| ≤ 10
 - **outgoingWeight**: |w| ≤ 0.1 (already clamped by the optimiser)
 
-### IDENTITY neuron filtering
+### 🚫 IDENTITY neuron filtering
 
 **IDENTITY neurons with bias ≈ 0 are redundant** because they're mathematically
 equivalent to a direct synapse. Discovery filters out these candidates:
@@ -867,7 +867,7 @@ equivalent to a direct synapse. Discovery filters out these candidates:
 1. **Bias filtering**: IDENTITY candidates with `|bias| < 0.01` are rejected
 2. **Use synapse analysis**: Direct connections should use `add-synapses`, not `add-neurons`
 
-### Add-neuron target neuron filtering
+### 🎯 Add-neuron target neuron filtering
 
 **Output and hidden neurons are valid targets** for add-neuron analysis. Input
 and constant neurons are filtered out from the focus list:
@@ -881,7 +881,7 @@ and constant neurons are filtered out from the focus list:
 
 ---
 
-## Error Distribution Analysis (Issue #192)
+## 📊 Error Distribution Analysis (Issue #192)
 
 The library computes comprehensive error distribution statistics for target neurons, enabling
 targeted discovery for specific error patterns like outliers, bimodal distributions, and
@@ -919,7 +919,7 @@ export NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE=90
 
 ---
 
-## Tiered Loading Strategy (Issue #215)
+## 📦 Tiered Loading Strategy (Issue #215)
 
 The library automatically selects the optimal loading strategy based on file size
 and available system memory.

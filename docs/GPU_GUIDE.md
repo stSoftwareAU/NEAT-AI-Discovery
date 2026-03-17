@@ -1,11 +1,11 @@
-# GPU Guide
+# 🎮 GPU Guide
 
 This document covers GPU performance tuning, troubleshooting, and debugging for
 NEAT-AI-Discovery. For a high-level overview, see [README.md](../README.md).
 
 ---
 
-## GPU Performance Tuning
+## ⚡ GPU Performance Tuning
 
 The library auto-detects GPU capabilities **and available system memory** to optimise
 settings. On startup, it logs the detected configuration:
@@ -15,7 +15,7 @@ settings. On startup, it logs the detected configuration:
 [NEAT-AI-Discovery] GPU: Apple M4 (integrated metal) | Tier: high-performance | Batch size: 512
 ```
 
-### Automatic Adaptation
+### 🤖 Automatic Adaptation
 
 The library adapts to your machine's capabilities:
 
@@ -37,7 +37,7 @@ The library adapts to your machine's capabilities:
 On memory-constrained systems, smaller batches and fewer in-flight requests
 prevent swap thrashing which can cause GPU driver hangs.
 
-### Manual Tuning
+### 🔧 Manual Tuning
 
 Override the batch size with an environment variable:
 
@@ -54,7 +54,7 @@ export NEAT_AI_DISCOVERY_GPU_BATCH_SIZE=2048
 
 Valid range: 64 to 4096. Values outside this range are ignored.
 
-### Understanding GPU Utilisation
+### 📊 Understanding GPU Utilisation
 
 Low GPU utilisation during analysis is typically caused by:
 
@@ -69,7 +69,7 @@ Low GPU utilisation during analysis is typically caused by:
 3. **I/O bottlenecks**: Reading from Parquet files or slow storage can cause
    the GPU to wait for data.
 
-### Tuning for M4 Mac
+### 🍎 Tuning for M4 Mac
 
 M4 Macs have significantly more GPU cores than earlier Apple Silicon. The library
 automatically detects M4 and uses larger batch sizes (1024 vs 512). For M4 Max
@@ -80,14 +80,14 @@ or Ultra, you may benefit from even larger batches:
 export NEAT_AI_DISCOVERY_GPU_BATCH_SIZE=2048
 ```
 
-### Compatibility with Older Machines
+### 🔄 Compatibility with Older Machines
 
 All tuning options are backwards-compatible. Older machines will:
 - Use smaller default batch sizes (512)
 - Automatically fall back to safe values if specified batch size is too large
 - Continue to work without any environment variables set
 
-### Verbose GPU Diagnostics
+### 🔍 Verbose GPU Diagnostics
 
 Enable verbose logging to see detailed GPU information:
 
@@ -101,7 +101,7 @@ This logs:
 - Selected batch size
 - Tuning hints
 
-### GPU Kernel Profiling (Issue #195)
+### ⏱️ GPU Kernel Profiling (Issue #195)
 
 For performance diagnostics, the library can collect timing data for GPU operations.
 This helps identify:
@@ -148,31 +148,31 @@ includes a `timing` object:
 
 ---
 
-## Troubleshooting
+## 🔧 Troubleshooting
 
-### Library not found
+### 📦 Library not found
 
 Double-check the artefact path, file extension (e.g. `.dylib` on macOS, `.so` on Linux),
 and `NEAT_AI_DISCOVERY_LIB_PATH`.
 
-### FFI permission errors
+### 🔒 FFI permission errors
 
 Ensure discovery workers launch with `--allow-ffi --allow-env --allow-read --allow-write`
 and only point to trusted library locations.
 
-### Empty Parquet output
+### 📭 Empty Parquet output
 
 Confirm the caller supplies the sampled discovery dataset and that each record bundles
 observations, activations, and errors for the same training index.
 
-### XDG_RUNTIME_DIR warnings on Linux
+### 🐧 XDG_RUNTIME_DIR warnings on Linux
 
 The library automatically sets `XDG_RUNTIME_DIR` to a temporary directory if it's not
 already set. This is required by wgpu (WebGPU) on Linux systems using Wayland. The
 warnings are harmless and the library handles this automatically. On macOS, this
 variable is not needed.
 
-### EGL/DRI permission denied warnings on Linux
+### 🔐 EGL/DRI permission denied warnings on Linux
 
 If you see warnings like `libEGL warning: failed to open /dev/dri/renderD128: Permission denied`
 or similar for `/dev/dri/card0`, the user running the process needs access to the GPU device
@@ -208,7 +208,7 @@ If the warnings appear but discovery still proceeds successfully (you see
 "Training ... with N binary file" after the warnings), wgpu has found an
 alternative GPU backend and the warnings can be safely ignored.
 
-### Out of memory errors (exit code 137)
+### 💾 Out of memory errors (exit code 137)
 
 Exit code 137 indicates the process was killed by the Linux OOM (Out of Memory) killer
 (128 + SIGKILL). This commonly occurs when `--max-old-space-size` exceeds available
@@ -237,7 +237,7 @@ deno run --v8-flags=--max-old-space-size=${HEAP_SIZE} ...
 **Note:** The Rust library itself is memory-efficient and streams data from
 Parquet files. The TypeScript/Deno controller typically consumes more memory.
 
-### Analysis timeout
+### ⏰ Analysis timeout
 
 The analysis phase has a default 10-minute timeout when `analysis_deadline_ms` is not
 provided. If a timeout is explicitly provided but is less than 3 seconds or greater than
@@ -256,7 +256,7 @@ work is covered over time**, even when a single run times out:
 **Important**: With a hard timeout, a single invocation will often return
 **partial results** by design. Coverage is achieved via repeated invocations.
 
-### GPU timeout errors
+### ⚠️ GPU timeout errors
 
 The library includes automatic timeout protection for GPU operations. If the GPU becomes
 unresponsive, you'll see an error like:
@@ -279,28 +279,28 @@ Consider reducing batch size or restarting.
 - **System memory pressure**: Close other applications or reduce workload.
 - **Hardware issue**: Check system logs (`dmesg` on Linux, Console.app on macOS).
 
-### Low GPU utilisation
+### 📉 Low GPU utilisation
 
 See the [GPU Performance Tuning](#gpu-performance-tuning) section above.
 
-### Deadlock or stuck process
+### 🔒 Deadlock or stuck process
 
 See the [Debugging Deadlocks](#debugging-deadlocks) section below.
 
 ---
 
-## Debugging Deadlocks
+## 🐛 Debugging Deadlocks
 
 The library includes built-in debugging tools for diagnosing stuck processes and
 deadlocks, similar to Java's `kill -3` thread dump.
 
-### Automatic Deadlock Detection
+### 🤖 Automatic Deadlock Detection
 
 The library automatically detects deadlocks every 10 seconds using `parking_lot`'s
 deadlock detection feature. When a deadlock is detected, the process panics with
 full backtrace information for all involved threads.
 
-### Thread Dump on Signal (kill -USR1)
+### 📡 Thread Dump on Signal (kill -USR1)
 
 Send `SIGUSR1` to dump thread information without terminating the process:
 
@@ -321,7 +321,7 @@ kill -USR1 <pid>
 - Signal handler thread backtrace
 - Instructions for using `gdb` to get full thread dumps
 
-### Hang Watchdog (unattended machines)
+### 🐕 Hang Watchdog (unattended machines)
 
 The library includes an optional stall watchdog that triggers a SIGUSR1 thread dump,
 then aborts the process (so logs/crash reports are captured).
@@ -336,7 +336,7 @@ export NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS=1800
 export NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS=2
 ```
 
-### Manual Thread Inspection
+### 🔬 Manual Thread Inspection
 
 **macOS (LLDB):**
 ```bash
@@ -354,7 +354,7 @@ gdb -p <pid> -ex 'thread apply all bt' -ex 'quit'
 
 ---
 
-## Parquet File Memory Check
+## 💾 Parquet File Memory Check
 
 Before loading a parquet file, the library checks if there's enough available memory.
 Parquet files are compressed, so they typically expand to 2-4× their file size when
@@ -377,7 +377,7 @@ To reduce parquet file size:
 - Reduce `discoveryRecordTimeOutMinutes`
 - Use fewer training data files
 
-### Streaming Parquet Loading (Issue #193)
+### 🔄 Streaming Parquet Loading (Issue #193)
 
 For very large datasets, the library supports streaming parquet loading with block-based
 caching and prefetch.
@@ -398,11 +398,11 @@ export NEAT_AI_DISCOVERY_PRELOAD_ALL=1
 export NEAT_AI_DISCOVERY_BLOCK_SIZE=10000
 ```
 
-### Memory-Constrained Streaming (Issue #420)
+### 🧠 Memory-Constrained Streaming (Issue #420)
 
 For systems with limited memory, the library provides additional adaptive behaviour:
 
-#### Memory Pressure Detection
+#### 🌡️ Memory Pressure Detection
 
 The library detects memory pressure at runtime and adapts accordingly:
 
@@ -413,7 +413,7 @@ The library detects memory pressure at runtime and adapts accordingly:
 | 5-15% | High | Aggressive eviction, smaller blocks |
 | < 5% | Critical | Minimal caching, streaming only |
 
-#### Adaptive Block Sizing
+#### 📏 Adaptive Block Sizing
 
 Block size is automatically tuned based on available memory when
 `NEAT_AI_DISCOVERY_BLOCK_SIZE` is not explicitly set:
@@ -430,7 +430,7 @@ Block size is automatically tuned based on available memory when
 Smaller blocks reduce peak memory per cached block, allowing more blocks to be
 held simultaneously.
 
-#### Compressed In-Memory Cache (LZ4)
+#### 🗜️ Compressed In-Memory Cache (LZ4)
 
 The library includes an LZ4-compressed LRU cache that trades CPU time for memory:
 

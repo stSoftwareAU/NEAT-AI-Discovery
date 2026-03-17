@@ -1,36 +1,32 @@
-# Remove Low-Impact Neurons
+# 📉 Remove Low-Impact Neurons
 
 [Back to Discovery Index](README.md) | **Source:** [`src/analysis/neuron.rs`](../../src/analysis/neuron.rs)
 
 ---
 
-## The Problem
+## 🔍 The Problem
 
 Some neurons contribute **less benefit** to the network than the **cost of
 their complexity**. In NEAT, every neuron and synapse incurs a "cost of growth"
 penalty on the creature's fitness. If a neuron's impact on accuracy is smaller
 than this penalty, the creature would score better without it.
 
-```
-  Impact vs Cost
-
-  Benefit ↑
-         │
-         │  ████  H1 (high impact)
-         │  ████
-         │  ████
-         │  ██    H2 (medium impact)
-         │  ██
-  cost ──│──░░░░░░░░░░░░░░░░░░░░──── cost of growth threshold
-         │  ░░    H3 (low impact)    ← below the line = net loss
-         │
-         └────────────────────────→ Neurons
-
-  H3 costs more to maintain than it contributes.
-  Removing H3 improves the creature's overall fitness.
+```mermaid
+graph LR
+    subgraph Legend["📊 Impact vs Cost"]
+        H1["🧠 H1<br/>HIGH impact ✅"]
+        H2["🧠 H2<br/>Medium impact"]
+        H3["🧠 H3<br/>LOW impact ❌<br/><i>below cost of growth</i>"]
+    end
+    style H1 fill:#2ecc71,stroke:#333,color:#fff
+    style H2 fill:#f39c12,stroke:#333,color:#fff
+    style H3 fill:#e74c3c,stroke:#333,color:#fff
 ```
 
-### Why It Hurts the Creature's Score
+> 📉 **H3 costs more to maintain than it contributes.** Removing H3 improves the
+> creature's overall fitness.
+
+### ⚠️ Why It Hurts the Creature's Score
 
 - NEAT's fitness function penalises structural complexity.
 - A low-impact neuron adds penalty without enough accuracy benefit to
@@ -40,62 +36,60 @@ than this penalty, the creature would score better without it.
 
 ---
 
-## How We Detect It
+## 🔬 How We Detect It
 
-```
-  ┌────────────────────────────────────────────────────────────┐
-  │  For each hidden neuron:                                   │
-  │                                                            │
-  │  1. Compute activation_weighted_impact:                    │
-  │     How much does this neuron's activation influence the   │
-  │     output neurons? (see Impact Calculation docs)          │
-  │                                                            │
-  │  2. Compare impact against costOfGrowth (default: 1e-7)   │
-  │                                                            │
-  │  3. Factor in synapse count:                               │
-  │     Removing a neuron also removes all its synapses        │
-  │     → more synapses saved = bigger complexity reduction    │
-  │                                                            │
-  │  4. If impact < costOfGrowth → candidate for removal       │
-  └────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A["🔍 For each hidden neuron"] --> B["📊 Compute<br/>activation_weighted_impact"]
+    B --> C{"⚖️ impact < costOfGrowth?<br/><i>(default: 1e-7)</i>"}
+    C -->|No| Z["✅ Neuron earns its keep"]
+    C -->|Yes| D["📐 Factor in synapse count<br/><i>more synapses = bigger savings</i>"]
+    D --> E["📉 Candidate for removal"]
+    style A fill:#e3f2fd,stroke:#1565c0,color:#000
+    style B fill:#e3f2fd,stroke:#1565c0,color:#000
+    style C fill:#fff3e0,stroke:#f57c00,color:#000
+    style D fill:#e3f2fd,stroke:#1565c0,color:#000
+    style E fill:#fce4ec,stroke:#c62828,color:#000
+    style Z fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
 
-### Impact Scoring
+### 📊 Impact Scoring
 
-```
-  activation_weighted_impact considers:
+The `activation_weighted_impact` considers:
 
-  ┌──────────────────────────────────────────────┐
-  │  • How often the neuron fires (activation     │
-  │    magnitude across samples)                  │
-  │  • How strong its connections to outputs are  │
-  │    (weight magnitude of outgoing synapses)    │
-  │  • How many hops to the nearest output        │
-  │    (closer = higher impact)                   │
-  └──────────────────────────────────────────────┘
+| Factor | Description |
+|--------|-------------|
+| 🔥 **Activation magnitude** | How often and how strongly the neuron fires across samples |
+| ⚡ **Connection strength** | Weight magnitude of outgoing synapses |
+| 📏 **Distance to output** | Closer to output = higher impact |
 
-  A neuron deep in the network with tiny outgoing
-  weights has very low impact — prime removal target.
-```
+> A neuron deep in the network with tiny outgoing weights has very low impact —
+> prime removal target. 🎯
 
 ---
 
-## How We Fix It
+## 🛠️ How We Fix It
 
 Remove the low-impact neuron and all its connections:
 
+```mermaid
+graph LR
+    subgraph Before["❌ Before"]
+        BI["🔵 I"] -->|"w=0.1"| BH3["📉 H3<br/>low impact"]
+        BI -->|"w=0.1"| BH3
+        BH3 -->|"w=0.05"| BO["🎯 O"]
+    end
+    subgraph After["✅ After"]
+        AI["🔵 I"] -->|"via other paths"| AO["🎯 O"]
+    end
+    style BI fill:#4a9eff,stroke:#333,color:#fff
+    style BH3 fill:#e74c3c,stroke:#333,color:#fff
+    style BO fill:#2ecc71,stroke:#333,color:#fff
+    style AI fill:#4a9eff,stroke:#333,color:#fff
+    style AO fill:#2ecc71,stroke:#333,color:#fff
 ```
-  BEFORE                              AFTER
-  ┌───┐    ┌────┐    ┌───┐           ┌───┐              ┌───┐
-  │ I │───→│ H3 │───→│ O │           │ I │──────────────→│ O │
-  │   │    │low │    │   │           │   │  (via other   │   │
-  │   │───→│imp.│    │   │           │   │   paths)      │   │
-  └───┘    └────┘    └───┘           └───┘              └───┘
-               ↑                          ↑
-          3 synapses                 2 synapses removed
-          (2 in, 1 out)             1 neuron removed
-                                    → lower complexity cost
-```
+
+> 2 synapses removed, 1 neuron removed → lower complexity cost ✅
 
 | Candidate | Operation | Detail |
 |-----------|-----------|--------|
@@ -103,29 +97,28 @@ Remove the low-impact neuron and all its connections:
 
 ---
 
-## Example
+## 📝 Example
 
-```
-  Creature with 50 hidden neurons, costOfGrowth = 1e-7
-
-  Neuron H28:
-  - activation_weighted_impact = 3.2e-8  (below 1e-7 threshold)
-  - Fan-in: 4 synapses
-  - Fan-out: 2 synapses
-  - Total synapses removed: 6
-
-  Removing H28:
-  - Accuracy loss: ~0.000000032 (negligible)
-  - Complexity saved: 1 neuron + 6 synapses
-  - Net fitness improvement: positive
-
-  Production success rate: 17.6% (65 successes from 369 candidates)
-  This is the highest success-rate discovery type.
-```
+> Creature with 50 hidden neurons, costOfGrowth = 1e-7
+>
+> **Neuron H28:**
+> - activation_weighted_impact = 3.2e-8 (below 1e-7 threshold)
+> - Fan-in: 4 synapses
+> - Fan-out: 2 synapses
+> - Total synapses removed: 6
+>
+> | Metric | Value |
+> |--------|-------|
+> | Accuracy loss | ~0.000000032 (negligible) |
+> | Complexity saved | 1 neuron + 6 synapses |
+> | Net fitness improvement | positive ✅ |
+>
+> **Production success rate: 17.6%** (65 successes from 369 candidates)
+> This is the highest success-rate discovery type. 🏆
 
 ---
 
-## References
+## 📚 References
 
 - **Network pruning** —
   [Wikipedia](https://en.wikipedia.org/wiki/Pruning_(artificial_neural_network)):

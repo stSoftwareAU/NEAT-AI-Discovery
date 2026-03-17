@@ -1,52 +1,62 @@
-# Input Sensitivity Analysis
+# 🎚️ Input Sensitivity Analysis
 
 [Back to Discovery Index](README.md) | **Source:** [`src/analysis/detection/input_sensitivity.rs`](../../src/analysis/detection/input_sensitivity.rs) | **Issue:** [#435](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/435)
 
 ---
 
-## The Problem
+## 🔍 The Problem
 
 Input sensitivity analysis detects two related brittleness patterns where
 small input changes cause disproportionately large output swings:
 
-### 1. Dominant Input Detection
+### ⚡ 1. Dominant Input Detection
 
 A single input neuron has excessive **leverage** over the network output —
 its weight, correlation with error, and variance combine to give it outsized
 influence. If this input receives noisy or missing data, the entire
 prediction collapses.
 
-```
-  ┌──────┐         ┌─────┐
-  │ I1   │─(w=0.1)─│     │
-  │      │         │ O1  │  I3 dominates:
-  │ I2   │─(w=0.2)─│     │  sensitivity = 4.5
-  │      │         │     │  (threshold: 2.0)
-  │ I3   │─(w=2.8)─│     │  One bad I3 value
-  └──────┘         └─────┘  → prediction collapse
-       ↑
-  Dominant input!
+```mermaid
+graph LR
+    I1["🔵 I1"]:::input -- "w = 0.1" --> O1["🟢 O1"]:::output
+    I2["🔵 I2"]:::input -- "w = 0.2" --> O1
+    I3["🔴 I3"]:::problem -- "w = 2.8" --> O1
+
+    note["⚠️ I3 dominates:<br/>sensitivity = 4.5<br/>threshold: 2.0<br/>One bad I3 value<br/>→ prediction collapse"]:::warn
+
+    classDef input fill:#4a9eff,stroke:#333,color:#fff
+    classDef output fill:#2ecc71,stroke:#333,color:#fff
+    classDef problem fill:#e74c3c,stroke:#333,color:#fff
+    classDef warn fill:#fff3e0,stroke:#f57c00,color:#000
 ```
 
-### 2. Threshold Effect Detection
+### 📉 2. Threshold Effect Detection
 
 An input feeds a hidden neuron through a region of extreme gradient in the
 activation function (e.g., near the steep part of TANH or LOGISTIC). Tiny
 input changes cause sudden, large output changes — a cliff effect.
 
-```
-  TANH gradient near threshold:
-  ─────────────────────────────
-  input:  0.98  0.99  1.00  1.01  1.02
-  output: 0.75  0.76  0.76  0.77  0.77  (gentle)
+```mermaid
+graph TD
+    subgraph gentle["Gentle Region"]
+        G["input: 0.98 → 1.02<br/>output: 0.75 → 0.77<br/>∆ small"]:::process
+    end
 
-  input:  -0.02 -0.01  0.00  0.01  0.02
-  output: -0.02 -0.01  0.00  0.01  0.02  (steep!)
-                               ↑
-  Small change → large gradient × weight = amplified
+    subgraph steep["⚠️ Steep Region — Cliff Effect"]
+        S["input: −0.02 → 0.02<br/>output: −0.02 → 0.02<br/>∆ large gradient × weight = amplified"]:::problem
+    end
+
+    G --> S
+
+    classDef process fill:#e3f2fd,stroke:#1565c0,color:#000
+    classDef problem fill:#e74c3c,stroke:#333,color:#fff
 ```
 
-### Why It Hurts the Creature's Score
+### ⚠️ Why It Hurts the Creature's Score
+
+> [!WARNING]
+> These sensitivity patterns make a creature's predictions unreliable and
+> fragile, leading to poor generalisation.
 
 - **Brittle predictions**: Dominant inputs make the model fragile — noise
   or missing values in one input can swing the entire output.
@@ -57,29 +67,33 @@ input changes cause sudden, large output changes — a cliff effect.
 
 ---
 
-## How We Detect It
+## 🔬 How We Detect It
 
-```
-  ┌────────────────────────────────────────────────────────────────┐
-  │  Dominant Input Detection:                                     │
-  │  For each input → output (or input → hidden → output) path:   │
-  │                                                                │
-  │  1. Compute leverage ratio:                                    │
-  │     |weight| × |correlation(input, error)| × √(input_var/     │
-  │     error_var)                                                 │
-  │  2. Compute sensitivity = leverage_ratio × |weight|            │
-  │  3. If sensitivity > 2.0 → dominant input detected             │
-  │                                                                │
-  │  Threshold Effect Detection:                                   │
-  │  For each input → hidden path (bounded activation):            │
-  │                                                                │
-  │  1. Compute effective gradient:                                │
-  │     max_finite_difference × |weight|                           │
-  │  2. If gradient > 10.0 → threshold effect detected             │
-  └────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A["🔵 For each input path"]:::input --> B{"Dominant Input<br/>Detection"}:::decision
+
+    B --> C["1. Compute leverage ratio:<br/>|weight| × |corr(input, error)|<br/>× √(input_var / error_var)"]:::process
+    C --> D["2. Compute sensitivity =<br/>leverage_ratio × |weight|"]:::process
+    D --> E{"sensitivity > 2.0?"}:::decision
+    E -- "Yes" --> F["🔴 Dominant input detected"]:::problem
+
+    A --> G{"Threshold Effect<br/>Detection"}:::decision
+    G --> H["1. Compute effective gradient:<br/>max_finite_difference × |weight|"]:::process
+    H --> I{"gradient > 10.0?"}:::decision
+    I -- "Yes" --> J["🔴 Threshold effect detected"]:::problem
+
+    classDef input fill:#4a9eff,stroke:#333,color:#fff
+    classDef process fill:#e3f2fd,stroke:#1565c0,color:#000
+    classDef decision fill:#fff3e0,stroke:#f57c00,color:#000
+    classDef problem fill:#e74c3c,stroke:#333,color:#fff
 ```
 
-### Environment Variables
+### ⚙️ Environment Variables
+
+> [!NOTE]
+> These thresholds can be tuned via environment variables to adjust
+> detection sensitivity for your specific use case.
 
 - `NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD`: Sensitivity threshold for dominant
   input detection (default: 2.0).
@@ -88,25 +102,45 @@ input changes cause sudden, large output changes — a cliff effect.
 
 ---
 
-## How We Fix It
+## 🛠️ How We Fix It
 
+```mermaid
+flowchart LR
+    subgraph before["🔴 Before — Dominant Input"]
+        I3a["🔵 I3"]:::input -- "w = 2.8<br/>sensitivity = 4.5" --> O1a["🟢 O1"]:::output
+    end
+
+    subgraph after["🟢 After — Weight Reduced"]
+        I3b["🔵 I3"]:::input -- "w = 1.4<br/>reduced to<br/>threshold × 0.8" --> O1b["🟢 O1"]:::fixed
+    end
+
+    before --> after
+
+    classDef input fill:#4a9eff,stroke:#333,color:#fff
+    classDef output fill:#e74c3c,stroke:#333,color:#fff
+    classDef fixed fill:#2ecc71,stroke:#333,color:#fff
 ```
-  Dominant Input Fix:
 
-  BEFORE                                 AFTER
-  │ I3 │──(w=2.8)──→ O1                 │ I3 │──(w=1.4)──→ O1
-         ↑ sensitivity=4.5                      ↑ reduced to threshold×0.8
+```mermaid
+flowchart TD
+    T["🔴 Threshold Effect Detected"]:::problem --> Opt1 & Opt2 & Opt3
 
-  Threshold Effect Fix (3 options):
+    Opt1["Option 1: Add dampening neuron<br/>I1 → IDENTITY gate → H1<br/>dampens signal"]:::process
+    Opt2["Option 2: Shift bias<br/>H1 bias shifted ±0.5<br/>moves away from cliff"]:::process
+    Opt3["Option 3: Reduce weight<br/>I1 →(w × 0.3)→ H1<br/>reduces amplification"]:::process
 
-  Option 1: Add dampening neuron         Option 2: Shift bias
-  I1 ──→ [IDENTITY gate] ──→ H1         H1 bias shifted ±0.5
-         dampens signal                  moves away from cliff
+    Opt1 --> R["🟢 Sensitivity Reduced"]:::fixed
+    Opt2 --> R
+    Opt3 --> R
 
-  Option 3: Reduce weight
-  I1 ──(w×0.3)──→ H1
-  reduces amplification
+    classDef problem fill:#e74c3c,stroke:#333,color:#fff
+    classDef process fill:#e3f2fd,stroke:#1565c0,color:#000
+    classDef fixed fill:#2ecc71,stroke:#333,color:#fff
 ```
+
+> [!TIP]
+> The repair system selects the most appropriate fix based on the pattern
+> detected and the network topology.
 
 | Pattern | Candidate | Operation | Detail |
 |---------|-----------|-----------|--------|
@@ -117,29 +151,27 @@ input changes cause sudden, large output changes — a cliff effect.
 
 ---
 
-## Example
+## 📝 Example
 
-```
-  Dominant Input:
-    Input I7 → Output O1, weight = 3.2
-    Correlation(I7, O1_error) = 0.85
-    Leverage ratio = 3.2 × 0.85 × 1.8 = 4.9
-    Sensitivity = 4.9 × 3.2 = 15.7 (>> 2.0)
-    Fix: Set weight to 2.0 × 0.8 = 1.6
-
-  Threshold Effect:
-    Input I2 → Hidden H3 (TANH), weight = 1.5
-    Max finite difference in activation = 0.98
-    Effective gradient = 0.98 × 1.5 = 14.7 (> 10.0)
-    Fix options:
-    1. Add IDENTITY dampening neuron between I2 and H3
-    2. Shift H3 bias by ±0.5 to move away from steep region
-    3. Reduce I2→H3 weight to 14.7 × 0.3 = 4.4
-```
+> **Dominant Input:**
+> Input I7 → Output O1, weight = 3.2
+> Correlation(I7, O1\_error) = 0.85
+> Leverage ratio = 3.2 × 0.85 × 1.8 = 4.9
+> Sensitivity = 4.9 × 3.2 = 15.7 (>> 2.0)
+> Fix: Set weight to 2.0 × 0.8 = 1.6
+>
+> **Threshold Effect:**
+> Input I2 → Hidden H3 (TANH), weight = 1.5
+> Max finite difference in activation = 0.98
+> Effective gradient = 0.98 × 1.5 = 14.7 (> 10.0)
+> Fix options:
+> 1. Add IDENTITY dampening neuron between I2 and H3
+> 2. Shift H3 bias by ±0.5 to move away from steep region
+> 3. Reduce I2→H3 weight to 14.7 × 0.3 = 4.4
 
 ---
 
-## References
+## 📚 References
 
 - **Source module**: [`src/analysis/detection/input_sensitivity.rs`](../../src/analysis/detection/input_sensitivity.rs)
 - **DISCOVERY_TYPES.md**: [Technical reference](../DISCOVERY_TYPES.md)

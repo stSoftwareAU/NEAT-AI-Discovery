@@ -1,4 +1,4 @@
-# FFI API Reference
+# 🔌 FFI API Reference
 
 This document contains the detailed FFI API reference, JSON interface specifications,
 and streaming recording API for NEAT-AI-Discovery. For a high-level overview, see
@@ -6,7 +6,7 @@ and streaming recording API for NEAT-AI-Discovery. For a high-level overview, se
 
 ---
 
-## Exported Symbols
+## 📦 Exported Symbols
 
 The library exposes a Deno FFI-friendly symbol set. The authoritative list of exported
 symbols lives in `src/lib.rs` as `#[no_mangle] pub extern "C"` functions.
@@ -24,7 +24,7 @@ The most commonly used entry points are:
 
 ---
 
-## Checking for a Usable GPU
+## 🖥️ Checking for a Usable GPU
 
 Discovery **requires a GPU** — there is no CPU fallback. On machines without a
 suitable GPU, controllers must disable discovery entirely.
@@ -54,7 +54,7 @@ suitable GPU, controllers must disable discovery entirely.
 - When `"gpuAvailable"` is `false`, controllers should treat discovery as disabled.
 - When `"gpuAvailable"` is `true`, controllers may safely schedule discovery jobs.
 
-### Platform-specific GPU behaviour
+### 🌏 Platform-specific GPU behaviour
 
 - **macOS**: GPU (Metal) should always be available. If `gpuAvailable` is `false`,
   this is treated as an error (`success: false`).
@@ -69,7 +69,7 @@ suitable GPU, controllers must disable discovery entirely.
 
 ---
 
-## JSON Interface
+## 📋 JSON Interface
 
 ### Input Format (record_discovery)
 
@@ -126,7 +126,7 @@ Error:
 
 ---
 
-## Streaming Recording API (v0.2.8+)
+## 🔄 Streaming Recording API (v0.2.8+)
 
 The streaming API solves the JavaScript "Invalid string length" error that occurs when
 trying to serialise large datasets (6+ minutes of recording) into a single JSON string.
@@ -136,24 +136,28 @@ Instead of one monolithic `record_discovery` call, data is streamed incrementall
 TypeScript accumulated 6+ minutes of discovery data and tried to JSON.stringify it all
 at once for the FFI call, it hit this limit. The streaming API keeps each FFI call small.
 
-### Usage Pattern
+### 🛠️ Usage Pattern
 
-```text
-TypeScript                              Rust (this library)
-────────────────────────────────────────────────────────────────────────
-1. start_discovery_session()       →    Creates session + Parquet file
-   ↓ returns sessionId
+```mermaid
+sequenceDiagram
+    participant TS as 🟦 TypeScript
+    participant RS as 🦀 Rust Library
 
-2. Loop while collecting data:
-   - Collect records (estimate size)
-   - When batch reaches ~50MB or ~10,000 records:
-     append_discovery_records()    →    Writes batch to Parquet
+    TS->>RS: 1. start_discovery_session()
+    RS-->>TS: sessionId
 
-3. finish_discovery_session()      →    Finalises Parquet file
-   ↓ returns { tempDir, file, totalRecords }
+    loop Collect data batches
+        Note over TS: Collect records<br/>(estimate size)
+        TS->>RS: 2. append_discovery_records()
+        Note over RS: Writes batch<br/>to Parquet
+        RS-->>TS: recordsWritten
+    end
+
+    TS->>RS: 3. finish_discovery_session()
+    RS-->>TS: tempDir, file, totalRecords
 ```
 
-### FFI Functions
+### ⚙️ FFI Functions
 
 **`start_discovery_session`** — Start a new recording session
 
@@ -234,7 +238,7 @@ Output:
 }
 ```
 
-### Size Estimation for TypeScript
+### 📐 Size Estimation for TypeScript
 
 To decide when to flush, estimate the JSON size before serialising:
 
@@ -253,7 +257,7 @@ if (estimatedBytes > FLUSH_THRESHOLD) {
 }
 ```
 
-### Benefits
+### ✅ Benefits
 
 - **No string length limits**: Each batch is small enough to serialise
 - **Unlimited sample sizes**: Can record for hours without memory issues
@@ -262,9 +266,9 @@ if (estimatedBytes > FLUSH_THRESHOLD) {
 
 ---
 
-## Critical Requirements
+## 🚨 Critical Requirements
 
-### Atomic Record Writes
+### ⚛️ Atomic Record Writes
 
 **For each discovery record, all data (observations, activations, errors) MUST come from the same training record.** This is essential because:
 - The analysis phase matches records by index
@@ -279,7 +283,7 @@ if (estimatedBytes > FLUSH_THRESHOLD) {
 - **No mixing**: Never mix data from different training records within a single discovery record write
 - **Matching by obs_index**: TypeScript matches records across neurons by `obs_index` (not by array position)
 
-### Forward-only Activation Order (no feedback)
+### ➡️ Forward-only Activation Order (no feedback)
 
 Discovery assumes **forward-only** networks (no recurrent feedback). This is critical for both recording and for applying discovery candidates:
 
@@ -290,7 +294,7 @@ Discovery assumes **forward-only** networks (no recurrent feedback). This is cri
 
 ---
 
-## File Format
+## 📁 File Format
 
 ### Single Parquet File
 
@@ -308,7 +312,7 @@ Schema:
 - Columnar format excellent for filtering by neuron during analysis
 - Viewable with standard tools for debugging
 
-### Debugging Parquet Files
+### 🔍 Debugging Parquet Files
 
 **Python:**
 ```python
