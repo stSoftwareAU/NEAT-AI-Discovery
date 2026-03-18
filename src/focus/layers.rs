@@ -67,10 +67,11 @@ pub fn compute_network_layers(creature: &CreatureJson) -> Vec<NeuronLayer> {
     }
 
     // Build neuron UUID set using indices for efficient lookup
+    // Skip any neurons whose UUIDs were not successfully interned (defensive).
     let neuron_indices: HashSet<u32> = creature
         .neurons
         .iter()
-        .map(|n| neuron_index.get_index(&n.uuid).unwrap())
+        .filter_map(|n| neuron_index.get_index(&n.uuid))
         .collect();
 
     // Build forward adjacency using interned indices
@@ -81,11 +82,12 @@ pub fn compute_network_layers(creature: &CreatureJson) -> Vec<NeuronLayer> {
         forward_adjacency.entry(from_idx).or_default().push(to_idx);
     }
 
-    // Identify input neuron indices (those not in the neuron list)
+    // Identify input neuron indices (those not in the neuron list).
+    // Skip any synapse source UUIDs not found in the index (defensive).
     let input_indices: HashSet<u32> = creature
         .synapses
         .iter()
-        .map(|s| neuron_index.get_index(&s.from_uuid).unwrap())
+        .filter_map(|s| neuron_index.get_index(&s.from_uuid))
         .filter(|idx| !neuron_indices.contains(idx))
         .collect();
 
@@ -132,10 +134,12 @@ pub fn compute_network_layers(creature: &CreatureJson) -> Vec<NeuronLayer> {
         }
     }
 
-    // Handle disconnected neurons (not reachable from any input)
+    // Handle disconnected neurons (not reachable from any input).
+    // Skip neurons whose UUIDs are not in the index (defensive).
     for neuron in &creature.neurons {
-        let idx = neuron_index.get_index(&neuron.uuid).unwrap();
-        depths.entry(idx).or_insert(usize::MAX);
+        if let Some(idx) = neuron_index.get_index(&neuron.uuid) {
+            depths.entry(idx).or_insert(usize::MAX);
+        }
     }
 
     // Group neurons by depth
@@ -146,7 +150,9 @@ pub fn compute_network_layers(creature: &CreatureJson) -> Vec<NeuronLayer> {
             continue;
         }
 
-        let idx = neuron_index.get_index(&neuron.uuid).unwrap();
+        let Some(idx) = neuron_index.get_index(&neuron.uuid) else {
+            continue;
+        };
         let depth = depths.get(&idx).copied().unwrap_or(usize::MAX);
         layers_map.entry(depth).or_default().push(NeuronInfo {
             uuid: neuron.uuid.clone(),
