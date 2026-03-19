@@ -20,12 +20,13 @@
 //! ## Recommended Actions
 //!
 //! When a high-gradient synapse is detected, we recommend:
-//! - **SetWeight**: Adjust the weight by a small step in the gradient descent
-//!   direction (proposed_delta = -learning_rate × gradient).
+//! - **`SetWeight`**: Adjust the weight by a small step in the gradient descent
+//!   direction (`proposed_delta` = -`learning_rate` × gradient).
 //!
 //! These are emitted as `CoordinatedStructuralCandidateJson` with `SetWeight`
 //! operations.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 
 use crate::types::DiscoverRecord;
@@ -40,7 +41,7 @@ use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT as MIN_SAMPLES_FOR_GRADI
 /// Below this, the weight change would have negligible error impact.
 const MIN_GRADIENT_MAGNITUDE: f32 = 0.01;
 
-/// Minimum gradient consistency (|mean| / std_dev) to ensure the gradient
+/// Minimum gradient consistency (|mean| / `std_dev`) to ensure the gradient
 /// direction is reliable, not just noise.
 const MIN_GRADIENT_CONSISTENCY: f32 = 0.3;
 
@@ -61,7 +62,7 @@ pub struct GradientCandidate {
     pub mean_gradient: f32,
     /// Standard deviation of the per-sample gradients.
     pub gradient_std_dev: f32,
-    /// Gradient consistency ratio (|mean| / std_dev).
+    /// Gradient consistency ratio (|mean| / `std_dev`).
     pub gradient_consistency: f32,
     /// Proposed weight change (negative gradient direction).
     pub proposed_weight_delta: f32,

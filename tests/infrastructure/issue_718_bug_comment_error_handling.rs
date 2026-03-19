@@ -9,6 +9,7 @@
 //! - Target analysis: output neuron with only constant upstream neurons
 //!   gracefully returns empty results instead of panicking
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{neuron, output, record, synapse};
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;

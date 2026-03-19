@@ -6,6 +6,7 @@
 //! These tests exercise real library functions with NaN-containing data to ensure
 //! the `total_cmp` migration is complete and correct across all modules.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::constants::{cmp_f32_asc, cmp_f32_desc, cmp_f64_desc};
 use neat_ai_discovery::analysis::recommendation::sample_weighted::{
     SampleWeightedConfig, compute_sample_weights, detect_high_error_neurons, stratify_samples,
@@ -84,7 +85,7 @@ fn test_error_distribution_all_nan_no_panic() {
 }
 
 /// `ErrorDistribution::from_errors` with purely finite values must produce
-/// correct statistics (sanity check that total_cmp doesn't change results).
+/// correct statistics (sanity check that `total_cmp` doesn't change results).
 #[test]
 fn test_error_distribution_finite_values_correct() {
     let errors = vec![1.0, 2.0, 3.0, 4.0, 5.0];

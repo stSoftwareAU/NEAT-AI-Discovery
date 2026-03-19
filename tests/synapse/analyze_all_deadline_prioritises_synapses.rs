@@ -2,10 +2,11 @@
 //!
 //! These tests verify:
 //! 1. Synapse analysis runs first when a deadline is set (preventing starvation)
-//! 2. Metadata fields correctly indicate whether target_value was available
+//! 2. Metadata fields correctly indicate whether `target_value` was available
 //! 3. Metadata fields correctly indicate whether saturation-aware simulation was used
 //! 4. Candidate found/returned counts are accurate
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::analyze_all;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -38,7 +39,7 @@ fn create_simple_creature() -> CreatureJson {
     }
 }
 
-/// Create test records with target_value (pre-activation) data.
+/// Create test records with `target_value` (pre-activation) data.
 fn create_records_with_value(parquet_file: &str) {
     let mut records = Vec::new();
     for obs_index in 0..100u32 {
@@ -64,7 +65,7 @@ fn create_records_with_value(parquet_file: &str) {
     write_records_to_parquet(parquet_file, &records).expect("Failed to write test records");
 }
 
-/// Create test records WITHOUT target_value (pre-activation) data.
+/// Create test records WITHOUT `target_value` (pre-activation) data.
 fn create_records_without_value(parquet_file: &str) {
     let mut records = Vec::new();
     for obs_index in 0..100u32 {
@@ -138,7 +139,7 @@ fn synapse_analysis_runs_under_deadline() {
     );
 }
 
-/// Test that metadata correctly indicates target_value was available.
+/// Test that metadata correctly indicates `target_value` was available.
 #[test]
 fn metadata_indicates_target_value_available() {
     skip_if_no_gpu!();
@@ -178,7 +179,7 @@ fn metadata_indicates_target_value_available() {
     );
 }
 
-/// Test that metadata correctly indicates target_value was NOT available.
+/// Test that metadata correctly indicates `target_value` was NOT available.
 #[test]
 fn metadata_indicates_target_value_not_available() {
     skip_if_no_gpu!();

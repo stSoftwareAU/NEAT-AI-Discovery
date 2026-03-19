@@ -20,12 +20,13 @@
 //! 11. Verify candidates are sorted by estimated improvement
 //! 12. Verify irregular oscillation patterns (not perfectly alternating)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::oscillating_neuron::{
     detect_oscillating_neurons, oscillating_neurons_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 
-/// Helper: create a DiscoverRecord for a neuron with given activation.
+/// Helper: create a `DiscoverRecord` for a neuron with given activation.
 fn make_record(neuron_uuid: &str, obs_index: u32, activation: f32) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,

@@ -12,7 +12,7 @@
 //!    direction (i.e., weight and gradient have the same sign — gradient descent
 //!    would push weight through zero).
 //! 2. **High gradient consistency**: The gradient direction is reliable across
-//!    samples (|mean| / std_dev exceeds threshold).
+//!    samples (|mean| / `std_dev` exceeds threshold).
 //! 3. **Significant weight magnitude**: The weight is far enough from zero that
 //!    flipping the sign represents a meaningful structural change.
 //! 4. **Gradient magnitude relative to weight**: The gradient is large enough
@@ -24,6 +24,7 @@
 //! the negated weight value. This is distinct from the small-delta adjustments
 //! proposed by `gradient_discovery.rs`.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 
 use super::helpers::build_record_map;
@@ -35,7 +36,7 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 /// Weights near zero have no meaningful polarity to invert.
 const MIN_WEIGHT_MAGNITUDE: f32 = 0.1;
 
-/// Minimum gradient consistency (|mean| / std_dev) for reliable direction.
+/// Minimum gradient consistency (|mean| / `std_dev`) for reliable direction.
 /// Higher than `gradient_discovery` because a polarity flip is a large change
 /// and requires stronger evidence.
 const MIN_FLIP_CONSISTENCY: f32 = 0.5;
@@ -62,7 +63,7 @@ pub struct PolarityFlipCandidate {
     pub mean_gradient: f32,
     /// Standard deviation of per-sample gradients.
     pub gradient_std_dev: f32,
-    /// Gradient consistency ratio (|mean| / std_dev).
+    /// Gradient consistency ratio (|mean| / `std_dev`).
     pub gradient_consistency: f32,
     /// Number of samples used for gradient computation.
     pub sample_count: usize,

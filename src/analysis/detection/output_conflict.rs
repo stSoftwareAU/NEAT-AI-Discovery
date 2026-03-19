@@ -26,6 +26,7 @@
 //!
 //! These are emitted as `CoordinatedStructuralCandidateJson` candidates.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
 use crate::types::DiscoverRecord;

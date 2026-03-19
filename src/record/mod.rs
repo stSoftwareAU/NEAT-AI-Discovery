@@ -4,6 +4,11 @@
 //! - `validation` — input validation and observation index resolution
 //! - `processing` — record building from training data and Parquet writing
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod processing;
 mod validation;
 

@@ -19,10 +19,10 @@
 //!
 //! For each detected sentinel observation, the module proposes a `coordinatedStructural`
 //! candidate with:
-//! - **AddNeuron**: A hidden gate neuron with `STEP` activation that outputs ~0 for
+//! - **`AddNeuron`**: A hidden gate neuron with `STEP` activation that outputs ~0 for
 //!   sentinel values and ~1 for useful values.
-//! - **AddSynapse** (obs → gate): Connects the observation to the gate neuron.
-//! - **AddSynapse** (gate → target): Connects the gate to each downstream target,
+//! - **`AddSynapse`** (obs → gate): Connects the observation to the gate neuron.
+//! - **`AddSynapse`** (gate → target): Connects the gate to each downstream target,
 //!   so the gate can modulate the observation's influence.
 //!
 //! All squash functions used are scalar and GPU-compatible (no `IF` or other
@@ -30,9 +30,10 @@
 //!
 //! ## Dependency
 //!
-//! Uses error-correlation analysis similar to observation_range (Issue #398)
+//! Uses error-correlation analysis similar to `observation_range` (Issue #398)
 //! for sentinel identification.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
 use crate::types::DiscoverRecord;
@@ -277,10 +278,10 @@ fn estimate_gating_improvement(
 ///
 /// For an observation `obs` with sentinel at `s` connected to targets `[t1, t2, ...]`:
 ///
-/// 1. **AddNeuron** — gate neuron with `STEP` squash and bias computed to place the
+/// 1. **`AddNeuron`** — gate neuron with `STEP` squash and bias computed to place the
 ///    step threshold between the sentinel and useful range.
-/// 2. **AddSynapse** (obs → gate) — weight 1.0 feeding the observation into the gate.
-/// 3. **AddSynapse** (gate → t_i) — for each downstream target, a synapse carrying
+/// 2. **`AddSynapse`** (obs → gate) — weight 1.0 feeding the observation into the gate.
+/// 3. **`AddSynapse`** (gate → `t_i`) — for each downstream target, a synapse carrying
 ///    the gated signal with the original connection weight.
 pub fn sentinel_gating_to_coordinated_candidates(
     candidates: &[SentinelGatingCandidate],

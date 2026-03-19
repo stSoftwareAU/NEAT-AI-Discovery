@@ -10,7 +10,7 @@
 //! ## TDD Plan
 //! 1. Detect observation where sentinel at -1 correlates with noise
 //! 2. Proposed candidate uses coordinatedStructural with addNeuron + addSynapse + setBias
-//! 3. Gate neuron uses GPU-compatible squash (HARD_TANH or STEP, not IF/MAXIMUM)
+//! 3. Gate neuron uses GPU-compatible squash (`HARD_TANH` or STEP, not IF/MAXIMUM)
 //! 4. Gate connects observation to downstream targets
 //! 5. No detection when observation has no sentinel cluster
 //! 6. No detection with insufficient samples
@@ -18,6 +18,7 @@
 //! 8. Sentinel at 0 is also detected and gated
 //! 9. Depends on observation range detection for sentinel identification
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{make_creature, neuron, output, synapse};
 use neat_ai_discovery::CoordinatedStructuralOpJson;
 use neat_ai_discovery::analysis::detection::sentinel_gating::{

@@ -26,6 +26,7 @@
 //! These are emitted as `CoordinatedStructuralCandidateJson` with `AddNeuron` and/or
 //! `AddSynapse` operations.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::helpers::build_record_map;
 
 use crate::types::DiscoverRecord;

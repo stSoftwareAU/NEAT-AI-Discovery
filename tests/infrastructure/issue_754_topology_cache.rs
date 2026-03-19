@@ -3,6 +3,7 @@
 //! Verifies that detection modules produce identical results when using a
 //! pre-computed `CreatureTopologyCache` versus building topology locally.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{hidden, make_creature, output, record, synapse};
 use neat_ai_discovery::NeuronJson;
 use neat_ai_discovery::analysis::detection::bottleneck::{

@@ -2,7 +2,7 @@
 //!
 //! Integration tests for improved synapse prediction accuracy:
 //! 1. Creature-level error fraction scaling produces realistic predictions
-//! 2. MIN_IMPROVED_RATIO constant is sensible
+//! 2. `MIN_IMPROVED_RATIO` constant is sensible
 
 use neat_ai_discovery::analysis::constants::MIN_IMPROVED_RATIO;
 use neat_ai_discovery::analysis::samples::EPSILON;
@@ -63,7 +63,7 @@ fn test_issue_730_error_fraction_zero_total_returns_zero() {
     );
 }
 
-/// Issue #730: Error fraction should clamp to 1.0 when target_error > total_error
+/// Issue #730: Error fraction should clamp to 1.0 when `target_error` > `total_error`
 /// (numerical edge case).
 #[test]
 fn test_issue_730_error_fraction_clamps_to_one() {
@@ -81,7 +81,7 @@ fn test_issue_730_error_fraction_clamps_to_one() {
 // MIN_IMPROVED_RATIO constant validation
 // =============================================================================
 
-/// Issue #730: MIN_IMPROVED_RATIO should be a sensible threshold.
+/// Issue #730: `MIN_IMPROVED_RATIO` should be a sensible threshold.
 /// Uses const assertions to validate at compile time.
 #[test]
 fn test_issue_730_min_improved_ratio_is_sensible() {

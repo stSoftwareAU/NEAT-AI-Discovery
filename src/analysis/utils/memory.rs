@@ -5,6 +5,7 @@
 //!
 //! Extracted from `implementation.rs` as part of Issue #267.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;
 
 // =============================================================================
@@ -114,7 +115,7 @@ pub fn detect_memory_tier() -> MemoryTier {
 // =============================================================================
 
 /// Get memory information from the OS.
-/// Returns (available_bytes, total_bytes).
+/// Returns (`available_bytes`, `total_bytes`).
 #[cfg(target_os = "macos")]
 pub fn get_memory_info() -> (u64, u64) {
     use std::process::Command;
@@ -161,7 +162,7 @@ pub fn get_memory_info() -> (u64, u64) {
     (available, total)
 }
 
-/// Parse a page count from a vm_stat output line.
+/// Parse a page count from a `vm_stat` output line.
 /// Example: "Pages free:                              123456." -> 123456
 #[cfg(target_os = "macos")]
 pub fn parse_vm_stat_line(line: &str) -> u64 {
@@ -171,7 +172,7 @@ pub fn parse_vm_stat_line(line: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Parse the page size from vm_stat output's header line.
+/// Parse the page size from `vm_stat` output's header line.
 /// Example: "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
 /// Returns the page size in bytes, or a default based on architecture.
 ///

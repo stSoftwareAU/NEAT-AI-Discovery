@@ -7,6 +7,7 @@
 //! - Single-module passthrough: candidates from only one module are unchanged
 
 use neat_ai_discovery::analysis::ensemble_scoring::apply_ensemble_scoring;
+use neat_ai_discovery::analysis::module_weights::ModuleOutcomeTracker;
 use neat_ai_discovery::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
 // ---------------------------------------------------------------------------
@@ -85,7 +86,7 @@ fn make_add_synapse_candidate(
 fn single_module_candidate_score_unchanged() {
     let candidates = vec![make_set_bias_candidate("neuron-a", 0.5, 0.02, "module A")];
 
-    let result = apply_ensemble_scoring(candidates, &Default::default());
+    let result = apply_ensemble_scoring(candidates, &ModuleOutcomeTracker::default());
 
     assert_eq!(result.candidates.len(), 1);
     // Single-module candidate should keep its original score.
@@ -100,7 +101,7 @@ fn single_module_candidate_score_unchanged() {
 
 #[test]
 fn empty_input_produces_empty_output() {
-    let result = apply_ensemble_scoring(Vec::new(), &Default::default());
+    let result = apply_ensemble_scoring(Vec::new(), &ModuleOutcomeTracker::default());
 
     assert!(result.candidates.is_empty());
     assert_eq!(result.ensemble_candidates, 0);
@@ -119,7 +120,7 @@ fn agreement_boosts_score_for_same_target_neuron() {
         make_set_bias_candidate("neuron-a", 0.6, 0.03, "operating point"),
     ];
 
-    let result = apply_ensemble_scoring(candidates, &Default::default());
+    let result = apply_ensemble_scoring(candidates, &ModuleOutcomeTracker::default());
 
     // The ensemble should produce a single candidate with a boosted score.
     // The boosted score should be higher than the best individual score (0.03).
@@ -156,7 +157,7 @@ fn disagreement_penalises_conflicting_candidates() {
         make_change_squash_candidate("neuron-a", "RELU", 0.04, "activation mismatch"),
     ];
 
-    let result = apply_ensemble_scoring(candidates, &Default::default());
+    let result = apply_ensemble_scoring(candidates, &ModuleOutcomeTracker::default());
 
     // Both candidates should be penalised (reduced from their original scores).
     for c in &result.candidates {
@@ -185,7 +186,7 @@ fn mixed_candidates_handled_correctly() {
         make_change_squash_candidate("neuron-b", "RELU", 0.01, "module-3"),
     ];
 
-    let result = apply_ensemble_scoring(candidates, &Default::default());
+    let result = apply_ensemble_scoring(candidates, &ModuleOutcomeTracker::default());
 
     // neuron-a ensemble: boosted above 0.03
     let neuron_a_best = result
@@ -278,7 +279,7 @@ fn candidates_targeting_same_synapse_are_ensembled() {
         make_add_synapse_candidate("input-0", "output-0", 0.15, 0.025, "sample weighted"),
     ];
 
-    let result = apply_ensemble_scoring(candidates, &Default::default());
+    let result = apply_ensemble_scoring(candidates, &ModuleOutcomeTracker::default());
 
     // Agreement on the same synapse target should boost.
     let best = result
@@ -309,7 +310,7 @@ fn candidates_for_different_targets_are_independent() {
         make_set_bias_candidate("neuron-b", 0.3, 0.01, "module-2"),
     ];
 
-    let result = apply_ensemble_scoring(candidates, &Default::default());
+    let result = apply_ensemble_scoring(candidates, &ModuleOutcomeTracker::default());
 
     // Each targets a different neuron, so both should pass through unchanged.
     assert_eq!(result.candidates.len(), 2);
@@ -346,7 +347,7 @@ fn result_tracks_ensemble_vs_single_module_counts() {
         make_remove_neuron_candidate("neuron-c", 0.04, "module-4"),
     ];
 
-    let result = apply_ensemble_scoring(candidates, &Default::default());
+    let result = apply_ensemble_scoring(candidates, &ModuleOutcomeTracker::default());
 
     assert!(
         result.ensemble_candidates >= 1,

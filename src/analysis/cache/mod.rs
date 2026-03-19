@@ -18,7 +18,7 @@
 //! - `tiered_cache` — Automatic strategy wrapper (Issue #215)
 //! - `serialisation` — Binary serialisation and LZ4 compression (Issue #420, #484)
 //!
-//! ## Issue #186: RwLock for Read-Heavy Workloads
+//! ## Issue #186: `RwLock` for Read-Heavy Workloads
 //!
 //! This module uses `parking_lot::RwLock` instead of `std::sync::Mutex` to allow
 //! concurrent reads during analysis. During the analysis phase, the cache is
@@ -37,10 +37,11 @@
 //! ## Issue #215: Tiered Loading Strategy
 //!
 //! The tiered loading strategy automatically selects between:
-//! - **PreloadAll**: For small files (estimated expanded < available_memory / 4)
-//! - **LruCache**: For medium files (keeps frequently-accessed neurons in memory)
+//! - **`PreloadAll`**: For small files (estimated expanded < `available_memory` / 4)
+//! - **`LruCache`**: For medium files (keeps frequently-accessed neurons in memory)
 //! - **Streaming**: For very large files (block-based loading with LRU eviction)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod compressed_cache;
 mod loading_strategy;
 mod lru_cache;
@@ -358,8 +359,8 @@ impl RecordCache {
     /// This method automatically selects the best loading strategy based on
     /// file size and available system memory:
     ///
-    /// - **PreloadAll**: For small files where estimated expanded size < available_memory / 4
-    /// - **LruCache**: For medium files, keeps frequently-accessed neurons in memory
+    /// - **`PreloadAll`**: For small files where estimated expanded size < `available_memory` / 4
+    /// - **`LruCache`**: For medium files, keeps frequently-accessed neurons in memory
     /// - **Streaming**: For very large files that exceed available memory
     ///
     /// This provides optimal performance across different file sizes while

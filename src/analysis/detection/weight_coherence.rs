@@ -22,6 +22,7 @@
 //! - `min_activation_variance`: Minimum variance to consider output non-constant (default: 0.01)
 //! - `min_correlation_for_cancellation`: Minimum correlation to flag symmetric cancellation (default: 0.8)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::activation_properties::is_saturating_squash;
 use super::topology_cache::CreatureTopologyCache;
 use crate::types::DiscoverRecord;
@@ -154,7 +155,7 @@ pub struct SymmetricCancellationCandidate {
 ///
 /// # Arguments
 /// * `creature` - The creature JSON containing network topology
-/// * `records` - Vector of (neuron_uuid, records) tuples with activation data
+/// * `records` - Vector of (`neuron_uuid`, records) tuples with activation data
 /// * `config` - Configuration for detection thresholds
 ///
 /// # Returns
@@ -248,7 +249,7 @@ pub fn detect_incoherent_weight_ratios(
 ///
 /// # Arguments
 /// * `creature` - The creature JSON containing network topology
-/// * `records` - Vector of (neuron_uuid, records) tuples with activation data
+/// * `records` - Vector of (`neuron_uuid`, records) tuples with activation data
 /// * `config` - Configuration for detection thresholds
 ///
 /// # Returns
@@ -354,7 +355,7 @@ pub fn detect_near_constant_paths(
 ///
 /// # Arguments
 /// * `creature` - The creature JSON containing network topology
-/// * `records` - Vector of (neuron_uuid, records) tuples with activation data
+/// * `records` - Vector of (`neuron_uuid`, records) tuples with activation data
 /// * `config` - Configuration for detection thresholds
 ///
 /// # Returns

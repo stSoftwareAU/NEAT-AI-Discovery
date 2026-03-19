@@ -5,12 +5,13 @@
 //!
 //! The root cause was that the synapse weight was computed using a linear model
 //! but evaluated against a saturation-aware model. When the target neuron uses
-//! a bounded activation (HARD_TANH, TANH, etc.), the linear-model weight can
+//! a bounded activation (`HARD_TANH`, TANH, etc.), the linear-model weight can
 //! overshoot into saturation, causing inverted predictions.
 //!
 //! The fix searches over multiple weight candidates for saturating targets,
 //! matching the approach already used by add-neuron candidates.
 
+#![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};
@@ -58,11 +59,11 @@ fn create_test_creature(
     }
 }
 
-/// Issue #413: Add-synapse candidates for HARD_TANH targets should have
-/// positive expected_creature_score_gain (not inverted).
+/// Issue #413: Add-synapse candidates for `HARD_TANH` targets should have
+/// positive `expected_creature_score_gain` (not inverted).
 ///
 /// This test creates a network where input-1 has a clear positive correlation
-/// with the HARD_TANH output neuron's error. The add-synapse candidate should
+/// with the `HARD_TANH` output neuron's error. The add-synapse candidate should
 /// predict positive improvement.
 #[test]
 fn test_issue_413_add_synapse_hard_tanh_prediction_not_inverted() {

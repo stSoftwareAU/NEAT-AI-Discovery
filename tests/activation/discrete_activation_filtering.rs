@@ -4,6 +4,7 @@
 //! the linear error model fails for them. In v0.2.18, we enabled simulation for STEP/BIPOLAR
 //! that accurately predicts output flips, allowing synapse candidates for these targets.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

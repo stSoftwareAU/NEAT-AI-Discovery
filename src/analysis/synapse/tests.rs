@@ -1,3 +1,4 @@
+#![allow(clippy::cast_possible_wrap, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::candidate_generation::compute_obs_index_overlap;
 use super::scoring::weight_sign;
 use super::*;
@@ -153,7 +154,7 @@ fn test_issue_413_negative_correlation_gives_positive_improvement() {
     assert!(improved > total / 2);
 }
 
-/// Issue #413: HARD_TANH target near saturation should NOT produce inverted
+/// Issue #413: `HARD_TANH` target near saturation should NOT produce inverted
 /// predictions. This is the core bug.
 #[test]
 fn test_issue_413_hard_tanh_saturated_no_inversion() {

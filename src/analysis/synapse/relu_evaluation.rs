@@ -1,6 +1,6 @@
-//! ReLU candidate evaluation
+//! `ReLU` candidate evaluation
 //!
-//! This module evaluates ReLU activation candidates by splitting samples based
+//! This module evaluates `ReLU` activation candidates by splitting samples based
 //! on the target neuron's error sign — finding candidates for both positive-error
 //! and negative-error subsets.
 
@@ -16,7 +16,7 @@ use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT;
 
 use crate::analysis::activation::get_target_simulation_fn;
 
-/// Result from ReLU evaluation (split by target error sign)
+/// Result from `ReLU` evaluation (split by target error sign)
 pub(crate) struct SplitReluResult {
     /// Candidate for samples with positive error (output should be higher)
     pub(crate) positive_error_candidate: Option<CandidateNeuronJson>,
@@ -24,9 +24,9 @@ pub(crate) struct SplitReluResult {
     pub(crate) negative_error_candidate: Option<CandidateNeuronJson>,
 }
 
-/// Evaluate ReLU candidates by splitting samples based on TARGET neuron's error sign.
+/// Evaluate `ReLU` candidates by splitting samples based on TARGET neuron's error sign.
 ///
-/// This is the PRIMARY approach for ReLU evaluation. It finds candidates for both directions:
+/// This is the PRIMARY approach for `ReLU` evaluation. It finds candidates for both directions:
 /// - **Positive-error samples** (output should be HIGHER): compute weight that pushes UP
 /// - **Negative-error samples** (output should be LOWER): compute weight that pushes DOWN
 ///
@@ -35,8 +35,8 @@ pub(crate) struct SplitReluResult {
 /// 2. Evaluate NET improvement across ALL samples
 /// 3. Return candidate if it passes threshold
 ///
-/// This is the correct approach for directional activations like ReLU because:
-/// - ReLU can only push output in ONE direction (based on outgoing weight sign)
+/// This is the correct approach for directional activations like `ReLU` because:
+/// - `ReLU` can only push output in ONE direction (based on outgoing weight sign)
 /// - Averaging over all samples cancels out when errors are split ~50/50
 /// - We evaluate source activations as-is (we don't care how they were calculated)
 pub(crate) fn evaluate_relu_candidates_split<G: GpuEvaluator>(

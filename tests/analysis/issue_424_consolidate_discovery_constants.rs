@@ -13,13 +13,13 @@
 
 use neat_ai_discovery::analysis::constants;
 
-/// Verify MIN_NEURON_SAMPLE_COUNT is accessible from the central constants module.
+/// Verify `MIN_NEURON_SAMPLE_COUNT` is accessible from the central constants module.
 #[test]
 fn test_min_neuron_sample_count_accessible() {
     assert_eq!(constants::MIN_NEURON_SAMPLE_COUNT, 10);
 }
 
-/// Verify MIN_DISCOVERY_SAMPLE_COUNT is accessible from the central constants module.
+/// Verify `MIN_DISCOVERY_SAMPLE_COUNT` is accessible from the central constants module.
 #[test]
 fn test_min_discovery_sample_count_accessible() {
     assert_eq!(constants::MIN_DISCOVERY_SAMPLE_COUNT, 20);
@@ -34,19 +34,19 @@ fn test_sentinel_constants_accessible() {
     assert!((constants::MIN_SENTINEL_GAP - 0.05).abs() < f32::EPSILON);
 }
 
-/// Verify MIN_SOURCE_STD_DEV is accessible from the central module.
+/// Verify `MIN_SOURCE_STD_DEV` is accessible from the central module.
 #[test]
 fn test_min_source_std_dev_accessible() {
     assert!((constants::MIN_SOURCE_STD_DEV - 0.05).abs() < f32::EPSILON);
 }
 
-/// Verify DIVERSIFY_TOP_K is accessible from the central module.
+/// Verify `DIVERSIFY_TOP_K` is accessible from the central module.
 #[test]
 fn test_diversify_top_k_accessible() {
     assert_eq!(constants::DIVERSIFY_TOP_K, 64);
 }
 
-/// Verify that saturated neuron detection still works (uses MIN_NEURON_SAMPLE_COUNT
+/// Verify that saturated neuron detection still works (uses `MIN_NEURON_SAMPLE_COUNT`
 /// indirectly via sample count filtering).
 #[test]
 fn test_saturation_detection_uses_centralised_constants() {

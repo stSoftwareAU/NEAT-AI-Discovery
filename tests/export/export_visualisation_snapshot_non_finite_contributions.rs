@@ -1,7 +1,7 @@
 //! Regression test: non-finite synapse contributions must not break snapshot export.
 //!
 //! The snapshot exporter stores per-synapse `contribution` series as:
-//!   contribution[obs] = from_activation[obs] * weight
+//!   contribution[obs] = `from_activation`[obs] * weight
 //!
 //! Even when both inputs are finite, this multiplication can overflow to ±Infinity.
 //! JSON cannot represent non-finite floats, so the exporter must sanitise the raw

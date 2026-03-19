@@ -32,13 +32,13 @@ use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT;
 /// * `incoming_weight` - For neurons: the incoming weight; for synapses: use 1.0
 ///
 /// # Returns
-/// * `Some(weight)` - Optimal outgoing weight, clamped to [-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT]
+/// * `Some(weight)` - Optimal outgoing weight, clamped to [-`MAX_OUTGOING_WEIGHT`, `MAX_OUTGOING_WEIGHT`]
 /// * `None` - If weight cannot be computed (insufficient activation, invalid result, or
 ///   weight ratio too small for reliable prediction)
 ///
 /// # Weight Ratio Validation
-/// For add-neuron candidates where incoming_weight > 1.0, we validate that the
-/// incoming/outgoing ratio is at least MIN_WEIGHT_RATIO. This is based on analysis
+/// For add-neuron candidates where `incoming_weight` > 1.0, we validate that the
+/// incoming/outgoing ratio is at least `MIN_WEIGHT_RATIO`. This is based on analysis
 /// showing successful discoveries have much larger incoming than outgoing weights
 /// (ratio 71x to 104,000x), while failures often have nearly equal weights.
 pub fn calculate_optimal_outgoing_weight(
@@ -317,7 +317,7 @@ pub fn calculate_optimal_bias(
     best_bias
 }
 
-/// Apply HARD_TANH activation function (clamp to [-1, 1])
+/// Apply `HARD_TANH` activation function (clamp to [-1, 1])
 #[inline(always)]
 pub(super) fn hard_tanh(x: f32) -> f32 {
     x.clamp(-1.0, 1.0)

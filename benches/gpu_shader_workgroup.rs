@@ -4,20 +4,21 @@
 //!
 //! 1. **Helpful evaluation** — With and without GPU reduction
 //! 2. **Harmful evaluation** — With and without GPU reduction
-//! 3. **ReLU evaluation** — Per-element contribution transfer
+//! 3. **`ReLU` evaluation** — Per-element contribution transfer
 //! 4. **Activation evaluation** — Per-element output transfer
 //! 5. **Batched activation** — Multiple configs in one command buffer
 //!
-//! Sample sizes span below and above the GPU_REDUCTION_THRESHOLD to
+//! Sample sizes span below and above the `GPU_REDUCTION_THRESHOLD` to
 //! compare reduction vs direct transfer performance.
 //!
 //! Skips gracefully on machines without GPU access.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::gpu::{GpuAnalyzer, GpuEvaluator};
 use neat_ai_discovery::analysis::samples::HelpfulSample;
 
-/// Sample counts below and above GPU_REDUCTION_THRESHOLD (10,000).
+/// Sample counts below and above `GPU_REDUCTION_THRESHOLD` (10,000).
 const SAMPLE_SIZES: &[usize] = &[1_000, 5_000, 10_000, 50_000, 100_000];
 
 /// Create test samples with realistic variance for benchmarking.
@@ -99,7 +100,7 @@ fn bench_harmful_evaluation(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark ReLU evaluation throughput across sample sizes.
+/// Benchmark `ReLU` evaluation throughput across sample sizes.
 fn bench_relu_evaluation(c: &mut Criterion) {
     if !GpuAnalyzer::gpu_is_available() {
         eprintln!("Skipping gpu_shader_workgroup benchmarks: no GPU available");

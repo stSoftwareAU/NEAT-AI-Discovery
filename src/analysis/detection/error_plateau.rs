@@ -9,7 +9,7 @@
 //!
 //! A plateau is identified when:
 //! 1. Mean absolute error exceeds `MIN_PLATEAU_ERROR` (not already converged)
-//! 2. Error coefficient of variation (std_dev / mean) is below
+//! 2. Error coefficient of variation (`std_dev` / mean) is below
 //!    `MAX_COEFFICIENT_OF_VARIATION` (tightly clustered = flat error surface)
 //! 3. Sufficient sample count for statistical confidence
 //!
@@ -20,6 +20,7 @@
 //! jump out of the local minimum (Issue #547). The bias adjustment compensates for
 //! the mean signed error, recentring the output after the squash change.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
@@ -28,7 +29,7 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 /// Below this threshold, the neuron is considered sufficiently converged.
 const MIN_PLATEAU_ERROR: f32 = 0.05;
 
-/// Maximum coefficient of variation (std_dev / mean) for error to be considered
+/// Maximum coefficient of variation (`std_dev` / mean) for error to be considered
 /// a plateau. Low CV means errors are tightly clustered around the mean.
 const MAX_COEFFICIENT_OF_VARIATION: f32 = 0.3;
 
@@ -53,7 +54,7 @@ pub struct ErrorPlateauCandidate {
     pub mean_error: f32,
     /// Standard deviation of errors.
     pub error_std_dev: f32,
-    /// Coefficient of variation (std_dev / mean).
+    /// Coefficient of variation (`std_dev` / mean).
     pub error_coefficient_of_variation: f32,
     /// Confidence in the plateau detection (0.0 to 1.0).
     pub confidence: f32,

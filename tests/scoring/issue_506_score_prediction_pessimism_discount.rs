@@ -8,6 +8,7 @@
 //! based on the `improved_count / total_count` ratio to produce more realistic
 //! predictions.
 
+#![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::skip_without_gpu;
 use neat_ai_discovery::analysis::synapse::apply_pessimism_discount;
 
@@ -137,7 +138,7 @@ fn test_pessimism_discount_reduces_weak_signal_significantly() {
 ///
 /// Creates a minimal network with clear error correlation and verifies that
 /// the pessimism discount is applied (gain is less than what it would be without
-/// the discount). We compare candidates' gain against their improved_count ratio.
+/// the discount). We compare candidates' gain against their `improved_count` ratio.
 #[test]
 fn test_issue_506_synapse_candidates_have_pessimism_discount() {
     skip_without_gpu!();

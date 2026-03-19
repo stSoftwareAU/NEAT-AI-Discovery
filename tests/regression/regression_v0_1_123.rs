@@ -5,7 +5,7 @@
 //!
 //! ## Fixes covered:
 //!
-//! 1. **MIN_FALLBACK_IMPROVEMENT (2%)**: Fallback candidates with very low predicted
+//! 1. **`MIN_FALLBACK_IMPROVEMENT` (2%)**: Fallback candidates with very low predicted
 //!    improvement (<2%) were causing 100% failure rates because the model's error
 //!    margin (~±0.5%) exceeded the prediction itself.
 //!
@@ -15,6 +15,7 @@
 //!
 //! If any of these tests fail after a code change, the fix has regressed.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::analyze_neurons;
 use neat_ai_discovery::analysis::shared::NeuronNoCandidateReason;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
@@ -36,12 +37,12 @@ macro_rules! skip_without_gpu {
 ///
 /// BUG (fixed in v0.1.123): Hidden neurons were entirely filtered out from
 /// add-neuron analysis due to observed "100% failure rates". This was caused
-/// by the same low-confidence fallback issue. With MIN_FALLBACK_IMPROVEMENT
+/// by the same low-confidence fallback issue. With `MIN_FALLBACK_IMPROVEMENT`
 /// fixed, hidden neurons can now be analysed with impact-based discounting.
 ///
 /// This test verifies that hidden neurons ARE included in analysis.
 /// If this test fails, check that the neuron type filter in
-/// analyze_neurons_with_cache() allows "hidden" neurons through.
+/// `analyze_neurons_with_cache()` allows "hidden" neurons through.
 #[test]
 fn regression_hidden_neurons_must_be_analyzed_not_filtered() {
     skip_without_gpu!();
@@ -191,8 +192,8 @@ fn regression_hidden_neurons_must_be_analyzed_not_filtered() {
 /// REGRESSION TEST: Fallback candidates must meet minimum 2% improvement threshold.
 ///
 /// BUG (fixed in v0.1.123): Fallback candidates with very low predicted improvement
-/// v0.1.134: Removed the arbitrary 2% MIN_FALLBACK_IMPROVEMENT threshold.
-/// v0.1.135: Added split-error evaluation - expected_creature_score_gain is now
+/// v0.1.134: Removed the arbitrary 2% `MIN_FALLBACK_IMPROVEMENT` threshold.
+/// v0.1.135: Added split-error evaluation - `expected_creature_score_gain` is now
 /// the NET improvement across ALL samples, not just a subset.
 ///
 /// The only requirement is positive improvement. TypeScript evaluates actual score.
@@ -398,7 +399,7 @@ fn regression_hidden_neuron_predictions_must_be_impact_discounted() {
 /// REGRESSION TEST: Discounted hidden neuron candidates must still meet 2% threshold.
 ///
 /// BUG (fixed in v0.1.124): After applying impact-based discounting for hidden neurons,
-/// candidates were not re-filtered against MIN_FALLBACK_IMPROVEMENT (2%). A hidden
+/// candidates were not re-filtered against `MIN_FALLBACK_IMPROVEMENT` (2%). A hidden
 /// neuron with 3% raw improvement and 0.3 impact would be discounted to 0.9%, falling
 /// below the minimum threshold but still returned.
 ///
@@ -563,12 +564,12 @@ fn regression_discounted_hidden_neurons_must_meet_minimum_threshold() {
     );
 }
 
-/// REGRESSION TEST: Impact-discounted neurons must appear in EITHER helpful_neurons OR no_candidate_reasons.
+/// REGRESSION TEST: Impact-discounted neurons must appear in EITHER `helpful_neurons` OR `no_candidate_reasons`.
 ///
 /// BUG (to be fixed in v0.1.125): When a hidden neuron candidate is found but then filtered out
 /// by impact discounting (falls below 2% after discount), the neuron disappears from BOTH:
 /// - `helpful_neurons` (candidate was removed by re-filtering)
-/// - `no_candidate_reasons` (had_candidate was set to true before filtering)
+/// - `no_candidate_reasons` (`had_candidate` was set to true before filtering)
 ///
 /// This causes focus neurons to silently disappear from the response, leaving callers
 /// with no information about neurons they explicitly requested analysis for.

@@ -19,12 +19,13 @@
 //! 9. Verify candidates are sorted by estimated improvement
 //! 10. Verify empty records produce no candidates
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::bimodal_neuron::{
     bimodal_neurons_to_coordinated_candidates, detect_bimodal_neurons,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 
-/// Helper: create a DiscoverRecord with a specific pre-activation value.
+/// Helper: create a `DiscoverRecord` with a specific pre-activation value.
 fn make_record(neuron_uuid: &str, obs_index: u32, value: Option<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,

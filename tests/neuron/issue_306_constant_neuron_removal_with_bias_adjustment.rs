@@ -2,12 +2,12 @@
 //!
 //! When a hidden neuron has near-constant activation (very low variance), removing it
 //! is equivalent to adjusting the biases of all downstream neurons by:
-//!   bias_adjustment = synapse_weight * mean_activation
+//!   `bias_adjustment` = `synapse_weight` * `mean_activation`
 //!
 //! This test verifies that such neurons are identified and returned as coordinated
 //! structural candidates containing:
-//! - RemoveNeuron operation for the constant neuron
-//! - SetBias operations for all downstream neurons with adjusted biases
+//! - `RemoveNeuron` operation for the constant neuron
+//! - `SetBias` operations for all downstream neurons with adjusted biases
 
 use neat_ai_discovery::focus::rank_focus_neurons;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
@@ -87,7 +87,7 @@ fn create_records_with_variance(
 ///   input-0 → constant-hidden (always outputs 1.0) → output-0
 ///
 /// When constant-hidden is removed, output-0's bias should be adjusted by:
-///   bias_adjustment = synapse_weight × mean_activation = 0.5 × 1.0 = 0.5
+///   `bias_adjustment` = `synapse_weight` × `mean_activation` = 0.5 × 1.0 = 0.5
 #[test]
 fn issue_306_constant_neuron_creates_removal_candidate_with_bias_adjustment() {
     // Create a creature with a hidden neuron that has constant activation

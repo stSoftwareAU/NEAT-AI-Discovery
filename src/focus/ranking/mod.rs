@@ -10,6 +10,7 @@
 //! - `score_calculation` — Individual neuron ranking score computation
 //! - `removal_candidates` — Removal candidate identification and constant neuron removal
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 pub(super) mod record_providers;
 mod removal_candidates;
 mod score_calculation;
@@ -52,8 +53,8 @@ pub struct RankFocusStats {
     /// When a hidden neuron has near-zero activation variance (constant output), it can be
     /// removed and its effect folded into bias adjustments for downstream neurons.
     /// Each candidate contains:
-    /// - A RemoveNeuron operation for the constant neuron
-    /// - SetBias operations for all downstream neurons with adjusted biases
+    /// - A `RemoveNeuron` operation for the constant neuron
+    /// - `SetBias` operations for all downstream neurons with adjusted biases
     pub constant_neuron_removals: Vec<CoordinatedStructuralCandidateJson>,
     pub max_output_error: f32,
     pub processed_neurons: usize,
@@ -338,8 +339,8 @@ pub fn rank_focus_neurons(
 /// ```
 ///
 /// where:
-/// - `base_score` = error × impact^gamma (same as rank_focus_neurons)
-/// - `history_factor` = bayesian_score from history (0.0 to 1.0)
+/// - `base_score` = error × impact^gamma (same as `rank_focus_neurons`)
+/// - `history_factor` = `bayesian_score` from history (0.0 to 1.0)
 /// - For neurons not in history, `history_factor` = 0.5 (neutral prior)
 ///
 /// # Arguments

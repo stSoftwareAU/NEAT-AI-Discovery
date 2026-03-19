@@ -10,7 +10,7 @@
 // =============================================================================
 
 /// EXPONENTIAL must return a finite value for extreme negative inputs
-/// (f64 exp() underflows to 0.0, which must cast to finite f32).
+/// (f64 `exp()` underflows to 0.0, which must cast to finite f32).
 #[test]
 fn exponential_returns_finite_for_extreme_negative() {
     let y = neat_ai_discovery::activations::apply_scalar_squash("EXPONENTIAL", f32::MIN)
@@ -51,7 +51,7 @@ fn exponential_returns_finite_for_non_finite_inputs() {
 }
 
 /// SOFTPLUS must return a finite value for extreme positive inputs
-/// (below the cutoff but still large enough to produce large exp() values).
+/// (below the cutoff but still large enough to produce large `exp()` values).
 #[test]
 fn softplus_returns_finite_for_large_positive() {
     let x = 700.0_f32; // below SOFTPLUS_CUTOFF (709) but large

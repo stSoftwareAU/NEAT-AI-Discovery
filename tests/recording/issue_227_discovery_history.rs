@@ -11,6 +11,12 @@
 //! - History can be persisted and loaded
 //! - Focus selection incorporates history scores
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::discovery_history::{DiscoveryHistory, NeuronDiscoveryHistory};
 use neat_ai_discovery::focus::rank_focus_neurons_with_history;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;

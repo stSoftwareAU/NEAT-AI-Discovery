@@ -4,6 +4,7 @@
 //! and improve maintainability. Contains the activation function evaluation
 //! pipeline builder and GPU evaluation methods (single and batched).
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};
 use bytemuck::Zeroable;
 use std::sync::mpsc;
@@ -83,7 +84,7 @@ impl GpuAnalyzer {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
 
@@ -92,7 +93,7 @@ impl GpuAnalyzer {
 
     /// Build the activation output reduction pipeline (Issue #567).
     ///
-    /// This pipeline aggregates ActivationOutput data on the GPU using parallel
+    /// This pipeline aggregates `ActivationOutput` data on the GPU using parallel
     /// tree reduction within workgroups, reducing GPU→CPU transfer by ~255×.
     pub(super) fn build_activation_reduce_pipeline(
         device: &wgpu::Device,
@@ -150,7 +151,7 @@ impl GpuAnalyzer {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
 
@@ -165,9 +166,9 @@ impl GpuAnalyzer {
 impl GpuAnalyzer {
     /// GPU-accelerated general activation evaluation.
     ///
-    /// Returns (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count).
+    /// Returns (`sum_activation_sq`, `sum_error_activation`, `total_baseline_error_sq`, `improved_count`).
     ///
-    /// For sample sets with >= GPU_REDUCTION_THRESHOLD samples, uses GPU-side
+    /// For sample sets with >= `GPU_REDUCTION_THRESHOLD` samples, uses GPU-side
     /// workgroup reduction to minimise data transfer (Issue #567).
     pub fn evaluate_activation_gpu(
         &self,
@@ -436,10 +437,10 @@ impl GpuAnalyzer {
     /// Issue #201: Evaluates multiple activation function configurations in a single
     /// GPU command buffer submission, reducing CPU-GPU round-trips by 10-20%.
     ///
-    /// Issue #567: For sample sets with >= GPU_REDUCTION_THRESHOLD samples, uses
+    /// Issue #567: For sample sets with >= `GPU_REDUCTION_THRESHOLD` samples, uses
     /// GPU-side workgroup reduction to minimise data transfer by ~255×.
     ///
-    /// Instead of submitting separate GPU operations for each (activation_type, orientation, scale)
+    /// Instead of submitting separate GPU operations for each (`activation_type`, orientation, scale)
     /// combination, this method:
     /// 1. Uploads sample data once
     /// 2. Creates all compute passes in a single command buffer
@@ -449,10 +450,10 @@ impl GpuAnalyzer {
     ///
     /// # Arguments
     /// * `samples` - The sample data to evaluate (uploaded once)
-    /// * `activation_configs` - List of (activation_type, orientation, scale) tuples
+    /// * `activation_configs` - List of (`activation_type`, orientation, scale) tuples
     ///
     /// # Returns
-    /// Vector of (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count)
+    /// Vector of (`sum_activation_sq`, `sum_error_activation`, `total_baseline_error_sq`, `improved_count`)
     /// in the same order as the input configs.
     pub fn evaluate_activations_batched_gpu(
         &self,

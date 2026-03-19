@@ -9,7 +9,7 @@
 //!    startup via `read_all_records_grouped_by_neuron()`. This means no disk I/O occurs
 //!    during the analysis loop.
 //!
-//! 2. **HashMap access**: After pre-loading, cache access is O(1) HashMap lookups
+//! 2. **`HashMap` access**: After pre-loading, cache access is O(1) `HashMap` lookups
 //!    (`cache.get(source_uuid)`). The order of access doesn't affect performance because
 //!    we're not doing sequential disk reads.
 //!
@@ -17,6 +17,7 @@
 //!    time per input *decreases* as input count increases. This is because fixed overhead
 //!    (GPU init, parquet loading) is amortized across more inputs.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::{
     analyze_synapses_with_cache_and_gpu_queue,

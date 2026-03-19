@@ -1,10 +1,11 @@
 //! Tests for Issue #835: Reduce lock contention on shared cache in impact computation.
 //!
 //! Verifies that impact computation produces identical results after migrating
-//! from Mutex<HashMap> to DashMap for the shared impact cache. These tests
+//! from Mutex<HashMap> to `DashMap` for the shared impact cache. These tests
 //! exercise the concurrent cache with various network topologies to ensure
 //! deterministic results under parallel execution.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::focus::compute_impacts_public;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 

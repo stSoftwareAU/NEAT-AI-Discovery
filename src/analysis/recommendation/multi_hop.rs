@@ -26,6 +26,7 @@
 //! These are emitted as `CoordinatedStructuralCandidateJson` with `AddNeuron` and/or
 //! `AddSynapse` operations.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet};
 
 use crate::types::DiscoverRecord;
@@ -324,7 +325,7 @@ fn find_three_hop_extensions(ctx: &ThreeHopContext<'_>, candidates: &mut Vec<Mul
 }
 
 /// Compute Pearson correlation between a neuron's activation and a target's error,
-/// both indexed by obs_index.
+/// both indexed by `obs_index`.
 fn compute_activation_error_correlation(
     activations: &HashMap<u32, f32>,
     errors: &HashMap<u32, f32>,
@@ -336,7 +337,7 @@ fn compute_activation_error_correlation(
     )
 }
 
-/// Compute Pearson correlation between two activation vectors indexed by obs_index.
+/// Compute Pearson correlation between two activation vectors indexed by `obs_index`.
 fn compute_activation_activation_correlation(
     activations_a: &HashMap<u32, f32>,
     activations_b: &HashMap<u32, f32>,

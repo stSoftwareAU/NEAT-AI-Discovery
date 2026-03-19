@@ -2,7 +2,7 @@
 //!
 //! When analysing multiple source neurons for the same target, there is significant
 //! overlap in which samples are relevant. This test suite verifies that:
-//! 1. Sources can be grouped by sample locality (obs_index overlap)
+//! 1. Sources can be grouped by sample locality (`obs_index` overlap)
 //! 2. Grouped sources share sample building overhead
 //! 3. GPU transfers are reduced for correlated sources
 //!
@@ -14,6 +14,11 @@
 //! | 100 sources, 80% overlap | 100 sample builds | ~5 sample builds | 20x fewer builds |
 //! | 100 sources, no overlap | 100 sample builds | 100 sample builds | No change |
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
@@ -45,7 +50,7 @@ fn create_correlated_input_creature(input_count: usize) -> CreatureJson {
     }
 }
 
-/// Create test records where all inputs share the same obs_indices.
+/// Create test records where all inputs share the same `obs_indices`.
 /// This simulates the common case where input neurons are recorded together.
 fn create_fully_correlated_records(input_count: usize, record_count: usize) -> Vec<DiscoverRecord> {
     let mut records = Vec::with_capacity((input_count + 1) * record_count);
@@ -77,8 +82,8 @@ fn create_fully_correlated_records(input_count: usize, record_count: usize) -> V
     records
 }
 
-/// Create test records where inputs have partial overlap in obs_indices.
-/// Half of the inputs share obs_indices 0-49, the other half share 50-99.
+/// Create test records where inputs have partial overlap in `obs_indices`.
+/// Half of the inputs share `obs_indices` 0-49, the other half share 50-99.
 fn create_partially_correlated_records(
     input_count: usize,
     record_count: usize,
@@ -133,7 +138,7 @@ fn create_partially_correlated_records(
     records
 }
 
-/// Test that sample locality detection correctly groups sources by obs_index overlap.
+/// Test that sample locality detection correctly groups sources by `obs_index` overlap.
 #[test]
 fn sample_locality_groups_sources_by_obs_index_overlap() {
     // This test verifies the grouping logic without needing GPU
@@ -199,7 +204,7 @@ fn sample_locality_groups_sources_by_obs_index_overlap() {
     );
 }
 
-/// Test that sources with identical obs_indices are grouped together.
+/// Test that sources with identical `obs_indices` are grouped together.
 /// This test verifies the grouping logic using local helper functions.
 #[test]
 fn sample_locality_groups_identical_obs_indices() {
@@ -255,8 +260,8 @@ fn sample_locality_keeps_disjoint_sources_separate() {
     );
 }
 
-/// Helper function to group sources by obs_index locality.
-/// Sources are grouped together if they share >= threshold fraction of their obs_indices.
+/// Helper function to group sources by `obs_index` locality.
+/// Sources are grouped together if they share >= threshold fraction of their `obs_indices`.
 fn group_sources_by_locality_test(
     source_obs_indices: &std::collections::HashMap<String, HashSet<u32>>,
     threshold: f32,

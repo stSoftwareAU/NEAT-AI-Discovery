@@ -1,10 +1,10 @@
 //! Generate a visualisation snapshot JSON from a parquet file and creature JSON.
 //!
 //! Usage:
-//!   cargo run --example generate_snapshot -- <parquet_file> <creature_json> <output_json> [max_obs]
+//!   cargo run --example `generate_snapshot` -- <`parquet_file`> <`creature_json`> <`output_json`> [`max_obs`]
 //!
 //! Example:
-//!   cargo run --release --example generate_snapshot -- \
+//!   cargo run --release --example `generate_snapshot` -- \
 //!     ~/src/GRQ/.discovery/ddc0ce7a-654b-5e40-9d9d-bf34e5b6b0eb/discovery_data.parquet \
 //!     ~/src/GRQ-sampler/samples/GRQ-19-1.json \
 //!     ~/Develop/NEAT-AI-Explore/snapshot.json \

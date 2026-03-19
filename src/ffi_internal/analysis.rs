@@ -1,5 +1,6 @@
 //! Internal business-logic functions for analysis FFI entry points.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;
 
 use crate::ffi_types::*;

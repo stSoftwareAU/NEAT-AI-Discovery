@@ -18,6 +18,7 @@
 //! `MAX_PAIRS_PER_DOMINANT_NEURON` diverse pairs per group (varying the partner,
 //! complementarity, etc.) rather than all N×M combinations.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::recommendation::epistatic::{
     EpistaticPairCandidate, SynergisticCandidate, deduplicate_by_dominant_neuron,
     deduplicate_synergistic_by_dominant_neuron,
@@ -250,8 +251,8 @@ fn synergistic_with_distinct_primaries_unchanged() {
 
 /// Test: Dominant neuron is determined by higher individual improvement.
 ///
-/// When source_a has lower improvement than source_b, source_b is the dominant.
-/// Pairs should be grouped by actual dominant neuron, not always by source_a.
+/// When `source_a` has lower improvement than `source_b`, `source_b` is the dominant.
+/// Pairs should be grouped by actual dominant neuron, not always by `source_a`.
 #[test]
 fn epistatic_dominant_is_higher_individual_improvement() {
     // Here "partner-x" is actually the dominant because it has higher improvement

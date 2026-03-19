@@ -22,8 +22,9 @@
 //! ## Recommended Actions
 //!
 //! 1. Change activation from RELU to RELU6 to cap high activations
-//! 2. For other unbounded activations, may recommend HARD_TANH or adjust weights
+//! 2. For other unbounded activations, may recommend `HARD_TANH` or adjust weights
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{hidden, make_creature, output, record, synapse};
 use neat_ai_discovery::analysis::detection::unbounded_capping::{
     detect_unbounded_capping_candidates, unbounded_capping_to_coordinated_candidates,

@@ -18,6 +18,11 @@
 //! of candidates each module produced. Accept/reject outcomes are recorded externally
 //! by the NEAT-AI controller when ablation results are available.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

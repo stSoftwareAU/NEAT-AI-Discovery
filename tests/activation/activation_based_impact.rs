@@ -586,7 +586,7 @@ fn test_if_neuron_without_synapse_types_uses_equal_probability() {
 // =============================================================================
 
 /// Verify that the old equal-probability behaviour is preserved when no activation data.
-/// This test uses compute_impacts_public which doesn't have activation data.
+/// This test uses `compute_impacts_public` which doesn't have activation data.
 #[test]
 fn test_selection_neurons_without_activation_data_use_equal_probability() {
     use neat_ai_discovery::focus::compute_impacts_public;

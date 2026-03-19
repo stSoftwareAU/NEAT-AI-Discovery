@@ -17,6 +17,7 @@
 //! 8. Test configurable utilisation threshold
 //! 9. Test multiple neurons — only restricted ones detected
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{hidden, hidden_with_bias, make_creature, neuron, output, record, synapse};
 use neat_ai_discovery::CoordinatedStructuralOpJson;
 use neat_ai_discovery::analysis::detection::restricted_range::{

@@ -1,5 +1,6 @@
 //! Threshold computation and source variance analysis functions.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::types::DiscoverRecord;
 
 use super::{DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD, HelpfulSample};
@@ -28,7 +29,7 @@ use crate::analysis::constants::MIN_SOURCE_STD_DEV as MIN_SOURCE_STD_DEV_REFEREN
 /// # Formula
 /// `discount = min(1.0, source_std_dev / MIN_SOURCE_STD_DEV)`
 ///
-/// Where MIN_SOURCE_STD_DEV = 0.05 (sources with std dev < 0.05 are progressively discounted)
+/// Where `MIN_SOURCE_STD_DEV` = 0.05 (sources with std dev < 0.05 are progressively discounted)
 pub fn compute_source_variance_discount(samples: &[HelpfulSample]) -> f32 {
     if samples.len() < 2 {
         return 0.0;

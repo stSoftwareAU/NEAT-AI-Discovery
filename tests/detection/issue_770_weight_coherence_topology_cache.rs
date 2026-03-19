@@ -1,8 +1,9 @@
-//! Tests for Issue #770: Pass CreatureTopologyCache to weight_coherence detection functions.
+//! Tests for Issue #770: Pass `CreatureTopologyCache` to `weight_coherence` detection functions.
 //!
 //! Verifies that the weight coherence detection functions produce identical results
 //! when given a pre-computed topology cache vs building locally (None).
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{make_creature, neuron, synapse};
 use neat_ai_discovery::analysis::detection::topology_cache::CreatureTopologyCache;
 use neat_ai_discovery::analysis::detection::weight_coherence::{

@@ -11,7 +11,7 @@ use crate::ffi_types::DiscoveryErrorKind;
 // Visualisation Snapshot Export API Types
 // ============================================================================
 
-/// JSON output from export_visualisation_snapshot function
+/// JSON output from `export_visualisation_snapshot` function
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportVisualisationSnapshotOutput {
@@ -64,7 +64,7 @@ pub struct MergeParquetOutput {
 // Read discovery records types
 // ============================================================================
 
-/// JSON output from read_discovery_records function
+/// JSON output from `read_discovery_records` function
 #[derive(Debug, Serialize)]
 pub struct ReadDiscoveryOutput {
     pub success: bool,
@@ -80,7 +80,7 @@ pub struct ReadDiscoveryOutput {
     pub retryable: Option<bool>,
 }
 
-/// JSON representation of DiscoverRecord for serialization
+/// JSON representation of `DiscoverRecord` for serialization
 #[derive(Debug, Serialize)]
 pub struct DiscoverRecordJson {
     pub obs_index: u32,
@@ -94,7 +94,7 @@ pub struct DiscoverRecordJson {
 // Calibration Summary (Issue #605)
 // ============================================================================
 
-/// JSON output from get_calibration_summary function.
+/// JSON output from `get_calibration_summary` function.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CalibrationSummaryOutput {

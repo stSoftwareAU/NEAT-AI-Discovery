@@ -34,13 +34,14 @@
 //! 25. Verify removal candidate uses removeSynapse operation
 //! 26. Verify Pearson correlation computed correctly for perfect correlation
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::opposing_synapse::{
     detect_opposing_synapses, opposing_synapses_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord for a neuron with given activation and errors.
+/// Helper: create a `DiscoverRecord` for a neuron with given activation and errors.
 fn make_record(
     neuron_uuid: &str,
     obs_index: u32,
@@ -66,7 +67,7 @@ fn make_creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>) -> Creatu
     }
 }
 
-/// Helper: build a NeuronJson.
+/// Helper: build a `NeuronJson`.
 fn neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
     NeuronJson {
         uuid: uuid.to_string(),
@@ -76,7 +77,7 @@ fn neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
     }
 }
 
-/// Helper: build a SynapseJson.
+/// Helper: build a `SynapseJson`.
 fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
     SynapseJson {
         from_uuid: from.to_string(),

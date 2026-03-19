@@ -1,8 +1,8 @@
 //! Tests for diagnostics and rejection tracking functionality.
 //!
 //! Tests cover:
-//! - TargetDiagnostics preference and candidate selection
-//! - NeuronDiagnostics load failure tracking and reporting
+//! - `TargetDiagnostics` preference and candidate selection
+//! - `NeuronDiagnostics` load failure tracking and reporting
 //! - Focus target filtering for threshold activations
 //! - Hidden/input/constant neuron filtering
 

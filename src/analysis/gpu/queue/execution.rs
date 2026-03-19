@@ -10,6 +10,7 @@
 //! limit is configurable via the `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` environment
 //! variable (default: 3).
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;
 use crossbeam_channel::Receiver;
 use std::time::Instant;
@@ -365,7 +366,7 @@ fn send_error_to_request(request: &GpuWorkRequest, error_msg: &str) {
     }
 }
 
-/// Implementation for shared GpuWorkQueue.
+/// Implementation for shared `GpuWorkQueue`.
 /// NOTE: These trait methods use `None` deadline, which gives maximum timeout (5 minutes).
 /// For deadline-aware evaluation, use the batch methods directly with an explicit deadline.
 impl GpuEvaluator for GpuWorkQueue {

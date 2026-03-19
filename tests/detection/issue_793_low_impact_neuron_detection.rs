@@ -7,14 +7,15 @@
 //!
 //! ## TDD Plan
 //! 1. Neuron with mean abs activation in the low-impact range is detected
-//! 2. Truly dead neurons (below 1e-6) are NOT detected (handled by dead_neuron module)
+//! 2. Truly dead neurons (below 1e-6) are NOT detected (handled by `dead_neuron` module)
 //! 3. Active neurons (above the low-impact threshold) are NOT detected
 //! 4. Confidence scales with sample count (more samples = higher confidence)
 //! 5. Confidence scales inversely with activation magnitude (lower = more confident)
 //! 6. Output and input neurons are excluded
-//! 7. Candidates convert to coordinated structural RemoveNeuron operations
+//! 7. Candidates convert to coordinated structural `RemoveNeuron` operations
 //! 8. Mixed network: only low-impact neurons are detected
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{make_creature, neuron, record, synapse};
 use neat_ai_discovery::analysis::detection::low_impact_neuron::{
     LowImpactNeuronCandidate, detect_low_impact_neurons,
@@ -58,7 +59,7 @@ fn test_detects_low_impact_neuron() {
     );
 }
 
-/// Test 2: Truly dead neuron (below 1e-6) is NOT detected — handled by dead_neuron module.
+/// Test 2: Truly dead neuron (below 1e-6) is NOT detected — handled by `dead_neuron` module.
 #[test]
 fn test_does_not_detect_dead_neurons() {
     let creature = make_creature(
@@ -233,7 +234,7 @@ fn test_output_and_input_neurons_excluded() {
     );
 }
 
-/// Test 7: Candidates convert to coordinated structural RemoveNeuron operations.
+/// Test 7: Candidates convert to coordinated structural `RemoveNeuron` operations.
 #[test]
 fn test_low_impact_neuron_candidates_produce_coordinated_removal_operations() {
     let candidate = LowImpactNeuronCandidate {

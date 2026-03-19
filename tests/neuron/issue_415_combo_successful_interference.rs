@@ -16,6 +16,7 @@
 //! Add interference detection to filter out incompatible candidate pairs before
 //! returning coordinated structural candidates.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::analysis::recommendation::epistatic::{
     InterferenceType, detect_interfering_pairs,

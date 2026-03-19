@@ -4,6 +4,7 @@
 //! `EarlyTerminationConfig`, and `check_batch_early_termination`. These tests
 //! complement existing unit tests by exploring edge cases with randomised inputs.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::early_termination::{
     EarlyTerminationConfig, EarlyTerminationDecision, SequentialEvaluator,
     check_batch_early_termination,

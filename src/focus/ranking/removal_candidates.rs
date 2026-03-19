@@ -3,6 +3,7 @@
 //! Contains `RemovalCandidate`, `SynapseCounts`, `calculate_removal_savings`,
 //! and detection of constant-value neurons for coordinated structural removal.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::record_providers::get_records_or_error;
 use super::score_calculation::activation_mean_and_variance_from_records;
 use crate::{
@@ -26,7 +27,7 @@ pub struct RemovalCandidate {
     pub impact: f32,
     /// Mean absolute activation value from recorded samples
     pub mean_activation: f32,
-    /// Activation-weighted impact = structural_impact × mean_activation
+    /// Activation-weighted impact = `structural_impact` × `mean_activation`
     /// This reflects the actual contribution the neuron makes during inference
     pub activation_weighted_impact: f32,
     /// Number of synapses pointing TO this neuron
@@ -36,9 +37,9 @@ pub struct RemovalCandidate {
     /// The complexity savings from removing this neuron (based on NEAT-AI Score.ts formula)
     pub removal_savings: f32,
     /// Expected creature-level error reduction from removing this neuron.
-    /// This is based on activation_weighted_impact, NOT the neuron's error.
+    /// This is based on `activation_weighted_impact`, NOT the neuron's error.
     ///
-    /// Issue #117: Previously, total_error was incorrectly used as expected error reduction,
+    /// Issue #117: Previously, `total_error` was incorrectly used as expected error reduction,
     /// leading to predictions like 27% when actual reduction was ~0%.
     pub expected_error_reduction: f32,
     pub reason: String,
@@ -82,14 +83,14 @@ pub fn calculate_removal_savings(
 /// twice (incoming + outgoing) for each neuron being ranked. With n neurons and m synapses,
 /// this was O(n × m) complexity.
 ///
-/// This struct pre-builds two HashMaps during initialisation in O(m) time, then provides
+/// This struct pre-builds two `HashMaps` during initialisation in O(m) time, then provides
 /// O(1) lookup for any neuron's synapse counts. Total complexity is O(n + m).
 ///
 /// # Example performance improvement
 ///
 /// For a creature with 500 neurons and 10,000 synapses:
 /// - Previous: 500 × 10,000 × 2 = **10 million** iterations
-/// - With SynapseCounts: 10,000 + 500 = **10,500** iterations
+/// - With `SynapseCounts`: 10,000 + 500 = **10,500** iterations
 /// - **~1000x improvement**
 #[derive(Debug)]
 pub struct SynapseCounts {
@@ -100,7 +101,7 @@ pub struct SynapseCounts {
 }
 
 impl SynapseCounts {
-    /// Create a new SynapseCounts by scanning all synapses once.
+    /// Create a new `SynapseCounts` by scanning all synapses once.
     ///
     /// Time complexity: O(m) where m is the number of synapses.
     /// Space complexity: O(n) where n is the number of unique neurons with synapses.
@@ -122,7 +123,7 @@ impl SynapseCounts {
     /// * `neuron_uuid` - The UUID of the neuron to look up
     ///
     /// # Returns
-    /// A tuple of (incoming_count, outgoing_count). Returns (0, 0) if the neuron
+    /// A tuple of (`incoming_count`, `outgoing_count`). Returns (0, 0) if the neuron
     /// has no synapses or doesn't exist in the creature.
     pub fn get(&self, neuron_uuid: &str) -> (usize, usize) {
         (
@@ -135,7 +136,7 @@ impl SynapseCounts {
 /// Identify removal candidates from ranked neurons.
 ///
 /// Issue #235: Return ALL neurons where removal improves the creature's score.
-/// A removal improves score when: removal_savings > activation_weighted_impact
+/// A removal improves score when: `removal_savings` > `activation_weighted_impact`
 pub(super) fn identify_removal_candidates(
     neurons: &[RankedNeuron],
     synapse_counts: &SynapseCounts,
@@ -205,7 +206,7 @@ pub(super) fn identify_removal_candidates(
 /// Issue #217/306: Neurons with variance below this threshold are treated as constant
 /// and can be removed with bias adjustments for downstream neurons.
 ///
-/// Value 1e-10 is from Issue #217's proposal for DEAD_VARIANCE_THRESHOLD.
+/// Value 1e-10 is from Issue #217's proposal for `DEAD_VARIANCE_THRESHOLD`.
 const CONSTANT_VARIANCE_THRESHOLD: f32 = 1e-10;
 
 /// Detect constant-value neurons and create coordinated structural candidates
@@ -213,7 +214,7 @@ const CONSTANT_VARIANCE_THRESHOLD: f32 = 1e-10;
 ///
 /// A neuron with near-zero activation variance is "constant" - it always outputs roughly
 /// the same value regardless of input. Removing it is equivalent to adjusting the biases
-/// of downstream neurons by: bias_adjustment = synapse_weight × mean_activation
+/// of downstream neurons by: `bias_adjustment` = `synapse_weight` × `mean_activation`
 pub(super) fn detect_constant_neuron_removals(
     selectable: &[&NeuronJson],
     records_provider: &Arc<dyn RecordProvider>,

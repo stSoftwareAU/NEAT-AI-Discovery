@@ -5,11 +5,12 @@
 //! success rate compared to 5.3–5.4% for output or discovery-hidden neurons.
 //! These tests verify that:
 //!
-//! 1. The EXISTING_HIDDEN_TARGET_BOOST constant is within a valid range
-//! 2. The apply_target_type_boost function boosts existing hidden targets
+//! 1. The `EXISTING_HIDDEN_TARGET_BOOST` constant is within a valid range
+//! 2. The `apply_target_type_boost` function boosts existing hidden targets
 //! 3. Under deadline constraints, existing hidden targets are evaluated first
 //! 4. Output neurons receive no target-type boost
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::constants::EXISTING_HIDDEN_TARGET_BOOST;
 use neat_ai_discovery::analysis::synapse::apply_target_type_boost;
 use std::collections::HashMap;

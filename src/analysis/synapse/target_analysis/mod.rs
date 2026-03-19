@@ -17,6 +17,7 @@
 //! - `candidate_selection` — Epistatic, synergistic, and redundant path detection
 //! - `statistics` — Source filtering, record loading, sample building orchestration
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod candidate_selection;
 mod evaluation;
 mod statistics;
@@ -66,7 +67,7 @@ pub(crate) struct TargetAnalysisResults {
     pub coordinated: Vec<crate::CoordinatedStructuralCandidateJson>,
     /// Error values collected from target records for distribution analysis.
     pub error_values: Vec<f32>,
-    /// Whether any samples had target_value data available.
+    /// Whether any samples had `target_value` data available.
     pub target_value_seen: bool,
     /// Whether saturation-aware simulation was used for any candidate.
     pub saturation_aware_used: bool,

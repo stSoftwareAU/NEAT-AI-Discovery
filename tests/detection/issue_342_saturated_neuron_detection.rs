@@ -12,12 +12,13 @@
 //! 4. Test activation function recommendation logic
 //! 5. Test bias adjustment calculation
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::saturation::{
     SaturatedNeuronCandidate, detect_saturated_neurons, saturated_neurons_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 
-/// Helper: create a DiscoverRecord for a neuron with given activation.
+/// Helper: create a `DiscoverRecord` for a neuron with given activation.
 fn record(
     neuron_uuid: &str,
     obs_index: u32,
@@ -162,7 +163,7 @@ fn test_detects_logistic_saturated_at_floor() {
     );
 }
 
-/// Test 6: HARD_TANH neuron clamped at +1.0.
+/// Test 6: `HARD_TANH` neuron clamped at +1.0.
 #[test]
 fn test_detects_hard_tanh_clamped() {
     let records: Vec<DiscoverRecord> = (0..100)

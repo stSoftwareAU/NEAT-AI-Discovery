@@ -8,6 +8,7 @@
 //!
 //! This is O(2n) instead of O(n²) for pairwise analysis.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::CoordinatedStructuralCandidateJson;
 use crate::CoordinatedStructuralOpJson;
 use crate::analysis::samples::HelpfulSample;
@@ -106,7 +107,7 @@ pub fn detect_synergistic_candidates(
 
 /// Compute residual errors after applying a source with given weight.
 ///
-/// Residual error = original_error - (weight × activation)
+/// Residual error = `original_error` - (weight × activation)
 fn compute_residual_errors(samples: &[HelpfulSample], weight: f32) -> Vec<ResidualSample> {
     samples
         .iter()

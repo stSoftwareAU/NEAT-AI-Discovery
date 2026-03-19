@@ -20,6 +20,7 @@
 //! - Sample count (more samples = narrower interval)
 //! - Source variance (higher variance = narrower interval)
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use serde::Serialize;
 
 use crate::analysis::samples::HelpfulSample;
@@ -79,7 +80,7 @@ pub struct PredictionConfidenceMetrics {
     /// Computed as geometric mean of sample confidence, variance confidence, and model fit.
     pub prediction_confidence: f32,
 
-    /// Confidence interval for the expected score gain: [lower_bound, upper_bound].
+    /// Confidence interval for the expected score gain: [`lower_bound`, `upper_bound`].
     ///
     /// The point estimate (expectedCreatureScoreGain) should fall within this interval.
     pub expected_score_gain_confidence_interval: [f32; 2],

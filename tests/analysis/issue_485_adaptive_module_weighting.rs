@@ -349,7 +349,7 @@ fn empty_synapse_result() -> neat_ai_discovery::analysis::shared::AnalyzeSynapse
         candidate_clusters: Vec::new(),
         gpu_used: false,
         no_candidate_reasons: Vec::new(),
-        metadata: Default::default(),
+        metadata: neat_ai_discovery::analysis::shared::SynapseAnalysisMetadata::default(),
     }
 }
 

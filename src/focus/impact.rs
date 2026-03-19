@@ -4,6 +4,7 @@
 //! path products. Handles squash-aware impact for STEP/BIPOLAR/MINIMUM/MAXIMUM
 //! neurons and activation-based selection statistics.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::ranking::{RecordProvider, SelectionStats};
 use crate::{CreatureJson, NeuronJson, SynapseJson};
 use anyhow::Result;
@@ -13,7 +14,7 @@ use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
 /// Categorise squash functions for impact calculation.
-/// See docs/IMPACT_CALCULATION.md for detailed explanation.
+/// See `docs/IMPACT_CALCULATION.md` for detailed explanation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SquashCategory {
     /// Linear or approximately linear (IDENTITY, TANH, etc.)
@@ -50,7 +51,7 @@ impl SquashCategory {
 ///
 /// For each selection-based neuron, this function analyses the recorded activations to determine
 /// which synapse "wins" (provides the min/max value) for each observation. The result is a map
-/// from (from_uuid, to_uuid) to the probability (0.0 to 1.0) that synapse wins.
+/// from (`from_uuid`, `to_uuid`) to the probability (0.0 to 1.0) that synapse wins.
 ///
 /// For IF neurons with synapse types:
 /// - "condition" synapses: Always contribute, so probability = 1.0
@@ -62,7 +63,7 @@ impl SquashCategory {
 /// * `grouped_records` - Activation records grouped by neuron UUID
 ///
 /// # Returns
-/// Map from (from_uuid, to_uuid) to win probability for selection-based synapses
+/// Map from (`from_uuid`, `to_uuid`) to win probability for selection-based synapses
 pub fn compute_selection_stats(
     creature: &CreatureJson,
     grouped_records: &dyn RecordProvider,
@@ -389,25 +390,25 @@ fn compute_if_stats(
 // calculation fix. The normalisation it supported was causing massive
 // underestimation of neuron impact (see regression_v0_1_126.rs tests).
 
-/// Public version of compute_impacts for use in add-neuron analysis.
+/// Public version of `compute_impacts` for use in add-neuron analysis.
 /// Computes the structural impact of each neuron on outputs (path weight products).
 /// Output neurons have impact = 1.0, hidden neurons have impact in [0, 1] based on
 /// their weighted paths to outputs.
 ///
 /// NOTE: This function is squash-aware. For neurons feeding into STEP/BIPOLAR/MINIMUM/MAXIMUM
 /// targets, the impact calculation uses special handling to avoid underestimation.
-/// See docs/IMPACT_CALCULATION.md for detailed explanation.
+/// See `docs/IMPACT_CALCULATION.md` for detailed explanation.
 pub fn compute_impacts_public(creature: &CreatureJson) -> HashMap<String, f32> {
     compute_impacts_internal(creature)
 }
 
 /// Context for impact calculation, containing pre-computed lookup tables.
-/// This struct groups related parameters to avoid clippy::too_many_arguments.
+/// This struct groups related parameters to avoid `clippy::too_many_arguments`.
 struct ImpactContext {
     adjacency: HashMap<String, Vec<(String, f32)>>,
     inbound_count: HashMap<String, usize>,
     /// Sum of |weight| for all synapses INTO each target neuron.
-    /// Used for normalising Linear squash impact: |w| / total_inbound_weight × child_impact
+    /// Used for normalising Linear squash impact: |w| / `total_inbound_weight` × `child_impact`
     /// This ensures hidden neurons always have impact < 1.0 (Issue #130).
     total_inbound_weight: HashMap<String, f32>,
     squash_map: HashMap<String, String>,

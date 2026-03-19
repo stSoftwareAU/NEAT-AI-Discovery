@@ -179,7 +179,7 @@ fn test_target_neuron_impact_field_exists() {
 /// Issue #128: Candidates should include `expectedCreatureErrorReduction` field.
 ///
 /// This field shows the expected reduction in the creature's overall error.
-/// Formula: neuron_error_reduction × target_neuron_impact
+/// Formula: `neuron_error_reduction` × `target_neuron_impact`
 #[test]
 fn test_expected_creature_error_reduction_field_exists() {
     skip_without_gpu!();
@@ -215,7 +215,7 @@ fn test_expected_creature_error_reduction_field_exists() {
 /// Issue #128: Candidates should include `expectedCreatureScoreGain` field.
 ///
 /// This field shows the expected improvement in the creature's score.
-/// Since score = 1 - error, score_gain ≈ error_reduction.
+/// Since score = 1 - error, `score_gain` ≈ `error_reduction`.
 #[test]
 fn test_expected_creature_score_gain_field_exists() {
     skip_without_gpu!();

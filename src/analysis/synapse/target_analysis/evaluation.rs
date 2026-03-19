@@ -3,8 +3,9 @@
 //! This module handles GPU work submission, result collection, and processing
 //! of helpful and harmful synapse candidates.
 //!
-//! Extracted from target_analysis.rs as part of Issue #599.
+//! Extracted from `target_analysis.rs` as part of Issue #599.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::CandidateSynapseJson;
 use crate::analysis::activation::get_target_simulation_fn;
 use crate::analysis::cache::RecordCache;

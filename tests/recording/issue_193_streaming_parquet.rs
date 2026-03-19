@@ -17,6 +17,7 @@
 //! These tests use `NEAT_AI_DISCOVERY_BLOCK_SIZE=10` to create multiple blocks
 //! from small test datasets.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use serial_test::serial;
@@ -88,7 +89,7 @@ fn streaming_cache_provides_correct_records() {
     }
 }
 
-/// Test that streaming cache respects max_cached_blocks configuration.
+/// Test that streaming cache respects `max_cached_blocks` configuration.
 #[test]
 fn streaming_cache_respects_max_blocks() {
     use neat_ai_discovery::analysis::cache::StreamingRecordCache;
@@ -207,7 +208,7 @@ fn streaming_cache_respects_env_config() {
     assert!(config.prefetch_depth.is_some() && config.prefetch_depth.unwrap() <= 10);
 }
 
-/// Test that NEAT_AI_DISCOVERY_PRELOAD_ALL=1 disables streaming mode.
+/// Test that `NEAT_AI_DISCOVERY_PRELOAD_ALL=1` disables streaming mode.
 #[test]
 fn preload_all_disables_streaming() {
     use neat_ai_discovery::analysis::cache::is_streaming_enabled;
@@ -328,7 +329,7 @@ fn streaming_cache_bounds_memory_usage() {
     assert_eq!(records.len(), 100);
 }
 
-/// Test that RecordCache::new_adaptive chooses streaming mode for large files.
+/// Test that `RecordCache::new_adaptive` chooses streaming mode for large files.
 #[test]
 fn new_adaptive_uses_streaming_for_memory_constraints() {
     // This test verifies that the adaptive mode considers streaming

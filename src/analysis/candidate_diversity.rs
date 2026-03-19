@@ -22,6 +22,7 @@
 //! - **Affected neuron overlap** — targeting/sourcing the same neurons scores higher.
 //! - Both factors are combined into a single [0.0, 1.0] score.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};

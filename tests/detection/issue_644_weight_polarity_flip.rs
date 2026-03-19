@@ -21,6 +21,7 @@
 //! 8. Test candidates are distinct from small-delta gradient proposals
 //! 9. Test candidates sorted by improvement
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{make_creature, neuron, output, synapse};
 use neat_ai_discovery::analysis::detection::weight_polarity_flip::{
     detect_weight_polarity_flip_candidates, polarity_flip_candidates_to_coordinated,

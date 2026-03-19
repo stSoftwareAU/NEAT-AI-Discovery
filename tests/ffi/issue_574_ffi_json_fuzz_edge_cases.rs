@@ -373,7 +373,7 @@ fn export_visualisation_nonexistent_file_does_not_panic() {
 // Deserialisation with valid structure — type coercion edge cases
 // ============================================================================
 
-/// Verify that CreatureJson deserialises with default values for optional fields.
+/// Verify that `CreatureJson` deserialises with default values for optional fields.
 #[test]
 fn creature_json_defaults_applied_correctly() {
     // Minimal neuron — squash defaults to IDENTITY, bias defaults to 0.0
@@ -391,7 +391,7 @@ fn creature_json_defaults_applied_correctly() {
     assert!(synapse.synapse_type.is_none());
 }
 
-/// Verify that CreatureJson round-trips via serde correctly.
+/// Verify that `CreatureJson` round-trips via serde correctly.
 #[test]
 fn creature_json_round_trip() {
     let json = serde_json::json!({

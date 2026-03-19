@@ -13,9 +13,10 @@
 //! 6. Empty input produces no clusters
 //! 7. Cluster JSON output has the expected structure
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::candidate_clustering::{ClusterableCandidate, cluster_candidates};
 
-/// Helper: create a ClusterableCandidate for testing.
+/// Helper: create a `ClusterableCandidate` for testing.
 fn candidate(from: &str, to: &str, improvement: f32) -> ClusterableCandidate {
     ClusterableCandidate {
         from_neuron_uuid: from.to_string(),

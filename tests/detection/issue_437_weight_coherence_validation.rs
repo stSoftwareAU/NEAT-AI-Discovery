@@ -10,10 +10,11 @@
 //! 3. Test detection of symmetric weights that cancel meaningful signal
 //! 4. Test detection of bypassed neuron computation (pass-through paths)
 //! 5. Test candidate generation for setWeight adjustments
-//! 6. Test configurable threshold via WeightCoherenceConfig
+//! 6. Test configurable threshold via `WeightCoherenceConfig`
 //! 7. Test edge cases: single synapse, no hidden neurons
 //! 8. Test coherence metric normalisation for comparison
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{make_creature, neuron, synapse};
 use neat_ai_discovery::analysis::detection::weight_coherence::{
     IncoherentWeightRatioCandidate, NearConstantPathCandidate, SymmetricCancellationCandidate,
@@ -513,7 +514,7 @@ fn test_symmetric_cancellation_produces_coordinated_candidate() {
 // Test 11: Configurable threshold
 // =============================================================================
 
-/// The ratio threshold can be configured via WeightCoherenceConfig.
+/// The ratio threshold can be configured via `WeightCoherenceConfig`.
 #[test]
 fn test_configurable_ratio_threshold() {
     let creature = make_creature(

@@ -8,6 +8,7 @@
 //! This is particularly useful when new observations have been added to the training
 //! data set and the user wants discovery to focus on connecting these new inputs first.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::utils::focus_unused_observations_from_env;
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;

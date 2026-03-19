@@ -1,3 +1,4 @@
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -6,7 +7,7 @@ use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson, analyze_parallel_
 /// Regression/integration test for Issue #173 (7-Jan-2026).
 ///
 /// This verifies we can discover that an existing direct synapse should be replaced
-/// by inserting a hidden ReLU neuron (as a single coordinated-structural group):
+/// by inserting a hidden `ReLU` neuron (as a single coordinated-structural group):
 /// - removeSynapse(source -> target)
 /// - addNeuron(hidden)
 /// - addSynapse(source -> hidden)

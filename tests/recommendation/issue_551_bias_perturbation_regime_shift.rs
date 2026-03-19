@@ -10,6 +10,7 @@
 //! 6. Test multiple suboptimal neurons each produce candidates
 //! 7. Test insufficient samples returns empty
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::bias_perturbation::{
     bias_perturbation_to_coordinated_candidates, detect_bias_perturbation_candidates,
 };

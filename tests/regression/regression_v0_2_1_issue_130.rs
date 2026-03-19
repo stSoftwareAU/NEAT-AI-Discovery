@@ -16,7 +16,7 @@
 //!
 //! ## The Fix
 //!
-//! Use the normalised formula as documented in IMPACT_CALCULATION.md:
+//! Use the normalised formula as documented in `IMPACT_CALCULATION.md`:
 //!   `contribution = |weight| / total_inbound_weight × child_impact`
 //!
 //! This mathematically guarantees that hidden neurons always have impact < 1.0

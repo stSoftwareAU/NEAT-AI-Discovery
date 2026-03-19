@@ -4,9 +4,10 @@
 //! - The implementation operates on `f32` values.
 //! - EXPONENTIAL must saturate to a finite value for large inputs.
 //! - Issue #323: Behaviour matches NEAT-AI WASM implementation:
-//!   - For x >= 36.0, returns JS_MAX_SAFE_INTEGER (~9e15) instead of f32::MAX.
+//!   - For x >= 36.0, returns `JS_MAX_SAFE_INTEGER` (~9e15) instead of `f32::MAX`.
 //!   - This ensures consistency between Discovery and NEAT-AI.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 const JS_MAX_SAFE_INTEGER: f32 = 9_007_199_254_740_992.0;
 
 #[test]

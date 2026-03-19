@@ -3,6 +3,7 @@
 //! Verifies that weight coherence detection functions produce correct results
 //! after replacing HashMap/HashSet with Vec where collections are only iterated.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{make_creature, neuron, synapse};
 use neat_ai_discovery::analysis::detection::weight_coherence::{
     WeightCoherenceConfig, detect_near_constant_paths, detect_symmetric_cancellation,

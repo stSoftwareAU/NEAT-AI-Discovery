@@ -48,15 +48,15 @@ pub const HELPFUL_SHADER: &str = include_str!("../../shaders/helpful.wgsl");
 /// Identifies synapses that could be candidates for removal or weight adjustment.
 pub const HARMFUL_SHADER: &str = include_str!("../../shaders/harmful.wgsl");
 
-/// ReLU activation analysis shader.
+/// `ReLU` activation analysis shader.
 ///
-/// Evaluates ReLU activation candidates by computing statistics for samples
-/// above and below the threshold. Used for add-neuron analysis with ReLU activation.
+/// Evaluates `ReLU` activation candidates by computing statistics for samples
+/// above and below the threshold. Used for add-neuron analysis with `ReLU` activation.
 pub const RELU_SHADER: &str = include_str!("../../shaders/relu.wgsl");
 
 /// General activation function analysis shader.
 ///
-/// Evaluates various activation functions (TANH, HARD_TANH, LOGISTIC, etc.)
+/// Evaluates various activation functions (TANH, `HARD_TANH`, LOGISTIC, etc.)
 /// for add-neuron candidates. Supports orientation and scale parameters.
 pub const ACTIVATION_SHADER: &str = include_str!("../../shaders/activation.wgsl");
 
@@ -68,7 +68,7 @@ pub const BIAS_SHADER: &str = include_str!("../../shaders/bias.wgsl");
 
 /// Helpful contribution reduction shader (Issue #218).
 ///
-/// Performs parallel tree reduction within workgroups to aggregate HelpfulContribution
+/// Performs parallel tree reduction within workgroups to aggregate `HelpfulContribution`
 /// data on the GPU. This reduces GPU→CPU data transfer by ~250× for large sample counts.
 ///
 /// For 100K samples: 4.8MB → 18.8KB transfer
@@ -76,15 +76,15 @@ pub const HELPFUL_REDUCE_SHADER: &str = include_str!("../../shaders/helpful_redu
 
 /// Harmful contribution reduction shader (Issue #218).
 ///
-/// Performs parallel tree reduction within workgroups to aggregate HarmfulContribution
+/// Performs parallel tree reduction within workgroups to aggregate `HarmfulContribution`
 /// data on the GPU. This reduces GPU→CPU data transfer by ~250× for large sample counts.
 ///
 /// For 100K samples: 1.6MB → 6.3KB transfer
 pub const HARMFUL_REDUCE_SHADER: &str = include_str!("../../shaders/harmful_reduce.wgsl");
 
-/// ReLU contribution reduction shader (Issue #567).
+/// `ReLU` contribution reduction shader (Issue #567).
 ///
-/// Performs parallel tree reduction within workgroups to aggregate ReluContribution
+/// Performs parallel tree reduction within workgroups to aggregate `ReluContribution`
 /// data on the GPU. This reduces GPU→CPU data transfer by ~255× for large sample counts.
 ///
 /// For 100K samples: 4.0MB → 15.6KB transfer
@@ -92,7 +92,7 @@ pub const RELU_REDUCE_SHADER: &str = include_str!("../../shaders/relu_reduce.wgs
 
 /// Activation output reduction shader (Issue #567).
 ///
-/// Performs parallel tree reduction within workgroups to aggregate ActivationOutput
+/// Performs parallel tree reduction within workgroups to aggregate `ActivationOutput`
 /// data on the GPU. This reduces GPU→CPU data transfer by ~255× for large sample counts.
 ///
 /// For 100K samples: 2.8MB → 10.9KB transfer

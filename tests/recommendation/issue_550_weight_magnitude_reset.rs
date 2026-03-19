@@ -10,6 +10,7 @@
 //! 6. Test multiple stuck synapses produce ranked candidates
 //! 7. Test comment references issue number
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::weight_magnitude_reset::{
     detect_stuck_synapse_weight_resets, stuck_synapses_to_coordinated_candidates,
 };

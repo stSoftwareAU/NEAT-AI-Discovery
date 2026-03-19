@@ -16,13 +16,13 @@ use crate::analysis::utils::get_work_queue_capacity;
 impl GpuWorkQueue {
     /// Create a new GPU work queue with a dedicated GPU thread.
     ///
-    /// The GPU thread is spawned immediately and owns the GpuAnalyzer.
+    /// The GPU thread is spawned immediately and owns the `GpuAnalyzer`.
     /// All GPU operations are processed sequentially on this thread,
     /// eliminating device creation overhead and improving utilisation.
     ///
-    /// CRITICAL: The GpuAnalyzer is created INSIDE the GPU thread, not before.
+    /// CRITICAL: The `GpuAnalyzer` is created INSIDE the GPU thread, not before.
     /// wgpu devices have thread-local state that doesn't transfer properly when
-    /// moved across threads, causing deadlocks in device.poll().
+    /// moved across threads, causing deadlocks in `device.poll()`.
     pub fn new() -> Result<Self> {
         // Create the channel for sending work to the GPU thread.
         // Capacity is dynamically sized based on available system memory.
@@ -98,7 +98,7 @@ impl GpuWorkQueue {
     ///
     /// Uses a timeout to avoid blocking forever if the queue is full and the GPU
     /// thread is hung. If the send times out, the GPU thread is likely unresponsive
-    /// and the Drop implementation will handle cleanup via the exit_rx timeout.
+    /// and the Drop implementation will handle cleanup via the `exit_rx` timeout.
     pub fn shutdown(&self) {
         // Use timeout to avoid blocking forever if queue is full and GPU thread is hung.
         // 2 seconds is generous - if the GPU thread is responsive, it should drain

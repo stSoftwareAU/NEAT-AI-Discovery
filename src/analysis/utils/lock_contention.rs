@@ -7,6 +7,7 @@
 //! In non-verbose mode, the tracing is completely bypassed — there is no
 //! overhead from `Instant::now()` calls or threshold checks.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use parking_lot::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 

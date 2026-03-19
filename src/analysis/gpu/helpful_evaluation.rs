@@ -4,6 +4,7 @@
 //! and improve maintainability. Contains the helpful synapse evaluation
 //! pipeline builder and batch evaluation methods.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};
 use bytemuck::Zeroable;
 use std::sync::mpsc;
@@ -85,7 +86,7 @@ impl GpuAnalyzer {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
 
@@ -94,7 +95,7 @@ impl GpuAnalyzer {
 
     /// Build the helpful contribution reduction pipeline (Issue #218).
     ///
-    /// This pipeline aggregates HelpfulContribution data on the GPU using parallel
+    /// This pipeline aggregates `HelpfulContribution` data on the GPU using parallel
     /// tree reduction within workgroups, reducing GPU→CPU transfer by ~250×.
     pub(super) fn build_helpful_reduce_pipeline(
         device: &wgpu::Device,
@@ -155,7 +156,7 @@ impl GpuAnalyzer {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
 
@@ -171,7 +172,7 @@ impl GpuAnalyzer {
     /// Batch evaluate multiple helpful operations to improve GPU utilisation.
     /// Returns a vector of stats in the same order as the input samples.
     ///
-    /// For sample sets with >= GPU_REDUCTION_THRESHOLD samples, uses GPU-side
+    /// For sample sets with >= `GPU_REDUCTION_THRESHOLD` samples, uses GPU-side
     /// workgroup reduction to minimise data transfer (Issue #218).
     pub fn evaluate_helpful_batch(
         &self,

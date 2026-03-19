@@ -5,6 +5,7 @@
 //! - Activation function classification predicates
 //! - Output variance validation for candidate neurons
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::analysis::samples::HelpfulSample;
 
 /// Minimum variance of new neuron output across samples.
@@ -133,8 +134,8 @@ pub fn get_target_simulation_mode(
     TargetSimulationMode::None
 }
 
-/// Legacy function for backwards compatibility - returns true only for HARD_TANH (or its alias CLIPPED).
-/// Deprecated: Use get_target_simulation_fn instead for more accurate simulation
+/// Legacy function for backwards compatibility - returns true only for `HARD_TANH` (or its alias CLIPPED).
+/// Deprecated: Use `get_target_simulation_fn` instead for more accurate simulation
 #[inline]
 pub fn can_use_hard_tanh(samples: &[HelpfulSample], target_squash: Option<&str>) -> bool {
     matches!(

@@ -3,7 +3,7 @@
 //! This module handles epistatic pair detection, synergistic candidate detection,
 //! and redundant path detection for coordinated structural candidates.
 //!
-//! Extracted from target_analysis.rs as part of Issue #599.
+//! Extracted from `target_analysis.rs` as part of Issue #599.
 
 use crate::analysis::detection::redundant_path::{
     ExistingPathContribution, detect_redundant_paths, redundant_paths_to_coordinated_candidates,

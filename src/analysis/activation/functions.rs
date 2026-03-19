@@ -79,7 +79,7 @@ pub fn mish_activation(x: f32) -> f32 {
 }
 
 /// Hard tanh activation function.
-/// 1 successful discovery evolved CLIPPED → HARD_TANH.
+/// 1 successful discovery evolved CLIPPED → `HARD_TANH`.
 /// Linear in [-1, 1], saturates outside. Same as CLIPPED but named for NEAT-AI.
 pub fn hard_tanh_activation(x: f32) -> f32 {
     x.clamp(-1.0, 1.0)
@@ -93,7 +93,7 @@ pub fn softsign_activation(x: f32) -> f32 {
 }
 
 /// Bent identity activation function.
-/// 1 successful discovery evolved LeakyReLU → BENT_IDENTITY.
+/// 1 successful discovery evolved `LeakyReLU` → `BENT_IDENTITY`.
 /// Smooth, nearly linear: (sqrt(x² + 1) - 1) / 2 + x
 pub fn bent_identity_activation(x: f32) -> f32 {
     ((x * x + 1.0).sqrt() - 1.0) / 2.0 + x
@@ -105,8 +105,8 @@ pub fn arctan_activation(x: f32) -> f32 {
     x.atan()
 }
 
-/// ReLU6 activation function.
-/// Capped ReLU at 6, useful for quantisation.
+/// `ReLU6` activation function.
+/// Capped `ReLU` at 6, useful for quantisation.
 pub fn relu6_activation(x: f32) -> f32 {
     x.clamp(0.0, 6.0)
 }

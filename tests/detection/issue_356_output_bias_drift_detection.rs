@@ -17,7 +17,7 @@ use neat_ai_discovery::analysis::recommendation::output_bias_drift::{
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord.
+/// Helper: create a `DiscoverRecord`.
 fn record(neuron_uuid: &str, obs_index: u32, activation: f32, errors: Vec<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,
@@ -38,7 +38,7 @@ fn make_creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>) -> Creatu
     }
 }
 
-/// Helper: build a NeuronJson.
+/// Helper: build a `NeuronJson`.
 fn neuron(uuid: &str, neuron_type: &str, bias: f32) -> NeuronJson {
     NeuronJson {
         uuid: uuid.to_string(),
@@ -48,7 +48,7 @@ fn neuron(uuid: &str, neuron_type: &str, bias: f32) -> NeuronJson {
     }
 }
 
-/// Helper: build a SynapseJson.
+/// Helper: build a `SynapseJson`.
 fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
     SynapseJson {
         from_uuid: from.to_string(),
@@ -231,7 +231,7 @@ fn test_output_bias_drift_356_noise_level_errors_not_flagged() {
     );
 }
 
-/// Test 7: Bias drift candidates produce correct coordinated SetBias operations.
+/// Test 7: Bias drift candidates produce correct coordinated `SetBias` operations.
 #[test]
 fn test_candidates_produce_coordinated_set_bias_operations() {
     let creature = make_creature(

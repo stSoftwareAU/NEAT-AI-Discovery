@@ -3,6 +3,7 @@
 //! Consolidates Pearson correlation, mean, and variance computations
 //! that were previously duplicated across multiple modules (Issue #767).
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 
 use crate::analysis::samples::HelpfulSample;

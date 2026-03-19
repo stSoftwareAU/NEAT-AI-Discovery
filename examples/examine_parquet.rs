@@ -1,4 +1,5 @@
 //! Quick tool to examine parquet data for debugging
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::parquet_format::read_records_from_parquet;
 
 fn main() -> anyhow::Result<()> {

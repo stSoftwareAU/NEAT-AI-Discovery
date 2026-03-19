@@ -65,7 +65,7 @@ pub struct FaninPolarityConflictCandidate {
     pub positive_count: usize,
     /// Number of negative incoming synapses.
     pub negative_count: usize,
-    /// Conflict score: min(pos_sum, neg_sum) / max(pos_sum, neg_sum).
+    /// Conflict score: `min(pos_sum`, `neg_sum`) / `max(pos_sum`, `neg_sum`).
     pub conflict_score: f32,
     /// Number of samples available for this neuron.
     pub sample_count: usize,

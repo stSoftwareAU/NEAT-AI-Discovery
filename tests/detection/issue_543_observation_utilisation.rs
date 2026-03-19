@@ -6,6 +6,7 @@
 //!
 //! These tests exercise real detection and conversion functions with test data.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::observation_utilisation::{
     detect_underutilised_observations, observation_utilisation_to_coordinated_candidates,
 };

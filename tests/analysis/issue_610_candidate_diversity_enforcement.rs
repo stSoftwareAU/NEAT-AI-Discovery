@@ -20,7 +20,7 @@ use neat_ai_discovery::analysis::candidate_diversity::{
 };
 use neat_ai_discovery::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
-/// Helper: create a RemoveSynapse coordinated candidate.
+/// Helper: create a `RemoveSynapse` coordinated candidate.
 fn remove_synapse_candidate(from: &str, to: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
@@ -32,7 +32,7 @@ fn remove_synapse_candidate(from: &str, to: &str, gain: f32) -> CoordinatedStruc
     }
 }
 
-/// Helper: create an AddSynapse coordinated candidate.
+/// Helper: create an `AddSynapse` coordinated candidate.
 fn add_synapse_candidate(
     from: &str,
     to: &str,
@@ -50,7 +50,7 @@ fn add_synapse_candidate(
     }
 }
 
-/// Helper: create a ChangeSquash coordinated candidate.
+/// Helper: create a `ChangeSquash` coordinated candidate.
 fn change_squash_candidate(
     neuron: &str,
     squash: &str,

@@ -26,6 +26,7 @@
 //! neuron (using `addNeuron` + `addSynapse` coordinated operations) that can learn
 //! to suppress the sentinel region while passing through useful values.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
 use crate::types::DiscoverRecord;

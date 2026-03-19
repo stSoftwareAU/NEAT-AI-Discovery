@@ -30,6 +30,11 @@
 //! When bimodality is detected, we recommend adding a new neuron to split the
 //! bimodal neuron. Each candidate includes bias offsets targeting each mode.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::helpers::build_record_map;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};

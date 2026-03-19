@@ -15,18 +15,23 @@
 //! 1. **Input distribution matching**:
 //!    - Gaussian inputs → TANH or SOFTPLUS
 //!    - Sparse inputs → RELU variants
-//!    - Bounded inputs → LOGISTIC or HARD_TANH
+//!    - Bounded inputs → LOGISTIC or `HARD_TANH`
 //!
 //! 2. **Output range requirements**:
 //!    - Binary outputs → LOGISTIC, STEP, BIPOLAR
 //!    - Bounded \[0,1\] → LOGISTIC
-//!    - Bounded [-1,1] → TANH, HARD_TANH
+//!    - Bounded [-1,1] → TANH, `HARD_TANH`
 //!    - Unbounded → IDENTITY, RELU
 //!
 //! 3. **Gradient flow analysis**:
 //!    - Prefer activations with healthy gradient flow for the observed input range
 //!    - Penalise activations that would saturate on the observed inputs
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 use std::collections::HashMap;
@@ -270,7 +275,7 @@ fn classify_distribution(
 /// * `distribution` - The analysed input distribution.
 ///
 /// # Returns
-/// A HashMap mapping activation function names to suitability scores (0.0 to 1.0).
+/// A `HashMap` mapping activation function names to suitability scores (0.0 to 1.0).
 pub fn classify_activation_suitability(distribution: &InputDistribution) -> HashMap<String, f32> {
     let mut scores: HashMap<String, f32> = HashMap::new();
 
@@ -556,7 +561,7 @@ pub fn recommend_activation_function(
 /// Get the score for an activation function.
 ///
 /// Squash names are pre-normalised to uppercase at deserialisation (Issue #753),
-/// so a direct HashMap lookup suffices.
+/// so a direct `HashMap` lookup suffices.
 fn get_activation_score(suitability: &HashMap<String, f32>, squash: &str) -> f32 {
     suitability.get(squash).copied().unwrap_or(0.5)
 }

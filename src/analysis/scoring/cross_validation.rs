@@ -42,6 +42,7 @@
 //! - Issue #432: "Brilliant but Brittle" initiative
 //! - `early_termination.rs`: SPRT infrastructure for fold evaluation
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::analysis::samples::HelpfulSample;
 
 /// Configuration for cross-validation consistency scoring.
@@ -54,7 +55,7 @@ pub struct CrossValidationConfig {
 
     /// Minimum samples required per fold for meaningful evaluation.
     ///
-    /// If total samples / fold_count < min_samples_per_fold, cross-validation
+    /// If total samples / `fold_count` < `min_samples_per_fold`, cross-validation
     /// is skipped and no penalty is applied.
     pub min_samples_per_fold: usize,
 

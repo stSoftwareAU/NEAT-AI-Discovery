@@ -1,14 +1,15 @@
-//! Issue #522: Targeted tests for synapse post_processing sub-module
+//! Issue #522: Targeted tests for synapse `post_processing` sub-module
 //!
 //! Tests the post-processing pipeline in `src/analysis/synapse/post_processing.rs`:
 //! - Impact-based discounting (hidden vs output neurons)
-//! - Candidate sorting by expected_creature_score_gain
-//! - Truncation via max_candidates
+//! - Candidate sorting by `expected_creature_score_gain`
+//! - Truncation via `max_candidates`
 //! - Pessimism discount integration in the full pipeline
 //!
 //! These tests exercise the full analysis pipeline with crafted creatures and
 //! verify correct post-processing behaviour by examining the output candidates.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -170,7 +171,7 @@ fn output_targets_have_full_impact_hidden_targets_are_discounted() {
 // =============================================================================
 
 /// After post-processing, helpful candidates should be sorted by
-/// expected_creature_score_gain in descending order (before diversification).
+/// `expected_creature_score_gain` in descending order (before diversification).
 #[test]
 fn candidates_sorted_by_expected_score_gain_descending() {
     if !GpuAnalyzer::gpu_is_available() {
@@ -282,7 +283,7 @@ fn candidates_sorted_by_expected_score_gain_descending() {
 // max_candidates truncation
 // =============================================================================
 
-/// When max_candidates is set, the total candidate count should not exceed
+/// When `max_candidates` is set, the total candidate count should not exceed
 /// the specified limit.
 #[test]
 fn max_candidates_limits_total_output() {
@@ -386,11 +387,11 @@ fn max_candidates_limits_total_output() {
 // =============================================================================
 
 /// Verify that the full pipeline applies pessimism discount. The pessimism
-/// discount is based on the improved_count / total_count ratio. Candidates
+/// discount is based on the `improved_count` / `total_count` ratio. Candidates
 /// where not all samples improve should have a discounted score gain.
 ///
-/// Note: score_gain also includes source-type and target-type boosts
-/// applied after pessimism, so score_gain can exceed error_reduction.
+/// Note: `score_gain` also includes source-type and target-type boosts
+/// applied after pessimism, so `score_gain` can exceed `error_reduction`.
 #[test]
 fn pipeline_applies_pessimism_discount_to_candidates() {
     if !GpuAnalyzer::gpu_is_available() {

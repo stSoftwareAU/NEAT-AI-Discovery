@@ -3,13 +3,14 @@
 //! This test verifies that the harmful synapse detection only returns candidates
 //! where removing the synapse is expected to improve the creature's score.
 //!
-//! Previously, harmful_synapses included ALL existing synapses without filtering,
-//! resulting in candidates with negative expected_creature_score_gain (i.e., synapses
+//! Previously, `harmful_synapses` included ALL existing synapses without filtering,
+//! resulting in candidates with negative `expected_creature_score_gain` (i.e., synapses
 //! that are actually helpful and should NOT be removed).
 //!
 //! NEAT-AI was filtering these out on its side, resulting in 0 samples being recorded
 //! for the "remove-harmful-synapse" discovery type.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};
@@ -81,13 +82,13 @@ fn create_records(
     records
 }
 
-/// Issue #416: Harmful synapse candidates must have positive expected_creature_score_gain.
+/// Issue #416: Harmful synapse candidates must have positive `expected_creature_score_gain`.
 ///
 /// This test creates a scenario with:
 /// 1. A helpful synapse (removing it would make things worse)
 /// 2. A harmful synapse (removing it would improve the score)
 ///
-/// Only the harmful synapse should appear in harmful_synapses.
+/// Only the harmful synapse should appear in `harmful_synapses`.
 #[test]
 fn test_harmful_synapse_candidates_must_have_positive_expected_gain() {
     skip_without_gpu!();
@@ -186,10 +187,10 @@ fn test_harmful_synapse_candidates_must_have_positive_expected_gain() {
     );
 }
 
-/// Issue #416: Verify that helpful synapses do NOT appear in harmful_synapses.
+/// Issue #416: Verify that helpful synapses do NOT appear in `harmful_synapses`.
 ///
 /// This test creates a synapse that is clearly helpful (its contribution reduces error)
-/// and verifies that it does NOT appear in harmful_synapses.
+/// and verifies that it does NOT appear in `harmful_synapses`.
 #[test]
 fn test_helpful_synapse_is_not_marked_as_harmful() {
     skip_without_gpu!();

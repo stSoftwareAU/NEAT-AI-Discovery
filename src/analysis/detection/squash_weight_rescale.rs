@@ -22,6 +22,7 @@
 //! weights are multiplied by this factor so the neuron's post-activation output
 //! is approximately preserved.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::activations::{apply_scalar_squash, is_aggregate_squash};
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 use crate::types::DiscoverRecord;
@@ -73,7 +74,7 @@ pub struct SquashWeightRescaleCandidate {
     pub current_squash: String,
     /// Recommended replacement activation function.
     pub recommended_squash: String,
-    /// Rescaled incoming weights: (from_uuid, to_uuid, new_weight).
+    /// Rescaled incoming weights: (`from_uuid`, `to_uuid`, `new_weight`).
     pub rescaled_weights: Vec<(String, String, f32)>,
     /// Estimated error reduction from the coordinated change.
     pub estimated_improvement: f32,

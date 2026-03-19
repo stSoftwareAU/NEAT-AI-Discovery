@@ -6,6 +6,7 @@
 //! edge cases (NaN propagation, overflow, extreme values, boundary conditions)
 //! that hand-written examples may miss.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::activations::apply_scalar_squash;
 use neat_ai_discovery::analysis::constants::{cmp_f32_asc, cmp_f32_desc};
 use neat_ai_discovery::analysis::neuron_fingerprint::compute_neuron_fingerprints;
@@ -58,12 +59,12 @@ fn activation_f32() -> impl Strategy<Value = f32> {
     -10.0f32..10.0f32
 }
 
-/// Strategy for generating HelpfulSample with finite values.
+/// Strategy for generating `HelpfulSample` with finite values.
 fn helpful_sample_strategy() -> impl Strategy<Value = HelpfulSample> {
     (activation_f32(), activation_f32()).prop_map(|(a, e)| make_sample(a, e))
 }
 
-/// Strategy for generating a Vec of HelpfulSamples of given size range.
+/// Strategy for generating a Vec of `HelpfulSamples` of given size range.
 fn helpful_samples(min_size: usize, max_size: usize) -> impl Strategy<Value = Vec<HelpfulSample>> {
     prop::collection::vec(helpful_sample_strategy(), min_size..=max_size)
 }

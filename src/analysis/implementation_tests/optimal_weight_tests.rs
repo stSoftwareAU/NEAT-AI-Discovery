@@ -1,13 +1,14 @@
 //! Tests for optimal outgoing weight calculation.
 //!
-//! Extracted from implementation_tests.rs as part of Issue #426.
+//! Extracted from `implementation_tests.rs` as part of Issue #426.
 //! Tests cover:
 //! - Weight calculation edge cases (zero activation, non-finite, near-zero)
-//! - Weight clamping to MAX_OUTGOING_WEIGHT
+//! - Weight clamping to `MAX_OUTGOING_WEIGHT`
 //! - Weight ratio validation for add-neuron candidates
 //! - Synapse weight handling (skips ratio check)
 //! - IDENTITY candidate fallback to affine fit
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::common::*;
 use crate::analysis::activation::ActivationCandidateSpec;
 use crate::analysis::gpu::GpuEvaluator;
@@ -134,7 +135,7 @@ fn identity_all_samples_fallback_uses_affine_fit_even_when_base_weight_is_none()
     );
 }
 
-/// Test that calculate_optimal_outgoing_weight returns None for insufficient activation
+/// Test that `calculate_optimal_outgoing_weight` returns None for insufficient activation
 #[test]
 fn returns_none_for_zero_activation() {
     let result = calculate_optimal_outgoing_weight(1.0, 0.0, 1.0);
@@ -150,7 +151,7 @@ fn returns_none_for_zero_activation() {
     );
 }
 
-/// Test that calculate_optimal_outgoing_weight returns None for non-finite results
+/// Test that `calculate_optimal_outgoing_weight` returns None for non-finite results
 #[test]
 fn returns_none_for_non_finite_weight() {
     let result = calculate_optimal_outgoing_weight(f32::INFINITY, 1.0, 1.0);
@@ -166,7 +167,7 @@ fn returns_none_for_non_finite_weight() {
     );
 }
 
-/// Test that calculate_optimal_outgoing_weight returns None for near-zero weights
+/// Test that `calculate_optimal_outgoing_weight` returns None for near-zero weights
 #[test]
 fn returns_none_for_near_zero_weight() {
     // Very small error_activation results in near-zero weight
@@ -177,7 +178,7 @@ fn returns_none_for_near_zero_weight() {
     );
 }
 
-/// Test that weights are clamped to MAX_OUTGOING_WEIGHT
+/// Test that weights are clamped to `MAX_OUTGOING_WEIGHT`
 #[test]
 fn clamps_to_max_outgoing_weight() {
     // Large error relative to activation would produce large weight

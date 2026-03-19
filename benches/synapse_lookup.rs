@@ -4,6 +4,7 @@
 //! on `CreatureTopologyCache`, which are called in hot loops in
 //! `bottleneck.rs` and `topology.rs`.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::detection::topology_cache::CreatureTopologyCache;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};

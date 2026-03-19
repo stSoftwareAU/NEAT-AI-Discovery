@@ -20,7 +20,7 @@
 //!    savings = growthCost × (1 + (N + M) / 10)
 //!    ```
 //!
-//! 2. **Unit conversion via fourth root**: activation_weighted_impact is in OUTPUT
+//! 2. **Unit conversion via fourth root**: `activation_weighted_impact` is in OUTPUT
 //!    units, while savings is in SCORE units (error + complexity). We use a fourth
 //!    root to bridge the gap:
 //!
@@ -29,7 +29,7 @@
 //!    ```
 //!
 //!    For savings ≈ 1.5e-7, threshold = (1.5e-7)^0.25 ≈ 6e-3 (0.6%)
-//!    Removal is beneficial when: activation_weighted_impact < savings^0.25
+//!    Removal is beneficial when: `activation_weighted_impact` < savings^0.25
 //!
 //! If any of these tests fail after a code change, the fix has regressed.
 
@@ -95,7 +95,7 @@ fn test_removal_savings_matches_neat_ai_formula() {
 /// Test that neurons with many synapses have higher removal threshold.
 ///
 /// A neuron with many connections saves more complexity when removed,
-/// so it can have a higher activation_weighted_impact and still be
+/// so it can have a higher `activation_weighted_impact` and still be
 /// a valid removal candidate.
 #[test]
 fn test_more_synapses_means_higher_threshold() {
@@ -118,7 +118,7 @@ fn test_more_synapses_means_higher_threshold() {
 /// REGRESSION TEST: Removal candidates must use dynamic savings based on synapse count.
 ///
 /// A neuron with many synapses saves more complexity when removed.
-/// The criterion is: activation_weighted_impact < savings^0.25.
+/// The criterion is: `activation_weighted_impact` < savings^0.25.
 #[test]
 fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
     // Network with two neurons having different synapse counts:
@@ -386,7 +386,7 @@ fn regression_removal_uses_dynamic_threshold_based_on_synapse_count() {
 /// (v0.1.145 incorrectly changed it to 0.01)
 ///
 /// Neurons are removal candidates when:
-///   activation_weighted_impact < costOfGrowth (1e-7)
+///   `activation_weighted_impact` < costOfGrowth (1e-7)
 ///
 /// This test creates a neuron with impact ABOVE costOfGrowth that should NOT
 /// be a removal candidate.

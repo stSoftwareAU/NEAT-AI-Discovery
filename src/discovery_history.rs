@@ -34,6 +34,7 @@
 //! assert!(score_2 > score_1);
 //! ```
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -41,12 +42,12 @@ use std::collections::HashMap;
 // Calibration Tracking (Issue #605)
 // =============================================================================
 
-/// Build a string key from module name and candidate type for HashMap lookup.
+/// Build a string key from module name and candidate type for `HashMap` lookup.
 fn calibration_key(module_name: &str, candidate_type: &str) -> String {
     format!("{module_name}::{candidate_type}")
 }
 
-/// Parse a calibration key back into (module_name, candidate_type).
+/// Parse a calibration key back into (`module_name`, `candidate_type`).
 fn parse_calibration_key(key: &str) -> (&str, &str) {
     key.split_once("::").unwrap_or((key, ""))
 }
@@ -88,7 +89,7 @@ pub struct CalibrationSummaryEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CalibrationTracker {
-    /// Observations keyed by "module_name::candidate_type".
+    /// Observations keyed by "`module_name::candidate_type`".
     observations: HashMap<String, Vec<CalibrationObservation>>,
 }
 

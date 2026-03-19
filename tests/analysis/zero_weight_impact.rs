@@ -13,7 +13,7 @@ use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 /// Network:
 ///   hidden → output (weight 0.0)
 ///
-/// With the bug: total_inbound_weight = 0.0, so 0.0 / 0.0 = NaN
+/// With the bug: `total_inbound_weight` = 0.0, so 0.0 / 0.0 = NaN
 /// With the fix: impact should be 0.0 (zero contribution)
 #[test]
 fn test_zero_weight_synapse_does_not_produce_nan() {

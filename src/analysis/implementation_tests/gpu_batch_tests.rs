@@ -4,9 +4,10 @@
 //! - GPU batch evaluation edge cases
 //! - Batch result merging
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::common::*;
 
-/// TDD Test: evaluate_harmful_batch should handle empty batch gracefully.
+/// TDD Test: `evaluate_harmful_batch` should handle empty batch gracefully.
 #[test]
 fn evaluate_harmful_batch_handles_empty_batch() {
     skip_if_no_gpu!();
@@ -20,7 +21,7 @@ fn evaluate_harmful_batch_handles_empty_batch() {
     assert!(result.is_empty(), "Empty batch should return empty results");
 }
 
-/// TDD Test: evaluate_harmful_batch should handle batch with empty sample sets.
+/// TDD Test: `evaluate_harmful_batch` should handle batch with empty sample sets.
 #[test]
 fn evaluate_harmful_batch_handles_empty_sample_sets() {
     skip_if_no_gpu!();

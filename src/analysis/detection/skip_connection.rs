@@ -22,6 +22,7 @@
 //! - **Attenuated gradient → addSynapse** (skip connection): Connect a shallow
 //!   neuron directly to a deep neuron to restore gradient signal flow.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::types::DiscoverRecord;

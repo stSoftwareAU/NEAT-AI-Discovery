@@ -17,8 +17,8 @@
 //! 3. Compare error variance in the sentinel cluster vs the non-sentinel (useful) range.
 //! 4. If the sentinel cluster has significantly lower error variance, it indicates
 //!    the sentinel values do not meaningfully influence the output.
-//! 5. Compute effective_min, effective_max from the non-sentinel values.
-//! 6. Compute utilisation_ratio as the fraction of the full observed range that is effective.
+//! 5. Compute `effective_min`, `effective_max` from the non-sentinel values.
+//! 6. Compute `utilisation_ratio` as the fraction of the full observed range that is effective.
 //!
 //! ## Differences from `bounded_range.rs`
 //!
@@ -26,6 +26,7 @@
 //! This module focuses on **characterising** the effective range and sentinel values
 //! using error correlation analysis, providing metadata for downstream use.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
 use crate::CreatureJson;

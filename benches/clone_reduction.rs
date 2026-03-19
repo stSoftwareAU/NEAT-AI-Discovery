@@ -1,6 +1,6 @@
 //! Benchmark for Issue #487: Clone reduction in hot analysis paths.
 //!
-//! Measures performance of modules that had avoidable clone() calls:
+//! Measures performance of modules that had avoidable `clone()` calls:
 //! - Bottleneck detection and candidate generation
 //! - Restricted range detection and candidate generation
 //! - Bounded range detection and candidate generation
@@ -8,6 +8,7 @@
 //! These benchmarks exercise the same code paths that were optimised
 //! to use borrows instead of clones.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::detection::bottleneck::{
     bottleneck_neurons_to_coordinated_candidates, detect_bottleneck_neurons,

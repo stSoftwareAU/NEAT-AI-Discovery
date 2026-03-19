@@ -14,7 +14,7 @@
 //! 5. Verify input neurons are excluded
 //! 6. Verify insufficient samples are excluded
 //! 7. Verify noise-level errors (tiny magnitude) are excluded
-//! 8. Verify coordinated candidate conversion produces correct SetBias operations
+//! 8. Verify coordinated candidate conversion produces correct `SetBias` operations
 //! 9. Verify multiple outputs: only biased ones detected
 //! 10. Verify current bias is correctly recorded in candidate
 //! 11. Verify recommended bias delta is negative of mean error
@@ -29,7 +29,7 @@
 //! 20. Verify mean error near noise threshold boundary (0.01)
 //! 21. Verify empty records produce no candidates
 //! 22. Verify empty creature (no neurons) produces no candidates
-//! 23. Verify coordinated candidate SetBias value is current_bias + delta
+//! 23. Verify coordinated candidate `SetBias` value is `current_bias` + delta
 //! 24. Verify each coordinated candidate has exactly one operation
 //! 25. Verify empty candidates conversion produces empty results
 //! 26. Verify coordinated candidates sorted by expected score gain
@@ -43,7 +43,7 @@ use neat_ai_discovery::analysis::recommendation::output_bias_drift::{
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord for a neuron with given activation and errors.
+/// Helper: create a `DiscoverRecord` for a neuron with given activation and errors.
 fn make_record(
     neuron_uuid: &str,
     obs_index: u32,
@@ -69,7 +69,7 @@ fn make_creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>) -> Creatu
     }
 }
 
-/// Helper: build a NeuronJson.
+/// Helper: build a `NeuronJson`.
 fn neuron(uuid: &str, neuron_type: &str, bias: f32) -> NeuronJson {
     NeuronJson {
         uuid: uuid.to_string(),
@@ -79,7 +79,7 @@ fn neuron(uuid: &str, neuron_type: &str, bias: f32) -> NeuronJson {
     }
 }
 
-/// Helper: build a SynapseJson.
+/// Helper: build a `SynapseJson`.
 fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
     SynapseJson {
         from_uuid: from.to_string(),

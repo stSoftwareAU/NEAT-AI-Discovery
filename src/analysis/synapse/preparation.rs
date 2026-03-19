@@ -4,6 +4,7 @@
 //! threshold computation from `analyze_synapses_with_cache_impl`, keeping
 //! the main orchestration function concise.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::intern::NeuronIndex;
 use crate::{AnalyzeSynapsesInput, SynapseJson};
 use std::collections::{HashMap, HashSet};

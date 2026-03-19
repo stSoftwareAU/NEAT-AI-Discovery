@@ -4,6 +4,7 @@
 //! structure that can be serialised to JSON when
 //! `NEAT_AI_DISCOVERY_PROFILE=json` is set.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::time::Instant;
 
 use super::gpu_metrics::GpuMetrics;
@@ -69,7 +70,7 @@ pub struct ProfileData {
 }
 
 impl ProfileData {
-    /// Create a new ProfileData instance.
+    /// Create a new `ProfileData` instance.
     pub fn new() -> Self {
         Self {
             start_time: Some(Instant::now()),
@@ -132,7 +133,7 @@ impl ProfileData {
         self.candidates_returned = Some(count);
     }
 
-    /// Copy metrics from a GpuMetrics instance.
+    /// Copy metrics from a `GpuMetrics` instance.
     pub fn from_gpu_metrics(&mut self, metrics: &GpuMetrics) {
         self.gpu_batch_count = Some(metrics.batch_count());
         self.gpu_samples_processed = Some(metrics.total_samples_processed());

@@ -64,9 +64,9 @@ fn sample_matching_retains_legitimate_zero_samples() {
     );
 }
 
-/// Test that sample matching preserves target_value and target_activation.
+/// Test that sample matching preserves `target_value` and `target_activation`.
 /// This is critical for accurate improvement predictions with non-linear
-/// activation functions (TANH, LOGISTIC, HARD_TANH, etc.).
+/// activation functions (TANH, LOGISTIC, `HARD_TANH`, etc.).
 #[test]
 fn sample_matching_preserves_target_value_and_activation() {
     // No GPU needed - tests the production build_samples function
@@ -105,8 +105,8 @@ fn sample_matching_preserves_target_value_and_activation() {
     );
 }
 
-/// Test that target_value enables proper activation function simulation.
-/// When target_value is available, get_target_simulation_fn should return
+/// Test that `target_value` enables proper activation function simulation.
+/// When `target_value` is available, `get_target_simulation_fn` should return
 /// the activation function, enabling saturation-aware improvement predictions.
 #[test]
 fn sample_matching_enables_target_activation_simulation() {

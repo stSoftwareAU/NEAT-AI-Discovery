@@ -21,6 +21,7 @@
 //! error data **across neurons** by `obs_index` to find observations that are
 //! systematically hard for the entire network.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet};
 
 use crate::types::DiscoverRecord;

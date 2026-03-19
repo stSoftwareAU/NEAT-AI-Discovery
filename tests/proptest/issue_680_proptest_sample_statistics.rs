@@ -1,9 +1,10 @@
-//! Property-based tests for HelpfulStats, HarmfulStats, and NeuronStats (Issue #680).
+//! Property-based tests for `HelpfulStats`, `HarmfulStats`, and `NeuronStats` (Issue #680).
 //!
 //! Uses `proptest` to verify mathematical invariants of the statistics types
 //! used in synapse and neuron evaluation, including merge additivity,
 //! ratio bounds, and minimum-sample guards.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::samples::{
     HarmfulStats, HelpfulSample, HelpfulStats, NeuronStats,
 };
@@ -14,7 +15,7 @@ fn moderate_f32() -> impl Strategy<Value = f32> {
     (-1e4f32..1e4f32).prop_filter("must be finite", |v| v.is_finite())
 }
 
-/// Strategy for generating HelpfulSample with finite values.
+/// Strategy for generating `HelpfulSample` with finite values.
 fn helpful_sample_strategy() -> impl Strategy<Value = HelpfulSample> {
     (moderate_f32(), moderate_f32()).prop_map(|(a, e)| HelpfulSample {
         activation: a,

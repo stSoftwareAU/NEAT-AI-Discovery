@@ -4,6 +4,7 @@
 //! 1. Neuron-specific pessimism calibration (more aggressive than synapse)
 //! 2. Cross-validation brittleness filtering for neuron candidates
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::constants::{
     NEURON_PESSIMISM_CURVE_EXPONENT, NEURON_PESSIMISM_DISCOUNT_FLOOR, PESSIMISM_CURVE_EXPONENT,
     PESSIMISM_DISCOUNT_FLOOR,

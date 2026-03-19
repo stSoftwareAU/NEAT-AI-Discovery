@@ -4,9 +4,10 @@
 //! target neuron errors across observations. This is CPU-bound work that prepares
 //! data for GPU evaluation.
 //!
-//! NOTE: The detailed unit tests for build_samples() are in src/analysis.rs.
+//! NOTE: The detailed unit tests for `build_samples()` are in src/analysis.rs.
 //! These integration tests verify the behaviour through the public API.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -85,8 +86,8 @@ fn analysis_handles_non_finite_values_gracefully() {
     );
 }
 
-/// Test that analysis correctly pairs samples by obs_index.
-/// Records with mismatched obs_index should not be paired.
+/// Test that analysis correctly pairs samples by `obs_index`.
+/// Records with mismatched `obs_index` should not be paired.
 #[test]
 fn analysis_pairs_samples_by_obs_index() {
     skip_without_gpu!();

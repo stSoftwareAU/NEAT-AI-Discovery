@@ -4,6 +4,7 @@
 //! early if insufficient time remains, returning a clear error message.
 //! Also verifies that watchdog receives intermediate beats during loading.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::cache::RecordCache;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -40,7 +41,7 @@ fn create_test_parquet(
 // Deadline-Aware Loading Tests
 // =============================================================================
 
-/// Test that new_adaptive_with_deadline succeeds when deadline is far in the future.
+/// Test that `new_adaptive_with_deadline` succeeds when deadline is far in the future.
 #[test]
 fn deadline_aware_loading_succeeds_with_generous_deadline() {
     let temp_dir = TempDir::new().unwrap();
@@ -60,7 +61,7 @@ fn deadline_aware_loading_succeeds_with_generous_deadline() {
     assert_eq!(records.len(), 50, "neuron-0 should have 50 records");
 }
 
-/// Test that new_adaptive_with_deadline returns an error when deadline is already passed.
+/// Test that `new_adaptive_with_deadline` returns an error when deadline is already passed.
 #[test]
 fn deadline_aware_loading_aborts_when_deadline_already_passed() {
     let temp_dir = TempDir::new().unwrap();
@@ -80,7 +81,7 @@ fn deadline_aware_loading_aborts_when_deadline_already_passed() {
     );
 }
 
-/// Test that new_adaptive_with_deadline works the same as new_adaptive when no deadline is set.
+/// Test that `new_adaptive_with_deadline` works the same as `new_adaptive` when no deadline is set.
 #[test]
 fn deadline_aware_loading_with_no_deadline_matches_adaptive() {
     let temp_dir = TempDir::new().unwrap();

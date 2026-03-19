@@ -3,6 +3,7 @@
 //! Automatically selects between preload, LRU, and streaming modes based on
 //! file size and available system memory.
 
+#![allow(clippy::cast_possible_wrap)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 /// Loading strategy for parquet files based on file size and available memory.
 ///
 /// Issue #215: Automatic selection between different caching modes to support
@@ -10,7 +11,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadingStrategy {
     /// Load everything into memory upfront.
-    /// Best for small files where estimated_expanded < available_memory / 4.
+    /// Best for small files where `estimated_expanded` < `available_memory` / 4.
     PreloadAll,
 
     /// Keep frequently-accessed neurons in memory with LRU eviction.
@@ -32,13 +33,13 @@ const DECOMPRESSION_RATIO: u64 = 3;
 ///
 /// # Strategy Selection Logic
 ///
-/// - **PreloadAll**: When estimated expanded size < available_memory / 4
+/// - **`PreloadAll`**: When estimated expanded size < `available_memory` / 4
 ///   (small files that easily fit in memory with plenty of headroom)
 ///
-/// - **LruCache**: When estimated expanded size < available_memory
+/// - **`LruCache`**: When estimated expanded size < `available_memory`
 ///   (medium files that fit but benefit from bounded memory usage)
 ///
-/// - **Streaming**: When estimated expanded size >= available_memory
+/// - **Streaming**: When estimated expanded size >= `available_memory`
 ///   (large files that would exceed available memory)
 ///
 /// # Arguments

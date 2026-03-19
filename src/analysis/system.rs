@@ -17,7 +17,7 @@
 //! ## Contents
 //!
 //! ### Memory Detection
-//! - `get_memory_info()` - Platform-specific memory detection (macOS vm_stat, Linux /proc/meminfo)
+//! - `get_memory_info()` - Platform-specific memory detection (macOS `vm_stat`, Linux /proc/meminfo)
 //! - `MemoryTier` - Memory classification enum (Low/Standard/High)
 //! - `detect_memory_tier()` - Cached memory tier detection
 //! - `categorise_memory_tier()` - Pure function for testing
@@ -43,7 +43,7 @@
 //! - `get_work_queue_capacity_for_tier()` - Get capacity for a specific tier
 //!
 //! ### Platform Setup
-//! - `ensure_xdg_runtime_dir()` - Ensure XDG_RUNTIME_DIR is set (Linux)
+//! - `ensure_xdg_runtime_dir()` - Ensure `XDG_RUNTIME_DIR` is set (Linux)
 //! - `suppress_mesa_warnings_if_requested()` - Suppress Mesa GPU warnings (Linux)
 
 // =============================================================================

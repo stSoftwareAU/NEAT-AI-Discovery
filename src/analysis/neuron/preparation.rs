@@ -3,6 +3,7 @@
 //!
 //! Extracted from neuron.rs as part of issue #598.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::AnalyzeNeuronsInput;
 use crate::types::DiscoverRecord;
 use anyhow::Result;

@@ -18,7 +18,7 @@ use crate::analysis::utils::verbose_enabled;
 // Neuron Rejection Tracking
 // =============================================================================
 
-/// Detail about why a source was rejected (currently only used for NoSamples).
+/// Detail about why a source was rejected (currently only used for `NoSamples`).
 #[derive(Clone)]
 pub(crate) struct NeuronRejectionDetail {
     pub(crate) source_uuid: String,
@@ -96,7 +96,7 @@ pub(crate) struct NeuronDiagnostics {
     log_enabled: bool,
     /// Lock-free concurrent map for diagnostic entries.
     /// Each focus neuron is processed by a separate thread, and diagnostics
-    /// are recorded without contention using DashMap's sharded internal structure.
+    /// are recorded without contention using `DashMap`'s sharded internal structure.
     pub(crate) entries: DashMap<String, NeuronDiagnosticEntry>,
 }
 

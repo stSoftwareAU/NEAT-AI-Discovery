@@ -12,7 +12,7 @@
 //! 1. **Activation near bounds**: For TANH, mean activation > 0.95 or < -0.95 across samples.
 //! 2. **Low relative variance**: Input varies but output doesn't (activation function is
 //!    squashing all variation).
-//! 3. **Uses a bounded activation**: Only bounded activations (TANH, LOGISTIC, HARD_TANH, etc.)
+//! 3. **Uses a bounded activation**: Only bounded activations (TANH, LOGISTIC, `HARD_TANH`, etc.)
 //!    can saturate. Unbounded activations (RELU, IDENTITY) are excluded, except RELU dead-zone
 //!    detection (all activations at zero).
 //!
@@ -25,6 +25,7 @@
 //! These are emitted as `CoordinatedStructuralCandidateJson` with `ChangeSquash` and/or
 //! `SetBias` operations.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::activation_properties::{can_have_dead_zone, is_bounded_squash};
 use super::helpers::build_record_map;
 use crate::types::DiscoverRecord;
@@ -48,7 +49,7 @@ const TANH_SATURATION_THRESHOLD: f32 = 0.85;
 const LOGISTIC_UPPER_THRESHOLD: f32 = 0.90;
 const LOGISTIC_LOWER_THRESHOLD: f32 = 0.10;
 
-/// HARD_TANH / CLIPPED saturation threshold (clamped at exactly ±1.0).
+/// `HARD_TANH` / CLIPPED saturation threshold (clamped at exactly ±1.0).
 ///
 /// Issue #417: Lowered from 0.99 to 0.95 to detect near-saturation.
 const HARD_TANH_SATURATION_THRESHOLD: f32 = 0.95;

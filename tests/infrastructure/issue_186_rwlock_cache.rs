@@ -1,6 +1,6 @@
-//! Tests for Issue #186: Replace Mutex with RwLock for RecordCache.
+//! Tests for Issue #186: Replace Mutex with `RwLock` for `RecordCache`.
 //!
-//! This test verifies that the RecordCache allows concurrent reads when using RwLock,
+//! This test verifies that the `RecordCache` allows concurrent reads when using `RwLock`,
 //! which is essential for read-heavy workloads during analysis where multiple focus
 //! neurons are processed in parallel.
 //!
@@ -8,9 +8,10 @@
 //!
 //! 1. Multiple readers can access the cache concurrently (no serialisation)
 //! 2. Cache still works correctly with concurrent access
-//! 3. The RwLock implementation is transparent to callers
-//! 4. The len() method works correctly with concurrent access
+//! 3. The `RwLock` implementation is transparent to callers
+//! 4. The `len()` method works correctly with concurrent access
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::types::DiscoverRecord;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -20,7 +21,7 @@ use std::time::Duration;
 /// Test that verifies the cache can handle concurrent reads correctly.
 ///
 /// This test creates a cache with test data and then spawns multiple threads
-/// that all read from the cache simultaneously. With RwLock, these reads should
+/// that all read from the cache simultaneously. With `RwLock`, these reads should
 /// not be serialised.
 #[test]
 fn cache_allows_concurrent_reads() {
@@ -162,9 +163,9 @@ fn cache_returns_consistent_data_across_concurrent_reads() {
     );
 }
 
-/// Test that cache.len() works correctly with concurrent access.
+/// Test that `cache.len()` works correctly with concurrent access.
 ///
-/// The diagnostics code uses cache.len() to report statistics. This must work
+/// The diagnostics code uses `cache.len()` to report statistics. This must work
 /// reliably even when other threads are reading from the cache.
 #[test]
 fn cache_len_works_with_concurrent_reads() {
@@ -230,7 +231,7 @@ fn cache_len_works_with_concurrent_reads() {
     }
 }
 
-/// Test that is_empty() works correctly.
+/// Test that `is_empty()` works correctly.
 #[test]
 fn cache_is_empty_works_correctly() {
     use neat_ai_discovery::analysis::cache::RecordCache;

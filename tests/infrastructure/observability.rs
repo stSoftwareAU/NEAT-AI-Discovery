@@ -10,6 +10,7 @@
 //! - `NEAT_AI_DISCOVERY_PROFILE=json`: Output structured profile as JSON
 //! - `NEAT_AI_DISCOVERY_GPU_METRICS=1`: Print GPU metrics to stderr
 
+#![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::observability::{
     GpuMetrics, PhaseTimer, ProfileData, ProfileMode, gpu_metrics_enabled, timing_enabled,
@@ -36,7 +37,7 @@ macro_rules! skip_without_gpu {
 // PhaseTimer Tests
 // =============================================================================
 
-/// Test that PhaseTimer records duration accurately (within 10ms tolerance).
+/// Test that `PhaseTimer` records duration accurately (within 10ms tolerance).
 #[test]
 fn phase_timer_accuracy() {
     // Create a timer and sleep for a known duration
@@ -62,7 +63,7 @@ fn phase_timer_accuracy() {
     );
 }
 
-/// Test that PhaseTimer reports correctly when NEAT_AI_DISCOVERY_TIMING=1.
+/// Test that `PhaseTimer` reports correctly when `NEAT_AI_DISCOVERY_TIMING=1`.
 #[test]
 fn phase_timer_respects_env_var() {
     // When timing is disabled (default), PhaseTimer should be cheap
@@ -73,7 +74,7 @@ fn phase_timer_respects_env_var() {
     // the timer completes without errors regardless of env var state
 }
 
-/// Test that nested PhaseTimers work correctly.
+/// Test that nested `PhaseTimers` work correctly.
 #[test]
 fn phase_timer_nested() {
     let _outer = PhaseTimer::new("outer_phase");
@@ -89,7 +90,7 @@ fn phase_timer_nested() {
 // GpuMetrics Tests
 // =============================================================================
 
-/// Test that GpuMetrics tracks batch counts correctly.
+/// Test that `GpuMetrics` tracks batch counts correctly.
 #[test]
 fn gpu_metrics_batch_count() {
     let metrics = GpuMetrics::new();
@@ -107,7 +108,7 @@ fn gpu_metrics_batch_count() {
     );
 }
 
-/// Test that GpuMetrics tracks queue wait time.
+/// Test that `GpuMetrics` tracks queue wait time.
 #[test]
 fn gpu_metrics_queue_wait_time() {
     let metrics = GpuMetrics::new();
@@ -122,7 +123,7 @@ fn gpu_metrics_queue_wait_time() {
     );
 }
 
-/// Test that GpuMetrics tracks GPU busy time.
+/// Test that `GpuMetrics` tracks GPU busy time.
 #[test]
 fn gpu_metrics_gpu_busy_time() {
     let metrics = GpuMetrics::new();
@@ -137,7 +138,7 @@ fn gpu_metrics_gpu_busy_time() {
     );
 }
 
-/// Test that GpuMetrics calculates utilisation correctly.
+/// Test that `GpuMetrics` calculates utilisation correctly.
 #[test]
 fn gpu_metrics_utilisation() {
     let metrics = GpuMetrics::new();
@@ -153,7 +154,7 @@ fn gpu_metrics_utilisation() {
     );
 }
 
-/// Test that GpuMetrics handles zero total time gracefully.
+/// Test that `GpuMetrics` handles zero total time gracefully.
 #[test]
 fn gpu_metrics_zero_utilisation() {
     let metrics = GpuMetrics::new();
@@ -166,7 +167,7 @@ fn gpu_metrics_zero_utilisation() {
     );
 }
 
-/// Test that GpuMetrics is thread-safe.
+/// Test that `GpuMetrics` is thread-safe.
 #[test]
 fn gpu_metrics_thread_safety() {
     use std::sync::Arc;
@@ -201,7 +202,7 @@ fn gpu_metrics_thread_safety() {
 // ProfileData Tests
 // =============================================================================
 
-/// Test that ProfileData collects timing data correctly.
+/// Test that `ProfileData` collects timing data correctly.
 #[test]
 fn profile_data_timing() {
     let mut profile = ProfileData::new();
@@ -219,7 +220,7 @@ fn profile_data_timing() {
     assert_eq!(json["timing"]["phases"]["gpu_analysis"], 987);
 }
 
-/// Test that ProfileData collects GPU metrics correctly.
+/// Test that `ProfileData` collects GPU metrics correctly.
 #[test]
 fn profile_data_gpu_metrics() {
     let mut profile = ProfileData::new();
@@ -237,7 +238,7 @@ fn profile_data_gpu_metrics() {
     assert_eq!(json["gpu"]["device"], "Apple M2 Max");
 }
 
-/// Test that ProfileData collects analysis metrics correctly.
+/// Test that `ProfileData` collects analysis metrics correctly.
 #[test]
 fn profile_data_analysis_metrics() {
     let mut profile = ProfileData::new();
@@ -255,7 +256,7 @@ fn profile_data_analysis_metrics() {
     assert_eq!(json["analysis"]["candidatesReturned"], 100);
 }
 
-/// Test that ProfileData to_json produces valid JSON output.
+/// Test that `ProfileData` `to_json` produces valid JSON output.
 #[test]
 fn profile_data_json_valid() {
     let mut profile = ProfileData::new();
@@ -278,7 +279,7 @@ fn profile_data_json_valid() {
 // Environment Variable Tests
 // =============================================================================
 
-/// Test that timing_enabled() respects the environment variable.
+/// Test that `timing_enabled()` respects the environment variable.
 #[test]
 fn timing_enabled_env_check() {
     // Note: env var checks are cached with OnceLock, so we can't dynamically
@@ -287,13 +288,13 @@ fn timing_enabled_env_check() {
     let _enabled = timing_enabled();
 }
 
-/// Test that gpu_metrics_enabled() respects the environment variable.
+/// Test that `gpu_metrics_enabled()` respects the environment variable.
 #[test]
 fn gpu_metrics_enabled_env_check() {
     let _enabled = gpu_metrics_enabled();
 }
 
-/// Test that profile_mode() parses the environment variable correctly.
+/// Test that `profile_mode()` parses the environment variable correctly.
 #[test]
 fn profile_mode_parsing() {
     // Test the ProfileMode enum
@@ -354,7 +355,7 @@ fn create_test_data() -> (String, CreatureJson) {
     (parquet_file, creature)
 }
 
-/// Test that timing output includes phase breakdown when NEAT_AI_DISCOVERY_TIMING=1.
+/// Test that timing output includes phase breakdown when `NEAT_AI_DISCOVERY_TIMING=1`.
 #[test]
 #[serial]
 fn integration_timing_output() {
@@ -386,7 +387,7 @@ fn integration_timing_output() {
     assert!(result.metadata.total_focus_neurons > 0);
 }
 
-/// Test that JSON profile output is structured correctly when NEAT_AI_DISCOVERY_PROFILE=json.
+/// Test that JSON profile output is structured correctly when `NEAT_AI_DISCOVERY_PROFILE=json`.
 #[test]
 #[serial]
 fn integration_json_profile() {
@@ -422,7 +423,7 @@ fn integration_json_profile() {
     // response should still be valid
 }
 
-/// Test that GPU metrics are collected when NEAT_AI_DISCOVERY_GPU_METRICS=1.
+/// Test that GPU metrics are collected when `NEAT_AI_DISCOVERY_GPU_METRICS=1`.
 #[test]
 #[serial]
 fn integration_gpu_metrics() {
@@ -455,7 +456,7 @@ fn integration_gpu_metrics() {
 // Overhead Verification Tests
 // =============================================================================
 
-/// Test that PhaseTimer can be created and dropped many times without error.
+/// Test that `PhaseTimer` can be created and dropped many times without error.
 ///
 /// Issue #454: Converted from timing-based benchmark to functional test.
 /// Performance measurement belongs in `benches/`, not unit tests.
@@ -467,7 +468,7 @@ fn phase_timer_repeated_creation_and_drop() {
     }
 }
 
-/// Test that GpuMetrics accumulates correctly after many recordings.
+/// Test that `GpuMetrics` accumulates correctly after many recordings.
 ///
 /// Issue #454: Converted from timing-based benchmark to functional test.
 /// Performance measurement belongs in `benches/`, not unit tests.
@@ -488,7 +489,7 @@ fn gpu_metrics_accumulates_many_recordings() {
     assert_eq!(metrics.total_gpu_busy_us(), iterations as u64 * 5000);
 }
 
-/// Test that ProfileData retains the last recorded phase value.
+/// Test that `ProfileData` retains the last recorded phase value.
 ///
 /// Issue #454: Converted from timing-based benchmark to functional test.
 /// Performance measurement belongs in `benches/`, not unit tests.

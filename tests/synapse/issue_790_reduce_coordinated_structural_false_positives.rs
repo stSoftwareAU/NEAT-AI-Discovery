@@ -3,9 +3,9 @@
 //! GRQ-sampler analysis shows coordinated-structural candidates have a 2.3% success
 //! rate (272 / 12,069). These tests verify tighter filtering:
 //!
-//! 1. Reduced COORDINATED_OPERATION_DISCOUNT applies steeper per-op discount
-//! 2. Raised MIN_COORDINATED_MULTI_OP_GAIN filters near-zero predictions
-//! 3. COORDINATED_PESSIMISM_DISCOUNT flat discount applied to all coordinated candidates
+//! 1. Reduced `COORDINATED_OPERATION_DISCOUNT` applies steeper per-op discount
+//! 2. Raised `MIN_COORDINATED_MULTI_OP_GAIN` filters near-zero predictions
+//! 3. `COORDINATED_PESSIMISM_DISCOUNT` flat discount applied to all coordinated candidates
 
 use neat_ai_discovery::analysis::candidate_aggregation::{
     apply_operation_count_discount, validate_coordinated_candidate_gain,

@@ -5,7 +5,7 @@
 //! detection module.
 //!
 //! ## TDD Plan
-//! 1. Verify build_record_map returns correct entries for typical input
+//! 1. Verify `build_record_map` returns correct entries for typical input
 //! 2. Verify empty input produces an empty map
 //! 3. Verify multiple neurons each get their own entry
 //! 4. Verify the map is usable for lookups by UUID string
@@ -13,7 +13,7 @@
 use neat_ai_discovery::analysis::detection::helpers::build_record_map;
 use neat_ai_discovery::types::DiscoverRecord;
 
-/// Helper: create a DiscoverRecord with minimal fields.
+/// Helper: create a `DiscoverRecord` with minimal fields.
 fn make_record(neuron_uuid: &str, obs_index: u32, activation: f32) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,
@@ -24,7 +24,7 @@ fn make_record(neuron_uuid: &str, obs_index: u32, activation: f32) -> DiscoverRe
     }
 }
 
-/// Test 1: build_record_map returns correct entries for typical input.
+/// Test 1: `build_record_map` returns correct entries for typical input.
 #[test]
 fn test_build_record_map_typical_input() {
     let neuron_records = vec![

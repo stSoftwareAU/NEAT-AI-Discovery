@@ -3,6 +3,11 @@
 //! This benchmark measures the performance improvement from batching sources
 //! that share the same observation indices.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::types::DiscoverRecord;
@@ -24,7 +29,7 @@ fn create_correlated_input_creature(input_count: usize) -> CreatureJson {
     }
 }
 
-/// Create test records where all inputs share the same obs_indices.
+/// Create test records where all inputs share the same `obs_indices`.
 fn create_fully_correlated_records(input_count: usize, record_count: usize) -> Vec<DiscoverRecord> {
     let mut records = Vec::with_capacity((input_count + 1) * record_count);
 
@@ -55,7 +60,7 @@ fn create_fully_correlated_records(input_count: usize, record_count: usize) -> V
     records
 }
 
-/// Create test records where inputs have partial overlap in obs_indices.
+/// Create test records where inputs have partial overlap in `obs_indices`.
 fn create_partially_correlated_records(
     input_count: usize,
     record_count: usize,

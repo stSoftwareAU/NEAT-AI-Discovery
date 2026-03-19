@@ -7,6 +7,7 @@
 //!
 //! Run with: `cargo bench --bench parallel_discovery`
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::analyze_all;
 use neat_ai_discovery::analysis::gpu::GpuAnalyzer;

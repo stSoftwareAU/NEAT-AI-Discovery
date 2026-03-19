@@ -3,7 +3,7 @@
 //! Tests budget allocation strategies with different neuron counts and budget sizes:
 //! - Equal allocation across layers
 //! - Proportional allocation (larger layers get more)
-//! - OutputFirst allocation (deeper layers prioritised)
+//! - `OutputFirst` allocation (deeper layers prioritised)
 //! - Edge cases: zero budget, single layer, budget exceeding neuron count
 
 use neat_ai_discovery::CreatureJson;

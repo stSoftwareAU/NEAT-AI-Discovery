@@ -56,7 +56,7 @@ fn relu_improvement_with_target_simulation_uses_safe_access() {
     assert!(improvement.is_finite(), "improvement must be finite");
 }
 
-/// Verifies that the ReLU function correctly computes improvement in the
+/// Verifies that the `ReLU` function correctly computes improvement in the
 /// activation domain when target simulation is enabled.
 #[test]
 fn relu_improvement_target_simulation_activation_domain() {

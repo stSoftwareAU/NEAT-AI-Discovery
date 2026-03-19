@@ -31,6 +31,7 @@
 //! - Observed activation range covers < `UTILISATION_THRESHOLD` of the theoretical range
 //! - Recommends IDENTITY (no bounds, preserves full signal)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::helpers::build_record_map;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};

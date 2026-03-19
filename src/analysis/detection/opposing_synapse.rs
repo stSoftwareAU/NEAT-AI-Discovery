@@ -28,6 +28,7 @@
 //! These are emitted as `CoordinatedStructuralCandidateJson` with `RemoveSynapse` or
 //! `SetWeight` operations.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 
 use super::helpers::build_record_map;

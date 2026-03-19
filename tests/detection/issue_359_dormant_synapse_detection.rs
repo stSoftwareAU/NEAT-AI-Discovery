@@ -12,7 +12,7 @@
 //! 4. Verify insufficient samples are excluded
 //! 5. Verify coordinated candidate conversion produces removeSynapse
 //! 6. Verify multiple dormant synapses are all detected
-//! 7. Verify other_fan_in count is correct
+//! 7. Verify `other_fan_in` count is correct
 //! 8. Verify empty synapse list produces no candidates
 //! 9. Verify missing source neuron records are handled
 //! 10. Verify weight exactly at threshold boundary
@@ -32,7 +32,7 @@ use neat_ai_discovery::analysis::detection::dormant_synapse::{
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord for a neuron with given activation.
+/// Helper: create a `DiscoverRecord` for a neuron with given activation.
 fn make_record(neuron_uuid: &str, obs_index: u32, activation: f32) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,
@@ -53,7 +53,7 @@ fn make_creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>) -> Creatu
     }
 }
 
-/// Helper: build a NeuronJson.
+/// Helper: build a `NeuronJson`.
 fn neuron(uuid: &str, neuron_type: &str, squash: &str) -> NeuronJson {
     NeuronJson {
         uuid: uuid.to_string(),
@@ -63,7 +63,7 @@ fn neuron(uuid: &str, neuron_type: &str, squash: &str) -> NeuronJson {
     }
 }
 
-/// Helper: build a SynapseJson.
+/// Helper: build a `SynapseJson`.
 fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
     SynapseJson {
         from_uuid: from.to_string(),

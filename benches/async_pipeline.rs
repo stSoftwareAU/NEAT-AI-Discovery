@@ -5,6 +5,7 @@
 //!
 //! Run with: `cargo bench --bench async_pipeline`
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::analyze_all;
 use neat_ai_discovery::analysis::gpu::GpuAnalyzer;
@@ -16,7 +17,7 @@ use tempfile::tempdir;
 /// Create a test creature with the specified number of hidden neurons.
 ///
 /// Structure: 3 inputs → N hidden neurons → 2 outputs, fully connected.
-/// Larger than parallel_discovery benchmark to increase GPU/CPU work ratio.
+/// Larger than `parallel_discovery` benchmark to increase GPU/CPU work ratio.
 fn create_benchmark_creature(num_hidden: usize) -> CreatureJson {
     let mut neurons = Vec::new();
 

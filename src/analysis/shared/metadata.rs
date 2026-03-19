@@ -31,7 +31,7 @@ pub struct SynapseAnalysisMetadata {
     ///
     /// This is `true` when both:
     /// 1. `target_value` is available, AND
-    /// 2. The target neuron has a supported saturating activation (e.g., HARD_TANH)
+    /// 2. The target neuron has a supported saturating activation (e.g., `HARD_TANH`)
     ///
     /// If `false` but the target has a saturating activation, predictions may invert.
     pub saturation_aware_simulation_used: bool,

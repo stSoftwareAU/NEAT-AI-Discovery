@@ -18,6 +18,7 @@
 //! - `NEAT_AI_DISCOVERY_PRELOAD_ALL`: Set to 1 to disable streaming (use full preload)
 //! - `NEAT_AI_DISCOVERY_BLOCK_SIZE`: Records per block (default: 10000, min: 10)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::types::DiscoverRecord;
 use anyhow::{Context, Result};
 use parking_lot::RwLock;

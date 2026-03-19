@@ -1,5 +1,6 @@
 //! Integration tests for discovery recording
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod common;
 
 use neat_ai_discovery::record_discovery_internal;
@@ -441,7 +442,7 @@ fn test_impact_calculation_with_multiple_incoming_connections() {
     );
 }
 
-/// Test that analyze_neurons returns non-zero bias values for neuron candidates
+/// Test that `analyze_neurons` returns non-zero bias values for neuron candidates
 #[test]
 fn test_analyze_neurons_returns_non_zero_bias() {
     skip_without_gpu!();
@@ -901,9 +902,9 @@ fn test_add_neuron_finds_candidates_with_correlated_errors() {
     );
 }
 
-/// Regression test: Add-neuron with HARD_TANH target must use bias-aware weight calculation.
+/// Regression test: Add-neuron with `HARD_TANH` target must use bias-aware weight calculation.
 ///
-/// Production uses HARD_TANH for output neurons. The optimal outgoing weight depends on
+/// Production uses `HARD_TANH` for output neurons. The optimal outgoing weight depends on
 /// the new neuron's bias - computing weight without bias gives wrong predictions.
 ///
 /// This test verifies that predictions for non-linear target neurons are accurate.
@@ -1239,10 +1240,10 @@ fn test_hidden_neurons_are_analysed_not_filtered() {
 
 /// REGRESSION TEST: Hidden neuron candidates must have discounted predictions.
 ///
-/// When a candidate targets a hidden neuron, the expected_creature_score_gain
+/// When a candidate targets a hidden neuron, the `expected_creature_score_gain`
 /// should be discounted by the hidden neuron's impact score (path to outputs).
 ///
-/// Impact is calculated as: (weight to child / total inbound to child) × child_impact
+/// Impact is calculated as: (weight to child / total inbound to child) × `child_impact`
 /// So to get impact < 1.0, we need multiple paths to the output.
 ///
 /// This test will FAIL if hidden neuron predictions are not discounted.

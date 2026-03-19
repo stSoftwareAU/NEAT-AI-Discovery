@@ -16,11 +16,12 @@
 //! 9. Deduplication metadata reports counts correctly
 //! 10. Large candidate sets are handled efficiently
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::CoordinatedStructuralCandidateJson;
 use neat_ai_discovery::CoordinatedStructuralOpJson;
 use neat_ai_discovery::analysis::candidate_clustering::deduplicate_cross_module_candidates;
 
-/// Helper: create a single-op ChangeSquash candidate.
+/// Helper: create a single-op `ChangeSquash` candidate.
 fn change_squash_candidate(
     neuron_uuid: &str,
     squash: &str,
@@ -37,7 +38,7 @@ fn change_squash_candidate(
     }
 }
 
-/// Helper: create a single-op RemoveNeuron candidate.
+/// Helper: create a single-op `RemoveNeuron` candidate.
 fn remove_neuron_candidate(
     neuron_uuid: &str,
     gain: f32,
@@ -52,7 +53,7 @@ fn remove_neuron_candidate(
     }
 }
 
-/// Helper: create a single-op SetBias candidate.
+/// Helper: create a single-op `SetBias` candidate.
 fn set_bias_candidate(
     neuron_uuid: &str,
     bias: f32,
@@ -69,7 +70,7 @@ fn set_bias_candidate(
     }
 }
 
-/// Helper: create an AddSynapse candidate.
+/// Helper: create an `AddSynapse` candidate.
 fn add_synapse_candidate(
     from: &str,
     to: &str,
@@ -324,7 +325,7 @@ fn test_large_candidate_set_deduplication() {
     assert_eq!(result.original_count, 100);
 }
 
-/// Test 11: ChangeSquash with different target squash values are NOT deduplicated
+/// Test 11: `ChangeSquash` with different target squash values are NOT deduplicated
 /// (they represent different proposed activations).
 #[test]
 fn test_different_squash_values_not_deduplicated() {
@@ -343,7 +344,7 @@ fn test_different_squash_values_not_deduplicated() {
     assert_eq!(result.duplicates_removed, 0);
 }
 
-/// Test 12: SetBias candidates with very different bias values are NOT deduplicated.
+/// Test 12: `SetBias` candidates with very different bias values are NOT deduplicated.
 #[test]
 fn test_different_bias_values_not_deduplicated() {
     let candidates = vec![
@@ -360,7 +361,7 @@ fn test_different_bias_values_not_deduplicated() {
     );
 }
 
-/// Test 13: SetBias candidates with similar bias values ARE deduplicated.
+/// Test 13: `SetBias` candidates with similar bias values ARE deduplicated.
 #[test]
 fn test_similar_bias_values_deduplicated() {
     let candidates = vec![
@@ -378,7 +379,7 @@ fn test_similar_bias_values_deduplicated() {
     assert_eq!(result.candidates[0].expected_creature_score_gain, 0.05);
 }
 
-/// Test 14: AddSynapse candidates with same endpoints but very different weights
+/// Test 14: `AddSynapse` candidates with same endpoints but very different weights
 /// are NOT deduplicated.
 #[test]
 fn test_add_synapse_different_weights_not_deduplicated() {
@@ -396,7 +397,7 @@ fn test_add_synapse_different_weights_not_deduplicated() {
     );
 }
 
-/// Test 15: AddSynapse candidates with same endpoints and similar weights
+/// Test 15: `AddSynapse` candidates with same endpoints and similar weights
 /// ARE deduplicated.
 #[test]
 fn test_add_synapse_similar_weights_deduplicated() {

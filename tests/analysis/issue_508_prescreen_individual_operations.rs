@@ -110,9 +110,9 @@ fn synergistic_candidate_allows_mildly_negative_complement() {
     let _ = candidates; // Primarily validates no panic / no over-filtering
 }
 
-/// Test: Epistatic pairs pre-screen filters sources used in valid_sources.
+/// Test: Epistatic pairs pre-screen filters sources used in `valid_sources`.
 ///
-/// Although the existing epistatic logic (combined > best_individual) already prevents
+/// Although the existing epistatic logic (combined > `best_individual`) already prevents
 /// most harmful pairings, the pre-screen adds an explicit early filter to avoid
 /// even evaluating pairs with strongly harmful sources.
 #[test]

@@ -22,10 +22,10 @@
 //! ## Impact Formula
 //!
 //! For STEP/BIPOLAR targets:
-//! - If flip_rate = 0% (saturated): impact = weight.abs() * child_impact * SATURATION_DISCOUNT
-//! - If flip_rate > 0% (flipping): impact = child_impact (any synapse could flip it)
+//! - If `flip_rate` = 0% (saturated): impact = `weight.abs()` * `child_impact` * `SATURATION_DISCOUNT`
+//! - If `flip_rate` > 0% (flipping): impact = `child_impact` (any synapse could flip it)
 //!
-//! The flip_rate is calculated from recorded activations by counting how many
+//! The `flip_rate` is calculated from recorded activations by counting how many
 //! unique output values we see.
 
 use neat_ai_discovery::focus::rank_focus_neurons;
@@ -74,7 +74,7 @@ fn output(uuid: &str, squash: &str) -> NeuronJson {
 /// input sum is consistently above threshold. Removing a small positive weight
 /// is unlikely to flip it unless the weight is massive.
 ///
-/// Expected: Upstream neurons should have DISCOUNTED impact (not full child_impact).
+/// Expected: Upstream neurons should have DISCOUNTED impact (not full `child_impact`).
 #[test]
 fn test_step_saturated_positive_has_discounted_impact() {
     let creature = CreatureJson {
@@ -382,7 +382,7 @@ fn test_bipolar_flipping_has_full_impact() {
 /// TDD Test: STEP with only one recorded sample can't determine flip rate.
 ///
 /// With insufficient data, we should fall back to the conservative approach
-/// (full child_impact) rather than incorrectly assuming saturation.
+/// (full `child_impact`) rather than incorrectly assuming saturation.
 #[test]
 fn test_step_insufficient_data_uses_conservative_impact() {
     let creature = CreatureJson {
@@ -503,9 +503,9 @@ fn test_chained_step_neurons_compound_impact() {
 /// Document: How to calculate flip rate from recorded activations.
 ///
 /// For STEP neuron with activations [1, 1, 0, 1, 0]:
-/// - unique_values = {0, 1}
+/// - `unique_values` = {0, 1}
 /// - count = 2
-/// - flip_rate = if count > 1 { high } else { 0 (saturated) }
+/// - `flip_rate` = if count > 1 { high } else { 0 (saturated) }
 ///
 /// This is a simple heuristic. A more sophisticated approach would count
 /// actual transitions (1→0 or 0→1) but that requires ordered samples.

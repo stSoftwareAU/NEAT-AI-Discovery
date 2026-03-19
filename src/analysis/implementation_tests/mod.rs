@@ -10,8 +10,8 @@
 //! - `sample_matching_tests` — Sample matching and filtering
 //! - `bias_calculation_tests` — Bias calculation for various activation functions
 //! - `diagnostics_tests` — Diagnostics and rejection tracking
-//! - `relu_evaluation_tests` — ReLU candidate evaluation and splitting
-//! - `improvement_model_tests` — Linear and HARD_TANH improvement models
+//! - `relu_evaluation_tests` — `ReLU` candidate evaluation and splitting
+//! - `improvement_model_tests` — Linear and `HARD_TANH` improvement models
 //! - `synapse_analysis_tests` — Synapse and neuron analysis integration
 //! - `optimal_weight_tests` — Optimal outgoing weight calculation
 //! - `prediction_accuracy_tests` — Prediction accuracy vs manual simulation

@@ -11,11 +11,12 @@
 //! **Extracted from implementation.rs as part of Issue #271**
 //!
 //! Sub-modules (Issue #524):
-//! - `rejection` — Synapse rejection tracking (RejectionReason, TargetDiagnostics)
-//! - `neuron_tracking` — Neuron rejection tracking (NeuronDiagnostics)
-//! - `target_data` — Target data structures for sample building (TargetMap)
+//! - `rejection` — Synapse rejection tracking (`RejectionReason`, `TargetDiagnostics`)
+//! - `neuron_tracking` — Neuron rejection tracking (`NeuronDiagnostics`)
+//! - `target_data` — Target data structures for sample building (`TargetMap`)
 //! - `focus_filter` — Focus target filtering and validation
 
+#![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod focus_filter;
 mod neuron_tracking;
 mod rejection;

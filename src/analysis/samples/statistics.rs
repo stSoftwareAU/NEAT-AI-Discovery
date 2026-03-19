@@ -1,5 +1,6 @@
 //! Statistics types for synapse and neuron evaluation results.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::{EPSILON, HelpfulSample};
 
 // Import confidence interval calculations (Issue #194)
@@ -191,7 +192,7 @@ impl HelpfulStats {
         self.positive_count + self.negative_count
     }
 
-    /// Get the improvement ratio (positive_count / total_count).
+    /// Get the improvement ratio (`positive_count` / `total_count`).
     ///
     /// Returns 0.5 (neutral) if no samples have been evaluated.
     #[must_use]
@@ -245,14 +246,14 @@ impl HelpfulStats {
     }
 }
 
-/// ReLU split direction for neuron candidates.
+/// `ReLU` split direction for neuron candidates.
 #[derive(Clone, Copy)]
 pub enum ReluOrientation {
     Positive,
     Negative,
 }
 
-/// ReLU evaluation results for neuron candidates.
+/// `ReLU` evaluation results for neuron candidates.
 pub struct ReluStats {
     pub orientation: ReluOrientation,
     pub samples: Vec<(f32, f32)>,
@@ -274,7 +275,7 @@ impl ReluStats {
     /// Evaluate this orientation and return a candidate if it passes the threshold.
     ///
     /// This method computes the optimal outgoing weight and expected improvement for
-    /// a ReLU candidate, returning a candidate JSON if it exceeds the threshold.
+    /// a `ReLU` candidate, returning a candidate JSON if it exceeds the threshold.
     ///
     /// # Arguments
     /// * `source_uuid` - UUID of the source neuron
@@ -398,7 +399,7 @@ impl HarmfulStats {
         self.harmful_count + self.helpful_count
     }
 
-    /// Get the harmful ratio (harmful_count / total_count).
+    /// Get the harmful ratio (`harmful_count` / `total_count`).
     ///
     /// Returns 0.5 (neutral) if no samples have been evaluated.
     #[must_use]

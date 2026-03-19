@@ -13,7 +13,7 @@
 //!    startup via `read_all_records_grouped_by_neuron()`. This means no disk I/O occurs
 //!    during the analysis loop.
 //!
-//! 2. **HashMap access**: After pre-loading, cache access is O(1) HashMap lookups
+//! 2. **`HashMap` access**: After pre-loading, cache access is O(1) `HashMap` lookups
 //!    (`cache.get(source_uuid)`). The order of access doesn't affect performance because
 //!    we're not doing sequential disk reads.
 //!
@@ -34,15 +34,16 @@
 //!
 //! The issue assumed inputs are accessed from disk/parquet sequentially during analysis,
 //! leading to cache misses when jumping between non-adjacent inputs. In reality:
-//! - ALL data is pre-loaded into a HashMap before analysis starts
-//! - During analysis, we're just doing O(1) HashMap lookups
-//! - CPU cache locality is determined by HashMap internals, not access order
+//! - ALL data is pre-loaded into a `HashMap` before analysis starts
+//! - During analysis, we're just doing O(1) `HashMap` lookups
+//! - CPU cache locality is determined by `HashMap` internals, not access order
 //!
 //! ## Conclusion
 //!
 //! No code changes are required. The current implementation is efficient for creatures
 //! with 1000-2000 inputs as requested in the issue.
 
+#![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};

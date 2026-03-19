@@ -5,6 +5,7 @@
 //! (Issue #520): `helpful_evaluation`, `harmful_evaluation`, `relu_evaluation`,
 //! `activation_evaluation`, `bias_evaluation`.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;
 use std::time::Duration;
 
@@ -48,13 +49,13 @@ pub struct GpuAnalyzer {
     pub(super) activation_pipeline: Option<wgpu::ComputePipeline>,
     pub(super) bias_layout: Option<wgpu::BindGroupLayout>,
     pub(super) bias_pipeline: Option<wgpu::ComputePipeline>,
-    /// Reduction pipeline for HelpfulContribution aggregation (Issue #218)
+    /// Reduction pipeline for `HelpfulContribution` aggregation (Issue #218)
     pub(super) helpful_reduce_layout: Option<wgpu::BindGroupLayout>,
     pub(super) helpful_reduce_pipeline: Option<wgpu::ComputePipeline>,
-    /// Reduction pipeline for HarmfulContribution aggregation (Issue #218)
+    /// Reduction pipeline for `HarmfulContribution` aggregation (Issue #218)
     pub(super) harmful_reduce_layout: Option<wgpu::BindGroupLayout>,
     pub(super) harmful_reduce_pipeline: Option<wgpu::ComputePipeline>,
-    /// Reduction pipeline for ActivationOutput aggregation (Issue #567)
+    /// Reduction pipeline for `ActivationOutput` aggregation (Issue #567)
     pub(super) activation_reduce_layout: Option<wgpu::BindGroupLayout>,
     pub(super) activation_reduce_pipeline: Option<wgpu::ComputePipeline>,
     /// Optimised GPU batch size based on detected hardware.
@@ -67,8 +68,8 @@ pub struct GpuAnalyzer {
 /// This allows helper functions to work with either a direct `GpuAnalyzer`
 /// or a shared `GpuWorkQueue` without code duplication.
 pub trait GpuEvaluator {
-    /// Evaluate ReLU activation for neuron candidates.
-    /// Returns (positive_stats, negative_stats, baseline_error_sq).
+    /// Evaluate `ReLU` activation for neuron candidates.
+    /// Returns (`positive_stats`, `negative_stats`, `baseline_error_sq`).
     fn evaluate_relu(
         &self,
         samples: &[HelpfulSample],
@@ -76,7 +77,7 @@ pub trait GpuEvaluator {
     ) -> Result<(ReluStats, ReluStats, f32)>;
 
     /// Evaluate general activation function for neuron candidates.
-    /// Returns (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count).
+    /// Returns (`sum_activation_sq`, `sum_error_activation`, `total_baseline_error_sq`, `improved_count`).
     fn evaluate_activation(
         &self,
         samples: &[HelpfulSample],
@@ -86,7 +87,7 @@ pub trait GpuEvaluator {
     ) -> Result<(f32, f32, f32, u32)>;
 
     /// Batch-evaluate multiple activation functions in a single GPU call (Issue #201).
-    /// Returns Vec of (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count).
+    /// Returns Vec of (`sum_activation_sq`, `sum_error_activation`, `total_baseline_error_sq`, `improved_count`).
     fn evaluate_activations_batched(
         &self,
         samples: &[HelpfulSample],
@@ -94,7 +95,7 @@ pub trait GpuEvaluator {
     ) -> Result<Vec<(f32, f32, f32, u32)>>;
 }
 
-/// Implementation for direct GpuAnalyzer access.
+/// Implementation for direct `GpuAnalyzer` access.
 impl GpuEvaluator for GpuAnalyzer {
     fn evaluate_relu(
         &self,
@@ -338,12 +339,12 @@ impl GpuAnalyzer {
             .clone()
     }
 
-    /// Check if this GpuAnalyzer has a valid GPU device (always `true` after `new()`).
+    /// Check if this `GpuAnalyzer` has a valid GPU device (always `true` after `new()`).
     pub fn has_gpu(&self) -> bool {
         self.device.is_some()
     }
 
-    /// Create a new GpuAnalyzer with all pipelines initialised (~100ms; reuse the instance).
+    /// Create a new `GpuAnalyzer` with all pipelines initialised (~100ms; reuse the instance).
     pub fn new() -> Result<Self> {
         // Suppress Mesa/libEGL warnings if requested (must be called before GPU init)
         suppress_mesa_warnings_if_requested();

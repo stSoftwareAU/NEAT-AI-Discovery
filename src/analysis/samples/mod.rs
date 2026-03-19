@@ -35,7 +35,7 @@ pub const EPSILON: f32 = 1e-8;
 /// a `setBias` coordinated-structural operation than paying complexity cost for a new edge.
 ///
 /// The heuristic is based on the *range* of the contribution:
-///   effect_range approx |weight| * (max_activation - min_activation)
+///   `effect_range` approx |weight| * (`max_activation` - `min_activation`)
 ///
 /// If `effect_range <= threshold`, we fold the synapse into `setBias`.
 pub const DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD: f32 = 1e-7;
@@ -47,7 +47,7 @@ pub const DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD: f32 = 1e-7;
 /// Core evaluation sample unit.
 ///
 /// Represents a single sample for evaluating potential synapse/neuron candidates.
-/// For accurate HARD_TANH modelling, we need the target's pre-activation value
+/// For accurate `HARD_TANH` modelling, we need the target's pre-activation value
 /// to properly simulate clamping behaviour. When `target_value` is `Some`, we can
 /// compute the actual effect of adding a contribution rather than using the linear
 /// approximation.
@@ -58,10 +58,10 @@ pub struct HelpfulSample {
     /// Target neuron's average error (expected - actual output)
     pub avg_error: f32,
     /// Target neuron's pre-activation value (input sum before squash function).
-    /// Used for accurate HARD_TANH/clamping calculations. None for GPU-matched samples.
+    /// Used for accurate `HARD_TANH/clamping` calculations. None for GPU-matched samples.
     pub target_value: Option<f32>,
     /// Target neuron's post-activation output (after squash function).
-    /// Note: avg_error is in VALUE domain, so expected = squash(target_value + avg_error)
+    /// Note: `avg_error` is in VALUE domain, so expected = `squash(target_value` + `avg_error`)
     pub target_activation: Option<f32>,
 }
 

@@ -4,7 +4,7 @@
 //! (incoming + outgoing) for each neuron being ranked. With n neurons and m synapses,
 //! this was O(n × m) complexity.
 //!
-//! The fix pre-computes synapse counts into HashMaps, reducing complexity to O(n + m).
+//! The fix pre-computes synapse counts into `HashMaps`, reducing complexity to O(n + m).
 //!
 //! These tests verify:
 //! - Correct synapse counts match the original implementation

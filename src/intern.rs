@@ -7,10 +7,10 @@
 //! # Memory Savings
 //!
 //! For a creature with 500 neurons and 10,000 synapses:
-//! - Without interning: Each HashMap entry clones the full UUID (~36 bytes per String)
+//! - Without interning: Each `HashMap` entry clones the full UUID (~36 bytes per String)
 //! - With interning: Each entry uses a `u32` index (4 bytes)
 //!
-//! Example savings for existing_synapses HashSet<(String, String)>:
+//! Example savings for `existing_synapses` `HashSet`<(String, String)>:
 //! - Before: 10,000 × 2 × ~36 bytes ≈ 720KB
 //! - After:  10,000 × 2 × 4 bytes = 80KB (89% reduction)
 //!
@@ -36,6 +36,7 @@
 //! `NeuronIndex` is NOT thread-safe. Create one per thread or wrap in a Mutex/RwLock
 //! if shared access is required.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -58,7 +59,7 @@ impl Default for NeuronIndex {
 }
 
 impl NeuronIndex {
-    /// Creates a new, empty NeuronIndex.
+    /// Creates a new, empty `NeuronIndex`.
     #[inline]
     pub fn new() -> Self {
         Self {
@@ -67,7 +68,7 @@ impl NeuronIndex {
         }
     }
 
-    /// Creates a new NeuronIndex with the specified capacity.
+    /// Creates a new `NeuronIndex` with the specified capacity.
     ///
     /// Use this when you know approximately how many unique UUIDs will be interned
     /// to avoid reallocations.

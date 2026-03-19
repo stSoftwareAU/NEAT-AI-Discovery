@@ -3,8 +3,8 @@
 //! Tests neuron ranking with known impact scores and verifies:
 //! - Ranking order respects error × impact weighting
 //! - Removal candidate selection based on activation-weighted impact vs savings
-//! - SynapseCounts correctness for various topologies
-//! - calculate_removal_savings formula
+//! - `SynapseCounts` correctness for various topologies
+//! - `calculate_removal_savings` formula
 //! - Ranking with known parquet data
 
 use neat_ai_discovery::focus::{

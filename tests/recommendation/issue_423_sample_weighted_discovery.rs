@@ -16,6 +16,7 @@
 //! 7. Test outlier sample detection (consistently failing samples)
 //! 8. Test weighted improvement estimation
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::recommendation::sample_weighted::{
     SampleWeightedConfig, compute_sample_weights, detect_high_error_neurons,
     high_error_neurons_to_coordinated_candidates, stratify_samples,

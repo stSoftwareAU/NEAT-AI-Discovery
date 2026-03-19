@@ -4,20 +4,21 @@
 //! LZ4-compressed caching. Defensive deserialisation returns errors on truncated
 //! or malformed data rather than panicking.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::types::DiscoverRecord;
 use anyhow::{Context, Result, bail};
 
 /// Serialise records to a compact binary format for LZ4 compression.
 ///
 /// Format per record:
-/// - obs_index: u32 (4 bytes)
-/// - uuid_len: u16 (2 bytes)
-/// - uuid: [u8; uuid_len]
-/// - has_value: u8 (1 byte)
-/// - value: f32 (4 bytes, only if has_value)
+/// - `obs_index`: u32 (4 bytes)
+/// - `uuid_len`: u16 (2 bytes)
+/// - uuid: [u8; `uuid_len`]
+/// - `has_value`: u8 (1 byte)
+/// - value: f32 (4 bytes, only if `has_value`)
 /// - activation: f32 (4 bytes)
-/// - errors_len: u16 (2 bytes)
-/// - errors: [f32; errors_len]
+/// - `errors_len`: u16 (2 bytes)
+/// - errors: [f32; `errors_len`]
 pub(crate) fn serialise_records(records: &[DiscoverRecord]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(records.len() * 32);
     for r in records {

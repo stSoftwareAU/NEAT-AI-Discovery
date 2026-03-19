@@ -17,7 +17,7 @@
 //!
 //! This test verifies that high-error neurons are NO LONGER returned as exploratory
 //! ablation candidates (Issue #414 fix). The legitimate "safe prune" removal candidates
-//! (based on activation_weighted_impact < costOfGrowth) remain active with a 17.6% success rate.
+//! (based on `activation_weighted_impact` < costOfGrowth) remain active with a 17.6% success rate.
 
 use neat_ai_discovery::focus::rank_focus_neurons;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;

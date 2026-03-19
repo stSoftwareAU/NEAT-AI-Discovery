@@ -9,8 +9,9 @@
 //! These utilities are used throughout the analysis pipeline for:
 //! 1. Deadline-constrained analysis (stop when time runs out)
 //! 2. Randomised ordering (avoid category starvation)
-//! 3. Verbose logging (controlled by NEAT_AI_DISCOVERY_VERBOSE)
+//! 3. Verbose logging (controlled by `NEAT_AI_DISCOVERY_VERBOSE`)
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::verbose_enabled;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -53,7 +54,7 @@ pub const GPU_QUEUE_TIMEOUT_MAX_SECS: u64 = 300;
 /// Returns `None` if the deadline is in the past (for absolute timestamps), or
 /// `Some(effective_duration_ms)` otherwise.
 ///
-/// Used by both `build_deadline` (to create the SystemTime) and `log_analysis_start`
+/// Used by both `build_deadline` (to create the `SystemTime`) and `log_analysis_start`
 /// (to display the effective timeout to users).
 pub fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
     let target_ms = deadline_ms.unwrap_or(DEFAULT_DURATION_MS);
@@ -114,7 +115,7 @@ pub fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
 
 /// Build a deadline from a timeout value in milliseconds.
 ///
-/// The deadline_ms parameter can be either:
+/// The `deadline_ms` parameter can be either:
 /// - A relative duration (milliseconds from now)
 /// - An absolute timestamp (milliseconds since UNIX epoch)
 ///
@@ -147,8 +148,8 @@ pub fn deadline_passed(deadline: &Option<SystemTime>) -> bool {
 /// For large datasets (>1GB Parquet files), GPU batch evaluations may take
 /// longer than the minimum 60 seconds. This function calculates a reasonable
 /// timeout based on:
-/// - Minimum: GPU_QUEUE_TIMEOUT_MIN_SECS (60s) - catches unresponsive GPU
-/// - Maximum: GPU_QUEUE_TIMEOUT_MAX_SECS (5 min) - prevents infinite waits
+/// - Minimum: `GPU_QUEUE_TIMEOUT_MIN_SECS` (60s) - catches unresponsive GPU
+/// - Maximum: `GPU_QUEUE_TIMEOUT_MAX_SECS` (5 min) - prevents infinite waits
 /// - If deadline is available: uses up to half remaining time (capped at max)
 pub fn calculate_gpu_batch_timeout(deadline: &Option<SystemTime>) -> Duration {
     let min_timeout = Duration::from_secs(GPU_QUEUE_TIMEOUT_MIN_SECS);

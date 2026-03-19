@@ -9,11 +9,12 @@
 //! 1. Test correlated neuron pairs are detected
 //! 2. Test anti-correlated neuron pairs are detected
 //! 3. Test independent neurons are ignored
-//! 4. Test candidates are generated for detected pairs (RemoveNeuron + SetWeight)
+//! 4. Test candidates are generated for detected pairs (`RemoveNeuron` + `SetWeight`)
 //! 5. Test insufficient samples are skipped
 //! 6. Test single hidden neuron produces no candidates
 //! 7. Test output/input neurons are excluded from pairing
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{hidden, make_creature, neuron, output, record, synapse};
 use neat_ai_discovery::analysis::detection::co_adaptation::{
     co_adapted_pairs_to_coordinated_candidates, detect_co_adapted_neurons,
@@ -156,8 +157,8 @@ fn test_independent_neurons_ignored() {
 }
 
 /// Detected co-adapted pairs should produce coordinated structural candidates:
-/// - RemoveNeuron for the lower-impact neuron
-/// - SetWeight perturbation as an alternative
+/// - `RemoveNeuron` for the lower-impact neuron
+/// - `SetWeight` perturbation as an alternative
 #[test]
 fn test_candidates_generated_for_co_adapted_pair() {
     let creature = make_creature(

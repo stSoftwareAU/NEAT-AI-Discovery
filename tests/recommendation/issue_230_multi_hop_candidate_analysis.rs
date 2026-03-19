@@ -19,7 +19,7 @@ use neat_ai_discovery::analysis::recommendation::multi_hop::{
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord for a neuron with given activation and errors.
+/// Helper: create a `DiscoverRecord` for a neuron with given activation and errors.
 fn record(neuron_uuid: &str, obs_index: u32, activation: f32, errors: Vec<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,
@@ -42,7 +42,7 @@ fn make_creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>) -> Creatu
     }
 }
 
-/// Helper: build a NeuronJson.
+/// Helper: build a `NeuronJson`.
 fn neuron(uuid: &str, neuron_type: &str, squash: &str) -> NeuronJson {
     NeuronJson {
         uuid: uuid.to_string(),
@@ -52,7 +52,7 @@ fn neuron(uuid: &str, neuron_type: &str, squash: &str) -> NeuronJson {
     }
 }
 
-/// Helper: build a SynapseJson.
+/// Helper: build a `SynapseJson`.
 fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
     SynapseJson {
         from_uuid: from.to_string(),
@@ -346,7 +346,7 @@ fn test_multi_hop_estimated_improvement_positive() {
 }
 
 /// Test 6: Multi-hop candidates produce valid coordinated structural candidates
-/// with AddNeuron and AddSynapse operations.
+/// with `AddNeuron` and `AddSynapse` operations.
 #[test]
 fn test_multi_hop_candidates_produce_coordinated_operations() {
     let creature = make_creature(

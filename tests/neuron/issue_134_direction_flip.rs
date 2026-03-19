@@ -19,7 +19,7 @@ fn bent_identity(x: f32) -> f32 {
 }
 
 /// Issue #134: Construct a scenario where the linear model would accept a helpful synapse,
-/// but target activation simulation (BENT_IDENTITY) rejects it as net harmful.
+/// but target activation simulation (`BENT_IDENTITY`) rejects it as net harmful.
 #[test]
 fn issue_134_bent_identity_target_simulation_rejects_linear_false_positive() {
     skip_without_gpu!();
@@ -97,7 +97,7 @@ fn issue_134_bent_identity_target_simulation_rejects_linear_false_positive() {
 
 /// Sanity check: the same record pattern with an IDENTITY target should produce a helpful synapse.
 /// This ensures the dataset is not degenerate and that we genuinely rely on target simulation for
-/// BENT_IDENTITY to avoid false positives.
+/// `BENT_IDENTITY` to avoid false positives.
 #[test]
 fn issue_134_identity_target_accepts_linear_candidate_sanity_check() {
     skip_without_gpu!();

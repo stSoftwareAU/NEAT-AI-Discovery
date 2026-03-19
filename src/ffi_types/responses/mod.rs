@@ -25,7 +25,7 @@ use super::{CoordinatedStructuralCandidateJson, RankedNeuronJson, RemovalCandida
 
 use crate::analysis as analysis_mod;
 
-/// JSON output from record_discovery function
+/// JSON output from `record_discovery` function
 #[derive(Debug, Serialize)]
 pub struct RecordDiscoveryOutput {
     pub success: bool,
@@ -71,8 +71,8 @@ pub struct RankFocusNeuronsOutput {
     /// When a hidden neuron has near-zero activation variance (constant output), it can be
     /// removed and its effect folded into bias adjustments for downstream neurons.
     /// Each candidate contains:
-    /// - A RemoveNeuron operation for the constant neuron
-    /// - SetBias operations for all downstream neurons with adjusted biases
+    /// - A `RemoveNeuron` operation for the constant neuron
+    /// - `SetBias` operations for all downstream neurons with adjusted biases
     #[serde(skip_serializing_if = "Option::is_none")]
     pub constant_neuron_removals: Option<Vec<CoordinatedStructuralCandidateJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]

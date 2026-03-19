@@ -8,6 +8,7 @@
 //! - Existing creatures can still *use* any squash; this is only about what we propose as NEW
 //!   add-neuron candidates.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::skip_without_gpu;
 use neat_ai_discovery::record_discovery_internal;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson};

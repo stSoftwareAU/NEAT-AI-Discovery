@@ -313,7 +313,7 @@ pub unsafe extern "C" fn get_calibration_summary(
 /// This allows callers to verify they're using the expected version.
 ///
 /// # Safety
-/// The returned pointer must be freed using free_discovery_result
+/// The returned pointer must be freed using `free_discovery_result`
 #[unsafe(no_mangle)]
 pub extern "C" fn get_library_version() -> *mut std::ffi::c_char {
     use std::ffi::CString;

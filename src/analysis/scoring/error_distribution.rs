@@ -10,6 +10,11 @@
 //! and kurtosis to help identify non-uniform error patterns that may benefit from
 //! targeted discovery approaches.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::analysis::samples::HelpfulSample;
 use serde::Serialize;
 
@@ -30,7 +35,7 @@ pub struct ErrorDistribution {
     /// Standard deviation of errors.
     pub std_dev: f32,
 
-    /// Variance of errors (std_dev^2).
+    /// Variance of errors (`std_dev^2`).
     pub variance: f32,
 
     /// Skewness - asymmetry indicator.

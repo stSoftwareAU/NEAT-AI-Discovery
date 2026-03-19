@@ -22,6 +22,7 @@
 //! beyond the local basin. The NEAT-AI validation framework naturally handles
 //! this by only accepting changes that improve the score.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::helpers::build_record_map;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 use crate::types::DiscoverRecord;
@@ -31,7 +32,7 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 /// Below this, the synapse is performing well enough.
 const MIN_STUCK_ERROR: f32 = 0.1;
 
-/// Maximum coefficient of variation (std_dev / mean) for the target error.
+/// Maximum coefficient of variation (`std_dev` / mean) for the target error.
 /// Low CV means the error is tightly clustered — a plateau in the error landscape.
 const MAX_ERROR_CV: f32 = 0.4;
 

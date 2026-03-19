@@ -17,6 +17,7 @@
 //!   predictions (based on successful discovery analysis)
 //! - Bias-aware calculation recomputes weights after bias optimisation
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 pub mod adjustment;
 pub mod calculation;
 pub mod normalisation;
@@ -28,8 +29,8 @@ pub mod normalisation;
 /// Maximum allowed outgoing weight for add-neuron and add-synapse candidates.
 ///
 /// Based on analysis of production discoveries (v0.1.138):
-/// - ALL successful discoveries have |outgoing_weight| < 0.05
-/// - 36% of failures have |outgoing_weight| > 0.05 (up to 50!)
+/// - ALL successful discoveries have |`outgoing_weight`| < 0.05
+/// - 36% of failures have |`outgoing_weight`| > 0.05 (up to 50!)
 ///
 /// Using 0.1 provides some margin while eliminating clearly bad candidates.
 /// The new neuron should contribute a SMALL correction, not dominate the network.

@@ -4,7 +4,7 @@
 //! squash functions like STEP, BIPOLAR, MINIMUM, and MAXIMUM where the
 //! standard linear model fails.
 //!
-//! See docs/IMPACT_CALCULATION.md for detailed explanation of the issues.
+//! See `docs/IMPACT_CALCULATION.md` for detailed explanation of the issues.
 
 use neat_ai_discovery::focus::rank_focus_neurons;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
@@ -70,7 +70,7 @@ fn create_records_with_activation(
 
 /// Test that tiny weights into STEP neurons are not underestimated.
 ///
-/// Scenario: A neuron with activation 0.000_001 connects via weight 0.000_002
+/// Scenario: A neuron with activation `0.000_001` connects via weight `0.000_002`
 /// to a STEP output neuron. The linear formula calculates impact ≈ 0, but if
 /// the STEP neuron is near its threshold, this tiny signal could flip the output.
 ///

@@ -15,6 +15,7 @@
 //!   which cannot be expressed as a pure `f(value)`; we treat them as non-scalar here.
 //! - Name matching is case-insensitive and includes NEAT-AI aliases (eg CLIPPED, RELU, INVERSE, SINUSOID).
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::borrow::Cow;
 
 /// JavaScript's `Number.MAX_SAFE_INTEGER` (~9.007e15).
@@ -25,7 +26,7 @@ const JS_MAX_SAFE_INTEGER: f32 = 9_007_199_254_740_992.0;
 
 /// Cutoff for EXPONENTIAL to match NEAT-AI WASM.
 ///
-/// At x >= 36.0, EXPONENTIAL returns JS_MAX_SAFE_INTEGER to prevent runaway growth
+/// At x >= 36.0, EXPONENTIAL returns `JS_MAX_SAFE_INTEGER` to prevent runaway growth
 /// and match the TypeScript/WASM behaviour.
 const EXPONENTIAL_CUTOFF: f32 = 36.0;
 

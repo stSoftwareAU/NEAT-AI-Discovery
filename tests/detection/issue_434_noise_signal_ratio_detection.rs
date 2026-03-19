@@ -12,6 +12,7 @@
 //! 5. Test edge cases and minimum sample requirements
 //! 6. Test coordinated structural candidate conversion
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{make_creature, neuron, synapse};
 use neat_ai_discovery::analysis::detection::noise_signal::{
     NoisyNeuronCandidate, NoisySynapseCandidate, detect_noisy_neurons, detect_noisy_synapses,

@@ -1,8 +1,9 @@
-//! Property-based tests for NeuronIndex UUID interning (Issue #680).
+//! Property-based tests for `NeuronIndex` UUID interning (Issue #680).
 //!
 //! Uses `proptest` to verify round-trip identity, sequential indexing, and
 //! structural invariants of the string interning pool.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::intern::NeuronIndex;
 use proptest::prelude::*;
 use std::collections::HashSet;

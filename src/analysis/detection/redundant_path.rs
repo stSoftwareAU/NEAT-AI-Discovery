@@ -20,6 +20,7 @@
 //! `COORDINATED_PRUNE_AND_REWEIGHT` – a coordinated structural candidate that
 //! removes one synapse and adjusts the weight of the surviving synapse.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::CoordinatedStructuralCandidateJson;
 use crate::CoordinatedStructuralOpJson;
 use crate::analysis::samples::HelpfulSample;
@@ -64,7 +65,7 @@ pub struct ExistingPathContribution {
     pub source_uuid: String,
     /// The existing synapse weight from source to target.
     pub existing_weight: f32,
-    /// Recorded activation samples for this source, aligned by obs_index with the target.
+    /// Recorded activation samples for this source, aligned by `obs_index` with the target.
     pub samples: Vec<HelpfulSample>,
 }
 

@@ -1,8 +1,8 @@
 //! Tests for lock-free error value collection in neuron analysis (Issue #834).
 //!
 //! Verifies that error values collected via Rayon fold/reduce produce identical
-//! results to the previous Mutex-based approach. The error_distribution in
-//! NeuronAnalysisMetadata must be correctly populated from all focus targets.
+//! results to the previous Mutex-based approach. The `error_distribution` in
+//! `NeuronAnalysisMetadata` must be correctly populated from all focus targets.
 
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;

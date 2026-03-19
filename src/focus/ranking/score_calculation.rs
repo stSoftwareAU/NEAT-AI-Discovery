@@ -3,13 +3,14 @@
 //! Contains the `RankedNeuron` type and functions for computing error, activation,
 //! frequency, and variance metrics from discovery records.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::super::gradient::GradientFlowStats;
 use crate::types::DiscoverRecord;
 
 use std::collections::HashMap;
 
 /// Statistics for selection-based neurons (MINIMUM, MAXIMUM, IF).
-/// Maps (from_uuid, to_uuid) -> win probability (0.0 to 1.0).
+/// Maps (`from_uuid`, `to_uuid`) -> win probability (0.0 to 1.0).
 /// For MIN/MAX: probability this synapse provides the min/max value.
 /// For IF: probability this synapse's branch is taken (condition always 1.0).
 pub type SelectionStats = HashMap<(String, String), f32>;
@@ -28,7 +29,7 @@ pub struct RankedNeuron {
     pub impact: f32,
     /// Mean absolute activation value from recorded samples
     pub mean_activation: f32,
-    /// Activation-weighted impact = structural_impact × mean_activation
+    /// Activation-weighted impact = `structural_impact` × `mean_activation`
     /// This reflects the actual contribution the neuron makes during inference
     pub activation_weighted_impact: f32,
     /// Issue #206: Gradient flow statistics for this neuron.
@@ -36,17 +37,17 @@ pub struct RankedNeuron {
     /// These metrics help identify neurons with high learning potential:
     /// - `avg_gradient_magnitude`: How much error signal can flow through
     /// - `saturation_ratio`: % of samples in saturated activation region
-    /// - `dead_ratio`: % of samples with zero gradient (ReLU dead zones)
+    /// - `dead_ratio`: % of samples with zero gradient (`ReLU` dead zones)
     pub gradient_flow: GradientFlowStats,
     /// Issue #204: Activation frequency (proportion of samples where neuron fires).
     ///
-    /// Calculated as: count_nonzero_activations / total_samples
+    /// Calculated as: `count_nonzero_activations` / `total_samples`
     /// where "fires" means |activation| > small threshold (avoiding floating point issues).
     ///
     /// This helps identify neurons with extreme firing patterns:
-    /// - activation_frequency < 0.1: Rarely fires, limited influence on most samples
-    /// - activation_frequency > 0.9: Always fires, behaves like a constant (no discriminative power)
-    /// - 0.1 <= activation_frequency <= 0.9: "Sweet spot" with good discriminative power
+    /// - `activation_frequency` < 0.1: Rarely fires, limited influence on most samples
+    /// - `activation_frequency` > 0.9: Always fires, behaves like a constant (no discriminative power)
+    /// - 0.1 <= `activation_frequency` <= 0.9: "Sweet spot" with good discriminative power
     pub activation_frequency: f32,
 }
 
@@ -70,7 +71,7 @@ pub(super) fn average_absolute_error_from_records(records: &[DiscoverRecord]) ->
 /// Sum of |activation| divided by number of finite records.
 ///
 /// Non-finite values (NaN, Infinity) are filtered out to prevent
-/// corruption of activation_weighted_impact calculations and sorting.
+/// corruption of `activation_weighted_impact` calculations and sorting.
 pub(super) fn mean_absolute_activation_from_records(records: &[DiscoverRecord]) -> f32 {
     if records.is_empty() {
         return 0.0;
@@ -91,7 +92,7 @@ pub(super) fn mean_absolute_activation_from_records(records: &[DiscoverRecord]) 
 
 /// Issue #204: Compute activation frequency from discovery records.
 ///
-/// Activation frequency = count_nonzero_activations / total_samples
+/// Activation frequency = `count_nonzero_activations` / `total_samples`
 /// where "fires" means |activation| > threshold to avoid floating-point issues.
 ///
 /// # Arguments
@@ -143,8 +144,8 @@ pub(super) fn activation_frequency_from_records(records: &[DiscoverRecord]) -> f
 /// * `activation_frequency` - The proportion of samples where the neuron fires [0.0, 1.0]
 ///
 /// # Returns
-/// * 0.8 if activation_frequency < 0.1 (rarely fires) - 20% penalty
-/// * 0.8 if activation_frequency > 0.9 (always fires) - 20% penalty
+/// * 0.8 if `activation_frequency` < 0.1 (rarely fires) - 20% penalty
+/// * 0.8 if `activation_frequency` > 0.9 (always fires) - 20% penalty
 /// * 1.0 otherwise (moderate frequency) - no penalty
 const FREQUENCY_LOW_THRESHOLD: f32 = 0.1;
 const FREQUENCY_HIGH_THRESHOLD: f32 = 0.9;
@@ -165,7 +166,7 @@ pub(super) fn compute_frequency_factor(activation_frequency: f32) -> f32 {
 /// with its effect folded into bias adjustments for downstream neurons.
 ///
 /// # Returns
-/// A tuple of (mean_activation, variance) where:
+/// A tuple of (`mean_activation`, variance) where:
 /// - `mean_activation` is the arithmetic mean (NOT absolute value)
 /// - `variance` is the statistical variance of activations
 ///

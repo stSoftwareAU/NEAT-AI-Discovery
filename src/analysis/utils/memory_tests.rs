@@ -3,6 +3,7 @@
 //! These tests verify the memory detection and system requirements functionality
 //! extracted from implementation.rs (Issue #267).
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::*;
 
 // =============================================================================

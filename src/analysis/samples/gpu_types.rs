@@ -72,7 +72,7 @@ pub struct HarmfulUniforms {
     pub weight: f32,
 }
 
-/// GPU contribution data for ReLU activation evaluation.
+/// GPU contribution data for `ReLU` activation evaluation.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct ReluContribution {
@@ -88,7 +88,7 @@ pub struct ReluContribution {
     pub pad2: u32,
 }
 
-/// GPU shader uniforms for ReLU activation evaluation.
+/// GPU shader uniforms for `ReLU` activation evaluation.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct ReluUniforms {

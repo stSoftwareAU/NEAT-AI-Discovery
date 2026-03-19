@@ -9,6 +9,7 @@
 //! - Improved discovery: Output-adjacent neurons often have highest impact
 //! - More representative selection for large creatures (500+ neurons)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::focus::{
     AllocationStrategy, compute_network_layers, hierarchical_focus_selection,
 };
@@ -49,9 +50,9 @@ fn create_creature(
     }
 }
 
-/// Neuron list type alias for create_deep_network return value.
+/// Neuron list type alias for `create_deep_network` return value.
 type NeuronList = Vec<(&'static str, &'static str)>;
-/// Synapse list type alias for create_deep_network return value.
+/// Synapse list type alias for `create_deep_network` return value.
 type SynapseList = Vec<(&'static str, &'static str, f32)>;
 
 /// Create a deep network with specified number of layers and neurons per layer.

@@ -6,6 +6,7 @@
 //!
 //! See GitHub issue: Single responsibility for impact calculation
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};
@@ -236,7 +237,7 @@ fn test_synapse_candidate_hidden_neuron_is_impact_discounted() {
 
 /// Test that synapse candidates targeting output neurons have full impact (no discount).
 ///
-/// Output neurons have impact = 1.0, so their expected_creature_score_gain
+/// Output neurons have impact = 1.0, so their `expected_creature_score_gain`
 /// should not be discounted at all.
 #[test]
 fn test_synapse_candidate_output_neuron_no_discount() {

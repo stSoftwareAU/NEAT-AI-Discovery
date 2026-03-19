@@ -10,8 +10,8 @@
 //! 3. Synapse weight updates (delta-based weight adjustments)
 //! 4. Helpful neurons (add neuron candidates with activation function)
 //! 5. Coordinated structural candidates (grouped atomic operations)
-//!    - RemoveSynapse, AddSynapse, AddNeuron, RemoveNeuron,
-//!      ChangeSquash, SetBias, SetWeight
+//!    - `RemoveSynapse`, `AddSynapse`, `AddNeuron`, `RemoveNeuron`,
+//!      `ChangeSquash`, `SetBias`, `SetWeight`
 //!
 //! Future discovery categories (see open issues):
 //! - Dead neuron detection (#341)
@@ -24,7 +24,7 @@ use neat_ai_discovery::{
     CoordinatedStructuralOpJson, SynapseWeightUpdateCandidateJson,
 };
 
-/// Verify that CandidateSynapseJson serialises with the expected camelCase field names.
+/// Verify that `CandidateSynapseJson` serialises with the expected camelCase field names.
 /// This is the contract between NEAT-AI-Discovery and the TypeScript controller.
 #[test]
 fn candidate_synapse_json_serialisation_contract() {
@@ -70,7 +70,7 @@ fn candidate_synapse_json_serialisation_contract() {
     );
 }
 
-/// Verify that CandidateNeuronJson serialises with the expected camelCase field names.
+/// Verify that `CandidateNeuronJson` serialises with the expected camelCase field names.
 #[test]
 fn candidate_neuron_json_serialisation_contract() {
     let candidate = CandidateNeuronJson {
@@ -115,7 +115,7 @@ fn candidate_neuron_json_serialisation_contract() {
     assert!(json.get("bias").is_some(), "expected bias");
 }
 
-/// Verify that SynapseWeightUpdateCandidateJson serialises correctly.
+/// Verify that `SynapseWeightUpdateCandidateJson` serialises correctly.
 #[test]
 fn synapse_weight_update_serialisation_contract() {
     let candidate = SynapseWeightUpdateCandidateJson {

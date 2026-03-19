@@ -326,7 +326,7 @@ fn test_oscillating_detection_handles_constant_activation() {
 // DIVERSIFY_TOP_K sanity
 // =============================================================================
 
-/// Verify that DIVERSIFY_TOP_K is large enough for meaningful diversification
+/// Verify that `DIVERSIFY_TOP_K` is large enough for meaningful diversification
 /// but not so large as to defeat sorting.
 #[test]
 fn test_diversify_top_k_is_practical() {

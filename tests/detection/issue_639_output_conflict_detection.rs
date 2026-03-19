@@ -16,6 +16,7 @@
 //! 9. Results sorted by conflict severity (worst first)
 //! 10. Empty records produce no detections
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::output_conflict::{
     OutputConflictNeuron, detect_output_conflict_neurons,
     output_conflicts_to_coordinated_candidates,
@@ -23,7 +24,7 @@ use neat_ai_discovery::analysis::detection::output_conflict::{
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord with multi-output errors.
+/// Helper: create a `DiscoverRecord` with multi-output errors.
 fn record(neuron_uuid: &str, obs_index: u32, activation: f32, errors: Vec<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,
