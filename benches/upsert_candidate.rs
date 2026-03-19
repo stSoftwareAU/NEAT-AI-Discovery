@@ -1,10 +1,11 @@
-//! Benchmark for Issue #526: Clone reduction in upsert_candidate hot path.
+//! Benchmark for Issue #526: Clone reduction in `upsert_candidate` hot path.
 //!
-//! Measures the cost of upsert_candidate() which is called for every neuron
+//! Measures the cost of `upsert_candidate()` which is called for every neuron
 //! candidate in the analysis pipeline. The key optimisation is replacing
-//! String-based HashMap keys with pre-computed hash keys to avoid 3 String
+//! String-based `HashMap` keys with pre-computed hash keys to avoid 3 String
 //! clones per candidate insertion.
 
+#![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::CandidateNeuronJson;
 use std::collections::HashMap;
@@ -32,7 +33,7 @@ fn make_candidate(source_idx: usize, target_idx: usize, squash: &str) -> Candida
     }
 }
 
-/// Benchmark: upsert_candidate with String-based keys (current approach).
+/// Benchmark: `upsert_candidate` with String-based keys (current approach).
 fn bench_upsert_candidate(c: &mut Criterion) {
     let mut group = c.benchmark_group("upsert_candidate");
 

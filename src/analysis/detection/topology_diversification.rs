@@ -22,6 +22,7 @@
 //! - Focus on paths where error is high but individual neuron metrics look healthy,
 //!   indicating the issue is structural, not parametric.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet};
 
 use crate::types::DiscoverRecord;

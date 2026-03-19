@@ -2,7 +2,7 @@
 //!
 //! This benchmark compares the performance and memory characteristics of:
 //! - Old approach: String-based HashMap/HashSet keys (cloning UUIDs)
-//! - New approach: u32-indexed keys using NeuronIndex interning
+//! - New approach: u32-indexed keys using `NeuronIndex` interning
 //!
 //! Expected improvements:
 //! - ~89% memory reduction for synapse pair collections
@@ -73,7 +73,7 @@ fn create_test_creature(
     }
 }
 
-/// OLD approach: Build existing_synapses HashSet using String keys.
+/// OLD approach: Build `existing_synapses` `HashSet` using String keys.
 fn build_existing_synapses_string(creature: &CreatureJson) -> HashSet<(String, String)> {
     creature
         .synapses
@@ -82,7 +82,7 @@ fn build_existing_synapses_string(creature: &CreatureJson) -> HashSet<(String, S
         .collect()
 }
 
-/// NEW approach: Build existing_synapses HashSet using interned u32 keys.
+/// NEW approach: Build `existing_synapses` `HashSet` using interned u32 keys.
 fn build_existing_synapses_interned(creature: &CreatureJson) -> (HashSet<(u32, u32)>, NeuronIndex) {
     let mut index = NeuronIndex::with_capacity(creature.neurons.len() + creature.input);
 
@@ -103,7 +103,7 @@ fn build_existing_synapses_interned(creature: &CreatureJson) -> (HashSet<(u32, u
     (set, index)
 }
 
-/// OLD approach: Build synapse weights HashMap using String keys.
+/// OLD approach: Build synapse weights `HashMap` using String keys.
 fn build_synapse_weights_string(creature: &CreatureJson) -> HashMap<(String, String), f32> {
     creature
         .synapses
@@ -112,7 +112,7 @@ fn build_synapse_weights_string(creature: &CreatureJson) -> HashMap<(String, Str
         .collect()
 }
 
-/// NEW approach: Build synapse weights HashMap using interned u32 keys.
+/// NEW approach: Build synapse weights `HashMap` using interned u32 keys.
 fn build_synapse_weights_interned(
     creature: &CreatureJson,
 ) -> (HashMap<(u32, u32), f32>, NeuronIndex) {

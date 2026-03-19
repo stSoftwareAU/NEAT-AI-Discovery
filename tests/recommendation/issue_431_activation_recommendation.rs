@@ -12,6 +12,7 @@
 //! 5. Test proactive recommendation generation
 //! 6. Test that recommendations differ from current reactive approach
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::recommendation::activation_recommendation::{
     ActivationRecommendation, InputDistribution, InputDistributionClass, OutputRangeRequirement,
     analyse_input_distribution, classify_activation_suitability, detect_output_range_requirements,
@@ -19,7 +20,7 @@ use neat_ai_discovery::analysis::recommendation::activation_recommendation::{
 };
 use neat_ai_discovery::types::DiscoverRecord;
 
-/// Helper: create a DiscoverRecord with given activation value.
+/// Helper: create a `DiscoverRecord` with given activation value.
 fn record(
     neuron_uuid: &str,
     obs_index: u32,
@@ -112,7 +113,7 @@ fn test_classifies_sparse_input_distribution() {
 // =============================================================================
 
 /// Test that a bounded distribution (values in tight range) is correctly classified.
-/// Bounded inputs should be recommended LOGISTIC or HARD_TANH.
+/// Bounded inputs should be recommended LOGISTIC or `HARD_TANH`.
 #[test]
 fn test_classifies_bounded_input_distribution() {
     // Generate bounded distribution: values strictly in [0, 1]
@@ -237,7 +238,7 @@ fn test_recommends_relu_for_sparse_inputs() {
 // Test 7: Activation Suitability for Bounded Inputs
 // =============================================================================
 
-/// Test that LOGISTIC and HARD_TANH are recommended for bounded inputs.
+/// Test that LOGISTIC and `HARD_TANH` are recommended for bounded inputs.
 #[test]
 fn test_recommends_logistic_for_bounded_inputs() {
     let distribution = InputDistribution {
@@ -503,7 +504,7 @@ fn test_considers_gradient_flow() {
 // Test 16: Documentation Consistency
 // =============================================================================
 
-/// Test that activation recommendation is documented in DISCOVERY_TYPES.md.
+/// Test that activation recommendation is documented in `DISCOVERY_TYPES.md`.
 #[test]
 fn test_activation_recommendation_documented() {
     let doc_content =

@@ -25,6 +25,7 @@
 //! These are emitted as `CoordinatedStructuralCandidateJson` with `AddNeuron` and
 //! `AddSynapse` operations.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet};
 
 use super::helpers::build_record_map;
@@ -237,7 +238,7 @@ pub fn detect_correlated_error_patterns(
     results
 }
 
-/// Compute Pearson correlation between two error vectors indexed by obs_index.
+/// Compute Pearson correlation between two error vectors indexed by `obs_index`.
 fn compute_pearson_correlation(errors_a: &HashMap<u32, f32>, errors_b: &HashMap<u32, f32>) -> f32 {
     super::stats::pearson_correlation_hashmaps(errors_a, errors_b, MIN_SAMPLES_FOR_CORRELATION)
 }
@@ -293,7 +294,7 @@ fn cluster_correlated_outputs(
     groups
 }
 
-/// Find obs_indices shared across all neurons in the group.
+/// Find `obs_indices` shared across all neurons in the group.
 fn find_shared_obs_indices(
     group_uuids: &[&str],
     error_by_obs: &HashMap<&str, HashMap<u32, f32>>,

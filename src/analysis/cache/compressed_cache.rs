@@ -4,6 +4,7 @@
 //! reduced memory usage. Typical compression ratios of 2-4x allow the cache
 //! to hold significantly more neurons in the same memory footprint.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::analysis::utils::verbose_enabled;
 use crate::types::DiscoverRecord;
 use anyhow::{Context, Result};

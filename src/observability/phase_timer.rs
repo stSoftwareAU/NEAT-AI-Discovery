@@ -4,6 +4,7 @@
 //! [`ScopedPhaseTimer`] records into a [`super::profile::ProfileData`] instance
 //! for structured JSON output.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::time::Instant;
 
 use super::{profile::ProfileData, timing_enabled};
@@ -70,7 +71,7 @@ impl Drop for PhaseTimer {
 // Scoped Phase Timer for Profile Integration
 // =============================================================================
 
-/// Scoped phase timer that records to a ProfileData instance.
+/// Scoped phase timer that records to a `ProfileData` instance.
 ///
 /// This is a more structured alternative to `PhaseTimer` that integrates
 /// with `ProfileData` for JSON output.

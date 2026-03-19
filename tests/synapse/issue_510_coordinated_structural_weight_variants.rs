@@ -12,7 +12,7 @@ use neat_ai_discovery::CoordinatedStructuralCandidateJson;
 use neat_ai_discovery::CoordinatedStructuralOpJson;
 use neat_ai_discovery::analysis::utils::pair_coordinated_structural_with_weight_variants;
 
-/// Helper to build a coordinated-structural candidate with two AddSynapse operations.
+/// Helper to build a coordinated-structural candidate with two `AddSynapse` operations.
 fn make_coordinated_candidate(
     source_a: &str,
     source_b: &str,

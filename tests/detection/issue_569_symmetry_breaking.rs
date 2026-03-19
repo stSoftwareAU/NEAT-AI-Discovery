@@ -10,6 +10,7 @@
 //! 6. Test insufficient samples returns empty
 //! 7. Test multiple symmetric pairs each produce candidates
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{hidden_with_bias, make_creature, neuron, output, synapse};
 
 use neat_ai_discovery::analysis::detection::symmetry_breaking::{

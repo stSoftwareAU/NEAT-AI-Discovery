@@ -4,6 +4,7 @@
 //! `compute_variance` functions handle edge cases correctly and always
 //! produce clamped, NaN-free results.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::stats::{
     compute_mean, compute_variance, pearson_correlation,
 };

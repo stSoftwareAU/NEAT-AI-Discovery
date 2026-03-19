@@ -2,7 +2,7 @@
 //!
 //! Tests for:
 //! 1. Synapse-specific pessimism calibration (more aggressive than both generic and neuron)
-//! 2. Raised MIN_IMPROVED_RATIO threshold for stricter filtering
+//! 2. Raised `MIN_IMPROVED_RATIO` threshold for stricter filtering
 
 use neat_ai_discovery::analysis::constants::{
     MIN_IMPROVED_RATIO, NEURON_PESSIMISM_CURVE_EXPONENT, NEURON_PESSIMISM_DISCOUNT_FLOOR,
@@ -153,7 +153,7 @@ fn synapse_pessimism_practical_difference() {
 // MIN_IMPROVED_RATIO threshold (Issue #789)
 // =============================================================================
 
-/// Issue #789: MIN_IMPROVED_RATIO should be raised above 0.5 to filter out
+/// Issue #789: `MIN_IMPROVED_RATIO` should be raised above 0.5 to filter out
 /// marginal candidates that consistently fail ablation testing, but not
 /// be too strict (still <= 0.75).
 #[test]

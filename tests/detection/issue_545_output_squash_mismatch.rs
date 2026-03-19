@@ -4,7 +4,7 @@
 //! the target data range, trapping the network in a local minimum.
 //!
 //! ## TDD Plan
-//! 1. Test HARD_TANH output with TANH-shaped targets detects mismatch
+//! 1. Test `HARD_TANH` output with TANH-shaped targets detects mismatch
 //! 2. Test correctly matched output squash produces no detection
 //! 3. Test insufficient samples returns empty
 //! 4. Test only output neurons are analysed (hidden neurons ignored)
@@ -12,6 +12,7 @@
 //! 6. Test multiple output neurons with different mismatches
 //! 7. Test edge cases (constant output, no pre-activation data)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::output_squash_mismatch::{
     detect_output_squash_mismatches, output_squash_mismatch_to_coordinated_candidates,
 };

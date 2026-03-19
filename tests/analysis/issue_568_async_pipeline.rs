@@ -5,6 +5,7 @@
 //! 2. The analysis pipeline produces identical results with async overlap
 //! 3. The `submit_helpful_batch` + `collect()` pattern works correctly
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::analyze_all;
 use neat_ai_discovery::analysis::gpu::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;

@@ -46,7 +46,7 @@ pub fn clamp_weight_update_delta(
 ///
 /// # Returns
 /// * `Some(delta)` - The activation delta needed for the coordinated candidate
-/// * `None` - If noisy_weight is effectively zero (cannot compute scale)
+/// * `None` - If `noisy_weight` is effectively zero (cannot compute scale)
 ///
 /// # Notes (7-Jan-2026)
 /// We intentionally do **not** clamp the trusted weight here. The coordinated candidate is

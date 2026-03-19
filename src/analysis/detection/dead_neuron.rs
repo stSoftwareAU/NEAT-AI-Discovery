@@ -22,6 +22,7 @@
 //! Dead neurons consume GPU resources during both training and inference without contributing
 //! useful information, so removal is the primary recommendation.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
 use super::helpers::build_record_map;

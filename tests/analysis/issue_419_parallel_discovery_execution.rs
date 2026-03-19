@@ -6,6 +6,7 @@
 //! These tests exercise the real `analyze_all()` pipeline with a small test
 //! creature and parquet data that triggers multiple detection modules.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{hidden, hidden_with_bias, make_creature, neuron, output, record, synapse};
 use crate::skip_without_gpu;
 use neat_ai_discovery::AnalyzeAllInput;
@@ -86,7 +87,7 @@ fn create_test_records() -> Vec<DiscoverRecord> {
     records
 }
 
-/// Run analyze_all with the test creature and parquet file, returning the
+/// Run `analyze_all` with the test creature and parquet file, returning the
 /// coordinated structural candidate gains for comparison.
 ///
 /// Caller must check GPU availability before calling this function.

@@ -27,6 +27,7 @@
 //! - **Unlimited sample sizes**: Can record for hours without memory issues
 //! - **Fail-safe**: Partial data is preserved if process crashes mid-recording
 
+#![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use rand::Rng;

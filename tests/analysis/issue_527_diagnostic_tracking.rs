@@ -9,6 +9,7 @@
 //! `analyze_parallel_internal`, verifying that diagnostic information flows
 //! correctly from internal tracking to the public API.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{neuron, output, synapse};
 use neat_ai_discovery::analysis::shared::{NeuronNoCandidateReason, SynapseNoCandidateReason};
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons, analyze_synapses};

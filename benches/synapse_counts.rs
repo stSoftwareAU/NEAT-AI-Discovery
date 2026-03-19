@@ -2,7 +2,7 @@
 //!
 //! This benchmark compares the performance of:
 //! - Old approach: O(n×m) - scanning all synapses for each neuron lookup
-//! - New approach: O(n+m) - pre-compute HashMaps, then O(1) lookup
+//! - New approach: O(n+m) - pre-compute `HashMaps`, then O(1) lookup
 //!
 //! Expected improvement: ~1000x for large creatures (500 neurons, 10,000 synapses).
 
@@ -73,7 +73,7 @@ fn create_test_creature(num_neurons: usize, num_synapses: usize) -> CreatureJson
 }
 
 /// Simulate the OLD approach: O(m) scan for each neuron lookup.
-/// This is what count_synapses_for_neuron used to do.
+/// This is what `count_synapses_for_neuron` used to do.
 fn old_count_synapses_for_neuron(neuron_uuid: &str, creature: &CreatureJson) -> (usize, usize) {
     let incoming = creature
         .synapses

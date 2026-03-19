@@ -20,6 +20,7 @@
 //! - Wald, A. (1945). Sequential Tests of Statistical Hypotheses
 //! - <https://en.wikipedia.org/wiki/Sequential_probability_ratio_test>
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 /// Decision result from the sequential evaluator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EarlyTerminationDecision {
@@ -229,7 +230,7 @@ impl SequentialEvaluator {
 
     /// Get the SPRT decision bounds.
     ///
-    /// Returns (lower_bound, upper_bound) for the log-likelihood ratio.
+    /// Returns (`lower_bound`, `upper_bound`) for the log-likelihood ratio.
     #[must_use]
     pub fn get_bounds(&self) -> (f64, f64) {
         (self.lower_bound, self.upper_bound)

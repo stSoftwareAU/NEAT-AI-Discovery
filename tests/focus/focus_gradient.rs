@@ -11,6 +11,7 @@
 //! not public, we test them indirectly via `compute_gradient_flow_stats` which
 //! reads from a parquet file.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::focus::{GradientFlowStats, compute_gradient_flow_stats};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

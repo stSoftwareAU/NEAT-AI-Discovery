@@ -2,7 +2,7 @@
 //!
 //! This module contains:
 //! - CPU activation function implementations for candidate evaluation
-//! - Activation candidate specifications (ACTIVATION_SPECS)
+//! - Activation candidate specifications (`ACTIVATION_SPECS`)
 //! - GPU ID mapping for activation functions
 //! - Bias range helpers for different activation types
 //! - Predicates for activation function classification

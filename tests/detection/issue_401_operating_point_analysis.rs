@@ -4,6 +4,7 @@
 //! neuron with a very negative bias that always outputs ~0, or a TANH neuron
 //! only using the linear region around zero.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{hidden, hidden_with_bias, make_creature, neuron, output, synapse};
 use neat_ai_discovery::analysis::detection::operating_point::{
     OperatingPointConfig, detect_operating_point_issues, operating_point_to_coordinated_candidates,
@@ -176,7 +177,7 @@ fn test_operating_point_input_neurons_excluded() {
     assert!(detected.is_empty(), "Input neurons should be excluded");
 }
 
-/// Neurons with fewer than min_samples should not be flagged.
+/// Neurons with fewer than `min_samples` should not be flagged.
 #[test]
 fn test_operating_point_insufficient_samples_skipped() {
     let creature = make_creature(

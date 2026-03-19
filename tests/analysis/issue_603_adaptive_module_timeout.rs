@@ -3,6 +3,7 @@
 //! Tests that time budgets are allocated to discovery modules based on their
 //! historical acceptance rates, with decay and fallback behaviour.
 
+#![allow(clippy::cast_possible_wrap)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::module_weights::ModuleOutcomeTracker;
 
 /// Helper to create a tracker with known module history.

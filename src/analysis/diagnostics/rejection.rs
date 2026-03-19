@@ -125,7 +125,7 @@ pub(crate) struct TargetDiagnostics {
     log_enabled: bool,
     /// Lock-free concurrent map for diagnostic entries.
     /// Each focus neuron is processed by a separate thread, and diagnostics
-    /// are recorded without contention using DashMap's sharded internal structure.
+    /// are recorded without contention using `DashMap`'s sharded internal structure.
     pub(crate) entries: DashMap<String, TargetDiagnosticEntry>,
 }
 

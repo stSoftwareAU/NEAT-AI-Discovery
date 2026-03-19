@@ -15,6 +15,7 @@
 //! - Source-type success rate tracking
 //! - Serialisation/deserialisation for persistence
 
+#![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::candidate_cache::CandidateOutcomeCache;
 
 // =============================================================================

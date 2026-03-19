@@ -2,6 +2,7 @@
 //!
 //! These tests were extracted from implementation.rs as part of the refactoring.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::*;
 use std::time::{Duration, SystemTime};
 
@@ -247,8 +248,8 @@ fn build_deadline_validates_duration_bounds() {
 // calculate_effective_timeout_ms tests
 // ============================================================================
 
-/// Test that calculate_effective_timeout_ms applies the same logic as build_deadline.
-/// This is critical for ensuring log_analysis_start displays the correct timeout.
+/// Test that `calculate_effective_timeout_ms` applies the same logic as `build_deadline`.
+/// This is critical for ensuring `log_analysis_start` displays the correct timeout.
 #[test]
 fn calculate_effective_timeout_ms_matches_build_deadline_logic() {
     let now_ms = SystemTime::now()

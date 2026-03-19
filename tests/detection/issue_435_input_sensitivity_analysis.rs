@@ -13,6 +13,7 @@
 //! 6. Test configurable sensitivity thresholds via environment variable
 //! 7. Test edge cases: zero variance, constant inputs
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{make_creature, neuron, synapse};
 use neat_ai_discovery::analysis::detection::input_sensitivity::{
     DominantInputCandidate, InputSensitivityConfig, ThresholdEffectCandidate,
@@ -512,7 +513,7 @@ fn test_sensitivity_scores_are_normalised() {
 // Test 10: Configurable sensitivity threshold
 // =============================================================================
 
-/// The sensitivity threshold can be configured via InputSensitivityConfig.
+/// The sensitivity threshold can be configured via `InputSensitivityConfig`.
 #[test]
 fn test_configurable_sensitivity_threshold() {
     let creature = make_creature(

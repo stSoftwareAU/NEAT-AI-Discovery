@@ -7,6 +7,7 @@
 //! This module increases change-squash candidate volume by triggering on error
 //! magnitude rather than waiting for structural problems (saturation, mismatch).
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::high_error_squash_exploration::{
     HighErrorSquashCandidate, detect_high_error_squash_candidates,
     high_error_squash_to_coordinated_candidates,

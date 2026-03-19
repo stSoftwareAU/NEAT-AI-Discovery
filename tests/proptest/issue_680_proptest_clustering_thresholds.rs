@@ -4,13 +4,14 @@
 //! mathematical properties of `compute_source_variance_discount` and
 //! `compute_dynamic_constant_source_threshold`.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::candidate_clustering::{ClusterableCandidate, cluster_candidates};
 use neat_ai_discovery::analysis::samples::{
     HelpfulSample, compute_dynamic_constant_source_threshold, compute_source_variance_discount,
 };
 use proptest::prelude::*;
 
-/// Strategy for generating a ClusterableCandidate.
+/// Strategy for generating a `ClusterableCandidate`.
 fn candidate_strategy(
     target: &'static str,
     neuron_type: &'static str,
@@ -23,7 +24,7 @@ fn candidate_strategy(
     })
 }
 
-/// Strategy for generating HelpfulSample with finite activations.
+/// Strategy for generating `HelpfulSample` with finite activations.
 fn helpful_sample_strategy() -> impl Strategy<Value = HelpfulSample> {
     (-10.0f32..10.0, -10.0f32..10.0).prop_map(|(a, e)| HelpfulSample {
         activation: a,

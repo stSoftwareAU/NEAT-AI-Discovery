@@ -26,7 +26,7 @@ fn test_cache_with_data(data: Vec<(String, Vec<DiscoverRecord>)>) -> RecordCache
 // Basic functionality
 // =============================================================================
 
-/// Verify that load_records_for_uuids returns records for all requested UUIDs.
+/// Verify that `load_records_for_uuids` returns records for all requested UUIDs.
 #[test]
 fn test_load_records_returns_all_requested_uuids() {
     let cache = test_cache_with_data(vec![

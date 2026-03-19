@@ -4,6 +4,7 @@
 //! sample throughput, queue wait time, and GPU busy time across threads.
 //! A global instance is available via [`global_gpu_metrics()`].
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 

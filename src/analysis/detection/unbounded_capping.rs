@@ -26,9 +26,10 @@
 //! When unbounded capping is detected, we recommend:
 //! 1. **Change RELU → RELU6**: Cap activations at 6.0.
 //! 2. **Change LEAKYRELU → RELU6**: Cap activations (loses negative leak, but caps positive).
-//! 3. **Change IDENTITY → HARD_TANH**: Cap activations at ±1.0.
+//! 3. **Change IDENTITY → `HARD_TANH`**: Cap activations at ±1.0.
 //! 4. **Optionally adjust weights**: Scale down incoming weights to reduce activation magnitude.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::helpers::build_record_map;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};

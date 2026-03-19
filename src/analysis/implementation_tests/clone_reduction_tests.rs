@@ -1,10 +1,11 @@
 //! Issue #526: Verify that hash-based candidate deduplication maintains
-//! correctness after replacing String-based HashMap keys with FNV-1a hash keys.
+//! correctness after replacing String-based `HashMap` keys with FNV-1a hash keys.
 //!
 //! These tests exercise `upsert_candidate` and `compute_candidate_dedup_key`
 //! with various candidate configurations, verifying deduplication semantics
 //! are preserved after the clone-reduction optimisation.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::common::*;
 
 /// Helper to create a candidate with given source/target/squash and weight signs.
@@ -217,7 +218,7 @@ fn upsert_keeps_best_gain_across_multiple_updates() {
     );
 }
 
-/// Verify compute_candidate_dedup_key produces consistent results.
+/// Verify `compute_candidate_dedup_key` produces consistent results.
 #[test]
 fn dedup_key_is_deterministic() {
     let c1 = make_candidate("input-0", "hidden-1", "ReLU", 1.0, 0.5, 0.10);
@@ -233,7 +234,7 @@ fn dedup_key_is_deterministic() {
     );
 }
 
-/// Verify compute_candidate_dedup_key distinguishes all five key components.
+/// Verify `compute_candidate_dedup_key` distinguishes all five key components.
 #[test]
 fn dedup_key_distinguishes_all_components() {
     let base = make_candidate("input-0", "hidden-1", "ReLU", 1.0, 0.5, 0.10);

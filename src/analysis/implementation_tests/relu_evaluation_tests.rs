@@ -1,11 +1,12 @@
-//! Tests for ReLU candidate evaluation and splitting functionality.
+//! Tests for `ReLU` candidate evaluation and splitting functionality.
 //!
 //! Tests cover:
-//! - ReLU split evaluation finds candidates when activation correlates with error
-//! - ReLU negative orientation candidates
+//! - `ReLU` split evaluation finds candidates when activation correlates with error
+//! - `ReLU` negative orientation candidates
 //! - Complementary pairs detection
 //! - Candidate upsert behaviour
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::common::*;
 
 #[test]
@@ -127,8 +128,8 @@ fn relu_split_evaluation_finds_negative_orientation_candidates() {
     }
 }
 
-/// Test that split-error ReLU evaluation finds complementary pairs when errors are split.
-/// When errors are ~50/50 positive/negative, no single ReLU can help all samples.
+/// Test that split-error `ReLU` evaluation finds complementary pairs when errors are split.
+/// When errors are ~50/50 positive/negative, no single `ReLU` can help all samples.
 /// Split evaluation should find two candidates: one for each error direction.
 #[test]
 fn test_split_relu_finds_complementary_pairs() {
@@ -173,9 +174,9 @@ fn test_split_relu_finds_complementary_pairs() {
     // This test documents the expected behaviour without requiring GPU.
 }
 
-/// Test that upsert_candidate keeps complementary ReLU candidates with different
-/// incoming_weight values. A positive-weight ReLU (incoming_weight=1.0) and a
-/// negative-weight ReLU (incoming_weight=-1.0) should both be kept, not collide.
+/// Test that `upsert_candidate` keeps complementary `ReLU` candidates with different
+/// `incoming_weight` values. A positive-weight `ReLU` (`incoming_weight=1.0`) and a
+/// negative-weight `ReLU` (incoming_weight=-1.0) should both be kept, not collide.
 #[test]
 fn test_upsert_keeps_complementary_relu_candidates_by_incoming_weight() {
     let mut map: HashMap<u64, CandidateNeuronJson> = HashMap::new();

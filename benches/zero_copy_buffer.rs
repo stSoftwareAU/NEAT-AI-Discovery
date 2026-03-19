@@ -3,6 +3,7 @@
 //! This benchmark compares the performance of zero-copy vs traditional copying
 //! on unified memory architectures (Apple Silicon).
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses, supports_unified_memory};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;

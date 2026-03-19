@@ -356,8 +356,8 @@ fn test_moderate_frequency_neuron_not_penalised() {
 
 /// Test: Frequency factor integrates correctly with error × impact calculation.
 ///
-/// The final score should be: error × impact^gamma × gradient_factor × frequency_factor
-/// This test verifies the frequency_factor is correctly applied to the ranking.
+/// The final score should be: error × impact^gamma × `gradient_factor` × `frequency_factor`
+/// This test verifies the `frequency_factor` is correctly applied to the ranking.
 #[test]
 fn test_frequency_factor_integrates_with_error_impact_calculation() {
     // Create neurons with different characteristics:

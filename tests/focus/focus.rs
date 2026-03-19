@@ -9,6 +9,7 @@
 //! Extracted from src/focus.rs in v0.1.126 to follow the testing philosophy
 //! documented in README.md (prefer tests/ over inline unit tests).
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::focus::rank_focus_neurons;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -1098,8 +1099,8 @@ fn test_cumulative_impact_mixed_direct_and_indirect_paths() {
     );
 }
 
-/// Issue #117: expected_error_reduction should reflect the creature's expected error change,
-/// NOT the neuron's error. For removal candidates, this should be based on activation_weighted_impact.
+/// Issue #117: `expected_error_reduction` should reflect the creature's expected error change,
+/// NOT the neuron's error. For removal candidates, this should be based on `activation_weighted_impact`.
 ///
 /// The bug was that `total_error` (the neuron's average error) was being used as
 /// `expectedErrorReduction` on the TypeScript side, leading to predictions like 27%
@@ -1107,7 +1108,7 @@ fn test_cumulative_impact_mixed_direct_and_indirect_paths() {
 ///
 /// The fix is to provide `expected_error_reduction` that reflects the ACTUAL expected
 /// creature-level error change from removing the neuron. For removal candidates (low-impact
-/// neurons), this should be very small - approximately equal to activation_weighted_impact.
+/// neurons), this should be very small - approximately equal to `activation_weighted_impact`.
 #[test]
 fn test_removal_candidate_expected_error_reduction_is_impact_based_not_neuron_error() {
     // Scenario: A neuron with HIGH error (0.27 normalised) but NEGLIGIBLE impact (< 1e-7).
@@ -1213,18 +1214,18 @@ fn test_removal_candidate_expected_error_reduction_is_impact_based_not_neuron_er
 /// Issue #235: Return ALL removal candidates expected to improve the creature's score.
 ///
 /// The only filter should be: "will this candidate improve the creature's score?"
-/// A removal improves score when: removal_savings > activation_weighted_impact
+/// A removal improves score when: `removal_savings` > `activation_weighted_impact`
 ///
-/// Previously, we filtered on activation_weighted_impact < cost_of_growth_threshold,
-/// but this missed neurons where removal_savings (due to many synapses) exceeds
-/// the neuron's contribution even when activation_weighted_impact is above threshold.
+/// Previously, we filtered on `activation_weighted_impact` < `cost_of_growth_threshold`,
+/// but this missed neurons where `removal_savings` (due to many synapses) exceeds
+/// the neuron's contribution even when `activation_weighted_impact` is above threshold.
 ///
 /// Mathematical explanation:
-/// - cost_of_growth_threshold = 1e-7 (default)
-/// - removal_savings = cost_of_growth * (1 + synapses/10)
+/// - `cost_of_growth_threshold` = 1e-7 (default)
+/// - `removal_savings` = `cost_of_growth` * (1 + synapses/10)
 /// - For neuron with impact 2e-7 and 20 synapses:
 ///   - Old filter: 2e-7 < 1e-7 = FALSE → rejected
-///   - removal_savings = 1e-7 * (1 + 2) = 3e-7
+///   - `removal_savings` = 1e-7 * (1 + 2) = 3e-7
 ///   - New filter: 3e-7 > 2e-7 = TRUE → accepted (removal improves score!)
 ///
 /// This test creates such a scenario.
@@ -1414,11 +1415,11 @@ fn test_issue_235_return_all_removal_candidates_expected_to_improve_score() {
 
 /// Issue #235: Direct test - neuron with impact ABOVE threshold but removal still improves score.
 ///
-/// This is the core fix: a neuron with activation_weighted_impact = 2e-7 (above threshold 1e-7)
-/// but with 20 synapses (removal_savings = 3e-7) SHOULD be returned because removal improves score.
+/// This is the core fix: a neuron with `activation_weighted_impact` = 2e-7 (above threshold 1e-7)
+/// but with 20 synapses (`removal_savings` = 3e-7) SHOULD be returned because removal improves score.
 ///
 /// Old behaviour: Only neurons with impact < 1e-7 are returned.
-/// New behaviour: Neurons where removal_savings > impact are returned.
+/// New behaviour: Neurons where `removal_savings` > impact are returned.
 #[test]
 fn test_issue_235_neuron_above_threshold_but_removal_improves_score() {
     // Create a creature with a hidden neuron that has:

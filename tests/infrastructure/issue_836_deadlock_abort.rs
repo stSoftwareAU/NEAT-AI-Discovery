@@ -1,6 +1,6 @@
-//! Integration tests for issue #836: deadlock detection uses abort() instead of panic().
+//! Integration tests for issue #836: deadlock detection uses `abort()` instead of `panic()`.
 //!
-//! We cannot test abort() in-process (it terminates immediately), so these tests
+//! We cannot test `abort()` in-process (it terminates immediately), so these tests
 //! verify the surrounding behaviour: that the deadlock detector thread starts
 //! correctly and that clean state reports no deadlocks.
 

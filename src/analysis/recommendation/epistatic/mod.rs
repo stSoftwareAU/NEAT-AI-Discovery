@@ -122,7 +122,7 @@ pub struct SourceContribution {
     pub optimal_weight: f32,
     /// Individual improvement prediction
     pub individual_improvement: f32,
-    /// Set of obs_indices where source fires (activation > threshold)
+    /// Set of `obs_indices` where source fires (activation > threshold)
     pub firing_indices: HashSet<u32>,
     /// GPU evaluation stats
     pub stats: HelpfulStats,

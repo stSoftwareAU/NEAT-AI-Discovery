@@ -13,10 +13,11 @@
 //! 4. Unimodal with one outlier → should NOT be flagged as bimodal
 //! 5. Heavy-tailed unimodal → should NOT be flagged as bimodal
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::bimodal_neuron::detect_bimodal_neurons;
 use neat_ai_discovery::types::DiscoverRecord;
 
-/// Helper: create a DiscoverRecord with a specific pre-activation value.
+/// Helper: create a `DiscoverRecord` with a specific pre-activation value.
 fn make_record(neuron_uuid: &str, obs_index: u32, value: Option<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,

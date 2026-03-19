@@ -28,6 +28,7 @@
 //! - `removeSynapse`: For synapses that amplify noise without signal benefit
 //! - `setWeight`: To reduce weight of partially useful but noisy connections
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
 use crate::types::DiscoverRecord;

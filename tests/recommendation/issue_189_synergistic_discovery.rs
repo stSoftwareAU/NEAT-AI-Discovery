@@ -9,6 +9,7 @@
 //! 3. Verify new residual-based approach finds synergistic candidates
 //! 4. Measure that discovery still finds non-synergistic patterns correctly
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

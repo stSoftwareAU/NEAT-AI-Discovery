@@ -9,6 +9,7 @@
 //! - H1: True improvement ≥ threshold (beneficial)
 //! - Stop early when log-likelihood ratio exceeds bounds
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::early_termination::{
     EarlyTerminationDecision, SequentialEvaluator,
 };

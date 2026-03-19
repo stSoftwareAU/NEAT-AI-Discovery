@@ -10,6 +10,7 @@
 //! 6. Test aggregate squashes are skipped (cannot be simulated as f(x))
 //! 7. Test insufficient samples produce no candidates
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::squash_weight_rescale::{
     detect_squash_weight_rescale_candidates, squash_weight_rescale_to_coordinated_candidates,
 };

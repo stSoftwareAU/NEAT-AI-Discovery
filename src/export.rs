@@ -5,6 +5,11 @@
 //!
 //! This is an optional debug tool that does not affect existing analysis behaviour.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

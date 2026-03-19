@@ -31,10 +31,10 @@ pub struct CandidateSynapseJson {
     /// Output neurons have impact = 1.0, hidden neurons have discounted impact.
     pub target_neuron_impact: f32,
     /// Expected reduction in creature's error from adding this synapse.
-    /// Formula: neuron_error_reduction × target_neuron_impact
+    /// Formula: `neuron_error_reduction` × `target_neuron_impact`
     pub expected_creature_error_reduction: f32,
     /// Expected improvement in creature's score from adding this synapse.
-    /// Since score = 1 - error, this equals expected_creature_error_reduction.
+    /// Since score = 1 - error, this equals `expected_creature_error_reduction`.
     pub expected_creature_score_gain: f32,
     pub improved_count: u32,
     pub total_count: u32,
@@ -207,10 +207,10 @@ pub struct CandidateNeuronJson {
     /// Output neurons have impact = 1.0, hidden neurons have discounted impact.
     pub target_neuron_impact: f32,
     /// Expected reduction in creature's error from adding this neuron.
-    /// Formula: neuron_error_reduction × target_neuron_impact
+    /// Formula: `neuron_error_reduction` × `target_neuron_impact`
     pub expected_creature_error_reduction: f32,
     /// Expected improvement in creature's score from adding this neuron.
-    /// Since score = 1 - error, this equals expected_creature_error_reduction.
+    /// Since score = 1 - error, this equals `expected_creature_error_reduction`.
     pub expected_creature_score_gain: f32,
     pub improved_count: u32,
     pub total_count: u32,
@@ -240,7 +240,7 @@ pub struct RankedNeuronJson {
     pub impact: f32,
     /// Mean absolute activation value from recorded samples
     pub mean_activation: f32,
-    /// Activation-weighted impact = structural_impact × mean_activation
+    /// Activation-weighted impact = `structural_impact` × `mean_activation`
     /// This reflects the actual contribution the neuron makes during inference
     pub activation_weighted_impact: f32,
 }
@@ -256,7 +256,7 @@ pub struct RemovalCandidateJson {
     pub impact: f32,
     /// Mean absolute activation value from recorded samples
     pub mean_activation: f32,
-    /// Activation-weighted impact = structural_impact × mean_activation
+    /// Activation-weighted impact = `structural_impact` × `mean_activation`
     /// This reflects the actual contribution the neuron makes during inference
     pub activation_weighted_impact: f32,
     /// Number of synapses pointing TO this neuron
@@ -266,7 +266,7 @@ pub struct RemovalCandidateJson {
     /// The complexity savings from removing this neuron (based on NEAT-AI Score.ts formula)
     pub removal_savings: f32,
     /// Expected creature-level error reduction from removing this neuron.
-    /// Issue #117: This is based on activation_weighted_impact, NOT total_error.
+    /// Issue #117: This is based on `activation_weighted_impact`, NOT `total_error`.
     /// For low-impact removal candidates, this will be very small (as it should be).
     pub expected_error_reduction: f32,
     /// Explains why removal improves score

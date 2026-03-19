@@ -1,7 +1,7 @@
-//! Issue #525 / #833: Verify that mutex helpers work correctly with parking_lot::Mutex.
+//! Issue #525 / #833: Verify that mutex helpers work correctly with `parking_lot::Mutex`.
 //!
-//! parking_lot::Mutex does not poison on thread panic, so lock_or_bail and
-//! into_inner_or_bail always succeed. These tests confirm that behaviour and
+//! `parking_lot::Mutex` does not poison on thread panic, so `lock_or_bail` and
+//! `into_inner_or_bail` always succeed. These tests confirm that behaviour and
 //! verify the helpers remain usable after a thread panics while holding the lock.
 
 use parking_lot::Mutex;
@@ -28,9 +28,9 @@ fn test_healthy_mutex_into_inner_returns_value() {
     assert_eq!(result.unwrap(), vec![10, 20, 30]);
 }
 
-/// Verify that parking_lot::Mutex remains usable after a thread panics while
+/// Verify that `parking_lot::Mutex` remains usable after a thread panics while
 /// holding the lock (no poisoning). This is the key behavioural difference
-/// from std::sync::Mutex that issue #833 migrates to.
+/// from `std::sync::Mutex` that issue #833 migrates to.
 #[test]
 fn test_mutex_usable_after_thread_panic() {
     let mutex = Arc::new(Mutex::new(42_i32));
@@ -52,7 +52,7 @@ fn test_mutex_usable_after_thread_panic() {
     assert_eq!(*result.unwrap(), 42);
 }
 
-/// Verify that into_inner_or_bail succeeds after a thread panic.
+/// Verify that `into_inner_or_bail` succeeds after a thread panic.
 #[test]
 fn test_into_inner_after_thread_panic() {
     let mutex = Arc::new(Mutex::new(vec![1, 2, 3]));

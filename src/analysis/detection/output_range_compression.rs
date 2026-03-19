@@ -36,7 +36,7 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 
-/// Minimum observed range (activation_max - activation_min) to distinguish
+/// Minimum observed range (`activation_max` - `activation_min`) to distinguish
 /// from dead neurons. Below this, the neuron is considered dead, not compressed.
 const MIN_OBSERVED_RANGE: f32 = 0.01;
 

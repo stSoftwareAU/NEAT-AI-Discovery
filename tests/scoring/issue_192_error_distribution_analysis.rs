@@ -9,6 +9,7 @@
 //! The analysis computes distribution statistics including percentiles, skewness,
 //! and kurtosis to help identify non-uniform error patterns.
 
+#![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::samples::HelpfulSample;
 use neat_ai_discovery::analysis::scoring::error_distribution::{
     ErrorDistribution, detect_error_modes, outlier_analysis_enabled, outlier_percentile_from_env,
@@ -66,7 +67,7 @@ fn create_test_creature(
 // ErrorDistribution Unit Tests
 // =============================================================================
 
-/// Test: ErrorDistribution computes basic statistics correctly.
+/// Test: `ErrorDistribution` computes basic statistics correctly.
 #[test]
 fn test_error_distribution_basic_stats() {
     // Simple uniform distribution: errors from 0.0 to 1.0
@@ -101,7 +102,7 @@ fn test_error_distribution_basic_stats() {
     );
 }
 
-/// Test: ErrorDistribution computes percentiles correctly.
+/// Test: `ErrorDistribution` computes percentiles correctly.
 #[test]
 fn test_error_distribution_percentiles() {
     // Linear distribution for predictable percentiles
@@ -147,7 +148,7 @@ fn test_error_distribution_percentiles() {
     );
 }
 
-/// Test: ErrorDistribution computes skewness correctly.
+/// Test: `ErrorDistribution` computes skewness correctly.
 ///
 /// Skewness measures the asymmetry of the distribution:
 /// - Negative skewness: tail on the left (more high values)
@@ -176,7 +177,7 @@ fn test_error_distribution_skewness_symmetric() {
     );
 }
 
-/// Test: ErrorDistribution detects positive skewness (right-tailed).
+/// Test: `ErrorDistribution` detects positive skewness (right-tailed).
 #[test]
 fn test_error_distribution_skewness_positive() {
     // Right-skewed distribution: many small values, few large outliers
@@ -204,7 +205,7 @@ fn test_error_distribution_skewness_positive() {
     );
 }
 
-/// Test: ErrorDistribution computes kurtosis correctly.
+/// Test: `ErrorDistribution` computes kurtosis correctly.
 ///
 /// Kurtosis measures the "tailedness" of the distribution:
 /// - Low kurtosis (< 3): lighter tails, flatter peak (platykurtic)
@@ -234,7 +235,7 @@ fn test_error_distribution_kurtosis() {
     );
 }
 
-/// Test: ErrorDistribution handles empty samples.
+/// Test: `ErrorDistribution` handles empty samples.
 #[test]
 fn test_error_distribution_empty_samples() {
     let samples: Vec<HelpfulSample> = vec![];
@@ -242,7 +243,7 @@ fn test_error_distribution_empty_samples() {
     assert!(dist.is_none(), "Empty samples should return None");
 }
 
-/// Test: ErrorDistribution handles single sample.
+/// Test: `ErrorDistribution` handles single sample.
 #[test]
 fn test_error_distribution_single_sample() {
     let samples = vec![HelpfulSample {
@@ -259,7 +260,7 @@ fn test_error_distribution_single_sample() {
     }
 }
 
-/// Test: ErrorDistribution identifies outliers correctly.
+/// Test: `ErrorDistribution` identifies outliers correctly.
 #[test]
 fn test_error_distribution_outlier_count() {
     // Create distribution with clear outliers at p90
@@ -290,7 +291,7 @@ fn test_error_distribution_outlier_count() {
 // Error Mode Detection Tests
 // =============================================================================
 
-/// Test: detect_error_modes finds distinct modes in bimodal distribution.
+/// Test: `detect_error_modes` finds distinct modes in bimodal distribution.
 #[test]
 fn test_detect_error_modes_bimodal() {
     // Bimodal distribution: half samples near 0.1, half near 0.9
@@ -327,7 +328,7 @@ fn test_detect_error_modes_bimodal() {
     );
 }
 
-/// Test: detect_error_modes returns few modes for unimodal distribution.
+/// Test: `detect_error_modes` returns few modes for unimodal distribution.
 #[test]
 fn test_detect_error_modes_unimodal() {
     // Unimodal distribution: all samples clustered around 0.5
@@ -368,7 +369,7 @@ fn test_detect_error_modes_unimodal() {
 // Environment Variable Configuration Tests
 // =============================================================================
 
-/// Test: outlier_analysis_enabled returns false by default.
+/// Test: `outlier_analysis_enabled` returns false by default.
 #[test]
 #[serial]
 fn test_outlier_analysis_disabled_by_default() {
@@ -380,7 +381,7 @@ fn test_outlier_analysis_disabled_by_default() {
     assert!(!enabled, "Outlier analysis should be disabled by default");
 }
 
-/// Test: outlier_percentile_from_env returns 90 by default.
+/// Test: `outlier_percentile_from_env` returns 90 by default.
 #[test]
 #[serial]
 fn test_outlier_percentile_default() {

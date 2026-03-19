@@ -1,6 +1,6 @@
 //! Synthetic tests to verify prediction accuracy against manual simulation.
 //!
-//! Extracted from implementation_tests.rs as part of Issue #426.
+//! Extracted from `implementation_tests.rs` as part of Issue #426.
 //! These tests create controlled scenarios where we know exactly what the
 //! predicted and actual improvements should be.
 //!
@@ -12,6 +12,7 @@
 //! - Simulated TypeScript evaluation matching
 //! - Contribution direction verification
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::common::*;
 use crate::analysis::synapse::compute_relu_improvement_and_count;
 
@@ -21,7 +22,7 @@ fn test_hard_tanh(x: f32) -> f32 {
 }
 
 /// Create synthetic samples with known properties.
-/// Returns (samples, baseline_error_sq_sum).
+/// Returns (samples, `baseline_error_sq_sum`).
 fn create_synthetic_samples(
     count: usize,
     avg_error: f32,

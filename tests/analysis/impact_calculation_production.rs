@@ -6,7 +6,7 @@
 //! ## The Problem (Issue #130)
 //!
 //! The absolute impact calculation:
-//!   impact = |weight| × child_impact
+//!   impact = |weight| × `child_impact`
 //!
 //! Could give hidden neurons impact >= 1.0 (same as outputs), which caused
 //! predictions to not be discounted, leading to massive overestimation.
@@ -14,12 +14,12 @@
 //! ## The Fix (v0.2.1)
 //!
 //! Use normalised impact as documented:
-//!   impact = |weight| / total_inbound × child_impact
+//!   impact = |weight| / `total_inbound` × `child_impact`
 //!
 //! This gives "fraction of influence" (attribution), which:
 //! - Is always <= 1.0 for hidden neurons (with competing inputs)
 //! - Correctly accounts for dilution when there are many inputs
-//! - Matches the documented formula in IMPACT_CALCULATION.md
+//! - Matches the documented formula in `IMPACT_CALCULATION.md`
 
 use crate::common::{hidden, output, synapse};
 use neat_ai_discovery::CreatureJson;

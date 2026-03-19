@@ -183,8 +183,8 @@ impl GpuWorkQueue {
         }
     }
 
-    /// Submit a ReLU evaluation and wait for results.
-    /// Returns (positive_stats, negative_stats, baseline_error_sq).
+    /// Submit a `ReLU` evaluation and wait for results.
+    /// Returns (`positive_stats`, `negative_stats`, `baseline_error_sq`).
     ///
     /// The `deadline` parameter is used to calculate an adaptive timeout (60s-5min).
     pub(crate) fn evaluate_relu_gpu(
@@ -243,7 +243,7 @@ impl GpuWorkQueue {
     }
 
     /// Submit an activation evaluation and wait for results.
-    /// Returns (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count).
+    /// Returns (`sum_activation_sq`, `sum_error_activation`, `total_baseline_error_sq`, `improved_count`).
     ///
     /// The `deadline` parameter is used to calculate an adaptive timeout (60s-5min).
     pub(crate) fn evaluate_activation_gpu(
@@ -309,11 +309,11 @@ impl GpuWorkQueue {
     ///
     /// # Arguments
     /// * `samples` - The sample data to evaluate
-    /// * `activation_configs` - List of (activation_type, orientation, scale) tuples
+    /// * `activation_configs` - List of (`activation_type`, orientation, scale) tuples
     /// * `deadline` - Optional deadline for adaptive timeout calculation
     ///
     /// # Returns
-    /// Vector of (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count)
+    /// Vector of (`sum_activation_sq`, `sum_error_activation`, `total_baseline_error_sq`, `improved_count`)
     /// in the same order as the input configs.
     pub(crate) fn evaluate_activations_batched_gpu(
         &self,

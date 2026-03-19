@@ -1,7 +1,7 @@
 //! Tests for GPU shader activation function support.
 //!
-//! Bug: New activation functions (LeakyReLU, Mish, Swish, HARD_TANH, SOFTSIGN,
-//! BENT_IDENTITY, ArcTan, ReLU6) are assigned GPU IDs 11-18 in `activation_name_to_gpu_id`,
+//! Bug: New activation functions (`LeakyReLU`, Mish, Swish, `HARD_TANH`, SOFTSIGN,
+//! `BENT_IDENTITY`, `ArcTan`, `ReLU6`) are assigned GPU IDs 11-18 in `activation_name_to_gpu_id`,
 //! but the GPU shaders (`activation.wgsl` and `bias.wgsl`) only handle IDs 0-10.
 //! Unknown IDs fall back to `default: { return x; }` which is IDENTITY.
 //!
@@ -17,6 +17,7 @@
 //! The fix: Added all 8 new activation functions to both GPU shaders
 //! (activation.wgsl and bias.wgsl) with correct implementations.
 
+#![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

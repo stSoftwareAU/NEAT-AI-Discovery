@@ -5,8 +5,9 @@
 //! (depth 50, fanout 5).
 //!
 //! Also measures overall detection-phase allocation patterns before/after
-//! the optimisations in dead_neuron, bottleneck, and skip_connection modules.
+//! the optimisations in `dead_neuron`, bottleneck, and `skip_connection` modules.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};

@@ -1,7 +1,7 @@
 //! Benchmark for Issue #215: Tiered/streaming Parquet loader for large files.
 //!
 //! This benchmark compares memory usage and access performance across different
-//! loading strategies (PreloadAll, LruCache, Streaming) to validate the tiered
+//! loading strategies (`PreloadAll`, `LruCache`, Streaming) to validate the tiered
 //! loading implementation.
 //!
 //! ## Key Metrics
@@ -11,6 +11,7 @@
 //! 3. **Access time**: Compares time to access neurons across strategies
 //! 4. **Eviction overhead**: Measures cost of LRU eviction
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::cache::{LruRecordCache, RecordCache, TieredRecordCache};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;

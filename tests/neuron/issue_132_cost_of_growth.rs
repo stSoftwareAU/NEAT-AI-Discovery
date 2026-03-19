@@ -60,7 +60,7 @@ fn create_records_with_activation(
 
 /// Issue #132: costOfGrowth should be passable from NEAT-AI.
 ///
-/// When a neuron has activation_weighted_impact between 1e-7 and 0.01:
+/// When a neuron has `activation_weighted_impact` between 1e-7 and 0.01:
 /// - With costOfGrowth = 0.01 (old default): IS a removal candidate
 /// - With costOfGrowth = 1e-7 (typical NEAT-AI value): NOT a removal candidate
 #[test]

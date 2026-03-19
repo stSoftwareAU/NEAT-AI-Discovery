@@ -4,6 +4,7 @@
 //! and improve maintainability. Contains the bias evaluation pipeline
 //! builder and GPU evaluation method.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};
 use std::sync::mpsc;
 use wgpu::util::DeviceExt;
@@ -91,7 +92,7 @@ impl GpuAnalyzer {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
 

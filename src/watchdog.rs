@@ -17,6 +17,7 @@
 //!   returned as JSON, but would not terminate the worker process.
 //! - All comments are written in Australian English.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use parking_lot::Mutex;
 use std::sync::{
     Arc, LazyLock,

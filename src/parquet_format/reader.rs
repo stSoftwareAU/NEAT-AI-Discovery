@@ -10,7 +10,7 @@ use crate::types::DiscoverRecord;
 use std::time::SystemTime;
 
 /// Read all discovery records from a Parquet file, grouped by neuron UUID.
-/// This is more efficient than calling read_records_from_parquet multiple times
+/// This is more efficient than calling `read_records_from_parquet` multiple times
 /// when you need records for multiple neurons.
 pub fn read_all_records_grouped_by_neuron(
     file_path: &str,

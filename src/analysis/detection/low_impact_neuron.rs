@@ -26,6 +26,7 @@
 //! - **Variance consistency** — lower std dev relative to mean = higher confidence
 //! - **Sample sufficiency** — more samples = higher confidence (plateaus at 500)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::helpers::build_record_map;
 
 use crate::types::DiscoverRecord;

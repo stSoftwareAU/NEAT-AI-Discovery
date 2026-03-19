@@ -8,6 +8,7 @@ use neat_ai_discovery::analysis::candidate_aggregation::{
     apply_operation_count_discount, validate_coordinated_candidate_gain,
 };
 use neat_ai_discovery::analysis::ensemble_scoring::apply_ensemble_scoring;
+use neat_ai_discovery::analysis::module_weights::ModuleOutcomeTracker;
 use neat_ai_discovery::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
 // ---------------------------------------------------------------------------
@@ -150,7 +151,7 @@ fn ensemble_boost_capped_for_multi_operation_candidates() {
         c
     }];
 
-    let result = apply_ensemble_scoring(candidates, &Default::default());
+    let result = apply_ensemble_scoring(candidates, &ModuleOutcomeTracker::default());
 
     // The boost for multi-op candidates should be capped lower than for single-op.
     // Single-op 2-module agreement gives ~15% boost (0.012 * 1.15 = 0.0138).
@@ -183,7 +184,7 @@ fn single_op_ensemble_boost_unchanged() {
         c
     }];
 
-    let result = apply_ensemble_scoring(candidates, &Default::default());
+    let result = apply_ensemble_scoring(candidates, &ModuleOutcomeTracker::default());
 
     let best = result
         .candidates

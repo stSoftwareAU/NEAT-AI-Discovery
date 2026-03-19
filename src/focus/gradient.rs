@@ -4,6 +4,7 @@
 //! learning potential. Analyses activation function derivatives, saturation
 //! ratios, and dead neuron ratios.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::CreatureJson;
 use crate::parquet_format::read_all_records_grouped_by_neuron;
 use crate::types::DiscoverRecord;
@@ -48,7 +49,7 @@ pub struct GradientFlowStats {
     /// Saturation thresholds by activation:
     /// - TANH: |value| > 3 (gradient < 0.01)
     /// - LOGISTIC: |value| > 5 (output near 0 or 1)
-    /// - HARD_TANH: |value| > 1 (clamped to ±1)
+    /// - `HARD_TANH`: |value| > 1 (clamped to ±1)
     ///
     /// High saturation ratio means the neuron cannot effectively learn because
     /// the gradient is near zero in the saturated region.
@@ -57,7 +58,7 @@ pub struct GradientFlowStats {
     /// Ratio of samples where the neuron has zero gradient (0.0 to 1.0).
     ///
     /// Primarily relevant for ReLU-family activations:
-    /// - ReLU: value < 0 (completely dead - zero output and gradient)
+    /// - `ReLU`: value < 0 (completely dead - zero output and gradient)
     /// - RELU6: value < 0 or value > 6 (dead at both ends)
     /// - SELU: value < 0 has reduced but non-zero gradient
     ///
@@ -85,7 +86,7 @@ mod saturation_thresholds {
     /// LOGISTIC: |x| > 5 means sigmoid'(x) < 0.007 (effectively saturated)
     pub const LOGISTIC_THRESHOLD: f32 = 5.0;
 
-    /// HARD_TANH: |x| >= 1 means output is clamped (gradient = 0)
+    /// `HARD_TANH`: |x| >= 1 means output is clamped (gradient = 0)
     pub const HARD_TANH_THRESHOLD: f32 = 1.0;
 
     /// ARCTAN: |x| > 10 means arctan'(x) < 0.01
@@ -100,9 +101,9 @@ mod saturation_thresholds {
 
 /// Compute the gradient (derivative) of an activation function at a given input value.
 ///
-/// Returns (gradient, is_dead) where:
+/// Returns (gradient, `is_dead`) where:
 /// - gradient: The derivative f'(value)
-/// - is_dead: True if this is a "dead" neuron sample (zero gradient AND zero output)
+/// - `is_dead`: True if this is a "dead" neuron sample (zero gradient AND zero output)
 ///
 /// # Arguments
 /// * `squash` - Uppercase squash function name
@@ -378,7 +379,7 @@ fn is_saturated(squash: &str, value: f32, gradient: f32) -> bool {
 /// * `creature` - The creature to analyse
 ///
 /// # Returns
-/// Map from neuron UUID to GradientFlowStats
+/// Map from neuron UUID to `GradientFlowStats`
 ///
 /// # Example
 ///
@@ -480,7 +481,7 @@ pub fn compute_gradient_flow_stats(
 /// * `records` - Discovery records for this neuron
 ///
 /// # Returns
-/// GradientFlowStats for the neuron
+/// `GradientFlowStats` for the neuron
 pub(super) fn compute_gradient_flow_for_neuron(
     neuron_uuid: &str,
     squash_map: &HashMap<String, String>,

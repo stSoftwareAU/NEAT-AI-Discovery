@@ -1,12 +1,13 @@
 //! Issue #323: Compare squash functions with NEAT-AI WASM implementation.
 //!
 //! This test ensures our squash functions produce results consistent with the
-//! NEAT-AI WASM implementation (wasm_activation/src/lib.rs). Differences in
+//! NEAT-AI WASM implementation (`wasm_activation/src/lib.rs`). Differences in
 //! squash function behaviour can cause failed candidates during discovery
 //! because predictions won't match actual outcomes.
 //!
-//! Reference: https://github.com/stSoftwareAU/NEAT-AI
+//! Reference: <https://github.com/stSoftwareAU/NEAT-AI>
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::activations::apply_scalar_squash;
 
 /// Helper to compare f32 values with appropriate tolerance.
@@ -524,7 +525,7 @@ fn test_exponential_consistency() {
     }
 }
 
-/// Test EXPONENTIAL at x >= 36 where NEAT-AI clamps to JS_MAX_SAFE_INTEGER.
+/// Test EXPONENTIAL at x >= 36 where NEAT-AI clamps to `JS_MAX_SAFE_INTEGER`.
 /// Issue #323: This test enforces consistency with NEAT-AI WASM.
 #[test]
 fn test_exponential_overflow_handling() {

@@ -129,7 +129,7 @@ fn high_error_neuron_is_not_returned_as_exploratory_ablation_candidate() {
 /// Test that low-impact neurons are STILL returned as removal candidates.
 ///
 /// This ensures we haven't broken the legitimate removal candidate detection.
-/// Low-impact neurons (activation_weighted_impact < costOfGrowth) should still
+/// Low-impact neurons (`activation_weighted_impact` < costOfGrowth) should still
 /// be suggested for removal because they genuinely don't contribute to the network.
 #[test]
 fn low_impact_neurons_still_returned_as_removal_candidates() {
@@ -221,7 +221,7 @@ fn low_impact_neurons_still_returned_as_removal_candidates() {
 
 /// Test that the removal candidate reason reflects the correct basis for removal.
 ///
-/// Removal candidates should be based on activation_weighted_impact being below
+/// Removal candidates should be based on `activation_weighted_impact` being below
 /// the costOfGrowth threshold, not on error magnitude.
 #[test]
 fn removal_candidate_reason_reflects_impact_not_error() {

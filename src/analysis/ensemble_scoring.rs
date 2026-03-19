@@ -19,6 +19,7 @@
 //! `ModuleOutcomeTracker`) are used as weights. Modules with higher success rates
 //! contribute more to the ensemble score.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 
 use crate::CoordinatedStructuralCandidateJson;

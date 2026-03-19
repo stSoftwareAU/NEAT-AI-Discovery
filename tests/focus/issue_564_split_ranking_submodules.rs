@@ -1,6 +1,6 @@
 //! Issue #564: Verify that splitting ranking.rs into sub-modules preserves all public API.
 //!
-//! These tests confirm that the focus::ranking module's public types, functions, and
+//! These tests confirm that the `focus::ranking` module's public types, functions, and
 //! constants remain accessible via `neat_ai_discovery::focus::*` after the split into
 //! a `ranking/` directory with focused sub-modules.
 //!

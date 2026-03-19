@@ -10,15 +10,16 @@
 //!
 //! 1. **Gradient magnitude**: How much error signal flows through this neuron
 //! 2. **Saturation ratio**: Percentage of samples in saturated activation region
-//! 3. **Dead neuron ratio**: Percentage of samples with zero gradient (ReLU dead zones)
+//! 3. **Dead neuron ratio**: Percentage of samples with zero gradient (`ReLU` dead zones)
 //!
 //! ## Test Strategy (TDD)
 //!
 //! 1. Test saturation detection for TANH near ±1
-//! 2. Test dead neuron detection for ReLU with negative inputs
+//! 2. Test dead neuron detection for `ReLU` with negative inputs
 //! 3. Test gradient magnitude ranking
 //! 4. Verify integration with existing focus selection
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::focus::{
     GradientFlowStats, compute_gradient_flow_stats, rank_focus_neurons,
 };
@@ -210,12 +211,12 @@ fn test_tanh_saturation_detection_low_saturation() {
 // Test: Dead Neuron Detection for ReLU
 // =============================================================================
 
-/// Test that ReLU neurons with mostly negative inputs are detected as "dead".
+/// Test that `ReLU` neurons with mostly negative inputs are detected as "dead".
 ///
-/// A dead ReLU:
+/// A dead `ReLU`:
 /// - Has output = 0 for all negative inputs
 /// - Has gradient = 0 for negative inputs (cannot learn)
-/// - The dead_ratio represents % of samples with zero gradient
+/// - The `dead_ratio` represents % of samples with zero gradient
 #[test]
 fn test_relu_dead_neuron_detection_mostly_dead() {
     let creature = create_creature(
@@ -269,7 +270,7 @@ fn test_relu_dead_neuron_detection_mostly_dead() {
     );
 }
 
-/// Test that active ReLU neurons have low dead ratio.
+/// Test that active `ReLU` neurons have low dead ratio.
 #[test]
 fn test_relu_active_neuron_detection() {
     let creature = create_creature(
@@ -326,7 +327,7 @@ fn test_relu_active_neuron_detection() {
 // Test: LeakyReLU Never Dead
 // =============================================================================
 
-/// Test that LeakyReLU neurons are never considered "dead" since they always have non-zero gradient.
+/// Test that `LeakyReLU` neurons are never considered "dead" since they always have non-zero gradient.
 #[test]
 fn test_leaky_relu_never_dead() {
     let creature = create_creature(
@@ -592,7 +593,7 @@ fn test_gradient_flow_integration_with_ranking() {
     );
 }
 
-/// Test that dead ReLU neurons are de-prioritised in ranking.
+/// Test that dead `ReLU` neurons are de-prioritised in ranking.
 #[test]
 fn test_dead_relu_deprioritised_in_ranking() {
     let creature = create_creature(
@@ -679,7 +680,7 @@ fn test_dead_relu_deprioritised_in_ranking() {
 // Test: GradientFlowStats struct fields
 // =============================================================================
 
-/// Test that GradientFlowStats contains the expected fields.
+/// Test that `GradientFlowStats` contains the expected fields.
 #[test]
 fn test_gradient_flow_stats_struct_fields() {
     let stats = GradientFlowStats {

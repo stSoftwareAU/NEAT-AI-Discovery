@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{CreatureJson, DiscoveryErrorKind, NeuronData};
 
-/// JSON input for start_discovery_session function
+/// JSON input for `start_discovery_session` function
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartSessionInput {
@@ -15,7 +15,7 @@ pub struct StartSessionInput {
     pub temp_dir: String,
 }
 
-/// JSON output from start_discovery_session function
+/// JSON output from `start_discovery_session` function
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartSessionOutput {
@@ -41,7 +41,7 @@ pub struct StreamingObservation {
     pub inputs: Vec<f32>,
 }
 
-/// JSON input for append_discovery_records function
+/// JSON input for `append_discovery_records` function
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppendRecordsInput {
@@ -49,7 +49,7 @@ pub struct AppendRecordsInput {
     pub observations: Vec<StreamingObservation>,
 }
 
-/// JSON output from append_discovery_records function
+/// JSON output from `append_discovery_records` function
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppendRecordsOutput {
@@ -66,14 +66,14 @@ pub struct AppendRecordsOutput {
     pub retryable: Option<bool>,
 }
 
-/// JSON input for finish_discovery_session function
+/// JSON input for `finish_discovery_session` function
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FinishSessionInput {
     pub session_id: String,
 }
 
-/// JSON output from finish_discovery_session function
+/// JSON output from `finish_discovery_session` function
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FinishSessionOutput {
@@ -94,14 +94,14 @@ pub struct FinishSessionOutput {
     pub retryable: Option<bool>,
 }
 
-/// JSON input for cancel_discovery_session function
+/// JSON input for `cancel_discovery_session` function
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelSessionInput {
     pub session_id: String,
 }
 
-/// JSON output from cancel_discovery_session function
+/// JSON output from `cancel_discovery_session` function
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelSessionOutput {

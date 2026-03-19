@@ -6,6 +6,7 @@
 //! Includes single-source and group-based sample building for locality optimisation
 //! (Issue #221).
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 
 use crate::analysis::samples::HelpfulSample;
@@ -23,7 +24,7 @@ pub(crate) struct TargetData {
 }
 
 /// Pre-built target map for efficient sample building across multiple sources.
-/// This avoids rebuilding the HashMap for each source when analysing a single target.
+/// This avoids rebuilding the `HashMap` for each source when analysing a single target.
 pub(crate) struct TargetMap {
     pub(crate) map: HashMap<u32, TargetData>,
 }
@@ -61,7 +62,7 @@ impl TargetMap {
     }
 
     /// Build samples by matching source records against this pre-built target map.
-    /// This is much faster than build_samples() when processing multiple sources
+    /// This is much faster than `build_samples()` when processing multiple sources
     /// against the same target.
     pub(crate) fn build_samples_from(&self, from_records: &[DiscoverRecord]) -> Vec<HelpfulSample> {
         if self.map.is_empty() || from_records.is_empty() {
@@ -87,10 +88,10 @@ impl TargetMap {
     }
 
     /// Build samples for multiple sources against this target map in a single pass.
-    /// This is an optimisation for sources that share the same obs_indices.
+    /// This is an optimisation for sources that share the same `obs_indices`.
     ///
     /// Instead of calling `build_samples_from` N times for N sources with identical
-    /// obs_indices, we iterate through the target data once and build all sample
+    /// `obs_indices`, we iterate through the target data once and build all sample
     /// vectors simultaneously.
     ///
     /// Returns a Vec of sample vectors, one per source, in the same order as
@@ -98,7 +99,7 @@ impl TargetMap {
     ///
     /// # Issue #221: Sample Locality Optimisation
     ///
-    /// When multiple sources share the same obs_indices (common for input neurons
+    /// When multiple sources share the same `obs_indices` (common for input neurons
     /// recorded together), this method reduces redundant target map lookups from
     /// O(sources × samples) to O(samples).
     pub(crate) fn build_samples_for_group(

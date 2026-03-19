@@ -32,7 +32,7 @@ pub const MIN_NEURON_SAMPLE_COUNT: usize = 10;
 /// sufficient data for pattern recognition.
 ///
 /// ## Valid Range
-/// Must be >= MIN_NEURON_SAMPLE_COUNT. Values below 20 produce unreliable
+/// Must be >= `MIN_NEURON_SAMPLE_COUNT`. Values below 20 produce unreliable
 /// pattern detection.
 pub const MIN_DISCOVERY_SAMPLE_COUNT: usize = 20;
 
@@ -72,7 +72,7 @@ pub const SENTINEL_TOLERANCE: f32 = 0.02;
 /// reliably.
 ///
 /// ## Valid Range
-/// Must be > SENTINEL_TOLERANCE. Values above 0.2 may miss valid sentinels.
+/// Must be > `SENTINEL_TOLERANCE`. Values above 0.2 may miss valid sentinels.
 pub const MIN_SENTINEL_GAP: f32 = 0.05;
 
 // =============================================================================
@@ -201,7 +201,7 @@ pub const MIN_IMPROVED_RATIO: f32 = 0.6;
 ///
 /// ## Valid Range
 /// Must be in (0.0, 1.0). Values below 0.3 provide insufficient filtering.
-/// Values above MIN_IMPROVED_RATIO may be too strict for neuron candidates.
+/// Values above `MIN_IMPROVED_RATIO` may be too strict for neuron candidates.
 pub const NEURON_MIN_IMPROVED_RATIO: f32 = 0.4;
 
 /// Minimum pessimism discount applied to all score predictions.
@@ -261,7 +261,7 @@ pub const PESSIMISM_CURVE_EXPONENT: f32 = 0.6;
 ///
 /// GRQ-sampler analysis (Issue #787) shows add-neurons has a 15% success rate
 /// (3,812 / 25,812) — substantially lower than synapse candidates. The generic
-/// pessimism parameters (PESSIMISM_DISCOUNT_FLOOR = 0.15, PESSIMISM_CURVE_EXPONENT
+/// pessimism parameters (`PESSIMISM_DISCOUNT_FLOOR` = 0.15, `PESSIMISM_CURVE_EXPONENT`
 /// = 0.6) are calibrated for the overall candidate pool and are too generous for
 /// neuron candidates specifically.
 ///
@@ -269,7 +269,7 @@ pub const PESSIMISM_CURVE_EXPONENT: f32 = 0.6;
 /// reducing the expected gain for candidates with few samples improving.
 ///
 /// ## Valid Range
-/// Must be in (0.0, PESSIMISM_DISCOUNT_FLOOR). Values below 0.05 risk
+/// Must be in (0.0, `PESSIMISM_DISCOUNT_FLOOR`). Values below 0.05 risk
 /// zeroing-out legitimate neuron candidates.
 pub const NEURON_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.10;
 
@@ -288,7 +288,7 @@ pub const NEURON_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.10;
 /// - ratio 1.0 → 1.0       → discount = 1.000
 ///
 /// ## Valid Range
-/// Must be in (PESSIMISM_CURVE_EXPONENT, 1.0]. Values above 0.9 give
+/// Must be in (`PESSIMISM_CURVE_EXPONENT`, 1.0]. Values above 0.9 give
 /// near-linear behaviour.
 pub const NEURON_PESSIMISM_CURVE_EXPONENT: f32 = 0.75;
 
@@ -300,7 +300,7 @@ pub const NEURON_PESSIMISM_CURVE_EXPONENT: f32 = 0.75;
 ///
 /// GRQ-sampler analysis (Issue #787) shows add-synapses has a 0% success rate
 /// (0 / 31) — the worst of all candidate types. The generic pessimism parameters
-/// (PESSIMISM_DISCOUNT_FLOOR = 0.15, PESSIMISM_CURVE_EXPONENT = 0.6) and even the
+/// (`PESSIMISM_DISCOUNT_FLOOR` = 0.15, `PESSIMISM_CURVE_EXPONENT` = 0.6) and even the
 /// neuron-specific parameters (0.10, 0.75) are too generous for synapse candidates.
 ///
 /// A lower floor applies more aggressive base discounting to synapse predictions,
@@ -309,7 +309,7 @@ pub const NEURON_PESSIMISM_CURVE_EXPONENT: f32 = 0.75;
 /// overfits to sample data.
 ///
 /// ## Valid Range
-/// Must be in (0.0, NEURON_PESSIMISM_DISCOUNT_FLOOR]. Values below 0.02 risk
+/// Must be in (0.0, `NEURON_PESSIMISM_DISCOUNT_FLOOR`]. Values below 0.02 risk
 /// zeroing-out all synapse candidates.
 pub const SYNAPSE_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.05;
 
@@ -329,7 +329,7 @@ pub const SYNAPSE_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.05;
 /// - ratio 1.0 → 1.0       → discount = 1.000
 ///
 /// ## Valid Range
-/// Must be in (NEURON_PESSIMISM_CURVE_EXPONENT, 1.0]. Values above 0.95 give
+/// Must be in (`NEURON_PESSIMISM_CURVE_EXPONENT`, 1.0]. Values above 0.95 give
 /// near-linear behaviour.
 pub const SYNAPSE_PESSIMISM_CURVE_EXPONENT: f32 = 0.85;
 
@@ -419,7 +419,7 @@ pub const MIN_COORDINATED_MULTI_OP_GAIN: f32 = 1e-3;
 /// GRQ-sampler analysis (Issue #787) shows coordinated-structural candidates have
 /// a 2.3% success rate (272 / 12,069), with successful candidates achieving only
 /// near-negligible score deltas (~2.2e-14). Unlike synapse and neuron candidates
-/// which have per-sample improved_count/total_count ratios, coordinated candidates
+/// which have per-sample `improved_count/total_count` ratios, coordinated candidates
 /// combine multiple operations whose individual predictions compound optimistically.
 ///
 /// This flat multiplicative discount is applied to all coordinated-structural

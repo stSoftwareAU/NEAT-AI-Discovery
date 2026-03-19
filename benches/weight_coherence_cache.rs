@@ -1,8 +1,9 @@
-//! Benchmark for Issue #770: Pass CreatureTopologyCache to weight_coherence.
+//! Benchmark for Issue #770: Pass `CreatureTopologyCache` to `weight_coherence`.
 //!
 //! Measures the performance of `detect_incoherent_weight_ratios` with and
 //! without a pre-computed `CreatureTopologyCache`, varying creature size.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::detection::topology_cache::CreatureTopologyCache;
 use neat_ai_discovery::analysis::detection::weight_coherence::{

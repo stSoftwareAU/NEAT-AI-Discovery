@@ -7,6 +7,7 @@
 //! The micro-nudge variant is only generated when the conservative variant's outgoing weight
 //! exceeds the micro-nudge max (i.e. when it would meaningfully differ from conservative).
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::{
     CandidateNeuronJson, analysis::utils::pair_extreme_candidates_with_conservative_variants,
 };

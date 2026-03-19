@@ -12,8 +12,8 @@
 //! 4. All samples filtered out — returns None
 //! 5. Insufficient non-sentinel samples — returns None
 //! 6. Multiple sentinel values filtered simultaneously
-//! 7. Uses ObservationRangeResult metadata from #398
-//! 8. Existing calculate_optimal_outgoing_weight unchanged (DRY wrapper)
+//! 7. Uses `ObservationRangeResult` metadata from #398
+//! 8. Existing `calculate_optimal_outgoing_weight` unchanged (DRY wrapper)
 
 use neat_ai_discovery::analysis::detection::observation_range::ObservationRangeResult;
 use neat_ai_discovery::analysis::samples::{EPSILON, HelpfulSample};
@@ -21,7 +21,7 @@ use neat_ai_discovery::analysis::scoring::weights::{
     calculate_optimal_outgoing_weight, calculate_range_aware_weight, compute_range_aware_sums,
 };
 
-/// Helper: create a HelpfulSample with given activation and error.
+/// Helper: create a `HelpfulSample` with given activation and error.
 fn sample(activation: f32, avg_error: f32) -> HelpfulSample {
     HelpfulSample {
         activation,
@@ -31,7 +31,7 @@ fn sample(activation: f32, avg_error: f32) -> HelpfulSample {
     }
 }
 
-/// Helper: create an ObservationRangeResult with the given sentinel values.
+/// Helper: create an `ObservationRangeResult` with the given sentinel values.
 fn range_result(
     sentinels: Vec<f32>,
     effective_min: f32,

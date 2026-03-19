@@ -166,7 +166,7 @@ pub fn detect_gpu_tier(adapter_info: &wgpu::AdapterInfo) -> GpuPerformanceTier {
 /// Safely create a wgpu Instance, avoiding panics from backend probing.
 ///
 /// On Linux with old hardware or missing GPU drivers, wgpu's EGL/OpenGL backend
-/// can panic during initialisation (e.g., "BadDisplay" errors). This function:
+/// can panic during initialisation (e.g., "`BadDisplay`" errors). This function:
 ///
 /// - On Linux: Disables the GL backend entirely, using only Vulkan to avoid EGL panics
 /// - On macOS: Uses Metal (the default and only backend on macOS)

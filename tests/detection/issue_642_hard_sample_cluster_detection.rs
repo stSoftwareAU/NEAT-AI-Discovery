@@ -7,12 +7,13 @@
 //!
 //! ## TDD Plan
 //! 1. Create test network with clear easy/hard observation split
-//! 2. Verify detection identifies hard sample clusters by obs_index
+//! 2. Verify detection identifies hard sample clusters by `obs_index`
 //! 3. Verify targeted structural candidates are produced
 //! 4. Test single-output network (degenerate case)
 //! 5. Test no hard samples (uniform error)
 //! 6. Test insufficient samples
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::hard_sample_cluster::{
     HardSampleCluster, HardSampleClusterConfig, detect_hard_sample_clusters,
     hard_sample_clusters_to_coordinated_candidates,
@@ -20,7 +21,7 @@ use neat_ai_discovery::analysis::detection::hard_sample_cluster::{
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord.
+/// Helper: create a `DiscoverRecord`.
 fn record(neuron_uuid: &str, obs_index: u32, activation: f32, errors: Vec<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,

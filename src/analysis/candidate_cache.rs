@@ -81,7 +81,7 @@ impl SourceTypeStats {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CandidateOutcomeCache {
-    /// Per-candidate outcomes keyed by "(source_uuid, target_uuid, operation_type)".
+    /// Per-candidate outcomes keyed by "(`source_uuid`, `target_uuid`, `operation_type`)".
     outcomes: HashMap<String, CandidateOutcome>,
     /// Per-source-type success/failure statistics.
     source_type_stats: HashMap<String, SourceTypeStats>,
@@ -187,7 +187,7 @@ impl CandidateOutcomeCache {
     ///
     /// A candidate is suppressed if:
     /// 1. It has a recorded **failed** outcome, AND
-    /// 2. The failure occurred within the staleness window (epoch - failure_epoch < staleness_window)
+    /// 2. The failure occurred within the staleness window (epoch - `failure_epoch` < `staleness_window`)
     ///
     /// Successful candidates and unknown candidates are never suppressed.
     pub fn is_suppressed(

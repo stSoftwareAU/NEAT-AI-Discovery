@@ -1,11 +1,12 @@
-//! Tests for Issue #487: Reduce unnecessary clone() allocations in hot analysis paths.
+//! Tests for Issue #487: Reduce unnecessary `clone()` allocations in hot analysis paths.
 //!
 //! These tests verify that the clone reduction refactoring preserves correct behaviour:
-//! - HelpfulStats derives Copy (enabling cheaper passing)
-//! - SampleLocalityGroup without _representative_indices still groups correctly
+//! - `HelpfulStats` derives Copy (enabling cheaper passing)
+//! - `SampleLocalityGroup` without _`representative_indices` still groups correctly
 //! - Bottleneck detection with borrowed fan-in/fan-out lists works correctly
 //! - Structural pattern detection with borrowed synapse maps works correctly
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::bottleneck::{
     bottleneck_neurons_to_coordinated_candidates, detect_bottleneck_neurons,
 };
@@ -17,7 +18,7 @@ use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 // HelpfulStats Copy trait
 // =============================================================================
 
-/// Verify HelpfulStats implements Copy (can be passed by value without clone).
+/// Verify `HelpfulStats` implements Copy (can be passed by value without clone).
 #[test]
 fn helpful_stats_is_copy() {
     let stats = HelpfulStats {
@@ -43,7 +44,7 @@ fn helpful_stats_is_copy() {
     assert_eq!(stats_copy.total_count(), 15);
 }
 
-/// Verify HelpfulStats can be passed to functions without explicit clone.
+/// Verify `HelpfulStats` can be passed to functions without explicit clone.
 #[test]
 fn helpful_stats_copy_through_function() {
     let stats = HelpfulStats {
@@ -170,7 +171,7 @@ fn bottleneck_detection_with_borrowed_lists() {
 // HelpfulSample Copy trait (pre-existing, verify still works)
 // =============================================================================
 
-/// Verify HelpfulSample is Copy and can be used in iterators with .copied().
+/// Verify `HelpfulSample` is Copy and can be used in iterators with .`copied()`.
 #[test]
 fn helpful_sample_is_copy() {
     let sample = HelpfulSample {

@@ -11,10 +11,10 @@
 //! - `scoring/` - Scoring, confidence, and validation (weights, confidence, etc.)
 //!
 //! ## Core modules (root level)
-//! - `shared/` - Common types, result structures, diagnostics (timing, metadata, gpu_info)
+//! - `shared/` - Common types, result structures, diagnostics (timing, metadata, `gpu_info`)
 //! - `synapse/` - Synapse analysis pipeline
 //! - `neuron/` - Neuron analysis (evaluation, post-processing, preparation)
-//! - `gpu/` - GPU infrastructure (GpuAnalyzer, GpuWorkQueue)
+//! - `gpu/` - GPU infrastructure (`GpuAnalyzer`, `GpuWorkQueue`)
 //! - `utils/` - Utility functions (memory checks, deadlines)
 //! - `diagnostics/` - Diagnostic tracking and rejection reasons
 //! - `system.rs` - System utilities facade (memory, GPU tier detection)

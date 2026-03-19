@@ -18,6 +18,7 @@
 //!   `MIN_ERROR_REDUCTION_FRACTION` relative to the current activation
 //! - The neuron's current activation is not IDENTITY (already linear)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::helpers::build_record_map;
 use crate::activations::apply_scalar_squash;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;

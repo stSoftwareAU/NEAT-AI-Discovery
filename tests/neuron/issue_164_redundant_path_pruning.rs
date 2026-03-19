@@ -14,6 +14,7 @@
 //! - `removeSynapse` for the pruned path
 //! - `setWeight` for the survivor (renormalised weight)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -293,7 +294,7 @@ fn independent_paths_not_detected_as_redundant() {
 
 /// Test: Redundant path candidate structure contains expected fields.
 ///
-/// The COORDINATED_PRUNE_AND_REWEIGHT candidate should have:
+/// The `COORDINATED_PRUNE_AND_REWEIGHT` candidate should have:
 /// - operations: [removeSynapse, setWeight]
 /// - expectedCreatureScoreGain > 0
 /// - comment referencing redundant path / Issue #164

@@ -14,7 +14,7 @@
 //! ## Sample Locality Optimisation (Issue #221)
 //!
 //! When analysing multiple source neurons for the same target, sources that share
-//! the same obs_indices can benefit from batched sample building. This reduces
+//! the same `obs_indices` can benefit from batched sample building. This reduces
 //! sample building overhead by up to 100x for creatures where input neurons share
 //! the same observation indices.
 //!
@@ -23,7 +23,7 @@
 //! - `scoring` — Improvement calculation, saturation-aware simulation, boosting
 //! - `candidate_generation` — Sample building, locality grouping, ordered neurons
 //! - `gpu_evaluation` — Batched GPU evaluation orchestration
-//!   - `relu_evaluation` — ReLU candidate evaluation (split by error sign)
+//!   - `relu_evaluation` — `ReLU` candidate evaluation (split by error sign)
 //!   - `activation_evaluation` — Non-ReLU activation candidate evaluation
 //! - `filtering` — Candidate filtering, deduplication, truncation
 //! - `target_analysis` — Per-target analysis loop (helpful, harmful, coordinated)
@@ -119,7 +119,7 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
 }
 
 /// Internal synapse analysis with shared cache.
-/// This is called by analyze_all to share the cache between synapse and neuron analysis.
+/// This is called by `analyze_all` to share the cache between synapse and neuron analysis.
 pub(crate) fn analyze_synapses_with_cache(
     input: &AnalyzeSynapsesInput,
     cache: Arc<RecordCache>,

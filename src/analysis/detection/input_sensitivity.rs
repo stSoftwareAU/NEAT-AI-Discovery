@@ -26,6 +26,7 @@
 //! - `addNeuron`: Add dampening/smoothing neuron to reduce sharp transitions
 //! - `setBias`: Shift operating point away from threshold regions
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet};
 
 use crate::types::DiscoverRecord;

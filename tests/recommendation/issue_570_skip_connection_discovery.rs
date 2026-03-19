@@ -13,13 +13,14 @@
 //! 6. Test existing skip connections are not duplicated
 //! 7. Test edge cases (empty network, no hidden neurons, insufficient samples)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::skip_connection::{
     detect_skip_connection_candidates, skip_connections_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord with custom errors.
+/// Helper: create a `DiscoverRecord` with custom errors.
 fn record(neuron_uuid: &str, obs_index: u32, activation: f32, errors: Vec<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,

@@ -21,6 +21,11 @@
 //! - **Connectivity imbalance → addSynapse**: Add inputs to starved neurons
 //!   to balance information flow.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::types::DiscoverRecord;
@@ -46,9 +51,9 @@ const MIN_IMBALANCE_RATIO: f32 = 3.0;
 pub struct TopologyCandidate {
     /// UUID of the neuron at the centre of the topology issue.
     pub neuron_uuid: String,
-    /// Type of topology issue: "long_path" or "connectivity_imbalance".
+    /// Type of topology issue: "`long_path`" or "`connectivity_imbalance`".
     pub issue_type: String,
-    /// Shortest path length to an output (for long_path issues).
+    /// Shortest path length to an output (for `long_path` issues).
     pub path_length: usize,
     /// Fan-in count for this neuron.
     pub fan_in: usize,

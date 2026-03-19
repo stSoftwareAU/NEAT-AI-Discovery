@@ -1,7 +1,7 @@
 //! Tests for the GPU work queue optimisation.
 //!
 //! The GPU work queue eliminates the overhead of creating multiple GPU devices
-//! by having a single dedicated thread that owns the GpuAnalyzer. All GPU
+//! by having a single dedicated thread that owns the `GpuAnalyzer`. All GPU
 //! operations are processed sequentially on this thread, avoiding device
 //! creation overhead and improving GPU utilisation.
 //!
@@ -10,6 +10,7 @@
 //! 2. Results are equivalent to the previous per-thread analyzer approach
 //! 3. The queue handles concurrent requests from multiple focus neurons
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

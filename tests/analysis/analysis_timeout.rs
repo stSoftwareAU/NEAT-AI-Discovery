@@ -5,6 +5,7 @@
 //! 2. Focus neurons are randomised for repeated runs with timeouts
 //! 3. Visible logging is provided when timeout occurs
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

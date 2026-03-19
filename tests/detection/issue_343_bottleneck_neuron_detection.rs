@@ -12,6 +12,7 @@
 //! 4. Test structural recommendations (parallel path, bypass)
 //! 5. Verify with network that has natural fan-in (should not flag)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::bottleneck::{
     BottleneckNeuronCandidate, bottleneck_neurons_to_coordinated_candidates,
     detect_bottleneck_neurons,
@@ -19,7 +20,7 @@ use neat_ai_discovery::analysis::detection::bottleneck::{
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord for a neuron with given activation and error.
+/// Helper: create a `DiscoverRecord` for a neuron with given activation and error.
 fn record(
     neuron_uuid: &str,
     obs_index: u32,

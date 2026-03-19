@@ -1,7 +1,7 @@
 //! Budget allocation strategies for hierarchical focus selection.
 //!
 //! Allocates a total focus budget across network layers using one of three
-//! strategies: Equal, Proportional, or OutputFirst.
+//! strategies: Equal, Proportional, or `OutputFirst`.
 
 use super::layers::{NeuronInfo, NeuronLayer};
 use crate::CreatureJson;
@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 /// Strategy for allocating focus budget across layers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AllocationStrategy {
-    /// Equal allocation per layer (total / num_layers)
+    /// Equal allocation per layer (total / `num_layers`)
     Equal,
     /// Proportional to layer size (larger layers get more slots)
     Proportional,
@@ -28,7 +28,7 @@ pub const HIERARCHICAL_SELECTION_THRESHOLD: usize = 100;
 ///
 /// # Arguments
 /// * `total` - Total focus budget to allocate
-/// * `layers` - Network layers (from compute_network_layers)
+/// * `layers` - Network layers (from `compute_network_layers`)
 /// * `strategy` - Allocation strategy to use
 ///
 /// # Returns

@@ -25,6 +25,7 @@
 //!   direction of the activation-error mapping
 //! - `changeSquash`: Change the activation function to better fit the data
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
 use crate::types::DiscoverRecord;

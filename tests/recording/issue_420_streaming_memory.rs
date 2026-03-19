@@ -6,6 +6,7 @@
 //! - Compressed in-memory cache (LZ4)
 //! - Progressive analysis (partial results)
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::cache::{
     CompressedLruRecordCache, LruRecordCache, RecordCache, select_loading_strategy,
 };

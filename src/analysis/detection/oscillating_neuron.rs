@@ -27,6 +27,7 @@
 //! These are emitted as `CoordinatedStructuralCandidateJson` with `ChangeSquash` and/or
 //! `SetBias` operations.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::helpers::build_record_map;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};

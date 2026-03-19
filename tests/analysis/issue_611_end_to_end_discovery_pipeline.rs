@@ -5,6 +5,7 @@
 //! realistic but small synthetic creature data and checks that the pipeline
 //! produces sensible candidates (or handles edge cases gracefully).
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -75,7 +76,7 @@ fn assert_positive_expected_improvement(candidates: &[serde_json::Value], label:
 
 /// A "dead" hidden neuron has zero activation across all observations. The
 /// pipeline should detect it and produce a `removeNeuron` coordinated candidate
-/// (or at least a removal candidate from rank_focus_neurons).
+/// (or at least a removal candidate from `rank_focus_neurons`).
 #[test]
 fn e2e_dead_neuron_produces_remove_neuron_candidate() {
     if !GpuAnalyzer::gpu_is_available() {

@@ -8,7 +8,7 @@
 //! ## Module Structure (Issue #491, #564)
 //!
 //! - `layers` — Network layer computation via BFS from inputs
-//! - `allocation` — Budget allocation strategies (Equal, Proportional, OutputFirst)
+//! - `allocation` — Budget allocation strategies (Equal, Proportional, `OutputFirst`)
 //! - `gradient` — Gradient flow analysis (saturation, dead neurons)
 //! - `impact` — Structural impact calculation (squash-aware, selection stats)
 //! - `ranking/` — Neuron ranking, record providers, removal candidates (Issue #564)

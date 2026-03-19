@@ -1,4 +1,4 @@
-//! Tests for Issue #493: Creature-aware record-loading helpers on RecordCache.
+//! Tests for Issue #493: Creature-aware record-loading helpers on `RecordCache`.
 //!
 //! Validates that the new convenience methods correctly combine UUID extraction
 //! from `CreatureJson` with record loading, eliminating the repeated
@@ -27,7 +27,7 @@ fn test_cache_with_data(data: Vec<(String, Vec<DiscoverRecord>)>) -> RecordCache
 // load_records_for_all_neurons
 // =============================================================================
 
-/// Verify that load_records_for_all_neurons returns records for every neuron in the creature.
+/// Verify that `load_records_for_all_neurons` returns records for every neuron in the creature.
 #[test]
 fn test_load_all_neurons_returns_records_for_every_neuron() {
     let creature = make_creature(
@@ -58,7 +58,7 @@ fn test_load_all_neurons_returns_records_for_every_neuron() {
     assert!(uuids.contains(&&"o1".to_string()));
 }
 
-/// Verify that load_records_for_all_neurons handles a creature with no neurons.
+/// Verify that `load_records_for_all_neurons` handles a creature with no neurons.
 #[test]
 fn test_load_all_neurons_empty_creature() {
     let creature = make_creature(vec![], vec![]);
@@ -72,7 +72,7 @@ fn test_load_all_neurons_empty_creature() {
 // load_records_for_neuron_types
 // =============================================================================
 
-/// Verify that load_records_for_neuron_types returns only the requested types.
+/// Verify that `load_records_for_neuron_types` returns only the requested types.
 #[test]
 fn test_load_by_type_filters_correctly() {
     let creature = make_creature(
@@ -105,7 +105,7 @@ fn test_load_by_type_filters_correctly() {
     assert!(uuids.contains(&&"i2".to_string()));
 }
 
-/// Verify that load_records_for_neuron_types supports multiple type filters.
+/// Verify that `load_records_for_neuron_types` supports multiple type filters.
 #[test]
 fn test_load_by_type_multiple_types() {
     let creature = make_creature(
@@ -138,7 +138,7 @@ fn test_load_by_type_multiple_types() {
     assert!(uuids.contains(&&"h1".to_string()));
 }
 
-/// Verify that load_records_for_neuron_types with no matching types returns empty.
+/// Verify that `load_records_for_neuron_types` with no matching types returns empty.
 #[test]
 fn test_load_by_type_no_matching_types() {
     let creature = make_creature(
@@ -159,7 +159,7 @@ fn test_load_by_type_no_matching_types() {
 // load_records_for_synapse_sources
 // =============================================================================
 
-/// Verify that load_records_for_synapse_sources returns unique source UUIDs.
+/// Verify that `load_records_for_synapse_sources` returns unique source UUIDs.
 #[test]
 fn test_load_synapse_sources_returns_unique_sources() {
     let creature = make_creature(
@@ -193,7 +193,7 @@ fn test_load_synapse_sources_returns_unique_sources() {
     assert!(uuids.contains(&&"h1".to_string()));
 }
 
-/// Verify that load_records_for_synapse_sources handles empty synapses.
+/// Verify that `load_records_for_synapse_sources` handles empty synapses.
 #[test]
 fn test_load_synapse_sources_empty_synapses() {
     let creature = make_creature(vec![neuron("i1", "input", "IDENTITY")], vec![]);
@@ -210,7 +210,7 @@ fn test_load_synapse_sources_empty_synapses() {
 // load_records_for_hidden consistency
 // =============================================================================
 
-/// Verify that load_records_for_hidden returns records matching the hidden neuron tuples.
+/// Verify that `load_records_for_hidden` returns records matching the hidden neuron tuples.
 #[test]
 fn test_load_hidden_returns_correct_records() {
     let cache = test_cache_with_data(vec![

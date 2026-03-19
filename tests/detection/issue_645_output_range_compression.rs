@@ -8,15 +8,16 @@
 //! ## TDD Plan
 //! 1. Output neuron using <40% of activation range SHOULD be flagged
 //! 2. Output neuron using >40% of range should NOT be flagged
-//! 3. Hidden neurons are excluded (handled by restricted_range module)
+//! 3. Hidden neurons are excluded (handled by `restricted_range` module)
 //! 4. Insufficient samples produce no detections
 //! 5. Unbounded activation functions (IDENTITY, RELU) are excluded
 //! 6. Produces valid coordinated candidates (setBias+setWeight or changeSquash)
-//! 7. Distinguishes from output_squash_mismatch (wrong function type vs compression)
+//! 7. Distinguishes from `output_squash_mismatch` (wrong function type vs compression)
 //! 8. Multiple output neurons — only compressed ones flagged
 //! 9. Near-saturated neurons excluded (saturation detection handles those)
 //! 10. Dead output neurons excluded (near-zero range)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::output_range_compression::{
     OutputRangeCompressionConfig, OutputRangeCompressionNeuron, detect_output_range_compression,
     output_range_compression_to_coordinated_candidates,
@@ -24,7 +25,7 @@ use neat_ai_discovery::analysis::detection::output_range_compression::{
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord.
+/// Helper: create a `DiscoverRecord`.
 fn record(neuron_uuid: &str, obs_index: u32, activation: f32, errors: Vec<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,
@@ -137,7 +138,7 @@ fn test_full_range_not_flagged() {
     );
 }
 
-/// Test 3: Hidden neurons should be excluded (restricted_range handles those).
+/// Test 3: Hidden neurons should be excluded (`restricted_range` handles those).
 #[test]
 fn test_hidden_neurons_excluded() {
     let creature = make_creature(

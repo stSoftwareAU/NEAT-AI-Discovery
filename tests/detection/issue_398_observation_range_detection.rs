@@ -16,6 +16,7 @@
 //! 8. Error correlation distinguishes sentinel from effective range
 //! 9. Multiple observations — independent ranges per neuron
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{make_creature, neuron, output, synapse};
 use neat_ai_discovery::analysis::detection::observation_range::detect_observation_ranges;
 use neat_ai_discovery::types::DiscoverRecord;

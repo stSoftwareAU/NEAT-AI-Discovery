@@ -1,4 +1,4 @@
-//! Issue #522: Targeted tests for synapse structural_patterns sub-module
+//! Issue #522: Targeted tests for synapse `structural_patterns` sub-module
 //!
 //! Tests the coordinated structural discovery functions in
 //! `src/analysis/synapse/structural_patterns.rs`:
@@ -8,6 +8,7 @@
 //! These tests exercise the full analysis pipeline with crafted creatures and
 //! verify correct structural candidate generation.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

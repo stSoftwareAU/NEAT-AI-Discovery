@@ -3,6 +3,11 @@
 //! This module contains functions for computing improvement scores, saturation-aware
 //! simulation, and source/target type boosting (Issues #413, #467, #468).
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::CandidateNeuronJson;
 #[cfg(test)]
 use crate::analysis::activation::get_target_simulation_fn;
@@ -93,9 +98,9 @@ pub(crate) fn weight_sign(weight: f32) -> i8 {
 /// same components (source UUID, target UUID, squash, weight signs) but avoids
 /// heap allocation entirely.
 ///
-/// The key includes signs of BOTH incoming_weight AND outgoing_weight so that:
-/// 1. Different ReLU orientations (incoming_weight ±1) are kept separately
-/// 2. Split-error complementary pairs (same incoming_weight, opposite outgoing_weight)
+/// The key includes signs of BOTH `incoming_weight` AND `outgoing_weight` so that:
+/// 1. Different `ReLU` orientations (`incoming_weight` ±1) are kept separately
+/// 2. Split-error complementary pairs (same `incoming_weight`, opposite `outgoing_weight`)
 ///    are also kept separately — one pushes output UP, one pushes DOWN
 pub(crate) fn compute_candidate_dedup_key(candidate: &CandidateNeuronJson) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325; // FNV-1a offset basis
@@ -129,9 +134,9 @@ pub(crate) fn compute_candidate_dedup_key(candidate: &CandidateNeuronJson) -> u6
 /// Insert or update a neuron candidate in the deduplication map.
 ///
 /// Uses a pre-computed FNV-1a hash key (Issue #526) to avoid 3 String clones per call.
-/// The key is derived from (source_uuid, target_uuid, squash, incoming_weight_sign,
-/// outgoing_weight_sign). When a collision occurs, the candidate with the higher
-/// expected_creature_score_gain wins.
+/// The key is derived from (`source_uuid`, `target_uuid`, squash, `incoming_weight_sign`,
+/// `outgoing_weight_sign`). When a collision occurs, the candidate with the higher
+/// `expected_creature_score_gain` wins.
 pub(crate) fn upsert_candidate(
     map: &mut HashMap<u64, CandidateNeuronJson>,
     candidate: CandidateNeuronJson,
@@ -153,19 +158,19 @@ pub(crate) fn upsert_candidate(
     }
 }
 
-/// Combined computation of improvement and count for ReLU candidates.
+/// Combined computation of improvement and count for `ReLU` candidates.
 /// Single pass over samples for better cache efficiency.
 ///
 /// When `target_activation_fn` is Some, simulates the target neuron's actual activation
 /// function for more accurate improvement estimates. Otherwise falls back to linear approximation.
 ///
-/// IMPORTANT: The `bias` parameter is critical for accurate predictions. It shifts the ReLU
+/// IMPORTANT: The `bias` parameter is critical for accurate predictions. It shifts the `ReLU`
 /// activation threshold, affecting which samples produce non-zero output.
 ///
-/// CRITICAL DOMAIN FIX (v0.1.120): When using target_activation_fn simulation,
+/// CRITICAL DOMAIN FIX (v0.1.120): When using `target_activation_fn` simulation,
 /// both baseline and new error must be computed in ACTIVATION domain.
 ///
-/// Returns (improvement_percentage, improved_count, total_count)
+/// Returns (`improvement_percentage`, `improved_count`, `total_count`)
 pub(crate) fn compute_relu_improvement_and_count(
     samples: &[HelpfulSample],
     incoming_weight: f32,
@@ -265,10 +270,10 @@ pub(crate) fn compute_relu_improvement_and_count(
 /// When `target_activation_fn` is Some, simulates the target neuron's actual activation
 /// function for more accurate improvement estimates. Otherwise falls back to linear approximation.
 ///
-/// CRITICAL DOMAIN FIX (v0.1.120): When using target_activation_fn simulation,
+/// CRITICAL DOMAIN FIX (v0.1.120): When using `target_activation_fn` simulation,
 /// both baseline and new error must be computed in ACTIVATION domain.
 ///
-/// Returns (improvement_percentage, improved_count, total_count)
+/// Returns (`improvement_percentage`, `improved_count`, `total_count`)
 pub(crate) fn compute_activation_improvement_and_count(
     samples: &[HelpfulSample],
     incoming_weight: f32,
@@ -357,7 +362,7 @@ pub(crate) fn compute_activation_improvement_and_count(
 }
 
 /// Wrapper for tests - computes improvement only.
-/// NOTE: For ReLU candidates, bias affects which samples activate. Pass the actual bias
+/// NOTE: For `ReLU` candidates, bias affects which samples activate. Pass the actual bias
 /// that will be used with the new neuron for accurate predictions.
 #[cfg(test)]
 pub(crate) fn compute_net_improvement_with_squash(
@@ -384,9 +389,9 @@ pub(crate) fn compute_net_improvement_with_squash(
 ///
 /// For direct synapse connections (source → target), the contribution is `weight × source_activation`.
 /// This function simulates the target's activation function to predict accurate improvement,
-/// avoiding overprediction near saturation for HARD_TANH, TANH, LOGISTIC, etc.
+/// avoiding overprediction near saturation for `HARD_TANH`, TANH, LOGISTIC, etc.
 ///
-/// Returns improvement_percentage only. Used in tests; production uses compute_synapse_improvement_and_count.
+/// Returns `improvement_percentage` only. Used in tests; production uses `compute_synapse_improvement_and_count`.
 #[cfg(test)]
 pub(crate) fn compute_synapse_improvement_with_target_squash(
     samples: &[HelpfulSample],
@@ -468,12 +473,12 @@ pub(crate) fn compute_synapse_improvement_with_target_squash(
 /// Compute improvement, improved count, and worsened count for synapse candidates.
 /// All counts use the same saturation-aware methodology for consistency.
 ///
-/// CRITICAL DOMAIN FIX (v0.1.120): When using target_activation_fn simulation,
+/// CRITICAL DOMAIN FIX (v0.1.120): When using `target_activation_fn` simulation,
 /// both baseline and new error must be computed in ACTIVATION domain. The passed-in
-/// total_baseline_error_sq is in VALUE domain, so we compute our own ACTIVATION
+/// `total_baseline_error_sq` is in VALUE domain, so we compute our own ACTIVATION
 /// domain baseline when simulating.
 ///
-/// Returns (improvement_percentage, improved_count, worsened_count, total_count)
+/// Returns (`improvement_percentage`, `improved_count`, `worsened_count`, `total_count`)
 pub(crate) fn compute_synapse_improvement_and_count(
     samples: &[HelpfulSample],
     weight: f32,

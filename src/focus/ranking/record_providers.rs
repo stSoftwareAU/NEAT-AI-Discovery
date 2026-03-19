@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-/// Provides access to recorded discovery data without assuming an in-memory HashMap.
+/// Provides access to recorded discovery data without assuming an in-memory `HashMap`.
 /// Implementations may pre-load all records or stream them on demand with bounded caching.
 pub trait RecordProvider: Send + Sync {
     fn get(&self, neuron_uuid: &str) -> Result<Option<Arc<Vec<DiscoverRecord>>>>;

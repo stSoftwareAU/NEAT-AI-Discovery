@@ -1,15 +1,16 @@
 //! Integration tests for synapse and neuron analysis functions.
 //!
-//! Extracted from implementation_tests.rs as part of Issue #426.
+//! Extracted from `implementation_tests.rs` as part of Issue #426.
 //! Tests cover:
-//! - analyze_synapses validation and diagnostics
-//! - analyze_neurons validation and diagnostics
-//! - analyze_all combined analysis
+//! - `analyze_synapses` validation and diagnostics
+//! - `analyze_neurons` validation and diagnostics
+//! - `analyze_all` combined analysis
 //! - Duplicate focus target rejection
 //! - Eligible source reporting
 //! - Deadline/timeout behaviour
 //! - Positive/negative improvement acceptance
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::common::*;
 
 #[test]

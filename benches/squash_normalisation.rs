@@ -5,6 +5,7 @@
 //! unbounded capping, and activation mismatch detection on a creature with
 //! 200+ hidden neurons using mixed-case activation function names.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::detection::saturation::detect_saturated_neurons;
 use neat_ai_discovery::analysis::detection::unbounded_capping::detect_unbounded_capping_candidates;

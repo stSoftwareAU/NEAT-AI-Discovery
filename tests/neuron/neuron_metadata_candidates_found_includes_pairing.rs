@@ -8,6 +8,7 @@
 //!
 //! This ensures "found" always implies "at least as many as returned."
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::{
     CandidateNeuronJson, analysis::utils::pair_extreme_candidates_with_conservative_variants,
 };
@@ -148,7 +149,7 @@ fn non_extreme_candidates_maintain_count_invariant() {
     );
 }
 
-/// Test with multiple extreme candidates and a low max_candidates limit.
+/// Test with multiple extreme candidates and a low `max_candidates` limit.
 /// This verifies the correct handling when truncation actually occurs.
 #[test]
 fn truncation_respects_invariant_with_multiple_extreme_candidates() {

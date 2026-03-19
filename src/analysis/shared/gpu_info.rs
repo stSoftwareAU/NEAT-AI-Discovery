@@ -67,8 +67,8 @@ impl From<wgpu::DeviceType> for GpuDeviceType {
 pub struct ZeroCopyBufferConfig {
     /// Whether zero-copy is explicitly enabled or disabled via environment variable.
     ///
-    /// - `Some(true)`: Force-enabled via NEAT_AI_DISCOVERY_ZERO_COPY=1
-    /// - `Some(false)`: Force-disabled via NEAT_AI_DISCOVERY_ZERO_COPY=0
+    /// - `Some(true)`: Force-enabled via `NEAT_AI_DISCOVERY_ZERO_COPY=1`
+    /// - `Some(false)`: Force-disabled via `NEAT_AI_DISCOVERY_ZERO_COPY=0`
     /// - `None`: Auto-detect based on unified memory support
     force_enabled: Option<bool>,
     /// Number of buffers in the ring buffer for pipelining.

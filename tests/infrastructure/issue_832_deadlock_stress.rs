@@ -8,6 +8,7 @@
 //! Tests use seeded RNG for reproducibility and a private Rayon thread pool
 //! with high thread counts to maximise contention.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -153,7 +154,7 @@ fn write_temp_parquet(records: &[DiscoverRecord], suffix: &str) -> (String, temp
     (parquet_file, temp_dir)
 }
 
-/// Run `analyze_all` via the internal JSON interface (same pattern as issue_612 tests).
+/// Run `analyze_all` via the internal JSON interface (same pattern as `issue_612` tests).
 fn run_analysis_pipeline(
     creature: &CreatureJson,
     parquet_file: &str,
@@ -190,7 +191,7 @@ fn run_analysis_pipeline(
 }
 
 /// Spawn a background thread that periodically checks for deadlocks.
-/// Returns (checker_handle, deadlock_flag, done_signal).
+/// Returns (`checker_handle`, `deadlock_flag`, `done_signal`).
 fn spawn_deadlock_checker(
     interval_ms: u64,
 ) -> (

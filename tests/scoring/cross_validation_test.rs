@@ -4,6 +4,7 @@
 //! which perform well on discovery samples but poorly on held-out validation data.
 //! Such candidates are "brilliant but brittle" - overfitting to the discovery sample.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::samples::HelpfulSample;
 use neat_ai_discovery::analysis::scoring::cross_validation::{
     CrossValidationConfig, CrossValidationResult, FoldResult, PerformanceVariance,

@@ -12,6 +12,7 @@
 //! 5. Test with independent errors (should not form groups)
 //! 6. Test single output neuron (should skip — nothing to correlate)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::correlated_error::{
     CorrelatedErrorGroup, correlated_errors_to_coordinated_candidates,
     detect_correlated_error_patterns,
@@ -19,7 +20,7 @@ use neat_ai_discovery::analysis::detection::correlated_error::{
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord for a neuron with given activation and errors.
+/// Helper: create a `DiscoverRecord` for a neuron with given activation and errors.
 fn record(neuron_uuid: &str, obs_index: u32, activation: f32, errors: Vec<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,
@@ -42,7 +43,7 @@ fn make_creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>) -> Creatu
     }
 }
 
-/// Helper: build a NeuronJson.
+/// Helper: build a `NeuronJson`.
 fn neuron(uuid: &str, neuron_type: &str, squash: &str) -> NeuronJson {
     NeuronJson {
         uuid: uuid.to_string(),
@@ -52,7 +53,7 @@ fn neuron(uuid: &str, neuron_type: &str, squash: &str) -> NeuronJson {
     }
 }
 
-/// Helper: build a SynapseJson.
+/// Helper: build a `SynapseJson`.
 fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
     SynapseJson {
         from_uuid: from.to_string(),
@@ -227,7 +228,7 @@ fn test_correlated_error_insufficient_samples_no_detection() {
 }
 
 /// Test 5: Correlated error group produces coordinated structural candidate
-/// with AddNeuron and AddSynapse operations.
+/// with `AddNeuron` and `AddSynapse` operations.
 #[test]
 fn test_correlated_error_candidates_produce_coordinated_operations() {
     let group = CorrelatedErrorGroup {

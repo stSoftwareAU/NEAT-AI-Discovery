@@ -8,6 +8,7 @@
 //! These tests exercise real public functions with test data and verify
 //! that confidence metrics behave correctly for candidate reliability assessment.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::samples::HelpfulSample;
 use neat_ai_discovery::analysis::scoring::confidence::compute_confidence_metrics;
 

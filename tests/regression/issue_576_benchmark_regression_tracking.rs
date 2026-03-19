@@ -1,6 +1,6 @@
 //! Integration tests for Issue #576: Benchmark regression tracking with Criterion comparison.
 //!
-//! These tests verify that the benchmark_compare.sh script behaves correctly
+//! These tests verify that the `benchmark_compare.sh` script behaves correctly
 //! by running it and checking its outputs — not by inspecting file existence.
 //! Converted to behavioural tests as part of Issue #813 audit.
 

@@ -111,7 +111,7 @@ pub(crate) enum GpuWorkRequest {
         /// Channel to send results back.
         response_tx: Sender<Result<Vec<HarmfulStats>>>,
     },
-    /// ReLU activation evaluation for neuron candidates.
+    /// `ReLU` activation evaluation for neuron candidates.
     ReluEval {
         samples: Vec<HelpfulSample>,
         threshold: f32,
@@ -160,7 +160,7 @@ mod tests {
     use crate::analysis::gpu::analyzer::GpuEvaluator;
     use crate::analysis::gpu::shaders::GPU_SHUTDOWN_TIMEOUT_SECS;
 
-    /// Test that the GpuWorkQueue module exports all expected types.
+    /// Test that the `GpuWorkQueue` module exports all expected types.
     #[test]
     fn test_queue_module_exports_are_accessible() {
         // Verify that GpuWorkQueue struct is accessible
@@ -170,7 +170,7 @@ mod tests {
         // This is tested implicitly through the GpuWorkQueue methods
     }
 
-    /// Test that GpuWorkQueue implements GpuEvaluator trait.
+    /// Test that `GpuWorkQueue` implements `GpuEvaluator` trait.
     #[test]
     fn test_gpu_work_queue_implements_evaluator() {
         // Verify GpuEvaluator trait is implemented
@@ -201,7 +201,7 @@ mod tests {
         assert!(empty.is_empty());
     }
 
-    /// Test that empty ReLU samples returns default stats without GPU.
+    /// Test that empty `ReLU` samples returns default stats without GPU.
     #[test]
     fn test_empty_relu_samples_returns_defaults() {
         let empty: Vec<HelpfulSample> = Vec::new();
@@ -225,7 +225,7 @@ mod tests {
         const _: () = assert!(GPU_SHUTDOWN_TIMEOUT_SECS <= 30, "Shutdown timeout too long");
     }
 
-    /// Test that GpuWorkRequest variants can be constructed (compile-time check).
+    /// Test that `GpuWorkRequest` variants can be constructed (compile-time check).
     #[test]
     fn test_gpu_work_request_variants_constructible() {
         // Verify all variants can be constructed

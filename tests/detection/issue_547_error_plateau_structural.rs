@@ -9,6 +9,7 @@
 //! 5. Test that healthy networks produce no candidates
 //! 6. Test that the estimated improvement accounts for both squash and bias changes
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::error_plateau::{
     detect_error_plateaus, error_plateaus_to_coordinated_candidates,
 };

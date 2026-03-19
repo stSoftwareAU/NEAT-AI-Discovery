@@ -5,6 +5,7 @@
 //!
 //! This test ensures those fields are populated consistently with `CandidateNeuronJson`.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::skip_without_gpu;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

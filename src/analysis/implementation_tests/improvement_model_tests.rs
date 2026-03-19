@@ -1,14 +1,14 @@
-//! Tests for improvement model calculations (linear vs HARD_TANH).
+//! Tests for improvement model calculations (linear vs `HARD_TANH`).
 //!
 //! Tests cover:
 //! - Linear model accuracy when errors are aligned
-//! - HARD_TANH saturation behaviour differences from linear model
+//! - `HARD_TANH` saturation behaviour differences from linear model
 //! - Fallback to linear when target data is missing
 //! - Sample counting with different models
 
 use super::common::*;
 
-/// Extended sample for HARD_TANH testing - includes target neuron's pre-activation value
+/// Extended sample for `HARD_TANH` testing - includes target neuron's pre-activation value
 struct HardTanhSample {
     source_activation: f32,
     target_value: f32,      // Pre-activation input sum
@@ -16,7 +16,7 @@ struct HardTanhSample {
     target_error: f32,      // expected - actual
 }
 
-/// Apply HARD_TANH activation function
+/// Apply `HARD_TANH` activation function
 fn hard_tanh(x: f32) -> f32 {
     x.clamp(-1.0, 1.0)
 }
@@ -91,8 +91,8 @@ fn test_linear_model_accurate_when_errors_aligned() {
     );
 }
 
-/// TEST: Demonstrates that linear model is WRONG for HARD_TANH targets near saturation.
-/// The linear model predicts disaster (-125%) but HARD_TANH actually gives perfect result!
+/// TEST: Demonstrates that linear model is WRONG for `HARD_TANH` targets near saturation.
+/// The linear model predicts disaster (-125%) but `HARD_TANH` actually gives perfect result!
 #[test]
 fn test_hard_tanh_linear_model_is_wrong_near_saturation() {
     let samples = vec![HardTanhSample {
@@ -156,7 +156,7 @@ fn test_hard_tanh_linear_model_is_wrong_near_saturation() {
     );
 }
 
-/// TEST: Linear model predicts improvement but HARD_TANH shows NO improvement (already saturated)
+/// TEST: Linear model predicts improvement but `HARD_TANH` shows NO improvement (already saturated)
 #[test]
 fn test_hard_tanh_linear_model_wrong_when_already_saturated() {
     let samples = vec![HardTanhSample {
@@ -209,7 +209,7 @@ fn test_hard_tanh_linear_model_wrong_when_already_saturated() {
     );
 }
 
-/// Test that compute_net_improvement_with_squash uses HARD_TANH model when specified.
+/// Test that `compute_net_improvement_with_squash` uses `HARD_TANH` model when specified.
 #[test]
 fn test_compute_net_improvement_uses_hard_tanh_model() {
     let samples = vec![HelpfulSample {
@@ -256,7 +256,7 @@ fn test_compute_net_improvement_uses_hard_tanh_model() {
     );
 }
 
-/// Test that HARD_TANH model falls back to linear when target data is missing.
+/// Test that `HARD_TANH` model falls back to linear when target data is missing.
 #[test]
 fn test_compute_net_improvement_falls_back_to_linear_without_target_data() {
     let samples = vec![HelpfulSample {
@@ -288,7 +288,7 @@ fn test_compute_net_improvement_falls_back_to_linear_without_target_data() {
     );
 }
 
-/// TEST: count_improved_samples must use HARD_TANH model for accurate sample counts.
+/// TEST: `count_improved_samples` must use `HARD_TANH` model for accurate sample counts.
 #[test]
 fn test_count_improved_samples_uses_hard_tanh_model() {
     let samples = vec![HelpfulSample {
@@ -316,7 +316,7 @@ fn test_count_improved_samples_uses_hard_tanh_model() {
     );
 }
 
-/// TEST: count_improved_samples falls back to linear model when target data is missing.
+/// TEST: `count_improved_samples` falls back to linear model when target data is missing.
 #[test]
 fn test_count_improved_samples_falls_back_to_linear_without_target_data() {
     let samples = vec![HelpfulSample {
@@ -346,7 +346,7 @@ fn test_count_improved_samples_falls_back_to_linear_without_target_data() {
     );
 }
 
-/// TEST: count_improved_samples uses linear model for non-HARD_TANH activations.
+/// TEST: `count_improved_samples` uses linear model for non-HARD_TANH activations.
 #[test]
 fn test_count_improved_samples_uses_linear_for_other_activations() {
     let samples = vec![HelpfulSample {

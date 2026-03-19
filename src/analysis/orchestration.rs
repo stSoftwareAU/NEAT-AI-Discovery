@@ -5,6 +5,7 @@
 //! - `run_optional_analysis` — guarded analysis phase execution
 //! - `dispatch_analyses` — parameterised synapse/neuron dispatch (Issue #774)
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::sync::Arc;
 use std::time::SystemTime;
 

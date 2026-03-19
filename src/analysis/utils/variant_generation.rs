@@ -418,10 +418,10 @@ const COORDINATED_GENTLE_NUDGE_EXPECTED_MULTIPLIER: f32 = 0.75;
 const COORDINATED_MICRO_NUDGE_WEIGHT_SCALE: f32 = 0.05;
 const COORDINATED_MICRO_NUDGE_EXPECTED_MULTIPLIER: f32 = 0.25;
 
-/// Minimum absolute weight for a coordinated-structural AddSynapse variant.
+/// Minimum absolute weight for a coordinated-structural `AddSynapse` variant.
 const COORDINATED_VARIANT_MIN_WEIGHT: f32 = 1e-6;
 
-/// Scale AddSynapse weights in a coordinated-structural candidate by the given factor.
+/// Scale `AddSynapse` weights in a coordinated-structural candidate by the given factor.
 fn scale_coordinated_add_synapse_weights(
     original: &CoordinatedStructuralCandidateJson,
     scale: f32,
@@ -477,7 +477,7 @@ fn scale_coordinated_add_synapse_weights(
     })
 }
 
-/// Coordinated-structural variant specs: (scale, expected_multiplier, comment).
+/// Coordinated-structural variant specs: (scale, `expected_multiplier`, comment).
 const COORDINATED_VARIANT_SPECS: [(f32, f32, &str); 3] = [
     (
         COORDINATED_CONSERVATIVE_WEIGHT_SCALE,

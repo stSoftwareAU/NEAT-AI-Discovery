@@ -22,6 +22,7 @@
 //! - `RemoveNeuron` — remove the lower-impact neuron (reuse `remove-low-impact`)
 //! - `SetWeight` — perturb one neuron's incoming weights to break the co-adaptation
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 
 use crate::types::DiscoverRecord;

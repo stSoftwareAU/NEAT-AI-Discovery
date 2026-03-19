@@ -15,6 +15,7 @@
 //! The reduction is implemented as a second shader pass that performs tree reduction
 //! within each workgroup using shared memory.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::analysis::samples::{HarmfulContribution, HelpfulContribution};
 
@@ -28,7 +29,7 @@ macro_rules! skip_without_gpu {
     };
 }
 
-/// Test that the HelpfulContribution struct size is as expected (48 bytes).
+/// Test that the `HelpfulContribution` struct size is as expected (48 bytes).
 /// This is important for calculating expected transfer sizes.
 #[test]
 fn test_helpful_contribution_size() {
@@ -39,7 +40,7 @@ fn test_helpful_contribution_size() {
     );
 }
 
-/// Test that the HarmfulContribution struct size is as expected (16 bytes).
+/// Test that the `HarmfulContribution` struct size is as expected (16 bytes).
 #[test]
 fn test_harmful_contribution_size() {
     let size = std::mem::size_of::<HarmfulContribution>();

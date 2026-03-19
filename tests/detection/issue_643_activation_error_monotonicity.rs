@@ -14,6 +14,7 @@
 //! 6. Distinguishes from noise-to-signal detection (variance-based)
 //! 7. Multiple neurons — only non-monotonic ones flagged
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::monotonicity::{
     MonotonicityCandidate, detect_non_monotonic_neurons,
     non_monotonic_neurons_to_coordinated_candidates,
@@ -21,7 +22,7 @@ use neat_ai_discovery::analysis::detection::monotonicity::{
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord.
+/// Helper: create a `DiscoverRecord`.
 fn record(neuron_uuid: &str, obs_index: u32, activation: f32, errors: Vec<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,

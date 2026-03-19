@@ -4,6 +4,7 @@
 //! which are hot paths in the synapse analysis pipeline. These benchmarks simulate
 //! the same patterns used in `preparation.rs` and `candidate_generation.rs`.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use std::collections::{HashMap, HashSet};
@@ -177,7 +178,7 @@ fn bench_per_target_uuid_patterns(c: &mut Criterion) {
     group.finish();
 }
 
-/// Simulate synapses_by_target with cloned SynapseJson objects (baseline).
+/// Simulate `synapses_by_target` with cloned `SynapseJson` objects (baseline).
 fn build_synapses_by_target_cloned(creature: &CreatureJson) {
     let synapses_by_target: HashMap<&str, Vec<SynapseJson>> =
         creature
@@ -192,7 +193,7 @@ fn build_synapses_by_target_cloned(creature: &CreatureJson) {
     black_box(&synapses_by_target);
 }
 
-/// Simulate synapses_by_target with borrowed references (optimised).
+/// Simulate `synapses_by_target` with borrowed references (optimised).
 fn build_synapses_by_target_borrowed(creature: &CreatureJson) {
     let synapses_by_target: HashMap<&str, Vec<&SynapseJson>> =
         creature
@@ -207,7 +208,7 @@ fn build_synapses_by_target_borrowed(creature: &CreatureJson) {
     black_box(&synapses_by_target);
 }
 
-/// Simulate neuron_type_map with owned String values (baseline).
+/// Simulate `neuron_type_map` with owned String values (baseline).
 fn build_neuron_type_map_owned(creature: &CreatureJson) {
     let mut neuron_type_map: HashMap<String, String> = HashMap::new();
     for i in 0..creature.input {
@@ -219,7 +220,7 @@ fn build_neuron_type_map_owned(creature: &CreatureJson) {
     black_box(&neuron_type_map);
 }
 
-/// Simulate neuron_type_map with borrowed &str values (optimised).
+/// Simulate `neuron_type_map` with borrowed &str values (optimised).
 fn build_neuron_type_map_borrowed(creature: &CreatureJson) {
     let mut neuron_type_map: HashMap<String, &str> = HashMap::new();
     for i in 0..creature.input {

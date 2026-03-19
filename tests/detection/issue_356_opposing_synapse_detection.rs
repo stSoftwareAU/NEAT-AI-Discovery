@@ -10,13 +10,14 @@
 //! 3. Verify helpful synapses are not flagged
 //! 4. Test coordinated structural candidate conversion (removal vs weight flip)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::opposing_synapse::{
     detect_opposing_synapses, opposing_synapses_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord for a neuron.
+/// Helper: create a `DiscoverRecord` for a neuron.
 fn record(neuron_uuid: &str, obs_index: u32, activation: f32, errors: Vec<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,
@@ -37,7 +38,7 @@ fn make_creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>) -> Creatu
     }
 }
 
-/// Helper: build a NeuronJson.
+/// Helper: build a `NeuronJson`.
 fn neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
     NeuronJson {
         uuid: uuid.to_string(),
@@ -47,7 +48,7 @@ fn neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
     }
 }
 
-/// Helper: build a SynapseJson.
+/// Helper: build a `SynapseJson`.
 fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
     SynapseJson {
         from_uuid: from.to_string(),

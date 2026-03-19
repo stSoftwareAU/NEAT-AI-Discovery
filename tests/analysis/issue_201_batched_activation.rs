@@ -14,6 +14,7 @@
 //! 2. Verify all activation functions work correctly in batched mode
 //! 3. Test edge cases (empty samples, single activation, etc.)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::activation::{ACTIVATION_SPECS, activation_name_to_gpu_id};
 use neat_ai_discovery::analysis::gpu::{GpuAnalyzer, GpuEvaluator};
 use neat_ai_discovery::analysis::samples::HelpfulSample;
@@ -50,7 +51,7 @@ fn create_test_samples(count: usize) -> Vec<HelpfulSample> {
 /// Test that batched activation evaluation produces identical results to sequential evaluation.
 ///
 /// This is the core correctness test - batched evaluation must produce exactly the
-/// same results as calling evaluate_activation for each activation type separately.
+/// same results as calling `evaluate_activation` for each activation type separately.
 #[test]
 fn test_batched_vs_sequential_results_identical() {
     skip_without_gpu!();
@@ -136,7 +137,7 @@ fn test_batched_vs_sequential_results_identical() {
 
 /// Test that all 15 activation specs work correctly in batched mode.
 ///
-/// This verifies that every activation function in ACTIVATION_SPECS is correctly
+/// This verifies that every activation function in `ACTIVATION_SPECS` is correctly
 /// evaluated when using the batched GPU call.
 #[test]
 fn test_all_activation_specs_in_batched_mode() {

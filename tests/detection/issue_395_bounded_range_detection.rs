@@ -14,6 +14,7 @@
 //! 5. Test edge cases: insufficient samples, uniform distribution, all-same values
 //! 6. Test coordinated structural candidate conversion
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{hidden, make_creature, neuron, output, record, synapse};
 use neat_ai_discovery::analysis::detection::bounded_range::{
     BoundedRangeCandidate, bounded_range_to_coordinated_candidates, detect_bounded_range_neurons,

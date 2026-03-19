@@ -1,11 +1,12 @@
-//! Regression test ensuring LeakyReLU is not suggested as an add-neuron candidate.
+//! Regression test ensuring `LeakyReLU` is not suggested as an add-neuron candidate.
 //!
 //! Rationale:
-//! - In our current discovery workflow LeakyReLU offers little practical advantage over ReLU,
+//! - In our current discovery workflow `LeakyReLU` offers little practical advantage over `ReLU`,
 //!   but it generates noisy/low-quality candidates in production runs.
-//! - We still support LeakyReLU for existing creatures (targets/sources may use it), we just
-//!   avoid proposing NEW LeakyReLU neurons.
+//! - We still support `LeakyReLU` for existing creatures (targets/sources may use it), we just
+//!   avoid proposing NEW `LeakyReLU` neurons.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::skip_without_gpu;
 use neat_ai_discovery::record_discovery_internal;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson};

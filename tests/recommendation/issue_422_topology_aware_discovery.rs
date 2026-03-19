@@ -11,13 +11,14 @@
 //! 5. Test conversion to coordinated structural candidates
 //! 6. Test edge cases (empty network, no hidden neurons, insufficient samples)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::topology::{
     detect_topology_issues, topology_issues_to_coordinated_candidates,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// Helper: create a DiscoverRecord with custom errors.
+/// Helper: create a `DiscoverRecord` with custom errors.
 fn record(neuron_uuid: &str, obs_index: u32, activation: f32, errors: Vec<f32>) -> DiscoverRecord {
     DiscoverRecord {
         obs_index,
@@ -288,7 +289,7 @@ fn balanced_creature() -> CreatureJson {
     }
 }
 
-/// Deep chain with high error: same as deep_chain but neurons carry significant error,
+/// Deep chain with high error: same as `deep_chain` but neurons carry significant error,
 /// making skip connections worthwhile.
 fn deep_chain_with_error_creature() -> CreatureJson {
     deep_chain_creature()

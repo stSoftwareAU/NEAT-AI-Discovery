@@ -35,6 +35,7 @@
 //! operation. Cross-module deduplication removes these redundancies after all modules
 //! have contributed their candidates.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 use serde::Serialize;
 use std::collections::HashMap;

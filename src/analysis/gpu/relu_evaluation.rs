@@ -1,9 +1,10 @@
-//! ReLU activation GPU evaluation module.
+//! `ReLU` activation GPU evaluation module.
 //!
 //! Extracted from `gpu/analyzer.rs` (Issue #520) to reduce file size
-//! and improve maintainability. Contains the ReLU activation evaluation
+//! and improve maintainability. Contains the `ReLU` activation evaluation
 //! pipeline builder and GPU evaluation method.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};
 use bytemuck::Zeroable;
 use std::sync::mpsc;
@@ -79,7 +80,7 @@ impl GpuAnalyzer {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
 
@@ -92,9 +93,9 @@ impl GpuAnalyzer {
 // =============================================================================
 
 impl GpuAnalyzer {
-    /// GPU-accelerated ReLU evaluation.
+    /// GPU-accelerated `ReLU` evaluation.
     ///
-    /// Evaluates ReLU activation for neuron candidates, returning statistics for
+    /// Evaluates `ReLU` activation for neuron candidates, returning statistics for
     /// both positive and negative orientations plus baseline error.
     pub fn evaluate_relu_gpu(
         &self,

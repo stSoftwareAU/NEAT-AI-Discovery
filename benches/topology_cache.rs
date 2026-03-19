@@ -7,6 +7,7 @@
 //! Varies creature size from 50 to 500 hidden neurons with proportional
 //! synapse counts (3× neurons).
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet};
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};

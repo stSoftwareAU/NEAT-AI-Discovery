@@ -6,6 +6,7 @@
 //! - Merging coordinated structural replacements into synapse results
 //! - Truncating candidate sets to respect `max_synapse_candidates`
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;

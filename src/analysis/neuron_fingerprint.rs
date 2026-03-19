@@ -57,8 +57,8 @@ pub struct FilterResult {
 /// The fingerprint for each neuron includes:
 /// - Activation function (squash)
 /// - Bias value
-/// - Incoming synapses: sorted list of (source_uuid, weight)
-/// - Outgoing synapses: sorted list of (target_uuid, weight)
+/// - Incoming synapses: sorted list of (`source_uuid`, weight)
+/// - Outgoing synapses: sorted list of (`target_uuid`, weight)
 ///
 /// This is O(n + s) where n is neuron count and s is synapse count.
 pub fn compute_neuron_fingerprints(creature: &CreatureJson) -> HashMap<String, NeuronFingerprint> {

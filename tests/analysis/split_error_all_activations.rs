@@ -5,12 +5,13 @@
 //! - Optimal weight computed from ALL samples averages to near-zero
 //! - Small positive predictions become negative actual results
 //!
-//! ReLU already has split-error handling. This test verifies that ALL activations
+//! `ReLU` already has split-error handling. This test verifies that ALL activations
 //! should use the same approach: compute optimal weight from ERROR SUBSET,
 //! then evaluate NET improvement across ALL samples.
 //!
 //! Bug fix: v0.1.135
 
+#![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

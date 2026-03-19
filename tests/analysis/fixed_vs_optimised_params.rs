@@ -1,16 +1,21 @@
 //! Tests comparing ReLU-style fixed parameters vs optimised parameters.
 //!
 //! Root cause analysis (Dec 2024) revealed systematic prediction inversion:
-//! - ReLU candidates use fixed params (incoming=±1.0, bias=0.0) → SUCCESS
+//! - `ReLU` candidates use fixed params (incoming=±1.0, bias=0.0) → SUCCESS
 //! - Other activations search wide param ranges → SYSTEMATIC FAILURE
 //!
 //! This test investigates whether using ReLU-style conservative parameters
 //! for TANH/GELU would produce more reliable predictions.
 //!
-//! Key insight: ReLU's fixed parameters mean the SAME candidate is found
+//! Key insight: `ReLU`'s fixed parameters mean the SAME candidate is found
 //! regardless of which 7.5% sample is used. Other activations find DIFFERENT
 //! "optimal" parameters for each sample, leading to overfitting.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -112,7 +117,7 @@ fn generate_sample_subset_data(
 /// Test demonstrating the problem: optimised params are sample-specific.
 ///
 /// When we run discovery on different 7.5% samples of the same dataset,
-/// optimised parameters vary significantly. ReLU's fixed params don't.
+/// optimised parameters vary significantly. `ReLU`'s fixed params don't.
 ///
 /// This test shows that:
 /// 1. Different samples produce different "optimal" params for TANH/GELU
@@ -321,10 +326,10 @@ fn test_large_bias_causes_saturation() {
     eprintln!("If sample errors are split ~50/50, saturated neurons WILL fail.");
 }
 
-/// Test demonstrating that ReLU's fixed params avoid the overfitting problem.
+/// Test demonstrating that `ReLU`'s fixed params avoid the overfitting problem.
 ///
-/// ReLU uses:
-/// - incoming_weight = ±1.0 (FIXED, not searched)
+/// `ReLU` uses:
+/// - `incoming_weight` = ±1.0 (FIXED, not searched)
 /// - bias = 0.0 (FIXED, not searched)
 ///
 /// This means the SAME candidate is found regardless of which sample is used.
@@ -556,7 +561,7 @@ fn test_synapse_weight_distribution() {
 /// Regression test: verify the parameter search ranges that cause overfitting.
 ///
 /// Documents the current (problematic) search ranges:
-/// - SCALES_SMOOTH: [0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 4.0, 10.0, 25.0, 50.0]
+/// - `SCALES_SMOOTH`: [0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 4.0, 10.0, 25.0, 50.0]
 /// - Bias values: [-10.0 ... +10.0] depending on activation
 ///
 /// These wide ranges allow overfitting to small sample characteristics.

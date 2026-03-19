@@ -4,6 +4,7 @@
 //! Handles split-error evaluation (computing optimal weights from positive/negative
 //! error subsets) and falls back to all-samples evaluation when needed.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::CandidateNeuronJson;
 use crate::analysis::activation::{
     ActivationCandidateSpec, activation_name_to_gpu_id, get_target_simulation_fn,

@@ -17,6 +17,7 @@
 //! - `min_weighted_error`: Minimum weighted error to flag a neuron (default: 0.25)
 //! - `min_samples`: Minimum samples required for statistical reliability (default: 10)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
@@ -226,7 +227,7 @@ pub fn stratify_samples(records: &[DiscoverRecord]) -> StratifiedAnalysis {
 /// and flags neurons that exceed the configured threshold.
 ///
 /// # Arguments
-/// * `records` - Vector of (neuron_uuid, records) tuples
+/// * `records` - Vector of (`neuron_uuid`, records) tuples
 /// * `config` - Configuration for detection thresholds
 ///
 /// # Returns

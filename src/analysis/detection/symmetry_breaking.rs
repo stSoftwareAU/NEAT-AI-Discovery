@@ -58,7 +58,7 @@ pub struct SymmetricPairCandidate {
     pub cosine_similarity: f32,
     /// Absolute bias difference between the two neurons.
     pub bias_difference: f32,
-    /// Incoming synapse weights for neuron B: (from_uuid, weight).
+    /// Incoming synapse weights for neuron B: (`from_uuid`, weight).
     pub neuron_b_incoming_weights: Vec<(String, f32)>,
     /// Estimated improvement from breaking this symmetry.
     pub estimated_improvement: f32,

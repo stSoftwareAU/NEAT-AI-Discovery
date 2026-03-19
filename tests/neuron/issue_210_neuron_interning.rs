@@ -1,6 +1,6 @@
 //! Tests for Issue #210: Neuron UUID string interning
 //!
-//! These tests verify that the NeuronIndex interning mechanism works correctly
+//! These tests verify that the `NeuronIndex` interning mechanism works correctly
 //! in the context of synapse analysis, ensuring no functional regressions while
 //! providing memory efficiency improvements.
 

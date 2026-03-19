@@ -3,6 +3,7 @@
 //! Compares the old approach (shared `Mutex<Vec<f32>>` with `.lock().extend()`)
 //! against the new lock-free approach (Rayon `try_fold`/`try_reduce`).
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use parking_lot::Mutex;
 use rayon::prelude::*;

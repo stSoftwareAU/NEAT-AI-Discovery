@@ -1,14 +1,15 @@
 //! Benchmark for Issue #201: Batched activation function evaluation.
 //!
 //! This benchmark compares the performance of:
-//! - Sequential: Calling evaluate_activation for each (activation_type, orientation, scale) config
-//! - Batched: Calling evaluate_activations_batched once with all configs
+//! - Sequential: Calling `evaluate_activation` for each (`activation_type`, orientation, scale) config
+//! - Batched: Calling `evaluate_activations_batched` once with all configs
 //!
 //! Expected improvements:
 //! - 10-20% fewer GPU round-trips during neuron analysis
 //! - Reduced CPU-GPU synchronisation overhead
 //! - Better GPU utilisation (larger, fewer batches)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::activation::{ACTIVATION_SPECS, activation_name_to_gpu_id};
 use neat_ai_discovery::analysis::gpu::{GpuAnalyzer, GpuEvaluator};
@@ -46,7 +47,7 @@ fn build_activation_configs(num_specs: usize) -> Vec<(u32, f32, f32)> {
     configs
 }
 
-/// Sequential evaluation - calls evaluate_activation for each config.
+/// Sequential evaluation - calls `evaluate_activation` for each config.
 fn evaluate_sequential(
     gpu: &GpuAnalyzer,
     samples: &[HelpfulSample],
@@ -61,7 +62,7 @@ fn evaluate_sequential(
         .collect()
 }
 
-/// Batched evaluation - calls evaluate_activations_batched once.
+/// Batched evaluation - calls `evaluate_activations_batched` once.
 fn evaluate_batched(
     gpu: &GpuAnalyzer,
     samples: &[HelpfulSample],

@@ -3,6 +3,7 @@
 //! This module handles sample building, locality optimisation (Issue #221),
 //! and neuron ordering for synapse analysis.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::analysis::diagnostics::TargetMap;
 use crate::analysis::samples::HelpfulSample;
 use crate::analysis::utils::OrderedNeuron;
@@ -19,17 +20,17 @@ use std::sync::Arc;
 pub(crate) const MIN_GROUP_SIZE_FOR_LOCALITY: usize = 3;
 
 /// Minimum overlap fraction required to group sources together.
-/// Sources are grouped if they share at least this fraction of their obs_indices.
+/// Sources are grouped if they share at least this fraction of their `obs_indices`.
 const MIN_LOCALITY_OVERLAP: f32 = 0.8;
 
-/// Represents a group of sources with similar obs_index coverage.
+/// Represents a group of sources with similar `obs_index` coverage.
 /// Sources in the same group can share sample building overhead.
 pub(crate) struct SampleLocalityGroup<'a> {
     /// The source neurons in this group
     pub(crate) sources: Vec<(&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)>,
 }
 
-/// Extract obs_indices from source records.
+/// Extract `obs_indices` from source records.
 pub(crate) fn extract_obs_indices(records: &[DiscoverRecord]) -> HashSet<u32> {
     records
         .iter()
@@ -38,7 +39,7 @@ pub(crate) fn extract_obs_indices(records: &[DiscoverRecord]) -> HashSet<u32> {
         .collect()
 }
 
-/// Compute the overlap fraction between two sets of obs_indices.
+/// Compute the overlap fraction between two sets of `obs_indices`.
 /// Returns a value in [0, 1] representing what fraction of the smaller set
 /// is contained in the larger set.
 pub(crate) fn compute_obs_index_overlap(a: &HashSet<u32>, b: &HashSet<u32>) -> f32 {
@@ -52,14 +53,14 @@ pub(crate) fn compute_obs_index_overlap(a: &HashSet<u32>, b: &HashSet<u32>) -> f
 
 /// Group sources by sample locality for efficient batch processing.
 ///
-/// Sources with high obs_index overlap (≥80%) are grouped together so that
+/// Sources with high `obs_index` overlap (≥80%) are grouped together so that
 /// sample building can be done in a single pass through the target data
 /// rather than N separate passes.
 ///
 /// # Issue #221: Sample Locality for Correlated Source Neurons
 ///
 /// Expected benefits for typical creatures:
-/// - 100 sources, same obs_indices: 1 group (100x reduction in target lookups)
+/// - 100 sources, same `obs_indices`: 1 group (100x reduction in target lookups)
 /// - 100 sources, 80% overlap: ~5 groups (20x reduction)
 /// - 100 sources, no overlap: 100 groups (no change)
 pub(crate) fn group_sources_by_locality<'a>(
@@ -192,8 +193,8 @@ pub(crate) fn build_ordered_neurons(creature: &crate::CreatureJson) -> Vec<Order
 // Build Samples (test helper)
 // =============================================================================
 
-/// Build samples for testing. In production, use TargetMap::from_records() and
-/// TargetMap::build_samples_from() for better performance when processing
+/// Build samples for testing. In production, use `TargetMap::from_records()` and
+/// `TargetMap::build_samples_from()` for better performance when processing
 /// multiple sources against the same target.
 #[cfg(test)]
 pub(crate) fn build_samples(

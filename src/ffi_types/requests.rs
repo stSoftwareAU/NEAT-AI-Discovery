@@ -8,7 +8,7 @@ use crate::analysis;
 
 use super::{CreatureJson, TrainingRecord};
 
-/// JSON input for record_discovery function
+/// JSON input for `record_discovery` function
 #[derive(Debug, Deserialize, Clone)]
 pub struct RecordDiscoveryInput {
     pub creature: CreatureJson,
@@ -57,7 +57,7 @@ pub struct AnalyzeParallelInput {
     pub module_outcome_tracker: Option<analysis::module_weights::ModuleOutcomeTracker>,
 }
 
-/// Internal input structure for synapse analysis (used by analyze_all)
+/// Internal input structure for synapse analysis (used by `analyze_all`)
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeSynapsesInput {
@@ -77,7 +77,7 @@ pub struct AnalyzeSynapsesInput {
     pub random_seed: Option<u64>,
 }
 
-/// Internal input structure for neuron analysis (used by analyze_all)
+/// Internal input structure for neuron analysis (used by `analyze_all`)
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeNeuronsInput {
@@ -97,7 +97,7 @@ pub struct AnalyzeNeuronsInput {
     pub random_seed: Option<u64>,
 }
 
-/// Internal input structure for combined analysis (used by analyze_parallel)
+/// Internal input structure for combined analysis (used by `analyze_parallel`)
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeAllInput {
@@ -142,7 +142,7 @@ pub struct RankFocusNeuronsInput {
     #[serde(default)]
     pub max_results: Option<usize>,
     /// The cost of growth from NEAT-AI (default: 1e-7).
-    /// Neurons with activation_weighted_impact below this threshold are
+    /// Neurons with `activation_weighted_impact` below this threshold are
     /// candidates for removal. The default 1e-7 matches NEAT-AI's Score.ts formula.
     /// Lower values (e.g., 1e-9) encourage creature expansion for evolution.
     /// Issue #132: Pass this from NEAT-AI's configured costOfGrowth for consistency.
@@ -157,7 +157,7 @@ pub struct MergeParquetInput {
     pub input_files: Vec<String>,
 }
 
-/// JSON input for export_visualisation_snapshot function
+/// JSON input for `export_visualisation_snapshot` function
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportVisualisationSnapshotInput {
@@ -186,14 +186,14 @@ fn default_top_k() -> Option<usize> {
     Some(20)
 }
 
-/// JSON input for read_discovery_records function
+/// JSON input for `read_discovery_records` function
 #[derive(Debug, Deserialize)]
 pub struct ReadDiscoveryInput {
     pub parquet_file: String,
     pub neuron_uuid: String,
 }
 
-/// JSON input for get_calibration_summary function (Issue #605).
+/// JSON input for `get_calibration_summary` function (Issue #605).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CalibrationSummaryInput {

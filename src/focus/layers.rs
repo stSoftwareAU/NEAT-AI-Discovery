@@ -48,13 +48,13 @@ pub struct NeuronInfo {
 /// - **Cycles**: Detected and handled by tracking visited nodes. A node in a cycle
 ///   gets its depth from the first path that reaches it.
 /// - **Disconnected components**: Neurons not reachable from inputs are assigned
-///   to a special "unreachable" layer (depth = usize::MAX, sorted last).
+///   to a special "unreachable" layer (depth = `usize::MAX`, sorted last).
 ///
 /// # Arguments
 /// * `creature` - The creature to analyse
 ///
 /// # Returns
-/// Vector of NeuronLayers sorted by depth (shallowest first)
+/// Vector of `NeuronLayers` sorted by depth (shallowest first)
 pub fn compute_network_layers(creature: &CreatureJson) -> Vec<NeuronLayer> {
     // Issue #210: Use NeuronIndex for memory-efficient BFS traversal.
     // Instead of cloning UUID strings for the adjacency map and queue,

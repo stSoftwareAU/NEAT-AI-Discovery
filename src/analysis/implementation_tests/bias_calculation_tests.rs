@@ -1,7 +1,7 @@
 //! Tests for bias calculation functionality.
 //!
 //! Tests cover:
-//! - Bias calculation for various activation functions (TANH, ReLU, IDENTITY, etc.)
+//! - Bias calculation for various activation functions (TANH, `ReLU`, IDENTITY, etc.)
 //! - Bias boundary ranges
 //! - Error reduction improvements with optimal bias
 //! - Edge cases (empty samples, insufficient samples, non-finite values)
@@ -22,7 +22,7 @@ fn test_bias_calculation_tanh() {
     );
 }
 
-/// Test bias calculation for ReLU activation function
+/// Test bias calculation for `ReLU` activation function
 #[test]
 fn test_bias_calculation_relu() {
     let samples = create_test_samples();
@@ -187,7 +187,7 @@ fn test_bias_calculation_with_non_finite_values() {
     );
 }
 
-/// Test is_threshold_activation identifies threshold functions (STEP/BIPOLAR).
+/// Test `is_threshold_activation` identifies threshold functions (STEP/BIPOLAR).
 /// These use a specialised threshold-crossing model instead of the linear model.
 /// All other activations use the standard linear error model - none are skipped.
 #[test]

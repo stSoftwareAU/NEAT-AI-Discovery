@@ -5,8 +5,8 @@
 //! Most of the input signal cancels out, wasting representational capacity.
 //!
 //! This module detects the general case of "this neuron's incoming weights are in
-//! fundamental tension" — distinct from opposing_synapse (same-source pairs) and
-//! weight_coherence (ratio consistency).
+//! fundamental tension" — distinct from `opposing_synapse` (same-source pairs) and
+//! `weight_coherence` (ratio consistency).
 //!
 //! ## TDD Plan
 //! 1. Test detection of clear polarity conflict (balanced positive/negative fan-in)
@@ -18,6 +18,7 @@
 //! 7. Test input/output neurons are excluded (hidden only)
 //! 8. Test candidates sorted by conflict score
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{hidden, make_creature, neuron, output, synapse};
 use neat_ai_discovery::analysis::detection::fanin_polarity_conflict::{
     detect_fanin_polarity_conflicts, fanin_polarity_conflicts_to_coordinated_candidates,

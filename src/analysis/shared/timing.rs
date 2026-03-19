@@ -5,6 +5,7 @@
 //! data-carrying types ([`ShaderTiming`], [`GpuTimingBreakdown`],
 //! [`CpuTimingBreakdown`], [`AnalysisTiming`]).
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -81,7 +82,7 @@ pub struct AnalysisTiming {
 pub struct TimingCollector {
     enabled: bool,
     start_time: Instant,
-    /// Per-shader timing data: (name -> (calls, total_ns))
+    /// Per-shader timing data: (name -> (calls, `total_ns`))
     shader_timings: Mutex<HashMap<String, (u32, u64)>>,
     /// Buffer transfer time in nanoseconds
     buffer_transfer_ns: AtomicU64,

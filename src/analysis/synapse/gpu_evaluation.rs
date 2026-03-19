@@ -3,7 +3,7 @@
 //! This module orchestrates batched GPU evaluation of activation candidates
 //! and re-exports the specialised evaluation sub-modules:
 //!
-//! - `relu_evaluation` — ReLU candidate evaluation (split by error sign)
+//! - `relu_evaluation` — `ReLU` candidate evaluation (split by error sign)
 //! - `activation_evaluation` — Non-ReLU activation candidate evaluation
 //! - `activation_subset_evaluation` — Split-error subset evaluation
 

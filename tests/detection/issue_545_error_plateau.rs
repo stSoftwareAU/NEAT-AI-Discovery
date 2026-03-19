@@ -13,6 +13,7 @@
 //! 6. Test multiple neurons with different plateau characteristics
 //! 7. Test high-variance errors are not flagged (noisy, not stagnant)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::detection::error_plateau::{
     detect_error_plateaus, error_plateaus_to_coordinated_candidates,
 };

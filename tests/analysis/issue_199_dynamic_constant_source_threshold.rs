@@ -11,6 +11,7 @@
 //! - For creatures with mostly low-variance sources: threshold stays at 1e-7
 //! - For creatures with high-variance sources: threshold scales up proportionally
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::skip_without_gpu;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;

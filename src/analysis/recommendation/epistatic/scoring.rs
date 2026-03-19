@@ -5,6 +5,7 @@
 //! - Filtering epistatic and synergistic candidates that would fail when combined
 //! - Computing activation correlations between sample sets
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::analysis::samples::HelpfulSample;
 
 use super::{
@@ -37,7 +38,7 @@ const SATURATION_RISK_THRESHOLD: f32 = 1.5;
 ///
 /// # Arguments
 /// * `target_uuid` - The target neuron UUID.
-/// * `candidates` - List of (source_uuid, samples, suggested_weight) tuples.
+/// * `candidates` - List of (`source_uuid`, samples, `suggested_weight`) tuples.
 ///
 /// # Returns
 /// A list of interference results for pairs that would fail when combined.

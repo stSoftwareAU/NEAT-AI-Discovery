@@ -24,6 +24,7 @@
 //! Removing dormant synapses reduces network complexity and may allow the controller
 //! to allocate evaluation budget to more promising candidates.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 
 use super::helpers::build_record_map;
@@ -36,7 +37,7 @@ use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DO
 /// Maximum absolute weight to consider a synapse dormant.
 const DORMANT_WEIGHT_THRESHOLD: f32 = 1e-4;
 
-/// Maximum mean absolute contribution (|weight × source_activation|) for dormancy.
+/// Maximum mean absolute contribution (|weight × `source_activation`|) for dormancy.
 const DORMANT_CONTRIBUTION_THRESHOLD: f32 = 1e-4;
 
 /// Result of detecting a dormant synapse.

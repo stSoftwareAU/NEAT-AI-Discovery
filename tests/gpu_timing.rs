@@ -5,12 +5,13 @@
 //! - CPU vs GPU time breakdown
 //! - Buffer transfer overhead
 //!
-//! Enabled via NEAT_AI_DISCOVERY_GPU_TIMING=1 environment variable.
+//! Enabled via `NEAT_AI_DISCOVERY_GPU_TIMING=1` environment variable.
 //!
-//! Note: The env var check is cached with OnceLock for performance, so we can't
-//! dynamically test enabling/disabling at runtime. Instead we test the TimingCollector
+//! Note: The env var check is cached with `OnceLock` for performance, so we can't
+//! dynamically test enabling/disabling at runtime. Instead we test the `TimingCollector`
 //! behavior directly and run integration tests with the env var pre-set.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod common;
 
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons, analyze_synapses};
@@ -83,8 +84,8 @@ fn create_test_data() -> (String, CreatureJson) {
 /// Test that the timing collector works correctly when disabled.
 ///
 /// Note: We can't test the env var being unset at runtime because the check
-/// is cached with OnceLock for performance. Instead, we directly test the
-/// TimingCollector behavior when constructed with `enabled=false`.
+/// is cached with `OnceLock` for performance. Instead, we directly test the
+/// `TimingCollector` behavior when constructed with `enabled=false`.
 #[test]
 fn timing_collector_disabled() {
     use neat_ai_discovery::analysis::shared::TimingCollector;
@@ -253,7 +254,7 @@ fn timing_in_json_output() {
     );
 }
 
-/// Test that the disabled TimingCollector discards recordings and the enabled
+/// Test that the disabled `TimingCollector` discards recordings and the enabled
 /// collector accumulates them into a finalised timing summary.
 ///
 /// Issue #454: Converted from timing-based benchmark to functional test.

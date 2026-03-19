@@ -8,9 +8,10 @@
 //!
 //! Split into sub-modules as part of issue #598:
 //! - `preparation` — Focus target filtering, neuron type maps, source ordering
-//! - `evaluation` — GPU-based candidate evaluation (ReLU, activation specs)
+//! - `evaluation` — GPU-based candidate evaluation (`ReLU`, activation specs)
 //! - `post_processing` — Impact discounting, sorting, filtering, result assembly
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod evaluation;
 mod post_processing;
 mod preparation;

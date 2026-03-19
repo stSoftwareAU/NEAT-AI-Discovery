@@ -2,7 +2,7 @@
 //!
 //! Tests for:
 //! 1. Logistic pessimism discount curve (more forgiving above 30%, more aggressive below 10%)
-//! 2. MIN_IMPROVED_RATIO filtering applied to neuron candidates
+//! 2. `MIN_IMPROVED_RATIO` filtering applied to neuron candidates
 //! 3. Adaptive pessimism constant validation
 
 use neat_ai_discovery::analysis::constants::{NEURON_MIN_IMPROVED_RATIO, PESSIMISM_DISCOUNT_FLOOR};
@@ -94,7 +94,7 @@ fn pessimism_discount_zero_total_gives_floor_gain() {
 // NEURON_MIN_IMPROVED_RATIO constant validation (Issue #733)
 // =============================================================================
 
-/// Issue #733: NEURON_MIN_IMPROVED_RATIO should be a sensible threshold for
+/// Issue #733: `NEURON_MIN_IMPROVED_RATIO` should be a sensible threshold for
 /// filtering add-neuron candidates that have insufficient sample improvement.
 #[test]
 fn neuron_min_improved_ratio_is_sensible() {
@@ -119,7 +119,7 @@ fn neuron_min_improved_ratio_is_sensible() {
     );
 }
 
-/// Issue #733: NEURON_MIN_IMPROVED_RATIO should be <= MIN_IMPROVED_RATIO
+/// Issue #733: `NEURON_MIN_IMPROVED_RATIO` should be <= `MIN_IMPROVED_RATIO`
 /// (neuron candidates are inherently noisier, so we allow a slightly lower bar).
 #[test]
 fn neuron_min_improved_ratio_not_more_strict_than_synapse() {

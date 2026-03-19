@@ -2,6 +2,7 @@
 //!
 //! Per-neuron caching with LRU eviction, bounded memory, and thread-safe access.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::analysis::utils::verbose_enabled;
 use crate::types::DiscoverRecord;
 use anyhow::{Context, Result};
@@ -74,7 +75,7 @@ pub(crate) fn estimate_records_size(records: &[DiscoverRecord]) -> usize {
 /// - **Per-neuron caching**: Each neuron's records are cached as a unit
 /// - **LRU eviction**: Least-recently-used neurons are evicted when capacity exceeded
 /// - **Bounded memory**: Total cache size respects the configured capacity
-/// - **Thread-safe**: Uses RwLock for concurrent access
+/// - **Thread-safe**: Uses `RwLock` for concurrent access
 pub struct LruRecordCache {
     /// Path to the parquet file.
     parquet_file: String,

@@ -144,6 +144,17 @@ redundant_closure_for_method_calls = "warn"
 semicolon_if_nothing_returned = "warn"
 unnested_or_patterns = "warn"
 
+# Numeric safety lints — prevent regressions from Issue #805 (Issue #873)
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_precision_loss = "warn"
+cast_sign_loss = "warn"
+
+# Code clarity lints (Issue #873)
+default_trait_access = "warn"
+doc_markdown = "warn"
+match_bool = "warn"
+
 # Nursery lints — stable enough to be useful
 redundant_clone = "warn"
 

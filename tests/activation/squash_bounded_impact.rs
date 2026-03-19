@@ -2,10 +2,10 @@
 //!
 //! ## The Problem
 //!
-//! Squash functions like TANH, LOGISTIC, HARD_TANH have bounded outputs:
+//! Squash functions like TANH, LOGISTIC, `HARD_TANH` have bounded outputs:
 //! - TANH: [-1, 1]
 //! - LOGISTIC: [0, 1]
-//! - HARD_TANH: [-1, 1]
+//! - `HARD_TANH`: [-1, 1]
 //!
 //! This affects impact calculation in two ways:
 //!
@@ -227,7 +227,7 @@ fn test_logistic_bounded_output() {
     // But the normalised formula doesn't account for this ceiling
 }
 
-/// Test: HARD_TANH neuron (hard clamping to [-1, 1])
+/// Test: `HARD_TANH` neuron (hard clamping to [-1, 1])
 #[test]
 fn test_hard_tanh_bounded_output() {
     let creature = CreatureJson {
@@ -252,9 +252,9 @@ fn test_hard_tanh_bounded_output() {
     // Max contribution to output is 100, not infinity
 }
 
-/// Test: ReLU neuron (bounded below at 0, unbounded above)
+/// Test: `ReLU` neuron (bounded below at 0, unbounded above)
 ///
-/// ReLU is different - it's bounded below (output >= 0) but unbounded above.
+/// `ReLU` is different - it's bounded below (output >= 0) but unbounded above.
 /// This means positive activations can grow without limit.
 #[test]
 fn test_relu_half_bounded() {

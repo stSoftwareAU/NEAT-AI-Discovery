@@ -3,10 +3,10 @@
 //! ## History:
 //!
 //! v0.1.126 introduced NORMALISED impact calculation (which was correct):
-//!   impact = |weight| / total_inbound × downstream_impact
+//!   impact = |weight| / `total_inbound` × `downstream_impact`
 //!
 //! v0.1.145 changed to ABSOLUTE impact (which was WRONG for prediction discounting):
-//!   impact = |weight| × downstream_impact
+//!   impact = |weight| × `downstream_impact`
 //!
 //! The absolute approach was introduced to fix removal candidate assessment, but it
 //! broke prediction discounting by allowing hidden neurons to have impact >= 1.0.
@@ -20,7 +20,7 @@
 //! ## v0.2.1 fix (Issue #130): Restore normalised calculation
 //!
 //! The impact calculation now uses the documented formula:
-//!   impact = |weight| / total_inbound × downstream_impact
+//!   impact = |weight| / `total_inbound` × `downstream_impact`
 //!
 //! This is correct because it measures ATTRIBUTION (fraction of influence),
 //! not SENSITIVITY (absolute change). For prediction discounting, we need attribution.

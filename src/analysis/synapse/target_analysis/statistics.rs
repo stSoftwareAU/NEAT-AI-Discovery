@@ -3,8 +3,9 @@
 //! This module handles source filtering, record loading, diagnostics tracking,
 //! and sample building orchestration for per-target synapse analysis.
 //!
-//! Extracted from target_analysis.rs as part of Issue #599.
+//! Extracted from `target_analysis.rs` as part of Issue #599.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::SynapseJson;
 use crate::analysis::cache::RecordCache;
 use crate::analysis::diagnostics::TargetMap;

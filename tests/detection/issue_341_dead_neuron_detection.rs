@@ -11,6 +11,7 @@
 //! 4. Test edge cases: rarely active neurons, tiny but nonzero activation
 //! 5. Test coordinated structural candidate conversion
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{make_creature, neuron, record, synapse};
 use neat_ai_discovery::analysis::detection::dead_neuron::{
     DeadNeuronCandidate, dead_neurons_to_coordinated_candidates, detect_dead_neurons,

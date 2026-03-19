@@ -1,16 +1,17 @@
-//! Tests for the TargetMap optimisation that pre-builds target data for efficient
+//! Tests for the `TargetMap` optimisation that pre-builds target data for efficient
 //! sample building across multiple sources.
 //!
-//! The TargetMap optimisation (v0.1.150) addresses a significant performance bottleneck
-//! where the target HashMap was being rebuilt for each of ~1000+ source neurons when
+//! The `TargetMap` optimisation (v0.1.150) addresses a significant performance bottleneck
+//! where the target `HashMap` was being rebuilt for each of ~1000+ source neurons when
 //! analysing a single focus neuron. With 64 focus neurons, this meant rebuilding the
-//! same HashMap ~64,000 times.
+//! same `HashMap` ~64,000 times.
 //!
 //! These tests verify:
-//! 1. TargetMap produces identical results to the original build_samples function
-//! 2. TargetMap correctly handles edge cases (empty records, non-finite values)
+//! 1. `TargetMap` produces identical results to the original `build_samples` function
+//! 2. `TargetMap` correctly handles edge cases (empty records, non-finite values)
 //! 3. The optimisation doesn't change the sample matching behaviour
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
@@ -26,7 +27,7 @@ macro_rules! skip_without_gpu {
     };
 }
 
-/// Test that synapse analysis completes successfully with the TargetMap optimisation.
+/// Test that synapse analysis completes successfully with the `TargetMap` optimisation.
 /// This is an integration test that exercises the full analysis pipeline.
 #[test]
 fn synapse_analysis_with_target_map_optimization_succeeds() {
@@ -94,7 +95,7 @@ fn synapse_analysis_with_target_map_optimization_succeeds() {
 }
 
 /// Test that analysis handles multiple focus neurons efficiently.
-/// With the TargetMap optimisation, each focus neuron builds its target map once
+/// With the `TargetMap` optimisation, each focus neuron builds its target map once
 /// and reuses it for all source evaluations.
 #[test]
 fn multiple_focus_neurons_share_target_map_optimization() {
@@ -185,7 +186,7 @@ fn multiple_focus_neurons_share_target_map_optimization() {
 }
 
 /// Test that sample matching correctly handles records with non-finite values.
-/// The TargetMap should filter out non-finite activations and errors.
+/// The `TargetMap` should filter out non-finite activations and errors.
 #[test]
 fn target_map_filters_non_finite_values() {
     skip_without_gpu!();

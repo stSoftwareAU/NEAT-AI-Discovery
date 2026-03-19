@@ -1,7 +1,7 @@
 //! GPU infrastructure module
 //!
-//! This module contains GPU-related code including device management, GpuAnalyzer,
-//! GpuWorkQueue, and GPU evaluation functions.
+//! This module contains GPU-related code including device management, `GpuAnalyzer`,
+//! `GpuWorkQueue`, and GPU evaluation functions.
 //!
 //! ## Module Structure (Issue #272, #273, #274, #277, #520)
 //!
@@ -27,8 +27,8 @@
 //!
 //! - [x] shaders.rs - GPU shader constants and references (Issue #277)
 //! - [x] device.rs - GPU device initialisation, detection, buffer management (Issue #272)
-//! - [x] analyzer.rs - GpuAnalyzer struct, GpuEvaluator trait (Issue #273)
-//! - [x] queue/ - GpuWorkQueue sub-modules (Issue #274, #608)
+//! - [x] analyzer.rs - `GpuAnalyzer` struct, `GpuEvaluator` trait (Issue #273)
+//! - [x] queue/ - `GpuWorkQueue` sub-modules (Issue #274, #608)
 //! - [x] Per-evaluation modules split from analyzer.rs (Issue #520)
 
 pub mod activation_evaluation;

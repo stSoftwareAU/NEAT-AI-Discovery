@@ -1,8 +1,9 @@
-//! Neuron candidate GPU evaluation — ReLU split evaluation and activation
+//! Neuron candidate GPU evaluation — `ReLU` split evaluation and activation
 //! spec batched evaluation for neuron candidates.
 //!
 //! Extracted from neuron.rs as part of issue #598.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::CandidateNeuronJson;
 use anyhow::Result;
 use parking_lot::Mutex;
@@ -36,7 +37,7 @@ pub(crate) struct NeuronWorkResult<'a> {
 }
 
 /// Shared context for neuron candidate evaluation, grouping parameters that
-/// are passed through evaluate → relu_split / activation_specs.
+/// are passed through evaluate → `relu_split` / `activation_specs`.
 pub(crate) struct NeuronEvalContext<'a> {
     pub gpu: &'a GpuWorkQueue,
     pub neuron_squash_map: &'a Arc<HashMap<String, String>>,
@@ -49,7 +50,7 @@ pub(crate) struct NeuronEvalContext<'a> {
 /// Evaluate neuron candidates for all sources with samples against a single
 /// target neuron using GPU shaders.
 ///
-/// This handles both ReLU split evaluation and batched activation spec
+/// This handles both `ReLU` split evaluation and batched activation spec
 /// evaluation, applying source variance discounting.
 pub(crate) fn evaluate_neuron_candidates(
     work_results: &[NeuronWorkResult<'_>],
@@ -106,7 +107,7 @@ pub(crate) fn evaluate_neuron_candidates(
     Ok(())
 }
 
-/// Evaluate ReLU candidates with positive/negative error split.
+/// Evaluate `ReLU` candidates with positive/negative error split.
 fn evaluate_relu_split(
     source_uuid: &str,
     target_uuid: &str,

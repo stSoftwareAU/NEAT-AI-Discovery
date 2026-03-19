@@ -16,7 +16,7 @@ use neat_ai_discovery::analysis::detection::dormant_synapse::{
 };
 use neat_ai_discovery::types::DiscoverRecord;
 
-/// Helper: create a DiscoverRecord with value derived from activation.
+/// Helper: create a `DiscoverRecord` with value derived from activation.
 /// Dormant-synapse tests use `value = activation * 0.8` by convention.
 fn record(neuron_uuid: &str, obs_index: u32, activation: f32) -> DiscoverRecord {
     DiscoverRecord {

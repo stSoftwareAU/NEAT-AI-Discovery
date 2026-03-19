@@ -7,6 +7,7 @@
 //! - Converting epistatic pairs to coordinated structural candidates
 //! - Building source contributions from samples and stats
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::CoordinatedStructuralCandidateJson;
 use crate::CoordinatedStructuralOpJson;
 use crate::analysis::samples::{HelpfulSample, HelpfulStats};

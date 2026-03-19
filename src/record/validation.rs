@@ -36,7 +36,7 @@ pub fn validate_and_resolve_indices(input: &RecordDiscoveryInput) -> Result<(usi
 /// Resolve observation indices from the input.
 ///
 /// If `record_indices` is provided, validates and converts them.
-/// Otherwise, generates sequential indices from 0..training_data.len().
+/// Otherwise, generates sequential indices from `0..training_data.len()`.
 fn resolve_observation_indices(input: &RecordDiscoveryInput) -> Result<Vec<u32>> {
     if let Some(ref record_indices) = input.record_indices {
         if record_indices.len() != input.training_data.len() {

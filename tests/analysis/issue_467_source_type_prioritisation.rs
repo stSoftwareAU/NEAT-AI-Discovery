@@ -5,10 +5,11 @@
 //! compared to only 2.8–3.3% for hidden neurons. These tests verify that:
 //!
 //! 1. Input neurons are ordered before hidden neurons during source evaluation
-//! 2. The INPUT_SOURCE_BOOST multiplier is applied to candidate score gains
+//! 2. The `INPUT_SOURCE_BOOST` multiplier is applied to candidate score gains
 //!    for input-neuron sources
 //! 3. Under deadline constraints, input neurons are evaluated first
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::constants::INPUT_SOURCE_BOOST;
 use neat_ai_discovery::analysis::utils::{
     OrderedNeuron, order_eligible_sources, parse_input_index,

@@ -15,6 +15,7 @@
 //! 7. Test gradient vs correlation — gradient should be more directional
 //! 8. Test improvement estimation scales with gradient magnitude
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{make_creature, neuron, output, synapse};
 use neat_ai_discovery::analysis::recommendation::gradient_discovery::{
     compute_synapse_gradient, detect_gradient_candidates, gradient_candidates_to_coordinated,
@@ -40,7 +41,7 @@ fn make_record(neuron_uuid: &str, obs_index: u32, activation: f32, error: f32) -
 // =============================================================================
 
 /// The local gradient ∂error/∂weight for a synapse should approximate
-/// the mean of (source_activation × target_error) across samples.
+/// the mean of (`source_activation` × `target_error`) across samples.
 #[test]
 fn test_gradient_computation_basic() {
     // 10 paired samples of source activation and target error
@@ -262,7 +263,7 @@ fn test_low_gradient_not_detected() {
 // =============================================================================
 
 /// Detected gradient candidates should produce valid coordinated candidates
-/// with SetWeight operations and positive expected improvement.
+/// with `SetWeight` operations and positive expected improvement.
 #[test]
 fn test_gradient_to_coordinated_candidates() {
     let creature = make_creature(

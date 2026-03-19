@@ -3,8 +3,8 @@
 //! This module tests the tiered loading strategy that automatically selects
 //! between different caching modes based on file size and available memory:
 //!
-//! 1. **PreloadAll**: Load everything into memory (current behaviour for small files)
-//! 2. **LruCache**: Keep frequently-accessed neurons in memory, evict others (medium files)
+//! 1. **`PreloadAll`**: Load everything into memory (current behaviour for small files)
+//! 2. **`LruCache`**: Keep frequently-accessed neurons in memory, evict others (medium files)
 //! 3. **Streaming**: Load on-demand via block-based loading (very large files)
 //!
 //! ## Key Features Tested
@@ -18,6 +18,11 @@
 //!
 //! These tests are written first (failing) and then implementation follows.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use std::sync::Arc;
@@ -54,7 +59,7 @@ fn create_test_parquet(
 // Strategy Selection Tests
 // =============================================================================
 
-/// Test that LoadingStrategy can be determined based on file size and available memory.
+/// Test that `LoadingStrategy` can be determined based on file size and available memory.
 #[test]
 fn loading_strategy_selection_preload_all_for_small_files() {
     use neat_ai_discovery::analysis::cache::{LoadingStrategy, select_loading_strategy};
@@ -72,7 +77,7 @@ fn loading_strategy_selection_preload_all_for_small_files() {
     );
 }
 
-/// Test that LruCache strategy is selected for medium-sized files.
+/// Test that `LruCache` strategy is selected for medium-sized files.
 #[test]
 fn loading_strategy_selection_lru_cache_for_medium_files() {
     use neat_ai_discovery::analysis::cache::{LoadingStrategy, select_loading_strategy};
@@ -109,7 +114,7 @@ fn loading_strategy_selection_streaming_for_large_files() {
     );
 }
 
-/// Test that LruCache capacity is set appropriately based on available memory.
+/// Test that `LruCache` capacity is set appropriately based on available memory.
 #[test]
 fn lru_cache_capacity_scales_with_memory() {
     use neat_ai_discovery::analysis::cache::{LoadingStrategy, select_loading_strategy};
@@ -140,7 +145,7 @@ fn lru_cache_capacity_scales_with_memory() {
 // LRU Cache Eviction Tests
 // =============================================================================
 
-/// Test that LruRecordCache correctly evicts least-recently-used neurons.
+/// Test that `LruRecordCache` correctly evicts least-recently-used neurons.
 #[test]
 fn lru_record_cache_evicts_least_recently_used() {
     use neat_ai_discovery::analysis::cache::LruRecordCache;
@@ -183,7 +188,7 @@ fn lru_record_cache_evicts_least_recently_used() {
     );
 }
 
-/// Test that LruRecordCache returns correct data after eviction and reload.
+/// Test that `LruRecordCache` returns correct data after eviction and reload.
 #[test]
 fn lru_record_cache_returns_correct_data_after_eviction() {
     use neat_ai_discovery::analysis::cache::LruRecordCache;
@@ -227,7 +232,7 @@ fn lru_record_cache_returns_correct_data_after_eviction() {
     );
 }
 
-/// Test that LruRecordCache respects capacity limits.
+/// Test that `LruRecordCache` respects capacity limits.
 #[test]
 fn lru_record_cache_respects_capacity_limits() {
     use neat_ai_discovery::analysis::cache::LruRecordCache;
@@ -345,7 +350,7 @@ fn all_strategies_return_identical_data() {
 // Integration with RecordCache Tests
 // =============================================================================
 
-/// Test that RecordCache::new_tiered automatically selects appropriate strategy.
+/// Test that `RecordCache::new_tiered` automatically selects appropriate strategy.
 #[test]
 fn new_tiered_selects_appropriate_strategy() {
     use neat_ai_discovery::analysis::cache::RecordCache;
@@ -366,7 +371,7 @@ fn new_tiered_selects_appropriate_strategy() {
 // Concurrent Access Tests
 // =============================================================================
 
-/// Test that LruRecordCache handles concurrent access correctly.
+/// Test that `LruRecordCache` handles concurrent access correctly.
 #[test]
 fn lru_record_cache_concurrent_access() {
     use neat_ai_discovery::analysis::cache::LruRecordCache;
@@ -412,7 +417,7 @@ fn lru_record_cache_concurrent_access() {
 // Statistics Tests
 // =============================================================================
 
-/// Test that LruRecordCache provides accurate statistics.
+/// Test that `LruRecordCache` provides accurate statistics.
 #[test]
 fn lru_record_cache_statistics_are_accurate() {
     use neat_ai_discovery::analysis::cache::LruRecordCache;

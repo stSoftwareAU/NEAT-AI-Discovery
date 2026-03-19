@@ -1,9 +1,10 @@
 //! Benchmark for Issue #835: Lock contention on shared cache in impact computation.
 //!
-//! Measures the cost of compute_impacts_public() with networks of varying size
-//! and depth. The key optimisation replaces Mutex<HashMap> with DashMap to
+//! Measures the cost of `compute_impacts_public()` with networks of varying size
+//! and depth. The key optimisation replaces Mutex<HashMap> with `DashMap` to
 //! reduce lock contention during parallel recursive impact computation.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use neat_ai_discovery::focus::compute_impacts_public;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};

@@ -5,6 +5,7 @@
 //! improvement in the creature's score waste evaluation budget and should
 //! never be returned.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{hidden, hidden_with_bias, make_creature, neuron, output, record, synapse};
 use crate::skip_without_gpu;
 use neat_ai_discovery::AnalyzeAllInput;
@@ -103,7 +104,7 @@ fn create_audit_records() -> Vec<DiscoverRecord> {
 }
 
 /// All returned candidates (synapse and neuron) must have strictly positive
-/// expected_creature_score_gain. This is the core audit requirement from
+/// `expected_creature_score_gain`. This is the core audit requirement from
 /// Issue #557.
 #[test]
 fn all_candidates_have_positive_expected_score_gain() {
@@ -187,7 +188,7 @@ fn all_candidates_have_positive_expected_score_gain() {
     }
 }
 
-/// Metadata candidates_returned must match actual candidate count after
+/// Metadata `candidates_returned` must match actual candidate count after
 /// positive-gain filtering.
 #[test]
 fn metadata_consistent_after_positive_gain_filtering() {

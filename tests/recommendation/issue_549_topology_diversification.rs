@@ -14,6 +14,7 @@
 //! 6. Test multiple output neurons with mixed structural needs
 //! 7. Test no false positive when error is parametric (high variance per neuron)
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::common::{hidden, make_creature, neuron, output, synapse};
 use neat_ai_discovery::analysis::detection::topology_diversification::{
     detect_topology_diversification_candidates, topology_diversification_to_coordinated_candidates,

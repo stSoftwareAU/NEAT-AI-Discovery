@@ -9,12 +9,13 @@
 //! 1. **Unified memory detection**: Correctly identifies Apple Silicon and other
 //!    unified memory architectures.
 //!
-//! 2. **ZeroCopyBufferConfig**: Tests the configuration for zero-copy buffer sharing.
+//! 2. **`ZeroCopyBufferConfig`**: Tests the configuration for zero-copy buffer sharing.
 //!
 //! 3. **Integration tests**: Verifies the zero-copy path produces correct results.
 //!
 //! 4. **Benchmark tests**: Measures performance improvement on unified memory.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::shared::ZeroCopyBufferConfig;
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses, supports_unified_memory};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
@@ -90,7 +91,7 @@ fn unified_memory_detection_returns_adapter_info() {
 // ZeroCopyBufferConfig Tests
 // =============================================================================
 
-/// Test that ZeroCopyBufferConfig can be created with default settings.
+/// Test that `ZeroCopyBufferConfig` can be created with default settings.
 #[test]
 fn zero_copy_config_default() {
     skip_without_gpu!();
@@ -103,7 +104,7 @@ fn zero_copy_config_default() {
     eprintln!("  buffer_count: {}", config.buffer_count());
 }
 
-/// Test that ZeroCopyBufferConfig respects environment variable override.
+/// Test that `ZeroCopyBufferConfig` respects environment variable override.
 #[test]
 #[serial]
 fn zero_copy_config_env_override() {

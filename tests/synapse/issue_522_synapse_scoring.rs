@@ -8,6 +8,7 @@
 //! These tests exercise real functions with known inputs and verify
 //! correct improvement calculation and boosting behaviour.
 
+#![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::constants::{
     EXISTING_HIDDEN_TARGET_BOOST, INPUT_SOURCE_BOOST, PESSIMISM_DISCOUNT_FLOOR,
 };
