@@ -356,9 +356,12 @@ cargo test --lib --tests --all-features -- --test-threads=2
 # Run benchmarks
 cargo bench --bench <bench_name>
 
+# Check documentation builds without warnings
+./scripts/doc-check.sh
+
 # Run fuzz tests (requires nightly toolchain and cargo-fuzz)
-cargo +nightly fuzz run fuzz_ffi_deserialisation -- -max_total_time=60
-cargo +nightly fuzz run fuzz_ffi_entry_points -- -max_total_time=60
+./scripts/fuzz-ci.sh            # 30s per target (default)
+./scripts/fuzz-ci.sh 60         # 60s per target
 ```
 
 ### 🔀 Fuzz Testing
@@ -388,7 +391,13 @@ rustup toolchain install nightly
 **Running:**
 
 ```bash
-# Run a specific target for 60 seconds
+# Run all fuzz targets via the CI helper script (30s each by default)
+./scripts/fuzz-ci.sh
+
+# Run with a custom duration (60s per target)
+./scripts/fuzz-ci.sh 60
+
+# Run a specific target directly
 cargo +nightly fuzz run fuzz_ffi_deserialisation -- -max_total_time=60
 
 # Run with a maximum input length of 4096 bytes

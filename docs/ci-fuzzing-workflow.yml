@@ -1,0 +1,63 @@
+# ==============================================================================
+# Fuzzing CI Workflow — runs fuzz targets to catch deserialisation panics and
+# FFI boundary issues before merge.
+#
+# To enable: copy this file to .github/workflows/fuzzing.yml
+# (Requires the 'workflow' OAuth scope to push workflow files.)
+#
+# Part of issue #875.
+# ==============================================================================
+
+name: Fuzzing
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - Develop
+  schedule:
+    # Run nightly at 02:00 UTC for longer fuzzing sessions
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzzing:
+    name: Fuzz Targets
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Free up runner disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo rm -rf /usr/share/swift
+
+    - name: Install nightly toolchain
+      run: rustup install nightly
+
+    - name: Install cargo-fuzz
+      run: cargo +nightly install cargo-fuzz
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-fuzz-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-fuzz-
+
+    - name: Fuzz FFI deserialisation
+      run: cargo +nightly fuzz run fuzz_ffi_deserialisation -- -max_total_time=30
+
+    - name: Fuzz FFI entry points
+      run: cargo +nightly fuzz run fuzz_ffi_entry_points -- -max_total_time=30
