@@ -202,6 +202,8 @@ Modules that detect issues with how neurons process activations.
 | [Activation Recommendation](docs/DISCOVERY_TYPES.md#activation-function-recommendation) | Proactive activation function matching | `changeSquash` |
 | [Bias Perturbation](docs/DISCOVERY_TYPES.md#bias-perturbation-detection) | Neurons in suboptimal activation regimes | `setBias` |
 | [Squash + Weight Rescale](docs/DISCOVERY_TYPES.md#squash-weight-rescale-detection) | Coordinated activation change with weight compensation | `changeSquash`, `setWeight` |
+| [High Error Squash Exploration](docs/DISCOVERY_TYPES.md#high-error-squash-exploration) | High-error neurons that benefit from activation change | `changeSquash` |
+| [Low-Impact Neuron](docs/DISCOVERY_TYPES.md#low-impact-neuron-detection) | Near-zero neurons between dead and meaningfully active | `removeNeuron` |
 
 ### ⚖️ Weight & Synapse
 
