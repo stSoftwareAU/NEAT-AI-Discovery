@@ -29,7 +29,11 @@ src/
 ├── ffi_types/                # JSON request/response structs for FFI boundary (Issue #596)
 │   ├── mod.rs                # Public API, re-exports, shared types (Creature, Neuron, Synapse)
 │   ├── requests.rs           # FFI request structs (input from NEAT-AI)
-│   ├── responses.rs          # FFI response structs (output to NEAT-AI)
+│   ├── responses/             # FFI response structs (output to NEAT-AI) (Issue #874)
+│   │   ├── mod.rs            # Re-exports, record/version/rank output types, conversion helpers
+│   │   ├── analysis.rs       # AnalyzeParallelOutput, metadata JSON, diagnostic types
+│   │   ├── gpu.rs            # CheckGpuOutput, GPU timing/adapter JSON types
+│   │   └── export.rs         # Export, merge, read, calibration output types
 │   ├── candidates.rs         # Candidate-related types (synapse, neuron, coordinated)
 │   └── session.rs            # Streaming session types
 ├── ffi_internal/             # Internal business-logic functions for FFI (Issue #665)
@@ -53,7 +57,11 @@ src/
 ├── export.rs                 # Data export utilities
 ├── discovery_history.rs      # Historical tracking
 ├── debug.rs                  # Debugging utilities
-├── observability.rs          # Observability / logging
+├── observability/             # Observability / logging (Issue #874)
+│   ├── mod.rs                # Tracing init, env var parsing, re-exports, tests
+│   ├── phase_timer.rs        # PhaseTimer and ScopedPhaseTimer RAII guards
+│   ├── gpu_metrics.rs        # GpuMetrics thread-safe tracking and global instance
+│   └── profile.rs            # ProfileData for JSON output
 ├── intern.rs                 # Neuron UUID interning
 ├── watchdog.rs               # Signal handling (SIGUSR1)
 ├── focus/                    # Focus neuron selection (Issue #491)
@@ -80,7 +88,11 @@ src/
 │   │   ├── structural_specs.rs # Structural discovery dispatch specs
 │   │   └── scoring_specs.rs    # Scoring and recommendation dispatch specs
 │   ├── constants.rs          # Central discovery thresholds (Issue #424)
-│   ├── shared.rs             # Common types, results, diagnostics
+│   ├── shared/               # Common types, results, diagnostics (Issue #874)
+│   │   ├── mod.rs            # Re-exports for backward compatibility
+│   │   ├── timing.rs         # TimingCollector, TimingScope, ShaderTiming, timing breakdowns
+│   │   ├── metadata.rs       # SynapseAnalysisMetadata, NeuronAnalysisMetadata, result types
+│   │   └── gpu_info.rs       # GpuAdapterInfo, GpuDeviceType, ZeroCopyBufferConfig
 │   ├── synapse/              # Synapse analysis (Issue #482)
 │   │   ├── mod.rs            # Public API, entry points, orchestration
 │   │   ├── target_analysis/  # Per-target analysis loop (Issue #599)
