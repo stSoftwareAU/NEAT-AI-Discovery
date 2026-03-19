@@ -137,13 +137,72 @@ cargo bench --bench synapse_counts -- --save-baseline saved
 
 ## 🔗 CI Integration
 
-The `benchmark_compare.sh` script can be integrated into CI by:
+### Benchmark CI Script
 
-1. Saving a baseline on a known-good commit
-2. Running the comparison on each pull request
-3. Failing the build if regressions exceed the threshold
+The `scripts/benchmark-ci.sh` script provides CI-friendly benchmark verification
+with two modes:
 
-**Note:** Benchmarks require a GPU and produce machine-specific results.
-CI integration requires a self-hosted runner with consistent hardware for
-meaningful comparisons. The script handles GPU-less environments gracefully
-by skipping benchmarks that cannot initialise.
+```bash
+# Verify all benchmarks compile (fast, no GPU needed, default mode)
+./scripts/benchmark-ci.sh --compile-only
+
+# Compare against a saved baseline (requires GPU and baseline)
+./scripts/benchmark-ci.sh --compare --threshold 10
+
+# List all discovered benchmark suites
+./scripts/benchmark-ci.sh --list
+```
+
+| Command | Description |
+|---------|-------------|
+| `./scripts/benchmark-ci.sh` | Verify benchmarks compile (default) |
+| `./scripts/benchmark-ci.sh --compile-only` | Explicitly compile-only mode |
+| `./scripts/benchmark-ci.sh --compare` | Compare against saved baseline |
+| `./scripts/benchmark-ci.sh --threshold N` | Set regression threshold (default: 10%) |
+| `./scripts/benchmark-ci.sh --list` | List discovered benchmark suites |
+| `./scripts/benchmark-ci.sh --help` | Show usage information |
+
+### CI Workflow
+
+The recommended CI integration has two tiers:
+
+**Tier 1 — Compilation check (every PR):**
+Runs `cargo bench --no-run` for every benchmark target to verify benchmarks
+compile. This catches compilation regressions without requiring a GPU or
+spending time on actual benchmark execution. Runs on standard GitHub Actions
+runners.
+
+**Tier 2 — Regression detection (self-hosted runners):**
+For environments with consistent hardware and GPU availability, the comparison
+mode runs full benchmarks against a saved baseline and fails if any benchmark
+regresses by more than the configured threshold.
+
+### Regression Threshold
+
+The default regression threshold is **10%**. This means a benchmark must slow
+down by more than 10% compared to the baseline to be flagged as a regression.
+
+The threshold can be configured via:
+- Command-line flag: `--threshold N`
+- Environment variable: `BENCHMARK_THRESHOLD=N`
+
+A 10% default was chosen to balance sensitivity against noise from CI
+environment variability. For self-hosted runners with stable hardware, consider
+lowering this to 5%.
+
+### Disk Space
+
+Benchmark compilation requires release builds which consume significant disk
+space. The CI script compiles benchmarks individually (per-suite) to limit
+peak disk usage. The `target/criterion/` directory stores baseline data and
+should be cached between runs for comparison mode.
+
+### GPU Benchmarks
+
+Most benchmarks require a GPU. On GitHub Actions runners (no GPU), the
+compile-only mode verifies the code compiles correctly. Benchmarks that
+cannot initialise a GPU are automatically skipped in comparison mode.
+
+**Note:** Benchmarks produce machine-specific results. Meaningful regression
+detection requires a self-hosted runner with consistent hardware. The scripts
+handle GPU-less environments gracefully.
