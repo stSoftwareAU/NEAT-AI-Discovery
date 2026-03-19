@@ -421,3 +421,94 @@ fn diamond_topology_assigns_correct_depths() {
     assert_eq!(depth_of(&layers, "h3"), Some(2));
     assert_eq!(depth_of(&layers, "out"), Some(3));
 }
+
+// =============================================================================
+// Issue #872: Graceful handling of unknown UUIDs
+// =============================================================================
+
+#[test]
+fn synapse_referencing_unknown_uuid_does_not_panic() {
+    // A synapse references a `to_uuid` that is neither in the neuron list
+    // nor identifiable as an input. The function should handle this gracefully
+    // (skip the unknown neuron) rather than panicking.
+    let creature = CreatureJson {
+        input: 1,
+        output: 1,
+        neurons: vec![
+            NeuronJson {
+                uuid: "h1".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "TANH".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "out".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "LOGISTIC".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: vec![
+            SynapseJson {
+                from_uuid: "input-0".to_string(),
+                to_uuid: "h1".to_string(),
+                weight: 1.0,
+                synapse_type: None,
+            },
+            SynapseJson {
+                from_uuid: "h1".to_string(),
+                to_uuid: "out".to_string(),
+                weight: 1.0,
+                synapse_type: None,
+            },
+            // Synapse referencing a UUID not in the neuron list and not an input
+            SynapseJson {
+                from_uuid: "ghost-neuron".to_string(),
+                to_uuid: "out".to_string(),
+                weight: 0.5,
+                synapse_type: None,
+            },
+        ],
+    };
+
+    // Should not panic — gracefully handles unknown UUIDs
+    let layers = compute_network_layers(&creature);
+
+    // Connected neurons should still be assigned depths correctly
+    assert!(depth_of(&layers, "h1").is_some(), "h1 should have a depth");
+    assert!(
+        depth_of(&layers, "out").is_some(),
+        "out should have a depth"
+    );
+}
+
+#[test]
+fn neuron_with_uuid_missing_from_index_is_skipped_gracefully() {
+    // Edge case: creature with neurons but no synapses at all.
+    // All neurons are disconnected and should be assigned usize::MAX depth.
+    let creature = CreatureJson {
+        input: 0,
+        output: 1,
+        neurons: vec![
+            NeuronJson {
+                uuid: "h1".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "TANH".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "out".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "LOGISTIC".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: vec![],
+    };
+
+    // Should not panic
+    let layers = compute_network_layers(&creature);
+    let uuids = all_uuids(&layers);
+    assert!(uuids.contains("h1"), "h1 should be in layers");
+    assert!(uuids.contains("out"), "out should be in layers");
+}

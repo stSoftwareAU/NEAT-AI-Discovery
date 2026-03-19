@@ -81,7 +81,7 @@ pub fn init_debug_handlers() {
 /// calls in `catch_unwind()`, which would swallow a panic and keep the worker
 /// alive with permanently deadlocked threads.
 fn start_deadlock_detector() {
-    thread::Builder::new()
+    if let Err(e) = thread::Builder::new()
         .name("deadlock-detector".to_string())
         .spawn(move || {
             loop {
@@ -128,7 +128,9 @@ fn start_deadlock_detector() {
                 std::process::abort();
             }
         })
-        .expect("Failed to spawn deadlock detector thread");
+    {
+        tracing::warn!("failed to spawn deadlock detector thread: {e}");
+    }
 }
 
 /// Install signal handler for SIGUSR1 (kill -USR1) to dump thread backtraces.
@@ -140,7 +142,7 @@ fn install_signal_handler() {
     use signal_hook::consts::SIGUSR1;
     use signal_hook::iterator::Signals;
 
-    thread::Builder::new()
+    if let Err(e) = thread::Builder::new()
         .name("signal-handler".to_string())
         .spawn(move || {
             let mut signals = match Signals::new([SIGUSR1]) {
@@ -155,7 +157,9 @@ fn install_signal_handler() {
                 dump_all_threads();
             }
         })
-        .expect("Failed to spawn signal handler thread");
+    {
+        tracing::warn!("failed to spawn signal handler thread: {e}");
+    }
 }
 
 /// Dump backtraces of all threads to stderr.
