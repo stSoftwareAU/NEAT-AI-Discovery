@@ -129,24 +129,48 @@ src/
 │   │   └── focus_filter.rs   # Focus target filtering and validation
 │   ├── detection/            # Pattern detection modules (Issue #528)
 │   │   ├── mod.rs            # Module declarations
-│   │   ├── saturation.rs     # Saturated neuron detection
+│   │   ├── activation_mismatch.rs # Activation function mismatch detection
+│   │   ├── activation_properties.rs # Shared activation classification helpers
+│   │   ├── bias_perturbation.rs # Bias perturbation regime shift detection
+│   │   ├── bimodal_neuron.rs # Bimodal pre-activation distribution detection
 │   │   ├── bottleneck.rs     # Bottleneck neuron detection
+│   │   ├── bounded_range.rs  # Bounded range detection
+│   │   ├── co_adaptation.rs  # Redundant neuron pair co-adaptation detection
+│   │   ├── correlated_error.rs # Correlated error patterns
 │   │   ├── dead_neuron.rs    # Dead neuron detection
 │   │   ├── dormant_synapse.rs # Dormant synapse detection
+│   │   ├── error_plateau.rs  # Output error stagnation plateau detection
+│   │   ├── fanin_polarity_conflict.rs # Fan-in weight polarity conflict detection
+│   │   ├── hard_sample_cluster.rs # High-error observation cluster detection
+│   │   ├── helpers.rs        # Shared detection helper utilities
+│   │   ├── high_error_squash_exploration.rs # Proactive activation exploration for high-error neurons
+│   │   ├── input_sensitivity.rs # Input sensitivity analysis
+│   │   ├── low_impact_neuron.rs # Low-impact (near-zero) neuron removal detection
+│   │   ├── monotonicity.rs   # Activation-error monotonicity detection
+│   │   ├── noise_signal.rs   # Noise-to-signal ratio detection
+│   │   ├── observation_range.rs # Observation effective range
+│   │   ├── observation_utilisation.rs # Underutilised input observation detection
+│   │   ├── operating_point.rs # Hidden neuron operating point
 │   │   ├── opposing_synapse.rs # Opposing synapse detection
 │   │   ├── oscillating_neuron.rs # Oscillating neuron detection
-│   │   ├── correlated_error.rs # Correlated error patterns
+│   │   ├── output_conflict.rs # Per-output error disaggregation detection
+│   │   ├── output_range_compression.rs # Output activation range compression
+│   │   ├── output_squash_mismatch.rs # Output activation mismatch detection
 │   │   ├── redundant_path.rs # Redundant path detection
-│   │   ├── bounded_range.rs  # Bounded range detection
-│   │   ├── observation_range.rs # Observation effective range
-│   │   ├── sentinel_gating.rs # Sentinel value gating
 │   │   ├── restricted_range.rs # Restricted activation range
-│   │   ├── operating_point.rs # Hidden neuron operating point
-│   │   ├── unbounded_capping.rs # Unbounded activation capping
-│   │   ├── noise_signal.rs   # Noise-to-signal ratio detection
-│   │   ├── input_sensitivity.rs # Input sensitivity analysis
+│   │   ├── saturation.rs     # Saturated neuron detection
+│   │   ├── sentinel_gating.rs # Sentinel value gating
+│   │   ├── skip_connection.rs # Skip connection (residual) discovery
+│   │   ├── squash_weight_rescale.rs # Coordinated squash change with weight rescale
+│   │   ├── stats.rs          # Statistical analysis helpers
+│   │   ├── symmetry_breaking.rs # Converged duplicate neuron detection
 │   │   ├── topology.rs       # Topology-aware structure analysis
-│   │   └── weight_coherence.rs # Weight coherence validation
+│   │   ├── topology_cache.rs # Shared pre-computed topology cache
+│   │   ├── topology_diversification.rs # Topology diversification for structural jumps
+│   │   ├── unbounded_capping.rs # Unbounded activation capping
+│   │   ├── weight_coherence.rs # Weight coherence validation
+│   │   ├── weight_magnitude_reset.rs # Stuck synapse weight magnitude reset
+│   │   └── weight_polarity_flip.rs # Gradient–weight sign disagreement detection
 │   ├── recommendation/       # Candidate recommendation modules (Issue #528)
 │   │   ├── mod.rs            # Module declarations
 │   │   ├── activation_recommendation.rs # Activation function recommendation
@@ -180,6 +204,12 @@ src/
 │   ├── streaming.rs          # Streaming parquet loading
 │   ├── discovery_dispatch.rs # Generic discovery module dispatch (Issue #375)
 │   ├── candidate_clustering.rs # Redundancy reduction
+│   ├── candidate_diversity.rs # Diversity-aware candidate reranking (Issue #610)
+│   ├── candidate_cache.rs    # Candidate outcome cache for success/failure tracking
+│   ├── ensemble_scoring.rs   # Cross-module ensemble scoring (Issue #572)
+│   ├── module_weights.rs     # Per-module success rate tracking for adaptive weighting
+│   ├── neuron_fingerprint.rs # Neuron structural fingerprinting for incremental analysis
+│   ├── system.rs             # System utilities facade (memory, GPU tier detection)
 │   ├── early_termination.rs  # SPRT-based early stopping
 │   ├── implementation_tests/ # Synapse analysis pipeline tests
 │   │
@@ -218,8 +248,8 @@ src/
 
 | Directory | Purpose |
 |-----------|---------|
-| `tests/` | Integration tests (~97 files) |
-| `benches/` | Criterion benchmarks (7 suites) |
+| `tests/` | Integration tests (~242 files) |
+| `benches/` | Criterion benchmarks (22 suites) |
 | `examples/` | Standalone examples (parquet inspection, snapshot generation) |
 | `scripts/` | Build and install helpers (`runlib.sh`) |
 | `docs/` | Supplementary documentation and PR summaries |

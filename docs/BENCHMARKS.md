@@ -5,7 +5,7 @@ performance regressions using Criterion.
 
 ## 🔍 Overview
 
-The project includes 12 Criterion benchmark suites in `benches/`. The
+The project includes 22 Criterion benchmark suites in `benches/`. The
 `benchmark_compare.sh` script automates baseline saving and regression
 detection by leveraging Criterion's built-in comparison features.
 
@@ -48,17 +48,27 @@ The following suites are defined in `Cargo.toml`:
 
 | Suite | Focus |
 |-------|-------|
+| `async_pipeline` | CPU/GPU overlap pipeline throughput |
 | `batched_activation` | Batched vs sequential activation evaluation |
+| `bfs_allocation` | Visited-set allocation strategies in BFS |
 | `cache_locality` | Cache access patterns |
 | `clone_reduction` | Clone elimination in hot paths |
+| `error_collection` | Lock-free vs mutex-based error collection |
 | `gpu_buffer_transfers` | GPU buffer transfer overhead |
+| `gpu_shader_workgroup` | GPU shader workgroup optimisation |
 | `memory_streaming` | Memory streaming performance |
 | `neuron_interning` | Neuron UUID interning |
 | `parallel_discovery` | Parallel discovery throughput |
 | `sample_locality` | Sample data locality |
+| `squash_normalisation` | Pre-normalised squash string lookup |
 | `synapse_counts` | Synapse count pre-computation |
+| `synapse_lookup` | Zero-allocation synapse existence and weight lookups |
+| `synapse_preparation` | String cloning cost in synapse preparation |
 | `tiered_loading` | Tiered cache loading strategies |
+| `topology_cache` | Pre-computed topology cache vs repeated map building |
 | `upsert_candidate` | Candidate upsert operations |
+| `uuid_hashing` | Deterministic UUID generation for candidates |
+| `weight_coherence_cache` | Weight coherence detection with topology cache |
 | `zero_copy_buffer` | Zero-copy buffer performance |
 
 **Note:** Most benchmarks require a GPU. Suites that cannot initialise a GPU
@@ -74,7 +84,7 @@ Save a baseline on your machine before making performance-sensitive changes:
 ./benchmark_compare.sh --save-baseline
 ```
 
-This runs all 12 benchmark suites and stores results in `target/criterion/`.
+This runs all 22 benchmark suites and stores results in `target/criterion/`.
 
 ### 🔎 Detecting Regressions
 

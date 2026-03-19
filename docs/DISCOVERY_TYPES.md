@@ -4,7 +4,7 @@ This document is the **single source of truth** for all discovery types used by
 NEAT-AI-Discovery. It covers detection criteria, recommended actions, candidate
 output format, and production success/failure rates.
 
-> **Last updated**: 6 Mar 2026
+> **Last updated**: 20 Mar 2026
 
 ## 📑 Table of Contents
 
@@ -27,6 +27,8 @@ output format, and production success/failure rates.
     - [Activation Function Recommendation](#activation-function-recommendation)
     - [Bias Perturbation Detection](#bias-perturbation-detection)
     - [Squash + Weight Rescale Detection](#squash-weight-rescale-detection)
+    - [High Error Squash Exploration](#high-error-squash-exploration)
+    - [Low-Impact Neuron Detection](#low-impact-neuron-detection)
   - Weight & Synapse
     - [Dormant Synapse Detection](#dormant-synapse-detection)
     - [Opposing Synapse Detection](#opposing-synapse-detection)
@@ -121,6 +123,8 @@ graph LR
 | [Activation Recommendation](#activation-function-recommendation) | `recommendation/activation_recommendation.rs` | #431 | `changeSquash` | 🟢 Active |
 | [Bias Perturbation](#bias-perturbation-detection) | `detection/bias_perturbation.rs` | #551 | `setBias` | 🟢 Active |
 | [Squash + Weight Rescale](#squash-weight-rescale-detection) | `detection/squash_weight_rescale.rs` | #548 | `changeSquash`, `setWeight` | 🟢 Active |
+| [High Error Squash Exploration](#high-error-squash-exploration) | `detection/high_error_squash_exploration.rs` | #788 | `changeSquash` | 🟢 Active |
+| [Low-Impact Neuron](#low-impact-neuron-detection) | `detection/low_impact_neuron.rs` | #793 | `removeNeuron` | 🟢 Active |
 
 ### ⚖️ Weight & Synapse
 
@@ -776,6 +780,74 @@ disruptive output changes.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`
 and `setWeight` operations applied atomically.
+
+---
+
+### High Error Squash Exploration
+
+**Source**: `src/analysis/detection/high_error_squash_exploration.rs` (Issue #788)
+
+**Purpose**: Proactively explores alternative activation functions for hidden
+neurons that exhibit high prediction error. Unlike reactive modules (saturation,
+mismatch), this module triggers on **error magnitude** — if a neuron's mean
+absolute error is above a threshold, it simulates what each candidate activation
+function would produce from the neuron's pre-activation values and recommends
+the one that best reduces error.
+
+This increases `changeSquash` candidate volume for a candidate type that
+enjoys a high success rate (~65% in production).
+
+**Detection criteria**:
+
+1. **Pre-activation data available**: At least `MIN_SAMPLES` records with
+   pre-activation (`value`) data.
+2. **High mean absolute error**: Mean absolute error ≥ 0.10.
+3. **Error reduction achievable**: At least one alternative activation
+   function reduces error by ≥ 15% relative to the current activation.
+4. **Not already linear**: Neurons with `IDENTITY` activation are excluded
+   (they are already the most flexible).
+
+**Recommended actions**:
+
+1. **Change activation**: Replace the current squash function with the
+   candidate that achieves the largest error reduction.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `changeSquash`
+operations.
+
+---
+
+### Low-Impact Neuron Detection
+
+**Source**: `src/analysis/detection/low_impact_neuron.rs` (Issue #793)
+
+**Purpose**: Identifies hidden neurons whose activations are consistently
+near-zero but above the dead-neuron threshold. These neurons sit in the
+"twilight zone" between truly dead (< 1e-6) and meaningfully active (> 1e-3)
+— they contribute virtually nothing to the network's output yet still consume
+complexity budget. Removing them simplifies the creature without meaningful
+accuracy loss.
+
+This module complements `dead_neuron.rs` by broadening the removal pool
+with a tiered confidence approach.
+
+**Detection criteria**:
+
+1. **Mean absolute activation** between the dead threshold (1e-6) and
+   the low-impact ceiling (1e-3).
+2. **Low activation variance**: The neuron is consistently near-zero, not
+   sporadically spiking.
+3. **Hidden neurons only**: Output and input neurons are excluded.
+4. **Sufficient samples**: At least `MIN_DISCOVERY_SAMPLE_COUNT` records.
+
+**Confidence scoring**:
+
+- **Activation proximity**: Lower mean absolute activation = higher confidence.
+- **Variance consistency**: Lower standard deviation relative to mean = higher confidence.
+- **Sample sufficiency**: More samples = higher confidence (plateaus at 500).
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `removeNeuron`
+operations.
 
 ---
 
