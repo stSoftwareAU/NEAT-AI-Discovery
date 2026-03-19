@@ -26,7 +26,8 @@ echo "🪄 Auto-formatting code..."
 cargo fmt --all
 
 echo "🔧 Running linter..."
-cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args -D clippy::filter_next -D clippy::collapsible_if
+# Lint rules are configured in Cargo.toml [lints.clippy] — do not add -D/-W flags here (Issue #876)
+cargo clippy --all-targets --all-features -- -D warnings
 
 echo "✅ Running type checks..."
 cargo check --all-targets --all-features
