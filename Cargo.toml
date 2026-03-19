@@ -128,10 +128,12 @@ harness = false
 lto = "fat"
 codegen-units = 1
 
-# Lint configuration (Issue #675)
-# Selectively enable useful pedantic and nursery lints.
+# Lint configuration — single source of truth (Issue #675, #876)
+# All clippy lints are configured here. quality.sh and CI just pass -D warnings.
 [lints.clippy]
 uninlined_format_args = "deny"
+filter_next = "deny"
+collapsible_if = "deny"
 
 # Pedantic lints — useful subset that improves code quality
 cloned_instead_of_copied = "warn"
