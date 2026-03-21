@@ -18,3 +18,4 @@ mod issue_753_squash_normalisation;
 mod issue_767_stats_pearson_correlation;
 mod issue_775_stats_spearman_correlation;
 mod issue_805_numeric_safety;
+mod issue_887_activation_neuron_boost;
