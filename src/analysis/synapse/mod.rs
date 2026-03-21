@@ -50,8 +50,8 @@ mod target_analysis;
 
 // Re-export items used by code outside this module (analysis/mod.rs, neuron.rs, implementation_tests).
 pub use scoring::{
-    apply_neuron_pessimism_discount, apply_pessimism_discount, apply_source_type_boost,
-    apply_synapse_pessimism_discount, apply_target_type_boost,
+    apply_activation_neuron_boost, apply_neuron_pessimism_discount, apply_pessimism_discount,
+    apply_source_type_boost, apply_synapse_pessimism_discount, apply_target_type_boost,
 };
 
 pub(crate) use candidate_generation::{

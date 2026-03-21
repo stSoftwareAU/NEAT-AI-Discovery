@@ -71,6 +71,25 @@ pub fn apply_target_type_boost(
 }
 
 // =============================================================================
+// Activation-Function-Aware Neuron Scoring (Issue #887)
+// =============================================================================
+
+/// Applies activation-function-aware boost/penalty to a neuron candidate's
+/// expected score gain (Issue #887).
+///
+/// GRQ-sampler cache analysis shows dramatic differences in success rates by
+/// activation function (e.g., GELU at 60% vs `HARD_TANH` at 7.2%). This function
+/// applies Bayesian-smoothed boost multipliers to prioritise candidates using
+/// historically more successful activation functions.
+///
+/// The boost is applied as a direct multiplier on `expected_creature_score_gain`,
+/// similar to [`apply_source_type_boost`] and [`apply_target_type_boost`].
+pub fn apply_activation_neuron_boost(gain: f32, squash_name: &str) -> f32 {
+    let boost = crate::analysis::constants::activation_neuron_boost(squash_name);
+    gain * boost as f32
+}
+
+// =============================================================================
 // Synapse Improvement Calculation
 // =============================================================================
 

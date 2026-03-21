@@ -22,7 +22,8 @@ use crate::analysis::shared::TimingScope;
 use crate::analysis::utils::{deadline_passed, lock_or_bail, verbose_enabled};
 
 use crate::analysis::synapse::{
-    evaluate_all_activation_specs_batched, evaluate_relu_candidates_split, upsert_candidate,
+    apply_activation_neuron_boost, evaluate_all_activation_specs_batched,
+    evaluate_relu_candidates_split, upsert_candidate,
 };
 
 /// Work result from sample building phase, containing samples for a single
@@ -235,6 +236,12 @@ fn evaluate_activation_specs(
         // Issue #130: Apply source variance discount
         candidate.expected_creature_error_reduction *= source_variance_discount;
         candidate.expected_creature_score_gain *= source_variance_discount;
+
+        // Issue #887: Apply activation-function-aware boost/penalty
+        candidate.expected_creature_score_gain = apply_activation_neuron_boost(
+            candidate.expected_creature_score_gain,
+            &candidate.squash,
+        );
 
         // Issue #791: Apply cross-validation brittleness penalty
         apply_cross_validation_penalty(&mut candidate, samples);

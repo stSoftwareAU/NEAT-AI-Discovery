@@ -204,6 +204,131 @@ pub const MIN_IMPROVED_RATIO: f32 = 0.6;
 /// Values above `MIN_IMPROVED_RATIO` may be too strict for neuron candidates.
 pub const NEURON_MIN_IMPROVED_RATIO: f32 = 0.4;
 
+// =============================================================================
+// Activation-Function-Aware Neuron Scoring (Issue #887)
+// =============================================================================
+
+// Per-activation-function boost/penalty multipliers for add-neuron candidate scoring.
+//
+// GRQ-sampler discovery cache reveals dramatic differences in success rates by
+// activation function. These multipliers are derived from Bayesian-smoothed success
+// rates (Beta posterior with prior centred on the baseline ~13.9% success rate,
+// K=20 pseudo-observations) to handle small sample sizes.
+//
+// Methodology:
+//
+// For each activation function:
+// 1. Compute Bayesian-smoothed rate: (successes + α) / (total + K) where
+//    α = baseline × K = 0.139 × 20 = 2.78, K = 20
+// 2. Compute ratio to baseline: smoothed_rate / baseline
+// 3. Apply square-root dampening to compress extreme ratios: ratio^0.5
+// 4. Clamp to [0.5, 2.0] to avoid over-biasing
+//
+// Cache Evidence (GRQ-sampler):
+//
+// | Activation     | Successes | Total | Raw Rate | Smoothed Rate | Boost |
+// |----------------|-----------|-------|----------|---------------|-------|
+// | GELU           | 111       | 185   | 60.0%    | 55.5%         | 2.0   |
+// | ABSOLUTE       | 28        | 38    | 73.6%    | 53.1%         | 1.95  |
+// | Mish           | 75        | 156   | 48.0%    | 44.2%         | 1.78  |
+// | ReLU6          | 27        | 54    | 50.0%    | 40.3%         | 1.70  |
+// | BENT_IDENTITY  | 57        | 155   | 36.7%    | 34.2%         | 1.57  |
+// | ELU            | 72        | 219   | 32.8%    | 31.3%         | 1.50  |
+// | Softplus       | 29        | 91    | 31.8%    | 28.6%         | 1.43  |
+// | ArcTan         | 11        | 58    | 18.9%    | 17.7%         | 1.13  |
+// | SOFTSIGN       | 5         | 28    | 17.8%    | 16.2%         | 1.08  |
+// | CLIPPED        | 9         | 59    | 15.2%    | 14.9%         | 1.03  |
+// | IDENTITY       | 41        | 274   | 14.9%    | 14.9%         | 1.03  |
+// | TANH           | 6         | 43    | 13.9%    | 13.9%         | 1.00  |
+// | BIPOLAR        | 8         | 66    | 12.1%    | 12.5%         | 0.95  |
+// | HARD_TANH      | 4         | 55    | 7.2%     | 9.0%          | 0.80  |
+//
+// Valid Range:
+// Each boost must be in [0.5, 2.0]. Values below 0.5 risk suppressing
+// potentially valuable candidates. Values above 2.0 risk over-biasing
+// toward historically successful activations at the expense of exploration.
+
+/// Boost multiplier for GELU activation (60.0% raw, Bayesian-smoothed 2.0×).
+pub const ACTIVATION_BOOST_GELU: f64 = 2.0;
+
+/// Boost multiplier for ABSOLUTE activation (73.6% raw, Bayesian-smoothed 1.95×).
+pub const ACTIVATION_BOOST_ABSOLUTE: f64 = 1.95;
+
+/// Boost multiplier for `Mish` activation (48.0% raw, Bayesian-smoothed 1.78×).
+pub const ACTIVATION_BOOST_MISH: f64 = 1.78;
+
+/// Boost multiplier for `ReLU6` activation (50.0% raw, Bayesian-smoothed 1.70×).
+pub const ACTIVATION_BOOST_RELU6: f64 = 1.70;
+
+/// Boost multiplier for `BENT_IDENTITY` activation (36.7% raw, Bayesian-smoothed 1.57×).
+pub const ACTIVATION_BOOST_BENT_IDENTITY: f64 = 1.57;
+
+/// Boost multiplier for ELU activation (32.8% raw, Bayesian-smoothed 1.50×).
+pub const ACTIVATION_BOOST_ELU: f64 = 1.50;
+
+/// Boost multiplier for `Softplus` activation (31.8% raw, Bayesian-smoothed 1.43×).
+pub const ACTIVATION_BOOST_SOFTPLUS: f64 = 1.43;
+
+/// Boost multiplier for `ArcTan` activation (18.9% raw, Bayesian-smoothed 1.13×).
+pub const ACTIVATION_BOOST_ARCTAN: f64 = 1.13;
+
+/// Boost multiplier for SOFTSIGN activation (17.8% raw, Bayesian-smoothed 1.08×).
+pub const ACTIVATION_BOOST_SOFTSIGN: f64 = 1.08;
+
+/// Boost multiplier for CLIPPED activation (15.2% raw, Bayesian-smoothed 1.03×).
+pub const ACTIVATION_BOOST_CLIPPED: f64 = 1.03;
+
+/// Boost multiplier for IDENTITY activation (14.9% raw, Bayesian-smoothed 1.03×).
+pub const ACTIVATION_BOOST_IDENTITY: f64 = 1.03;
+
+/// Neutral multiplier for TANH activation (13.9% raw, matches baseline exactly).
+pub const ACTIVATION_BOOST_TANH: f64 = 1.0;
+
+/// Penalty multiplier for BIPOLAR activation (12.1% raw, Bayesian-smoothed 0.95×).
+pub const ACTIVATION_BOOST_BIPOLAR: f64 = 0.95;
+
+/// Penalty multiplier for `HARD_TANH` activation (7.2% raw, Bayesian-smoothed 0.80×).
+pub const ACTIVATION_BOOST_HARD_TANH: f64 = 0.80;
+
+/// Returns the activation-function-aware boost/penalty multiplier for add-neuron
+/// candidate scoring (Issue #887).
+///
+/// This lookup maps activation function names to their Bayesian-smoothed boost
+/// multipliers derived from GRQ-sampler cache success rates. Unknown activations
+/// (including `ReLU`, which is evaluated separately) receive a neutral multiplier of 1.0.
+#[inline]
+pub fn activation_neuron_boost(squash_name: &str) -> f64 {
+    match squash_name {
+        "GELU" => ACTIVATION_BOOST_GELU,
+        "ABSOLUTE" => ACTIVATION_BOOST_ABSOLUTE,
+        "Mish" => ACTIVATION_BOOST_MISH,
+        "ReLU6" => ACTIVATION_BOOST_RELU6,
+        "BENT_IDENTITY" => ACTIVATION_BOOST_BENT_IDENTITY,
+        "ELU" => ACTIVATION_BOOST_ELU,
+        "Softplus" => ACTIVATION_BOOST_SOFTPLUS,
+        "ArcTan" => ACTIVATION_BOOST_ARCTAN,
+        "SOFTSIGN" => ACTIVATION_BOOST_SOFTSIGN,
+        "CLIPPED" => ACTIVATION_BOOST_CLIPPED,
+        "IDENTITY" => ACTIVATION_BOOST_IDENTITY,
+        "TANH" => ACTIVATION_BOOST_TANH,
+        "BIPOLAR" => ACTIVATION_BOOST_BIPOLAR,
+        "HARD_TANH" => ACTIVATION_BOOST_HARD_TANH,
+        _ => 1.0, // Neutral boost for unknown activations (including ReLU)
+    }
+}
+
+/// Minimum activation boost value (lower clamp).
+///
+/// ## Valid Range
+/// Must be > 0.0 and < 1.0.
+pub const ACTIVATION_BOOST_MIN: f64 = 0.5;
+
+/// Maximum activation boost value (upper clamp).
+///
+/// ## Valid Range
+/// Must be > 1.0 and <= 3.0.
+pub const ACTIVATION_BOOST_MAX: f64 = 2.0;
+
 /// Minimum pessimism discount applied to all score predictions.
 ///
 /// Production analysis (creature b2ff6e45, GRQ-sampler commit a1340f8d) showed
