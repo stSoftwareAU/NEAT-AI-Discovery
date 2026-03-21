@@ -55,7 +55,7 @@ fn prescreen_rejects_mildly_harmful_source() {
         build_source_contribution("positive", samples_b, HelpfulStats::default(), 0.1, 0.03),
     ];
 
-    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0);
+    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0, None);
 
     // Under the new strict pre-screen (>= 0.0), the mildly-harmful source must be excluded
     assert!(
@@ -88,7 +88,7 @@ fn prescreen_allows_zero_improvement_source() {
     // The zero-improvement source should be valid (>= 0.0 passes the pre-screen)
     // Whether a pair is produced depends on combined improvement checks, but
     // both sources should pass the pre-screen filter.
-    let _pairs = detect_epistatic_pairs("output-0", &contributions, 1.0);
+    let _pairs = detect_epistatic_pairs("output-0", &contributions, 1.0, None);
     // If the pre-screen was too strict (> 0.0), it would filter the zero-improvement source.
     // We verify by checking that the function does not reject based on the pre-screen.
     // (The test passes as long as no panic and the function processes both.)
@@ -160,7 +160,7 @@ fn rejects_pair_where_source_hurts_others_samples() {
         ),
     ];
 
-    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0);
+    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0, None);
 
     // Even though firing indices are complementary, each source hurts the samples
     // where the other source helps. The cross-harm check should reject this pair.
@@ -194,7 +194,7 @@ fn rejects_pair_without_super_additivity() {
         build_source_contribution("src-b", samples_b, HelpfulStats::default(), 0.3, 0.05),
     ];
 
-    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0);
+    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0, None);
 
     // If both individually improve by 5%, the combined additive would be ~10%.
     // For a genuine epistatic pair we require combined > sum_of_individuals.
@@ -252,7 +252,7 @@ fn cross_validation_rejects_overfit_combo() {
         build_source_contribution("overfit-b", samples_b, HelpfulStats::default(), 0.2, 0.01),
     ];
 
-    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0);
+    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0, None);
 
     // With cross-validation, the system should detect that the combo benefit
     // does not hold on the held-out half and reject the pair.
@@ -317,7 +317,7 @@ fn genuine_epistatic_pair_survives_strict_filters() {
         ),
     ];
 
-    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0);
+    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0, None);
 
     // A true epistatic pair should survive: complementary, no cross-harm,
     // and combined > sum of individuals (0 + 0 < combined positive)
