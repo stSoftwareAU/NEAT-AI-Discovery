@@ -46,8 +46,16 @@ pub(crate) fn detect_epistatic_and_synergistic(
         .is_some_and(|t| *t == "output");
     let target_impact = if target_is_output { 1.0 } else { 0.5 };
 
+    // Issue #897: Pass target squash function for saturation-aware estimation
+    let target_squash = ctx.neuron_squash_map.get(target_uuid).copied();
+
     // Issue #202: Detect epistatic neuron pairs
-    let epistatic_pairs = detect_epistatic_pairs(target_uuid, source_contributions, target_impact);
+    let epistatic_pairs = detect_epistatic_pairs(
+        target_uuid,
+        source_contributions,
+        target_impact,
+        target_squash,
+    );
 
     if !epistatic_pairs.is_empty() {
         let filtered_pairs =
@@ -73,8 +81,12 @@ pub(crate) fn detect_epistatic_and_synergistic(
     }
 
     // Issue #189: Detect synergistic candidates via residual analysis
-    let synergistic_candidates =
-        detect_synergistic_candidates(target_uuid, source_contributions, target_impact);
+    let synergistic_candidates = detect_synergistic_candidates(
+        target_uuid,
+        source_contributions,
+        target_impact,
+        target_squash,
+    );
 
     if !synergistic_candidates.is_empty() {
         let filtered_synergistic =

@@ -16,6 +16,9 @@ use crate::analysis::samples::HelpfulSample;
 // Issue #508: Individual operation pre-screen threshold
 use crate::analysis::constants::MAX_INDIVIDUAL_HARM_FOR_PAIRING;
 
+// Issue #897: Conservative weight scale for coordinated estimation
+use crate::analysis::constants::COORDINATED_ESTIMATION_WEIGHT_SCALE;
+
 use super::{SourceContribution, SynergisticCandidate};
 
 /// Minimum residual reduction ratio for synergistic detection (Issue #189).
@@ -50,10 +53,14 @@ pub fn detect_synergistic_candidates(
     target_uuid: &str,
     contributions: &[SourceContribution],
     target_impact: f32,
+    target_squash: Option<&str>,
 ) -> Vec<SynergisticCandidate> {
     if contributions.len() < 2 {
         return Vec::new();
     }
+
+    // Issue #897: Resolve target activation function for saturation-aware simulation
+    let target_activation_fn = target_squash.and_then(crate::activations::target_simulation_fn);
 
     // Filter to sources with enough samples and non-harmful individual improvement (Issue #508)
     let valid_sources: Vec<&SourceContribution> = contributions
@@ -79,8 +86,11 @@ pub fn detect_synergistic_candidates(
     };
 
     // Step 2: Compute residual errors after applying primary source
-    // For each sample, residual = original_error - (primary_weight * primary_activation)
-    let residuals = compute_residual_errors(&primary.samples, primary.optimal_weight);
+    let residuals = compute_residual_errors(
+        &primary.samples,
+        primary.optimal_weight,
+        target_activation_fn,
+    );
 
     // Step 3: Search for complementary sources that reduce the residual
     let mut candidates = Vec::new();
@@ -92,9 +102,14 @@ pub fn detect_synergistic_candidates(
         }
 
         // Evaluate how well this source reduces the residual error
-        if let Some(candidate) =
-            evaluate_residual_reduction(target_uuid, primary, source, &residuals, target_impact)
-        {
+        if let Some(candidate) = evaluate_residual_reduction(
+            target_uuid,
+            primary,
+            source,
+            &residuals,
+            target_impact,
+            target_activation_fn,
+        ) {
             candidates.push(candidate);
         }
     }
@@ -105,28 +120,68 @@ pub fn detect_synergistic_candidates(
     candidates
 }
 
-/// Compute residual errors after applying a source with given weight.
+/// Compute residual errors after applying a source with given weight (Issue #897).
 ///
-/// Residual error = `original_error` - (weight × activation)
-fn compute_residual_errors(samples: &[HelpfulSample], weight: f32) -> Vec<ResidualSample> {
+/// When `target_activation_fn` is provided and samples have target data, uses
+/// saturation-aware simulation in activation domain. Otherwise uses linear
+/// approximation: `residual_error` = `original_error` - (weight × activation).
+fn compute_residual_errors(
+    samples: &[HelpfulSample],
+    weight: f32,
+    target_activation_fn: Option<fn(f32) -> f32>,
+) -> Vec<ResidualSample> {
+    let use_activation = target_activation_fn.is_some()
+        && samples
+            .iter()
+            .all(|s| s.target_value.is_some() && s.target_activation.is_some());
+
     samples
         .iter()
         .map(|s| {
-            let contribution = weight * s.activation;
-            let residual_error = s.avg_error - contribution;
-            ResidualSample {
-                original_error: s.avg_error,
-                residual_error,
+            if use_activation {
+                let target_fn = target_activation_fn.unwrap();
+                let target_value = s.target_value.unwrap();
+                let target_activation = s.target_activation.unwrap();
+                let desired_value = target_value + s.avg_error;
+                let expected = target_fn(desired_value);
+
+                // Baseline error in activation domain
+                let original_error = expected - target_activation;
+
+                // Residual after applying primary source through activation
+                let new_input = target_value + weight * s.activation;
+                let new_output = target_fn(new_input);
+                let residual_error = expected - new_output;
+
+                ResidualSample {
+                    original_error,
+                    residual_error,
+                    new_target_value: Some(new_input),
+                    desired_value: Some(desired_value),
+                }
+            } else {
+                let contribution = weight * s.activation;
+                let residual_error = s.avg_error - contribution;
+                ResidualSample {
+                    original_error: s.avg_error,
+                    residual_error,
+                    new_target_value: None,
+                    desired_value: None,
+                }
             }
         })
         .collect()
 }
 
-/// Internal structure for residual analysis.
+/// Internal structure for residual analysis (Issue #897: extended with target data).
 #[derive(Debug, Clone)]
 struct ResidualSample {
     original_error: f32,
     residual_error: f32,
+    /// Target neuron pre-activation value after applying primary contribution (for activation-aware simulation).
+    new_target_value: Option<f32>,
+    /// Desired pre-activation value for computing expected output.
+    desired_value: Option<f32>,
 }
 
 /// Compute Pearson correlation coefficient between two activation patterns.
@@ -147,36 +202,38 @@ fn compute_activation_correlation(
     )
 }
 
-/// Evaluate how well a complement source reduces the residual error.
+/// Evaluate how well a complement source reduces the residual error (Issue #897).
+///
+/// When `target_activation_fn` is provided and residual samples carry target data,
+/// uses saturation-aware simulation for the complement contribution.
 fn evaluate_residual_reduction(
     target_uuid: &str,
     primary: &SourceContribution,
     complement: &SourceContribution,
     residuals: &[ResidualSample],
     target_impact: f32,
+    target_activation_fn: Option<fn(f32) -> f32>,
 ) -> Option<SynergisticCandidate> {
-    // We need to match samples between primary and complement
-    // Build a map of sample activations for the complement source
-    // Note: samples may not have the same indices, so we need to be careful
-
-    // For simplicity, we assume samples are aligned (same obs_indices)
-    // In practice, we should use obs_index for matching
-
     let min_samples = residuals.len().min(complement.samples.len());
     if min_samples < MIN_SAMPLES_FOR_RESIDUAL_ANALYSIS {
         return None;
     }
 
     // Check activation pattern correlation between primary and complement
-    // If they have very high correlation, adding both is redundant, not synergistic
     let activation_correlation =
         compute_activation_correlation(&primary.samples, &complement.samples, min_samples);
 
     // Skip if activations are too similar (correlation > 0.9)
-    // This prevents false positives where both sources are essentially the same
     if activation_correlation > 0.9 {
         return None;
     }
+
+    // Issue #897: Check if activation-aware simulation is available
+    let use_activation = target_activation_fn.is_some()
+        && residuals
+            .iter()
+            .take(min_samples)
+            .all(|r| r.new_target_value.is_some() && r.desired_value.is_some());
 
     // Compute optimal weight for complement source against residual errors
     // Using least squares: w = Σ(activation × residual_error) / Σ(activation²)
@@ -213,10 +270,27 @@ fn evaluate_residual_reduction(
         .zip(residuals.iter())
         .take(min_samples)
     {
-        let activation = complement_sample.activation as f64;
         let original = residual_sample.original_error as f64;
         let residual = residual_sample.residual_error as f64;
-        let combined_residual = residual - (complement_weight as f64 * activation);
+
+        let combined_residual = if use_activation {
+            // Issue #897: Saturation-aware simulation for complement contribution
+            let target_fn = target_activation_fn.unwrap();
+            let new_target_value = residual_sample.new_target_value.unwrap() as f64;
+            let desired_value = residual_sample.desired_value.unwrap();
+            let expected = target_fn(desired_value) as f64;
+
+            // Add complement contribution through activation function
+            let complement_contribution =
+                complement_weight as f64 * complement_sample.activation as f64;
+            let combined_input = new_target_value + complement_contribution;
+            let combined_output = target_fn(combined_input as f32) as f64;
+            expected - combined_output
+        } else {
+            // Linear approximation fallback
+            let activation = complement_sample.activation as f64;
+            residual - (complement_weight as f64 * activation)
+        };
 
         original_error_sum += original * original;
         residual_error_sum += residual * residual;
@@ -279,13 +353,18 @@ fn evaluate_residual_reduction(
         )
     };
 
+    // Issue #897: Apply conservative weight scale to reported gain.
+    // During evaluation, coordinated candidate weights are scaled to 0.2× variants,
+    // so the reported gain should reflect this more conservative configuration.
+    let weight_scale = COORDINATED_ESTIMATION_WEIGHT_SCALE as f64;
+
     Some(SynergisticCandidate {
         primary_source_uuid: primary.source_uuid.clone(),
         complement_source_uuid: complement.source_uuid.clone(),
         target_uuid: target_uuid.to_string(),
         primary_weight: primary.optimal_weight,
         complement_weight,
-        combined_improvement: (combined_improvement * target_impact as f64) as f32,
+        combined_improvement: (combined_improvement * target_impact as f64 * weight_scale) as f32,
         primary_improvement: (primary_improvement * target_impact as f64) as f32,
         complement_improvement: (complement.individual_improvement as f64 * target_impact as f64)
             as f32,
@@ -363,7 +442,7 @@ mod tests {
             ),
         ];
 
-        let synergistic = detect_synergistic_candidates("output-0", &contributions, 1.0);
+        let synergistic = detect_synergistic_candidates("output-0", &contributions, 1.0, None);
 
         // Should not include the harmful source
         assert!(

@@ -444,7 +444,7 @@ mod tests {
             ),
         ];
 
-        let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0);
+        let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0, None);
 
         // Neither should include the harmful source
         assert!(
@@ -494,7 +494,7 @@ mod tests {
 
         // With threshold at 0.0, the mildly-negative source is rejected by pre-screen.
         // Only one valid source remains, so no pairs can be formed.
-        let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0);
+        let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0, None);
         assert!(
             pairs
                 .iter()

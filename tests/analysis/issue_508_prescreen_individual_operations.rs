@@ -72,7 +72,7 @@ fn synergistic_candidate_rejects_strongly_harmful_complement() {
         make_contribution("harmful-source", -0.05, 64, false),
     ];
 
-    let candidates = detect_synergistic_candidates("output-0", &contributions, 1.0);
+    let candidates = detect_synergistic_candidates("output-0", &contributions, 1.0, None);
 
     // No synergistic candidate should include the harmful source as complement
     for candidate in &candidates {
@@ -100,7 +100,7 @@ fn synergistic_candidate_allows_mildly_negative_complement() {
         make_contribution("mild-source", -0.005, 64, false),
     ];
 
-    let candidates = detect_synergistic_candidates("output-0", &contributions, 1.0);
+    let candidates = detect_synergistic_candidates("output-0", &contributions, 1.0, None);
 
     // This test verifies the pre-screen doesn't over-filter.
     // Whether candidates are produced depends on synergistic criteria (residual reduction,
@@ -126,7 +126,7 @@ fn epistatic_prescreen_filters_strongly_harmful_sources_early() {
         make_contribution("good-b", 0.02, 64, false),
     ];
 
-    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0);
+    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0, None);
 
     // No pair should include the harmful source
     let pairs_with_harmful: Vec<_> = pairs
@@ -189,7 +189,7 @@ fn issue_508_scenario_all_pairs_with_harmful_source_rejected() {
     let mut all_contributions = vec![harmful];
     all_contributions.extend(partners);
 
-    let pairs = detect_epistatic_pairs("output-0", &all_contributions, 1.0);
+    let pairs = detect_epistatic_pairs("output-0", &all_contributions, 1.0, None);
 
     let pairs_with_harmful: Vec<_> = pairs
         .iter()

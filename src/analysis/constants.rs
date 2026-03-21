@@ -567,6 +567,18 @@ pub const MIN_COORDINATED_MULTI_OP_GAIN: f32 = 1e-3;
 // Coordinated-Structural Pessimism Discount (Issue #790)
 // =============================================================================
 
+/// Conservative weight scale used when estimating coordinated candidate gains (Issue #897).
+///
+/// During evaluation, coordinated candidate weights are scaled to 0.2×, 0.1×, or 0.05×
+/// variants (see `variant_generation.rs`). The estimation should use the most likely
+/// tested weight scale (0.2×) rather than the full optimal weight, because non-linear
+/// activation functions mean scaling a weight does NOT proportionally scale improvement.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Should match `COORDINATED_CONSERVATIVE_WEIGHT_SCALE` in
+/// `variant_generation.rs`.
+pub const COORDINATED_ESTIMATION_WEIGHT_SCALE: f32 = 0.2;
+
 /// Flat pessimism discount applied to all coordinated-structural candidates.
 ///
 /// GRQ-sampler analysis (Issue #787) shows coordinated-structural candidates have
