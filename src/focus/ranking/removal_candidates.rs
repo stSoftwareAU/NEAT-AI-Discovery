@@ -6,6 +6,7 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::record_providers::get_records_or_error;
 use super::score_calculation::activation_mean_and_variance_from_records;
+use crate::analysis::constants::{REMOVAL_CANDIDATE_BOOST, REMOVAL_MEAN_ACTIVATION_THRESHOLD};
 use crate::{
     CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson, NeuronJson,
 };
@@ -137,6 +138,11 @@ impl SynapseCounts {
 ///
 /// Issue #235: Return ALL neurons where removal improves the creature's score.
 /// A removal improves score when: `removal_savings` > `activation_weighted_impact`
+///
+/// Issue #892: Apply stricter filtering based on GRQ-sampler cache evidence.
+/// Successful removals (21.5% success rate) have low mean activation (≤ 0.04)
+/// and low structural impact (≤ 6e-5). Candidates passing these thresholds
+/// receive a scoring boost to prioritise them over other candidate types.
 pub(super) fn identify_removal_candidates(
     neurons: &[RankedNeuron],
     synapse_counts: &SynapseCounts,
@@ -155,12 +161,28 @@ pub(super) fn identify_removal_candidates(
                 return None;
             }
 
+            // Issue #892: Filter out neurons with high mean activation when they
+            // also have non-negligible structural impact. Cache evidence shows
+            // failed removals have high mean activation (up to 57.8) combined with
+            // meaningful impact — these neurons are actually contributing.
+            // Disconnected neurons (impact ≈ 0) are always safe to remove regardless
+            // of activation level.
+            let has_meaningful_impact = n.impact > f32::EPSILON;
+            if has_meaningful_impact
+                && n.mean_activation > REMOVAL_MEAN_ACTIVATION_THRESHOLD
+            {
+                return None;
+            }
+
             // Issue #117: expected_error_reduction should be based on activation_weighted_impact,
             // NOT total_error.
             let expected_error_reduction = n.activation_weighted_impact;
 
             // Net score improvement = savings - impact
-            let net_improvement = savings - n.activation_weighted_impact;
+            // Issue #892: Apply boost to savings for high-quality removal candidates.
+            // The 21.5% success rate justifies prioritising these candidates.
+            let boosted_savings = savings * REMOVAL_CANDIDATE_BOOST;
+            let net_improvement = boosted_savings - n.activation_weighted_impact;
 
             Some(RemovalCandidate {
                 neuron_uuid: n.neuron_uuid.clone(),
@@ -170,11 +192,12 @@ pub(super) fn identify_removal_candidates(
                 activation_weighted_impact: n.activation_weighted_impact,
                 incoming_synapses: incoming,
                 outgoing_synapses: outgoing,
-                removal_savings: savings,
+                removal_savings: boosted_savings,
                 expected_error_reduction,
                 reason: format!(
-                    "Removal improves score: saves {:.2e} > impact {:.2e} (net +{:.2e}), {} synapses, costOfGrowth={:.2e}",
+                    "Removal improves score: saves {:.2e} (boosted {:.1}×) > impact {:.2e} (net +{:.2e}), {} synapses, costOfGrowth={:.2e}",
                     savings,
+                    REMOVAL_CANDIDATE_BOOST,
                     n.activation_weighted_impact,
                     net_improvement,
                     incoming + outgoing,

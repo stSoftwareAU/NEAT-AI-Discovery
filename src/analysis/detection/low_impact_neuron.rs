@@ -40,7 +40,12 @@ use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 const DEAD_THRESHOLD: f32 = 1e-6;
 
 /// Upper bound: activations above this are considered meaningfully active.
-const LOW_IMPACT_CEILING: f32 = 1e-3;
+///
+/// Issue #892: Widened from 1e-3 to 0.04. GRQ-sampler discovery cache shows
+/// successful `remove-low-impact` candidates have mean activation up to ~0.04.
+/// The previous ceiling of 1e-3 was too restrictive and excluded many valid
+/// low-impact neurons that could be safely removed.
+const LOW_IMPACT_CEILING: f32 = 0.04;
 
 /// Maximum activation standard deviation relative to mean for low-impact status.
 /// If the neuron's output varies too much, it may still be contributing on some
@@ -49,12 +54,19 @@ const MAX_RELATIVE_STD_DEV: f32 = 5.0;
 
 /// Absolute ceiling on standard deviation. Even if the relative std dev is low,
 /// a high absolute std dev suggests the neuron is not consistently near-zero.
-const MAX_ABSOLUTE_STD_DEV: f32 = 1e-3;
+///
+/// Issue #892: Widened from 1e-3 to 0.02 to match the widened `LOW_IMPACT_CEILING`
+/// of 0.04. Neurons with mean activation up to 0.04 can have proportionally
+/// higher variance while still being consistently low-impact.
+const MAX_ABSOLUTE_STD_DEV: f32 = 0.02;
 
 /// Base estimated improvement for removing a low-impact neuron.
-/// Lower than dead-neuron removal because there is a small chance the neuron
-/// contributes marginally.
-const BASE_IMPROVEMENT: f32 = 0.002;
+///
+/// Issue #892: Boosted from 0.002 to 0.003. GRQ-sampler cache shows
+/// `remove-low-impact` has the highest success rate at 21.5% (440/2,043),
+/// roughly double the overall 10.7% rate. The higher base improvement
+/// ensures these candidates are prioritised over lower-success-rate types.
+const BASE_IMPROVEMENT: f32 = 0.003;
 
 /// Result of detecting a low-impact neuron.
 #[derive(Debug, Clone)]
@@ -76,7 +88,7 @@ pub struct LowImpactNeuronCandidate {
 /// Detect low-impact neurons from the creature topology and recorded activations.
 ///
 /// Low-impact neurons have mean absolute activations between the dead threshold
-/// (1e-6) and the low-impact ceiling (1e-3), with consistently low variance.
+/// (1e-6) and the low-impact ceiling (0.04), with consistently low variance.
 ///
 /// # Arguments
 /// * `creature` - The creature's network topology (neurons and synapses).

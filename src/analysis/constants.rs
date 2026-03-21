@@ -557,3 +557,48 @@ pub const MIN_COORDINATED_MULTI_OP_GAIN: f32 = 1e-3;
 /// candidates. Values above 0.30 provide insufficient correction given the
 /// 2.3% success rate.
 pub const COORDINATED_PESSIMISM_DISCOUNT: f32 = 0.15;
+
+// =============================================================================
+// Remove-Low-Impact Candidate Thresholds (Issue #892)
+// =============================================================================
+
+/// Maximum mean activation for a removal candidate to be considered high-quality.
+///
+/// GRQ-sampler discovery cache shows that successful `remove-low-impact` candidates
+/// (21.5% success rate, 440/2,043) consistently have mean activation near zero
+/// (~0 to 0.04). Failed removals often have much higher mean activation (up to 57.8),
+/// indicating the neuron was actually contributing to the network.
+///
+/// Candidates with `mean_activation` above this threshold are filtered out to
+/// focus removal efforts on neurons that are genuinely inactive.
+///
+/// ## Valid Range
+/// Must be > 0.0. Values above 0.1 risk including neurons that are contributing.
+/// Values below 0.01 may be too restrictive and miss valid removal candidates.
+pub const REMOVAL_MEAN_ACTIVATION_THRESHOLD: f32 = 0.04;
+
+/// Maximum structural impact for a removal candidate to be considered high-quality.
+///
+/// GRQ-sampler discovery cache shows successful `remove-low-impact` removals have
+/// impact magnitudes ≤ 6e-5. Neurons with higher structural impact are more likely
+/// to be contributing to the network output even if their activation is low.
+///
+/// ## Valid Range
+/// Must be > 0.0. Values above 1e-3 risk including neurons with meaningful impact.
+/// Values below 1e-6 may be too restrictive.
+pub const REMOVAL_IMPACT_THRESHOLD: f32 = 6e-5;
+
+/// Scoring boost multiplier for `remove-low-impact` candidates (Issue #892).
+///
+/// GRQ-sampler discovery cache shows `remove-low-impact` has the highest success
+/// rate at 21.5% (440/2,043) — roughly double the overall 10.7% rate. This boost
+/// is applied to the `removal_savings` score to ensure removal candidates are
+/// ranked higher relative to other candidate types.
+///
+/// The boost is derived from the ratio of `remove-low-impact` success rate to the
+/// overall baseline: 21.5% / 10.7% ≈ 2.0, dampened with square-root to 1.41,
+/// then rounded to 1.5 for conservatism.
+///
+/// ## Valid Range
+/// Must be >= 1.0 (boost) and <= 3.0 (avoid over-biasing).
+pub const REMOVAL_CANDIDATE_BOOST: f32 = 1.5;
