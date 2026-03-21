@@ -18,7 +18,8 @@
 use neat_ai_discovery::analysis::detection::observation_range::ObservationRangeResult;
 use neat_ai_discovery::analysis::samples::{EPSILON, HelpfulSample};
 use neat_ai_discovery::analysis::scoring::weights::{
-    calculate_optimal_outgoing_weight, calculate_range_aware_weight, compute_range_aware_sums,
+    MAX_OUTGOING_WEIGHT, calculate_optimal_outgoing_weight, calculate_range_aware_weight,
+    compute_range_aware_sums,
 };
 
 /// Helper: create a `HelpfulSample` with given activation and error.
@@ -274,14 +275,14 @@ fn test_uses_observation_range_metadata() {
 // ---------------------------------------------------------------------------
 #[test]
 fn test_existing_function_unchanged_dry_wrapper() {
-    // Verify that calculate_optimal_outgoing_weight still works exactly as before
-    // This ensures we haven't modified the core function
+    // Verify that calculate_optimal_outgoing_weight still works correctly.
+    // Issue #888: raw weight = 0.5/10.0 = 0.05, now clamped to MAX_OUTGOING_WEIGHT (0.01).
     let result = calculate_optimal_outgoing_weight(0.5, 10.0, 1.0);
     assert!(result.is_some());
     let weight = result.unwrap();
     assert!(
-        (weight - 0.05).abs() < 0.001,
-        "Core function should still compute ~0.05, got {weight}"
+        (weight - MAX_OUTGOING_WEIGHT).abs() < 0.001,
+        "Core function should clamp to MAX_OUTGOING_WEIGHT, got {weight}"
     );
 
     // calculate_range_aware_weight should delegate to the same core function
@@ -293,7 +294,7 @@ fn test_existing_function_unchanged_dry_wrapper() {
     if let Some(rw) = range_weight {
         assert!(rw.is_finite(), "Range-aware weight should be finite");
         assert!(
-            rw.abs() <= 0.1 + EPSILON,
+            rw.abs() <= MAX_OUTGOING_WEIGHT + EPSILON,
             "Range-aware weight should respect MAX_OUTGOING_WEIGHT clamping"
         );
     }

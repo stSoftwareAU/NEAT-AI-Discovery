@@ -41,34 +41,46 @@ pub struct NeuronVariantConfig {
 }
 
 /// Conservative: tight clamps on all parameters.
+///
+/// Issue #888: Tightened outgoing from 0.05→0.005 to match cache evidence
+/// where successes cluster at 0.001–0.005.
 pub static CONSERVATIVE_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
     incoming_abs_max: 2.0,
     bias_abs_max: 1.0,
-    outgoing_abs_max: 0.05,
+    outgoing_abs_max: 0.005,
     outgoing_scale: 0.2,
     expected_multiplier: 0.5,
-    min_outgoing_fallback: 0.01,
+    min_outgoing_fallback: 0.001,
     comment: "Conservative variant (clamped incoming/bias, outgoing scaled)",
 };
 
 /// Gentle Nudge: moderate incoming/bias range, very small outgoing.
+///
+/// Issue #888: Tightened incoming from 20→5, bias from 10→2, outgoing from
+/// 0.02→0.01 to match GRQ-sampler cache evidence. The previous ranges
+/// allowed values in the "Extreme" pattern that almost always fails.
 pub static GENTLE_NUDGE_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
-    incoming_abs_max: 20.0,
-    bias_abs_max: 10.0,
-    outgoing_abs_max: 0.02,
+    incoming_abs_max: 5.0,
+    bias_abs_max: 2.0,
+    outgoing_abs_max: 0.01,
     outgoing_scale: 0.1,
     expected_multiplier: 0.75,
-    min_outgoing_fallback: 0.005,
+    min_outgoing_fallback: 0.002,
     comment: "Gentle Nudge variant (tight outgoing, bias tamed)",
 };
 
 /// Micro-Nudge: ultra-conservative, targeting ±0.002–0.005 outgoing range.
+///
+/// Issue #888: Boosted `expected_multiplier` from 0.25 to 0.5 because
+/// the Micro-Nudge pattern dominates successes (~90% of successful samples
+/// in GRQ-sampler cache). The higher multiplier ensures these candidates
+/// are prioritised in the ranking over other variants.
 pub static MICRO_NUDGE_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
     incoming_abs_max: 2.0,
     bias_abs_max: 1.0,
     outgoing_abs_max: 0.005,
     outgoing_scale: 0.05,
-    expected_multiplier: 0.25,
+    expected_multiplier: 0.5,
     min_outgoing_fallback: 0.002,
     comment: "Micro-Nudge variant (ultra-conservative outgoing, tight incoming/bias)",
 };
@@ -168,13 +180,21 @@ pub fn make_synapse_variant(
 // ============================================================================
 
 /// Maximum absolute incoming weight we consider "sensible" for add-neuron candidates.
-const SENSIBLE_INCOMING_ABS_MAX: f32 = 20.0;
+///
+/// Issue #888: Tightened from 20.0 to match `MAX_INCOMING_WEIGHT` (5.0).
+/// GRQ-sampler cache shows incoming weights of 10+ almost always fail.
+const SENSIBLE_INCOMING_ABS_MAX: f32 = 5.0;
 
 /// Maximum absolute bias we consider "sensible" for add-neuron candidates.
-const SENSIBLE_BIAS_ABS_MAX: f32 = 10.0;
+///
+/// Issue #888: Tightened from 10.0 to match `MAX_BIAS_MAGNITUDE` (2.0).
+/// GRQ-sampler cache shows bias values outside [-1, 1] almost always fail.
+const SENSIBLE_BIAS_ABS_MAX: f32 = 2.0;
 
 /// Maximum absolute outgoing weight we consider "sensible" for add-neuron candidates.
-const SENSIBLE_OUTGOING_ABS_MAX: f32 = 0.1;
+///
+/// Issue #888: Tightened from 0.1 to match `MAX_OUTGOING_WEIGHT` (0.01).
+const SENSIBLE_OUTGOING_ABS_MAX: f32 = 0.01;
 
 pub(crate) fn sensible_bias_abs_max_for_squash(_squash: &str) -> f32 {
     SENSIBLE_BIAS_ABS_MAX

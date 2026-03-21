@@ -83,11 +83,12 @@ fn extreme_candidate_pairing_considers_outgoing_weight_differences() {
         "comment should reflect what was actually returned"
     );
 
-    // Conservative variant should have meaningfully smaller outgoing weight.
-    // 0.1 * 0.2 = 0.02 (within outgoing clamp).
+    // Issue #888: Conservative outgoing_abs_max tightened from 0.05 to 0.005.
+    // 0.1 * 0.2 = 0.02, clamped to 0.005.
     assert!(
-        (paired[1].outgoing_weight - 0.02).abs() < 1e-6,
-        "expected outgoing weight to be scaled to ~0.02"
+        (paired[1].outgoing_weight - 0.005).abs() < 1e-6,
+        "expected outgoing weight to be clamped to ~0.005, got {}",
+        paired[1].outgoing_weight
     );
     assert!(paired[1].comment.is_some());
 }
@@ -123,24 +124,26 @@ fn extreme_candidate_includes_gentle_nudge_variant_when_limit_allows() {
         "comment should reflect both variants were returned"
     );
 
-    // Conservative variant: outgoing scaled to 0.02 and bias clamped to 1.0.
+    // Issue #888: Conservative outgoing tightened from 0.05 to 0.005, bias stays 1.0.
     assert!(
-        (paired[1].outgoing_weight - 0.02).abs() < 1e-6,
-        "expected conservative outgoing weight ~0.02"
+        (paired[1].outgoing_weight - 0.005).abs() < 1e-6,
+        "expected conservative outgoing weight ~0.005, got {}",
+        paired[1].outgoing_weight
     );
     assert!(
         (paired[1].bias - 1.0).abs() < 1e-6,
         "expected conservative bias to be clamped to 1.0"
     );
 
-    // Gentle Nudge variant: even smaller outgoing (~0.01) but a looser bias clamp (~10.0).
+    // Issue #888: Gentle Nudge outgoing 0.01, bias tightened from 10.0 to 2.0.
     assert!(
         (paired[2].outgoing_weight - 0.01).abs() < 1e-6,
         "expected gentle outgoing weight ~0.01"
     );
     assert!(
-        (paired[2].bias - 10.0).abs() < 1e-6,
-        "expected gentle bias to be clamped to 10.0"
+        (paired[2].bias - 2.0).abs() < 1e-6,
+        "expected gentle bias to be clamped to 2.0, got {}",
+        paired[2].bias
     );
     assert!(
         paired[2]
@@ -201,14 +204,16 @@ fn gentle_nudge_variants_are_not_deduped_across_different_neuron_pairs() {
     };
 
     // Limit allows both originals plus all safety variants per candidate.
-    // Issue #507: 4 variants per extreme candidate (original + conservative + gentle nudge + micro-nudge).
+    // Issue #888: With tightened constraints, Conservative and Micro-Nudge have the
+    // same outgoing_abs_max (0.005), so Micro-Nudge is skipped (not meaningfully different).
+    // Each extreme candidate gets: original + conservative + gentle nudge = 3 variants.
     let paired =
         pair_extreme_candidates_with_conservative_variants(vec![candidate_a, candidate_b], Some(8));
 
     assert_eq!(
         paired.len(),
-        8,
-        "expected two originals + two conservative + two Gentle Nudge + two Micro-Nudge variants"
+        6,
+        "expected two originals + two conservative + two Gentle Nudge variants"
     );
 
     // Expect a Gentle Nudge variant for each distinct neuron pair.

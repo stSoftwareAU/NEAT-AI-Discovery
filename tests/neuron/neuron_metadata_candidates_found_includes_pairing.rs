@@ -70,10 +70,12 @@ fn candidates_found_includes_paired_variants() {
     );
 
     // Verify actual values
-    // Issue #507: 4 variants per extreme candidate (original + conservative + gentle nudge + micro-nudge)
+    // Issue #888: With tightened constraints, Conservative and Micro-Nudge share the same
+    // outgoing_abs_max (0.005), so Micro-Nudge is skipped as not meaningfully different.
+    // Result: 3 variants per extreme candidate (original + conservative + gentle nudge).
     assert_eq!(
-        candidates_found, 4,
-        "Expected 4 candidates found (original + conservative + gentle nudge + micro-nudge)"
+        candidates_found, 3,
+        "Expected 3 candidates found (original + conservative + gentle nudge)"
     );
     assert_eq!(
         candidates_returned, 2,
@@ -179,7 +181,9 @@ fn truncation_respects_invariant_with_multiple_extreme_candidates() {
     // CORRECT approach: pair first (no limit), then count, then truncate
     let paired = pair_extreme_candidates_with_conservative_variants(extreme_candidates, None);
 
-    // Issue #507: candidates_found = total after pairing (3 originals × 4 variants each = 12)
+    // Issue #888: With tightened constraints, 3 variants per extreme candidate
+    // (original + conservative + gentle nudge). Micro-Nudge is skipped because
+    // it shares the same outgoing_abs_max as Conservative.
     let candidates_found = paired.len();
 
     // Truncate to max_candidates=5
@@ -195,8 +199,8 @@ fn truncation_respects_invariant_with_multiple_extreme_candidates() {
 
     // Verify actual values
     assert_eq!(
-        candidates_found, 12,
-        "Expected 12 candidates found (3 extreme × 4 variants each)"
+        candidates_found, 9,
+        "Expected 9 candidates found (3 extreme × 3 variants each)"
     );
     assert_eq!(
         candidates_returned, 5,

@@ -1169,9 +1169,11 @@ Pages speculative:                        12345.
     fn synapse_weight_update_expected_gain_uses_clamped_delta_weight() {
         // Regression test (3-Jan-2026): synapse weight updates must compute expected improvement
         // using the effective (clamped) delta_weight, not the proposed delta.
-
-        let old_weight = 0.06f32;
-        let proposed_delta = 0.06f32; // would produce 0.12 without clamping
+        //
+        // Issue #888: Updated values to work with MAX_OUTGOING_WEIGHT=0.01.
+        // old_weight=0.006, proposed_delta=0.006 => unclamped=0.012 > 0.01
+        let old_weight = 0.006f32;
+        let proposed_delta = 0.006f32; // would produce 0.012 without clamping
 
         let (new_weight, delta_weight) =
             clamp_weight_update_delta(old_weight, proposed_delta).expect("delta should be non-zero");
@@ -1180,8 +1182,8 @@ Pages speculative:                        12345.
             "new_weight should be clamped to MAX_OUTGOING_WEIGHT"
         );
         assert!(
-            (delta_weight - 0.04).abs() < 1e-6,
-            "effective delta should be 0.04 after clamping, got {delta_weight}"
+            (delta_weight - 0.004).abs() < 1e-6,
+            "effective delta should be 0.004 after clamping, got {delta_weight}"
         );
 
         // Simple linear case: two identical samples.

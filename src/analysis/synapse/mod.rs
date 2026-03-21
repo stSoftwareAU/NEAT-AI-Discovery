@@ -82,8 +82,6 @@ pub(crate) use scoring::compute_synapse_improvement_and_count;
 #[cfg(test)]
 pub(crate) use candidate_generation::build_samples;
 #[cfg(test)]
-pub(crate) use gpu_evaluation::{ActivationEvalParams, evaluate_activation_candidate};
-#[cfg(test)]
 pub(crate) use scoring::{
     compute_net_improvement_with_squash, compute_relu_improvement_and_count,
     compute_synapse_improvement_with_target_squash, count_improved_samples,

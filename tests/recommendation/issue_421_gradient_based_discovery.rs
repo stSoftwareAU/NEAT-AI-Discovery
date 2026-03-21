@@ -419,7 +419,10 @@ fn test_gradient_sign_determines_direction() {
             neuron("input-0", "input", "IDENTITY"),
             output("output-0", "HARD_TANH"),
         ],
-        vec![synapse("input-0", "output-0", 0.05)],
+        // Issue #888: Synapse weight reduced from 0.05 to 0.005 so it falls within
+        // the tightened MAX_OUTGOING_WEIGHT (0.01) and the gradient can propose
+        // a positive delta rather than being clamped downward.
+        vec![synapse("input-0", "output-0", 0.005)],
     );
 
     // Negative gradient: high activation with negative error

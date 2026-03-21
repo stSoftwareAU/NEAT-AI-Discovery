@@ -95,8 +95,9 @@ fn conservative_config_scales_outgoing() {
     let candidate = make_test_neuron_candidate(200.0, 0.1, 50.0);
     let variant = make_neuron_variant(&candidate, &CONSERVATIVE_CONFIG);
 
-    // 0.1 * 0.2 = 0.02, clamped to 0.05 max → 0.02
-    let expected = (0.1_f32 * 0.2).clamp(-0.05, 0.05);
+    // Issue #888: outgoing_abs_max tightened from 0.05 to 0.005.
+    // 0.1 * 0.2 = 0.02, clamped to 0.005 max → 0.005
+    let expected = (0.1_f32 * 0.2).clamp(-0.005, 0.005);
     assert!(
         (variant.outgoing_weight - expected).abs() < 1e-6,
         "conservative outgoing should be {expected}, got {}",
@@ -123,12 +124,13 @@ fn conservative_config_scales_expected_improvement() {
 
 #[test]
 fn gentle_nudge_config_preserves_moderate_incoming() {
-    let candidate = make_test_neuron_candidate(10.0, 0.1, 5.0);
+    // Issue #888: Gentle Nudge incoming_abs_max tightened from 20.0 to 5.0.
+    let candidate = make_test_neuron_candidate(4.0, 0.01, 1.5);
     let variant = make_neuron_variant(&candidate, &GENTLE_NUDGE_CONFIG);
 
-    // Gentle nudge has incoming_abs_max = 20.0, so 10.0 is within range
+    // Gentle nudge has incoming_abs_max = 5.0, so 4.0 is within range
     assert!(
-        (variant.incoming_weight - 10.0).abs() < 1e-6,
+        (variant.incoming_weight - 4.0).abs() < 1e-6,
         "gentle nudge should preserve incoming within range, got {}",
         variant.incoming_weight
     );
@@ -139,10 +141,11 @@ fn gentle_nudge_config_has_tight_outgoing() {
     let candidate = make_test_neuron_candidate(200.0, 0.1, 50.0);
     let variant = make_neuron_variant(&candidate, &GENTLE_NUDGE_CONFIG);
 
-    // 0.1 * 0.1 = 0.01, clamped to 0.02 max → 0.01
+    // Issue #888: outgoing_abs_max tightened from 0.02 to 0.01.
+    // 0.1 * 0.1 = 0.01, clamped to 0.01 max → 0.01
     assert!(
-        variant.outgoing_weight.abs() <= 0.02 + 1e-6,
-        "gentle nudge outgoing should be at most 0.02, got {}",
+        variant.outgoing_weight.abs() <= 0.01 + 1e-6,
+        "gentle nudge outgoing should be at most 0.01, got {}",
         variant.outgoing_weight
     );
 }
@@ -411,7 +414,8 @@ fn custom_synapse_config_produces_expected_variant() {
 
 #[test]
 fn filter_sensible_ranges_passes_candidates_within_bounds() {
-    let candidate = make_test_neuron_candidate(5.0, 0.05, 3.0);
+    // Issue #888: Tightened sensible ranges (incoming ≤5, outgoing ≤0.01, bias ≤2).
+    let candidate = make_test_neuron_candidate(3.0, 0.005, 1.0);
     let result = filter_candidates_to_sensible_ranges(vec![candidate]);
 
     assert_eq!(
@@ -420,44 +424,47 @@ fn filter_sensible_ranges_passes_candidates_within_bounds() {
         "candidate within bounds should pass through"
     );
     assert!(
-        (result[0].incoming_weight - 5.0).abs() < 1e-6,
+        (result[0].incoming_weight - 3.0).abs() < 1e-6,
         "should preserve incoming weight"
     );
 }
 
 #[test]
 fn filter_sensible_ranges_rejects_excessive_incoming_weight() {
-    let candidate = make_test_neuron_candidate(25.0, 0.05, 3.0);
+    // Issue #888: Tightened SENSIBLE_INCOMING_ABS_MAX from 20.0 to 5.0.
+    let candidate = make_test_neuron_candidate(8.0, 0.005, 1.0);
     let result = filter_candidates_to_sensible_ranges(vec![candidate]);
 
     assert!(
         result.is_empty(),
-        "incoming weight > 20.0 should be filtered out"
+        "incoming weight > 5.0 should be filtered out"
     );
 }
 
 #[test]
 fn filter_sensible_ranges_rejects_excessive_bias() {
-    let candidate = make_test_neuron_candidate(5.0, 0.05, 15.0);
+    // Issue #888: Tightened SENSIBLE_BIAS_ABS_MAX from 10.0 to 2.0.
+    let candidate = make_test_neuron_candidate(3.0, 0.005, 4.0);
     let result = filter_candidates_to_sensible_ranges(vec![candidate]);
 
-    assert!(result.is_empty(), "bias > 10.0 should be filtered out");
+    assert!(result.is_empty(), "bias > 2.0 should be filtered out");
 }
 
 #[test]
 fn filter_sensible_ranges_rejects_excessive_outgoing_weight() {
-    let candidate = make_test_neuron_candidate(5.0, 0.5, 3.0);
+    // Issue #888: Tightened SENSIBLE_OUTGOING_ABS_MAX from 0.1 to 0.01.
+    let candidate = make_test_neuron_candidate(3.0, 0.05, 1.0);
     let result = filter_candidates_to_sensible_ranges(vec![candidate]);
 
     assert!(
         result.is_empty(),
-        "outgoing weight > 0.1 should be filtered out"
+        "outgoing weight > 0.01 should be filtered out"
     );
 }
 
 #[test]
 fn filter_sensible_ranges_rejects_nan_values() {
-    let mut candidate = make_test_neuron_candidate(5.0, 0.05, 3.0);
+    let mut candidate = make_test_neuron_candidate(3.0, 0.005, 1.0);
     candidate.incoming_weight = f32::NAN;
     let result = filter_candidates_to_sensible_ranges(vec![candidate]);
 
@@ -469,7 +476,7 @@ fn filter_sensible_ranges_rejects_nan_values() {
 
 #[test]
 fn filter_sensible_ranges_rejects_infinity() {
-    let mut candidate = make_test_neuron_candidate(5.0, 0.05, 3.0);
+    let mut candidate = make_test_neuron_candidate(3.0, 0.005, 1.0);
     candidate.outgoing_weight = f32::INFINITY;
     let result = filter_candidates_to_sensible_ranges(vec![candidate]);
 
@@ -481,8 +488,8 @@ fn filter_sensible_ranges_rejects_infinity() {
 
 #[test]
 fn filter_sensible_ranges_accepts_boundary_values() {
-    // Exactly at the limits: incoming=20.0, bias=10.0, outgoing=0.1
-    let candidate = make_test_neuron_candidate(20.0, 0.1, 10.0);
+    // Issue #888: Tightened limits: incoming=5.0, outgoing=0.01, bias=2.0.
+    let candidate = make_test_neuron_candidate(5.0, 0.01, 2.0);
     let result = filter_candidates_to_sensible_ranges(vec![candidate]);
 
     assert_eq!(
@@ -494,10 +501,11 @@ fn filter_sensible_ranges_accepts_boundary_values() {
 
 #[test]
 fn filter_sensible_ranges_keeps_valid_from_mixed_list() {
-    let good = make_test_neuron_candidate(5.0, 0.05, 3.0);
-    let bad_incoming = make_test_neuron_candidate(25.0, 0.05, 3.0);
-    let bad_bias = make_test_neuron_candidate(5.0, 0.05, 15.0);
-    let also_good = make_test_neuron_candidate(10.0, 0.08, 7.0);
+    // Issue #888: Tightened sensible ranges.
+    let good = make_test_neuron_candidate(3.0, 0.005, 1.0);
+    let bad_incoming = make_test_neuron_candidate(8.0, 0.005, 1.0);
+    let bad_bias = make_test_neuron_candidate(3.0, 0.005, 4.0);
+    let also_good = make_test_neuron_candidate(4.0, 0.008, 1.5);
 
     let result =
         filter_candidates_to_sensible_ranges(vec![good, bad_incoming, bad_bias, also_good]);
@@ -513,7 +521,8 @@ fn filter_sensible_ranges_returns_empty_for_empty_input() {
 
 #[test]
 fn filter_sensible_ranges_handles_negative_values_within_bounds() {
-    let candidate = make_test_neuron_candidate(-15.0, -0.08, -8.0);
+    // Issue #888: Tightened sensible ranges.
+    let candidate = make_test_neuron_candidate(-4.0, -0.008, -1.5);
     let result = filter_candidates_to_sensible_ranges(vec![candidate]);
 
     assert_eq!(result.len(), 1, "negative values within bounds should pass");
