@@ -38,6 +38,7 @@ mod activation_subset_evaluation;
 mod candidate_generation;
 mod filtering;
 mod gpu_evaluation;
+pub(crate) mod holdout_validation;
 mod metadata;
 mod orchestration;
 pub mod post_processing;
