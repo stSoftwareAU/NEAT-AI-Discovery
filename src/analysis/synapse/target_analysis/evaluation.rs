@@ -92,8 +92,8 @@ pub(crate) fn collect_and_process_helpful_results(
                 continue;
             }
 
-            let total_count = work.samples.len() as u32;
-            if total_count == 0 {
+            let full_total_count = work.samples.len() as u32;
+            if full_total_count == 0 {
                 continue;
             }
 
@@ -117,38 +117,100 @@ pub(crate) fn collect_and_process_helpful_results(
 
             let baseline_error_sq = stats.error_sq_sum;
 
-            let (applied_weight, neuron_error_improvement, improved_count, worsened_count) =
-                if let Some(old_weight) = work.existing_weight {
-                    let Some((_new_weight, delta_weight)) =
-                        clamp_weight_update_delta(old_weight, weight)
-                    else {
-                        continue;
-                    };
-                    let (improvement, improved, worsened, _) =
-                        compute_synapse_improvement_and_count(
-                            &work.samples,
-                            delta_weight,
-                            baseline_error_sq,
+            // Issue #893: total_count is updated to the validation sample count
+            // when hold-out validation is used, so ratio checks remain consistent.
+            let (
+                applied_weight,
+                neuron_error_improvement,
+                improved_count,
+                worsened_count,
+                total_count,
+            ) = if let Some(old_weight) = work.existing_weight {
+                let Some((_new_weight, delta_weight)) =
+                    clamp_weight_update_delta(old_weight, weight)
+                else {
+                    continue;
+                };
+                let (improvement, improved, worsened, _) = compute_synapse_improvement_and_count(
+                    &work.samples,
+                    delta_weight,
+                    baseline_error_sq,
+                    target_squash,
+                );
+                (
+                    delta_weight,
+                    improvement,
+                    improved,
+                    worsened,
+                    full_total_count,
+                )
+            } else {
+                // Issue #730: Multi-weight search for ALL new synapse candidates.
+                // Previously only saturating targets used weight search (Issue #413).
+                // Production data showed 0% success rate because a single computed
+                // weight often overshoots, especially with noisy samples.
+                //
+                // Issue #893: Hold-out validation to combat overfitting from the
+                // 9-variant search. Select weight on training samples, report
+                // improvement on held-out validation samples.
+                use crate::analysis::synapse::holdout_validation::{
+                    baseline_error_sq as compute_baseline, collect_samples, split_samples_holdout,
+                };
+
+                let weight_candidates: [f32; 9] = [
+                    weight * 0.1,
+                    weight * 0.25,
+                    weight * 0.5,
+                    weight * 0.75,
+                    weight,
+                    weight * 1.5,
+                    weight * 2.0,
+                    -weight * 0.5,
+                    -weight,
+                ];
+
+                if let Some(split) =
+                    split_samples_holdout(&work.samples, &work.source_uuid, &work.target_uuid)
+                {
+                    // Phase 1: Select best weight using training samples only
+                    let train_samples = collect_samples(&split.train);
+                    let train_baseline = compute_baseline(&split.train);
+
+                    let mut best_weight = weight;
+                    let mut best_train_improvement = f32::NEG_INFINITY;
+
+                    for &w in &weight_candidates {
+                        let clamped = w.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+                        if clamped.abs() <= EPSILON {
+                            continue;
+                        }
+                        let (imp, _, _, _) = compute_synapse_improvement_and_count(
+                            &train_samples,
+                            clamped,
+                            train_baseline,
                             target_squash,
                         );
-                    (delta_weight, improvement, improved, worsened)
-                } else {
-                    // Issue #730: Multi-weight search for ALL new synapse candidates.
-                    // Previously only saturating targets used weight search (Issue #413).
-                    // Production data showed 0% success rate because a single computed
-                    // weight often overshoots, especially with noisy samples.
-                    let weight_candidates: [f32; 9] = [
-                        weight * 0.1,
-                        weight * 0.25,
-                        weight * 0.5,
-                        weight * 0.75,
-                        weight,
-                        weight * 1.5,
-                        weight * 2.0,
-                        -weight * 0.5,
-                        -weight,
-                    ];
+                        if imp > best_train_improvement {
+                            best_train_improvement = imp;
+                            best_weight = clamped;
+                        }
+                    }
 
+                    // Phase 2: Report improvement on validation samples only
+                    let validate_samples = collect_samples(&split.validate);
+                    let validate_baseline = compute_baseline(&split.validate);
+                    let val_total = validate_samples.len() as u32;
+
+                    let (val_imp, val_improved, val_worsened, _) =
+                        compute_synapse_improvement_and_count(
+                            &validate_samples,
+                            best_weight,
+                            validate_baseline,
+                            target_squash,
+                        );
+                    (best_weight, val_imp, val_improved, val_worsened, val_total)
+                } else {
+                    // Fallback: below hold-out threshold, use all samples
                     let mut best_weight = weight;
                     let mut best_improvement = f32::NEG_INFINITY;
                     let mut best_improved = 0u32;
@@ -172,8 +234,15 @@ pub(crate) fn collect_and_process_helpful_results(
                             best_worsened = worsened;
                         }
                     }
-                    (best_weight, best_improvement, best_improved, best_worsened)
-                };
+                    (
+                        best_weight,
+                        best_improvement,
+                        best_improved,
+                        best_worsened,
+                        full_total_count,
+                    )
+                }
+            };
 
             // Issue #202: Track source contribution for epistatic pair detection
             if work.existing_weight.is_none() {

@@ -290,6 +290,34 @@ pub const ACTIVATION_BOOST_BIPOLAR: f64 = 0.95;
 /// Penalty multiplier for `HARD_TANH` activation (7.2% raw, Bayesian-smoothed 0.80×).
 pub const ACTIVATION_BOOST_HARD_TANH: f64 = 0.80;
 
+// =============================================================================
+// Hold-Out Validation for Multi-Weight Search (Issue #893)
+// =============================================================================
+
+/// Minimum number of samples required to use hold-out validation.
+///
+/// Below this threshold, splitting into train/validate sets would leave
+/// too few samples in each partition for reliable results. When the total
+/// sample count is below this value, the current approach (full-sample
+/// evaluation with pessimism discounting) is used as a fallback.
+///
+/// ## Valid Range
+/// Must be >= `MIN_DISCOVERY_SAMPLE_COUNT`. Values below 20 produce
+/// unreliable splits.
+pub const HOLDOUT_MIN_SAMPLE_COUNT: usize = 20;
+
+/// Fraction of samples reserved for the validation (hold-out) set.
+///
+/// The remaining samples (1 - this fraction) are used for training
+/// (weight selection). A 70/30 split balances having enough training
+/// data for reliable weight fitting while retaining a meaningful
+/// validation set.
+///
+/// ## Valid Range
+/// Must be in (0.1, 0.5). Values below 0.1 leave too few validation
+/// samples. Values above 0.5 leave too few training samples.
+pub const HOLDOUT_VALIDATION_FRACTION: f32 = 0.3;
+
 /// Returns the activation-function-aware boost/penalty multiplier for add-neuron
 /// candidate scoring (Issue #887).
 ///

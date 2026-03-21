@@ -21,6 +21,7 @@ mod issue_731_combo_successful_filtering;
 mod issue_732_coordinated_structural_success_rate;
 mod issue_789_improve_add_synapses_success_rate;
 mod issue_790_reduce_coordinated_structural_false_positives;
+mod issue_893_holdout_validation;
 mod sample_matching;
 mod sensible_range_filtering;
 mod source_variance_discounting;

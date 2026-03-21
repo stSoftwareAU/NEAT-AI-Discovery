@@ -228,54 +228,125 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                         -base_weight,
                     ];
 
-                    let mut best_weight = base_weight;
-                    let mut best_bias = 0.0f32;
-                    let mut best_improvement = f32::NEG_INFINITY;
-                    let mut best_improved_count = 0u32;
+                    // Issue #893: Hold-out validation to combat overfitting from the
+                    // 9-variant search. Select weight on training samples, report
+                    // improvement on held-out validation samples.
+                    use crate::analysis::synapse::holdout_validation::{
+                        baseline_error_sq as compute_baseline, collect_samples,
+                        split_samples_holdout,
+                    };
 
-                    for &weight in &weight_candidates {
-                        // Clamp scaled weights to ensure they stay within bounds
-                        let clamped_weight =
-                            weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
-                        if clamped_weight.abs() <= EPSILON {
-                            continue;
+                    if let Some(split) =
+                        split_samples_holdout(samples, params.source_uuid, params.target_uuid)
+                    {
+                        // Phase 1: Select best weight+bias using training samples only
+                        let train_samples = collect_samples(&split.train);
+                        let train_baseline = compute_baseline(&split.train);
+
+                        let mut best_weight = base_weight;
+                        let mut best_bias = 0.0f32;
+                        let mut best_train_improvement = f32::NEG_INFINITY;
+
+                        for &weight in &weight_candidates {
+                            let clamped_weight =
+                                weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+                            if clamped_weight.abs() <= EPSILON {
+                                continue;
+                            }
+
+                            let bias = calculate_optimal_bias(
+                                &train_samples,
+                                incoming_weight,
+                                clamped_weight,
+                                spec.activation,
+                                spec.name,
+                                None,
+                                params.target_squash,
+                            );
+
+                            let (improvement, _, _) = compute_activation_improvement_and_count(
+                                &train_samples,
+                                incoming_weight,
+                                clamped_weight,
+                                bias,
+                                spec.activation,
+                                train_baseline,
+                                target_activation_fn,
+                            );
+
+                            if improvement > best_train_improvement {
+                                best_train_improvement = improvement;
+                                best_weight = clamped_weight;
+                                best_bias = bias;
+                            }
                         }
 
-                        let bias = calculate_optimal_bias(
-                            samples,
-                            incoming_weight,
-                            clamped_weight,
-                            spec.activation,
-                            spec.name,
-                            None,
-                            params.target_squash,
-                        );
+                        // Phase 2: Report improvement on validation samples only
+                        let validate_samples = collect_samples(&split.validate);
+                        let validate_baseline = compute_baseline(&split.validate);
 
-                        // Single pass for improvement and count with target simulation
-                        let (improvement, improved, _) = compute_activation_improvement_and_count(
-                            samples,
-                            incoming_weight,
-                            clamped_weight,
-                            bias,
-                            spec.activation,
-                            baseline_sq,
-                            target_activation_fn,
-                        );
+                        let (val_improvement, val_improved, _) =
+                            compute_activation_improvement_and_count(
+                                &validate_samples,
+                                incoming_weight,
+                                best_weight,
+                                best_bias,
+                                spec.activation,
+                                validate_baseline,
+                                target_activation_fn,
+                            );
 
-                        if improvement > best_improvement {
-                            best_improvement = improvement;
-                            best_weight = clamped_weight;
-                            best_bias = bias;
-                            best_improved_count = improved;
+                        (best_weight, best_bias, val_improvement, val_improved)
+                    } else {
+                        // Fallback: below hold-out threshold, use all samples
+                        let mut best_weight = base_weight;
+                        let mut best_bias = 0.0f32;
+                        let mut best_improvement = f32::NEG_INFINITY;
+                        let mut best_improved_count = 0u32;
+
+                        for &weight in &weight_candidates {
+                            let clamped_weight =
+                                weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+                            if clamped_weight.abs() <= EPSILON {
+                                continue;
+                            }
+
+                            let bias = calculate_optimal_bias(
+                                samples,
+                                incoming_weight,
+                                clamped_weight,
+                                spec.activation,
+                                spec.name,
+                                None,
+                                params.target_squash,
+                            );
+
+                            let (improvement, improved, _) =
+                                compute_activation_improvement_and_count(
+                                    samples,
+                                    incoming_weight,
+                                    clamped_weight,
+                                    bias,
+                                    spec.activation,
+                                    baseline_sq,
+                                    target_activation_fn,
+                                );
+
+                            if improvement > best_improvement {
+                                best_improvement = improvement;
+                                best_weight = clamped_weight;
+                                best_bias = bias;
+                                best_improved_count = improved;
+                            }
                         }
+
+                        (
+                            best_weight,
+                            best_bias,
+                            best_improvement,
+                            best_improved_count,
+                        )
                     }
-
-                    (
-                        best_weight,
-                        best_bias,
-                        best_improvement,
-                        best_improved_count,
-                    )
                 } else {
                     // For linear targets or when target data unavailable, use the base weight.
                     let base_weight = match calculate_optimal_outgoing_weight(
