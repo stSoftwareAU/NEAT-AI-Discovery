@@ -124,6 +124,19 @@ pub const DIVERSIFY_TOP_K: usize = 64;
 /// Must be > 1.0 (boost) and <= 3.0 (avoid over-biasing).
 pub const INPUT_SOURCE_BOOST: f64 = 1.5;
 
+/// Scoring boost multiplier for candidates from hidden-neuron sources (Issue #910).
+///
+/// Hidden-to-hidden synapse candidates connect existing computational units into
+/// more complex structures. While input sources have higher individual success
+/// rates, hidden-to-hidden connections are essential for building deeper network
+/// architectures. This modest boost ensures hidden-sourced candidates are not
+/// entirely eclipsed by `INPUT_SOURCE_BOOST` during ranking.
+///
+/// ## Valid Range
+/// Must be >= 1.0 and <= `INPUT_SOURCE_BOOST` (hidden sources should not
+/// outrank input sources, just compete more fairly).
+pub const HIDDEN_SOURCE_BOOST: f64 = 1.2;
+
 /// Interleave interval for hidden sources during source ordering (Issue #907).
 ///
 /// After every `HIDDEN_SOURCE_INTERLEAVE_INTERVAL` input sources, one hidden

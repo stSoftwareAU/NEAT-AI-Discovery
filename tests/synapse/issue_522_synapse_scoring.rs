@@ -139,21 +139,28 @@ fn source_boost_applied_to_various_input_indices() {
 }
 
 #[test]
-fn source_boost_not_applied_to_hidden_uuids() {
-    let test_uuids = [
-        "hidden-abc-123",
-        "some-random-uuid",
-        "output-0",
-        "discovery-hidden-xyz",
-    ];
-    for uuid in test_uuids {
+fn source_boost_applies_hidden_boost_to_hidden_uuids() {
+    // Issue #910: Hidden sources now receive HIDDEN_SOURCE_BOOST (1.2x)
+    use neat_ai_discovery::analysis::constants::HIDDEN_SOURCE_BOOST;
+
+    let hidden_uuids = ["hidden-abc-123", "some-random-uuid", "discovery-hidden-xyz"];
+    for uuid in hidden_uuids {
         let gain = 0.10;
         let result = apply_source_type_boost(gain, uuid);
+        let expected = gain * HIDDEN_SOURCE_BOOST as f32;
         assert!(
-            (result - gain).abs() < 1e-6,
-            "Non-input source '{uuid}' should not be boosted: expected {gain}, got {result}"
+            (result - expected).abs() < 1e-6,
+            "Hidden source '{uuid}' should receive HIDDEN_SOURCE_BOOST: expected {expected}, got {result}"
         );
     }
+
+    // Output sources still get no boost
+    let gain = 0.10;
+    let result = apply_source_type_boost(gain, "output-0");
+    assert!(
+        (result - gain).abs() < 1e-6,
+        "Output source should not be boosted: expected {gain}, got {result}"
+    );
 }
 
 #[test]

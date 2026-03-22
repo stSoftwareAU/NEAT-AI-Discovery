@@ -221,22 +221,23 @@ fn input_source_boost_amplifies_score_gain() {
 }
 
 #[test]
-fn input_source_boost_does_not_apply_to_hidden_sources() {
-    // Hidden neurons should get a neutral multiplier (1.0)
-    // This is a behavioural test: the boost constant is only for input sources
+fn input_source_boost_exceeds_hidden_source_boost() {
+    // Issue #910: Hidden neurons now receive HIDDEN_SOURCE_BOOST (1.2x) but
+    // input neurons should still outrank them with INPUT_SOURCE_BOOST (1.5x).
+    use neat_ai_discovery::analysis::constants::HIDDEN_SOURCE_BOOST;
+
     let base_gain = 0.05_f64;
-    let hidden_multiplier = 1.0_f64;
-    let hidden_gain = base_gain * hidden_multiplier;
+    let hidden_gain = base_gain * HIDDEN_SOURCE_BOOST;
+    let input_gain = base_gain * INPUT_SOURCE_BOOST;
 
     assert!(
-        (hidden_gain - base_gain).abs() < f64::EPSILON,
-        "Hidden neuron sources should not get a boost"
+        hidden_gain > base_gain,
+        "Hidden neuron sources should get a modest boost via HIDDEN_SOURCE_BOOST"
     );
 
-    let input_gain = base_gain * INPUT_SOURCE_BOOST;
     assert!(
         input_gain > hidden_gain,
-        "Input neuron gain ({input_gain}) should exceed hidden neuron gain ({hidden_gain})"
+        "Input neuron gain ({input_gain}) should still exceed hidden neuron gain ({hidden_gain})"
     );
 }
 
@@ -263,15 +264,19 @@ fn apply_source_type_boost_boosts_input_source() {
 }
 
 #[test]
-fn apply_source_type_boost_neutral_for_hidden_source() {
+fn apply_source_type_boost_applies_hidden_boost_to_hidden_source() {
+    // Issue #910: Hidden sources now receive HIDDEN_SOURCE_BOOST (1.2x) instead of
+    // neutral (1.0x) to ensure hidden-to-hidden candidates can compete more fairly.
+    use neat_ai_discovery::analysis::constants::HIDDEN_SOURCE_BOOST;
     use neat_ai_discovery::analysis::synapse::apply_source_type_boost;
 
     let gain = 0.10_f32;
     let result = apply_source_type_boost(gain, "hidden-uuid-abc");
+    let expected = gain * HIDDEN_SOURCE_BOOST as f32;
 
     assert!(
-        (result - gain).abs() < 1e-6,
-        "Hidden source should not be boosted: expected {gain}, got {result}"
+        (result - expected).abs() < 1e-6,
+        "Hidden source should receive HIDDEN_SOURCE_BOOST: expected {expected}, got {result}"
     );
 }
 
