@@ -11,7 +11,10 @@ use crate::analysis::activation::{activation_name_to_gpu_id, get_bias_range, get
 use crate::analysis::gpu::GpuAnalyzer;
 use crate::analysis::samples::{EPSILON, HelpfulSample};
 
-use super::{MAX_OUTGOING_WEIGHT, MIN_WEIGHT_RATIO};
+use super::{
+    MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT_NON_LINEAR, MIN_WEIGHT_RATIO,
+    MIN_WEIGHT_RATIO_NON_LINEAR,
+};
 
 // MIN_NEURON_SAMPLE_COUNT moved to constants.rs (Issue #424)
 use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT;
@@ -46,6 +49,78 @@ pub fn calculate_optimal_outgoing_weight(
     sum_activation_sq: f32,
     incoming_weight: f32,
 ) -> Option<f32> {
+    compute_outgoing_weight(
+        sum_error_activation,
+        sum_activation_sq,
+        incoming_weight,
+        MAX_OUTGOING_WEIGHT,
+        MIN_WEIGHT_RATIO,
+    )
+}
+
+/// Return activation-aware maximum outgoing weight.
+///
+/// Issue #905: IDENTITY candidates use the tight ceiling from Issue #888,
+/// while non-linear activations (TANH, GELU, `ReLU`, etc.) use a relaxed
+/// ceiling because they compress their output range.
+pub fn max_outgoing_weight_for_activation(activation_name: &str) -> f32 {
+    if activation_name.eq_ignore_ascii_case("IDENTITY") {
+        MAX_OUTGOING_WEIGHT
+    } else {
+        MAX_OUTGOING_WEIGHT_NON_LINEAR
+    }
+}
+
+/// Return activation-aware minimum weight ratio.
+///
+/// Issue #905: IDENTITY candidates use the tight ratio from Issue #888,
+/// while non-linear activations use a relaxed ratio because they operate
+/// in different weight regimes.
+pub fn min_weight_ratio_for_activation(activation_name: &str) -> f32 {
+    if activation_name.eq_ignore_ascii_case("IDENTITY") {
+        MIN_WEIGHT_RATIO
+    } else {
+        MIN_WEIGHT_RATIO_NON_LINEAR
+    }
+}
+
+/// Calculate optimal outgoing weight with activation-aware constraints.
+///
+/// Issue #905: This function applies relaxed `MAX_OUTGOING_WEIGHT` and
+/// `MIN_WEIGHT_RATIO` for non-linear activations to avoid systematic
+/// rejection of valid non-IDENTITY and hidden-source candidates.
+///
+/// For IDENTITY, this produces identical results to
+/// [`calculate_optimal_outgoing_weight`].
+pub fn calculate_activation_aware_outgoing_weight(
+    sum_error_activation: f32,
+    sum_activation_sq: f32,
+    incoming_weight: f32,
+    activation_name: &str,
+) -> Option<f32> {
+    let max_outgoing = max_outgoing_weight_for_activation(activation_name);
+    let min_ratio = min_weight_ratio_for_activation(activation_name);
+    compute_outgoing_weight(
+        sum_error_activation,
+        sum_activation_sq,
+        incoming_weight,
+        max_outgoing,
+        min_ratio,
+    )
+}
+
+/// Core outgoing weight calculation with configurable constraints.
+///
+/// Shared implementation for both `calculate_optimal_outgoing_weight` (IDENTITY
+/// defaults) and `calculate_activation_aware_outgoing_weight` (activation-aware
+/// constraints).
+fn compute_outgoing_weight(
+    sum_error_activation: f32,
+    sum_activation_sq: f32,
+    incoming_weight: f32,
+    max_outgoing: f32,
+    min_ratio: f32,
+) -> Option<f32> {
     // Need sufficient activation energy to compute meaningful weight
     if sum_activation_sq <= EPSILON {
         return None;
@@ -59,16 +134,13 @@ pub fn calculate_optimal_outgoing_weight(
         return None;
     }
 
-    // Clamp to tight range based on successful discovery analysis
-    let clamped = raw_weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+    // Clamp to range based on activation-aware constraints
+    let clamped = raw_weight.clamp(-max_outgoing, max_outgoing);
 
     // For add-neuron candidates with non-trivial incoming weights, validate ratio
-    // This catches cases where the computed weight is too large relative to incoming
     if incoming_weight.abs() > 1.0 {
         let ratio = incoming_weight.abs() / (clamped.abs() + EPSILON);
-        if ratio < MIN_WEIGHT_RATIO {
-            // Weight ratio too small - this configuration is unreliable
-            // Skip rather than returning a weight that's likely to fail
+        if ratio < min_ratio {
             return None;
         }
     }

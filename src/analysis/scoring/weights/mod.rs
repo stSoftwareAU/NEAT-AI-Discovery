@@ -12,9 +12,10 @@
 //!
 //! ## Design Notes
 //!
-//! - Outgoing weights are clamped to [-0.01, 0.01] (tightened in Issue #888)
-//! - Weight ratio validation ensures incoming/outgoing ratio >= 50 for reliable
-//!   predictions (based on successful discovery analysis)
+//! - IDENTITY outgoing weights are clamped to [-0.01, 0.01] (tightened in Issue #888)
+//! - Non-linear activations use relaxed ceiling [-0.05, 0.05] (Issue #905)
+//! - Weight ratio validation is activation-aware: IDENTITY requires ratio >= 50,
+//!   non-linear activations require ratio >= 10 (Issue #905)
 //! - Bias-aware calculation recomputes weights after bias optimisation
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
@@ -26,7 +27,7 @@ pub mod normalisation;
 // Constants
 // =============================================================================
 
-/// Maximum allowed outgoing weight for add-neuron and add-synapse candidates.
+/// Maximum allowed outgoing weight for IDENTITY add-neuron and add-synapse candidates.
 ///
 /// Issue #888: Tightened from 0.1 to 0.01 based on GRQ-sampler discovery cache:
 /// - Successful candidates: outgoing weights 0.001–0.005 (exponent e-3)
@@ -36,9 +37,22 @@ pub mod normalisation;
 ///
 /// Using 0.01 provides margin above the 0.005 success peak while filtering
 /// the 0.01–0.1 range that almost always fails.
+///
+/// Issue #905: This value is now specific to IDENTITY candidates. Non-linear
+/// activations use `MAX_OUTGOING_WEIGHT_NON_LINEAR` via the activation-aware
+/// helpers.
 pub const MAX_OUTGOING_WEIGHT: f32 = 0.01;
 
-/// Minimum incoming/outgoing weight ratio for reliable predictions.
+/// Maximum allowed outgoing weight for non-linear activation candidates.
+///
+/// Issue #905: Non-linear activations (TANH, GELU, `ReLU`, etc.) compress their
+/// output range, requiring a larger outgoing weight to achieve the same
+/// correction magnitude. The IDENTITY-calibrated ceiling of 0.01 systematically
+/// rejects valid non-linear candidates whose optimal weight is in the 0.01–0.03
+/// range.
+pub const MAX_OUTGOING_WEIGHT_NON_LINEAR: f32 = 0.03;
+
+/// Minimum incoming/outgoing weight ratio for IDENTITY predictions.
 ///
 /// Based on successful discovery analysis:
 /// - Successful discoveries have ratio 71x to 104,000x
@@ -46,6 +60,13 @@ pub const MAX_OUTGOING_WEIGHT: f32 = 0.01;
 ///
 /// We require ratio >= 50 when incoming weight > 1.0.
 pub(crate) const MIN_WEIGHT_RATIO: f32 = 50.0;
+
+/// Minimum incoming/outgoing weight ratio for non-linear activation predictions.
+///
+/// Issue #905: Non-linear activations operate in different weight regimes than
+/// IDENTITY. Hidden-source candidates with smaller incoming weights and
+/// non-linear activations are valid at lower ratios.
+pub(crate) const MIN_WEIGHT_RATIO_NON_LINEAR: f32 = 10.0;
 
 // DEFAULT_SENTINEL_TOLERANCE uses SENTINEL_TOLERANCE from constants.rs (Issue #424)
 pub use crate::analysis::constants::SENTINEL_TOLERANCE as DEFAULT_SENTINEL_TOLERANCE;
@@ -56,8 +77,9 @@ pub use crate::analysis::constants::SENTINEL_TOLERANCE as DEFAULT_SENTINEL_TOLER
 
 pub use adjustment::{clamp_weight_update_delta, coordinated_structural_activation_delta};
 pub use calculation::{
-    calculate_optimal_bias, calculate_optimal_identity_outgoing_and_bias,
-    calculate_optimal_outgoing_weight,
+    calculate_activation_aware_outgoing_weight, calculate_optimal_bias,
+    calculate_optimal_identity_outgoing_and_bias, calculate_optimal_outgoing_weight,
+    max_outgoing_weight_for_activation, min_weight_ratio_for_activation,
 };
 pub use normalisation::{calculate_range_aware_weight, compute_range_aware_sums};
 

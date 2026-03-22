@@ -323,11 +323,11 @@ mod tests {
 
         let specs = build_discovery_module_specs(&creature, &hidden, &cache, &topo);
 
-        // We expect exactly 45 modules across all four spec groups.
+        // We expect exactly 46 modules across all four spec groups.
         assert_eq!(
             specs.len(),
-            45,
-            "Expected 45 discovery module specs, got {}",
+            46,
+            "Expected 46 discovery module specs, got {}",
             specs.len()
         );
 

@@ -361,19 +361,22 @@ mod tests {
         let mode = get_target_simulation_mode(&samples, Some("HARD_TANH"));
         assert!(matches!(
             mode,
-            TargetSimulationMode::ApproximateValueFromActivation(_)
+            TargetSimulationMode::ApproximateValueFromActivation { .. }
         ));
 
         // CLIPPED (alias for HARD_TANH) should also work
         let mode = get_target_simulation_mode(&samples, Some("CLIPPED"));
         assert!(matches!(
             mode,
-            TargetSimulationMode::ApproximateValueFromActivation(_)
+            TargetSimulationMode::ApproximateValueFromActivation { .. }
         ));
 
-        // Other activations should fall back to None
+        // Issue #906: TANH should now also use approximation mode (was None before)
         let mode = get_target_simulation_mode(&samples, Some("TANH"));
-        assert!(matches!(mode, TargetSimulationMode::None));
+        assert!(matches!(
+            mode,
+            TargetSimulationMode::ApproximateValueFromActivation { .. }
+        ));
     }
 
     #[test]

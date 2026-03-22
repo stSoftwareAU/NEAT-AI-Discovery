@@ -382,13 +382,81 @@ pub struct OrderedNeuron {
     pub index: usize,
 }
 
+/// Interleave hidden sources among input sources (Issue #907).
+///
+/// Instead of appending all hidden sources after all input sources, this
+/// function inserts one hidden source after every
+/// [`crate::analysis::constants::HIDDEN_SOURCE_INTERLEAVE_INTERVAL`] input
+/// sources. This ensures hidden-to-hidden synapse candidates are evaluated
+/// even under tight deadline constraints.
+///
+/// Input sources are still prioritised (they occupy the majority of slots),
+/// but hidden sources get regular evaluation opportunities throughout the
+/// ordering rather than being starved at the end.
+fn interleave_sources<'a>(
+    eligible_sources: &mut Vec<&'a OrderedNeuron>,
+    inputs: Vec<&'a OrderedNeuron>,
+    hidden: Vec<&'a OrderedNeuron>,
+) {
+    use crate::analysis::constants::HIDDEN_SOURCE_INTERLEAVE_INTERVAL;
+
+    if hidden.is_empty() {
+        eligible_sources.extend(inputs);
+        return;
+    }
+    if inputs.is_empty() {
+        eligible_sources.extend(hidden);
+        return;
+    }
+
+    let interval = HIDDEN_SOURCE_INTERLEAVE_INTERVAL;
+    let input_iter = inputs.into_iter();
+    let mut hidden_iter = hidden.into_iter().peekable();
+
+    let mut input_count_since_hidden = 0usize;
+
+    for inp in input_iter {
+        eligible_sources.push(inp);
+        input_count_since_hidden += 1;
+
+        // After every `interval` inputs, insert one hidden source
+        if input_count_since_hidden >= interval {
+            if let Some(hid) = hidden_iter.next() {
+                eligible_sources.push(hid);
+            }
+            input_count_since_hidden = 0;
+        }
+    }
+
+    // Append any remaining hidden sources
+    eligible_sources.extend(hidden_iter);
+
+    if verbose_enabled() {
+        let total = eligible_sources.len();
+        let hidden_count = eligible_sources
+            .iter()
+            .filter(|n| parse_input_index(&n.uuid).is_none())
+            .count();
+        let input_count = total - hidden_count;
+        tracing::debug!(
+            input_sources = input_count,
+            hidden_sources = hidden_count,
+            total_sources = total,
+            interleave_interval = interval,
+            "Issue #907: interleaved hidden sources among input sources"
+        );
+    }
+}
+
 /// Order eligible sources for evaluation.
 ///
 /// - Always respects forward-only candidate constraints (caller must filter by index).
-/// - **Issue #467**: Input neurons are always evaluated before hidden neurons. Within
-///   each group, neurons are randomly shuffled. This ensures that under deadline
-///   constraints, input-neuron sources (36.2% success rate) are tried before hidden
-///   neurons (2.8–3.3% success rate).
+/// - **Issue #467**: Input neurons are prioritised over hidden neurons. Within
+///   each group, neurons are randomly shuffled.
+/// - **Issue #907**: Hidden sources are interleaved among input sources at regular
+///   intervals (every [`crate::analysis::constants::HIDDEN_SOURCE_INTERLEAVE_INTERVAL`]
+///   inputs) so they are evaluated even under deadline pressure, rather than being
+///   appended at the end where they would be skipped.
 /// - If `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` is set, input sources are further
 ///   ordered by a weighted random permutation favouring higher input indices.
 /// - If `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS=1` is set, input neurons with NO
@@ -431,7 +499,7 @@ pub fn order_eligible_sources<S: std::borrow::Borrow<str> + std::hash::Hash + Eq
             );
         }
 
-        // Shuffle each partition separately, then concatenate
+        // Shuffle each partition separately, then interleave (Issue #907)
         shuffle_slice(&mut unused_inputs, seed, &format!("{context}:unused"));
         shuffle_slice(
             &mut used_inputs_vec,
@@ -440,9 +508,11 @@ pub fn order_eligible_sources<S: std::borrow::Borrow<str> + std::hash::Hash + Eq
         );
         shuffle_slice(&mut non_inputs, seed, &format!("{context}:non_inputs"));
 
-        eligible_sources.extend(unused_inputs);
-        eligible_sources.extend(used_inputs_vec);
-        eligible_sources.extend(non_inputs);
+        // Combine unused and used inputs in priority order, then interleave
+        // hidden sources among them so they are evaluated under deadline pressure.
+        let mut all_inputs = unused_inputs;
+        all_inputs.extend(used_inputs_vec);
+        interleave_sources(eligible_sources, all_inputs, non_inputs);
         return;
     }
 
@@ -454,11 +524,10 @@ pub fn order_eligible_sources<S: std::borrow::Borrow<str> + std::hash::Hash + Eq
         .partition(|n| parse_input_index(&n.uuid).is_some());
 
     let Some(bias) = source_input_index_bias_from_env() else {
-        // No index bias: shuffle each partition independently, inputs first
+        // No index bias: shuffle each partition independently, then interleave (Issue #907)
         shuffle_slice(&mut inputs, seed, &format!("{context}:inputs"));
         shuffle_slice(&mut non_inputs, seed, &format!("{context}:non_inputs"));
-        eligible_sources.extend(inputs);
-        eligible_sources.extend(non_inputs);
+        interleave_sources(eligible_sources, inputs, non_inputs);
         return;
     };
 
@@ -498,11 +567,11 @@ pub fn order_eligible_sources<S: std::borrow::Borrow<str> + std::hash::Hash + Eq
     }
 
     keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
-    eligible_sources.extend(keyed.into_iter().map(|(_, n)| n));
+    let sorted_inputs: Vec<&OrderedNeuron> = keyed.into_iter().map(|(_, n)| n).collect();
 
-    // Append non-input neurons after all input neurons
+    // Issue #907: Interleave hidden sources among weighted input sources
     shuffle_slice(&mut non_inputs, seed, &format!("{context}:non_inputs"));
-    eligible_sources.extend(non_inputs);
+    interleave_sources(eligible_sources, sorted_inputs, non_inputs);
 }
 
 // =============================================================================

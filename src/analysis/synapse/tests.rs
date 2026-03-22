@@ -74,7 +74,7 @@ fn test_target_simulation_mode_approximate() {
     let mode = get_target_simulation_mode(&samples, Some("HARD_TANH"));
     assert!(matches!(
         mode,
-        TargetSimulationMode::ApproximateValueFromActivation(_)
+        TargetSimulationMode::ApproximateValueFromActivation { .. }
     ));
 }
 

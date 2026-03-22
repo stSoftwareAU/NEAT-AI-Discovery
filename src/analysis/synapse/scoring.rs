@@ -18,9 +18,9 @@ use std::collections::HashMap;
 
 // Boosting and discount constants
 use crate::analysis::constants::{
-    EXISTING_HIDDEN_TARGET_BOOST, INPUT_SOURCE_BOOST, NEURON_PESSIMISM_CURVE_EXPONENT,
-    NEURON_PESSIMISM_DISCOUNT_FLOOR, PESSIMISM_CURVE_EXPONENT, PESSIMISM_DISCOUNT_FLOOR,
-    SYNAPSE_PESSIMISM_CURVE_EXPONENT, SYNAPSE_PESSIMISM_DISCOUNT_FLOOR,
+    EXISTING_HIDDEN_TARGET_BOOST, HIDDEN_SOURCE_BOOST, INPUT_SOURCE_BOOST,
+    NEURON_PESSIMISM_CURVE_EXPONENT, NEURON_PESSIMISM_DISCOUNT_FLOOR, PESSIMISM_CURVE_EXPONENT,
+    PESSIMISM_DISCOUNT_FLOOR, SYNAPSE_PESSIMISM_CURVE_EXPONENT, SYNAPSE_PESSIMISM_DISCOUNT_FLOOR,
 };
 
 // =============================================================================
@@ -34,10 +34,17 @@ use crate::analysis::constants::{
 /// [`INPUT_SOURCE_BOOST`] as a multiplier when the source neuron is an input
 /// neuron (UUID matches `input-N` pattern).
 ///
-/// Hidden and output neurons receive no boost (multiplier = 1.0).
+/// Hidden neuron sources receive [`HIDDEN_SOURCE_BOOST`] (Issue #910) to
+/// ensure hidden-to-hidden synapse candidates can compete more fairly against
+/// input-sourced candidates, enabling the network to build deeper structures.
+///
+/// Output neurons receive no boost (multiplier = 1.0).
 pub fn apply_source_type_boost(gain: f32, source_uuid: &str) -> f32 {
     if parse_input_index(source_uuid).is_some() {
         gain * INPUT_SOURCE_BOOST as f32
+    } else if !source_uuid.starts_with("output") {
+        // Hidden neuron source — apply modest boost (Issue #910)
+        gain * HIDDEN_SOURCE_BOOST as f32
     } else {
         gain
     }
@@ -451,10 +458,16 @@ pub(crate) fn compute_synapse_improvement_with_target_squash(
                 let new_input = target_value + contribution;
                 expected - target_fn(new_input)
             }
-            TargetSimulationMode::ApproximateValueFromActivation(target_fn) => {
-                // Saturation-aware model (ACTIVATION domain), approximating missing target_value.
+            TargetSimulationMode::ApproximateValueFromActivation {
+                activation_fn: target_fn,
+                inverse_fn,
+            } => {
+                // Saturation-aware model (ACTIVATION domain), approximating missing target_value
+                // using the inverse function (Issue #906).
                 let target_activation = sample.target_activation.unwrap();
-                let target_value = sample.target_value.unwrap_or(target_activation);
+                let target_value = sample
+                    .target_value
+                    .unwrap_or_else(|| inverse_fn(target_activation));
                 let desired_value = target_value + sample.avg_error;
                 let expected = target_fn(desired_value);
 
@@ -538,10 +551,16 @@ pub(crate) fn compute_synapse_improvement_and_count(
 
                 (baseline_err, new_err)
             }
-            TargetSimulationMode::ApproximateValueFromActivation(target_fn) => {
-                // As above, but approximate missing target_value from the observed activation.
+            TargetSimulationMode::ApproximateValueFromActivation {
+                activation_fn: target_fn,
+                inverse_fn,
+            } => {
+                // As above, but approximate missing target_value using the inverse function
+                // (Issue #906).
                 let target_activation = sample.target_activation.unwrap();
-                let target_value = sample.target_value.unwrap_or(target_activation);
+                let target_value = sample
+                    .target_value
+                    .unwrap_or_else(|| inverse_fn(target_activation));
                 let desired_value = target_value + sample.avg_error;
                 let expected = target_fn(desired_value);
 
