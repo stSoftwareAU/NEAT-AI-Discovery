@@ -22,3 +22,4 @@ mod issue_887_activation_neuron_boost;
 mod issue_888_weight_constraints;
 mod issue_891_prediction_calibration;
 mod issue_905_activation_aware_weight_constraints;
+mod issue_909_identity_activation_penalty;

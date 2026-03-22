@@ -220,7 +220,7 @@ pub const MIN_IMPROVED_RATIO: f32 = 0.6;
 pub const NEURON_MIN_IMPROVED_RATIO: f32 = 0.4;
 
 // =============================================================================
-// Activation-Function-Aware Neuron Scoring (Issue #887)
+// Activation-Function-Aware Neuron Scoring (Issue #887, Issue #909)
 // =============================================================================
 
 // Per-activation-function boost/penalty multipliers for add-neuron candidate scoring.
@@ -230,6 +230,16 @@ pub const NEURON_MIN_IMPROVED_RATIO: f32 = 0.4;
 // rates (Beta posterior with prior centred on the baseline ~13.9% success rate,
 // K=20 pseudo-observations) to handle small sample sizes.
 //
+// Issue #909 recalibration: IDENTITY's 14.9% raw success rate is inflated because
+// IDENTITY candidates dominate the candidate pool (274 total — more than any other
+// activation). Per-candidate success is mediocre, and GRQ-sampler evidence (commit
+// 7f15429) shows IDENTITY neurons are frequently substituted with non-linear
+// activations like SINE for improvement. A penalty of 0.85× is applied to discourage
+// IDENTITY dominance and encourage exploration of non-linear alternatives.
+//
+// Additionally, SINE is added as a supported activation with a modest boost, reflecting
+// its demonstrated value as a substitution target for IDENTITY neurons.
+//
 // Methodology:
 //
 // For each activation function:
@@ -238,8 +248,9 @@ pub const NEURON_MIN_IMPROVED_RATIO: f32 = 0.4;
 // 2. Compute ratio to baseline: smoothed_rate / baseline
 // 3. Apply square-root dampening to compress extreme ratios: ratio^0.5
 // 4. Clamp to [0.5, 2.0] to avoid over-biasing
+// 5. Apply candidate-pool normalisation penalty for over-represented activations
 //
-// Cache Evidence (GRQ-sampler):
+// Cache Evidence (GRQ-sampler, with Issue #909 normalisation):
 //
 // | Activation     | Successes | Total | Raw Rate | Smoothed Rate | Boost |
 // |----------------|-----------|-------|----------|---------------|-------|
@@ -250,13 +261,18 @@ pub const NEURON_MIN_IMPROVED_RATIO: f32 = 0.4;
 // | BENT_IDENTITY  | 57        | 155   | 36.7%    | 34.2%         | 1.57  |
 // | ELU            | 72        | 219   | 32.8%    | 31.3%         | 1.50  |
 // | Softplus       | 29        | 91    | 31.8%    | 28.6%         | 1.43  |
+// | SINE           | —         | —     | —        | ~20%*         | 1.15  |
 // | ArcTan         | 11        | 58    | 18.9%    | 17.7%         | 1.13  |
 // | SOFTSIGN       | 5         | 28    | 17.8%    | 16.2%         | 1.08  |
 // | CLIPPED        | 9         | 59    | 15.2%    | 14.9%         | 1.03  |
-// | IDENTITY       | 41        | 274   | 14.9%    | 14.9%         | 1.03  |
 // | TANH           | 6         | 43    | 13.9%    | 13.9%         | 1.00  |
 // | BIPOLAR        | 8         | 66    | 12.1%    | 12.5%         | 0.95  |
+// | IDENTITY       | 41        | 274   | 14.9%    | 14.9%         | 0.85† |
 // | HARD_TANH      | 4         | 55    | 7.2%     | 9.0%          | 0.80  |
+//
+// * SINE boost estimated from substitution evidence (commit 7f15429)
+// † IDENTITY penalised (Issue #909): raw rate inflated by candidate-pool dominance;
+//   neurons frequently substituted with non-linear activations post-addition
 //
 // Valid Range:
 // Each boost must be in [0.5, 2.0]. Values below 0.5 risk suppressing
@@ -284,6 +300,13 @@ pub const ACTIVATION_BOOST_ELU: f64 = 1.50;
 /// Boost multiplier for `Softplus` activation (31.8% raw, Bayesian-smoothed 1.43×).
 pub const ACTIVATION_BOOST_SOFTPLUS: f64 = 1.43;
 
+/// Boost multiplier for SINE activation (~20% estimated, 1.15×).
+///
+/// SINE is added based on GRQ-sampler evidence showing it successfully
+/// substitutes IDENTITY neurons (commit 7f15429). The modest boost encourages
+/// exploration of this non-linear activation.
+pub const ACTIVATION_BOOST_SINE: f64 = 1.15;
+
 /// Boost multiplier for `ArcTan` activation (18.9% raw, Bayesian-smoothed 1.13×).
 pub const ACTIVATION_BOOST_ARCTAN: f64 = 1.13;
 
@@ -293,8 +316,16 @@ pub const ACTIVATION_BOOST_SOFTSIGN: f64 = 1.08;
 /// Boost multiplier for CLIPPED activation (15.2% raw, Bayesian-smoothed 1.03×).
 pub const ACTIVATION_BOOST_CLIPPED: f64 = 1.03;
 
-/// Boost multiplier for IDENTITY activation (14.9% raw, Bayesian-smoothed 1.03×).
-pub const ACTIVATION_BOOST_IDENTITY: f64 = 1.03;
+/// Penalty multiplier for IDENTITY activation (Issue #909).
+///
+/// Although IDENTITY has a 14.9% raw success rate (near the 13.9% baseline),
+/// this rate is inflated by IDENTITY's dominance in the candidate pool (274
+/// candidates — more than any other activation). GRQ-sampler evidence (commit
+/// 7f15429) shows IDENTITY neurons are frequently substituted with non-linear
+/// activations like SINE for improvement, indicating IDENTITY acts as a
+/// placeholder rather than an optimal choice. The penalty discourages IDENTITY
+/// dominance and encourages exploration of genuinely better non-linear activations.
+pub const ACTIVATION_BOOST_IDENTITY: f64 = 0.85;
 
 /// Neutral multiplier for TANH activation (13.9% raw, matches baseline exactly).
 pub const ACTIVATION_BOOST_TANH: f64 = 1.0;
@@ -349,6 +380,7 @@ pub fn activation_neuron_boost(squash_name: &str) -> f64 {
         "BENT_IDENTITY" => ACTIVATION_BOOST_BENT_IDENTITY,
         "ELU" => ACTIVATION_BOOST_ELU,
         "Softplus" => ACTIVATION_BOOST_SOFTPLUS,
+        "SINE" | "SINUSOID" => ACTIVATION_BOOST_SINE,
         "ArcTan" => ACTIVATION_BOOST_ARCTAN,
         "SOFTSIGN" => ACTIVATION_BOOST_SOFTSIGN,
         "CLIPPED" => ACTIVATION_BOOST_CLIPPED,
