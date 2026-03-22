@@ -19,8 +19,8 @@ use neat_ai_discovery::analysis::constants::{
     ACTIVATION_BOOST_BIPOLAR, ACTIVATION_BOOST_CLIPPED, ACTIVATION_BOOST_ELU,
     ACTIVATION_BOOST_GELU, ACTIVATION_BOOST_HARD_TANH, ACTIVATION_BOOST_IDENTITY,
     ACTIVATION_BOOST_MAX, ACTIVATION_BOOST_MIN, ACTIVATION_BOOST_MISH, ACTIVATION_BOOST_RELU6,
-    ACTIVATION_BOOST_SOFTPLUS, ACTIVATION_BOOST_SOFTSIGN, ACTIVATION_BOOST_TANH,
-    activation_neuron_boost,
+    ACTIVATION_BOOST_SINE, ACTIVATION_BOOST_SOFTPLUS, ACTIVATION_BOOST_SOFTSIGN,
+    ACTIVATION_BOOST_TANH, activation_neuron_boost,
 };
 use neat_ai_discovery::analysis::synapse::apply_activation_neuron_boost;
 
@@ -43,6 +43,8 @@ const _: () = assert!(ACTIVATION_BOOST_ELU >= 0.5);
 const _: () = assert!(ACTIVATION_BOOST_ELU <= 2.0);
 const _: () = assert!(ACTIVATION_BOOST_SOFTPLUS >= 0.5);
 const _: () = assert!(ACTIVATION_BOOST_SOFTPLUS <= 2.0);
+const _: () = assert!(ACTIVATION_BOOST_SINE >= 0.5);
+const _: () = assert!(ACTIVATION_BOOST_SINE <= 2.0);
 const _: () = assert!(ACTIVATION_BOOST_ARCTAN >= 0.5);
 const _: () = assert!(ACTIVATION_BOOST_ARCTAN <= 2.0);
 const _: () = assert!(ACTIVATION_BOOST_SOFTSIGN >= 0.5);
@@ -96,6 +98,7 @@ fn low_success_activations_get_penalty_below_baseline() {
     // Bottom performers should have boost < 1.0
     let hard_tanh = ACTIVATION_BOOST_HARD_TANH;
     let bipolar = ACTIVATION_BOOST_BIPOLAR;
+    let identity = ACTIVATION_BOOST_IDENTITY;
     assert!(
         hard_tanh < 1.0,
         "HARD_TANH (7.2% success) should have boost < 1.0, got {hard_tanh}"
@@ -103,6 +106,11 @@ fn low_success_activations_get_penalty_below_baseline() {
     assert!(
         bipolar < 1.0,
         "BIPOLAR (12.1% success) should have boost < 1.0, got {bipolar}"
+    );
+    // Issue #909: IDENTITY penalised due to inflated success rate from candidate-pool dominance
+    assert!(
+        identity < 1.0,
+        "IDENTITY (inflated 14.9%) should have penalty < 1.0, got {identity}"
     );
 }
 
@@ -125,10 +133,11 @@ fn boost_ordering_reflects_success_rates() {
         ACTIVATION_BOOST_MISH,
         ACTIVATION_BOOST_ELU,
         ACTIVATION_BOOST_SOFTPLUS,
+        ACTIVATION_BOOST_SINE,
         ACTIVATION_BOOST_ARCTAN,
-        ACTIVATION_BOOST_IDENTITY,
         ACTIVATION_BOOST_TANH,
         ACTIVATION_BOOST_BIPOLAR,
+        ACTIVATION_BOOST_IDENTITY,
         ACTIVATION_BOOST_HARD_TANH,
     ];
     let names = [
@@ -136,10 +145,11 @@ fn boost_ordering_reflects_success_rates() {
         "Mish",
         "ELU",
         "Softplus",
+        "SINE",
         "ArcTan",
-        "IDENTITY",
         "TANH",
         "BIPOLAR",
+        "IDENTITY",
         "HARD_TANH",
     ];
     for i in 0..boosts.len() - 1 {
