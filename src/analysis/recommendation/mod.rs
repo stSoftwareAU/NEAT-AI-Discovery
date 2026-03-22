@@ -5,6 +5,7 @@
 
 pub mod activation_recommendation;
 pub mod epistatic;
+pub mod fan_in;
 pub mod gradient_discovery;
 pub mod multi_hop;
 pub mod output_bias_drift;

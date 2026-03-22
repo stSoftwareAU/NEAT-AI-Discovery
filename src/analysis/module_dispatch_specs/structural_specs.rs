@@ -1,8 +1,8 @@
 //! Structural discovery module dispatch specs.
 //!
 //! Covers: multi-hop candidate analysis, topology structure analysis,
-//! topology diversification, skip-connection discovery, and correlated
-//! error detection.
+//! topology diversification, skip-connection discovery, correlated
+//! error detection, and fan-in candidate generation.
 
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use super::super::detection::{
     correlated_error, hard_sample_cluster, output_conflict, skip_connection, topology,
     topology_cache::CreatureTopologyCache, topology_diversification,
 };
-use super::super::recommendation::multi_hop;
+use super::super::recommendation::{fan_in, multi_hop};
 use super::super::{cache, discovery_dispatch};
 
 /// Append structural discovery module specs to the provided vector.
@@ -112,6 +112,14 @@ pub(crate) fn append_structural_specs(
                 candidates,
             })
         },
+    );
+
+    // Issue #908: Fan-in candidate generation (multiple inputs converging to one hidden neuron)
+    discovery_spec!(modules, "fan-in candidate generation", "fan_in_candidate_generation",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_all_neurons(&creature),
+        detect: |records| fan_in::detect_fan_in_candidates(&creature, &records),
+        convert: |detected| fan_in::fan_in_to_coordinated_candidates(&detected, &creature),
     );
 
     // Issue #642: Hard sample cluster detection (cross-network high-error observations)
