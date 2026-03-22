@@ -45,7 +45,10 @@ fn test_complement_is_discovered_as_identity_not_inverse() {
     //
     // For complement behaviour (up to scale), we want:
     //   incoming ≈ -bias  and  correction(0) ≈ ERROR_SCALE, correction(1) ≈ 0
-    const ERROR_SCALE: f32 = 0.1;
+    // Issue #888: Reduced from 0.1 to 0.01 so that the optimal IDENTITY candidate
+    // (incoming ≈ -1, bias ≈ 1, outgoing ≈ 0.01) falls within the tightened
+    // weight constraints (MAX_OUTGOING_WEIGHT=0.01, MAX_BIAS_MAGNITUDE=2.0).
+    const ERROR_SCALE: f32 = 0.01;
 
     let mut training_data = Vec::new();
     for i in 0..=100 {

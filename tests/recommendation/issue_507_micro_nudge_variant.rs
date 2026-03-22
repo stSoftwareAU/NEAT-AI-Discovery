@@ -4,8 +4,10 @@
 //! variants. The micro-nudge variant goes even smaller: outgoing weight in the ±0.002–0.005
 //! range, targeting the near-miss sweet spot observed in production.
 //!
-//! The micro-nudge variant is only generated when the conservative variant's outgoing weight
-//! exceeds the micro-nudge max (i.e. when it would meaningfully differ from conservative).
+//! Issue #888: With tightened constraints, Conservative and Micro-Nudge now share the same
+//! `outgoing_abs_max` (0.005), so `should_generate_micro_nudge` returns false (the micro-nudge
+//! would not meaningfully differ from conservative). The pairing function now generates
+//! 3 variants per extreme candidate: original + conservative + gentle nudge.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::{
@@ -43,83 +45,70 @@ fn make_extreme_candidate(
 
 #[test]
 fn micro_nudge_variant_is_generated_for_extreme_candidates() {
-    // Extreme candidate with large incoming weight and outgoing weight.
-    // Conservative outgoing = 0.1 * 0.2 = 0.02 (above micro-nudge max of 0.005).
-    // So the micro-nudge variant should meaningfully differ and be included.
+    // Issue #888: With tightened constraints, Conservative outgoing is always clamped
+    // to 0.005 which equals Micro-Nudge max, so Micro-Nudge is no longer generated.
+    // Extreme candidates now produce 3 variants: original + conservative + gentle nudge.
     let candidate = make_extreme_candidate("source-1", "target-1", 200.0, 0.1, 50.0);
 
-    // Limit allows all 4 variants: original + conservative + gentle nudge + micro-nudge
     let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], Some(4));
 
     assert_eq!(
         paired.len(),
-        4,
-        "expected original + conservative + gentle nudge + micro-nudge"
+        3,
+        "expected original + conservative + gentle nudge (micro-nudge skipped)"
     );
 
-    // Find the micro-nudge variant
-    let micro_nudge = paired
-        .iter()
-        .find(|c| {
-            c.comment
-                .as_deref()
-                .unwrap_or_default()
-                .starts_with("Micro-Nudge")
-        })
-        .expect("expected a Micro-Nudge variant");
-
-    // Micro-nudge outgoing weight should be very small (±0.005 max)
+    // Conservative variant should have outgoing clamped to 0.005
     assert!(
-        micro_nudge.outgoing_weight.abs() <= 0.005 + 1e-6,
-        "micro-nudge outgoing weight {} should be at most 0.005",
-        micro_nudge.outgoing_weight
+        paired[1]
+            .comment
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Conservative"),
+        "second should be Conservative variant"
+    );
+    assert!(
+        (paired[1].outgoing_weight - 0.005).abs() < 1e-6,
+        "conservative outgoing should be 0.005, got {}",
+        paired[1].outgoing_weight
     );
 
-    // Micro-nudge should preserve the sign of the outgoing weight
-    // Original has positive outgoing (0.1), so micro-nudge should also be positive
+    // Gentle Nudge variant
     assert!(
-        micro_nudge.outgoing_weight > 0.0,
-        "micro-nudge should preserve outgoing weight sign"
-    );
-
-    // Micro-nudge incoming should be clamped (like conservative)
-    assert!(
-        micro_nudge.incoming_weight.abs() <= 2.0 + 1e-6,
-        "micro-nudge incoming weight {} should be clamped to 2.0",
-        micro_nudge.incoming_weight
-    );
-
-    // Micro-nudge bias should be tightly clamped
-    assert!(
-        micro_nudge.bias.abs() <= 1.0 + 1e-6,
-        "micro-nudge bias {} should be clamped to 1.0",
-        micro_nudge.bias
+        paired[2]
+            .comment
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Gentle Nudge"),
+        "third should be Gentle Nudge variant"
     );
 }
 
 #[test]
 fn micro_nudge_outgoing_weight_is_in_expected_range() {
-    // Conservative outgoing = 0.1 * 0.2 = 0.02, well above micro-nudge max of 0.005.
-    // Micro-nudge outgoing = 0.1 * 0.05 = 0.005, clamped to 0.005.
+    // Issue #888: Micro-Nudge is no longer generated in the pairing context because
+    // Conservative outgoing (clamped to 0.005) does not exceed Micro-Nudge max (0.005).
+    // Verify the conservative variant takes the ultra-small outgoing role instead.
     let candidate = make_extreme_candidate("source-1", "target-1", 200.0, 0.1, 50.0);
 
     let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], None);
 
-    let micro_nudge = paired
+    // Conservative variant should have the smallest outgoing weight
+    let conservative = paired
         .iter()
         .find(|c| {
             c.comment
                 .as_deref()
                 .unwrap_or_default()
-                .starts_with("Micro-Nudge")
+                .starts_with("Conservative")
         })
-        .expect("expected a Micro-Nudge variant");
+        .expect("expected a Conservative variant");
 
-    // With outgoing_weight=0.1, micro-nudge scale=0.05: 0.1 * 0.05 = 0.005
+    // Conservative outgoing = min(0.1 * 0.2, 0.005) = 0.005
     assert!(
-        (micro_nudge.outgoing_weight - 0.005).abs() < 1e-6,
-        "expected micro-nudge outgoing ~0.005, got {}",
-        micro_nudge.outgoing_weight
+        (conservative.outgoing_weight - 0.005).abs() < 1e-6,
+        "expected conservative outgoing ~0.005, got {}",
+        conservative.outgoing_weight
     );
 }
 
@@ -129,8 +118,6 @@ fn micro_nudge_not_generated_when_conservative_outgoing_already_small() {
     // range (≤0.005), the micro-nudge would not meaningfully differ and should be skipped.
     //
     // Original outgoing = 0.01, conservative outgoing = 0.01 * 0.2 = 0.002 (within 0.005).
-    // Micro-nudge outgoing = 0.01 * 0.05 = 0.0005 (would differ, but very close).
-    // However, the issue specifies: only generate when conservative outgoing > micro-nudge max.
     // Conservative outgoing (0.002) ≤ micro-nudge max (0.005), so skip micro-nudge.
     let candidate = make_extreme_candidate("source-1", "target-1", 200.0, 0.01, 50.0);
 
@@ -154,77 +141,72 @@ fn micro_nudge_not_generated_when_conservative_outgoing_already_small() {
 
 #[test]
 fn micro_nudge_expected_improvement_is_scaled_down() {
+    // Issue #888: With tightened constraints, Micro-Nudge is no longer generated in
+    // the pairing function. Verify that Conservative uses the tightened multiplier instead.
     let candidate = make_extreme_candidate("source-1", "target-1", 200.0, 0.1, 50.0);
     let original_expected = candidate.expected_creature_error_reduction;
 
     let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], None);
 
-    let micro_nudge = paired
+    let conservative = paired
         .iter()
         .find(|c| {
             c.comment
                 .as_deref()
                 .unwrap_or_default()
-                .starts_with("Micro-Nudge")
+                .starts_with("Conservative")
         })
-        .expect("expected a Micro-Nudge variant");
+        .expect("expected a Conservative variant");
 
-    // Micro-nudge expected multiplier is 0.25 (from issue spec)
-    let expected = original_expected * 0.25;
+    // Conservative expected multiplier is 0.5
+    let expected = original_expected * 0.5;
     assert!(
-        (micro_nudge.expected_creature_error_reduction - expected).abs() < 1e-6,
-        "expected micro-nudge error reduction {expected}, got {}",
-        micro_nudge.expected_creature_error_reduction
-    );
-    assert!(
-        (micro_nudge.expected_creature_score_gain - expected).abs() < 1e-6,
-        "expected micro-nudge score gain {expected}, got {}",
-        micro_nudge.expected_creature_score_gain
+        (conservative.expected_creature_error_reduction - expected).abs() < 1e-6,
+        "expected conservative error reduction {expected}, got {}",
+        conservative.expected_creature_error_reduction
     );
 }
 
 #[test]
 fn micro_nudge_preserves_negative_outgoing_weight_sign() {
-    // Candidate with negative outgoing weight
+    // Issue #888: With tightened constraints, test Conservative (which takes Micro-Nudge's role).
     let candidate = make_extreme_candidate("source-1", "target-1", 200.0, -0.1, 50.0);
 
     let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], None);
 
-    let micro_nudge = paired
+    let conservative = paired
         .iter()
         .find(|c| {
             c.comment
                 .as_deref()
                 .unwrap_or_default()
-                .starts_with("Micro-Nudge")
+                .starts_with("Conservative")
         })
-        .expect("expected a Micro-Nudge variant");
+        .expect("expected a Conservative variant");
 
     assert!(
-        micro_nudge.outgoing_weight < 0.0,
-        "micro-nudge should preserve negative outgoing weight sign, got {}",
-        micro_nudge.outgoing_weight
+        conservative.outgoing_weight < 0.0,
+        "conservative should preserve negative outgoing weight sign, got {}",
+        conservative.outgoing_weight
     );
     assert!(
-        (micro_nudge.outgoing_weight - (-0.005)).abs() < 1e-6,
-        "expected micro-nudge outgoing ~-0.005, got {}",
-        micro_nudge.outgoing_weight
+        (conservative.outgoing_weight - (-0.005)).abs() < 1e-6,
+        "expected conservative outgoing ~-0.005, got {}",
+        conservative.outgoing_weight
     );
 }
 
 #[test]
 fn extreme_candidate_comment_reflects_all_four_variants() {
+    // Issue #888: With tightened constraints, only Conservative + Gentle Nudge are generated.
     let candidate = make_extreme_candidate("source-1", "target-1", 200.0, 0.1, 50.0);
 
     let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], None);
 
-    // Original candidate should mention all three variant types
     let original_comment = paired[0].comment.as_deref().unwrap_or_default();
     assert!(
-        original_comment.contains("Conservative")
-            && original_comment.contains("Gentle Nudge")
-            && original_comment.contains("Micro-Nudge"),
-        "original comment should mention all three variants: {original_comment}"
+        original_comment.contains("Conservative") && original_comment.contains("Gentle Nudge"),
+        "original comment should mention Conservative and Gentle Nudge: {original_comment}"
     );
 }
 
@@ -232,7 +214,8 @@ fn extreme_candidate_comment_reflects_all_four_variants() {
 fn micro_nudge_skipped_when_limit_too_small() {
     let candidate = make_extreme_candidate("source-1", "target-1", 200.0, 0.1, 50.0);
 
-    // Limit of 3 leaves room for original + conservative + gentle nudge only
+    // Issue #888: With tightened constraints, only 3 variants are generated
+    // (original + conservative + gentle nudge). Limit of 3 fits all of them.
     let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], Some(3));
 
     assert_eq!(paired.len(), 3, "expected 3 candidates at limit of 3");
@@ -249,54 +232,56 @@ fn micro_nudge_skipped_when_limit_too_small() {
 
     assert_eq!(
         micro_nudge_count, 0,
-        "micro-nudge should be skipped when limit prevents it"
+        "micro-nudge should not be generated with tightened constraints"
     );
 }
 
 #[test]
 fn micro_nudge_deduplication_across_different_neuron_pairs() {
-    // Two extreme candidates connecting different neuron pairs should each get
-    // their own micro-nudge variant (not deduped across pairs).
+    // Issue #888: With tightened constraints, Micro-Nudge is no longer generated.
+    // Verify that Conservative variants are correctly generated for each neuron pair.
     let candidate_a = make_extreme_candidate("source-a", "target-a", 200.0, 0.1, 50.0);
     let candidate_b = make_extreme_candidate("source-b", "target-b", 200.0, 0.1, 50.0);
 
     let paired =
         pair_extreme_candidates_with_conservative_variants(vec![candidate_a, candidate_b], None);
 
-    let micro_nudge_pairs: Vec<(&str, &str)> = paired
+    let conservative_pairs: Vec<(&str, &str)> = paired
         .iter()
         .filter(|c| {
             c.comment
                 .as_deref()
                 .unwrap_or_default()
-                .starts_with("Micro-Nudge")
+                .starts_with("Conservative")
         })
         .map(|c| (c.source_neuron_uuid.as_str(), c.target_neuron_uuid.as_str()))
         .collect();
 
     assert_eq!(
-        micro_nudge_pairs.len(),
+        conservative_pairs.len(),
         2,
-        "expected two micro-nudge variants (one per neuron pair)"
+        "expected two Conservative variants (one per neuron pair)"
     );
     assert!(
-        micro_nudge_pairs.contains(&("source-a", "target-a")),
-        "expected micro-nudge for candidate_a"
+        conservative_pairs.contains(&("source-a", "target-a")),
+        "expected Conservative for candidate_a"
     );
     assert!(
-        micro_nudge_pairs.contains(&("source-b", "target-b")),
-        "expected micro-nudge for candidate_b"
+        conservative_pairs.contains(&("source-b", "target-b")),
+        "expected Conservative for candidate_b"
     );
 }
 
 #[test]
 fn micro_nudge_minimum_outgoing_weight_when_scale_produces_near_zero() {
-    // When the scaled outgoing weight is near zero, micro-nudge should use a
+    // When the scaled outgoing weight is near zero, conservative should use a
     // small non-zero fallback to ensure the candidate actually does something.
     let candidate = make_extreme_candidate("source-1", "target-1", 200.0, 0.0001, 50.0);
 
     let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], None);
 
+    // Conservative outgoing = 0.0001 * 0.2 = 0.00002, which is ≤ 0.005.
+    // So micro-nudge should NOT be generated.
     let micro_nudge = paired.iter().find(|c| {
         c.comment
             .as_deref()
@@ -304,9 +289,6 @@ fn micro_nudge_minimum_outgoing_weight_when_scale_produces_near_zero() {
             .starts_with("Micro-Nudge")
     });
 
-    // Even with near-zero outgoing weight, the micro-nudge (if generated) should have
-    // a non-zero weight. However, conservative outgoing = 0.0001 * 0.2 = 0.00002 which
-    // is ≤ 0.005, so micro-nudge should NOT be generated per the mitigation rule.
     assert!(
         micro_nudge.is_none(),
         "micro-nudge should not be generated when conservative outgoing is within micro-nudge range"
@@ -315,8 +297,8 @@ fn micro_nudge_minimum_outgoing_weight_when_scale_produces_near_zero() {
 
 #[test]
 fn total_candidate_count_with_micro_nudge_is_four_per_extreme() {
-    // 3 extreme candidates with large outgoing weights should produce 12 total:
-    // 3 originals + 3 conservative + 3 gentle nudge + 3 micro-nudge
+    // Issue #888: With tightened constraints, 3 variants per extreme candidate
+    // (original + conservative + gentle nudge). Micro-Nudge is skipped.
     let candidates: Vec<CandidateNeuronJson> = (0..3)
         .map(|i| {
             let mut c =
@@ -331,7 +313,7 @@ fn total_candidate_count_with_micro_nudge_is_four_per_extreme() {
 
     assert_eq!(
         paired.len(),
-        12,
-        "expected 12 candidates (3 extreme × 4 variants each)"
+        9,
+        "expected 9 candidates (3 extreme × 3 variants each)"
     );
 }

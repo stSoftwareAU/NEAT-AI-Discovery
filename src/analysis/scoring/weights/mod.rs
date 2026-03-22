@@ -12,7 +12,7 @@
 //!
 //! ## Design Notes
 //!
-//! - Outgoing weights are clamped to [-0.1, 0.1] (tightened in v0.1.138)
+//! - Outgoing weights are clamped to [-0.01, 0.01] (tightened in Issue #888)
 //! - Weight ratio validation ensures incoming/outgoing ratio >= 50 for reliable
 //!   predictions (based on successful discovery analysis)
 //! - Bias-aware calculation recomputes weights after bias optimisation
@@ -28,13 +28,15 @@ pub mod normalisation;
 
 /// Maximum allowed outgoing weight for add-neuron and add-synapse candidates.
 ///
-/// Based on analysis of production discoveries (v0.1.138):
-/// - ALL successful discoveries have |`outgoing_weight`| < 0.05
-/// - 36% of failures have |`outgoing_weight`| > 0.05 (up to 50!)
+/// Issue #888: Tightened from 0.1 to 0.01 based on GRQ-sampler discovery cache:
+/// - Successful candidates: outgoing weights 0.001–0.005 (exponent e-3)
+/// - Failed candidates: outgoing weights 0.01–0.1 (exponent e-2 to e-1)
+/// - The previous ceiling of 0.1 was far too permissive; virtually all
+///   successes have outgoing weights ≤ 0.005
 ///
-/// Using 0.1 provides some margin while eliminating clearly bad candidates.
-/// The new neuron should contribute a SMALL correction, not dominate the network.
-pub const MAX_OUTGOING_WEIGHT: f32 = 0.1;
+/// Using 0.01 provides margin above the 0.005 success peak while filtering
+/// the 0.01–0.1 range that almost always fails.
+pub const MAX_OUTGOING_WEIGHT: f32 = 0.01;
 
 /// Minimum incoming/outgoing weight ratio for reliable predictions.
 ///
@@ -134,20 +136,21 @@ mod tests {
 
     #[test]
     fn test_optimal_weight_accounts_for_incoming_weight() {
-        // With incoming_weight=10, raw_weight=1.0, clamped=0.1
-        // ratio = 10/0.1 = 100 >= 50 (MIN_WEIGHT_RATIO), should pass
+        // With incoming_weight=10, raw_weight=1.0, clamped=0.01
+        // ratio = 10/0.01 = 1000 >= 50 (MIN_WEIGHT_RATIO), should pass
         let result = calculate_optimal_outgoing_weight(1.0, 1.0, 10.0);
         assert!(
             result.is_some(),
             "incoming_weight=10 should have ratio >= 50"
         );
 
-        // With incoming_weight=2, raw_weight=1.0, clamped=0.1
-        // ratio = 2/0.1 = 20 < 50 (MIN_WEIGHT_RATIO), should be rejected
+        // Issue #888: With MAX_OUTGOING_WEIGHT=0.01, incoming_weight=2 now passes
+        // the ratio check (2/0.01=200 >= 50). This is correct because incoming ~2
+        // is the dominant success pattern in GRQ-sampler cache evidence.
         let result = calculate_optimal_outgoing_weight(1.0, 1.0, 2.0);
         assert!(
-            result.is_none(),
-            "incoming_weight=2 with clamped weight=0.1 has ratio=20 < MIN_WEIGHT_RATIO"
+            result.is_some(),
+            "incoming_weight=2 with clamped weight=0.01 has ratio=200 >= MIN_WEIGHT_RATIO"
         );
 
         // With incoming_weight=1.0 (not > 1), ratio check is skipped
@@ -157,14 +160,15 @@ mod tests {
 
     #[test]
     fn test_optimal_weight_normal_calculation() {
-        // Normal case: small weight within range
-        // sum_error_activation=0.5, sum_activation_sq=10 => raw_weight=0.05
-        let result = calculate_optimal_outgoing_weight(0.5, 10.0, 1.0);
+        // Issue #888: With MAX_OUTGOING_WEIGHT=0.01, a weight that would be
+        // 0.05 is now clamped to 0.01. Use smaller inputs to test unclamped path.
+        // sum_error_activation=0.05, sum_activation_sq=10 => raw_weight=0.005
+        let result = calculate_optimal_outgoing_weight(0.05, 10.0, 1.0);
         assert!(result.is_some());
         let weight = result.unwrap();
         assert!(
-            (weight - 0.05).abs() < 0.001,
-            "Expected weight ~0.05, got {weight}"
+            (weight - 0.005).abs() < 0.001,
+            "Expected weight ~0.005, got {weight}"
         );
     }
 
@@ -172,7 +176,8 @@ mod tests {
     fn test_optimal_weight_ratio_validation() {
         // With large incoming_weight (100), the outgoing weight must be small enough
         // for ratio >= MIN_WEIGHT_RATIO (50)
-        // If raw_weight would be 0.1, we need 100/0.1 = 1000 >= 50, so it should pass
+        // raw_weight = 10/100 = 0.1 => clamped to 0.01
+        // ratio = 100/0.01 = 10000 >= 50, should pass
         let sum_error_activation = 10.0;
         let sum_activation_sq = 100.0;
         let incoming_weight = 100.0;
@@ -182,8 +187,6 @@ mod tests {
             incoming_weight,
         );
 
-        // raw_weight = 10/100 = 0.1 => clamped to 0.1
-        // ratio = 100/0.1 = 1000 >= 50, should pass
         assert!(result.is_some());
         let weight = result.unwrap();
         assert!(
@@ -195,7 +198,7 @@ mod tests {
     #[test]
     fn test_optimal_weight_rejects_poor_ratio() {
         // Large raw weight that would be clamped to MAX_OUTGOING_WEIGHT
-        // With incoming_weight=10, ratio = 10/0.1 = 100 >= 50, should pass
+        // With incoming_weight=10, ratio = 10/0.01 = 1000 >= 50, should pass
         let result = calculate_optimal_outgoing_weight(10.0, 1.0, 10.0);
         assert!(
             (result.unwrap().abs() - MAX_OUTGOING_WEIGHT).abs() < EPSILON,
@@ -268,17 +271,19 @@ mod tests {
 
     #[test]
     fn test_identity_computes_valid_weight_and_bias() {
-        // Create samples with varying activation and correlated error
+        // Issue #888: Test data adjusted to produce a weight within the tightened
+        // MAX_OUTGOING_WEIGHT (0.01). Error magnitude ~0.005 × activation so
+        // that the optimal weight is ~0.005 and the bias remains small.
         let samples = vec![
             HelpfulSample {
                 activation: 0.0,
-                avg_error: 0.05,
+                avg_error: 0.005,
                 target_value: None,
                 target_activation: None,
             },
             HelpfulSample {
                 activation: 0.5,
-                avg_error: 0.025,
+                avg_error: 0.0025,
                 target_value: None,
                 target_activation: None,
             },
@@ -290,13 +295,13 @@ mod tests {
             },
             HelpfulSample {
                 activation: -0.5,
-                avg_error: 0.075,
+                avg_error: 0.0075,
                 target_value: None,
                 target_activation: None,
             },
             HelpfulSample {
                 activation: -1.0,
-                avg_error: 0.1,
+                avg_error: 0.01,
                 target_value: None,
                 target_activation: None,
             },
@@ -399,37 +404,37 @@ mod tests {
 
     #[test]
     fn test_clamp_delta_returns_none_for_tiny_delta() {
-        let result = clamp_weight_update_delta(0.05, EPSILON * 0.5);
+        let result = clamp_weight_update_delta(0.005, EPSILON * 0.5);
         assert!(result.is_none(), "Tiny delta should return None");
     }
 
     #[test]
     fn test_clamp_delta_within_bounds() {
-        let result = clamp_weight_update_delta(0.0, 0.05);
+        let result = clamp_weight_update_delta(0.0, 0.005);
         assert!(result.is_some());
         let (new_weight, delta) = result.unwrap();
-        assert!((new_weight - 0.05).abs() < EPSILON);
-        assert!((delta - 0.05).abs() < EPSILON);
+        assert!((new_weight - 0.005).abs() < EPSILON);
+        assert!((delta - 0.005).abs() < EPSILON);
     }
 
     #[test]
     fn test_clamp_delta_exceeds_upper_bound() {
-        // Start at 0.05, try to add 0.1 => clamped to 0.1
-        let result = clamp_weight_update_delta(0.05, 0.1);
+        // Start at 0.005, try to add 0.01 => clamped to MAX_OUTGOING_WEIGHT (0.01)
+        let result = clamp_weight_update_delta(0.005, 0.01);
         assert!(result.is_some());
         let (new_weight, delta) = result.unwrap();
         assert!((new_weight - MAX_OUTGOING_WEIGHT).abs() < EPSILON);
-        assert!((delta - 0.05).abs() < EPSILON); // Effective delta is 0.05
+        assert!((delta - 0.005).abs() < EPSILON); // Effective delta is 0.005
     }
 
     #[test]
     fn test_clamp_delta_exceeds_lower_bound() {
-        // Start at -0.05, try to subtract 0.1 => clamped to -0.1
-        let result = clamp_weight_update_delta(-0.05, -0.1);
+        // Start at -0.005, try to subtract 0.01 => clamped to -MAX_OUTGOING_WEIGHT (-0.01)
+        let result = clamp_weight_update_delta(-0.005, -0.01);
         assert!(result.is_some());
         let (new_weight, delta) = result.unwrap();
         assert!((new_weight - (-MAX_OUTGOING_WEIGHT)).abs() < EPSILON);
-        assert!((delta - (-0.05)).abs() < EPSILON); // Effective delta is -0.05
+        assert!((delta - (-0.005)).abs() < EPSILON); // Effective delta is -0.005
     }
 
     #[test]

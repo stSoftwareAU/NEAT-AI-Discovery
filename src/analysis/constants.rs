@@ -628,6 +628,58 @@ pub const REMOVAL_MEAN_ACTIVATION_THRESHOLD: f32 = 0.04;
 /// Values below 1e-6 may be too restrictive.
 pub const REMOVAL_IMPACT_THRESHOLD: f32 = 6e-5;
 
+// =============================================================================
+// Add-Neuron Weight Constraints (Issue #888)
+// =============================================================================
+
+// GRQ-sampler discovery cache shows that successful add-neuron candidates have
+// dramatically different weight/bias magnitudes than failures:
+//
+// | Parameter       | Successful Range  | Failed Range      |
+// |-----------------|-------------------|-------------------|
+// | Outgoing weight | 0.001–0.005 (e-3) | 0.01–0.1 (e-2/1) |
+// | Incoming weight | ~2                | 5, 10, 20         |
+// | Bias            | 0 to 1            | -10, -5, 5, 10    |
+//
+// The "Micro-Nudge" variant (incoming=2, outgoing=0.001–0.005) dominates
+// successes (~90% of successful samples). "Extreme" variants (incoming=10–20,
+// outgoing=0.02–0.1) almost always fail, sometimes catastrophically.
+
+/// Maximum absolute incoming weight for add-neuron candidates (Issue #888).
+///
+/// GRQ-sampler cache evidence shows successful candidates consistently have
+/// incoming weight ~2. Candidates with incoming weights of 5, 10, or 20
+/// almost always fail. A threshold of 5.0 provides margin while filtering
+/// the clearly extreme values.
+///
+/// ## Valid Range
+/// Must be > 1.0. Values above 10.0 allow too many doomed candidates through.
+/// Values below 2.0 may filter the dominant success pattern.
+pub const MAX_INCOMING_WEIGHT: f32 = 5.0;
+
+/// Maximum absolute bias for add-neuron candidates (Issue #888).
+///
+/// GRQ-sampler cache evidence shows successful candidates have bias in
+/// the range 0 to 1. Failed candidates have extreme bias values (-10, -5,
+/// 5, 10). A threshold of 2.0 provides margin while filtering the clearly
+/// extreme values.
+///
+/// ## Valid Range
+/// Must be > 0.0. Values above 5.0 allow too many doomed candidates through.
+/// Values below 1.0 may filter some valid candidates.
+pub const MAX_BIAS_MAGNITUDE: f32 = 2.0;
+
+/// Scoring boost multiplier for Micro-Nudge variant candidates (Issue #888).
+///
+/// GRQ-sampler cache evidence shows the Micro-Nudge pattern (incoming=2,
+/// outgoing=0.001–0.005) dominates successes at ~90% of successful samples.
+/// This boost is applied to Micro-Nudge variant candidates to prioritise
+/// them in the ranking.
+///
+/// ## Valid Range
+/// Must be > 1.0 (boost) and <= 2.0 (avoid over-biasing).
+pub const MICRO_NUDGE_VARIANT_BOOST: f32 = 1.5;
+
 /// Scoring boost multiplier for `remove-low-impact` candidates (Issue #892).
 ///
 /// GRQ-sampler discovery cache shows `remove-low-impact` has the highest success

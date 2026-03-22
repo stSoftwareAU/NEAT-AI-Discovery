@@ -32,10 +32,15 @@ use std::collections::HashMap;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-use crate::analysis::scoring::weights::MAX_OUTGOING_WEIGHT;
-
 // MIN_SAMPLES_FOR_GRADIENT uses MIN_NEURON_SAMPLE_COUNT (Issue #424)
 use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT as MIN_SAMPLES_FOR_GRADIENT;
+
+/// Maximum absolute weight for gradient-based synapse adjustments.
+///
+/// This is distinct from `MAX_OUTGOING_WEIGHT` (which constrains add-neuron
+/// candidate outgoing weights). Synapse weight adjustments operate on existing
+/// synapse weights, which can be much larger.
+const MAX_GRADIENT_ADJUSTED_WEIGHT: f32 = 10.0;
 
 /// Minimum absolute gradient to consider a synapse as a candidate.
 /// Below this, the weight change would have negligible error impact.
@@ -247,8 +252,8 @@ pub fn detect_gradient_candidates(
 
         // Propose weight delta in gradient descent direction
         let raw_delta = -LEARNING_RATE * mean_gradient;
-        let new_weight =
-            (synapse.weight + raw_delta).clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+        let new_weight = (synapse.weight + raw_delta)
+            .clamp(-MAX_GRADIENT_ADJUSTED_WEIGHT, MAX_GRADIENT_ADJUSTED_WEIGHT);
         let effective_delta = new_weight - synapse.weight;
 
         // Skip if effective delta is negligible
