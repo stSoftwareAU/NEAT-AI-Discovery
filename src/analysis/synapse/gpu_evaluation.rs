@@ -22,8 +22,8 @@ use crate::analysis::gpu::GpuEvaluator;
 use crate::analysis::samples::{EPSILON, HelpfulSample, NeuronStats};
 use crate::analysis::scoring::confidence::compute_confidence_metrics;
 use crate::analysis::scoring::weights::{
-    calculate_optimal_bias, calculate_optimal_identity_outgoing_and_bias,
-    calculate_optimal_outgoing_weight,
+    calculate_activation_aware_outgoing_weight, calculate_optimal_bias,
+    calculate_optimal_identity_outgoing_and_bias,
 };
 use anyhow::Result;
 
@@ -115,10 +115,13 @@ pub(crate) fn evaluate_all_activation_specs_batched<G: GpuEvaluator>(
                 None => continue,
             }
         } else {
-            let outgoing_weight = match calculate_optimal_outgoing_weight(
+            // Issue #905: Use activation-aware weight calculation to avoid
+            // systematically rejecting non-linear candidates
+            let outgoing_weight = match calculate_activation_aware_outgoing_weight(
                 sum_error_activation,
                 sum_activation_sq,
                 incoming_weight,
+                spec.name,
             ) {
                 Some(w) => w,
                 None => continue,

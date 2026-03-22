@@ -14,8 +14,8 @@ use crate::analysis::gpu::GpuEvaluator;
 use crate::analysis::samples::{EPSILON, HelpfulSample, NeuronStats};
 use crate::analysis::scoring::confidence::compute_confidence_metrics;
 use crate::analysis::scoring::weights::{
-    MAX_OUTGOING_WEIGHT, calculate_optimal_bias, calculate_optimal_identity_outgoing_and_bias,
-    calculate_optimal_outgoing_weight,
+    calculate_activation_aware_outgoing_weight, calculate_optimal_bias,
+    calculate_optimal_identity_outgoing_and_bias, max_outgoing_weight_for_activation,
 };
 use anyhow::Result;
 
@@ -205,11 +205,12 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
 
                     (outgoing_weight, optimal_bias, improvement, improved_count)
                 } else if target_activation_fn.is_some() {
-                    // Use shared weight calculation with validation.
-                    let base_weight = match calculate_optimal_outgoing_weight(
+                    // Issue #905: Use activation-aware weight calculation
+                    let base_weight = match calculate_activation_aware_outgoing_weight(
                         sum_error_activation,
                         sum_activation_sq,
                         incoming_weight,
+                        spec.name,
                     ) {
                         Some(w) => w,
                         None => continue,
@@ -247,9 +248,9 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                         let mut best_bias = 0.0f32;
                         let mut best_train_improvement = f32::NEG_INFINITY;
 
+                        let max_out = max_outgoing_weight_for_activation(spec.name);
                         for &weight in &weight_candidates {
-                            let clamped_weight =
-                                weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+                            let clamped_weight = weight.clamp(-max_out, max_out);
                             if clamped_weight.abs() <= EPSILON {
                                 continue;
                             }
@@ -304,9 +305,9 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                         let mut best_improvement = f32::NEG_INFINITY;
                         let mut best_improved_count = 0u32;
 
+                        let max_out_fb = max_outgoing_weight_for_activation(spec.name);
                         for &weight in &weight_candidates {
-                            let clamped_weight =
-                                weight.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
+                            let clamped_weight = weight.clamp(-max_out_fb, max_out_fb);
                             if clamped_weight.abs() <= EPSILON {
                                 continue;
                             }
@@ -348,11 +349,12 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                         )
                     }
                 } else {
-                    // For linear targets or when target data unavailable, use the base weight.
-                    let base_weight = match calculate_optimal_outgoing_weight(
+                    // Issue #905: Use activation-aware weight calculation
+                    let base_weight = match calculate_activation_aware_outgoing_weight(
                         sum_error_activation,
                         sum_activation_sq,
                         incoming_weight,
+                        spec.name,
                     ) {
                         Some(w) => w,
                         None => continue,
@@ -379,11 +381,12 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                             sum_error_activation_with_bias += output * sample.avg_error;
                         }
                     }
-                    // Use shared function for bias-adjusted weight calculation
-                    let outgoing_weight = calculate_optimal_outgoing_weight(
+                    // Issue #905: Use activation-aware function for bias-adjusted weight
+                    let outgoing_weight = calculate_activation_aware_outgoing_weight(
                         sum_error_activation_with_bias,
                         sum_activation_sq_with_bias,
                         incoming_weight,
+                        spec.name,
                     )
                     .unwrap_or(base_weight);
 
