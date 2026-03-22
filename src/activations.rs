@@ -407,6 +407,143 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
     }
 }
 
+/// Returns an approximate inverse function for monotonic activations (Issue #906).
+///
+/// When `target_value` is missing but `target_activation` is available, the inverse function
+/// computes `target_value ≈ inverse(target_activation)` so that saturation-aware simulation
+/// can proceed without falling back to the linear model.
+///
+/// Only activations where a reasonable inverse exists are supported:
+/// - Monotonic, bounded activations with closed-form inverses (TANH, LOGISTIC, SOFTSIGN, etc.)
+/// - Piecewise-linear activations (`HARD_TANH`, ELU, `LEAKYRELU`, SELU, `RELU6`)
+/// - Approximately invertible activations (GELU, MISH, SWISH via Newton's method)
+///
+/// Non-monotonic activations (SINE, GAUSSIAN, SQUARE, ABSOLUTE) return `None`.
+pub fn approximate_inverse_fn(name: &str) -> Option<fn(f32) -> f32> {
+    let n = normalise_squash_name(name);
+    match n.as_ref() {
+        // Piecewise-linear: identity in valid range
+        "HARD_TANH" | "CLIPPED" => Some(|y| y.clamp(-1.0, 1.0)),
+        "RELU6" => Some(|y| y.clamp(0.0, 6.0)),
+
+        // Closed-form inverses for monotonic bounded activations
+        "TANH" => Some(|y| y.clamp(-0.999, 0.999).atanh()),
+        "LOGISTIC" => Some(|y| {
+            let y = y.clamp(0.001, 0.999);
+            (y / (1.0 - y)).ln()
+        }),
+        "SOFTSIGN" => Some(|y| {
+            let y = y.clamp(-0.999, 0.999);
+            y / (1.0 - y.abs())
+        }),
+        "BIPOLAR_SIGMOID" => Some(|y| {
+            // bipolar_sigmoid(x) = 2*sigmoid(x) - 1 = tanh(x/2)
+            // inverse: 2*atanh(y)
+            let y = y.clamp(-0.999, 0.999);
+            2.0 * y.atanh()
+        }),
+        "ISRU" => Some(|y| {
+            // ISRU(x) = x/sqrt(1+x^2), inverse: y/sqrt(1-y^2)
+            let y = y.clamp(-0.999, 0.999);
+            y / (1.0 - y * y).sqrt()
+        }),
+        "ARCTAN" => Some(f32::tan),
+        "LOGSIGMOID" => Some(|y| {
+            // logsigmoid(x) = -ln(1+exp(-x)) = y => 1+exp(-x) = exp(-y) => x = -ln(exp(-y)-1)
+            // For y in (-inf, 0), exp(-y) > 1 so exp(-y)-1 > 0
+            let y = y.min(-0.001);
+            -((-y).exp() - 1.0).max(1e-10).ln()
+        }),
+
+        // Piecewise-invertible activations
+        "ELU" => Some(|y| {
+            if y >= 0.0 {
+                y
+            } else {
+                (y + 1.0).max(0.001).ln()
+            }
+        }),
+        "LEAKYRELU" => Some(|y| if y >= 0.0 { y } else { y / 0.01 }),
+        "SELU" => Some(|y| {
+            const ALPHA: f32 = 1.673_263_2;
+            const LAMBDA: f32 = 1.050_701;
+            if y >= 0.0 {
+                y / LAMBDA
+            } else {
+                (y / (LAMBDA * ALPHA) + 1.0).max(0.001).ln()
+            }
+        }),
+        "SOFTPLUS" => Some(|y| {
+            // softplus(x) = ln(1+exp(x)), inverse: ln(exp(y)-1)
+            let y = y.max(0.001);
+            (y.exp() - 1.0).max(1e-10).ln()
+        }),
+
+        // Newton's method for approximately invertible activations (3 iterations)
+        "GELU" => Some(|y| {
+            let mut x = if y >= 0.0 {
+                y
+            } else if y > -0.2 {
+                y * 1.5
+            } else {
+                -1.0
+            };
+            for _ in 0..4 {
+                let x3 = x * x * x;
+                let tanh_arg = 0.797_884_6_f32 * (x + 0.044_715_f32 * x3);
+                let tanh_val = tanh_arg.tanh();
+                let gelu_x = 0.5 * x * (1.0 + tanh_val);
+                let sech2 = 1.0 - tanh_val * tanh_val;
+                let d_tanh_arg = 0.797_884_6_f32 * (1.0 + 3.0 * 0.044_715_f32 * x * x);
+                let derivative = 0.5 * (1.0 + tanh_val) + 0.5 * x * sech2 * d_tanh_arg;
+                if derivative.abs() > 1e-10 {
+                    x -= (gelu_x - y) / derivative;
+                }
+            }
+            x
+        }),
+        "MISH" => Some(|y| {
+            let mut x = y;
+            for _ in 0..4 {
+                let exp_x = x.exp();
+                let softplus = (1.0 + exp_x).ln();
+                let tanh_sp = softplus.tanh();
+                let mish_x = x * tanh_sp;
+                let sigmoid = exp_x / (1.0 + exp_x);
+                let derivative = tanh_sp + x * (1.0 - tanh_sp * tanh_sp) * sigmoid;
+                if derivative.abs() > 1e-10 {
+                    x -= (mish_x - y) / derivative;
+                }
+            }
+            x
+        }),
+        "SWISH" => Some(|y| {
+            let mut x = y;
+            for _ in 0..4 {
+                let sigmoid = if x >= 0.0 {
+                    1.0 / (1.0 + (-x).exp())
+                } else {
+                    let exp_x = x.exp();
+                    exp_x / (1.0 + exp_x)
+                };
+                let swish_x = x * sigmoid;
+                let derivative = sigmoid + x * sigmoid * (1.0 - sigmoid);
+                if derivative.abs() > 1e-10 {
+                    x -= (swish_x - y) / derivative;
+                }
+            }
+            x
+        }),
+
+        // IDENTITY: trivially invertible
+        "IDENTITY" => Some(|y| y),
+        // COMPLEMENT/INVERSE: self-inverse (1-(1-x) = x)
+        "COMPLEMENT" | "INVERSE" => Some(|y| 1.0 - y),
+
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,5 +602,124 @@ mod tests {
         assert!(target_simulation_fn("IF").is_none());
         assert!(target_simulation_fn("MEAN").is_none());
         assert!(target_simulation_fn("HYPOT").is_none());
+    }
+
+    // =========================================================================
+    // Issue #906: Approximate inverse function tests
+    // =========================================================================
+
+    /// Verify inverse functions exist for all expected monotonic activations.
+    #[test]
+    fn inverse_fn_exists_for_monotonic_activations() {
+        let invertible = [
+            "TANH",
+            "LOGISTIC",
+            "SOFTSIGN",
+            "BIPOLAR_SIGMOID",
+            "ISRU",
+            "HARD_TANH",
+            "CLIPPED",
+            "RELU6",
+            "ELU",
+            "LEAKYRELU",
+            "SELU",
+            "SOFTPLUS",
+            "ARCTAN",
+            "LOGSIGMOID",
+            "GELU",
+            "MISH",
+            "SWISH",
+            "IDENTITY",
+            "COMPLEMENT",
+        ];
+        for name in &invertible {
+            assert!(
+                approximate_inverse_fn(name).is_some(),
+                "{name} should have an approximate inverse function"
+            );
+        }
+    }
+
+    /// Non-monotonic activations should not have an inverse.
+    #[test]
+    fn inverse_fn_none_for_non_monotonic() {
+        let non_invertible = ["SINE", "COSINE", "GAUSSIAN", "SQUARE", "ABSOLUTE", "STEP"];
+        for name in &non_invertible {
+            assert!(
+                approximate_inverse_fn(name).is_none(),
+                "{name} should not have an approximate inverse function"
+            );
+        }
+    }
+
+    /// Verify round-trip accuracy: `inverse(forward(x)) ≈ x` for closed-form inverses.
+    #[test]
+    fn inverse_round_trip_closed_form() {
+        let test_values = [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0];
+
+        // TANH
+        let fwd = target_simulation_fn("TANH").unwrap();
+        let inv = approximate_inverse_fn("TANH").unwrap();
+        for &x in &test_values {
+            let roundtrip = inv(fwd(x));
+            assert!(
+                (roundtrip - x).abs() < 0.01,
+                "TANH round-trip failed: x={x}, got {roundtrip}"
+            );
+        }
+
+        // LOGISTIC
+        let fwd = target_simulation_fn("LOGISTIC").unwrap();
+        let inv = approximate_inverse_fn("LOGISTIC").unwrap();
+        for &x in &test_values {
+            let roundtrip = inv(fwd(x));
+            assert!(
+                (roundtrip - x).abs() < 0.01,
+                "LOGISTIC round-trip failed: x={x}, got {roundtrip}"
+            );
+        }
+
+        // SOFTSIGN
+        let fwd = target_simulation_fn("SOFTSIGN").unwrap();
+        let inv = approximate_inverse_fn("SOFTSIGN").unwrap();
+        for &x in &test_values {
+            let roundtrip = inv(fwd(x));
+            assert!(
+                (roundtrip - x).abs() < 0.01,
+                "SOFTSIGN round-trip failed: x={x}, got {roundtrip}"
+            );
+        }
+
+        // ELU
+        let fwd = target_simulation_fn("ELU").unwrap();
+        let inv = approximate_inverse_fn("ELU").unwrap();
+        for &x in &test_values {
+            let roundtrip = inv(fwd(x));
+            assert!(
+                (roundtrip - x).abs() < 0.01,
+                "ELU round-trip failed: x={x}, got {roundtrip}"
+            );
+        }
+    }
+
+    /// Verify round-trip accuracy for Newton's method inverses (GELU, MISH, SWISH).
+    ///
+    /// Note: GELU/MISH/SWISH have small non-monotonic regions for negative x, so
+    /// we test in the monotonic region (x >= -0.5) where the inverse is well-defined.
+    #[test]
+    fn inverse_round_trip_newton() {
+        let test_values = [-0.5, 0.0, 0.5, 1.0, 1.5, 2.0];
+
+        for name in &["GELU", "MISH", "SWISH"] {
+            let fwd = target_simulation_fn(name).unwrap();
+            let inv = approximate_inverse_fn(name).unwrap();
+            for &x in &test_values {
+                let roundtrip = inv(fwd(x));
+                assert!(
+                    (roundtrip - x).abs() < 0.05,
+                    "{name} round-trip failed: x={x}, got {roundtrip}"
+                );
+            }
+        }
     }
 }

@@ -451,10 +451,16 @@ pub(crate) fn compute_synapse_improvement_with_target_squash(
                 let new_input = target_value + contribution;
                 expected - target_fn(new_input)
             }
-            TargetSimulationMode::ApproximateValueFromActivation(target_fn) => {
-                // Saturation-aware model (ACTIVATION domain), approximating missing target_value.
+            TargetSimulationMode::ApproximateValueFromActivation {
+                activation_fn: target_fn,
+                inverse_fn,
+            } => {
+                // Saturation-aware model (ACTIVATION domain), approximating missing target_value
+                // using the inverse function (Issue #906).
                 let target_activation = sample.target_activation.unwrap();
-                let target_value = sample.target_value.unwrap_or(target_activation);
+                let target_value = sample
+                    .target_value
+                    .unwrap_or_else(|| inverse_fn(target_activation));
                 let desired_value = target_value + sample.avg_error;
                 let expected = target_fn(desired_value);
 
@@ -538,10 +544,16 @@ pub(crate) fn compute_synapse_improvement_and_count(
 
                 (baseline_err, new_err)
             }
-            TargetSimulationMode::ApproximateValueFromActivation(target_fn) => {
-                // As above, but approximate missing target_value from the observed activation.
+            TargetSimulationMode::ApproximateValueFromActivation {
+                activation_fn: target_fn,
+                inverse_fn,
+            } => {
+                // As above, but approximate missing target_value using the inverse function
+                // (Issue #906).
                 let target_activation = sample.target_activation.unwrap();
-                let target_value = sample.target_value.unwrap_or(target_activation);
+                let target_value = sample
+                    .target_value
+                    .unwrap_or_else(|| inverse_fn(target_activation));
                 let desired_value = target_value + sample.avg_error;
                 let expected = target_fn(desired_value);
 

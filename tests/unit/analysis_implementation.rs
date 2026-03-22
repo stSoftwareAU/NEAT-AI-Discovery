@@ -483,7 +483,7 @@ Pages speculative:                        12345.
         // Use mixed case to confirm case-insensitive alias handling.
         let mode = get_target_simulation_mode(&samples, Some("cLiPpEd"));
         match mode {
-            TargetSimulationMode::ApproximateValueFromActivation(_) => {}
+            TargetSimulationMode::ApproximateValueFromActivation { .. } => {}
             _ => panic!("CLIPPED should enable saturation-aware target simulation approximation"),
         }
     }
