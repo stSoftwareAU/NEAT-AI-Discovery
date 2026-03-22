@@ -124,6 +124,21 @@ pub const DIVERSIFY_TOP_K: usize = 64;
 /// Must be > 1.0 (boost) and <= 3.0 (avoid over-biasing).
 pub const INPUT_SOURCE_BOOST: f64 = 1.5;
 
+/// Interleave interval for hidden sources during source ordering (Issue #907).
+///
+/// After every `HIDDEN_SOURCE_INTERLEAVE_INTERVAL` input sources, one hidden
+/// source is inserted into the evaluation order. This ensures hidden-to-hidden
+/// synapse candidates are evaluated even under tight deadline constraints.
+///
+/// With an interval of 3, approximately 25% of evaluation slots go to hidden
+/// sources — enough to discover hidden-to-hidden connections without starving
+/// the higher-success-rate input sources.
+///
+/// ## Valid Range
+/// Must be >= 2 (to still prioritise inputs) and <= 5 (to ensure hidden
+/// sources get meaningful evaluation time).
+pub const HIDDEN_SOURCE_INTERLEAVE_INTERVAL: usize = 3;
+
 /// Minimum number of recorded outcomes before applying source-type boost.
 ///
 /// Below this threshold, the Bayesian estimate is too noisy to use for

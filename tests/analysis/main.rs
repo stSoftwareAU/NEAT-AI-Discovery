@@ -42,6 +42,7 @@ mod issue_733_add_neurons_pessimism_tuning;
 mod issue_791_improve_add_neurons_prediction;
 mod issue_792_adaptive_module_wiring;
 mod issue_806_dry_variant_generation;
+mod issue_907_hidden_source_interleaving;
 mod split_error_all_activations;
 mod split_error_fallback_candidates;
 mod target_map_optimization;
