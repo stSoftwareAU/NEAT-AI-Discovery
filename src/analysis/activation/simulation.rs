@@ -29,19 +29,25 @@ const MIN_NEURON_OUTPUT_STD_DEV: f32 = 0.01;
 /// for every sample. In production, `target_value` is not always recorded, but
 /// `target_activation` typically is.
 ///
-/// For a small set of squash functions where a reasonable approximation is possible, we can
-/// still simulate in activation domain by approximating `target_value` from the observed
-/// activation. This is particularly important for `HARD_TANH`, where the linear model can
-/// massively overstate improvement near saturation.
+/// For squash functions where a reasonable inverse approximation is possible, we can
+/// still simulate in activation domain by computing `target_value` from the observed
+/// activation using the inverse function. This is critical for non-linear activations
+/// (TANH, LOGISTIC, GELU, etc.) where the linear model ignores saturation effects.
 #[derive(Copy, Clone)]
 pub enum TargetSimulationMode {
     /// No saturation-aware simulation is available; fall back to the linear (value-domain) model.
     None,
     /// Full saturation-aware simulation using recorded `target_value` + `target_activation`.
     Full(fn(f32) -> f32),
-    /// Saturation-aware simulation using recorded `target_activation` and an approximation for
-    /// `target_value`.
-    ApproximateValueFromActivation(fn(f32) -> f32),
+    /// Saturation-aware simulation using recorded `target_activation` and an approximate
+    /// inverse function to recover `target_value` (Issue #906).
+    ///
+    /// `activation_fn` is the forward activation function.
+    /// `inverse_fn` computes `target_value ≈ inverse(target_activation)`.
+    ApproximateValueFromActivation {
+        activation_fn: fn(f32) -> f32,
+        inverse_fn: fn(f32) -> f32,
+    },
 }
 
 // ============================================================================
@@ -121,14 +127,16 @@ pub fn get_target_simulation_mode(
         return TargetSimulationMode::Full(activation_fn);
     }
 
-    // Approximation path: keep deliberately narrow (Jan 2026).
+    // Approximation path (Issue #906): use approximate inverse to recover target_value
+    // from target_activation for any activation with a feasible inverse function.
     //
-    // `HARD_TANH` (aka `CLIPPED`) is piecewise linear and, when not saturated,
-    // `target_activation == target_value`.
-    // When saturated, the exact pre-activation is unknown, but approximating it as ±1 still avoids
-    // the linear-model failure mode where we assume the activation can move beyond the clamp.
-    if squash.eq_ignore_ascii_case("HARD_TANH") || squash.eq_ignore_ascii_case("CLIPPED") {
-        return TargetSimulationMode::ApproximateValueFromActivation(activation_fn);
+    // Previously only HARD_TANH/CLIPPED was supported here. Now we support all monotonic
+    // activations (TANH, LOGISTIC, GELU, SOFTSIGN, etc.) via `approximate_inverse_fn`.
+    if let Some(inverse_fn) = crate::activations::approximate_inverse_fn(squash) {
+        return TargetSimulationMode::ApproximateValueFromActivation {
+            activation_fn,
+            inverse_fn,
+        };
     }
 
     TargetSimulationMode::None
