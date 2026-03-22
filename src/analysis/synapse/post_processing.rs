@@ -11,7 +11,8 @@ use std::collections::HashMap;
 
 use super::filtering::truncate_combined_synapse_candidate_sets;
 use super::scoring::{
-    apply_source_type_boost, apply_synapse_pessimism_discount, apply_target_type_boost,
+    apply_prediction_calibration, apply_source_type_boost, apply_synapse_pessimism_discount,
+    apply_target_type_boost,
 };
 use crate::analysis::cache::RecordCache;
 use crate::analysis::samples::EPSILON;
@@ -146,6 +147,14 @@ fn apply_impact_to_helpful(
         neuron_type_map,
     );
 
+    // Issue #891: Apply synapse prediction calibration to correct ~1,000× overestimation.
+    // Applied after pessimism discount and type boosts to scale the final prediction
+    // closer to observed actual gains, improving cross-type candidate ranking.
+    candidate.expected_creature_score_gain = apply_prediction_calibration(
+        candidate.expected_creature_score_gain,
+        crate::analysis::constants::SYNAPSE_PREDICTION_CALIBRATION,
+    );
+
     if verbose_enabled() && is_hidden {
         tracing::debug!(
             to_neuron_uuid = &candidate.to_neuron_uuid[..12.min(candidate.to_neuron_uuid.len())],
@@ -190,6 +199,12 @@ fn apply_impact_to_harmful(
         candidate.expected_creature_score_gain,
         candidate.improved_count,
         candidate.total_count,
+    );
+
+    // Issue #891: Apply synapse prediction calibration to harmful candidates.
+    candidate.expected_creature_score_gain = apply_prediction_calibration(
+        candidate.expected_creature_score_gain,
+        crate::analysis::constants::SYNAPSE_PREDICTION_CALIBRATION,
     );
 }
 
@@ -256,6 +271,12 @@ fn apply_impact_to_coordinated(
     // Coordinated-structural candidates have a 2.3% success rate with near-negligible
     // actual gains, indicating predictions are wildly over-estimated.
     candidate.expected_creature_score_gain *= COORDINATED_PESSIMISM_DISCOUNT;
+
+    // Issue #891: Apply coordinated prediction calibration to correct ~10,000× overestimation.
+    candidate.expected_creature_score_gain = apply_prediction_calibration(
+        candidate.expected_creature_score_gain,
+        crate::analysis::constants::COORDINATED_PREDICTION_CALIBRATION,
+    );
 }
 
 /// Apply impact discounting, sorting, diversification, and truncation to all candidate sets.
