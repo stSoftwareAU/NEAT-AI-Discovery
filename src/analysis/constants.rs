@@ -680,6 +680,74 @@ pub const MAX_BIAS_MAGNITUDE: f32 = 2.0;
 /// Must be > 1.0 (boost) and <= 2.0 (avoid over-biasing).
 pub const MICRO_NUDGE_VARIANT_BOOST: f32 = 1.5;
 
+// =============================================================================
+// Prediction Calibration Scaling (Issue #891)
+// =============================================================================
+
+// GRQ-sampler discovery cache reveals that `expectedCreatureScoreGain` overestimates
+// actual outcomes by 100–10,000×. The magnitude of overestimation varies by candidate
+// type, making cross-type comparisons unreliable. These per-type calibration factors
+// are applied post-pessimism-discount to correct the systematic magnitude gap.
+//
+// Cache Evidence (GRQ-sampler):
+//
+// | Candidate Type | Predicted Gain    | Actual Gain       | Overestimation |
+// |----------------|-------------------|-------------------|----------------|
+// | Add-Neuron     | 0.003–0.01        | 1e-7 to 3e-6     | 100–10,000×    |
+// | Add-Synapse    | 0.001–0.01        | (often negative)  | ~1,000×+       |
+// | Coordinated    | 0.001–0.01        | ~2.2e-14          | ~10,000×+      |
+//
+// Calibration factors are conservative (slightly under-correcting) to avoid
+// suppressing genuinely strong candidates. The pessimism discount already handles
+// ratio-based corrections; these factors address the residual magnitude gap.
+
+/// Prediction calibration factor for synapse candidates (Issue #891).
+///
+/// Synapse predictions overestimate actual score gains by approximately 1,000×.
+/// Applied as a multiplicative factor to `expected_creature_score_gain` after
+/// pessimism discounting and type-specific boosts.
+///
+/// ## Derivation
+/// Actual/predicted ratio from cache evidence: ~0.001 (range 0.0001–0.01).
+/// Conservative choice: 0.001 (corrects the median overestimation without
+/// over-correcting edge cases).
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Values above 0.01 provide insufficient correction.
+/// Values below 0.0001 risk suppressing all synapse candidates.
+pub const SYNAPSE_PREDICTION_CALIBRATION: f32 = 0.001;
+
+/// Prediction calibration factor for neuron candidates (Issue #891).
+///
+/// Neuron predictions overestimate actual score gains by approximately 100×.
+/// The overestimation is less severe than synapses because neuron candidates
+/// involve more direct structural changes.
+///
+/// ## Derivation
+/// Actual/predicted ratio from cache evidence: ~0.01 (range 0.001–0.1).
+/// Conservative choice: 0.01 (corrects the median overestimation).
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Values above 0.1 provide insufficient correction.
+/// Values below 0.001 risk suppressing all neuron candidates.
+pub const NEURON_PREDICTION_CALIBRATION: f32 = 0.01;
+
+/// Prediction calibration factor for coordinated-structural candidates (Issue #891).
+///
+/// Coordinated predictions have the most severe overestimation (~10,000×)
+/// because multi-operation predictions compound optimistically. Successful
+/// coordinated candidates achieve only ~2.2e-14 actual gain despite
+/// predictions in the 0.001–0.01 range.
+///
+/// ## Derivation
+/// Actual/predicted ratio from cache evidence: ~0.0001 (range 0.00001–0.001).
+/// Conservative choice: 0.0001 (corrects the median overestimation).
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Values above 0.001 provide insufficient correction.
+/// Values below 0.00001 risk suppressing all coordinated candidates.
+pub const COORDINATED_PREDICTION_CALIBRATION: f32 = 0.0001;
+
 /// Scoring boost multiplier for `remove-low-impact` candidates (Issue #892).
 ///
 /// GRQ-sampler discovery cache shows `remove-low-impact` has the highest success

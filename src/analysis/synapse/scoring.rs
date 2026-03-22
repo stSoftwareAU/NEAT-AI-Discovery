@@ -691,6 +691,30 @@ pub fn apply_synapse_pessimism_discount(gain: f32, improved_count: u32, total_co
     gain * discount
 }
 
+/// Apply a per-candidate-type prediction calibration factor (Issue #891).
+///
+/// GRQ-sampler discovery cache reveals that `expected_creature_score_gain` overestimates
+/// actual outcomes by 100–10,000×, with the magnitude varying by candidate type. This
+/// systematic overestimation means cross-type comparisons are unreliable — a synapse
+/// prediction of 0.01 is not comparable to a neuron prediction of 0.003.
+///
+/// This function applies a multiplicative calibration factor to scale predictions
+/// closer to observed actual gains. It is applied after pessimism discounting and
+/// type-specific boosts.
+///
+/// ## Arguments
+///
+/// * `gain` — The expected creature score gain after pessimism discounting
+/// * `calibration_factor` — Per-type calibration constant (e.g., `SYNAPSE_PREDICTION_CALIBRATION`)
+///
+/// ## Returns
+///
+/// The calibrated gain, preserving the sign of the original.
+#[inline]
+pub fn apply_prediction_calibration(gain: f32, calibration_factor: f32) -> f32 {
+    gain * calibration_factor
+}
+
 /// Wrapper for tests - counts improved samples only.
 #[cfg(test)]
 pub(crate) fn count_improved_samples(
