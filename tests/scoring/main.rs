@@ -21,3 +21,4 @@ mod issue_805_numeric_safety;
 mod issue_887_activation_neuron_boost;
 mod issue_888_weight_constraints;
 mod issue_891_prediction_calibration;
+mod issue_905_activation_aware_weight_constraints;
