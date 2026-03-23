@@ -19,8 +19,8 @@ use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
 
 use super::shared::{AnalyzeAllResult, AnalyzeNeuronsResult, AnalyzeSynapsesResult};
 use super::{
-    cache, candidate_aggregation, module_dispatch_specs, module_weights, neuron,
-    neuron_fingerprint, synapse, utils,
+    cache, candidate_aggregation, candidate_compression, module_dispatch_specs, module_weights,
+    neuron, neuron_fingerprint, synapse, utils,
 };
 
 /// Choose analysis ordering when deadline-constrained.
@@ -286,6 +286,22 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             neuron,
             &shared_cache,
         );
+    }
+
+    // Issue #921: Compress compatible IDENTITY candidates into coordinated candidates.
+    if let Some(syn) = synapse_result.as_mut() {
+        let compressed = candidate_compression::compress_identity_candidates(
+            &syn.helpful_synapses,
+            &input.creature,
+        );
+        if !compressed.is_empty() {
+            candidate_aggregation::merge_coordinated_structural_replacements(
+                syn,
+                compressed,
+                input.max_synapse_candidates,
+                input.analysis_deadline_ms.is_some(),
+            );
+        }
     }
 
     // Issue #792: Resolve the module outcome tracker from input or use a default.
