@@ -35,6 +35,7 @@ pub mod activation;
 pub mod cache;
 pub mod candidate_cache;
 pub mod candidate_clustering;
+pub mod candidate_compression;
 pub mod candidate_diversity;
 pub mod constants;
 pub mod diagnostics;

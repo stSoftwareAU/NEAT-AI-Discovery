@@ -44,6 +44,7 @@ mod issue_792_adaptive_module_wiring;
 mod issue_806_dry_variant_generation;
 mod issue_907_hidden_source_interleaving;
 mod issue_910_hidden_to_hidden_synapse_candidates;
+mod issue_921_candidate_compression;
 mod split_error_all_activations;
 mod split_error_fallback_candidates;
 mod target_map_optimization;

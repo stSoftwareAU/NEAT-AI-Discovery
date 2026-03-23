@@ -822,3 +822,28 @@ pub const COORDINATED_PREDICTION_CALIBRATION: f32 = 0.0001;
 /// ## Valid Range
 /// Must be >= 1.0 (boost) and <= 3.0 (avoid over-biasing).
 pub const REMOVAL_CANDIDATE_BOOST: f32 = 1.5;
+
+// =============================================================================
+// Candidate Compression (Issue #921)
+// =============================================================================
+
+/// Minimum number of candidates sharing a target neuron to attempt compression.
+///
+/// Groups with fewer than this many distinct source neurons are not worth
+/// compressing — a single synapse candidate is simpler and has lower
+/// operation-count discount penalty.
+///
+/// ## Valid Range
+/// Must be >= 2. Values above 3 may miss useful compression opportunities.
+pub const MIN_COMPRESSED_SOURCES: usize = 2;
+
+/// Maximum number of input synapses per compressed candidate.
+///
+/// Caps the number of inputs feeding into a single compressed hidden neuron.
+/// Higher values increase the operation count (N+2 operations for N inputs),
+/// which compounds the `COORDINATED_OPERATION_DISCOUNT` penalty.
+///
+/// ## Valid Range
+/// Must be >= `MIN_COMPRESSED_SOURCES` and <= 8. Values above 5 receive
+/// severe discount penalties (0.65^6 ≈ 0.075).
+pub const MAX_COMPRESSION_INPUTS: usize = 5;
