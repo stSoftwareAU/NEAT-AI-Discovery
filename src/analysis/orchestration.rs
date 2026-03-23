@@ -289,15 +289,24 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     }
 
     // Issue #921: Compress compatible IDENTITY candidates into coordinated candidates.
+    // Issue #922: Also compress using non-linear squash functions (TANH, GELU).
     if let Some(syn) = synapse_result.as_mut() {
-        let compressed = candidate_compression::compress_identity_candidates(
+        let identity_compressed = candidate_compression::compress_identity_candidates(
             &syn.helpful_synapses,
             &input.creature,
         );
-        if !compressed.is_empty() {
+        let nonlinear_compressed = candidate_compression::compress_nonlinear_candidates(
+            &syn.helpful_synapses,
+            &input.creature,
+        );
+
+        let mut all_compressed = identity_compressed;
+        all_compressed.extend(nonlinear_compressed);
+
+        if !all_compressed.is_empty() {
             candidate_aggregation::merge_coordinated_structural_replacements(
                 syn,
-                compressed,
+                all_compressed,
                 input.max_synapse_candidates,
                 input.analysis_deadline_ms.is_some(),
             );

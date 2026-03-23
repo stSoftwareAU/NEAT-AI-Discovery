@@ -1,7 +1,7 @@
-//! Candidate compression for IDENTITY squash candidates (Issue #921).
+//! Candidate compression for synapse candidates (Issues #921, #922).
 //!
 //! When multiple independently-discovered `CandidateSynapseJson` candidates target
-//! the same output neuron via IDENTITY, this module compresses them into a single
+//! the same output neuron, this module compresses them into a single
 //! `CoordinatedStructuralCandidateJson`:
 //!
 //! ```text
@@ -11,13 +11,19 @@
 //!
 //! After (1 compressed candidate):
 //!   input-A --+
-//!             +-→ [hidden IDENTITY, bias=0] → output   (combined gain)
+//!             +-→ [hidden neuron, bias=0] → output   (combined gain)
 //!   input-B --+
 //! ```
 //!
-//! The compressed candidate uses one hidden IDENTITY neuron that sums all inputs —
-//! mathematically equivalent to applying the individual synapses separately, but
-//! tested as a single atomic mutation.
+//! ## IDENTITY compression (Issue #921)
+//! Uses a hidden IDENTITY neuron that sums all inputs — mathematically equivalent
+//! to applying the individual synapses separately.
+//!
+//! ## Non-linear compression (Issue #922)
+//! Uses TANH or GELU hidden neurons to capture interaction effects between inputs.
+//! The combined signal through a non-linear neuron is not simply the sum of
+//! individual effects — saturation-aware gain estimation accounts for diminished
+//! returns in saturated regimes.
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for neural network computation (Issue #873)
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for neural network computation (Issue #873)
@@ -29,7 +35,10 @@ use crate::{
     CreatureJson,
 };
 
+use crate::activations::apply_scalar_squash;
+
 use super::constants::{
+    COMPRESSION_MIN_BENEFIT_RATIO, COMPRESSION_SATURATION_THRESHOLD,
     COORDINATED_OPERATION_DISCOUNT, MAX_COMPRESSION_INPUTS, MIN_COMPRESSED_SOURCES,
     MIN_COORDINATED_MULTI_OP_GAIN,
 };
@@ -237,6 +246,233 @@ pub fn compress_identity_candidates(
     let mut compressed = Vec::new();
     for group in &groups {
         if let Some(candidate) = compress_group(group, creature) {
+            compressed.push(candidate);
+        }
+    }
+
+    // Sort by gain descending for deterministic output.
+    compressed.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+
+    compressed
+}
+
+// =============================================================================
+// Non-linear compression (Issue #922)
+// =============================================================================
+
+/// Supported non-linear squash functions for compression.
+const NONLINEAR_SQUASH_FUNCTIONS: &[&str] = &["TANH", "GELU"];
+
+/// Estimate the combined gain of routing multiple inputs through a non-linear
+/// squash function, accounting for saturation effects.
+///
+/// For each candidate, computes `squash(w_i * input_proxy)` individually and
+/// `squash(sum(w_i * input_proxy))` combined. The proxy input is 1.0 (unit
+/// activation), so weights directly determine the pre-activation magnitude.
+///
+/// Returns `None` if the combined gain does not exceed the best individual
+/// gain by `COMPRESSION_MIN_BENEFIT_RATIO`.
+fn estimate_nonlinear_gain(candidates: &[CandidateSynapseJson], squash_name: &str) -> Option<f32> {
+    if candidates.len() < MIN_COMPRESSED_SOURCES {
+        return None;
+    }
+
+    // Compute individual squash outputs: |squash(w_i)| as proxy for individual contribution.
+    let mut individual_gains: Vec<f32> = Vec::with_capacity(candidates.len());
+    let mut combined_pre_activation: f32 = 0.0;
+
+    for c in candidates {
+        let individual_output = apply_scalar_squash(squash_name, c.weight)?;
+        individual_gains.push(individual_output.abs() * c.expected_creature_score_gain);
+        combined_pre_activation += c.weight;
+    }
+
+    let best_individual = individual_gains.iter().copied().fold(0.0_f32, f32::max);
+
+    if best_individual <= 0.0 {
+        return None;
+    }
+
+    // Compute combined squash output.
+    let combined_output = apply_scalar_squash(squash_name, combined_pre_activation)?;
+
+    // Estimate combined gain: ratio of combined activation to sum of individual activations,
+    // scaled by the sum of individual gains.
+    let individual_activation_sum: f32 = candidates
+        .iter()
+        .filter_map(|c| apply_scalar_squash(squash_name, c.weight).map(f32::abs))
+        .sum();
+
+    let combined_gain = if individual_activation_sum > 1e-10 {
+        let activation_ratio = combined_output.abs() / individual_activation_sum;
+        let gain_sum: f32 = candidates
+            .iter()
+            .map(|c| c.expected_creature_score_gain)
+            .sum();
+        gain_sum * activation_ratio
+    } else {
+        return None;
+    };
+
+    // Apply saturation discount if combined activation is near squash bounds.
+    let saturation_limit = match squash_name {
+        "TANH" => 1.0_f32,
+        "GELU" => combined_pre_activation.abs().max(1.0), // GELU is unbounded positive
+        _ => 1.0,
+    };
+
+    let saturation_fraction = combined_output.abs() / saturation_limit;
+    let discounted_gain = if saturation_fraction > COMPRESSION_SATURATION_THRESHOLD {
+        // Diminished returns in saturated regime.
+        let excess = saturation_fraction - COMPRESSION_SATURATION_THRESHOLD;
+        let discount = 1.0 - (excess / (1.0 - COMPRESSION_SATURATION_THRESHOLD)).min(0.9);
+        combined_gain * discount
+    } else {
+        combined_gain
+    };
+
+    // Benefit ratio check: combined must beat best individual by the required margin.
+    if discounted_gain < best_individual * COMPRESSION_MIN_BENEFIT_RATIO {
+        return None;
+    }
+
+    Some(discounted_gain)
+}
+
+/// Select the squash function for non-linear compression.
+///
+/// If the target neuron already uses a non-linear squash (TANH or GELU), use
+/// that. Otherwise default to TANH (matching fan-in module behaviour).
+fn select_nonlinear_squash(creature: &CreatureJson, target_uuid: &str) -> &'static str {
+    if let Some(target) = creature.neurons.iter().find(|n| n.uuid == target_uuid) {
+        let squash = target.squash.to_uppercase();
+        for &s in NONLINEAR_SQUASH_FUNCTIONS {
+            if squash == s {
+                return s;
+            }
+        }
+    }
+    // Default to TANH (matches fan_in.rs:59).
+    "TANH"
+}
+
+/// Compress a group of candidates into a non-linear coordinated structural candidate.
+///
+/// Returns `None` if:
+/// - The non-linear gain estimation fails or is below threshold
+/// - The discounted gain does not exceed `MIN_COORDINATED_MULTI_OP_GAIN`
+fn compress_group_nonlinear(
+    group: &CompressibleGroup,
+    creature: &CreatureJson,
+) -> Option<CoordinatedStructuralCandidateJson> {
+    let mut sorted_candidates = group.candidates.clone();
+    sorted_candidates.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+    sorted_candidates.truncate(MAX_COMPRESSION_INPUTS);
+
+    if sorted_candidates.len() < MIN_COMPRESSED_SOURCES {
+        return None;
+    }
+
+    let squash_name = select_nonlinear_squash(creature, &group.to_neuron_uuid);
+
+    // Estimate non-linear gain with saturation awareness.
+    let combined_gain = estimate_nonlinear_gain(&sorted_candidates, squash_name)?;
+
+    if combined_gain <= 0.0 {
+        return None;
+    }
+
+    let input_uuids: Vec<String> = sorted_candidates
+        .iter()
+        .map(|c| c.from_neuron_uuid.clone())
+        .collect();
+
+    let neuron_uuid = generate_compression_uuid(&input_uuids, &group.to_neuron_uuid);
+
+    // N inputs → N+2 operations (1 AddNeuron + N AddSynapse inputs + 1 AddSynapse output).
+    let op_count = sorted_candidates.len() + 2;
+    let exponent = (op_count - 1) as f32;
+    let discounted_gain = combined_gain * COORDINATED_OPERATION_DISCOUNT.powf(exponent);
+
+    if discounted_gain <= MIN_COORDINATED_MULTI_OP_GAIN {
+        return None;
+    }
+
+    // Insert before target neuron.
+    let insert_before = creature
+        .neurons
+        .iter()
+        .find(|n| n.uuid == group.to_neuron_uuid)
+        .map(|n| n.uuid.clone());
+
+    let mut operations = Vec::with_capacity(op_count);
+
+    // 1. Add the hidden non-linear neuron with bias=0.
+    operations.push(CoordinatedStructuralOpJson::AddNeuron {
+        neuron_uuid: neuron_uuid.clone(),
+        neuron_type: "hidden".to_string(),
+        squash: squash_name.to_string(),
+        bias: 0.0,
+        insert_before_neuron_uuid: insert_before,
+    });
+
+    // 2. Add synapses from each input to the hidden neuron.
+    for candidate in &sorted_candidates {
+        operations.push(CoordinatedStructuralOpJson::AddSynapse {
+            from_neuron_uuid: candidate.from_neuron_uuid.clone(),
+            to_neuron_uuid: neuron_uuid.clone(),
+            weight: candidate.weight,
+        });
+    }
+
+    // 3. Add synapse from hidden neuron to target (weight=0.1 for non-linear,
+    //    matching fan-in conservative output weight).
+    operations.push(CoordinatedStructuralOpJson::AddSynapse {
+        from_neuron_uuid: neuron_uuid,
+        to_neuron_uuid: group.to_neuron_uuid.clone(),
+        weight: 0.1,
+    });
+
+    let input_labels: Vec<&str> = sorted_candidates
+        .iter()
+        .map(|c| c.from_neuron_uuid.as_str())
+        .collect();
+
+    Some(CoordinatedStructuralCandidateJson {
+        operations,
+        expected_creature_score_gain: discounted_gain,
+        comment: Some(format!(
+            "Compressed {squash_name}: {} inputs [{}] → {}",
+            sorted_candidates.len(),
+            input_labels.join(", "),
+            group.to_neuron_uuid,
+        )),
+    })
+}
+
+/// Compress compatible candidates into non-linear coordinated structural candidates (Issue #922).
+///
+/// For each compressible group, attempts TANH/GELU compression with saturation-aware
+/// gain estimation. Only emits candidates where the combined gain exceeds the best
+/// individual gain by `COMPRESSION_MIN_BENEFIT_RATIO` (1.05).
+///
+/// Returns non-linear compressed candidates alongside (not replacing) IDENTITY
+/// compressed candidates. The caller merges both sets into the pipeline.
+pub fn compress_nonlinear_candidates(
+    helpful_synapses: &[CandidateSynapseJson],
+    creature: &CreatureJson,
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    let groups = detect_compressible_groups(helpful_synapses);
+
+    let mut compressed = Vec::new();
+    for group in &groups {
+        if let Some(candidate) = compress_group_nonlinear(group, creature) {
             compressed.push(candidate);
         }
     }
@@ -657,5 +893,244 @@ mod tests {
             }
             _ => panic!("First operation should be AddNeuron"),
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Non-linear compression tests (Issue #922)
+    // -------------------------------------------------------------------------
+
+    fn neuron_with_squash(uuid: &str, neuron_type: &str, squash: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: neuron_type.to_string(),
+            squash: squash.to_string(),
+            bias: 0.0,
+        }
+    }
+
+    #[test]
+    fn test_nonlinear_tanh_compression_linear_regime() {
+        // Small weights keep TANH in its linear regime — compression should succeed.
+        let candidates = vec![
+            make_candidate("input-a", "output-1", 0.3, 0.05),
+            make_candidate("input-b", "output-1", 0.4, 0.06),
+        ];
+        let creature = make_creature(
+            vec![
+                neuron("input-a", "input"),
+                neuron("input-b", "input"),
+                neuron("output-1", "output"),
+            ],
+            vec![
+                synapse("input-a", "output-1", 0.3),
+                synapse("input-b", "output-1", 0.4),
+            ],
+        );
+
+        let compressed = compress_nonlinear_candidates(&candidates, &creature);
+        assert!(
+            !compressed.is_empty(),
+            "TANH compression should succeed in linear regime"
+        );
+
+        // Verify the hidden neuron uses TANH (default).
+        match &compressed[0].operations[0] {
+            CoordinatedStructuralOpJson::AddNeuron { squash, .. } => {
+                assert_eq!(squash, "TANH", "Should default to TANH squash");
+            }
+            _ => panic!("First operation should be AddNeuron"),
+        }
+    }
+
+    #[test]
+    fn test_nonlinear_tanh_saturated_inputs_diminished() {
+        // Large weights push TANH into saturation — gain should be diminished.
+        let candidates = vec![
+            make_candidate("input-a", "output-1", 3.0, 0.05),
+            make_candidate("input-b", "output-1", 3.0, 0.06),
+        ];
+        let creature = make_creature(
+            vec![
+                neuron("input-a", "input"),
+                neuron("input-b", "input"),
+                neuron("output-1", "output"),
+            ],
+            vec![
+                synapse("input-a", "output-1", 3.0),
+                synapse("input-b", "output-1", 3.0),
+            ],
+        );
+
+        // With saturated inputs, combined TANH output ≈ 1.0, individual outputs ≈ 1.0 each.
+        // The benefit ratio check should filter this out since combining saturated
+        // inputs adds no benefit.
+        let compressed = compress_nonlinear_candidates(&candidates, &creature);
+
+        // Either filtered out entirely or has reduced gain.
+        if !compressed.is_empty() {
+            // Gain should be less than sum of individual gains (saturation penalty).
+            let individual_sum: f32 = candidates
+                .iter()
+                .map(|c| c.expected_creature_score_gain)
+                .sum();
+            assert!(
+                compressed[0].expected_creature_score_gain < individual_sum,
+                "Saturated TANH should produce lower gain than linear sum"
+            );
+        }
+    }
+
+    #[test]
+    fn test_nonlinear_gelu_compression() {
+        // GELU compression with moderate positive weights.
+        let candidates = vec![
+            make_candidate("input-a", "output-1", 0.5, 0.05),
+            make_candidate("input-b", "output-1", 0.6, 0.06),
+        ];
+        let creature = make_creature(
+            vec![
+                neuron("input-a", "input"),
+                neuron("input-b", "input"),
+                neuron_with_squash("output-1", "output", "GELU"),
+            ],
+            vec![
+                synapse("input-a", "output-1", 0.5),
+                synapse("input-b", "output-1", 0.6),
+            ],
+        );
+
+        let compressed = compress_nonlinear_candidates(&candidates, &creature);
+
+        // Should produce a GELU compressed candidate (target neuron uses GELU).
+        if !compressed.is_empty() {
+            match &compressed[0].operations[0] {
+                CoordinatedStructuralOpJson::AddNeuron { squash, .. } => {
+                    assert_eq!(squash, "GELU", "Should use target's GELU squash");
+                }
+                _ => panic!("First operation should be AddNeuron"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_nonlinear_benefit_ratio_filtering() {
+        // Very similar individual gains — non-linear combining may not meet
+        // the 1.05 benefit ratio threshold.
+        let gain = estimate_nonlinear_gain(
+            &[
+                make_candidate("input-a", "output-1", 3.0, 0.05),
+                make_candidate("input-b", "output-1", 3.0, 0.05),
+            ],
+            "TANH",
+        );
+
+        // With saturated TANH (w=3.0), combining adds minimal benefit.
+        // The function should return None because the benefit ratio is not met.
+        assert!(
+            gain.is_none(),
+            "Saturated TANH inputs should fail benefit ratio check"
+        );
+    }
+
+    #[test]
+    fn test_nonlinear_selects_target_squash() {
+        let creature = make_creature(
+            vec![
+                neuron("input-a", "input"),
+                neuron_with_squash("output-1", "output", "GELU"),
+            ],
+            vec![],
+        );
+        assert_eq!(
+            select_nonlinear_squash(&creature, "output-1"),
+            "GELU",
+            "Should select target neuron's GELU squash"
+        );
+    }
+
+    #[test]
+    fn test_nonlinear_defaults_to_tanh() {
+        let creature = make_creature(
+            vec![
+                neuron("input-a", "input"),
+                neuron("output-1", "output"), // IDENTITY squash
+            ],
+            vec![],
+        );
+        assert_eq!(
+            select_nonlinear_squash(&creature, "output-1"),
+            "TANH",
+            "Should default to TANH when target is not non-linear"
+        );
+    }
+
+    #[test]
+    fn test_nonlinear_output_weight_is_conservative() {
+        // Non-linear compression should use conservative output weight (0.1).
+        let candidates = vec![
+            make_candidate("input-a", "output-1", 0.3, 0.05),
+            make_candidate("input-b", "output-1", 0.4, 0.06),
+        ];
+        let creature = make_creature(
+            vec![
+                neuron("input-a", "input"),
+                neuron("input-b", "input"),
+                neuron("output-1", "output"),
+            ],
+            vec![
+                synapse("input-a", "output-1", 0.3),
+                synapse("input-b", "output-1", 0.4),
+            ],
+        );
+
+        let compressed = compress_nonlinear_candidates(&candidates, &creature);
+        assert!(!compressed.is_empty());
+
+        // Last operation is AddSynapse to target with weight=0.1.
+        let last_op = compressed[0].operations.last().unwrap();
+        match last_op {
+            CoordinatedStructuralOpJson::AddSynapse { weight, .. } => {
+                assert!(
+                    (*weight - 0.1).abs() < f32::EPSILON,
+                    "Non-linear output synapse weight should be 0.1, got {weight}"
+                );
+            }
+            _ => panic!("Last operation should be AddSynapse"),
+        }
+    }
+
+    #[test]
+    fn test_nonlinear_comment_mentions_squash() {
+        let candidates = vec![
+            make_candidate("input-a", "output-1", 0.3, 0.05),
+            make_candidate("input-b", "output-1", 0.4, 0.06),
+        ];
+        let creature = make_creature(
+            vec![
+                neuron("input-a", "input"),
+                neuron("input-b", "input"),
+                neuron("output-1", "output"),
+            ],
+            vec![
+                synapse("input-a", "output-1", 0.3),
+                synapse("input-b", "output-1", 0.4),
+            ],
+        );
+
+        let compressed = compress_nonlinear_candidates(&candidates, &creature);
+        assert!(!compressed.is_empty());
+
+        let comment = compressed[0].comment.as_ref().unwrap();
+        assert!(
+            comment.contains("TANH"),
+            "Comment should mention TANH, got: {comment}"
+        );
+    }
+
+    #[test]
+    fn test_nonlinear_empty_input() {
+        let creature = make_creature(vec![neuron("output-1", "output")], vec![]);
+        let compressed = compress_nonlinear_candidates(&[], &creature);
+        assert!(compressed.is_empty(), "Empty input should produce nothing");
     }
 }
