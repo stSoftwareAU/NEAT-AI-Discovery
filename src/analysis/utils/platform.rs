@@ -47,7 +47,7 @@ pub fn suppress_mesa_warnings_if_requested() {
     // No-op on non-Linux platforms
 }
 
-/// Ensure XDG_RUNTIME_DIR is set on Linux (required by wgpu on Wayland).
+/// Ensure `XDG_RUNTIME_DIR` is set on Linux (required by wgpu on Wayland).
 ///
 /// This function uses `Once` for thread-safe one-time initialisation. It's safe to
 /// call from multiple threads concurrently - only the first call will set the
