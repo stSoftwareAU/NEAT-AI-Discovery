@@ -237,7 +237,7 @@ pub fn get_memory_info() -> (u64, u64) {
 
 /// Parse a memory value from a /proc/meminfo line.
 /// Returns None if the line is malformed (missing or non-numeric value).
-/// Example: "MemTotal:       16384000 kB" -> Some(16384000)
+/// Example: "`MemTotal`:       16384000 kB" -> Some(16384000)
 #[cfg(target_os = "linux")]
 pub fn parse_meminfo_line(line: &str) -> Option<u64> {
     line.split_whitespace()
