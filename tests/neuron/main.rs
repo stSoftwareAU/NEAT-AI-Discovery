@@ -14,4 +14,5 @@ mod issue_414_remove_neuron_high_error;
 mod issue_415_combo_successful_interference;
 mod issue_743_uuid_hashing;
 mod issue_834_lock_free_error_collection;
+mod issue_926_add_neuron_between_hidden;
 mod neuron_metadata_candidates_found_includes_pairing;
