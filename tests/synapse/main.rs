@@ -24,6 +24,7 @@ mod issue_790_reduce_coordinated_structural_false_positives;
 mod issue_893_holdout_validation;
 mod issue_897_saturation_aware_coordinated_estimation;
 mod issue_906_saturation_aware_fallback_nonlinear;
+mod issue_927_remove_harmful_synapse;
 mod sample_matching;
 mod sensible_range_filtering;
 mod source_variance_discounting;
