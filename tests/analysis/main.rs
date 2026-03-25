@@ -46,6 +46,7 @@ mod issue_907_hidden_source_interleaving;
 mod issue_910_hidden_to_hidden_synapse_candidates;
 mod issue_921_candidate_compression;
 mod issue_922_nonlinear_candidate_compression;
+mod issue_925_add_synapse_between_hidden_neurons;
 mod split_error_all_activations;
 mod split_error_fallback_candidates;
 mod target_map_optimization;
