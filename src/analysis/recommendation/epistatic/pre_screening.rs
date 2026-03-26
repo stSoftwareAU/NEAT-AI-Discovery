@@ -137,11 +137,12 @@ fn compute_residual_errors(
 
     samples
         .iter()
-        .map(|s| {
+        .filter_map(|s| {
             if use_activation {
-                let target_fn = target_activation_fn.unwrap();
-                let target_value = s.target_value.unwrap();
-                let target_activation = s.target_activation.unwrap();
+                // Gracefully skip samples missing target data (Issue #940).
+                let target_fn = target_activation_fn?;
+                let target_value = s.target_value?;
+                let target_activation = s.target_activation?;
                 let desired_value = target_value + s.avg_error;
                 let expected = target_fn(desired_value);
 
@@ -153,21 +154,21 @@ fn compute_residual_errors(
                 let new_output = target_fn(new_input);
                 let residual_error = expected - new_output;
 
-                ResidualSample {
+                Some(ResidualSample {
                     original_error,
                     residual_error,
                     new_target_value: Some(new_input),
                     desired_value: Some(desired_value),
-                }
+                })
             } else {
                 let contribution = weight * s.activation;
                 let residual_error = s.avg_error - contribution;
-                ResidualSample {
+                Some(ResidualSample {
                     original_error: s.avg_error,
                     residual_error,
                     new_target_value: None,
                     desired_value: None,
-                }
+                })
             }
         })
         .collect()
@@ -274,10 +275,16 @@ fn evaluate_residual_reduction(
         let residual = residual_sample.residual_error as f64;
 
         let combined_residual = if use_activation {
-            // Issue #897: Saturation-aware simulation for complement contribution
-            let target_fn = target_activation_fn.unwrap();
-            let new_target_value = residual_sample.new_target_value.unwrap() as f64;
-            let desired_value = residual_sample.desired_value.unwrap();
+            // Issue #897: Saturation-aware simulation for complement contribution.
+            // Gracefully skip samples missing target data (Issue #940).
+            let (Some(target_fn), Some(new_target_value), Some(desired_value)) = (
+                target_activation_fn,
+                residual_sample.new_target_value,
+                residual_sample.desired_value,
+            ) else {
+                continue;
+            };
+            let new_target_value = new_target_value as f64;
             let expected = target_fn(desired_value) as f64;
 
             // Add complement contribution through activation function

@@ -354,8 +354,10 @@ pub fn calculate_optimal_bias(
             let new_error = if use_hard_tanh {
                 // HARD_TANH model: account for target neuron's clamping
                 // CRITICAL: avg_error is in VALUE domain (targetValue - currentValue from TypeScript)
-                // So we compute desired_value = target_value + avg_error, then squash to get expected activation
-                let target_value = sample.target_value.unwrap();
+                // Gracefully skip samples missing target_value (Issue #940).
+                let Some(target_value) = sample.target_value else {
+                    continue;
+                };
                 let desired_value = target_value + sample.avg_error;
                 let expected = hard_tanh(desired_value);
                 let new_input = target_value + correction;

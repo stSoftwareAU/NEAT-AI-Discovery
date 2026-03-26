@@ -392,10 +392,16 @@ fn compute_combined_improvement_on_range(
 
         if use_activation_simulation {
             // Issue #897: Saturation-aware simulation in ACTIVATION domain
-            // Reference: scoring.rs compute_relu_improvement_and_count()
-            let target_fn = target_activation_fn.unwrap();
-            let target_value = sample.target_value.unwrap() as f64;
-            let target_activation = sample.target_activation.unwrap() as f64;
+            // Gracefully skip samples missing target data (Issue #940).
+            let (Some(target_fn), Some(tv), Some(ta)) = (
+                target_activation_fn,
+                sample.target_value,
+                sample.target_activation,
+            ) else {
+                continue;
+            };
+            let target_value = tv as f64;
+            let target_activation = ta as f64;
 
             // Reconstruct expected output: what the target should produce
             let desired_value = target_value + sample.avg_error as f64;

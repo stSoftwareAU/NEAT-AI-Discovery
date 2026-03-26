@@ -144,10 +144,14 @@ pub fn detect_correlated_error_patterns(
             let uuid_i = output_neurons_with_errors[i];
             let uuid_j = output_neurons_with_errors[j];
 
-            let corr = compute_pearson_correlation(
-                error_by_obs.get(uuid_i).unwrap(),
-                error_by_obs.get(uuid_j).unwrap(),
-            );
+            // UUIDs are from output_neurons_with_errors, which are only included
+            // when they have entries in error_by_obs. Skip defensively (Issue #940).
+            let (Some(errors_i), Some(errors_j)) =
+                (error_by_obs.get(uuid_i), error_by_obs.get(uuid_j))
+            else {
+                continue;
+            };
+            let corr = compute_pearson_correlation(errors_i, errors_j);
 
             correlation_matrix[i][j] = corr;
             correlation_matrix[j][i] = corr;
@@ -303,12 +307,11 @@ fn find_shared_obs_indices(
         return Vec::new();
     }
 
-    let first = error_by_obs.get(group_uuids[0]);
-    if first.is_none() {
+    let Some(first) = error_by_obs.get(group_uuids[0]) else {
         return Vec::new();
-    }
+    };
 
-    let mut shared: HashSet<u32> = first.unwrap().keys().copied().collect();
+    let mut shared: HashSet<u32> = first.keys().copied().collect();
 
     for &uuid in &group_uuids[1..] {
         if let Some(obs_map) = error_by_obs.get(uuid) {
