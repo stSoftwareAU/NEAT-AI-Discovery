@@ -1,98 +1,8 @@
-//! Central constants module for discovery thresholds (Issue #424).
+//! Candidate evaluation, scoring, and calibration constants.
 //!
-//! This module is the single source of truth for all discovery detection
-//! constants and thresholds. Previously these were duplicated across
-//! individual analysis modules.
-//!
-//! ## Constant Categories
-//!
-//! - **Sample count thresholds**: Minimum samples required for reliable detection
-//! - **Sentinel detection**: Constants for identifying sentinel/null values
-//! - **Source variance**: Thresholds for source activation variance filtering
-//! - **Candidate diversification**: Parameters for deadline-constrained exploration
-
-// =============================================================================
-// Sample Count Thresholds
-// =============================================================================
-
-/// Minimum number of samples required for neuron candidate evaluation.
-///
-/// Used by weight calculation, synapse analysis, neuron analysis, and GPU
-/// shader validation to ensure sufficient data for reliable predictions.
-///
-/// ## Valid Range
-/// Must be >= 2 for statistical calculations. Values below 10 produce
-/// unreliable least-squares fits.
-pub const MIN_NEURON_SAMPLE_COUNT: usize = 10;
-
-/// Minimum number of samples required for discovery module detection.
-///
-/// Used by detection modules (saturation, dead neuron, bottleneck, oscillation,
-/// dormant synapse, opposing synapse, correlated error, etc.) to ensure
-/// sufficient data for pattern recognition.
-///
-/// ## Valid Range
-/// Must be >= `MIN_NEURON_SAMPLE_COUNT`. Values below 20 produce unreliable
-/// pattern detection.
-pub const MIN_DISCOVERY_SAMPLE_COUNT: usize = 20;
-
-// =============================================================================
-// Sentinel Detection Constants
-// =============================================================================
-
-/// Candidate sentinel values to check for clusters.
-///
-/// These are the most common sentinel values in normalised data.
-/// Used by observation range, bounded range, and sentinel gating modules.
-pub const CANDIDATE_SENTINELS: [f32; 3] = [-1.0, 0.0, 1.0];
-
-/// Minimum fraction of samples at a sentinel value to consider it a cluster.
-///
-/// If fewer than this fraction of samples cluster at a candidate sentinel
-/// value, it is not considered a meaningful sentinel.
-///
-/// ## Valid Range
-/// Must be in (0.0, 1.0). Values below 0.10 may flag noise as sentinels.
-pub const MIN_SENTINEL_FRACTION: f32 = 0.15;
-
-/// Tolerance for grouping values into a sentinel cluster.
-///
-/// Values within this distance of a candidate sentinel are considered part
-/// of the cluster. Also used as the default sentinel tolerance for
-/// range-aware weight calculations.
-///
-/// ## Valid Range
-/// Must be > 0.0. Values above 0.1 may merge distinct value groups.
-pub const SENTINEL_TOLERANCE: f32 = 0.02;
-
-/// Minimum gap between a sentinel cluster and the useful value range.
-///
-/// If the gap between the sentinel cluster and the nearest useful value is
-/// smaller than this threshold, the values are too interleaved to separate
-/// reliably.
-///
-/// ## Valid Range
-/// Must be > `SENTINEL_TOLERANCE`. Values above 0.2 may miss valid sentinels.
-pub const MIN_SENTINEL_GAP: f32 = 0.05;
-
-// =============================================================================
-// Source Variance Thresholds
-// =============================================================================
-
-/// Minimum source activation standard deviation for full credit.
-///
-/// Sources with std dev below this are progressively discounted to avoid
-/// over-prediction from constant-ish sources. Also used as the reference
-/// value for dynamic constant-source threshold scaling.
-///
-/// ## Context
-/// Based on production analysis: input-1064 had std dev 0.01 and caused
-/// massive over-prediction. Sources should have at least 0.05 std dev for
-/// reliable correlation.
-///
-/// ## Valid Range
-/// Must be > 0.0. Values above 0.1 may discard useful low-variance sources.
-pub const MIN_SOURCE_STD_DEV: f32 = 0.05;
+//! Covers diversification, source/target-type boosts, activation-function
+//! boosts, pessimism discounts, prediction calibration, coordinated-structural
+//! validation, and NaN-safe comparison helpers.
 
 // =============================================================================
 // Candidate Diversification
@@ -176,61 +86,6 @@ pub const MIN_BOOST_SAMPLES: usize = 10;
 /// ## Valid Range
 /// Must be > 1.0 (boost) and <= 3.0 (avoid over-biasing).
 pub const EXISTING_HIDDEN_TARGET_BOOST: f64 = 1.5;
-
-// =============================================================================
-// Individual Operation Pre-Screen (Issue #508)
-// =============================================================================
-
-/// Maximum individual harm allowed for a source to participate in epistatic or
-/// synergistic pairing.
-///
-/// Production analysis (creature b2ff6e45, GRQ-sampler commit a1340f8d) showed
-/// that all 10 coordinated-structural candidates failed because they all included
-/// the same harmful operation (e8480883 → output-0, weight 0.1) which degraded
-/// the score by ~−0.042. The partner neuron varied but could never overcome that
-/// dominant damage.
-///
-/// Before forming a coordinated pair, each individual operation is pre-screened:
-/// if its `individual_improvement` is below this threshold, it is excluded from
-/// pairing. Issue #731 tightened this from −0.01 to 0.0 because production data
-/// showed that even mildly harmful sources (e.g. −0.005) consistently caused
-/// combo-successful failures — the partner could never overcome the damage.
-///
-/// ## Valid Range
-/// Must be >= 0.0 to exclude all harmful individual sources from pairing.
-pub const MAX_INDIVIDUAL_HARM_FOR_PAIRING: f32 = 0.0;
-
-// =============================================================================
-// Pessimism Discount (Issue #506)
-// =============================================================================
-
-/// Minimum ratio of improved samples required for a synapse candidate to be accepted.
-///
-/// Issue #730: The add-synapses module had a 0% success rate because candidates
-/// where more samples worsened than improved were still being proposed.
-///
-/// Issue #789: Raised from 0.5 to 0.6. GRQ-sampler cache data (Issue #787) showed
-/// all 31 candidates that passed the 0.5 threshold still failed ablation testing.
-/// Requiring 60% of samples to improve filters out marginal candidates where the
-/// multi-weight search found a local optimum that does not generalise.
-///
-/// ## Valid Range
-/// Must be in (0.0, 1.0). Values below 0.3 provide insufficient filtering.
-/// Values above 0.75 may over-filter legitimate candidates.
-pub const MIN_IMPROVED_RATIO: f32 = 0.6;
-
-/// Minimum ratio of improved samples required for a neuron candidate to be accepted.
-///
-/// Issue #733: The add-neurons module had a 14.1% success rate. Neuron candidates
-/// are inherently noisier than synapse candidates because they involve two new
-/// connections (incoming + outgoing) rather than one. A slightly lower threshold
-/// than `MIN_IMPROVED_RATIO` allows moderate-quality candidates through while
-/// still filtering out clearly bad ones.
-///
-/// ## Valid Range
-/// Must be in (0.0, 1.0). Values below 0.3 provide insufficient filtering.
-/// Values above `MIN_IMPROVED_RATIO` may be too strict for neuron candidates.
-pub const NEURON_MIN_IMPROVED_RATIO: f32 = 0.4;
 
 // =============================================================================
 // Activation-Function-Aware Neuron Scoring (Issue #887, Issue #909)
@@ -349,34 +204,6 @@ pub const ACTIVATION_BOOST_BIPOLAR: f64 = 0.95;
 /// Penalty multiplier for `HARD_TANH` activation (7.2% raw, Bayesian-smoothed 0.80×).
 pub const ACTIVATION_BOOST_HARD_TANH: f64 = 0.80;
 
-// =============================================================================
-// Hold-Out Validation for Multi-Weight Search (Issue #893)
-// =============================================================================
-
-/// Minimum number of samples required to use hold-out validation.
-///
-/// Below this threshold, splitting into train/validate sets would leave
-/// too few samples in each partition for reliable results. When the total
-/// sample count is below this value, the current approach (full-sample
-/// evaluation with pessimism discounting) is used as a fallback.
-///
-/// ## Valid Range
-/// Must be >= `MIN_DISCOVERY_SAMPLE_COUNT`. Values below 20 produce
-/// unreliable splits.
-pub const HOLDOUT_MIN_SAMPLE_COUNT: usize = 20;
-
-/// Fraction of samples reserved for the validation (hold-out) set.
-///
-/// The remaining samples (1 - this fraction) are used for training
-/// (weight selection). A 70/30 split balances having enough training
-/// data for reliable weight fitting while retaining a meaningful
-/// validation set.
-///
-/// ## Valid Range
-/// Must be in (0.1, 0.5). Values below 0.1 leave too few validation
-/// samples. Values above 0.5 leave too few training samples.
-pub const HOLDOUT_VALIDATION_FRACTION: f32 = 0.3;
-
 /// Returns the activation-function-aware boost/penalty multiplier for add-neuron
 /// candidate scoring (Issue #887).
 ///
@@ -416,6 +243,10 @@ pub const ACTIVATION_BOOST_MIN: f64 = 0.5;
 /// ## Valid Range
 /// Must be > 1.0 and <= 3.0.
 pub const ACTIVATION_BOOST_MAX: f64 = 2.0;
+
+// =============================================================================
+// Pessimism Discount (Issue #506)
+// =============================================================================
 
 /// Minimum pessimism discount applied to all score predictions.
 ///
@@ -659,75 +490,8 @@ pub const COORDINATED_ESTIMATION_WEIGHT_SCALE: f32 = 0.2;
 pub const COORDINATED_PESSIMISM_DISCOUNT: f32 = 0.15;
 
 // =============================================================================
-// Remove-Low-Impact Candidate Thresholds (Issue #892)
+// Scoring Boost Multipliers
 // =============================================================================
-
-/// Maximum mean activation for a removal candidate to be considered high-quality.
-///
-/// GRQ-sampler discovery cache shows that successful `remove-low-impact` candidates
-/// (21.5% success rate, 440/2,043) consistently have mean activation near zero
-/// (~0 to 0.04). Failed removals often have much higher mean activation (up to 57.8),
-/// indicating the neuron was actually contributing to the network.
-///
-/// Candidates with `mean_activation` above this threshold are filtered out to
-/// focus removal efforts on neurons that are genuinely inactive.
-///
-/// ## Valid Range
-/// Must be > 0.0. Values above 0.1 risk including neurons that are contributing.
-/// Values below 0.01 may be too restrictive and miss valid removal candidates.
-pub const REMOVAL_MEAN_ACTIVATION_THRESHOLD: f32 = 0.04;
-
-/// Maximum structural impact for a removal candidate to be considered high-quality.
-///
-/// GRQ-sampler discovery cache shows successful `remove-low-impact` removals have
-/// impact magnitudes ≤ 6e-5. Neurons with higher structural impact are more likely
-/// to be contributing to the network output even if their activation is low.
-///
-/// ## Valid Range
-/// Must be > 0.0. Values above 1e-3 risk including neurons with meaningful impact.
-/// Values below 1e-6 may be too restrictive.
-pub const REMOVAL_IMPACT_THRESHOLD: f32 = 6e-5;
-
-// =============================================================================
-// Add-Neuron Weight Constraints (Issue #888)
-// =============================================================================
-
-// GRQ-sampler discovery cache shows that successful add-neuron candidates have
-// dramatically different weight/bias magnitudes than failures:
-//
-// | Parameter       | Successful Range  | Failed Range      |
-// |-----------------|-------------------|-------------------|
-// | Outgoing weight | 0.001–0.005 (e-3) | 0.01–0.1 (e-2/1) |
-// | Incoming weight | ~2                | 5, 10, 20         |
-// | Bias            | 0 to 1            | -10, -5, 5, 10    |
-//
-// The "Micro-Nudge" variant (incoming=2, outgoing=0.001–0.005) dominates
-// successes (~90% of successful samples). "Extreme" variants (incoming=10–20,
-// outgoing=0.02–0.1) almost always fail, sometimes catastrophically.
-
-/// Maximum absolute incoming weight for add-neuron candidates (Issue #888).
-///
-/// GRQ-sampler cache evidence shows successful candidates consistently have
-/// incoming weight ~2. Candidates with incoming weights of 5, 10, or 20
-/// almost always fail. A threshold of 5.0 provides margin while filtering
-/// the clearly extreme values.
-///
-/// ## Valid Range
-/// Must be > 1.0. Values above 10.0 allow too many doomed candidates through.
-/// Values below 2.0 may filter the dominant success pattern.
-pub const MAX_INCOMING_WEIGHT: f32 = 5.0;
-
-/// Maximum absolute bias for add-neuron candidates (Issue #888).
-///
-/// GRQ-sampler cache evidence shows successful candidates have bias in
-/// the range 0 to 1. Failed candidates have extreme bias values (-10, -5,
-/// 5, 10). A threshold of 2.0 provides margin while filtering the clearly
-/// extreme values.
-///
-/// ## Valid Range
-/// Must be > 0.0. Values above 5.0 allow too many doomed candidates through.
-/// Values below 1.0 may filter some valid candidates.
-pub const MAX_BIAS_MAGNITUDE: f32 = 2.0;
 
 /// Scoring boost multiplier for Micro-Nudge variant candidates (Issue #888).
 ///
@@ -739,6 +503,21 @@ pub const MAX_BIAS_MAGNITUDE: f32 = 2.0;
 /// ## Valid Range
 /// Must be > 1.0 (boost) and <= 2.0 (avoid over-biasing).
 pub const MICRO_NUDGE_VARIANT_BOOST: f32 = 1.5;
+
+/// Scoring boost multiplier for `remove-low-impact` candidates (Issue #892).
+///
+/// GRQ-sampler discovery cache shows `remove-low-impact` has the highest success
+/// rate at 21.5% (440/2,043) — roughly double the overall 10.7% rate. This boost
+/// is applied to the `removal_savings` score to ensure removal candidates are
+/// ranked higher relative to other candidate types.
+///
+/// The boost is derived from the ratio of `remove-low-impact` success rate to the
+/// overall baseline: 21.5% / 10.7% ≈ 2.0, dampened with square-root to 1.41,
+/// then rounded to 1.5 for conservatism.
+///
+/// ## Valid Range
+/// Must be >= 1.0 (boost) and <= 3.0 (avoid over-biasing).
+pub const REMOVAL_CANDIDATE_BOOST: f32 = 1.5;
 
 // =============================================================================
 // Prediction Calibration Scaling (Issue #891)
@@ -807,68 +586,3 @@ pub const NEURON_PREDICTION_CALIBRATION: f32 = 0.01;
 /// Must be in (0.0, 1.0). Values above 0.001 provide insufficient correction.
 /// Values below 0.00001 risk suppressing all coordinated candidates.
 pub const COORDINATED_PREDICTION_CALIBRATION: f32 = 0.0001;
-
-/// Scoring boost multiplier for `remove-low-impact` candidates (Issue #892).
-///
-/// GRQ-sampler discovery cache shows `remove-low-impact` has the highest success
-/// rate at 21.5% (440/2,043) — roughly double the overall 10.7% rate. This boost
-/// is applied to the `removal_savings` score to ensure removal candidates are
-/// ranked higher relative to other candidate types.
-///
-/// The boost is derived from the ratio of `remove-low-impact` success rate to the
-/// overall baseline: 21.5% / 10.7% ≈ 2.0, dampened with square-root to 1.41,
-/// then rounded to 1.5 for conservatism.
-///
-/// ## Valid Range
-/// Must be >= 1.0 (boost) and <= 3.0 (avoid over-biasing).
-pub const REMOVAL_CANDIDATE_BOOST: f32 = 1.5;
-
-// =============================================================================
-// Candidate Compression (Issue #921)
-// =============================================================================
-
-/// Minimum number of candidates sharing a target neuron to attempt compression.
-///
-/// Groups with fewer than this many distinct source neurons are not worth
-/// compressing — a single synapse candidate is simpler and has lower
-/// operation-count discount penalty.
-///
-/// ## Valid Range
-/// Must be >= 2. Values above 3 may miss useful compression opportunities.
-pub const MIN_COMPRESSED_SOURCES: usize = 2;
-
-/// Maximum number of input synapses per compressed candidate.
-///
-/// Caps the number of inputs feeding into a single compressed hidden neuron.
-/// Higher values increase the operation count (N+2 operations for N inputs),
-/// which compounds the `COORDINATED_OPERATION_DISCOUNT` penalty.
-///
-/// ## Valid Range
-/// Must be >= `MIN_COMPRESSED_SOURCES` and <= 8. Values above 5 receive
-/// severe discount penalties (0.65^6 ≈ 0.075).
-pub const MAX_COMPRESSION_INPUTS: usize = 5;
-
-/// Saturation threshold for non-linear candidate compression (Issue #922).
-///
-/// When the estimated combined pre-activation exceeds this fraction of the
-/// squash function's output range, a saturation discount is applied. This
-/// accounts for diminished returns when TANH/GELU inputs are pushed into
-/// saturated regimes where additional signal produces little change.
-///
-/// ## Valid Range
-/// Must be in (0.0, 1.0). Values below 0.7 may over-discount useful
-/// candidates. Values above 0.95 provide insufficient saturation correction.
-pub const COMPRESSION_SATURATION_THRESHOLD: f32 = 0.9;
-
-/// Minimum combined benefit ratio for non-linear compressed candidates (Issue #922).
-///
-/// The estimated combined gain through a non-linear squash must exceed the
-/// best individual candidate gain multiplied by this ratio. This ensures the
-/// interaction effect captured by TANH/GELU is meaningful and justifies the
-/// additional operation-count penalty.
-///
-/// Matches `MIN_COMBINED_BENEFIT_RATIO` in `fan_in.rs` (1.05 = 5% improvement).
-///
-/// ## Valid Range
-/// Must be > 1.0. Values above 1.20 may filter too aggressively.
-pub const COMPRESSION_MIN_BENEFIT_RATIO: f32 = 1.05;

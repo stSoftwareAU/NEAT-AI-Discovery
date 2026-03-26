@@ -49,6 +49,7 @@ mod issue_922_nonlinear_candidate_compression;
 mod issue_925_add_synapse_between_hidden_neurons;
 mod issue_928_verify_fan_in_synapse_discovery;
 mod issue_930_change_squash_suboptimal_activation;
+mod issue_938_constants_submodule_organisation;
 mod split_error_all_activations;
 mod split_error_fallback_candidates;
 mod target_map_optimization;
