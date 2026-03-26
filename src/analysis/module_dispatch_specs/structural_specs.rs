@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use super::super::detection::{
-    correlated_error, hard_sample_cluster, output_conflict, skip_connection, topology,
-    topology_cache::CreatureTopologyCache, topology_diversification,
+    compound_degradation, correlated_error, hard_sample_cluster, output_conflict, skip_connection,
+    topology, topology_cache::CreatureTopologyCache, topology_diversification,
 };
 use super::super::recommendation::{fan_in, multi_hop};
 use super::super::{cache, discovery_dispatch};
@@ -131,5 +131,14 @@ pub(crate) fn append_structural_specs(
             hard_sample_cluster::detect_hard_sample_clusters(&creature, &records, &config)
         },
         convert: |detected| hard_sample_cluster::hard_sample_clusters_to_coordinated_candidates(&detected, &creature),
+    );
+
+    // Issue #929: Compound bias+weight degradation detection
+    discovery_spec!(modules, "compound bias weight degradation detection", "compound_bias_weight_degradation_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature =>
+        guard: hidden,
+        records: cache.load_records_for_all_neurons(&creature),
+        detect: |records| compound_degradation::detect_compound_bias_weight_degradations(&creature, &records),
+        convert: |detected| compound_degradation::compound_degradations_to_coordinated_candidates(&detected),
     );
 }

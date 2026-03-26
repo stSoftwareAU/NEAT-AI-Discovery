@@ -11,6 +11,7 @@ pub mod bimodal_neuron;
 pub mod bottleneck;
 pub mod bounded_range;
 pub mod co_adaptation;
+pub mod compound_degradation;
 pub mod correlated_error;
 pub mod dead_neuron;
 pub mod dormant_synapse;
