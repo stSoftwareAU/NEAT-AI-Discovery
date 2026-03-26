@@ -87,7 +87,14 @@ src/
 │   │   ├── synapse_specs.rs    # Synapse-focused dispatch specs
 │   │   ├── structural_specs.rs # Structural discovery dispatch specs
 │   │   └── scoring_specs.rs    # Scoring and recommendation dispatch specs
-│   ├── constants.rs          # Central discovery thresholds (Issue #424)
+│   ├── constants/             # Central discovery thresholds (Issue #424, #938)
+│   │   ├── mod.rs                # Re-exports all constants (backward compatibility)
+│   │   ├── sample_thresholds.rs  # Sample count thresholds, hold-out validation
+│   │   ├── sentinel_detection.rs # Sentinel values and clustering thresholds
+│   │   ├── source_variance.rs    # Source variance filtering thresholds
+│   │   ├── candidate_scoring.rs  # Scoring boosts, pessimism, calibration, comparisons
+│   │   ├── compression.rs        # Candidate compression thresholds
+│   │   └── detection_thresholds.rs # Detection filtering (removal, weight constraints)
 │   ├── shared/               # Common types, results, diagnostics (Issue #874)
 │   │   ├── mod.rs            # Re-exports for backward compatibility
 │   │   ├── timing.rs         # TimingCollector, TimingScope, ShaderTiming, timing breakdowns

@@ -20,7 +20,7 @@
 //! - `system.rs` - System utilities facade (memory, GPU tier detection)
 //! - `activation.rs` - Activation function related code
 //! - `samples/` - Sample data structures and GPU formats
-//! - `constants.rs` - Central discovery thresholds and constants
+//! - `constants/` - Central discovery thresholds and constants (thematic sub-modules)
 //! - `cache/` - Record caching for parquet files (Issue #565)
 //! - `candidate_cache.rs` - Candidate outcome cache for success/failure tracking
 //! - `streaming.rs` - Streaming parquet loading with block-based caching
