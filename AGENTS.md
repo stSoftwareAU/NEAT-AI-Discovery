@@ -44,10 +44,11 @@ src/
 │   └── utilities.rs          # Utility business logic (merge, read, export)
 ├── types.rs                  # Core type definitions
 ├── activations.rs            # Activation function calculations
-├── record/                   # Discovery data recording (Issue #604)
+├── record/                   # Discovery data recording (Issue #604, #942)
 │   ├── mod.rs                # Public API, re-exports, orchestration
 │   ├── validation.rs         # Input validation and observation index resolution
-│   └── processing.rs         # Record building from training data
+│   ├── processing.rs         # Record building from training data
+│   └── tests.rs              # Unit tests for record module
 ├── streaming.rs              # Streaming session management
 ├── parquet_format/            # Parquet I/O (Issue #600)
 │   ├── mod.rs                # Public API, re-exports
