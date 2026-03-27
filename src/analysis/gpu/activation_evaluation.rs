@@ -657,7 +657,9 @@ impl GpuAnalyzer {
                 (std::mem::size_of::<ActivationOutput>() * workgroups as usize) as u64;
 
             for (config_idx, output_buffer) in output_buffers.iter().enumerate() {
-                let partial_sums_buffer = partial_sums_buffers[config_idx].as_ref().unwrap();
+                let Some(partial_sums_buffer) = partial_sums_buffers[config_idx].as_ref() else {
+                    continue;
+                };
 
                 let reduction_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     layout: activation_reduce_layout,

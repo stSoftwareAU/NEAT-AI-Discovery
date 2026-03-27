@@ -249,7 +249,12 @@ fn combine_agreeing_candidates(
     let ensemble_score = best_raw_gain * boost;
 
     // Use the best-weighted candidate as the template, update its score and comment.
-    let mut result = group.into_iter().nth(best_candidate_idx).unwrap();
+    // best_candidate_idx is computed from iterating this same group, so nth() is
+    // guaranteed to succeed. Fallback to first element defensively (Issue #940).
+    let mut result = group
+        .into_iter()
+        .nth(best_candidate_idx)
+        .expect("best_candidate_idx was computed from this group and must be in range");
     result.expected_creature_score_gain = ensemble_score;
 
     let modules_str = module_names.join(", ");

@@ -221,10 +221,7 @@ fn evaluate_alternative_squashes(
         .map(|r| r.activation - r.errors.first().copied().unwrap_or(0.0))
         .collect();
 
-    let pre_activations: Vec<f32> = records_with_values
-        .iter()
-        .map(|r| r.value.unwrap())
-        .collect();
+    let pre_activations: Vec<f32> = records_with_values.iter().filter_map(|r| r.value).collect();
 
     let mut best: Option<(String, f32, f32)> = None;
 
@@ -262,7 +259,7 @@ fn evaluate_alternative_squashes(
         };
 
         if reduction_fraction > MIN_ERROR_REDUCTION_FRACTION
-            && (best.is_none() || candidate_mean_error < best.as_ref().unwrap().1)
+            && best.as_ref().is_none_or(|b| candidate_mean_error < b.1)
         {
             best = Some((
                 candidate_name.to_string(),

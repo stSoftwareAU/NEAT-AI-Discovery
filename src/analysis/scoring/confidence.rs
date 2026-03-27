@@ -200,7 +200,10 @@ fn t_critical_95(df: usize) -> f32 {
     let df = df as u32;
 
     // Beyond table range, use normal approximation
-    let &(last_df, last_t) = T_CRITICAL_95_TABLE.last().unwrap();
+    // T_CRITICAL_95_TABLE is a non-empty compile-time constant (Issue #940).
+    let Some(&(last_df, last_t)) = T_CRITICAL_95_TABLE.last() else {
+        return Z_SCORE_95;
+    };
     if df >= last_df {
         return if df == last_df { last_t } else { Z_SCORE_95 };
     }
