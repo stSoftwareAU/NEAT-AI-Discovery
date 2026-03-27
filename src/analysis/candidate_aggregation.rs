@@ -153,10 +153,10 @@ pub(crate) fn convert_neurons_to_coordinated_replacements(
     neuron: &mut shared::AnalyzeNeuronsResult,
     shared_cache: &Arc<cache::RecordCache>,
 ) {
-    // Build a quick lookup from (from_uuid,to_uuid) to existing weight.
-    let mut direct_synapse_weight: HashMap<(String, String), f32> = HashMap::new();
+    // Issue #943: Borrow UUID strings from input instead of cloning.
+    let mut direct_synapse_weight: HashMap<(&str, &str), f32> = HashMap::new();
     for s in &input.creature.synapses {
-        direct_synapse_weight.insert((s.from_uuid.clone(), s.to_uuid.clone()), s.weight);
+        direct_synapse_weight.insert((s.from_uuid.as_str(), s.to_uuid.as_str()), s.weight);
     }
 
     let mut kept_neurons: Vec<CandidateNeuronJson> =
@@ -165,8 +165,8 @@ pub(crate) fn convert_neurons_to_coordinated_replacements(
 
     for candidate in &neuron.helpful_neurons {
         let key = (
-            candidate.source_neuron_uuid.clone(),
-            candidate.target_neuron_uuid.clone(),
+            candidate.source_neuron_uuid.as_str(),
+            candidate.target_neuron_uuid.as_str(),
         );
         let Some(&old_weight) = direct_synapse_weight.get(&key) else {
             kept_neurons.push(candidate.clone());

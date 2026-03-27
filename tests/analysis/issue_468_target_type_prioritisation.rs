@@ -55,7 +55,7 @@ fn existing_hidden_target_boost_amplifies_score_gain() {
 fn apply_target_type_boost_boosts_existing_hidden_target() {
     let gain = 0.10_f32;
     let mut neuron_type_map = HashMap::new();
-    neuron_type_map.insert("hidden-uuid-abc".to_string(), "hidden".to_string());
+    neuron_type_map.insert("hidden-uuid-abc", "hidden");
 
     let boosted = apply_target_type_boost(gain, "hidden-uuid-abc", &neuron_type_map);
 
@@ -74,7 +74,7 @@ fn apply_target_type_boost_boosts_existing_hidden_target() {
 fn apply_target_type_boost_neutral_for_output_target() {
     let gain = 0.10_f32;
     let mut neuron_type_map = HashMap::new();
-    neuron_type_map.insert("output-uuid-xyz".to_string(), "output".to_string());
+    neuron_type_map.insert("output-uuid-xyz", "output");
 
     let result = apply_target_type_boost(gain, "output-uuid-xyz", &neuron_type_map);
 
@@ -87,7 +87,7 @@ fn apply_target_type_boost_neutral_for_output_target() {
 #[test]
 fn apply_target_type_boost_neutral_for_unknown_target() {
     let gain = 0.10_f32;
-    let neuron_type_map = HashMap::new(); // Empty map
+    let neuron_type_map: HashMap<&str, &str> = HashMap::new(); // Empty map
 
     let result = apply_target_type_boost(gain, "unknown-uuid", &neuron_type_map);
 
@@ -100,7 +100,7 @@ fn apply_target_type_boost_neutral_for_unknown_target() {
 #[test]
 fn apply_target_type_boost_zero_gain_stays_zero() {
     let mut neuron_type_map = HashMap::new();
-    neuron_type_map.insert("hidden-uuid-abc".to_string(), "hidden".to_string());
+    neuron_type_map.insert("hidden-uuid-abc", "hidden");
 
     let result = apply_target_type_boost(0.0, "hidden-uuid-abc", &neuron_type_map);
 
@@ -114,7 +114,7 @@ fn apply_target_type_boost_zero_gain_stays_zero() {
 fn apply_target_type_boost_neutral_for_input_target() {
     let gain = 0.10_f32;
     let mut neuron_type_map = HashMap::new();
-    neuron_type_map.insert("input-0".to_string(), "input".to_string());
+    neuron_type_map.insert("input-0", "input");
 
     let result = apply_target_type_boost(gain, "input-0", &neuron_type_map);
 
@@ -128,7 +128,7 @@ fn apply_target_type_boost_neutral_for_input_target() {
 fn apply_target_type_boost_neutral_for_constant_target() {
     let gain = 0.10_f32;
     let mut neuron_type_map = HashMap::new();
-    neuron_type_map.insert("const-uuid".to_string(), "constant".to_string());
+    neuron_type_map.insert("const-uuid", "constant");
 
     let result = apply_target_type_boost(gain, "const-uuid", &neuron_type_map);
 

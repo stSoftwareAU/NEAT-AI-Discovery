@@ -65,11 +65,11 @@ pub fn apply_source_type_boost(gain: f32, source_uuid: &str) -> f32 {
 pub fn apply_target_type_boost(
     gain: f32,
     target_uuid: &str,
-    neuron_type_map: &HashMap<String, String>,
+    neuron_type_map: &HashMap<&str, &str>,
 ) -> f32 {
     if neuron_type_map
         .get(target_uuid)
-        .is_some_and(|t| t == "hidden")
+        .is_some_and(|t| *t == "hidden")
     {
         gain * EXISTING_HIDDEN_TARGET_BOOST as f32
     } else {

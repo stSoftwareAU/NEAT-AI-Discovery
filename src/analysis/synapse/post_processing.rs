@@ -25,7 +25,7 @@ use crate::analysis::samples::EPSILON;
 /// generated and not crowded out by input-sourced candidates.
 fn log_source_type_distribution(
     candidates: &[CandidateSynapseJson],
-    neuron_type_map: &HashMap<String, String>,
+    neuron_type_map: &HashMap<&str, &str>,
 ) {
     use crate::analysis::utils::parse_input_index;
 
@@ -37,8 +37,8 @@ fn log_source_type_distribution(
     for c in candidates {
         let source_is_input = parse_input_index(&c.from_neuron_uuid).is_some();
         let target_is_output = neuron_type_map
-            .get(&c.to_neuron_uuid)
-            .is_some_and(|t| t == "output");
+            .get(c.to_neuron_uuid.as_str())
+            .is_some_and(|t| *t == "output");
 
         match (source_is_input, target_is_output) {
             (true, false) => input_to_hidden += 1,
@@ -93,10 +93,10 @@ pub fn scale_by_error_fraction(
 ///
 /// Issue #730: Used to determine what fraction of total creature error each target
 /// neuron contributes, enabling creature-level prediction calibration.
-fn compute_neuron_error_sq_map(
-    input: &crate::AnalyzeSynapsesInput,
+fn compute_neuron_error_sq_map<'a>(
+    input: &'a crate::AnalyzeSynapsesInput,
     cache: &RecordCache,
-) -> HashMap<String, f32> {
+) -> HashMap<&'a str, f32> {
     let mut error_sq_map = HashMap::new();
     for neuron in &input.creature.neurons {
         if let Ok(records) = cache.get(&neuron.uuid) {
@@ -107,7 +107,7 @@ fn compute_neuron_error_sq_map(
                 .map(|e| e * e)
                 .sum();
             if error_sq > EPSILON {
-                error_sq_map.insert(neuron.uuid.clone(), error_sq);
+                error_sq_map.insert(neuron.uuid.as_str(), error_sq);
             }
         }
     }
@@ -123,7 +123,7 @@ fn compute_neuron_error_sq_map(
 fn apply_impact_to_helpful(
     candidate: &mut CandidateSynapseJson,
     impact_scores: &HashMap<String, f32>,
-    neuron_type_map: &HashMap<String, String>,
+    neuron_type_map: &HashMap<&str, &str>,
     order_map: &HashMap<String, usize>,
     target_error_sq: f32,
     total_error_sq: f32,
@@ -133,8 +133,8 @@ fn apply_impact_to_helpful(
     candidate.to_neuron_index = order_map.get(&candidate.to_neuron_uuid).copied();
 
     let is_hidden = neuron_type_map
-        .get(&candidate.to_neuron_uuid)
-        .is_none_or(|t| t != "output"); // Default to hidden if type unknown
+        .get(candidate.to_neuron_uuid.as_str())
+        .is_none_or(|t| *t != "output"); // Default to hidden if type unknown
 
     let impact = if is_hidden {
         if let Some(&impact) = impact_scores.get(&candidate.to_neuron_uuid) {
@@ -211,15 +211,15 @@ fn apply_impact_to_helpful(
 fn apply_impact_to_harmful(
     candidate: &mut CandidateSynapseJson,
     impact_scores: &HashMap<String, f32>,
-    neuron_type_map: &HashMap<String, String>,
+    neuron_type_map: &HashMap<&str, &str>,
     order_map: &HashMap<String, usize>,
 ) {
     candidate.from_neuron_index = order_map.get(&candidate.from_neuron_uuid).copied();
     candidate.to_neuron_index = order_map.get(&candidate.to_neuron_uuid).copied();
 
     let is_hidden = neuron_type_map
-        .get(&candidate.to_neuron_uuid)
-        .is_none_or(|t| t != "output");
+        .get(candidate.to_neuron_uuid.as_str())
+        .is_none_or(|t| *t != "output");
 
     let impact = if is_hidden {
         if let Some(&impact) = impact_scores.get(&candidate.to_neuron_uuid) {
@@ -261,7 +261,7 @@ fn apply_impact_to_harmful(
 fn apply_impact_to_coordinated(
     candidate: &mut crate::CoordinatedStructuralCandidateJson,
     impact_scores: &HashMap<String, f32>,
-    neuron_type_map: &HashMap<String, String>,
+    neuron_type_map: &HashMap<&str, &str>,
 ) {
     use crate::analysis::constants::COORDINATED_PESSIMISM_DISCOUNT;
 
@@ -295,7 +295,7 @@ fn apply_impact_to_coordinated(
 
     let is_hidden = neuron_type_map
         .get(target_uuid)
-        .is_none_or(|t| t != "output");
+        .is_none_or(|t| *t != "output");
     let impact = if is_hidden {
         impact_scores
             .get(target_uuid)
@@ -334,11 +334,12 @@ pub(crate) fn apply_post_processing(
 ) -> PostProcessingMetrics {
     // Issue #128: Apply impact-based discounting and set creature-level metrics.
     let impact_scores = compute_impact_scores_for_discounting(&input.creature, cache);
-    let neuron_type_map: HashMap<String, String> = input
+    // Issue #943: Borrow uuid and neuron_type from input instead of cloning.
+    let neuron_type_map: HashMap<&str, &str> = input
         .creature
         .neurons
         .iter()
-        .map(|n| (n.uuid.clone(), n.neuron_type.clone()))
+        .map(|n| (n.uuid.as_str(), n.neuron_type.as_str()))
         .collect();
 
     // Issue #730: Compute per-neuron and total error for creature-level calibration.
@@ -348,7 +349,7 @@ pub(crate) fn apply_post_processing(
     // Apply impact discounting to helpful synapse candidates
     for candidate in helpful_results.iter_mut() {
         let target_error_sq = error_sq_map
-            .get(&candidate.to_neuron_uuid)
+            .get(candidate.to_neuron_uuid.as_str())
             .copied()
             .unwrap_or(0.0);
         apply_impact_to_helpful(
