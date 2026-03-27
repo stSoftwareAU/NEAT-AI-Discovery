@@ -29,6 +29,7 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
+use super::helpers::{ConfidenceFactor, sort_candidates_by_score_gain, weighted_confidence};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -197,23 +198,33 @@ fn analyse_neuron_for_boundary_cluster(
 /// - Boundary fraction is larger (more samples at sentinel)
 /// - Gap between sentinel and useful range is wider
 /// - More samples were analysed
+///
+/// Issue #941: refactored to use `weighted_confidence` shared helper.
 fn compute_detection_confidence(boundary_fraction: f32, gap: f32, sample_count: f32) -> f32 {
-    // Fraction factor: more values at sentinel = clearer separation
     let fraction_factor = ((boundary_fraction - MIN_BOUNDARY_FRACTION)
         / (1.0 - MIN_BOUNDARY_FRACTION))
         .clamp(0.0, 1.0);
-
-    // Gap factor: wider gap = clearer separation (saturates at gap=0.5)
     let gap_factor = (gap / 0.5).clamp(0.0, 1.0);
-
-    // Sample factor: more samples = higher confidence (plateaus at 1000)
     let sample_factor = (sample_count / 1000.0).min(1.0);
 
-    // Combine factors
-    let raw = fraction_factor * 0.4 + gap_factor * 0.4 + sample_factor * 0.2;
-
-    // Scale to [0.5, 1.0] since we already passed threshold checks
-    0.5 + raw * 0.5
+    weighted_confidence(
+        &[
+            ConfidenceFactor {
+                value: fraction_factor,
+                weight: 0.4,
+            },
+            ConfidenceFactor {
+                value: gap_factor,
+                weight: 0.4,
+            },
+            ConfidenceFactor {
+                value: sample_factor,
+                weight: 0.2,
+            },
+        ],
+        0.5,
+        1.0,
+    )
 }
 
 /// Convert bounded range candidates into coordinated structural candidates.
@@ -266,11 +277,8 @@ pub fn bounded_range_to_coordinated_candidates(
         });
     }
 
-    // Sort by expected improvement (best first)
-    results.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
+    // Sort by expected improvement (best first) (Issue #941: shared helper)
+    sort_candidates_by_score_gain(&mut results);
 
     results
 }

@@ -25,7 +25,10 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
-use super::helpers::build_record_map;
+use super::helpers::{
+    ConfidenceFactor, build_record_map, compute_activation_stats, compute_mean_abs_activation,
+    sort_candidates_by_score_gain, weighted_confidence,
+};
 
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -112,21 +115,11 @@ pub fn detect_dead_neurons(
 
         let n = records.len() as f32;
 
-        // Compute mean absolute activation
-        let sum_abs_activation: f32 = records.iter().map(|r| r.activation.abs()).sum();
-        let mean_abs_activation = sum_abs_activation / n;
+        // Compute mean absolute activation (Issue #941: shared helper)
+        let mean_abs_activation = compute_mean_abs_activation(records);
 
-        // Compute activation standard deviation
-        let mean_activation: f32 = records.iter().map(|r| r.activation).sum::<f32>() / n;
-        let variance: f32 = records
-            .iter()
-            .map(|r| {
-                let diff = r.activation - mean_activation;
-                diff * diff
-            })
-            .sum::<f32>()
-            / n;
-        let activation_std_dev = variance.sqrt();
+        // Compute activation standard deviation (Issue #941: shared helper)
+        let activation_std_dev = compute_activation_stats(records).std_dev;
 
         // Check if neuron is dead: near-zero mean absolute activation AND low variance
         if mean_abs_activation >= DEAD_ACTIVATION_THRESHOLD {
@@ -213,25 +206,35 @@ fn find_connected_outputs_cached(start_uuid: &str, topo: &CreatureTopologyCache)
 /// - Mean absolute activation is closer to zero
 /// - Standard deviation is closer to zero
 /// - More samples were analysed
+///
+/// Issue #941: refactored to use `weighted_confidence` shared helper.
 fn compute_removal_confidence(
     mean_abs_activation: f32,
     activation_std_dev: f32,
     sample_count: f32,
 ) -> f32 {
-    // Base confidence from how dead the neuron is (closer to zero = higher confidence)
     let activation_factor = 1.0 - (mean_abs_activation / DEAD_ACTIVATION_THRESHOLD).min(1.0);
-
-    // Variance factor (lower variance = higher confidence)
     let variance_factor = 1.0 - (activation_std_dev / MAX_DEAD_STD_DEV).min(1.0);
-
-    // Sample size factor (more samples = higher confidence, plateaus at 1000)
     let sample_factor = (sample_count / 1000.0).min(1.0);
 
-    // Combine: all factors contribute to confidence
-    let raw_confidence = activation_factor * 0.4 + variance_factor * 0.4 + sample_factor * 0.2;
-
-    // Scale to [0.5, 1.0] range since we already passed the threshold checks
-    0.5 + raw_confidence * 0.5
+    weighted_confidence(
+        &[
+            ConfidenceFactor {
+                value: activation_factor,
+                weight: 0.4,
+            },
+            ConfidenceFactor {
+                value: variance_factor,
+                weight: 0.4,
+            },
+            ConfidenceFactor {
+                value: sample_factor,
+                weight: 0.2,
+            },
+        ],
+        0.5,
+        1.0,
+    )
 }
 
 /// Convert dead neuron candidates into coordinated structural candidates.
@@ -257,11 +260,8 @@ pub fn dead_neurons_to_coordinated_candidates(
         });
     }
 
-    // Sort by expected improvement (best first)
-    results.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
+    // Sort by expected improvement (best first) (Issue #941: shared helper)
+    sort_candidates_by_score_gain(&mut results);
 
     results
 }
