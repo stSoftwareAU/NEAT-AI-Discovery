@@ -33,6 +33,7 @@
 //! - `setBias` — adjust bias to centre the neuron in its active region.
 //! - `setWeight` — scale incoming weights to expand the operating range.
 
+use super::helpers::{compute_activation_range, sort_candidates_by_score_gain};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -156,15 +157,11 @@ pub fn detect_restricted_range_neurons(
         };
         let theoretical_range = theoretical_max - theoretical_min;
 
-        // Compute observed activation range
-        let mut act_min = f32::INFINITY;
-        let mut act_max = f32::NEG_INFINITY;
-        for r in records {
-            act_min = act_min.min(r.activation);
-            act_max = act_max.max(r.activation);
-        }
-
-        let observed_range = act_max - act_min;
+        // Compute observed activation range (Issue #941: shared helper)
+        let act_range = compute_activation_range(records);
+        let act_min = act_range.min;
+        let act_max = act_range.max;
+        let observed_range = act_range.span;
 
         // Exclude dead neurons (near-zero range)
         if observed_range < MIN_OBSERVED_RANGE {
@@ -309,11 +306,8 @@ pub fn restricted_range_to_coordinated_candidates(
         }
     }
 
-    // Sort by expected improvement (best first)
-    results.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
+    // Sort by expected improvement (best first) (Issue #941: shared helper)
+    sort_candidates_by_score_gain(&mut results);
 
     results
 }

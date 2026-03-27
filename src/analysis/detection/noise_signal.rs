@@ -96,7 +96,7 @@ fn noise_signal_threshold_from_env() -> f32 {
     crate::config::noise_signal_threshold(DEFAULT_NOISE_SIGNAL_THRESHOLD)
 }
 
-use super::helpers::build_record_map;
+use super::helpers::{build_record_map, sort_candidates_by_score_gain};
 use super::stats::{compute_mean, compute_variance};
 
 /// Detect neurons with high noise-to-signal ratio.
@@ -332,11 +332,8 @@ pub fn noisy_neurons_to_coordinated_candidates(
         });
     }
 
-    // Sort by expected improvement (best first)
-    results.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
+    // Sort by expected improvement (best first) (Issue #941: shared helper)
+    sort_candidates_by_score_gain(&mut results);
 
     results
 }
@@ -376,11 +373,8 @@ pub fn noisy_synapses_to_coordinated_candidates(
         });
     }
 
-    // Sort by expected improvement (best first)
-    results.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
+    // Sort by expected improvement (best first) (Issue #941: shared helper)
+    sort_candidates_by_score_gain(&mut results);
 
     results
 }

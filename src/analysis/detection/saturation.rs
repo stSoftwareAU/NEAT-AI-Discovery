@@ -27,7 +27,7 @@
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::activation_properties::{can_have_dead_zone, is_bounded_squash};
-use super::helpers::build_record_map;
+use super::helpers::{build_record_map, compute_activation_stats, sort_candidates_by_score_gain};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
@@ -118,20 +118,10 @@ pub fn detect_saturated_neurons(
             continue;
         }
 
-        // Compute activation statistics
-        let n = records.len() as f32;
-        let sum_activation: f32 = records.iter().map(|r| r.activation).sum();
-        let mean_activation = sum_activation / n;
-
-        let variance: f32 = records
-            .iter()
-            .map(|r| {
-                let diff = r.activation - mean_activation;
-                diff * diff
-            })
-            .sum::<f32>()
-            / n;
-        let activation_std_dev = variance.sqrt();
+        // Compute activation statistics (Issue #941: shared helper)
+        let act_stats = compute_activation_stats(records);
+        let mean_activation = act_stats.mean;
+        let activation_std_dev = act_stats.std_dev;
 
         // Compute input (pre-activation) statistics
         let input_std_dev = compute_input_std_dev(records);
@@ -351,11 +341,8 @@ pub fn saturated_neurons_to_coordinated_candidates(
         }
     }
 
-    // Sort by expected improvement (best first)
-    results.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
+    // Sort by expected improvement (best first) (Issue #941: shared helper)
+    sort_candidates_by_score_gain(&mut results);
 
     results
 }

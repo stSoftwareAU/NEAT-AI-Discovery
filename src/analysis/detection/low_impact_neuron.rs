@@ -27,7 +27,10 @@
 //! - **Sample sufficiency** — more samples = higher confidence (plateaus at 500)
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use super::helpers::build_record_map;
+use super::helpers::{
+    ConfidenceFactor, build_record_map, compute_activation_stats, compute_mean_abs_activation,
+    sort_candidates_by_score_gain, weighted_confidence,
+};
 
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -126,26 +129,16 @@ pub fn detect_low_impact_neurons(
 
         let n = records.len() as f32;
 
-        // Compute mean absolute activation
-        let sum_abs_activation: f32 = records.iter().map(|r| r.activation.abs()).sum();
-        let mean_abs_activation = sum_abs_activation / n;
+        // Compute mean absolute activation (Issue #941: shared helper)
+        let mean_abs_activation = compute_mean_abs_activation(records);
 
         // Must be above dead threshold and below low-impact ceiling
         if mean_abs_activation <= DEAD_THRESHOLD || mean_abs_activation >= LOW_IMPACT_CEILING {
             continue;
         }
 
-        // Compute activation standard deviation
-        let mean_activation: f32 = records.iter().map(|r| r.activation).sum::<f32>() / n;
-        let variance: f32 = records
-            .iter()
-            .map(|r| {
-                let diff = r.activation - mean_activation;
-                diff * diff
-            })
-            .sum::<f32>()
-            / n;
-        let activation_std_dev = variance.sqrt();
+        // Compute activation standard deviation (Issue #941: shared helper)
+        let activation_std_dev = compute_activation_stats(records).std_dev;
 
         // Reject if variance is too high (neuron may still be useful on some samples)
         if activation_std_dev >= MAX_ABSOLUTE_STD_DEV {
@@ -185,13 +178,14 @@ pub fn detect_low_impact_neurons(
 /// - **Activation proximity** (40%): how close to the dead threshold (lower = safer)
 /// - **Variance consistency** (30%): how consistent the low activation is
 /// - **Sample sufficiency** (30%): how many samples confirm the low impact
+///
+/// Issue #941: refactored to use `weighted_confidence` shared helper.
 fn compute_low_impact_confidence(
     mean_abs_activation: f32,
     activation_std_dev: f32,
     sample_count: f32,
 ) -> f32 {
     // Activation proximity: log-scale distance from dead threshold to ceiling.
-    // Closer to dead threshold → higher factor.
     let log_range = (LOW_IMPACT_CEILING / DEAD_THRESHOLD).ln();
     let log_position = (mean_abs_activation / DEAD_THRESHOLD).ln();
     let activation_factor = 1.0 - (log_position / log_range).clamp(0.0, 1.0);
@@ -202,12 +196,26 @@ fn compute_low_impact_confidence(
     // Sample sufficiency: more samples → higher confidence, plateaus at 500.
     let sample_factor = (sample_count / 500.0).min(1.0);
 
-    // Weighted combination
-    let raw = activation_factor * 0.4 + variance_factor * 0.3 + sample_factor * 0.3;
-
-    // Scale to [0.3, 0.9] range — lower than dead-neuron confidence since
+    // Scale to [0.3, 0.9] — lower than dead-neuron confidence since
     // there is more uncertainty when the neuron is not completely dead.
-    0.3 + raw * 0.6
+    weighted_confidence(
+        &[
+            ConfidenceFactor {
+                value: activation_factor,
+                weight: 0.4,
+            },
+            ConfidenceFactor {
+                value: variance_factor,
+                weight: 0.3,
+            },
+            ConfidenceFactor {
+                value: sample_factor,
+                weight: 0.3,
+            },
+        ],
+        0.3,
+        0.9,
+    )
 }
 
 /// Convert low-impact neuron candidates into coordinated structural candidates.
@@ -238,11 +246,8 @@ pub fn low_impact_neurons_to_coordinated_candidates(
         });
     }
 
-    // Sort by expected improvement (best first)
-    results.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
+    // Sort by expected improvement (best first) (Issue #941: shared helper)
+    sort_candidates_by_score_gain(&mut results);
 
     results
 }

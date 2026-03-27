@@ -42,4 +42,5 @@ mod issue_751_bimodal_cluster_coherence;
 mod issue_770_weight_coherence_topology_cache;
 mod issue_793_low_impact_neuron_detection;
 mod issue_804_detection_helpers;
+mod issue_941_detection_helpers;
 mod saturation_detection;
