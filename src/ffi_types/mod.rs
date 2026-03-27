@@ -33,6 +33,12 @@ pub struct CreatureJson {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NeuronJson {
+    /// Neuron identity string. May be either:
+    /// - An RFC 4122 UUID from creature exports (e.g. `"550e8400-e29b-41d4-…"`), or
+    /// - A stringified integer matching the TypeScript runtime `neuron.id` after
+    ///   normalisation (e.g. `"42"`).
+    ///
+    /// Callers must not assume a single format (Issue #950).
     pub uuid: String,
     #[serde(rename = "type")]
     pub neuron_type: String,
@@ -69,8 +75,12 @@ where
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct SynapseJson {
+    /// Source neuron identity string. Same format rules as [`NeuronJson::uuid`]:
+    /// may be an RFC 4122 UUID or a stringified integer (Issue #950).
     #[serde(default, alias = "fromUUID")]
     pub from_uuid: String,
+    /// Target neuron identity string. Same format rules as [`NeuronJson::uuid`]:
+    /// may be an RFC 4122 UUID or a stringified integer (Issue #950).
     #[serde(default, alias = "toUUID")]
     pub to_uuid: String,
     #[serde(default)]
@@ -85,6 +95,8 @@ pub struct SynapseJson {
 /// Pre-computed neuron data for a single neuron
 #[derive(Debug, Deserialize, Clone)]
 pub struct NeuronData {
+    /// Neuron identity string. Must match the corresponding [`NeuronJson::uuid`]
+    /// exactly — may be an RFC 4122 UUID or a stringified integer (Issue #950).
     pub neuron_uuid: String,
     pub activation: f32,
     #[serde(default)]
