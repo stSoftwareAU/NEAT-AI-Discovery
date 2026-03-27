@@ -334,11 +334,9 @@ impl StreamingRecordCache {
             if let Ok(block_records) =
                 Self::load_block_records(&inner.parquet_file, req.block_id, inner.block_size)
             {
-                // Evict if needed
-                Self::evict_if_needed_inner(&inner);
-
-                // Store the prefetched block
+                // Evict and store atomically under the same write lock
                 let mut blocks = inner.blocks.write();
+                Self::evict_blocks(&mut blocks, inner.max_cached_blocks, &inner.eviction_count);
                 blocks
                     .entry(req.block_id)
                     .or_insert_with(|| CacheBlock::new(block_records));
@@ -551,9 +549,6 @@ impl StreamingRecordCache {
 
         // Load each block that contains this neuron
         for &block_id in &block_ids {
-            // Evict if necessary before loading
-            Self::evict_if_needed_inner(&self.inner);
-
             // Check if this block is already cached
             {
                 let blocks = self.inner.blocks.read();
@@ -577,9 +572,14 @@ impl StreamingRecordCache {
                 all_records.extend(records.iter().cloned());
             }
 
-            // Cache the block
+            // Evict and cache atomically under the same write lock
             {
                 let mut blocks = self.inner.blocks.write();
+                Self::evict_blocks(
+                    &mut blocks,
+                    self.inner.max_cached_blocks,
+                    &self.inner.eviction_count,
+                );
                 blocks
                     .entry(block_id)
                     .or_insert_with(|| CacheBlock::new(block_records));
@@ -592,11 +592,13 @@ impl StreamingRecordCache {
         Ok(Arc::new(all_records))
     }
 
-    /// Evict least-recently-used blocks if cache is full.
-    fn evict_if_needed_inner(inner: &StreamingCacheInner) {
-        if let Some(max_blocks) = inner.max_cached_blocks {
-            let mut blocks = inner.blocks.write();
-
+    /// Evict least-recently-used blocks from an already-locked block map.
+    fn evict_blocks(
+        blocks: &mut HashMap<usize, CacheBlock>,
+        max_blocks: Option<usize>,
+        eviction_count: &AtomicU64,
+    ) {
+        if let Some(max_blocks) = max_blocks {
             while blocks.len() >= max_blocks {
                 // Find the LRU block
                 let lru_block_id = blocks
@@ -606,7 +608,7 @@ impl StreamingRecordCache {
 
                 if let Some(block_id) = lru_block_id {
                     blocks.remove(&block_id);
-                    inner.eviction_count.fetch_add(1, Ordering::Relaxed);
+                    eviction_count.fetch_add(1, Ordering::Relaxed);
                 } else {
                     break;
                 }
