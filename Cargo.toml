@@ -124,6 +124,10 @@ harness = false
 name = "error_collection"
 harness = false
 
+[[bench]]
+name = "candidate_pipeline_clones"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

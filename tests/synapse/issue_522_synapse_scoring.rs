@@ -188,7 +188,7 @@ fn source_boost_negative_gain_boosted_correctly() {
 fn target_boost_applied_to_existing_hidden_neuron() {
     let gain = 0.10;
     let mut type_map = HashMap::new();
-    type_map.insert("hidden-abc".to_string(), "hidden".to_string());
+    type_map.insert("hidden-abc", "hidden");
 
     let boosted = apply_target_type_boost(gain, "hidden-abc", &type_map);
     let expected = gain * EXISTING_HIDDEN_TARGET_BOOST as f32;
@@ -202,7 +202,7 @@ fn target_boost_applied_to_existing_hidden_neuron() {
 fn target_boost_not_applied_to_output_neuron() {
     let gain = 0.10;
     let mut type_map = HashMap::new();
-    type_map.insert("output-0".to_string(), "output".to_string());
+    type_map.insert("output-0", "output");
 
     let result = apply_target_type_boost(gain, "output-0", &type_map);
     assert!(
@@ -214,7 +214,7 @@ fn target_boost_not_applied_to_output_neuron() {
 #[test]
 fn target_boost_not_applied_to_missing_neuron() {
     let gain = 0.10;
-    let type_map = HashMap::new(); // Empty map — neuron not found
+    let type_map: HashMap<&str, &str> = HashMap::new(); // Empty map — neuron not found
 
     let result = apply_target_type_boost(gain, "unknown-uuid", &type_map);
     assert!(
@@ -227,10 +227,10 @@ fn target_boost_not_applied_to_missing_neuron() {
 fn target_boost_multiple_neuron_types() {
     let gain = 0.10;
     let mut type_map = HashMap::new();
-    type_map.insert("hidden-a".to_string(), "hidden".to_string());
-    type_map.insert("hidden-b".to_string(), "hidden".to_string());
-    type_map.insert("output-0".to_string(), "output".to_string());
-    type_map.insert("input-0".to_string(), "input".to_string());
+    type_map.insert("hidden-a", "hidden");
+    type_map.insert("hidden-b", "hidden");
+    type_map.insert("output-0", "output");
+    type_map.insert("input-0", "input");
 
     // Hidden neurons should be boosted
     let boosted_a = apply_target_type_boost(gain, "hidden-a", &type_map);
@@ -265,7 +265,7 @@ fn combined_source_and_target_boost_stacks_multiplicatively() {
     // gain × source_boost × target_boost (applied sequentially)
     let gain = 0.10;
     let mut type_map = HashMap::new();
-    type_map.insert("hidden-target".to_string(), "hidden".to_string());
+    type_map.insert("hidden-target", "hidden");
 
     // Apply source boost first (as production does)
     let after_source = apply_source_type_boost(gain, "input-0");
@@ -284,7 +284,7 @@ fn pessimism_discount_then_boosts_gives_correct_order() {
     // Production applies pessimism first, then source boost, then target boost
     let gain = 0.10;
     let mut type_map = HashMap::new();
-    type_map.insert("hidden-target".to_string(), "hidden".to_string());
+    type_map.insert("hidden-target", "hidden");
 
     // Apply in production order
     let after_pessimism = apply_pessimism_discount(gain, 80, 100);

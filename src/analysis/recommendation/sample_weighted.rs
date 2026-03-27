@@ -161,10 +161,12 @@ pub fn stratify_samples(records: &[DiscoverRecord]) -> StratifiedAnalysis {
         })
         .collect();
 
-    // Compute median
-    let mut sorted_errors: Vec<f32> = abs_errors.clone();
-    sorted_errors.sort_by(f32::total_cmp);
-    let median = sorted_errors[sorted_errors.len() / 2];
+    // Issue #943: Compute median using select_nth_unstable (O(n) average)
+    // instead of cloning the entire Vec and sorting (O(n log n) + allocation).
+    let median_idx = abs_errors.len() / 2;
+    let mut median_scratch: Vec<f32> = abs_errors.clone();
+    median_scratch.select_nth_unstable_by(median_idx, f32::total_cmp);
+    let median = median_scratch[median_idx];
 
     // Split into easy (≤ median) and hard (> median)
     let mut easy_samples = Vec::new();
