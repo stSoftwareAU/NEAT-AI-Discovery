@@ -40,10 +40,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// A string interning pool for neuron UUIDs.
+/// A string interning pool for neuron identity strings.
 ///
-/// Maps UUID strings to compact `u32` indices, enabling memory-efficient
-/// HashMap/HashSet operations with integer keys instead of String keys.
+/// Maps neuron identity strings to compact `u32` indices, enabling
+/// memory-efficient HashMap/HashSet operations with integer keys instead of
+/// String keys. Identity strings may be RFC 4122 UUIDs or stringified
+/// integers from TypeScript runtime `neuron.id` (Issue #950) — no format
+/// validation is performed.
 #[derive(Debug, Clone)]
 pub struct NeuronIndex {
     /// Maps interned UUID strings to their assigned index.

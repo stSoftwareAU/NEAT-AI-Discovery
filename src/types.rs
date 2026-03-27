@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 pub struct DiscoverRecord {
     /// Observation index (training record index)
     pub obs_index: u32,
-    /// Neuron UUID
+    /// Neuron identity string — may be an RFC 4122 UUID or a stringified
+    /// integer from TypeScript runtime `neuron.id` (Issue #950).
     pub neuron_uuid: String,
     /// Neuron value (optional, can be None)
     pub value: Option<f32>,
