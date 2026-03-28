@@ -439,8 +439,8 @@ If any step fails, fix the issue and re-run. Do **not** commit code that fails
 GitHub Actions runs on every pull request to `Develop`:
 
 - `auto-format` — applies `rustfmt` and commits fixes
-- `version-increment` — auto-bumps patch version when `src/` changes
-  (see [Version Management](#version-management) for why this is critical)
+- `version-increment` — auto-bumps patch version when changes exist (uses
+  `ACTIONS_PUSH` PAT so the push re-triggers workflows, matching NEAT-AI)
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
 - `shell-checks` — validates bash script syntax
 - `spell-check` — runs codespell on the codebase
@@ -473,10 +473,10 @@ This script:
 
 **How versions are incremented:**
 
-- **CI auto-increment**: The `version-increment` CI job automatically bumps the
-  patch version when `src/` changes are detected in a pull request. This is the
-  primary mechanism — in most cases, you do not need to bump the version
-  manually.
+- **CI auto-increment (primary)**: The `version-increment` CI job auto-bumps the
+  patch version on every PR when changes exist compared to the base branch. It
+  uses a PAT (`secrets.ACTIONS_PUSH`) so that the push re-triggers workflows,
+  matching the approach used in the NEAT-AI repository (Issue #955).
 - **Manual increment**: If you are making changes outside of the normal PR
   workflow, or if CI does not run (e.g., direct commits), you **must** manually
   increment the patch version in `Cargo.toml` (e.g., `0.43.8` → `0.43.9`).

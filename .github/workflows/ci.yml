@@ -38,8 +38,8 @@ jobs:
       with:
         ref: ${{ github.head_ref }}
         fetch-depth: 0
-        token: ${{ secrets.GITHUB_TOKEN }}
-        
+        token: ${{ secrets.ACTIONS_PUSH }}
+
     - name: Configure Git
       run: |
         git config user.name "github-actions[bot]"
@@ -95,28 +95,6 @@ jobs:
               echo "Skipping version increment to avoid duplicate commits"
               exit 0
             fi
-          fi
-        fi
-        
-        # Check if there are changes in src directory compared to base branch
-        # This correctly detects changes even if auto-format pushed commits
-        HAS_SRC_CHANGES=false
-        if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
-          if ! git diff --quiet origin/$BASE_BRANCH...HEAD -- src/; then
-            HAS_SRC_CHANGES=true
-            echo "Found changes in src directory compared to base branch"
-          else
-            echo "No changes in src directory compared to base branch, skipping version increment"
-            exit 0
-          fi
-        else
-          # Fallback: if base branch not available, check HEAD~1 (original logic)
-          if ! git diff --quiet HEAD~1 HEAD -- src/; then
-            HAS_SRC_CHANGES=true
-            echo "Found changes in src directory"
-          else
-            echo "No changes in src directory, skipping version increment"
-            exit 0
           fi
         fi
         
@@ -338,7 +316,7 @@ jobs:
       with:
         ref: ${{ github.head_ref }}
         fetch-depth: 0
-        token: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ secrets.ACTIONS_PUSH }}
 
     - name: Ensure bash scripts are executable
       run: |
