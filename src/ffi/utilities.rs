@@ -331,6 +331,7 @@ pub extern "C" fn get_library_version() -> *mut std::ffi::c_char {
                 let output = GetVersionOutput {
                     success: false,
                     version: String::new(),
+                    schema_version: SCHEMA_VERSION.to_string(),
                     error: Some(err_msg),
                     error_kind,
                     retryable,

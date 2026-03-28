@@ -59,11 +59,11 @@ fn test_record_discovery_integration() {
     let output: serde_json::Value = serde_json::from_str(&result).unwrap();
 
     assert_eq!(output["success"], true);
-    assert!(output["temp_dir"].as_str().is_some());
+    assert!(output["tempDir"].as_str().is_some());
     assert_eq!(output["file"], "discovery_data.parquet");
 
     // Verify Parquet file was created
-    let parquet_file = std::path::Path::new(output["temp_dir"].as_str().unwrap())
+    let parquet_file = std::path::Path::new(output["tempDir"].as_str().unwrap())
         .join(output["file"].as_str().unwrap());
     assert!(parquet_file.exists());
 }

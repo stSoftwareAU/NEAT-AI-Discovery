@@ -19,6 +19,62 @@ pub use session::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
 // ============================================================================
+// FFI contract version (Issue #952)
+// ============================================================================
+
+/// Current discovery FFI schema version.
+///
+/// Callers can use this to reject stale cached payloads instead of guessing
+/// compatibility. Bump this when the wire format changes.
+pub const SCHEMA_VERSION: &str = "2";
+
+// ============================================================================
+// UUID validation (Issue #952)
+// ============================================================================
+
+/// Returns `true` if the string is a purely numeric integer (e.g. `"0"`, `"42"`,
+/// `"999999"`). These are runtime integer IDs that must never cross the FFI
+/// boundary.
+fn is_numeric_id(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Deserialise a neuron UUID string, rejecting purely numeric identifiers.
+///
+/// Accepts RFC 4122 UUIDs, `input-N` format, and any other descriptive string
+/// identifier. Rejects stringified integers (Issue #952).
+fn deserialise_neuron_uuid<'de, D>(deserialiser: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserialiser)?;
+    if is_numeric_id(&raw) {
+        return Err(serde::de::Error::custom(format!(
+            "numeric integer neuron ID \"{raw}\" is not permitted in FFI payloads \
+             (Issue #952). Use a stable UUID string instead."
+        )));
+    }
+    Ok(raw)
+}
+
+/// Deserialise a synapse UUID string, rejecting purely numeric identifiers.
+///
+/// Empty strings are allowed (serde default for missing fields).
+fn deserialise_synapse_uuid<'de, D>(deserialiser: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserialiser)?;
+    if is_numeric_id(&raw) {
+        return Err(serde::de::Error::custom(format!(
+            "numeric integer synapse UUID \"{raw}\" is not permitted in FFI payloads \
+             (Issue #952). Use a stable UUID string instead."
+        )));
+    }
+    Ok(raw)
+}
+
+// ============================================================================
 // Creature / Neuron / Synapse representations
 // ============================================================================
 
@@ -33,12 +89,11 @@ pub struct CreatureJson {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NeuronJson {
-    /// Neuron identity string. May be either:
-    /// - An RFC 4122 UUID from creature exports (e.g. `"550e8400-e29b-41d4-…"`), or
-    /// - A stringified integer matching the TypeScript runtime `neuron.id` after
-    ///   normalisation (e.g. `"42"`).
+    /// Stable neuron identity string. Must be a UUID or descriptive identifier
+    /// (e.g. `"550e8400-e29b-41d4-…"`, `"input-0"`).
     ///
-    /// Callers must not assume a single format (Issue #950).
+    /// Purely numeric integer IDs are rejected at the FFI boundary (Issue #952).
+    #[serde(deserialize_with = "deserialise_neuron_uuid")]
     pub uuid: String,
     #[serde(rename = "type")]
     pub neuron_type: String,
@@ -75,13 +130,21 @@ where
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct SynapseJson {
-    /// Source neuron identity string. Same format rules as [`NeuronJson::uuid`]:
-    /// may be an RFC 4122 UUID or a stringified integer (Issue #950).
-    #[serde(default, alias = "fromUUID")]
+    /// Source neuron identity string. Must be a UUID or descriptive identifier.
+    /// Purely numeric integer IDs are rejected (Issue #952).
+    #[serde(
+        default,
+        alias = "fromUUID",
+        deserialize_with = "deserialise_synapse_uuid"
+    )]
     pub from_uuid: String,
-    /// Target neuron identity string. Same format rules as [`NeuronJson::uuid`]:
-    /// may be an RFC 4122 UUID or a stringified integer (Issue #950).
-    #[serde(default, alias = "toUUID")]
+    /// Target neuron identity string. Must be a UUID or descriptive identifier.
+    /// Purely numeric integer IDs are rejected (Issue #952).
+    #[serde(
+        default,
+        alias = "toUUID",
+        deserialize_with = "deserialise_synapse_uuid"
+    )]
     pub to_uuid: String,
     #[serde(default)]
     pub weight: f32,
@@ -96,7 +159,8 @@ pub struct SynapseJson {
 #[derive(Debug, Deserialize, Clone)]
 pub struct NeuronData {
     /// Neuron identity string. Must match the corresponding [`NeuronJson::uuid`]
-    /// exactly — may be an RFC 4122 UUID or a stringified integer (Issue #950).
+    /// exactly. Purely numeric integer IDs are rejected (Issue #952).
+    #[serde(deserialize_with = "deserialise_neuron_uuid")]
     pub neuron_uuid: String,
     pub activation: f32,
     #[serde(default)]

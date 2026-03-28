@@ -140,6 +140,7 @@ fn response_types_accessible() {
     // Verify the types can be constructed — proves they are accessible
     let _output = RecordDiscoveryOutput {
         success: true,
+        schema_version: neat_ai_discovery::SCHEMA_VERSION.to_string(),
         temp_dir: None,
         file: None,
         error: None,
@@ -159,6 +160,7 @@ fn response_types_accessible() {
     let _output = GetVersionOutput {
         success: true,
         version: "test".to_string(),
+        schema_version: neat_ai_discovery::SCHEMA_VERSION.to_string(),
         error: None,
         error_kind: None,
         retryable: None,

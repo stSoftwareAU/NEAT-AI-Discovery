@@ -47,6 +47,7 @@ pub unsafe extern "C" fn rank_focus_neurons(
                 let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = RankFocusNeuronsOutput {
                     success: false,
+                    schema_version: SCHEMA_VERSION.to_string(),
                     neurons: None,
                     removal_candidates: None,
                     constant_neuron_removals: None,
@@ -115,6 +116,7 @@ pub unsafe extern "C" fn analyze_parallel(
                 let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = AnalyzeParallelOutput {
                     success: false,
+                    schema_version: SCHEMA_VERSION.to_string(),
                     helpful_synapses: None,
                     harmful_synapses: None,
                     synapse_diagnostics: None,

@@ -44,9 +44,9 @@ use std::sync::Arc;
 ///
 /// Maps neuron identity strings to compact `u32` indices, enabling
 /// memory-efficient HashMap/HashSet operations with integer keys instead of
-/// String keys. Identity strings may be RFC 4122 UUIDs or stringified
-/// integers from TypeScript runtime `neuron.id` (Issue #950) — no format
-/// validation is performed.
+/// String keys. Identity strings are stable UUIDs or descriptive identifiers
+/// (e.g. `input-0`, `hidden-abc`). Numeric integer IDs are rejected at the
+/// FFI boundary (Issue #952).
 #[derive(Debug, Clone)]
 pub struct NeuronIndex {
     /// Maps interned UUID strings to their assigned index.

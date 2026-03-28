@@ -94,6 +94,7 @@ mod tests {
             let (error_kind, retryable) = error_fields(error_msg);
             let output = RecordDiscoveryOutput {
                 success: false,
+                schema_version: SCHEMA_VERSION.to_string(),
                 temp_dir: None,
                 file: None,
                 error: Some(error_msg.to_string()),

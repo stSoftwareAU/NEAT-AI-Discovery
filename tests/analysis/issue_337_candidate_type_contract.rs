@@ -299,6 +299,7 @@ fn analyze_parallel_output_contains_all_candidate_fields() {
     // that NEAT-AI's DiscoverResult.ts and DiscoveryCandidates.ts consume.
     let output = neat_ai_discovery::AnalyzeParallelOutput {
         success: true,
+        schema_version: neat_ai_discovery::SCHEMA_VERSION.to_string(),
         helpful_synapses: Some(vec![]),
         harmful_synapses: Some(vec![]),
         synapse_diagnostics: None,
@@ -357,6 +358,7 @@ fn rank_focus_neurons_output_contains_removal_candidate_fields() {
     // including constantNeuronRemovals (Issue #306).
     let output = neat_ai_discovery::RankFocusNeuronsOutput {
         success: true,
+        schema_version: neat_ai_discovery::SCHEMA_VERSION.to_string(),
         neurons: Some(vec![]),
         removal_candidates: Some(vec![]),
         constant_neuron_removals: Some(vec![]),
