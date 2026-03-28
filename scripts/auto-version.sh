@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Auto-increment Cargo.toml patch version when src/ has changed.
+# Auto-increment Cargo.toml patch version when the branch has changes.
 #
 # Called by quality.sh so that the version is always incremented BEFORE
 # committing. This prevents the CI version-increment job from pushing a
@@ -55,14 +55,14 @@ if [ "$CURRENT_BRANCH" = "$BASE_BRANCH" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Check whether src/ has changed compared to the base branch
+# Check whether ANY files have changed compared to the base branch
 # ---------------------------------------------------------------------------
-if git diff --quiet "origin/$BASE_BRANCH"...HEAD -- src/ 2>/dev/null; then
-    # Also check for staged but uncommitted src/ changes
-    if git diff --quiet --cached -- src/ 2>/dev/null; then
-        # Also check for unstaged src/ changes
-        if git diff --quiet -- src/ 2>/dev/null; then
-            echo "⏭️  No src/ changes — skipping version auto-increment"
+if git diff --quiet "origin/$BASE_BRANCH"...HEAD 2>/dev/null; then
+    # Also check for staged but uncommitted changes
+    if git diff --quiet --cached 2>/dev/null; then
+        # Also check for unstaged changes
+        if git diff --quiet 2>/dev/null; then
+            echo "⏭️  No changes — skipping version auto-increment"
             exit 0
         fi
     fi

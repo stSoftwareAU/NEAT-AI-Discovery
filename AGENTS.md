@@ -439,7 +439,7 @@ If any step fails, fix the issue and re-run. Do **not** commit code that fails
 GitHub Actions runs on every pull request to `Develop`:
 
 - `auto-format` — applies `rustfmt` and commits fixes
-- `version-increment` — auto-bumps patch version when `src/` changes (fallback;
+- `version-increment` — auto-bumps patch version when changes exist (fallback;
   prefer local increment via `quality.sh`, see [Version Management](#version-management))
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
 - `shell-checks` — validates bash script syntax
@@ -474,8 +474,8 @@ This script:
 **How versions are incremented:**
 
 - **Local auto-increment (primary)**: Running `./quality.sh` automatically
-  increments the patch version via `scripts/auto-version.sh` when `src/` has
-  changed compared to the base branch. Since `quality.sh` must be run before
+  increments the patch version via `scripts/auto-version.sh` when the branch has
+  any changes compared to the base branch. Since `quality.sh` must be run before
   every commit, the version is always correct before pushing. This prevents the
   CI `version-increment` job from pushing a commit with `GITHUB_TOKEN` (which
   does not re-trigger workflows), ensuring PR checks start reliably (Issue #955).

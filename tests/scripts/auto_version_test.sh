@@ -82,9 +82,9 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 1: Increment when src/ has changed and version matches base
+# Test 1: Increment when branch has changes and version matches base
 # ---------------------------------------------------------------------------
-echo "Test 1: Increment when src/ has changed"
+echo "Test 1: Increment when branch has changes"
 setup_repo "1.0.0"
 echo "// new code" >> src/lib.rs
 git add src/lib.rs
@@ -110,15 +110,15 @@ cleanup
 TMPDIR_BASE=""
 
 # ---------------------------------------------------------------------------
-# Test 3: Skip when no src/ changes
+# Test 3: Increment for non-src changes (e.g. docs, scripts)
 # ---------------------------------------------------------------------------
-echo "Test 3: Skip when no src/ changes"
+echo "Test 3: Increment for non-src changes"
 setup_repo "2.0.0"
 echo "# docs change" >> README.md
 git add -A
 git commit -m "docs only" --quiet
 bash "$AUTO_VERSION"
-assert_version "$TMPDIR_BASE/Cargo.toml" "2.0.0" "Version unchanged (no src/ changes)"
+assert_version "$TMPDIR_BASE/Cargo.toml" "2.0.1" "Version incremented for non-src changes"
 cleanup
 TMPDIR_BASE=""
 
@@ -155,13 +155,13 @@ cleanup
 TMPDIR_BASE=""
 
 # ---------------------------------------------------------------------------
-# Test 6: Handles unstaged src/ changes
+# Test 6: Handles unstaged changes
 # ---------------------------------------------------------------------------
-echo "Test 6: Handles unstaged src/ changes"
+echo "Test 6: Handles unstaged changes"
 setup_repo "4.0.0"
 echo "// uncommitted change" >> src/lib.rs
 bash "$AUTO_VERSION"
-assert_version "$TMPDIR_BASE/Cargo.toml" "4.0.1" "Incremented for unstaged src/ changes"
+assert_version "$TMPDIR_BASE/Cargo.toml" "4.0.1" "Incremented for unstaged changes"
 cleanup
 TMPDIR_BASE=""
 
