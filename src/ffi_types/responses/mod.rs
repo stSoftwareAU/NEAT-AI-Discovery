@@ -27,8 +27,11 @@ use crate::analysis as analysis_mod;
 
 /// JSON output from `record_discovery` function
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RecordDiscoveryOutput {
     pub success: bool,
+    /// FFI schema version so callers can reject stale cached payloads (Issue #952).
+    pub schema_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temp_dir: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,6 +51,8 @@ pub struct RecordDiscoveryOutput {
 pub struct GetVersionOutput {
     pub success: bool,
     pub version: String,
+    /// FFI schema version so callers can reject stale cached payloads (Issue #952).
+    pub schema_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Structured error classification for retry decisions (Issue #651).
@@ -62,6 +67,8 @@ pub struct GetVersionOutput {
 #[serde(rename_all = "camelCase")]
 pub struct RankFocusNeuronsOutput {
     pub success: bool,
+    /// FFI schema version so callers can reject stale cached payloads (Issue #952).
+    pub schema_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neurons: Option<Vec<RankedNeuronJson>>,
     /// Neurons with high error but very low impact - candidates for removal

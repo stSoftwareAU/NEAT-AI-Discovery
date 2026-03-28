@@ -17,6 +17,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
             let kind = typed.error_kind();
             let output = AnalyzeParallelOutput {
                 success: false,
+                schema_version: SCHEMA_VERSION.to_string(),
                 helpful_synapses: None,
                 harmful_synapses: None,
                 synapse_diagnostics: None,
@@ -73,6 +74,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
 
             let output = AnalyzeParallelOutput {
                 success: true,
+                schema_version: SCHEMA_VERSION.to_string(),
                 helpful_synapses: synapse.as_ref().map(|s| s.helpful_synapses.clone()),
                 harmful_synapses: synapse.as_ref().map(|s| s.harmful_synapses.clone()),
                 synapse_diagnostics: synapse
@@ -136,6 +138,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
             let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
             let output = AnalyzeParallelOutput {
                 success: false,
+                schema_version: SCHEMA_VERSION.to_string(),
                 helpful_synapses: None,
                 harmful_synapses: None,
                 synapse_diagnostics: None,
@@ -189,6 +192,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
             let kind = typed.error_kind();
             let output = RankFocusNeuronsOutput {
                 success: false,
+                schema_version: SCHEMA_VERSION.to_string(),
                 neurons: None,
                 removal_candidates: None,
                 constant_neuron_removals: None,
@@ -241,6 +245,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
             let (error_kind, retryable) = no_error_fields();
             let output = RankFocusNeuronsOutput {
                 success: true,
+                schema_version: SCHEMA_VERSION.to_string(),
                 neurons: Some(neurons),
                 removal_candidates: if removal_candidates.is_empty() {
                     None
@@ -267,6 +272,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
             let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
             let output = RankFocusNeuronsOutput {
                 success: false,
+                schema_version: SCHEMA_VERSION.to_string(),
                 neurons: None,
                 removal_candidates: None,
                 constant_neuron_removals: None,

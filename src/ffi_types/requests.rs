@@ -190,8 +190,9 @@ fn default_top_k() -> Option<usize> {
 #[derive(Debug, Deserialize)]
 pub struct ReadDiscoveryInput {
     pub parquet_file: String,
-    /// Neuron identity string to filter by. May be an RFC 4122 UUID or a
-    /// stringified integer — exact string matching is used (Issue #950).
+    /// Neuron identity string to filter by. Must be a stable UUID or descriptive
+    /// identifier — exact string matching is used. Numeric integer IDs are not
+    /// permitted (Issue #952).
     pub neuron_uuid: String,
 }
 

@@ -49,6 +49,7 @@ pub unsafe extern "C" fn record_discovery(
                 let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
                 let output = RecordDiscoveryOutput {
                     success: false,
+                    schema_version: SCHEMA_VERSION.to_string(),
                     temp_dir: None,
                     file: None,
                     error: Some(err_msg),

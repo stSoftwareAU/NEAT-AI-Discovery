@@ -42,6 +42,7 @@ pub fn get_library_version_internal() -> Result<String> {
     let output = GetVersionOutput {
         success: true,
         version: crate::LIB_VERSION.to_string(),
+        schema_version: SCHEMA_VERSION.to_string(),
         error: None,
         error_kind,
         retryable,

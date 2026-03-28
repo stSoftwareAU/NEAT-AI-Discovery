@@ -22,6 +22,7 @@ pub fn record_discovery_internal(input_json: &str) -> Result<String> {
             let kind = typed.error_kind();
             let output = RecordDiscoveryOutput {
                 success: false,
+                schema_version: SCHEMA_VERSION.to_string(),
                 temp_dir: None,
                 file: None,
                 error: Some(typed.to_string()),
@@ -39,6 +40,7 @@ pub fn record_discovery_internal(input_json: &str) -> Result<String> {
             let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
             let output = RecordDiscoveryOutput {
                 success: false,
+                schema_version: SCHEMA_VERSION.to_string(),
                 temp_dir: None,
                 file: None,
                 error: Some(err_msg),
@@ -53,6 +55,7 @@ pub fn record_discovery_internal(input_json: &str) -> Result<String> {
     let (error_kind, retryable) = no_error_fields();
     let output = RecordDiscoveryOutput {
         success: true,
+        schema_version: SCHEMA_VERSION.to_string(),
         temp_dir: Some(result.temp_dir),
         file: Some(result.file),
         error: None,

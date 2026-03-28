@@ -18,6 +18,8 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeParallelOutput {
     pub success: bool,
+    /// FFI schema version so callers can reject stale cached payloads (Issue #952).
+    pub schema_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub helpful_synapses: Option<Vec<CandidateSynapseJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]

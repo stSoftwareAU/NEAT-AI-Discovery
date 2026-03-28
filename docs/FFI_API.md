@@ -107,11 +107,15 @@ suitable GPU, controllers must disable discovery entirely.
 
 ### Output Format
 
+All discovery responses include a `schemaVersion` field (Issue #952) so callers can
+reject stale cached payloads instead of guessing compatibility.
+
 Success:
 ```json
 {
   "success": true,
-  "temp_dir": ".discovery/abc123_456789",
+  "schemaVersion": "2",
+  "tempDir": ".discovery/abc123_456789",
   "file": "discovery_data.parquet"
 }
 ```
@@ -120,9 +124,26 @@ Error:
 ```json
 {
   "success": false,
-  "error": "Error message here"
+  "schemaVersion": "2",
+  "error": "Error message here",
+  "errorKind": "data_validation",
+  "retryable": false
 }
 ```
+
+### Neuron Identity Contract (Issue #952)
+
+All neuron and synapse identity fields in FFI JSON payloads must use **stable UUID
+strings**. Purely numeric integer IDs (e.g. `"0"`, `"42"`, `"999999"`) are rejected
+at the FFI boundary with a `data_validation` error.
+
+Accepted formats:
+- RFC 4122 UUIDs: `"550e8400-e29b-41d4-a716-446655440000"`
+- Input neuron identifiers: `"input-0"`, `"input-1"`
+- Descriptive identifiers: `"hidden-layer1-node0"`, `"output-main"`
+
+Numeric integer IDs are an internal optimisation detail and must never cross the
+FFI boundary.
 
 ---
 
