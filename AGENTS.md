@@ -439,8 +439,8 @@ If any step fails, fix the issue and re-run. Do **not** commit code that fails
 GitHub Actions runs on every pull request to `Develop`:
 
 - `auto-format` — applies `rustfmt` and commits fixes
-- `version-increment` — auto-bumps patch version when `src/` changes
-  (see [Version Management](#version-management) for why this is critical)
+- `version-increment` — auto-bumps patch version when `src/` changes (fallback;
+  prefer local increment via `quality.sh`, see [Version Management](#version-management))
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
 - `shell-checks` — validates bash script syntax
 - `spell-check` — runs codespell on the codebase
@@ -473,10 +473,15 @@ This script:
 
 **How versions are incremented:**
 
-- **CI auto-increment**: The `version-increment` CI job automatically bumps the
-  patch version when `src/` changes are detected in a pull request. This is the
-  primary mechanism — in most cases, you do not need to bump the version
-  manually.
+- **Local auto-increment (primary)**: Running `./quality.sh` automatically
+  increments the patch version via `scripts/auto-version.sh` when `src/` has
+  changed compared to the base branch. Since `quality.sh` must be run before
+  every commit, the version is always correct before pushing. This prevents the
+  CI `version-increment` job from pushing a commit with `GITHUB_TOKEN` (which
+  does not re-trigger workflows), ensuring PR checks start reliably (Issue #955).
+- **CI auto-increment (fallback)**: The `version-increment` CI job still exists
+  as a safety net. If the local version already differs from the base branch, the
+  CI job skips — no commit is pushed and PR checks run on the correct SHA.
 - **Manual increment**: If you are making changes outside of the normal PR
   workflow, or if CI does not run (e.g., direct commits), you **must** manually
   increment the patch version in `Cargo.toml` (e.g., `0.43.8` → `0.43.9`).
