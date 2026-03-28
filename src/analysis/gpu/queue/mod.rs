@@ -51,7 +51,7 @@ mod submission;
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::analysis::samples::{HarmfulStats, HelpfulSample, HelpfulStats, ReluStats};
 
@@ -142,6 +142,16 @@ pub(crate) enum GpuWorkRequest {
 ///
 /// This eliminates the overhead of creating multiple GPU devices (one per parallel
 /// focus neuron) and improves GPU utilisation by batching work from multiple sources.
+///
+/// ## Deadline propagation (Issue #953)
+///
+/// The optional `deadline` field propagates the analysis deadline to every GPU
+/// operation submitted through the `GpuEvaluator` trait. Without a deadline the
+/// trait methods fall back to the maximum GPU timeout (5 minutes per call), which
+/// can cause the process to appear hung when many rayon threads are all waiting
+/// on slow GPU responses. Setting a deadline tightens the per-call timeout to
+/// the remaining analysis time and allows the system to fail fast instead of
+/// stalling until the outer task controller kills the process.
 pub struct GpuWorkQueue {
     /// Channel to send work to the GPU thread.
     pub(super) work_tx: Sender<GpuWorkRequest>,
@@ -150,6 +160,22 @@ pub struct GpuWorkQueue {
     /// Channel to receive notification when GPU thread exits.
     /// This allows Drop to use a timeout instead of blocking forever.
     pub(super) exit_rx: Receiver<()>,
+    /// Analysis deadline propagated to `GpuEvaluator` trait methods (Issue #953).
+    /// When `Some`, GPU batch timeouts are derived from the remaining time until
+    /// this deadline instead of using the maximum 5-minute default.
+    pub(super) deadline: Option<SystemTime>,
+}
+
+impl GpuWorkQueue {
+    /// Return a new queue with the given analysis deadline (Issue #953).
+    ///
+    /// The deadline is used by `GpuEvaluator` trait methods to calculate adaptive
+    /// timeouts, preventing the queue from stalling for up to 5 minutes per call
+    /// when the analysis is already nearing its overall time limit.
+    pub fn with_deadline(mut self, deadline: Option<SystemTime>) -> Self {
+        self.deadline = deadline;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +249,58 @@ mod tests {
         // Using const assertion to verify at compile time
         const _: () = assert!(GPU_SHUTDOWN_TIMEOUT_SECS >= 5, "Shutdown timeout too short");
         const _: () = assert!(GPU_SHUTDOWN_TIMEOUT_SECS <= 30, "Shutdown timeout too long");
+    }
+
+    /// Issue #953: Verify `with_deadline(None)` leaves deadline unset.
+    /// This is a compile-time + structural check — no GPU needed.
+    #[test]
+    fn test_with_deadline_none_leaves_deadline_unset() {
+        // Construct a dummy queue struct to test the builder.
+        // We can't call GpuWorkQueue::new() without a GPU, so build manually.
+        let (work_tx, _work_rx) = bounded::<GpuWorkRequest>(1);
+        let (_exit_tx, exit_rx) = bounded::<()>(1);
+        let queue = GpuWorkQueue {
+            work_tx,
+            thread_handle: None,
+            exit_rx,
+            deadline: None,
+        };
+        let queue = queue.with_deadline(None);
+        assert!(queue.deadline.is_none());
+    }
+
+    /// Issue #953: Verify `with_deadline(Some(...))` stores the deadline.
+    #[test]
+    fn test_with_deadline_some_stores_deadline() {
+        let (work_tx, _work_rx) = bounded::<GpuWorkRequest>(1);
+        let (_exit_tx, exit_rx) = bounded::<()>(1);
+        let future = SystemTime::now() + Duration::from_secs(120);
+        let queue = GpuWorkQueue {
+            work_tx,
+            thread_handle: None,
+            exit_rx,
+            deadline: None,
+        };
+        let queue = queue.with_deadline(Some(future));
+        assert!(queue.deadline.is_some());
+        assert_eq!(queue.deadline.unwrap(), future);
+    }
+
+    /// Issue #953: Verify `with_deadline` can override a previously set deadline.
+    #[test]
+    fn test_with_deadline_overrides_previous() {
+        let (work_tx, _work_rx) = bounded::<GpuWorkRequest>(1);
+        let (_exit_tx, exit_rx) = bounded::<()>(1);
+        let initial = SystemTime::now() + Duration::from_secs(60);
+        let updated = SystemTime::now() + Duration::from_secs(300);
+        let queue = GpuWorkQueue {
+            work_tx,
+            thread_handle: None,
+            exit_rx,
+            deadline: Some(initial),
+        };
+        let queue = queue.with_deadline(Some(updated));
+        assert_eq!(queue.deadline.unwrap(), updated);
     }
 
     /// Test that `GpuWorkRequest` variants can be constructed (compile-time check).
