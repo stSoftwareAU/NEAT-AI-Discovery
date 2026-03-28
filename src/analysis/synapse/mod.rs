@@ -124,8 +124,11 @@ pub(crate) fn analyze_synapses_with_cache(
     input: &AnalyzeSynapsesInput,
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeSynapsesResult> {
-    // Create GPU queue for this analysis
-    let gpu_queue = Arc::new(GpuWorkQueue::new()?);
+    // Create GPU queue for this analysis.
+    // Issue #953: Propagate the analysis deadline so GpuEvaluator trait calls use
+    // adaptive timeouts, preventing liveness stalls on slow GPU responses.
+    let deadline = crate::analysis::utils::build_deadline(input.analysis_deadline_ms);
+    let gpu_queue = Arc::new(GpuWorkQueue::new()?.with_deadline(deadline));
     orchestration::analyze_synapses_with_cache_impl(input, cache, gpu_queue)
 }
 

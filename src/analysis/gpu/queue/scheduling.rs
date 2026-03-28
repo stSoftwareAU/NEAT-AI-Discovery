@@ -90,6 +90,7 @@ impl GpuWorkQueue {
             work_tx,
             thread_handle: Some(thread_handle),
             exit_rx,
+            deadline: None,
         })
     }
 

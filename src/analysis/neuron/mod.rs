@@ -152,7 +152,9 @@ pub(crate) fn analyze_neurons_with_cache(
     // This eliminates the overhead of creating multiple GPU devices (one per thread).
     // All GPU operations are processed by a single dedicated thread, improving utilisation.
     // CRITICAL: The GpuAnalyzer is created INSIDE the GPU thread to avoid wgpu deadlocks.
-    let gpu_queue = Arc::new(GpuWorkQueue::new()?);
+    // Issue #953: Propagate the analysis deadline so GpuEvaluator trait calls use
+    // adaptive timeouts instead of the 5-minute maximum, preventing liveness stalls.
+    let gpu_queue = Arc::new(GpuWorkQueue::new()?.with_deadline(deadline));
 
     // Process each focus neuron in parallel. Deadline checks happen at the start of
     // each focus target so that once analysis for a neuron begins, we prefer to

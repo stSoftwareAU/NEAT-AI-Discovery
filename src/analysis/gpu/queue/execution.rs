@@ -13,6 +13,7 @@
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;
 use crossbeam_channel::Receiver;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use super::recovery::{get_gpu_retry_limit, is_device_lost_error};
@@ -20,6 +21,11 @@ use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::analyzer::{GpuAnalyzer, GpuEvaluator};
 use crate::analysis::samples::{HelpfulSample, ReluStats};
 use crate::observability::{global_gpu_metrics, gpu_metrics_enabled};
+
+/// Stall warning threshold in seconds (Issue #953). When a single GPU request
+/// takes longer than this, a warning is logged to help diagnose liveness issues
+/// before the outer task controller kills the process.
+const GPU_REQUEST_STALL_WARN_SECS: u64 = 30;
 
 /// Return a short label describing the GPU work request variant.
 fn request_label(request: &GpuWorkRequest) -> &'static str {
@@ -218,25 +224,51 @@ impl GpuWorkQueue {
     /// channel.
     ///
     /// When `NEAT_AI_DISCOVERY_GPU_METRICS=1` is set, this loop tracks:
-    /// - Batch count and samples processed
-    /// - GPU busy time (time spent executing GPU operations)
+    ///   - Batch count and samples processed
+    ///   - GPU busy time (time spent executing GPU operations)
     pub(super) fn gpu_thread_loop(mut analyzer: GpuAnalyzer, work_rx: Receiver<GpuWorkRequest>) {
         let track_metrics = gpu_metrics_enabled();
         let retry_limit = get_gpu_retry_limit();
+        let completed_count = AtomicU64::new(0);
         tracing::debug!("GPU thread loop started — waiting for work");
 
         while let Ok(request) = work_rx.recv() {
             if matches!(request, GpuWorkRequest::Shutdown) {
-                tracing::debug!("GPU thread received shutdown request");
+                let total = completed_count.load(Ordering::Relaxed);
+                tracing::debug!(
+                    total_completed = total,
+                    "GPU thread received shutdown request"
+                );
                 break;
             }
 
             let label = request_label(&request);
+            let request_start = Instant::now();
             tracing::debug!(request_type = label, "GPU queue: dequeued work item");
 
             match execute_request(&analyzer, &request, track_metrics) {
                 Ok(()) => {
-                    tracing::debug!(request_type = label, "GPU queue: work item completed");
+                    let elapsed = request_start.elapsed();
+                    let count = completed_count.fetch_add(1, Ordering::Relaxed) + 1;
+
+                    // Issue #953: Warn when a single GPU request takes too long,
+                    // providing early visibility into potential stalls.
+                    if elapsed.as_secs() >= GPU_REQUEST_STALL_WARN_SECS {
+                        tracing::warn!(
+                            request_type = label,
+                            elapsed_secs = elapsed.as_secs(),
+                            total_completed = count,
+                            "GPU request took longer than {GPU_REQUEST_STALL_WARN_SECS}s — \
+                             GPU may be under heavy load or driver is slow",
+                            GPU_REQUEST_STALL_WARN_SECS = GPU_REQUEST_STALL_WARN_SECS,
+                        );
+                    } else {
+                        tracing::debug!(
+                            request_type = label,
+                            elapsed_ms = elapsed.as_millis() as u64,
+                            "GPU queue: work item completed"
+                        );
+                    }
                 }
                 Err(device_err) => {
                     // Device-lost detected — attempt recovery
@@ -367,17 +399,19 @@ fn send_error_to_request(request: &GpuWorkRequest, error_msg: &str) {
 }
 
 /// Implementation for shared `GpuWorkQueue`.
-/// NOTE: These trait methods use `None` deadline, which gives maximum timeout (5 minutes).
-/// For deadline-aware evaluation, use the batch methods directly with an explicit deadline.
+///
+/// Issue #953: These trait methods now use the queue's `deadline` field (set via
+/// `with_deadline()`) to calculate adaptive timeouts. Previously they always
+/// passed `None`, giving every call a maximum 5-minute timeout. When many rayon
+/// threads were blocked waiting on slow GPU responses simultaneously, the process
+/// appeared hung until the outer task controller killed it.
 impl GpuEvaluator for GpuWorkQueue {
     fn evaluate_relu(
         &self,
         samples: &[HelpfulSample],
         threshold: f32,
     ) -> Result<(ReluStats, ReluStats, f32)> {
-        // Clone samples to send to the GPU thread
-        // Uses None deadline = maximum timeout (5 minutes)
-        self.evaluate_relu_gpu(samples.to_vec(), threshold, &None)
+        self.evaluate_relu_gpu(samples.to_vec(), threshold, &self.deadline)
     }
 
     fn evaluate_activation(
@@ -387,8 +421,13 @@ impl GpuEvaluator for GpuWorkQueue {
         orientation: f32,
         scale: f32,
     ) -> Result<(f32, f32, f32, u32)> {
-        // Uses None deadline = maximum timeout (5 minutes)
-        self.evaluate_activation_gpu(samples.to_vec(), activation_type, orientation, scale, &None)
+        self.evaluate_activation_gpu(
+            samples.to_vec(),
+            activation_type,
+            orientation,
+            scale,
+            &self.deadline,
+        )
     }
 
     fn evaluate_activations_batched(
@@ -396,8 +435,11 @@ impl GpuEvaluator for GpuWorkQueue {
         samples: &[HelpfulSample],
         activation_configs: &[(u32, f32, f32)],
     ) -> Result<Vec<(f32, f32, f32, u32)>> {
-        // Uses None deadline = maximum timeout (5 minutes)
-        self.evaluate_activations_batched_gpu(samples.to_vec(), activation_configs.to_vec(), &None)
+        self.evaluate_activations_batched_gpu(
+            samples.to_vec(),
+            activation_configs.to_vec(),
+            &self.deadline,
+        )
     }
 }
 
