@@ -10,16 +10,6 @@ export RUSTFLAGS="-D warnings"
 echo "🔍 Pre-deployment Quality Check"
 echo "================================"
 
-# Auto-increment version if src/ has changed (Issue #955)
-# This prevents the CI version-increment job from pushing a commit with
-# GITHUB_TOKEN (which does not re-trigger workflows), eliminating the
-# need for manual follow-up pushes to start PR checks.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -x "$SCRIPT_DIR/scripts/auto-version.sh" ]; then
-    echo "📦 Checking version..."
-    "$SCRIPT_DIR/scripts/auto-version.sh" || echo "⚠️  Version auto-increment skipped (non-fatal)"
-fi
-
 # Check bash script syntax
 echo "📝 Checking bash script syntax..."
 find . -name "*.sh" -type f -not -path "./target/*" -not -path "./.git/*" -exec bash -n {} \;

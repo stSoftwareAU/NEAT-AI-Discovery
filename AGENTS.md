@@ -439,8 +439,8 @@ If any step fails, fix the issue and re-run. Do **not** commit code that fails
 GitHub Actions runs on every pull request to `Develop`:
 
 - `auto-format` — applies `rustfmt` and commits fixes
-- `version-increment` — auto-bumps patch version when changes exist (fallback;
-  prefer local increment via `quality.sh`, see [Version Management](#version-management))
+- `version-increment` — auto-bumps patch version when changes exist (uses
+  `ACTIONS_PUSH` PAT so the push re-triggers workflows, matching NEAT-AI)
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
 - `shell-checks` — validates bash script syntax
 - `spell-check` — runs codespell on the codebase
@@ -473,15 +473,10 @@ This script:
 
 **How versions are incremented:**
 
-- **Local auto-increment (primary)**: Running `./quality.sh` automatically
-  increments the patch version via `scripts/auto-version.sh` when the branch has
-  any changes compared to the base branch. Since `quality.sh` must be run before
-  every commit, the version is always correct before pushing. This prevents the
-  CI `version-increment` job from pushing a commit with `GITHUB_TOKEN` (which
-  does not re-trigger workflows), ensuring PR checks start reliably (Issue #955).
-- **CI auto-increment (fallback)**: The `version-increment` CI job still exists
-  as a safety net. If the local version already differs from the base branch, the
-  CI job skips — no commit is pushed and PR checks run on the correct SHA.
+- **CI auto-increment (primary)**: The `version-increment` CI job auto-bumps the
+  patch version on every PR when changes exist compared to the base branch. It
+  uses a PAT (`secrets.ACTIONS_PUSH`) so that the push re-triggers workflows,
+  matching the approach used in the NEAT-AI repository (Issue #955).
 - **Manual increment**: If you are making changes outside of the normal PR
   workflow, or if CI does not run (e.g., direct commits), you **must** manually
   increment the patch version in `Cargo.toml` (e.g., `0.43.8` → `0.43.9`).
