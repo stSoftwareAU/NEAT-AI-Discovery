@@ -5,10 +5,11 @@
 //! acceptable access performance.
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::cache::{CompressedLruRecordCache, LruRecordCache};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
+use std::hint::black_box;
 use tempfile::tempdir;
 
 /// Create test records for benchmarking.

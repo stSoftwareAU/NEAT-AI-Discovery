@@ -14,7 +14,7 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::verbose_enabled;
 use rand::seq::SliceRandom;
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use std::collections::HashSet;
 use std::time::{Duration, SystemTime};
 
@@ -322,7 +322,7 @@ pub fn shuffle_slice<T>(items: &mut [T], seed: Option<u64>, context: &str) {
             items.shuffle(&mut rng);
         }
         None => {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             items.shuffle(&mut rng);
         }
     }
@@ -545,7 +545,7 @@ pub fn order_eligible_sources<S: std::borrow::Borrow<str> + std::hash::Hash + Eq
         None => {
             // Use a random seed then a deterministic RNG instance so we can reuse the same
             // code path without fighting trait object ergonomics.
-            let seed: u64 = rand::thread_rng().r#gen();
+            let seed: u64 = rand::random();
             StdRng::seed_from_u64(seed)
         }
     };
@@ -561,7 +561,7 @@ pub fn order_eligible_sources<S: std::borrow::Borrow<str> + std::hash::Hash + Eq
             1.0
         };
 
-        let u: f64 = rng.r#gen::<f64>().max(f64::MIN_POSITIVE);
+        let u: f64 = rng.random::<f64>().max(f64::MIN_POSITIVE);
         let t = -u.ln() / weight.max(1e-12);
         keyed.push((t, n));
     }

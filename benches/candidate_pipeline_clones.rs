@@ -10,11 +10,12 @@
 //! instead of clones where the data is read-only.
 
 #![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::recommendation::sample_weighted::stratify_samples;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use std::collections::HashMap;
+use std::hint::black_box;
 
 /// Create test records with varying error magnitudes for stratification.
 fn create_stratification_records(count: usize) -> Vec<DiscoverRecord> {

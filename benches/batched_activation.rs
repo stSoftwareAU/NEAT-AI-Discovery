@@ -10,10 +10,11 @@
 //! - Better GPU utilisation (larger, fewer batches)
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::activation::{ACTIVATION_SPECS, activation_name_to_gpu_id};
 use neat_ai_discovery::analysis::gpu::{GpuAnalyzer, GpuEvaluator};
 use neat_ai_discovery::analysis::samples::HelpfulSample;
+use std::hint::black_box;
 
 /// Create test samples with variance.
 fn create_test_samples(count: usize) -> Vec<HelpfulSample> {

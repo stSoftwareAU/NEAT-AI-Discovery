@@ -4,11 +4,12 @@
 //! on unified memory architectures (Apple Silicon).
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses, supports_unified_memory};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use std::hint::black_box;
 use tempfile::tempdir;
 
 fn benchmark_zero_copy_vs_copying(c: &mut Criterion) {
