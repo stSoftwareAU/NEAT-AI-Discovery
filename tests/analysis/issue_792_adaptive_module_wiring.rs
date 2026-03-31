@@ -70,6 +70,7 @@ fn tracker_stats_populate_metadata_in_parallel_dispatch() {
         DiscoveryModuleSpec {
             module_name: "high-success module".to_string(),
             phase_name: "test_792_high",
+            max_candidates: 0,
             detect_fn: Box::new(|| {
                 Some(DiscoveryDetectionResult {
                     detected_count: 1,
@@ -80,6 +81,7 @@ fn tracker_stats_populate_metadata_in_parallel_dispatch() {
         DiscoveryModuleSpec {
             module_name: "low-success module".to_string(),
             phase_name: "test_792_low",
+            max_candidates: 0,
             detect_fn: Box::new(|| {
                 Some(DiscoveryDetectionResult {
                     detected_count: 1,

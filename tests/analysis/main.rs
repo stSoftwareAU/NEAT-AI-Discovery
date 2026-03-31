@@ -53,6 +53,7 @@ mod issue_938_constants_submodule_organisation;
 mod issue_962_ultra_conservative_variants;
 mod issue_963_cross_detection_candidate_synthesis;
 mod issue_964_per_scale_success_rate;
+mod issue_967_adaptive_candidate_budget;
 mod split_error_all_activations;
 mod split_error_fallback_candidates;
 mod target_map_optimization;

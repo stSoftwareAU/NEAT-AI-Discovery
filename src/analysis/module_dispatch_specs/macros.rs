@@ -74,6 +74,7 @@ macro_rules! discovery_spec {
             $modules.push($crate::analysis::discovery_dispatch::DiscoveryModuleSpec {
                 module_name: $name.to_string(),
                 phase_name: $phase,
+                max_candidates: 0,
                 detect_fn: Box::new(move || {
                     $( if $guard.is_empty() { return None; } )?
                     let $rec = $load_records;
@@ -104,6 +105,7 @@ macro_rules! discovery_spec {
             $modules.push($crate::analysis::discovery_dispatch::DiscoveryModuleSpec {
                 module_name: $name.to_string(),
                 phase_name: $phase,
+                max_candidates: 0,
                 detect_fn: Box::new(move || {
                     let $rec = $load_records;
                     if $rec.is_empty() {
@@ -136,6 +138,7 @@ macro_rules! discovery_spec {
             $modules.push($crate::analysis::discovery_dispatch::DiscoveryModuleSpec {
                 module_name: $name.to_string(),
                 phase_name: $phase,
+                max_candidates: 0,
                 detect_fn: Box::new(move || {
                     if $guard_var.len() < $min_count {
                         return None;
@@ -165,6 +168,7 @@ macro_rules! discovery_spec {
             $modules.push($crate::analysis::discovery_dispatch::DiscoveryModuleSpec {
                 module_name: $name.to_string(),
                 phase_name: $phase,
+                max_candidates: 0,
                 detect_fn: Box::new($closure),
             });
         }

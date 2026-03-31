@@ -27,7 +27,8 @@ use std::sync::Arc;
 use super::detection::topology_cache::CreatureTopologyCache;
 use super::{
     cache, candidate_clustering, candidate_diversity, discovery_dispatch, ensemble_scoring,
-    module_weights::ModuleOutcomeTracker, shared, utils,
+    module_weights::{self, CandidateBudgetConfig, ModuleOutcomeTracker},
+    shared, utils,
 };
 
 /// Build all discovery module specs for parallel dispatch.
@@ -73,7 +74,18 @@ pub(crate) fn dispatch_and_merge_discovery_modules(
 ) {
     // Issue #754: Pre-compute topology cache once for all detection modules.
     let topo = Arc::new(CreatureTopologyCache::new(creature));
-    let modules = build_discovery_module_specs(creature, hidden_neurons, shared_cache, &topo);
+    let mut modules = build_discovery_module_specs(creature, hidden_neurons, shared_cache, &topo);
+
+    // Issue #967: Allocate candidate budgets based on module success rates.
+    let config = CandidateBudgetConfig::default();
+    let module_names: Vec<String> = modules.iter().map(|m| m.module_name.clone()).collect();
+    let budgets = module_weights::allocate_candidate_budgets(&module_names, tracker, &config);
+    for module in &mut modules {
+        if let Some(&budget) = budgets.get(&module.module_name) {
+            module.max_candidates = budget;
+        }
+    }
+
     discovery_dispatch::run_discovery_modules_parallel(
         syn,
         modules,
