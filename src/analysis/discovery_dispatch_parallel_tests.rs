@@ -42,6 +42,7 @@ fn make_module(
     DiscoveryModuleSpec {
         module_name: name.to_string(),
         phase_name: "test_phase",
+        max_candidates: 0,
         detect_fn: Box::new(move || {
             candidates.map(|c| DiscoveryDetectionResult {
                 detected_count,

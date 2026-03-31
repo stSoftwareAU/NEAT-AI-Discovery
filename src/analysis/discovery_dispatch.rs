@@ -81,10 +81,14 @@ pub fn run_discovery_module(
 /// Specification for a single discovery module to be dispatched in parallel.
 ///
 /// Each module provides a name (for logging/watchdog), a phase name (for timing),
-/// and a detection closure that returns candidates independently.
+/// a maximum candidate budget (Issue #967), and a detection closure that returns
+/// candidates independently.
 pub struct DiscoveryModuleSpec {
     pub module_name: String,
     pub phase_name: &'static str,
+    /// Maximum number of candidates this module should generate (Issue #967).
+    /// Allocated by `allocate_candidate_budgets` based on historical success rate.
+    pub max_candidates: usize,
     pub detect_fn: Box<dyn FnOnce() -> Option<DiscoveryDetectionResult> + Send>,
 }
 
@@ -114,11 +118,21 @@ pub fn run_discovery_modules_parallel(
 
     // Parallel detection phase: run all closures concurrently.
     // `into_par_iter().map().collect()` preserves input order for indexed iterators.
-    let results: Vec<(String, &'static str, Option<DiscoveryDetectionResult>)> = modules
+    let results: Vec<(
+        String,
+        &'static str,
+        usize,
+        Option<DiscoveryDetectionResult>,
+    )> = modules
         .into_par_iter()
         .map(|spec| {
             let result = (spec.detect_fn)();
-            (spec.module_name, spec.phase_name, result)
+            (
+                spec.module_name,
+                spec.phase_name,
+                spec.max_candidates,
+                result,
+            )
         })
         .collect();
 
@@ -126,7 +140,7 @@ pub fn run_discovery_modules_parallel(
 
     // Sequential merge phase: iterate in original order and merge non-empty results.
     // Also collect per-module stats for metadata (Issue #485, #792).
-    for (module_name, _phase_name, result) in results {
+    for (module_name, _phase_name, max_candidates, result) in results {
         let candidates_produced = result.as_ref().map_or(0, |r| r.candidates.len());
 
         // Record per-module stats in metadata from historical tracker (Issue #792).
@@ -141,14 +155,28 @@ pub fn run_discovery_modules_parallel(
                 success_rate: historical.success_rate(),
             });
 
-        if let Some(result) = result
+        if let Some(mut result) = result
             && !result.candidates.is_empty()
         {
+            // Issue #967: Truncate to per-module candidate budget if set.
+            if max_candidates > 0 && result.candidates.len() > max_candidates {
+                if utils::verbose_enabled() {
+                    tracing::debug!(
+                        module = %module_name,
+                        before = result.candidates.len(),
+                        budget = max_candidates,
+                        "Truncating candidates to module budget (Issue #967)"
+                    );
+                }
+                result.candidates.truncate(max_candidates);
+            }
+
             if utils::verbose_enabled() {
                 tracing::debug!(
                     module = %module_name,
                     detections = result.detected_count,
                     candidates = result.candidates.len(),
+                    budget = max_candidates,
                     "discovery module results"
                 );
             }

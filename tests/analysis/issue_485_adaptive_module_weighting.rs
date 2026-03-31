@@ -280,6 +280,7 @@ fn discovery_module_stats_populated_after_parallel_dispatch() {
         DiscoveryModuleSpec {
             module_name: "test module A".to_string(),
             phase_name: "test_a",
+            max_candidates: 0,
             detect_fn: Box::new(|| {
                 Some(DiscoveryDetectionResult {
                     detected_count: 2,
@@ -290,11 +291,13 @@ fn discovery_module_stats_populated_after_parallel_dispatch() {
         DiscoveryModuleSpec {
             module_name: "test module B".to_string(),
             phase_name: "test_b",
+            max_candidates: 0,
             detect_fn: Box::new(|| None), // No detections
         },
         DiscoveryModuleSpec {
             module_name: "test module C".to_string(),
             phase_name: "test_c",
+            max_candidates: 0,
             detect_fn: Box::new(|| {
                 Some(DiscoveryDetectionResult {
                     detected_count: 1,

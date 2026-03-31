@@ -253,6 +253,134 @@ pub fn allocate_time_budgets(
     budgets
 }
 
+/// Configuration for adaptive candidate budget allocation (Issue #967).
+///
+/// Controls how candidate generation budgets are distributed across discovery
+/// modules based on their historical success rates.
+#[derive(Debug, Clone)]
+pub struct CandidateBudgetConfig {
+    /// Base number of candidates per module before adaptive scaling.
+    pub base_candidates: usize,
+    /// Maximum total candidates across all modules (global cap).
+    pub global_max_candidates: usize,
+    /// Minimum allocation factor (floor). Modules never receive fewer than
+    /// `base_candidates * min_allocation_factor` candidates.
+    pub min_allocation_factor: f64,
+    /// Maximum allocation factor (ceiling). Modules never receive more than
+    /// `base_candidates * max_allocation_factor` candidates.
+    pub max_allocation_factor: f64,
+}
+
+impl Default for CandidateBudgetConfig {
+    fn default() -> Self {
+        Self {
+            base_candidates: 10,
+            global_max_candidates: 500,
+            min_allocation_factor: 0.5,
+            max_allocation_factor: 2.0,
+        }
+    }
+}
+
+/// Allocate candidate generation budgets to discovery modules based on historical
+/// success rates (Issue #967).
+///
+/// Each module receives a number of candidate slots proportional to its Bayesian
+/// success rate, clamped to [`CandidateBudgetConfig::min_allocation_factor`] –
+/// [`CandidateBudgetConfig::max_allocation_factor`] times the base allocation.
+/// The total is capped by [`CandidateBudgetConfig::global_max_candidates`].
+///
+/// Modules with insufficient history (fewer than [`MIN_BOOST_SAMPLES`] attempts)
+/// receive the base allocation (neutral).
+///
+/// # Arguments
+///
+/// * `module_names` — Names of modules to allocate budgets for.
+/// * `tracker` — Historical outcome tracker with per-module success/failure data.
+/// * `config` — Budget allocation configuration.
+///
+/// # Returns
+///
+/// A map from module name to allocated candidate count.
+pub fn allocate_candidate_budgets(
+    module_names: &[String],
+    tracker: &ModuleOutcomeTracker,
+    config: &CandidateBudgetConfig,
+) -> HashMap<String, usize> {
+    let mut budgets = HashMap::new();
+    if module_names.is_empty() {
+        return budgets;
+    }
+
+    // Compute per-module allocation factors based on success rate.
+    let factors: Vec<f64> = module_names
+        .iter()
+        .map(|name| {
+            let stats = tracker.stats(name);
+            if (stats.attempts as usize) < MIN_BOOST_SAMPLES {
+                // Insufficient data — neutral allocation.
+                1.0
+            } else {
+                // Scale factor: 2.0 * success_rate, clamped to [min, max].
+                let rate = stats.success_rate();
+                (2.0 * rate).clamp(config.min_allocation_factor, config.max_allocation_factor)
+            }
+        })
+        .collect();
+
+    // Compute raw budgets (before global cap).
+    let mut raw_budgets: Vec<usize> = factors
+        .iter()
+        .map(|&factor| {
+            let raw = (config.base_candidates as f64 * factor).round() as usize;
+            // Ensure every module gets at least 1 candidate.
+            raw.max(1)
+        })
+        .collect();
+
+    // Apply global cap: scale down proportionally if total exceeds cap.
+    let total: usize = raw_budgets.iter().sum();
+    if total > config.global_max_candidates {
+        let scale = config.global_max_candidates as f64 / total as f64;
+        for budget in &mut raw_budgets {
+            *budget = ((*budget as f64) * scale).round() as usize;
+            // Ensure every module still gets at least 1 candidate after scaling.
+            if *budget == 0 {
+                *budget = 1;
+            }
+        }
+    }
+
+    // Log allocation decisions for observability.
+    if super::utils::verbose_enabled() {
+        let total_allocated: usize = raw_budgets.iter().sum();
+        tracing::debug!(
+            modules = module_names.len(),
+            base = config.base_candidates,
+            global_cap = config.global_max_candidates,
+            total_allocated,
+            "Candidate budget allocation (Issue #967)"
+        );
+        for (i, name) in module_names.iter().enumerate() {
+            let stats = tracker.stats(name);
+            tracing::debug!(
+                module = %name,
+                budget = raw_budgets[i],
+                factor = format!("{:.2}", factors[i]),
+                success_rate = format!("{:.3}", stats.success_rate()),
+                attempts = stats.attempts,
+                "Module candidate budget"
+            );
+        }
+    }
+
+    for (i, name) in module_names.iter().enumerate() {
+        budgets.insert(name.clone(), raw_budgets[i]);
+    }
+
+    budgets
+}
+
 /// Per-module statistics for JSON metadata output.
 ///
 /// A flattened representation of module stats suitable for inclusion in
