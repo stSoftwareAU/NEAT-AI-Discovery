@@ -11,7 +11,9 @@ use super::super::detection::{
     bounded_range, error_plateau, input_sensitivity, observation_utilisation,
     output_range_compression, output_squash_mismatch, sentinel_gating,
 };
-use super::super::recommendation::{gradient_discovery, output_bias_drift, sample_weighted};
+use super::super::recommendation::{
+    batch_successful, gradient_discovery, output_bias_drift, sample_weighted,
+};
 use super::super::{cache, discovery_dispatch};
 
 /// Append scoring and recommendation discovery module specs to the provided vector.
@@ -167,5 +169,14 @@ pub(crate) fn append_scoring_specs(
                 candidates,
             })
         },
+    );
+
+    // Issue #965: Batch-successful candidate grouping — batch proven winners
+    discovery_spec!(modules, "batch-successful grouping", "batch_successful_grouping",
+        cache = shared_cache, creature = creature =>
+        records: cache.load_records_for_all_neurons(&creature),
+        guard_records,
+        detect: |records| batch_successful::detect_batch_successful_groups(&creature, &records),
+        convert: |detected| batch_successful::batch_successful_to_coordinated_candidates(&detected),
     );
 }

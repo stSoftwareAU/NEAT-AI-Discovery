@@ -20,3 +20,4 @@ mod issue_551_bias_perturbation_regime_shift;
 mod issue_570_skip_connection_discovery;
 mod issue_788_high_error_squash_exploration;
 mod issue_908_fan_in_candidates;
+mod issue_965_batch_successful_grouping;

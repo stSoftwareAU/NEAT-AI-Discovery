@@ -4,6 +4,7 @@
 //! candidates based on analysis of recorded discovery data.
 
 pub mod activation_recommendation;
+pub mod batch_successful;
 pub mod epistatic;
 pub mod fan_in;
 pub mod gradient_discovery;
