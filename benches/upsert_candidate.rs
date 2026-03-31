@@ -6,9 +6,10 @@
 //! clones per candidate insertion.
 
 #![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::CandidateNeuronJson;
 use std::collections::HashMap;
+use std::hint::black_box;
 
 /// Create a realistic candidate for benchmarking.
 fn make_candidate(source_idx: usize, target_idx: usize, squash: &str) -> CandidateNeuronJson {

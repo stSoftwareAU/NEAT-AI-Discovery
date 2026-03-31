@@ -5,9 +5,10 @@
 //! reduce lock contention during parallel recursive impact computation.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::focus::compute_impacts_public;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use std::hint::black_box;
 
 /// Build a wide network: many hidden neurons each connecting to the output.
 fn build_wide_network(width: usize) -> CreatureJson {

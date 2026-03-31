@@ -30,7 +30,8 @@
 #![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
-use rand::Rng;
+use rand::RngExt;
+use rand::distr::Alphanumeric;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -100,8 +101,8 @@ pub fn start_session(creature: CreatureJson, temp_dir: String) -> Result<String>
     }
 
     // Generate session ID using rand (already a dependency)
-    let session_id: String = rand::thread_rng()
-        .sample_iter(&rand::distributions::Alphanumeric)
+    let session_id: String = rand::rng()
+        .sample_iter(&Alphanumeric)
         .take(32)
         .map(char::from)
         .collect();

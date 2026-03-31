@@ -8,10 +8,11 @@
 //! - ~89% memory reduction for synapse pair collections
 //! - Faster HashMap/HashSet operations due to cheaper key comparison
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::intern::NeuronIndex;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use std::collections::{HashMap, HashSet};
+use std::hint::black_box;
 
 /// Create a test creature with specified number of neurons and synapses.
 fn create_test_creature(

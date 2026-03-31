@@ -9,7 +9,7 @@
 //! to use borrows instead of clones.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::detection::bottleneck::{
     bottleneck_neurons_to_coordinated_candidates, detect_bottleneck_neurons,
 };
@@ -22,6 +22,7 @@ use neat_ai_discovery::analysis::detection::restricted_range::{
 };
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use std::hint::black_box;
 
 /// Create a creature with multiple bottleneck neurons (fan-in=8, fan-out=2).
 fn create_bottleneck_creature(

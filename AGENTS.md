@@ -423,13 +423,15 @@ so do not skip this step.
 `./quality.sh` performs these checks in order:
 
 1. Bash syntax check (all `.sh` files)
-2. `cargo build` (debug, quick feedback)
-3. `cargo fmt --all` (auto-formatting)
-4. `cargo clippy --all-targets --all-features -- -D warnings`
-5. `cargo check --all-targets --all-features`
-6. `cargo test --lib --tests --all-features -- --test-threads=2`
-7. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
-8. `cargo build --release --lib`
+2. `cargo upgrade --incompatible` + `cargo update` (dependency upgrade, Issue #959)
+3. `cargo deny check` (licence and dependency audit)
+4. `cargo build` (debug, quick feedback)
+5. `cargo fmt --all` (auto-formatting)
+6. `cargo clippy --all-targets --all-features -- -D warnings`
+7. `cargo check --all-targets --all-features`
+8. `cargo test --lib --tests --all-features -- --test-threads=2`
+9. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
+10. `cargo build --release --lib`
 
 If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `./quality.sh`.
