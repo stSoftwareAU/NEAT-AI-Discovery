@@ -14,9 +14,10 @@
 //! Skips gracefully on machines without GPU access.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::gpu::{GpuAnalyzer, GpuEvaluator};
 use neat_ai_discovery::analysis::samples::HelpfulSample;
+use std::hint::black_box;
 
 /// Sample counts below and above `GPU_REDUCTION_THRESHOLD` (10,000).
 const SAMPLE_SIZES: &[usize] = &[1_000, 5_000, 10_000, 50_000, 100_000];

@@ -14,6 +14,16 @@ echo "================================"
 echo "📝 Checking bash script syntax..."
 find . -name "*.sh" -type f -not -path "./target/*" -not -path "./.git/*" -exec bash -n {} \;
 
+# Update dependencies to latest versions (including incompatible upgrades)
+echo "📦 Upgrading Rust library dependencies..."
+if command -v cargo-upgrade &> /dev/null; then
+    cargo upgrade --incompatible
+    cargo update
+else
+    echo "⚠️  cargo-edit not installed — skipping dependency upgrade"
+    echo "   Install with: cargo install cargo-edit"
+fi
+
 # Licence and dependency audit
 echo "📜 Running licence and dependency audit..."
 cargo deny check

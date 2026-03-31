@@ -12,10 +12,11 @@
 //! 4. **Eviction overhead**: Measures cost of LRU eviction
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::cache::{LruRecordCache, RecordCache, TieredRecordCache};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
+use std::hint::black_box;
 use std::sync::Arc;
 use tempfile::tempdir;
 

@@ -5,8 +5,9 @@
 //! generates deterministic UUIDs for coordinated structural candidates.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::deterministic_coordinated_neuron_uuid;
+use std::hint::black_box;
 
 fn bench_deterministic_uuid(c: &mut Criterion) {
     let mut group = c.benchmark_group("deterministic_uuid");

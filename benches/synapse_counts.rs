@@ -6,9 +6,10 @@
 //!
 //! Expected improvement: ~1000x for large creatures (500 neurons, 10,000 synapses).
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::focus::SynapseCounts;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use std::hint::black_box;
 
 /// Create a test creature with specified number of neurons and synapses.
 ///

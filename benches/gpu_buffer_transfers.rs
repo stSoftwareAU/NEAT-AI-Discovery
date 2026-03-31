@@ -12,9 +12,10 @@
 //! Skips gracefully on machines without GPU access.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::gpu::{GpuAnalyzer, GpuEvaluator};
 use neat_ai_discovery::analysis::samples::HelpfulSample;
+use std::hint::black_box;
 
 /// Batch sizes to benchmark, matching the range used by the GPU batch size tuning
 /// (64–4096 from `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE`).

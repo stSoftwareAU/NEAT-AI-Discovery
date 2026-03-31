@@ -4,13 +4,14 @@
 //! without a pre-computed `CreatureTopologyCache`, varying creature size.
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::detection::topology_cache::CreatureTopologyCache;
 use neat_ai_discovery::analysis::detection::weight_coherence::{
     WeightCoherenceConfig, detect_incoherent_weight_ratios,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use std::hint::black_box;
 
 /// Create a creature with the given number of hidden neurons and proportional synapses.
 fn create_test_creature(hidden_count: usize) -> CreatureJson {

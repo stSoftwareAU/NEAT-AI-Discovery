@@ -192,10 +192,9 @@ pub fn create_wgpu_instance_safely() -> Option<wgpu::Instance> {
 
     // Wrap in catch_unwind to handle any remaining panics from backend probing
     let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-        wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends,
-            flags: wgpu::InstanceFlags::default(),
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         })
     }));
 

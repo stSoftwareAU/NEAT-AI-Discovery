@@ -18,7 +18,7 @@
 //!    (GPU init, parquet loading) is amortized across more inputs.
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::{
     analyze_synapses_with_cache_and_gpu_queue,
     cache::RecordCache,
@@ -26,6 +26,7 @@ use neat_ai_discovery::analysis::{
 };
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use std::hint::black_box;
 use std::sync::Arc;
 use tempfile::tempdir;
 

@@ -10,13 +10,14 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::detection::dead_neuron::{
     dead_neurons_to_coordinated_candidates, detect_dead_neurons,
 };
 use neat_ai_discovery::analysis::detection::topology_cache::CreatureTopologyCache;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use std::hint::black_box;
 
 /// Create a deep network with the given depth and fanout.
 ///

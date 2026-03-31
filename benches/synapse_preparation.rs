@@ -5,9 +5,10 @@
 //! the same patterns used in `preparation.rs` and `candidate_generation.rs`.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use std::collections::{HashMap, HashSet};
+use std::hint::black_box;
 
 /// Create a creature with a given number of hidden neurons and synapses.
 fn create_test_creature(hidden_count: usize) -> CreatureJson {

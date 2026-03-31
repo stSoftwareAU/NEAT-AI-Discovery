@@ -10,9 +10,10 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet};
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::detection::topology_cache::CreatureTopologyCache;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use std::hint::black_box;
 
 /// Number of detection modules that rebuild topology maps per `analyze_all` call.
 const MODULE_COUNT: usize = 30;
