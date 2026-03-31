@@ -83,6 +83,46 @@ pub(crate) fn dispatch_and_merge_discovery_modules(
     );
 }
 
+/// Synthesise cross-detection candidates for co-flagged neurons (Issue #963).
+///
+/// When multiple detection modules flag the same neuron with compatible operations,
+/// a combined coordinated candidate is synthesised containing all operations.
+/// Individual candidates are always preserved — synthesis is additive.
+pub(crate) fn synthesise_cross_detection_candidates(syn: &mut shared::AnalyzeSynapsesResult) {
+    use crate::observability::PhaseTimer;
+
+    if syn.coordinated_structural_candidates.is_empty() {
+        return;
+    }
+
+    crate::watchdog::beat("analysis::analyze_all → cross-detection synthesis starting");
+    let _timer = PhaseTimer::new("cross_detection_synthesis");
+
+    let before_count = syn.coordinated_structural_candidates.len();
+
+    let result = super::detection::cross_detection_synthesis::synthesise_cross_detection_candidates(
+        std::mem::take(&mut syn.coordinated_structural_candidates),
+    );
+
+    syn.coordinated_structural_candidates = result.candidates;
+
+    if result.synthesised_count > 0 && utils::verbose_enabled() {
+        tracing::debug!(
+            before = before_count,
+            after = syn.coordinated_structural_candidates.len(),
+            synthesised = result.synthesised_count,
+            "Cross-detection synthesis: synthesised combined candidate(s) for co-flagged neuron(s)"
+        );
+    }
+
+    // Update metadata to reflect synthesised candidates.
+    syn.metadata.candidates_returned = syn.helpful_synapses.len()
+        + syn.harmful_synapses.len()
+        + syn.coordinated_structural_candidates.len();
+
+    crate::watchdog::beat("analysis::analyze_all → cross-detection synthesis finished");
+}
+
 /// Perform cross-module deduplication on coordinated structural candidates.
 pub(crate) fn deduplicate_cross_module_candidates(syn: &mut shared::AnalyzeSynapsesResult) {
     use crate::observability::PhaseTimer;

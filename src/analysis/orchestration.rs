@@ -353,6 +353,12 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
     }
 
+    // Issue #963: Cross-detection candidate synthesis — synthesise combined
+    // candidates when multiple detection modules flag the same neuron.
+    if let Some(syn) = synapse_result.as_mut() {
+        module_dispatch_specs::synthesise_cross_detection_candidates(syn);
+    }
+
     // Issue #489: Cross-module candidate deduplication.
     if let Some(syn) = synapse_result.as_mut() {
         module_dispatch_specs::deduplicate_cross_module_candidates(syn);
