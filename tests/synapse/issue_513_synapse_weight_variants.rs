@@ -41,15 +41,16 @@ fn make_synapse_candidate(
 
 #[test]
 fn synapse_candidate_generates_four_variants() {
-    // A synapse candidate with weight 0.08 should produce 4 variants:
-    // original + conservative + gentle nudge + micro-nudge.
+    // A synapse candidate with weight 0.08 should produce 6 variants:
+    // original + conservative + gentle nudge + micro-nudge + feather-touch + whisper.
+    // Issue #962: Feather-Touch and Whisper added for weights >= 0.05 threshold.
     let candidate = make_synapse_candidate("input-5", "output-0", 0.08, 0.1);
     let paired = pair_synapse_candidates_with_weight_variants(vec![candidate], None);
 
     assert_eq!(
         paired.len(),
-        4,
-        "expected original + conservative + gentle nudge + micro-nudge, got {}",
+        6,
+        "expected original + conservative + gentle nudge + micro-nudge + feather-touch + whisper, got {}",
         paired.len()
     );
 }
@@ -247,11 +248,14 @@ fn synapse_variant_original_comment_lists_included_variants() {
     let paired = pair_synapse_candidates_with_weight_variants(vec![candidate], None);
 
     let original_comment = paired[0].comment.as_deref().unwrap_or_default();
+    // Issue #962: Now includes Feather-Touch and Whisper for weights above threshold.
     assert!(
         original_comment.contains("Conservative")
             && original_comment.contains("Gentle Nudge")
-            && original_comment.contains("Micro-Nudge"),
-        "original comment should mention all three variants: {original_comment}"
+            && original_comment.contains("Micro-Nudge")
+            && original_comment.contains("Feather-Touch")
+            && original_comment.contains("Whisper"),
+        "original comment should mention all five variants: {original_comment}"
     );
 }
 
@@ -263,11 +267,11 @@ fn synapse_variant_multiple_candidates_each_get_variants() {
     ];
     let paired = pair_synapse_candidates_with_weight_variants(candidates, None);
 
-    // 2 candidates × 4 variants = 8
+    // Issue #962: 2 candidates × 6 variants = 12 (weights 0.08 and 0.06 both above threshold).
     assert_eq!(
         paired.len(),
-        8,
-        "expected 8 candidates (2 × 4 variants each), got {}",
+        12,
+        "expected 12 candidates (2 \u{00d7} 6 variants each), got {}",
         paired.len()
     );
 }

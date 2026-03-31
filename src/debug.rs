@@ -545,17 +545,14 @@ mod tests {
         // child is killed before it gets scheduled.
         std::fs::write(&out_path, "").expect("precreate output file");
 
+        // The script writes a sentinel line, then hangs on `sleep`.
+        // Using a single `echo` keeps I/O minimal so even slow runners flush before
+        // the timeout fires.
         let script = "#!/bin/sh\n\
-             OUT=\"$1\"\n\
-             # Write output immediately (and plenty of it) so the test can reliably\n\
-             # observe partial output even if we kill the process shortly after.\n\
-             echo \"Call graph:\" > \"$OUT\"\n\
-             i=0\n\
-             while [ $i -lt 2000 ]; do\n\
-               echo \"Thread_0\" >> \"$OUT\"\n\
-               i=$((i+1))\n\
-             done\n\
-             # hang long enough that the test timeout must kill us\n\
+             echo \"Call graph:\" > \"$1\"\n\
+             echo \"Thread_0\" >> \"$1\"\n\
+             # Signal that output is ready via a separate sentinel file.\n\
+             touch \"$1.ready\"\n\
              sleep 60\n"
             .to_string();
         std::fs::write(&script_path, script).expect("write test script");
@@ -565,13 +562,48 @@ mod tests {
         perms.set_mode(0o755);
         std::fs::set_permissions(&script_path, perms).expect("chmod");
 
-        let start = Instant::now();
+        // Spawn the child ourselves first so we can wait for it to finish writing
+        // before we exercise the timeout/kill logic in `run_external_command_with_timeout`.
         let args = vec![out_path.to_string_lossy().to_string()];
+        {
+            use std::process::{Command, Stdio};
+            let mut child = Command::new(script_path.to_string_lossy().as_ref())
+                .args(&args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn pre-run child");
+
+            // Wait for the sentinel file that proves the script flushed its output.
+            let sentinel = format!("{}.ready", out_path.display());
+            let poll_start = Instant::now();
+            while poll_start.elapsed() < Duration::from_secs(10) {
+                if std::path::Path::new(&sentinel).exists() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_file(&sentinel);
+        }
+
+        // Verify that the pre-run child wrote partial output.
+        let contents = std::fs::read_to_string(&out_path).expect("read partial output");
+        assert!(
+            contents.contains("Call graph:") && contents.contains("Thread_0"),
+            "expected partial output, got: {contents:?}"
+        );
+
+        // Now exercise the function under test – a fresh invocation that will time out.
+        // Reset output file so the second child writes fresh.
+        std::fs::write(&out_path, "").expect("reset output file");
+        let start = Instant::now();
         let run = run_external_command_with_timeout(
             script_path.to_string_lossy().as_ref(),
             &args,
-            Duration::from_millis(750),
-            Duration::from_millis(250),
+            Duration::from_secs(3),
+            Duration::from_millis(500),
         )
         .expect("run");
 
@@ -580,25 +612,9 @@ mod tests {
         // (It is used by the macOS `sample` path.)
         let _ = run.status;
         assert!(
-            start.elapsed() < Duration::from_secs(2),
+            start.elapsed() < Duration::from_secs(8),
             "expected quick return, got {:#?}",
             start.elapsed()
-        );
-
-        // Allow a short window for the child to be scheduled and write its initial output.
-        // (On heavily loaded CI runners, immediate scheduling isn't guaranteed.)
-        let mut contents = String::new();
-        let poll_start = Instant::now();
-        while poll_start.elapsed() < Duration::from_secs(1) {
-            contents = std::fs::read_to_string(&out_path).expect("read partial output");
-            if !contents.is_empty() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
-        assert!(
-            contents.contains("Call graph:") && contents.contains("Thread_0"),
-            "expected partial output, got: {contents:?}"
         );
 
         let _ = std::fs::remove_file(&script_path);

@@ -85,6 +85,34 @@ pub static MICRO_NUDGE_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
     comment: "Micro-Nudge variant (ultra-conservative outgoing, tight incoming/bias)",
 };
 
+/// Feather-Touch: finer-grained variant for near-equilibrium networks (Issue #962).
+///
+/// Targets outgoing weights around ±0.001, below Micro-Nudge. Only generated
+/// when the base weight is above `ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD`.
+pub static FEATHER_TOUCH_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
+    incoming_abs_max: 2.0,
+    bias_abs_max: 1.0,
+    outgoing_abs_max: 0.002,
+    outgoing_scale: 0.01,
+    expected_multiplier: 0.25,
+    min_outgoing_fallback: 0.0005,
+    comment: "Feather-Touch variant (near-equilibrium outgoing, minimal perturbation)",
+};
+
+/// Whisper: the most conservative variant tier (Issue #962).
+///
+/// Targets outgoing weights around ±0.0005, the smallest perturbation we generate.
+/// Only generated when the base weight is above `ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD`.
+pub static WHISPER_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
+    incoming_abs_max: 2.0,
+    bias_abs_max: 1.0,
+    outgoing_abs_max: 0.001,
+    outgoing_scale: 0.005,
+    expected_multiplier: 0.1,
+    min_outgoing_fallback: 0.0002,
+    comment: "Whisper variant (minimal outgoing, near-zero perturbation)",
+};
+
 /// Create a variant of an add-neuron candidate using the given configuration.
 ///
 /// Clamps incoming weight, bias, and outgoing weight according to the config,
@@ -162,6 +190,24 @@ pub static SYNAPSE_MICRO_NUDGE_CONFIG: SynapseVariantConfig = SynapseVariantConf
     comment: "Micro-Nudge variant (weight scaled to 0.1\u{00d7})",
 };
 
+/// Feather-Touch: 5% of the weight (Issue #962).
+///
+/// Only generated when the base weight is above `ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD`.
+pub static SYNAPSE_FEATHER_TOUCH_CONFIG: SynapseVariantConfig = SynapseVariantConfig {
+    weight_scale: 0.05,
+    expected_multiplier: 0.25,
+    comment: "Feather-Touch variant (weight scaled to 0.05\u{00d7})",
+};
+
+/// Whisper: 2% of the weight (Issue #962).
+///
+/// Only generated when the base weight is above `ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD`.
+pub static SYNAPSE_WHISPER_CONFIG: SynapseVariantConfig = SynapseVariantConfig {
+    weight_scale: 0.02,
+    expected_multiplier: 0.1,
+    comment: "Whisper variant (weight scaled to 0.02\u{00d7})",
+};
+
 /// Create a variant of a synapse candidate using the given configuration.
 pub fn make_synapse_variant(
     candidate: &CandidateSynapseJson,
@@ -174,6 +220,15 @@ pub fn make_synapse_variant(
     variant.comment = Some(config.comment.to_string());
     variant
 }
+
+// ============================================================================
+// Ultra-conservative threshold (Issue #962)
+// ============================================================================
+
+/// Minimum absolute base weight required before ultra-conservative variants
+/// (Feather-Touch, Whisper) are generated. Prevents creating near-zero
+/// variants of already-small weights.
+pub const ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD: f32 = 0.05;
 
 // ============================================================================
 // Sensible-range filtering (production guard rails)
@@ -312,6 +367,36 @@ pub fn pair_extreme_candidates_with_conservative_variants(
             }
         }
 
+        // Ultra-conservative variants (Issue #962): only when base weight is large enough.
+        let mut added_feather_touch = false;
+        let mut added_whisper = false;
+        let base_weight_above_threshold =
+            candidate.outgoing_weight.abs() >= ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD;
+
+        if should_pair && output.len() < limit && base_weight_above_threshold {
+            let feather = make_neuron_variant(&candidate, &FEATHER_TOUCH_CONFIG);
+            if candidates_meaningfully_differ(&feather, &candidate)
+                && output
+                    .iter()
+                    .all(|existing| candidates_meaningfully_differ(existing, &feather))
+            {
+                output.push(feather);
+                added_feather_touch = true;
+            }
+        }
+
+        if should_pair && output.len() < limit && base_weight_above_threshold {
+            let whisper = make_neuron_variant(&candidate, &WHISPER_CONFIG);
+            if candidates_meaningfully_differ(&whisper, &candidate)
+                && output
+                    .iter()
+                    .all(|existing| candidates_meaningfully_differ(existing, &whisper))
+            {
+                output.push(whisper);
+                added_whisper = true;
+            }
+        }
+
         if should_pair && output[original_index].comment.is_none() {
             let mut parts = Vec::new();
             if added_conservative {
@@ -322,6 +407,12 @@ pub fn pair_extreme_candidates_with_conservative_variants(
             }
             if added_micro_nudge {
                 parts.push("Micro-Nudge");
+            }
+            if added_feather_touch {
+                parts.push("Feather-Touch");
+            }
+            if added_whisper {
+                parts.push("Whisper");
             }
             output[original_index].comment = Some(if parts.is_empty() {
                 "Extreme candidate (no safety variants included)".to_string()
@@ -356,6 +447,23 @@ fn synapse_candidates_meaningfully_differ(
     (a.weight - b.weight).abs() > SYNAPSE_VARIANT_MIN_WEIGHT
 }
 
+/// Extract a human-readable variant name from a config comment string.
+fn variant_name_from_comment(comment: &str) -> &'static str {
+    if comment.starts_with("Conservative") {
+        "Conservative"
+    } else if comment.starts_with("Gentle") {
+        "Gentle Nudge"
+    } else if comment.starts_with("Micro") {
+        "Micro-Nudge"
+    } else if comment.starts_with("Feather") {
+        "Feather-Touch"
+    } else if comment.starts_with("Whisper") {
+        "Whisper"
+    } else {
+        "Unknown"
+    }
+}
+
 /// Pair each synapse candidate with weight variants (Issue #513).
 #[doc(hidden)]
 pub fn pair_synapse_candidates_with_weight_variants(
@@ -369,11 +477,14 @@ pub fn pair_synapse_candidates_with_weight_variants(
 
     let mut output = Vec::with_capacity(sorted_candidates.len().min(limit));
 
-    let configs = [
+    let base_configs = [
         &SYNAPSE_CONSERVATIVE_CONFIG,
         &SYNAPSE_GENTLE_NUDGE_CONFIG,
         &SYNAPSE_MICRO_NUDGE_CONFIG,
     ];
+
+    // Ultra-conservative configs gated by base weight threshold (Issue #962).
+    let ultra_configs = [&SYNAPSE_FEATHER_TOUCH_CONFIG, &SYNAPSE_WHISPER_CONFIG];
 
     for candidate in sorted_candidates.into_iter() {
         if output.len() >= limit {
@@ -385,7 +496,7 @@ pub fn pair_synapse_candidates_with_weight_variants(
 
         let mut added_names = Vec::new();
 
-        for config in &configs {
+        for config in &base_configs {
             if output.len() >= limit {
                 break;
             }
@@ -396,16 +507,29 @@ pub fn pair_synapse_candidates_with_weight_variants(
                     .iter()
                     .all(|existing| synapse_candidates_meaningfully_differ(existing, &variant))
             {
-                // Extract the variant name from the comment for labelling the original.
-                let name = if config.comment.starts_with("Conservative") {
-                    "Conservative"
-                } else if config.comment.starts_with("Gentle") {
-                    "Gentle Nudge"
-                } else {
-                    "Micro-Nudge"
-                };
+                let name = variant_name_from_comment(config.comment);
                 added_names.push(name);
                 output.push(variant);
+            }
+        }
+
+        // Only generate ultra-conservative variants when the base weight is large enough.
+        if candidate.weight.abs() >= ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD {
+            for config in &ultra_configs {
+                if output.len() >= limit {
+                    break;
+                }
+                let variant = make_synapse_variant(&candidate, config);
+                if variant.weight.abs() > SYNAPSE_VARIANT_MIN_WEIGHT
+                    && synapse_candidates_meaningfully_differ(&variant, &candidate)
+                    && output
+                        .iter()
+                        .all(|existing| synapse_candidates_meaningfully_differ(existing, &variant))
+                {
+                    let name = variant_name_from_comment(config.comment);
+                    added_names.push(name);
+                    output.push(variant);
+                }
             }
         }
 
@@ -437,6 +561,14 @@ const COORDINATED_GENTLE_NUDGE_EXPECTED_MULTIPLIER: f32 = 0.75;
 
 const COORDINATED_MICRO_NUDGE_WEIGHT_SCALE: f32 = 0.05;
 const COORDINATED_MICRO_NUDGE_EXPECTED_MULTIPLIER: f32 = 0.25;
+
+/// Issue #962: Feather-Touch scaling for coordinated-structural candidates.
+const COORDINATED_FEATHER_TOUCH_WEIGHT_SCALE: f32 = 0.01;
+const COORDINATED_FEATHER_TOUCH_EXPECTED_MULTIPLIER: f32 = 0.25;
+
+/// Issue #962: Whisper scaling for coordinated-structural candidates.
+const COORDINATED_WHISPER_WEIGHT_SCALE: f32 = 0.005;
+const COORDINATED_WHISPER_EXPECTED_MULTIPLIER: f32 = 0.1;
 
 /// Minimum absolute weight for a coordinated-structural `AddSynapse` variant.
 const COORDINATED_VARIANT_MIN_WEIGHT: f32 = 1e-6;
@@ -516,6 +648,22 @@ const COORDINATED_VARIANT_SPECS: [(f32, f32, &str); 3] = [
     ),
 ];
 
+/// Ultra-conservative coordinated-structural variant specs (Issue #962).
+/// Only applied when the maximum `AddSynapse` weight in the candidate exceeds
+/// `ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD`.
+const COORDINATED_ULTRA_VARIANT_SPECS: [(f32, f32, &str); 2] = [
+    (
+        COORDINATED_FEATHER_TOUCH_WEIGHT_SCALE,
+        COORDINATED_FEATHER_TOUCH_EXPECTED_MULTIPLIER,
+        "Feather-Touch variant (AddSynapse weights scaled to 0.01\u{00d7})",
+    ),
+    (
+        COORDINATED_WHISPER_WEIGHT_SCALE,
+        COORDINATED_WHISPER_EXPECTED_MULTIPLIER,
+        "Whisper variant (AddSynapse weights scaled to 0.005\u{00d7})",
+    ),
+];
+
 /// Pair each coordinated-structural candidate with weight variants (Issue #510).
 #[doc(hidden)]
 pub fn pair_coordinated_structural_with_weight_variants(
@@ -549,15 +697,38 @@ pub fn pair_coordinated_structural_with_weight_variants(
                 expected_multiplier,
                 comment,
             ) {
-                let name = if comment.starts_with("Conservative") {
-                    "Conservative"
-                } else if comment.starts_with("Gentle") {
-                    "Gentle Nudge"
-                } else {
-                    "Micro-Nudge"
-                };
+                let name = variant_name_from_comment(comment);
                 added_names.push(name);
                 output.push(variant);
+            }
+        }
+
+        // Ultra-conservative variants (Issue #962): only when the largest AddSynapse
+        // weight in the candidate exceeds the threshold.
+        let max_add_synapse_weight = candidate
+            .operations
+            .iter()
+            .filter_map(|op| match op {
+                CoordinatedStructuralOpJson::AddSynapse { weight, .. } => Some(weight.abs()),
+                _ => None,
+            })
+            .fold(0.0_f32, f32::max);
+
+        if max_add_synapse_weight >= ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD {
+            for &(scale, expected_multiplier, comment) in &COORDINATED_ULTRA_VARIANT_SPECS {
+                if output.len() >= limit {
+                    break;
+                }
+                if let Some(variant) = scale_coordinated_add_synapse_weights(
+                    &candidate,
+                    scale,
+                    expected_multiplier,
+                    comment,
+                ) {
+                    let name = variant_name_from_comment(comment);
+                    added_names.push(name);
+                    output.push(variant);
+                }
             }
         }
 
