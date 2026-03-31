@@ -47,6 +47,7 @@ pub mod module_weights;
 pub mod neuron;
 pub mod neuron_fingerprint;
 pub mod samples;
+pub mod scale_outcomes;
 pub mod shared;
 pub mod streaming;
 pub mod synapse;
