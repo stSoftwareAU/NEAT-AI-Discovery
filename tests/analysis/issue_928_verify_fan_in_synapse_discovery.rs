@@ -25,6 +25,7 @@ use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson, analyze_parallel_internal};
+use serial_test::serial;
 
 /// Build the "crippled" creature (hidden-B → hidden-A synapse removed).
 fn crippled_creature() -> CreatureJson {
@@ -216,6 +217,7 @@ fn find_add_synapse_in_coordinated(
 /// direct helpful synapse or as an addSynapse operation within a coordinated
 /// structural candidate.
 #[test]
+#[serial]
 fn issue_928_discovers_missing_fan_in_synapse() {
     if !GpuAnalyzer::gpu_is_available() {
         eprintln!("Skipping: no GPU available");
@@ -316,6 +318,7 @@ fn issue_928_discovers_missing_fan_in_synapse() {
 /// Verify that the discovered candidate identifies hidden-B as the source
 /// neuron and hidden-A as the target neuron (not reversed).
 #[test]
+#[serial]
 fn issue_928_candidate_identifies_correct_source_and_target() {
     if !GpuAnalyzer::gpu_is_available() {
         eprintln!("Skipping: no GPU available");
@@ -374,6 +377,7 @@ fn issue_928_candidate_identifies_correct_source_and_target() {
 /// Verify that all candidates returned by the pipeline have positive expected
 /// score gain (the project mission: only return improvements).
 #[test]
+#[serial]
 fn issue_928_all_candidates_have_positive_improvement() {
     if !GpuAnalyzer::gpu_is_available() {
         eprintln!("Skipping: no GPU available");
