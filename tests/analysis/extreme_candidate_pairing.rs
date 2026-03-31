@@ -206,14 +206,18 @@ fn gentle_nudge_variants_are_not_deduped_across_different_neuron_pairs() {
     // Limit allows both originals plus all safety variants per candidate.
     // Issue #888: With tightened constraints, Conservative and Micro-Nudge have the
     // same outgoing_abs_max (0.005), so Micro-Nudge is skipped (not meaningfully different).
-    // Each extreme candidate gets: original + conservative + gentle nudge = 3 variants.
-    let paired =
-        pair_extreme_candidates_with_conservative_variants(vec![candidate_a, candidate_b], Some(8));
+    // Issue #962: Feather-Touch and Whisper variants added for weights above threshold.
+    // Each extreme candidate gets: original + conservative + gentle nudge + feather-touch
+    // + whisper = 5 items. Two candidates = 10, limited to 8.
+    let paired = pair_extreme_candidates_with_conservative_variants(
+        vec![candidate_a, candidate_b],
+        Some(12),
+    );
 
     assert_eq!(
         paired.len(),
-        6,
-        "expected two originals + two conservative + two Gentle Nudge variants"
+        10,
+        "expected two originals + two conservative + two Gentle Nudge + two Feather-Touch + two Whisper variants"
     );
 
     // Expect a Gentle Nudge variant for each distinct neuron pair.

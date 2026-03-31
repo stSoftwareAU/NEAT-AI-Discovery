@@ -47,15 +47,17 @@ fn make_extreme_candidate(
 fn micro_nudge_variant_is_generated_for_extreme_candidates() {
     // Issue #888: With tightened constraints, Conservative outgoing is always clamped
     // to 0.005 which equals Micro-Nudge max, so Micro-Nudge is no longer generated.
-    // Extreme candidates now produce 3 variants: original + conservative + gentle nudge.
+    // Issue #962: Feather-Touch and Whisper added for weights above threshold (0.05).
+    // Extreme candidates with outgoing 0.1 now produce 5 variants:
+    // original + conservative + gentle nudge + feather-touch + whisper.
     let candidate = make_extreme_candidate("source-1", "target-1", 200.0, 0.1, 50.0);
 
-    let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], Some(4));
+    let paired = pair_extreme_candidates_with_conservative_variants(vec![candidate], Some(6));
 
     assert_eq!(
         paired.len(),
-        3,
-        "expected original + conservative + gentle nudge (micro-nudge skipped)"
+        5,
+        "expected original + conservative + gentle nudge + feather-touch + whisper (micro-nudge skipped)"
     );
 
     // Conservative variant should have outgoing clamped to 0.005
@@ -297,8 +299,10 @@ fn micro_nudge_minimum_outgoing_weight_when_scale_produces_near_zero() {
 
 #[test]
 fn total_candidate_count_with_micro_nudge_is_four_per_extreme() {
-    // Issue #888: With tightened constraints, 3 variants per extreme candidate
-    // (original + conservative + gentle nudge). Micro-Nudge is skipped.
+    // Issue #888: With tightened constraints, Micro-Nudge is skipped.
+    // Issue #962: Feather-Touch and Whisper added for weights above threshold.
+    // 5 variants per extreme candidate (original + conservative + gentle nudge
+    // + feather-touch + whisper).
     let candidates: Vec<CandidateNeuronJson> = (0..3)
         .map(|i| {
             let mut c =
@@ -313,7 +317,7 @@ fn total_candidate_count_with_micro_nudge_is_four_per_extreme() {
 
     assert_eq!(
         paired.len(),
-        9,
-        "expected 9 candidates (3 extreme × 3 variants each)"
+        15,
+        "expected 15 candidates (3 extreme \u{00d7} 5 variants each)"
     );
 }

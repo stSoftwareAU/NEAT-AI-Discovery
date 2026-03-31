@@ -577,15 +577,16 @@ fn pair_synapse_generates_variants_with_no_limit() {
     let candidate = make_test_synapse_candidate(0.08, 0.1);
     let result = pair_synapse_candidates_with_weight_variants(vec![candidate], None);
 
-    // Original + up to 3 variants (conservative, gentle nudge, micro-nudge)
+    // Original + up to 5 variants (conservative, gentle nudge, micro-nudge,
+    // feather-touch, whisper). Issue #962 added the last two.
     assert!(
         result.len() >= 2,
         "should generate at least one variant, got {}",
         result.len()
     );
     assert!(
-        result.len() <= 4,
-        "should generate at most 3 variants + original, got {}",
+        result.len() <= 6,
+        "should generate at most 5 variants + original, got {}",
         result.len()
     );
 }

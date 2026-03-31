@@ -45,15 +45,16 @@ fn make_coordinated_candidate(
 
 #[test]
 fn coordinated_generates_four_variants() {
-    // A coordinated candidate with weight 0.1 should produce 4 variants:
-    // original + conservative + gentle-nudge + micro-nudge.
+    // A coordinated candidate with weight 0.1 should produce 6 variants:
+    // original + conservative + gentle-nudge + micro-nudge + feather-touch + whisper.
+    // Issue #962: Feather-Touch and Whisper added for max weight >= 0.05 threshold.
     let candidate = make_coordinated_candidate("input-0", "input-1", "output-0", 0.1, 0.08, 0.05);
     let paired = pair_coordinated_structural_with_weight_variants(vec![candidate], None);
 
     assert_eq!(
         paired.len(),
-        4,
-        "expected original + 3 variants, got {}",
+        6,
+        "expected original + 5 variants, got {}",
         paired.len()
     );
 }
@@ -370,11 +371,11 @@ fn coordinated_variant_multiple_candidates_each_get_variants() {
     ];
     let paired = pair_coordinated_structural_with_weight_variants(candidates, None);
 
-    // 2 candidates × 4 variants = 8
+    // Issue #962: 2 candidates × 6 variants = 12 (weights above threshold).
     assert_eq!(
         paired.len(),
-        8,
-        "expected 8 candidates (2 × 4 variants each), got {}",
+        12,
+        "expected 12 candidates (2 \u{00d7} 6 variants each), got {}",
         paired.len()
     );
 }

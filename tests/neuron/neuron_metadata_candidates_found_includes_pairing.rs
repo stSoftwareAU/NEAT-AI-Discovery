@@ -72,10 +72,12 @@ fn candidates_found_includes_paired_variants() {
     // Verify actual values
     // Issue #888: With tightened constraints, Conservative and Micro-Nudge share the same
     // outgoing_abs_max (0.005), so Micro-Nudge is skipped as not meaningfully different.
-    // Result: 3 variants per extreme candidate (original + conservative + gentle nudge).
+    // Issue #962: Feather-Touch and Whisper variants added for weights above threshold.
+    // Result: 5 variants per extreme candidate (original + conservative + gentle nudge
+    // + feather-touch + whisper).
     assert_eq!(
-        candidates_found, 3,
-        "Expected 3 candidates found (original + conservative + gentle nudge)"
+        candidates_found, 5,
+        "Expected 5 candidates found (original + conservative + gentle nudge + feather-touch + whisper)"
     );
     assert_eq!(
         candidates_returned, 2,
@@ -181,9 +183,11 @@ fn truncation_respects_invariant_with_multiple_extreme_candidates() {
     // CORRECT approach: pair first (no limit), then count, then truncate
     let paired = pair_extreme_candidates_with_conservative_variants(extreme_candidates, None);
 
-    // Issue #888: With tightened constraints, 3 variants per extreme candidate
-    // (original + conservative + gentle nudge). Micro-Nudge is skipped because
+    // Issue #888: With tightened constraints, Micro-Nudge is skipped because
     // it shares the same outgoing_abs_max as Conservative.
+    // Issue #962: Feather-Touch and Whisper variants added for weights above threshold.
+    // 5 variants per extreme candidate (original + conservative + gentle nudge
+    // + feather-touch + whisper).
     let candidates_found = paired.len();
 
     // Truncate to max_candidates=5
@@ -199,8 +203,8 @@ fn truncation_respects_invariant_with_multiple_extreme_candidates() {
 
     // Verify actual values
     assert_eq!(
-        candidates_found, 9,
-        "Expected 9 candidates found (3 extreme × 3 variants each)"
+        candidates_found, 15,
+        "Expected 15 candidates found (3 extreme \u{00d7} 5 variants each)"
     );
     assert_eq!(
         candidates_returned, 5,
