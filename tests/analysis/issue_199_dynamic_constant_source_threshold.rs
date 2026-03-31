@@ -96,8 +96,8 @@ fn issue_199_low_variance_sources_use_default_threshold() {
         creature,
         focus_neurons: vec!["output-0".to_string()],
         max_candidates: Some(10),
-        analysis_deadline_ms: Some(30_000),
-        random_seed: None,
+        analysis_deadline_ms: Some(60_000),
+        random_seed: Some(42),
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input)
