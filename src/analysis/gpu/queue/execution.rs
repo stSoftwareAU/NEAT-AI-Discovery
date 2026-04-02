@@ -411,7 +411,7 @@ impl GpuEvaluator for GpuWorkQueue {
         samples: &[HelpfulSample],
         threshold: f32,
     ) -> Result<(ReluStats, ReluStats, f32)> {
-        self.evaluate_relu_gpu(samples.to_vec(), threshold, &self.deadline)
+        self.evaluate_relu_gpu(samples, threshold, &self.deadline)
     }
 
     fn evaluate_activation(
@@ -421,13 +421,7 @@ impl GpuEvaluator for GpuWorkQueue {
         orientation: f32,
         scale: f32,
     ) -> Result<(f32, f32, f32, u32)> {
-        self.evaluate_activation_gpu(
-            samples.to_vec(),
-            activation_type,
-            orientation,
-            scale,
-            &self.deadline,
-        )
+        self.evaluate_activation_gpu(samples, activation_type, orientation, scale, &self.deadline)
     }
 
     fn evaluate_activations_batched(
@@ -435,11 +429,7 @@ impl GpuEvaluator for GpuWorkQueue {
         samples: &[HelpfulSample],
         activation_configs: &[(u32, f32, f32)],
     ) -> Result<Vec<(f32, f32, f32, u32)>> {
-        self.evaluate_activations_batched_gpu(
-            samples.to_vec(),
-            activation_configs.to_vec(),
-            &self.deadline,
-        )
+        self.evaluate_activations_batched_gpu(samples, activation_configs, &self.deadline)
     }
 }
 

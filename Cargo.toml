@@ -85,6 +85,10 @@ name = "gpu_buffer_transfers"
 harness = false
 
 [[bench]]
+name = "queue_submission_copies"
+harness = false
+
+[[bench]]
 name = "async_pipeline"
 harness = false
 
