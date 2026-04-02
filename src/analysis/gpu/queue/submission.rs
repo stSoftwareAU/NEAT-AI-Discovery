@@ -189,7 +189,7 @@ impl GpuWorkQueue {
     /// The `deadline` parameter is used to calculate an adaptive timeout (60s-5min).
     pub(crate) fn evaluate_relu_gpu(
         &self,
-        samples: Vec<HelpfulSample>,
+        samples: &[HelpfulSample],
         threshold: f32,
         deadline: &Option<std::time::SystemTime>,
     ) -> Result<(ReluStats, ReluStats, f32)> {
@@ -212,7 +212,7 @@ impl GpuWorkQueue {
         // Send with timeout to prevent deadlock if GPU thread is hung
         match self.work_tx.send_timeout(
             GpuWorkRequest::ReluEval {
-                samples,
+                samples: samples.to_vec(),
                 threshold,
                 response_tx,
             },
@@ -248,7 +248,7 @@ impl GpuWorkQueue {
     /// The `deadline` parameter is used to calculate an adaptive timeout (60s-5min).
     pub(crate) fn evaluate_activation_gpu(
         &self,
-        samples: Vec<HelpfulSample>,
+        samples: &[HelpfulSample],
         activation_type: u32,
         orientation: f32,
         scale: f32,
@@ -270,7 +270,7 @@ impl GpuWorkQueue {
         // Send with timeout to prevent deadlock if GPU thread is hung
         match self.work_tx.send_timeout(
             GpuWorkRequest::ActivationEval {
-                samples,
+                samples: samples.to_vec(),
                 activation_type,
                 orientation,
                 scale,
@@ -317,8 +317,8 @@ impl GpuWorkQueue {
     /// in the same order as the input configs.
     pub(crate) fn evaluate_activations_batched_gpu(
         &self,
-        samples: Vec<HelpfulSample>,
-        activation_configs: Vec<(u32, f32, f32)>,
+        samples: &[HelpfulSample],
+        activation_configs: &[(u32, f32, f32)],
         deadline: &Option<std::time::SystemTime>,
     ) -> Result<Vec<(f32, f32, f32, u32)>> {
         // Handle edge cases
@@ -343,8 +343,8 @@ impl GpuWorkQueue {
         // Send with timeout to prevent deadlock if GPU thread is hung
         match self.work_tx.send_timeout(
             GpuWorkRequest::ActivationBatchEval {
-                samples,
-                activation_configs,
+                samples: samples.to_vec(),
+                activation_configs: activation_configs.to_vec(),
                 response_tx,
             },
             timeout,
