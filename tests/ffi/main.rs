@@ -7,3 +7,4 @@ mod issue_574_ffi_json_fuzz_edge_cases;
 mod issue_711_ffi_safety_unsafe_markers;
 mod issue_950_numeric_neuron_ids;
 mod issue_952_uuid_only_ffi_contract;
+mod issue_975_ffi_boundary_error_handling;
