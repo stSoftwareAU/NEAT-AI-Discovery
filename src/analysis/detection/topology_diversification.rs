@@ -81,31 +81,54 @@ fn max_hidden_depth_to_output(
         .map(|n| n.uuid.as_str())
         .collect();
 
-    // DFS backwards from output, counting hidden neurons on each path
+    // DFS backwards from output using backtracking instead of cloning visited sets.
+    // Insert before recursing, remove after returning — O(n) memory instead of O(n²).
+    let mut visited = HashSet::new();
+    visited.insert(output_uuid);
+
+    dfs_max_hidden_depth(
+        output_uuid,
+        0,
+        &mut visited,
+        &reverse_adj,
+        &input_set,
+        hidden_set,
+    )
+}
+
+/// Recursive DFS with backtracking to find the maximum hidden depth.
+/// Uses insert-before-recurse / remove-after-return to avoid cloning the visited set.
+fn dfs_max_hidden_depth<'a>(
+    current: &'a str,
+    hidden_count: usize,
+    visited: &mut HashSet<&'a str>,
+    reverse_adj: &HashMap<&'a str, Vec<&'a str>>,
+    input_set: &HashSet<&'a str>,
+    hidden_set: &HashSet<&'a str>,
+) -> usize {
+    if input_set.contains(current) {
+        return hidden_count;
+    }
+
     let mut max_depth: usize = 0;
-    let mut stack: Vec<(&str, usize, HashSet<&str>)> = Vec::new();
 
-    let mut initial_visited = HashSet::new();
-    initial_visited.insert(output_uuid);
-    stack.push((output_uuid, 0, initial_visited));
-
-    while let Some((current, hidden_count, visited)) = stack.pop() {
-        if input_set.contains(current) {
-            // Reached an input — record the hidden depth of this path
-            max_depth = max_depth.max(hidden_count);
-            continue;
-        }
-
-        if let Some(predecessors) = reverse_adj.get(current) {
-            for &pred in predecessors {
-                if visited.contains(pred) {
-                    continue; // Avoid cycles
-                }
-                let mut new_visited = visited.clone();
-                new_visited.insert(pred);
-                let added_hidden = if hidden_set.contains(pred) { 1 } else { 0 };
-                stack.push((pred, hidden_count + added_hidden, new_visited));
+    if let Some(predecessors) = reverse_adj.get(current) {
+        for &pred in predecessors {
+            if visited.contains(pred) {
+                continue; // Avoid cycles
             }
+            visited.insert(pred);
+            let added_hidden = if hidden_set.contains(pred) { 1 } else { 0 };
+            let depth = dfs_max_hidden_depth(
+                pred,
+                hidden_count + added_hidden,
+                visited,
+                reverse_adj,
+                input_set,
+                hidden_set,
+            );
+            max_depth = max_depth.max(depth);
+            visited.remove(pred);
         }
     }
 

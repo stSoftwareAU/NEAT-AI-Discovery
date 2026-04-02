@@ -412,7 +412,83 @@ fn test_no_detection_when_individual_neurons_have_issues() {
 }
 
 // =============================================================================
-// 8. Empty inputs
+// 8. Diamond topology: backtracking finds deepest path through shared nodes
+// =============================================================================
+
+#[test]
+fn test_diamond_topology_finds_deepest_path() {
+    // Diamond topology where two paths share a hidden node:
+    //   input-1 → hidden-A → hidden-C → output-1
+    //   input-1 → hidden-B → hidden-C → output-1
+    //   input-2 → output-1  (direct path)
+    //
+    // The deepest path has 2 hidden neurons (hidden-A → hidden-C or hidden-B → hidden-C).
+    // Backtracking must allow hidden-C to appear on both explored paths.
+    // With 2 hidden neurons on the deepest path, max_hidden_depth >= MIN_NONLINEAR_DEPTH,
+    // so no candidate should be emitted for output-1.
+    let creature = make_creature(
+        vec![
+            neuron("input-1", "input", "IDENTITY"),
+            neuron("input-2", "input", "IDENTITY"),
+            hidden("hidden-A", "TANH"),
+            hidden("hidden-B", "TANH"),
+            hidden("hidden-C", "TANH"),
+            output("output-1", "TANH"),
+        ],
+        vec![
+            synapse("input-1", "hidden-A", 0.5),
+            synapse("input-1", "hidden-B", 0.3),
+            synapse("hidden-A", "hidden-C", 0.4),
+            synapse("hidden-B", "hidden-C", 0.2),
+            synapse("hidden-C", "output-1", 0.6),
+            synapse("input-2", "output-1", 0.1), // direct path
+        ],
+    );
+
+    let records: Vec<(String, Vec<DiscoverRecord>)> = vec![
+        (
+            "input-1".to_string(),
+            make_records_for("input-1", 40, 0.5, 0.0),
+        ),
+        (
+            "input-2".to_string(),
+            make_records_for("input-2", 40, -0.2, 0.0),
+        ),
+        (
+            "hidden-A".to_string(),
+            make_records_for("hidden-A", 40, 0.4, 0.05),
+        ),
+        (
+            "hidden-B".to_string(),
+            make_records_for("hidden-B", 40, 0.3, 0.04),
+        ),
+        (
+            "hidden-C".to_string(),
+            make_records_for("hidden-C", 40, 0.35, 0.06),
+        ),
+        (
+            "output-1".to_string(),
+            (0..40)
+                .map(|i| make_record("output-1", i, 0.3, 0.25))
+                .collect(),
+        ),
+    ];
+
+    let candidates = detect_topology_diversification_candidates(&creature, &records);
+
+    // The deepest path has 2 hidden neurons, which exceeds MIN_NONLINEAR_DEPTH (1).
+    // Even though there is a direct path (input-2 → output-1), the existence of
+    // deep paths should prevent detection.
+    assert!(
+        candidates.is_empty(),
+        "Diamond topology with depth-2 hidden paths should NOT trigger diversification, \
+         but got {} candidates",
+        candidates.len()
+    );
+}
+
+// =============================================================================
+// 9. Empty inputs
 // =============================================================================
 
 #[test]

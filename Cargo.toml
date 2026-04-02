@@ -109,6 +109,10 @@ name = "topology_cache"
 harness = false
 
 [[bench]]
+name = "topology_traversal"
+harness = false
+
+[[bench]]
 name = "bfs_allocation"
 harness = false
 
