@@ -153,14 +153,16 @@ fn compute_min_stats(
         match grouped_records.get(&synapse.from_uuid)? {
             None => continue,
             Some(records) => {
+                // Hoist key creation outside inner loop (Issue #976):
+                // clone once per synapse, not once per record.
+                let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
                 for record in records.iter() {
                     if record.activation.is_finite() {
                         let weighted = synapse.weight * record.activation;
-                        let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
                         obs_contributions
                             .entry(record.obs_index)
                             .or_default()
-                            .push((key, weighted));
+                            .push((key.clone(), weighted));
                     }
                 }
             }
@@ -189,8 +191,13 @@ fn compute_min_stats(
             .filter(|(_, v)| (*v - min_val).abs() < 1e-10)
             .collect();
 
+        // Avoid cloning key when it already exists in win_counts (Issue #976)
         for (key, _) in winners {
-            *win_counts.entry(key.clone()).or_insert(0) += 1;
+            if let Some(count) = win_counts.get_mut(key) {
+                *count += 1;
+            } else {
+                win_counts.insert(key.clone(), 1);
+            }
         }
     }
 
@@ -224,14 +231,16 @@ fn compute_max_stats(
         match grouped_records.get(&synapse.from_uuid)? {
             None => continue,
             Some(records) => {
+                // Hoist key creation outside inner loop (Issue #976):
+                // clone once per synapse, not once per record.
+                let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
                 for record in records.iter() {
                     if record.activation.is_finite() {
                         let weighted = synapse.weight * record.activation;
-                        let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
                         obs_contributions
                             .entry(record.obs_index)
                             .or_default()
-                            .push((key, weighted));
+                            .push((key.clone(), weighted));
                     }
                 }
             }
@@ -260,8 +269,13 @@ fn compute_max_stats(
             .filter(|(_, v)| (*v - max_val).abs() < 1e-10)
             .collect();
 
+        // Avoid cloning key when it already exists in win_counts (Issue #976)
         for (key, _) in winners {
-            *win_counts.entry(key.clone()).or_insert(0) += 1;
+            if let Some(count) = win_counts.get_mut(key) {
+                *count += 1;
+            } else {
+                win_counts.insert(key.clone(), 1);
+            }
         }
     }
 
@@ -422,10 +436,15 @@ struct ImpactContext {
 fn build_adjacency(creature: &CreatureJson) -> HashMap<String, Vec<(String, f32)>> {
     let mut adjacency: HashMap<String, Vec<(String, f32)>> = HashMap::new();
     for synapse in &creature.synapses {
-        adjacency
-            .entry(synapse.from_uuid.clone())
-            .or_default()
-            .push((synapse.to_uuid.clone(), synapse.weight));
+        // Avoid cloning from_uuid when key already exists (Issue #976)
+        if let Some(edges) = adjacency.get_mut(&synapse.from_uuid) {
+            edges.push((synapse.to_uuid.clone(), synapse.weight));
+        } else {
+            adjacency.insert(
+                synapse.from_uuid.clone(),
+                vec![(synapse.to_uuid.clone(), synapse.weight)],
+            );
+        }
     }
     adjacency
 }
@@ -461,25 +480,21 @@ fn compute_impacts_internal_with_stats(
     let squash_map = super::gradient::build_squash_map(creature);
 
     // Build inbound synapse count for selection squashes (MIN/MAX/IF neurons)
-    let inbound_count: HashMap<String, usize> = {
-        let mut map: HashMap<String, usize> = HashMap::new();
-        for synapse in &creature.synapses {
-            *map.entry(synapse.to_uuid.clone()).or_insert(0) += 1;
+    // and total inbound weight for Linear squash normalisation (Issue #130).
+    // Combined into a single pass to halve UUID cloning (Issue #976).
+    let mut inbound_count: HashMap<String, usize> = HashMap::new();
+    let mut total_inbound_weight: HashMap<String, f32> = HashMap::new();
+    for synapse in &creature.synapses {
+        // Avoid cloning to_uuid when key already exists (Issue #976)
+        if let Some(count) = inbound_count.get_mut(&synapse.to_uuid) {
+            *count += 1;
+            // Key guaranteed to exist in total_inbound_weight too
+            *total_inbound_weight.get_mut(&synapse.to_uuid).unwrap() += synapse.weight.abs();
+        } else {
+            inbound_count.insert(synapse.to_uuid.clone(), 1);
+            total_inbound_weight.insert(synapse.to_uuid.clone(), synapse.weight.abs());
         }
-        map
-    };
-
-    // Build total inbound weight for Linear squash normalisation (Issue #130).
-    // Sum of |weight| for all synapses INTO each target neuron.
-    // This ensures hidden neurons always have impact < 1.0:
-    //   contribution = |weight| / total_inbound_weight × child_impact
-    let total_inbound_weight: HashMap<String, f32> = {
-        let mut map: HashMap<String, f32> = HashMap::new();
-        for synapse in &creature.synapses {
-            *map.entry(synapse.to_uuid.clone()).or_insert(0.0) += synapse.weight.abs();
-        }
-        map
-    };
+    }
 
     let outputs: HashSet<String> = creature
         .neurons

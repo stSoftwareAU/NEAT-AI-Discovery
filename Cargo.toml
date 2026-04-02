@@ -128,6 +128,10 @@ harness = false
 name = "candidate_pipeline_clones"
 harness = false
 
+[[bench]]
+name = "impact_uuid_cloning"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
