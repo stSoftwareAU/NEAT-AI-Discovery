@@ -16,6 +16,7 @@
 //! ├── relu_evaluation.rs        <- ReLU activation GPU evaluation (Issue #520)
 //! ├── activation_evaluation.rs  <- Activation function GPU evaluation (Issue #520)
 //! ├── bias_evaluation.rs        <- Bias GPU evaluation (Issue #520)
+//! ├── pipeline_builder.rs      <- Shared compute pipeline builder (Issue #978)
 //! ├── queue/                    <- GPU work queue (Issue #274, #608)
 //! │   ├── mod.rs                <- Public API, re-exports, queue types
 //! │   ├── submission.rs         <- Work item submission and batching
@@ -37,6 +38,7 @@ pub mod bias_evaluation;
 pub mod device;
 pub mod harmful_evaluation;
 pub mod helpful_evaluation;
+pub(crate) mod pipeline_builder;
 pub mod queue;
 pub mod relu_evaluation;
 pub mod shaders;

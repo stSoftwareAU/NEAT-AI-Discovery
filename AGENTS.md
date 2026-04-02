@@ -230,6 +230,7 @@ src/
 │   │   ├── relu_evaluation.rs     # ReLU activation GPU evaluation
 │   │   ├── activation_evaluation.rs # Activation function GPU evaluation
 │   │   ├── bias_evaluation.rs     # Bias GPU evaluation
+│   │   ├── pipeline_builder.rs    # Shared compute pipeline builder (Issue #978)
 │   │   ├── queue/            # GPU work queue (Issue #608)
 │   │   │   ├── mod.rs            # Public API, re-exports, queue types
 │   │   │   ├── submission.rs     # Work item submission and batching

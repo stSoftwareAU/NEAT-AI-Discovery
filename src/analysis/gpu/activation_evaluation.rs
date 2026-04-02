@@ -13,6 +13,7 @@ use wgpu::util::DeviceExt;
 use crate::analysis::gpu::device::{
     GPU_BUFFER_MAP_TIMEOUT_SECS, wait_for_buffer_map, wait_for_buffer_maps_batch,
 };
+use crate::analysis::gpu::pipeline_builder::{STANDARD_BINDINGS, build_compute_pipeline};
 use crate::analysis::gpu::shaders::{
     ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER, GPU_REDUCTION_THRESHOLD, WORKGROUP_SIZE,
 };
@@ -32,63 +33,14 @@ impl GpuAnalyzer {
         device: &wgpu::Device,
         label: &str,
     ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("activation-shader"),
-            source: wgpu::ShaderSource::Wgsl(ACTIVATION_SHADER.into()),
-        });
-
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("activation-bind-group"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(label),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(label),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
-
-        (layout, pipeline)
+        build_compute_pipeline(
+            device,
+            "activation-shader",
+            ACTIVATION_SHADER,
+            "activation-bind-group",
+            &STANDARD_BINDINGS,
+            label,
+        )
     }
 
     /// Build the activation output reduction pipeline (Issue #567).
@@ -99,63 +51,14 @@ impl GpuAnalyzer {
         device: &wgpu::Device,
         label: &str,
     ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("activation-reduce-shader"),
-            source: wgpu::ShaderSource::Wgsl(ACTIVATION_REDUCE_SHADER.into()),
-        });
-
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("activation-reduce-bind-group"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(label),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(label),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
-
-        (layout, pipeline)
+        build_compute_pipeline(
+            device,
+            "activation-reduce-shader",
+            ACTIVATION_REDUCE_SHADER,
+            "activation-reduce-bind-group",
+            &STANDARD_BINDINGS,
+            label,
+        )
     }
 }
 
