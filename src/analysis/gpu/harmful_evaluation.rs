@@ -14,6 +14,7 @@ use wgpu::util::DeviceExt;
 use crate::analysis::gpu::device::{
     GPU_BUFFER_MAP_TIMEOUT_SECS, poll_device_until_idle, wait_for_buffer_maps_batch,
 };
+use crate::analysis::gpu::pipeline_builder::{STANDARD_BINDINGS, build_compute_pipeline};
 use crate::analysis::gpu::shaders::{
     GPU_REDUCTION_THRESHOLD, HARMFUL_REDUCE_SHADER, HARMFUL_SHADER, WORKGROUP_SIZE,
 };
@@ -34,63 +35,14 @@ impl GpuAnalyzer {
         device: &wgpu::Device,
         label: &str,
     ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("harmful-synapse-shader"),
-            source: wgpu::ShaderSource::Wgsl(HARMFUL_SHADER.into()),
-        });
-
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("harmful-synapse-bind-group"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(label),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(label),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
-
-        (layout, pipeline)
+        build_compute_pipeline(
+            device,
+            "harmful-synapse-shader",
+            HARMFUL_SHADER,
+            "harmful-synapse-bind-group",
+            &STANDARD_BINDINGS,
+            label,
+        )
     }
 
     /// Build the harmful contribution reduction pipeline (Issue #218).
@@ -101,66 +53,14 @@ impl GpuAnalyzer {
         device: &wgpu::Device,
         label: &str,
     ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("harmful-reduce-shader"),
-            source: wgpu::ShaderSource::Wgsl(HARMFUL_REDUCE_SHADER.into()),
-        });
-
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("harmful-reduce-bind-group"),
-            entries: &[
-                // Binding 0: contributions (read-only input)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 1: partial_sums (read-write output)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 2: uniforms
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(label),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(label),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
-
-        (layout, pipeline)
+        build_compute_pipeline(
+            device,
+            "harmful-reduce-shader",
+            HARMFUL_REDUCE_SHADER,
+            "harmful-reduce-bind-group",
+            &STANDARD_BINDINGS,
+            label,
+        )
     }
 }
 
