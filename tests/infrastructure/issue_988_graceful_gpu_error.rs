@@ -64,16 +64,18 @@ fn analyze_parallel_returns_structured_error_when_no_gpu() {
         return;
     }
 
-    // Minimal valid input that would previously trigger the panic
+    // Minimal valid input that would previously trigger the panic.
+    // NB: NeuronJson uses `#[serde(rename = "type")]` (not camelCase) and
+    // SynapseJson uses `from_uuid`/`to_uuid` (with `fromUUID`/`toUUID` aliases).
     let input_json = serde_json::json!({
         "parquetFile": "/tmp/nonexistent.parquet",
         "creature": {
             "neurons": [
-                {"uuid": "input-1", "neuronType": "input", "squash": "IDENTITY", "bias": 0.0},
-                {"uuid": "output-1", "neuronType": "output", "squash": "LOGISTIC", "bias": 0.0}
+                {"uuid": "input-1", "type": "input", "squash": "IDENTITY", "bias": 0.0},
+                {"uuid": "output-1", "type": "output", "squash": "LOGISTIC", "bias": 0.0}
             ],
             "synapses": [
-                {"fromUuid": "input-1", "toUuid": "output-1", "weight": 1.0}
+                {"from_uuid": "input-1", "to_uuid": "output-1", "weight": 1.0}
             ],
             "input": 1,
             "output": 1
