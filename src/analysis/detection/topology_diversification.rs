@@ -403,10 +403,11 @@ pub fn topology_diversification_to_coordinated_candidates(
     candidates: &[TopologyDiversificationCandidate],
     creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
-    let existing_synapses: HashSet<(String, String)> = creature
+    // Issue #983: Use borrowed references to avoid cloning every synapse UUID pair.
+    let existing_synapses: HashSet<(&str, &str)> = creature
         .synapses
         .iter()
-        .map(|s| (s.from_uuid.clone(), s.to_uuid.clone()))
+        .map(|s| (s.from_uuid.as_str(), s.to_uuid.as_str()))
         .collect();
 
     let mut results = Vec::new();
@@ -416,7 +417,7 @@ pub fn topology_diversification_to_coordinated_candidates(
             topology_diversification_neuron_uuid(&c.source_input_uuid, &c.output_neuron_uuid);
 
         // Skip if the new neuron's connections would duplicate existing synapses
-        if existing_synapses.contains(&(neuron_uuid.clone(), c.output_neuron_uuid.clone())) {
+        if existing_synapses.contains(&(neuron_uuid.as_str(), c.output_neuron_uuid.as_str())) {
             continue;
         }
 

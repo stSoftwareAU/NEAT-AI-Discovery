@@ -140,6 +140,10 @@ harness = false
 name = "impact_uuid_cloning"
 harness = false
 
+[[bench]]
+name = "analysis_pipeline_clones"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

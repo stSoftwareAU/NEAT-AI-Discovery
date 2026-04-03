@@ -574,10 +574,13 @@ pub(super) fn compute_gradient_flow_factor(stats: &GradientFlowStats) -> f32 {
 }
 
 /// Build a map from neuron UUID to squash function name.
+///
+/// Issue #983: Use `clone()` instead of `to_uppercase()` since squash strings
+/// are already normalised to uppercase at load time (Issue #771).
 pub(super) fn build_squash_map(creature: &CreatureJson) -> HashMap<String, String> {
     creature
         .neurons
         .iter()
-        .map(|n| (n.uuid.clone(), n.squash.to_uppercase()))
+        .map(|n| (n.uuid.clone(), n.squash.clone()))
         .collect()
 }

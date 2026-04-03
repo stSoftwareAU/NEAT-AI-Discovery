@@ -87,10 +87,11 @@ pub fn group_into_batches(candidates: &[IndividualCandidate]) -> Vec<BatchSucces
             let combined_improvement: f32 =
                 batch.iter().map(|c| c.improvement).sum::<f32>() * BATCH_IMPROVEMENT_SCALE;
 
-            let source_list: Vec<String> = batch.iter().map(|c| c.source_uuid.clone()).collect();
-            let target_list: Vec<String> = batch
+            // Issue #983: Collect references for formatting instead of cloning strings.
+            let source_list: Vec<&str> = batch.iter().map(|c| c.source_uuid.as_str()).collect();
+            let target_list: Vec<&str> = batch
                 .iter()
-                .map(|c| c.target_uuid.clone())
+                .map(|c| c.target_uuid.as_str())
                 .collect::<std::collections::HashSet<_>>()
                 .into_iter()
                 .collect();

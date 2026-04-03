@@ -93,26 +93,29 @@ pub fn calculate_removal_savings(
 /// - Previous: 500 × 10,000 × 2 = **10 million** iterations
 /// - With `SynapseCounts`: 10,000 + 500 = **10,500** iterations
 /// - **~1000x improvement**
+///
+/// Issue #983: Uses borrowed `&str` keys to avoid cloning every synapse UUID
+/// during construction.
 #[derive(Debug)]
-pub struct SynapseCounts {
+pub struct SynapseCounts<'a> {
     /// Map from neuron UUID to count of synapses pointing TO that neuron
-    incoming: HashMap<String, usize>,
+    incoming: HashMap<&'a str, usize>,
     /// Map from neuron UUID to count of synapses pointing FROM that neuron
-    outgoing: HashMap<String, usize>,
+    outgoing: HashMap<&'a str, usize>,
 }
 
-impl SynapseCounts {
+impl<'a> SynapseCounts<'a> {
     /// Create a new `SynapseCounts` by scanning all synapses once.
     ///
     /// Time complexity: O(m) where m is the number of synapses.
     /// Space complexity: O(n) where n is the number of unique neurons with synapses.
-    pub fn new(creature: &CreatureJson) -> Self {
-        let mut incoming: HashMap<String, usize> = HashMap::new();
-        let mut outgoing: HashMap<String, usize> = HashMap::new();
+    pub fn new(creature: &'a CreatureJson) -> Self {
+        let mut incoming: HashMap<&'a str, usize> = HashMap::new();
+        let mut outgoing: HashMap<&'a str, usize> = HashMap::new();
 
         for synapse in &creature.synapses {
-            *incoming.entry(synapse.to_uuid.clone()).or_default() += 1;
-            *outgoing.entry(synapse.from_uuid.clone()).or_default() += 1;
+            *incoming.entry(synapse.to_uuid.as_str()).or_default() += 1;
+            *outgoing.entry(synapse.from_uuid.as_str()).or_default() += 1;
         }
 
         Self { incoming, outgoing }

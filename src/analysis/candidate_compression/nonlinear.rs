@@ -29,10 +29,11 @@ const NONLINEAR_SQUASH_FUNCTIONS: &[&str] = &["TANH", "GELU"];
 /// If the target neuron already uses a non-linear squash (TANH or GELU), use
 /// that. Otherwise default to TANH (matching fan-in module behaviour).
 fn select_nonlinear_squash(creature: &CreatureJson, target_uuid: &str) -> &'static str {
+    // Issue #983: Squash strings are already uppercase at load time (Issue #771),
+    // so compare directly without allocating via `to_uppercase()`.
     if let Some(target) = creature.neurons.iter().find(|n| n.uuid == target_uuid) {
-        let squash = target.squash.to_uppercase();
         for &s in NONLINEAR_SQUASH_FUNCTIONS {
-            if squash == s {
+            if target.squash == s {
                 return s;
             }
         }
