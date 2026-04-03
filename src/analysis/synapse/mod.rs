@@ -20,7 +20,7 @@
 //!
 //! ## Module Structure (Issue #482, #802)
 //!
-//! - `scoring` — Improvement calculation, saturation-aware simulation, boosting
+//! - `scoring` — Scoring pipeline (Issue #982: split into `boost_functions`, `improvement`, `discounting`)
 //! - `candidate_generation` — Sample building, locality grouping, ordered neurons
 //! - `gpu_evaluation` — Batched GPU evaluation orchestration
 //!   - `relu_evaluation` — `ReLU` candidate evaluation (split by error sign)

@@ -113,7 +113,11 @@ src/
 │   │   │   ├── evaluation.rs     # GPU work submission, result collection, candidate processing
 │   │   │   ├── candidate_selection.rs # Epistatic, synergistic, redundant path detection
 │   │   │   └── statistics.rs     # Source filtering, record loading, sample building
-│   │   ├── scoring.rs        # Improvement calculation, boosting
+│   │   ├── scoring/           # Scoring pipeline (Issue #982)
+│   │   │   ├── mod.rs            # Re-exports for backward compatibility
+│   │   │   ├── boost_functions.rs # Source/target/activation type boosts
+│   │   │   ├── improvement.rs    # Core improvement calculation, candidate dedup
+│   │   │   └── discounting.rs    # Pessimism discounting, prediction calibration
 │   │   ├── gpu_evaluation.rs # GPU batch orchestration
 │   │   ├── candidate_generation.rs # Sample building, locality grouping
 │   │   ├── filtering.rs      # Candidate filtering, deduplication
