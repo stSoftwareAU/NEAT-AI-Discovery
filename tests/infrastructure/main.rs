@@ -20,4 +20,5 @@ mod issue_832_deadlock_stress;
 mod issue_836_deadlock_abort;
 mod issue_837_lock_contention_tracing;
 mod issue_874_module_split_backward_compat;
+mod issue_988_graceful_gpu_error;
 mod observability;

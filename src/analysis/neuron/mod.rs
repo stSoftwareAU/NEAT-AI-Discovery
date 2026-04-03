@@ -94,12 +94,14 @@ pub(crate) fn analyze_neurons_with_cache(
     ));
 
     let deadline = build_deadline(input.analysis_deadline_ms);
-    // GPU is always required - TypeScript layer calls check_gpu_available() and skips
-    // discovery entirely on machines without GPU. Reaching here without GPU is a bug.
-    assert!(
-        GpuAnalyzer::gpu_is_available(),
-        "Discovery logic called without GPU - check_gpu_available should have prevented this"
-    );
+    // GPU is required for analysis. Return a structured error instead of panicking
+    // so the TypeScript layer receives a JSON response it can handle gracefully.
+    if !GpuAnalyzer::gpu_is_available() {
+        return Err(crate::ffi_types::DiscoveryError::GpuUnavailable {
+            reason: "No compatible GPU adapter found on this system".to_string(),
+        }
+        .into());
+    }
     let gpu_used = true;
     let analysis_timed_out = Arc::new(AtomicBool::new(false));
 

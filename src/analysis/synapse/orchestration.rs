@@ -66,10 +66,14 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     let total_focus_count = focus_order.len();
     let completed_count = Arc::new(AtomicUsize::new(0));
 
-    assert!(
-        GpuAnalyzer::gpu_is_available(),
-        "Discovery logic called without GPU - check_gpu_available should have prevented this"
-    );
+    // GPU is required for analysis. Return a structured error instead of panicking
+    // so the TypeScript layer receives a JSON response it can handle gracefully.
+    if !GpuAnalyzer::gpu_is_available() {
+        return Err(crate::ffi_types::DiscoveryError::GpuUnavailable {
+            reason: "No compatible GPU adapter found on this system".to_string(),
+        }
+        .into());
+    }
 
     // Phase 3: Shared atomic state for parallel processing (lock-free)
     let metadata = Arc::new(AtomicMetadata::new());
