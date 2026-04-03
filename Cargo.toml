@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.72.18"
+version = "0.72.19"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -138,6 +138,10 @@ harness = false
 
 [[bench]]
 name = "impact_uuid_cloning"
+harness = false
+
+[[bench]]
+name = "analysis_pipeline_clones"
 harness = false
 
 [profile.release]
