@@ -74,7 +74,9 @@ fn analyze_parallel_returns_structured_error_when_no_gpu() {
             ],
             "synapses": [
                 {"fromUuid": "input-1", "toUuid": "output-1", "weight": 1.0}
-            ]
+            ],
+            "input": 1,
+            "output": 1
         },
         "focusNeurons": ["output-1"],
         "maxSynapseCandidates": 10,
