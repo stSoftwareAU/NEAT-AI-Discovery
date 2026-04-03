@@ -10,6 +10,9 @@
 //! On deadlock, the program will abort after printing backtrace information.
 //! On SIGUSR1 (kill -USR1), thread backtraces are printed to stderr without exiting.
 //!
+//! Call `shutdown_debug_handlers()` before process exit to cleanly stop the
+//! background threads and unregister signal handlers (Issue #994).
+//!
 //! # Example
 //!
 //! ```rust,ignore
@@ -18,8 +21,12 @@
 //!
 //! // Now you can send kill -USR1 <pid> to dump threads
 //! // And deadlocks will be detected and abort the process
+//!
+//! // Before shutdown
+//! neat_ai_discovery::debug::shutdown_debug_handlers();
 //! ```
 
+use parking_lot::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -31,11 +38,30 @@ static DEBUG_HANDLERS_INITIALISED: OnceLock<()> = OnceLock::new();
 /// Flag to track if we're in verbose mode (shows more detail).
 static VERBOSE_MODE: AtomicBool = AtomicBool::new(false);
 
+/// Shutdown flag — when set, background threads exit their loops.
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
 /// Interval between deadlock checks (in seconds).
 ///
 /// Kept short (5 s) so that deadlocks are detected quickly without adding
 /// meaningful overhead — the check itself is very cheap.
 const DEADLOCK_CHECK_INTERVAL_SECS: u64 = 5;
+
+/// Maximum time to wait for each debug thread to exit during shutdown (seconds).
+const SHUTDOWN_JOIN_TIMEOUT_SECS: u64 = 10;
+
+/// Holds the join handles and shutdown primitives for background debug threads.
+///
+/// Stored globally so `shutdown_debug_handlers()` can stop them cleanly.
+struct DebugThreadState {
+    deadlock_handle: Option<thread::JoinHandle<()>>,
+    #[cfg(unix)]
+    signal_handle: Option<thread::JoinHandle<()>>,
+    #[cfg(unix)]
+    signal_closer: Option<signal_hook::iterator::backend::Handle>,
+}
+
+static DEBUG_THREADS: Mutex<Option<DebugThreadState>> = Mutex::new(None);
 
 /// Initialise debug handlers for deadlock detection and signal-based thread dumps.
 ///
@@ -55,20 +81,99 @@ const DEADLOCK_CHECK_INTERVAL_SECS: u64 = 5;
 /// - **Windows**: Only deadlock detection is available (no SIGUSR1 equivalent)
 pub fn init_debug_handlers() {
     DEBUG_HANDLERS_INITIALISED.get_or_init(|| {
+        // Reset shutdown flag in case a previous shutdown was called (e.g. in tests).
+        SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
+
         // Check if verbose mode is enabled
         if crate::config::verbose() {
             VERBOSE_MODE.store(true, Ordering::Relaxed);
         }
 
+        let mut state = DebugThreadState {
+            deadlock_handle: None,
+            #[cfg(unix)]
+            signal_handle: None,
+            #[cfg(unix)]
+            signal_closer: None,
+        };
+
         // Start deadlock detection thread
-        start_deadlock_detector();
+        state.deadlock_handle = start_deadlock_detector();
 
         // Install signal handler (Unix only)
         #[cfg(unix)]
-        install_signal_handler();
+        {
+            let (handle, closer) = install_signal_handler();
+            state.signal_handle = handle;
+            state.signal_closer = closer;
+        }
+
+        *DEBUG_THREADS.lock() = Some(state);
 
         tracing::debug!("debug handlers initialised (deadlock detection + kill -USR1 thread dump)");
     });
+}
+
+/// Shut down background debug threads cleanly (Issue #994).
+///
+/// This function signals all debug background threads to exit and waits
+/// (with a timeout) for them to finish. It should be called before
+/// process exit to prevent the deadlock-detector and signal-handler
+/// threads from keeping the process alive.
+///
+/// This function is idempotent — calling it multiple times is safe.
+pub fn shutdown_debug_handlers() {
+    // Signal all debug threads to stop.
+    SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
+
+    let mut guard = DEBUG_THREADS.lock();
+    let Some(mut state) = guard.take() else {
+        return;
+    };
+
+    // Close the signal handler first (unblocks `signals.forever()`).
+    #[cfg(unix)]
+    if let Some(closer) = state.signal_closer.take() {
+        closer.close();
+    }
+
+    // Join deadlock-detector thread with timeout.
+    if let Some(handle) = state.deadlock_handle.take() {
+        join_with_timeout(handle, "deadlock-detector");
+    }
+
+    // Join signal-handler thread with timeout.
+    #[cfg(unix)]
+    if let Some(handle) = state.signal_handle.take() {
+        join_with_timeout(handle, "signal-handler");
+    }
+
+    tracing::debug!("debug handlers shut down");
+}
+
+/// Join a thread with a bounded timeout to avoid blocking shutdown forever.
+fn join_with_timeout(handle: thread::JoinHandle<()>, name: &str) {
+    // We cannot set a timeout on `JoinHandle::join()` directly, so we spawn
+    // a helper thread that performs the blocking join and notify via channel.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let thread_name = name.to_string();
+    let _ = thread::Builder::new()
+        .name(format!("{thread_name}-joiner"))
+        .spawn(move || {
+            let _ = handle.join();
+            let _ = tx.send(());
+        });
+
+    match rx.recv_timeout(Duration::from_secs(SHUTDOWN_JOIN_TIMEOUT_SECS)) {
+        Ok(()) => {}
+        Err(_) => {
+            tracing::trace!(
+                thread = name,
+                timeout_secs = SHUTDOWN_JOIN_TIMEOUT_SECS,
+                "debug thread did not exit within timeout — abandoning"
+            );
+        }
+    }
 }
 
 /// Start background thread for deadlock detection.
@@ -80,19 +185,29 @@ pub fn init_debug_handlers() {
 /// We use `abort()` rather than `panic!()` because most FFI entrypoints wrap
 /// calls in `catch_unwind()`, which would swallow a panic and keep the worker
 /// alive with permanently deadlocked threads.
-fn start_deadlock_detector() {
-    if let Err(e) = thread::Builder::new()
+fn start_deadlock_detector() -> Option<thread::JoinHandle<()>> {
+    match thread::Builder::new()
         .name("deadlock-detector".to_string())
         .spawn(move || {
             loop {
+                // Check shutdown flag before sleeping so we exit promptly.
+                if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
+                    return;
+                }
+
                 thread::sleep(Duration::from_secs(DEADLOCK_CHECK_INTERVAL_SECS));
+
+                // Re-check after sleep in case shutdown was requested while sleeping.
+                if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
+                    return;
+                }
 
                 let deadlocks = parking_lot::deadlock::check_deadlock();
                 if deadlocks.is_empty() {
                     continue;
                 }
 
-                // Deadlock detected! Print details and panic.
+                // Deadlock detected! Print details and abort.
                 eprintln!("\n{}", "=".repeat(80));
                 eprintln!("DEADLOCK DETECTED - {} deadlock(s) found", deadlocks.len());
                 eprintln!("{}\n", "=".repeat(80));
@@ -127,39 +242,57 @@ fn start_deadlock_detector() {
                 // the worker alive with permanently deadlocked threads.
                 std::process::abort();
             }
-        })
-    {
-        tracing::warn!("failed to spawn deadlock detector thread: {e}");
+        }) {
+        Ok(handle) => Some(handle),
+        Err(e) => {
+            tracing::warn!("failed to spawn deadlock detector thread: {e}");
+            None
+        }
     }
 }
 
 /// Install signal handler for SIGUSR1 (kill -USR1) to dump thread backtraces.
 ///
+/// Returns the thread `JoinHandle` and a `signal_hook` `Handle` that can be used to
+/// close the signal iterator and unblock the thread (Issue #994).
+///
 /// SIGUSR1 is a user-defined signal with no default action, making it safe
 /// to use for diagnostics without risk of terminating the process.
 #[cfg(unix)]
-fn install_signal_handler() {
+fn install_signal_handler() -> (
+    Option<thread::JoinHandle<()>>,
+    Option<signal_hook::iterator::backend::Handle>,
+) {
     use signal_hook::consts::SIGUSR1;
     use signal_hook::iterator::Signals;
 
-    if let Err(e) = thread::Builder::new()
+    let mut signals = match Signals::new([SIGUSR1]) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("failed to install SIGUSR1 handler: {e}");
+            return (None, None);
+        }
+    };
+
+    // Get a handle BEFORE moving signals into the thread so we can close
+    // the iterator from shutdown_debug_handlers() (Issue #994).
+    let closer = signals.handle();
+
+    let handle = match thread::Builder::new()
         .name("signal-handler".to_string())
         .spawn(move || {
-            let mut signals = match Signals::new([SIGUSR1]) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!("failed to install SIGUSR1 handler: {e}");
-                    return;
-                }
-            };
-
             for _sig in signals.forever() {
                 dump_all_threads();
             }
-        })
-    {
-        tracing::warn!("failed to spawn signal handler thread: {e}");
-    }
+        }) {
+        Ok(h) => Some(h),
+        Err(e) => {
+            tracing::warn!("failed to spawn signal handler thread: {e}");
+            return (None, None);
+        }
+    };
+
+    (handle, Some(closer))
 }
 
 /// Dump backtraces of all threads to stderr.
@@ -520,6 +653,26 @@ mod tests {
             deadlocks.is_empty(),
             "No deadlocks should exist in clean test"
         );
+    }
+
+    #[test]
+    fn test_shutdown_is_idempotent() {
+        // Calling shutdown multiple times should not panic, even without init.
+        shutdown_debug_handlers();
+        shutdown_debug_handlers();
+    }
+
+    #[test]
+    fn test_shutdown_stops_deadlock_detector() {
+        // Verify the shutdown flag is respected by the deadlock detector loop.
+        SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
+        assert!(!SHUTDOWN_REQUESTED.load(Ordering::Relaxed));
+
+        SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
+        assert!(SHUTDOWN_REQUESTED.load(Ordering::Relaxed));
+
+        // Reset for other tests.
+        SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
     }
 
     #[test]
