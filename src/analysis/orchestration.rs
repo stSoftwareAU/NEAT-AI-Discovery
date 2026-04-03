@@ -196,6 +196,16 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         });
     }
 
+    // Early GPU availability check (Issue #988): fail fast with a structured
+    // error before attempting expensive parquet I/O. The per-module checks in
+    // synapse/neuron analysis are retained as a defence-in-depth measure.
+    if !super::gpu::GpuAnalyzer::gpu_is_available() {
+        return Err(crate::ffi_types::DiscoveryError::GpuUnavailable {
+            reason: "No compatible GPU adapter found on this system".to_string(),
+        }
+        .into());
+    }
+
     crate::watchdog::beat("analysis::analyze_all → loading parquet cache");
 
     // Pre-load ALL records from parquet in one pass. This is MUCH faster than
