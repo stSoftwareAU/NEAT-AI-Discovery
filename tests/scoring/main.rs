@@ -23,3 +23,4 @@ mod issue_888_weight_constraints;
 mod issue_891_prediction_calibration;
 mod issue_905_activation_aware_weight_constraints;
 mod issue_909_identity_activation_penalty;
+mod issue_982_scoring_module_split;
