@@ -304,6 +304,26 @@ pub unsafe extern "C" fn get_calibration_summary(
 }
 
 // ============================================================================
+// Library cleanup (Issue #994)
+// ============================================================================
+
+/// Shut down background threads spawned by the library (Issue #994).
+///
+/// Call this function before process exit to cleanly stop the deadlock-detector
+/// and signal-handler threads. Without this call, those threads may keep the
+/// host process alive after all FFI work has finished.
+///
+/// This function is safe to call multiple times and from any thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn cleanup_discovery_lib() {
+    use std::panic;
+
+    let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        crate::debug::shutdown_debug_handlers();
+    }));
+}
+
+// ============================================================================
 // Library version
 // ============================================================================
 
