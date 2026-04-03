@@ -55,7 +55,12 @@ src/
 │   ├── schema.rs             # Schema definitions and validation
 │   ├── writer.rs             # Parquet writing and serialisation
 │   └── reader.rs             # Parquet reading and deserialisation
-├── export.rs                 # Data export utilities
+├── export/                   # Visualisation snapshot export (Issue #980)
+│   ├── mod.rs                # Public API, re-exports
+│   ├── types.rs              # Snapshot structs, export options, stats types
+│   ├── stats.rs              # Aggregation functions, JSON-safe float conversion
+│   ├── snapshot.rs           # Main export_visualisation_snapshot pipeline
+│   └── timestamp.rs          # chrono_lite_now, leap year calculation
 ├── discovery_history.rs      # Historical tracking
 ├── debug.rs                  # Debugging utilities
 ├── observability/             # Observability / logging (Issue #874)
