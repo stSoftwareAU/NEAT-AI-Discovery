@@ -62,16 +62,20 @@ pub(crate) fn build_discovery_module_specs(
     modules
 }
 
-/// Dispatch all discovery modules and merge results into the synapse result.
-pub(crate) fn dispatch_and_merge_discovery_modules(
-    syn: &mut shared::AnalyzeSynapsesResult,
+/// Prepare and run discovery module detection phases without merging (Issue #1004).
+///
+/// Builds module specs, allocates candidate budgets, and runs all detection
+/// closures in parallel. Returns the detection results for deferred merging
+/// via [`discovery_dispatch::merge_discovery_module_results`].
+///
+/// This separation allows the detection phase to overlap with other concurrent
+/// work (e.g., candidate compression) before merging results sequentially.
+pub(crate) fn prepare_and_detect_discovery_modules(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
-    max_candidates: Option<usize>,
-    diversify: bool,
     tracker: &ModuleOutcomeTracker,
-) {
+) -> discovery_dispatch::DiscoveryModuleDetectionResults {
     // Issue #754: Pre-compute topology cache once for all detection modules.
     let topo = Arc::new(CreatureTopologyCache::new(creature));
     let mut modules = build_discovery_module_specs(creature, hidden_neurons, shared_cache, &topo);
@@ -86,13 +90,7 @@ pub(crate) fn dispatch_and_merge_discovery_modules(
         }
     }
 
-    discovery_dispatch::run_discovery_modules_parallel(
-        syn,
-        modules,
-        max_candidates,
-        diversify,
-        tracker,
-    );
+    discovery_dispatch::detect_discovery_modules_parallel(modules)
 }
 
 /// Synthesise cross-detection candidates for co-flagged neurons (Issue #963).
