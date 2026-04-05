@@ -17,8 +17,8 @@ use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
 
 use super::shared::{AnalyzeAllResult, AnalyzeNeuronsResult, AnalyzeSynapsesResult};
 use super::{
-    cache, candidate_aggregation, candidate_compression, module_dispatch_specs, module_weights,
-    neuron, neuron_fingerprint, synapse, utils,
+    cache, candidate_aggregation, candidate_compression, discovery_dispatch, module_dispatch_specs,
+    module_weights, neuron, neuron_fingerprint, synapse, utils,
 };
 
 pub(crate) fn run_optional_analysis<T>(
@@ -299,45 +299,25 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
     }
 
-    // Issue #921: Compress compatible IDENTITY candidates into coordinated candidates.
-    // Issue #922: Also compress using non-linear squash functions (TANH, GELU).
-    if let Some(syn) = synapse_result.as_mut() {
-        let (identity_compressed, nonlinear_compressed) = rayon::join(
-            || {
-                candidate_compression::compress_identity_candidates(
-                    &syn.helpful_synapses,
-                    &input.creature,
-                )
-            },
-            || {
-                candidate_compression::compress_nonlinear_candidates(
-                    &syn.helpful_synapses,
-                    &input.creature,
-                )
-            },
-        );
-
-        let mut all_compressed = identity_compressed;
-        all_compressed.extend(nonlinear_compressed);
-
-        if !all_compressed.is_empty() {
-            candidate_aggregation::merge_coordinated_structural_replacements(
-                syn,
-                all_compressed,
-                input.max_synapse_candidates,
-                input.analysis_deadline_ms.is_some(),
-            );
-        }
-    }
-
     // Issue #792: Resolve the module outcome tracker from input or use a default.
     let tracker = input.module_outcome_tracker.clone().unwrap_or_default();
 
-    // Issue #375 / Issue #419: Discovery module dispatch using parallel pattern.
+    // Issue #1004: Overlap candidate compression with discovery module detection.
+    //
+    // Both compression (reads `helpful_synapses` immutably) and discovery module
+    // detection (reads creature/cache, runs ~48 detection closures) are independent
+    // in their detection phases. We run them concurrently via `rayon::join`, then
+    // merge results sequentially (compression first, then discovery modules) to
+    // preserve deterministic ordering.
     if let Some(syn) = synapse_result.as_mut() {
         let max_candidates = input.max_synapse_candidates;
         let diversify = input.analysis_deadline_ms.is_some();
 
+        // Snapshot data needed by compression (immutable reads).
+        let helpful_synapses_snapshot = syn.helpful_synapses.clone();
+        let creature_for_compression = input.creature.clone();
+
+        // Data needed by discovery module detection.
         let creature = Arc::new(input.creature.clone());
         let hidden_neurons: Arc<Vec<(String, String, f32)>> = Arc::new(
             input
@@ -359,11 +339,55 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 .collect(),
         );
 
-        module_dispatch_specs::dispatch_and_merge_discovery_modules(
+        // Issue #1004: Run compression detection and discovery module detection
+        // concurrently. The heavier discovery dispatch (~48 parallel modules)
+        // overlaps with the lighter compression work.
+        let (all_compressed, discovery_results) = rayon::join(
+            || {
+                // Issue #921 / #922: Compress IDENTITY and non-linear candidates.
+                let (identity_compressed, nonlinear_compressed) = rayon::join(
+                    || {
+                        candidate_compression::compress_identity_candidates(
+                            &helpful_synapses_snapshot,
+                            &creature_for_compression,
+                        )
+                    },
+                    || {
+                        candidate_compression::compress_nonlinear_candidates(
+                            &helpful_synapses_snapshot,
+                            &creature_for_compression,
+                        )
+                    },
+                );
+                let mut all = identity_compressed;
+                all.extend(nonlinear_compressed);
+                all
+            },
+            || {
+                // Issue #375 / #419: Discovery module detection phase only.
+                module_dispatch_specs::prepare_and_detect_discovery_modules(
+                    &creature,
+                    &hidden_neurons,
+                    &shared_cache,
+                    &tracker,
+                )
+            },
+        );
+
+        // Sequential merge phase: compression results first, then discovery modules.
+        // This preserves the same ordering as the previous sequential pipeline.
+        if !all_compressed.is_empty() {
+            candidate_aggregation::merge_coordinated_structural_replacements(
+                syn,
+                all_compressed,
+                max_candidates,
+                diversify,
+            );
+        }
+
+        discovery_dispatch::merge_discovery_module_results(
             syn,
-            &creature,
-            &hidden_neurons,
-            &shared_cache,
+            discovery_results,
             max_candidates,
             diversify,
             &tracker,
