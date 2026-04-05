@@ -12,6 +12,7 @@ mod fixed_vs_optimised_params;
 mod impact_caching;
 mod impact_calculation_production;
 mod impact_squash;
+mod issue_1003_parallel_candidate_compression;
 mod issue_199_dynamic_constant_source_threshold;
 mod issue_201_batched_activation;
 mod issue_204_activation_frequency_ranking;
