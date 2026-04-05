@@ -3,6 +3,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod issue_1002_concurrent_analysis;
 mod issue_186_rwlock_cache;
 mod issue_196_cache_locality_benchmark;
 mod issue_228_zero_copy_buffer;

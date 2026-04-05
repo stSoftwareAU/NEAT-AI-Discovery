@@ -49,35 +49,6 @@ fn watchdog_beats_do_not_claim_finished_when_analysis_is_skipped() {
 }
 
 #[test]
-fn choose_deadline_order_is_deterministic_for_fixed_inputs() {
-    let now_ms = 1_700_000_000_000u64;
-    assert_eq!(
-        choose_deadline_order_synapse_first(Some(123), now_ms),
-        choose_deadline_order_synapse_first(Some(123), now_ms)
-    );
-}
-
-#[test]
-fn choose_deadline_order_varies_over_time() {
-    // The chooser mixes in epoch-ms, so adjacent milliseconds should flip the result.
-    let now_ms = 1_700_000_000_000u64;
-    assert_ne!(
-        choose_deadline_order_synapse_first(Some(0), now_ms),
-        choose_deadline_order_synapse_first(Some(0), now_ms + 1)
-    );
-}
-
-#[test]
-fn choose_deadline_order_can_be_controlled_by_seed() {
-    // With a fixed time, different seeds should be able to flip ordering.
-    let now_ms = 1_700_000_000_000u64;
-    assert_ne!(
-        choose_deadline_order_synapse_first(Some(0), now_ms),
-        choose_deadline_order_synapse_first(Some(1), now_ms)
-    );
-}
-
-#[test]
 fn postprocess_reapplies_max_synapse_candidates_after_coordinated_merge() {
     // Regression test (7-Jan-2026):
     // Neuron→coordinated conversion happens after synapse analysis truncation, so we must

@@ -66,6 +66,21 @@ pub(crate) fn analyze_neurons_with_cache(
     input: &AnalyzeNeuronsInput,
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeNeuronsResult> {
+    let deadline = build_deadline(input.analysis_deadline_ms);
+    let gpu_queue = Arc::new(GpuWorkQueue::new()?.with_deadline(deadline));
+    analyze_neurons_with_cache_and_gpu_queue(input, cache, gpu_queue)
+}
+
+/// Neuron analysis with a shared GPU work queue (Issue #1002).
+///
+/// This variant accepts an externally created `GpuWorkQueue`, allowing the
+/// caller to share a single GPU thread between synapse and neuron analyses
+/// when they run concurrently.
+pub fn analyze_neurons_with_cache_and_gpu_queue(
+    input: &AnalyzeNeuronsInput,
+    cache: Arc<RecordCache>,
+    gpu_queue: Arc<GpuWorkQueue>,
+) -> Result<AnalyzeNeuronsResult> {
     // v0.1.134: Return ALL positive improvements.
     // NEAT-AI applies the cost-of-growth gate during evaluation.
     let threshold = 0.0;
@@ -149,14 +164,6 @@ pub(crate) fn analyze_neurons_with_cache(
     let used_inputs_arc = Arc::new(prep.used_inputs);
 
     // Issue #486 / #192: Error values collected lock-free via Rayon fold/reduce (Issue #834).
-
-    // Create a shared GPU work queue ONCE before the parallel loop.
-    // This eliminates the overhead of creating multiple GPU devices (one per thread).
-    // All GPU operations are processed by a single dedicated thread, improving utilisation.
-    // CRITICAL: The GpuAnalyzer is created INSIDE the GPU thread to avoid wgpu deadlocks.
-    // Issue #953: Propagate the analysis deadline so GpuEvaluator trait calls use
-    // adaptive timeouts instead of the 5-minute maximum, preventing liveness stalls.
-    let gpu_queue = Arc::new(GpuWorkQueue::new()?.with_deadline(deadline));
 
     // Process each focus neuron in parallel. Deadline checks happen at the start of
     // each focus target so that once analysis for a neuron begins, we prefer to
