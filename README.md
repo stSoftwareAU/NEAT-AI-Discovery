@@ -219,6 +219,7 @@ Modules that detect issues with synapse weights and connections.
 | [Noise-to-Signal](docs/DISCOVERY_TYPES.md#noise-to-signal-ratio-detection) | High noise-to-signal neurons and synapses | `removeNeuron`, `removeSynapse`, `setWeight` |
 | [Fan-in Polarity Conflict](docs/DISCOVERY_TYPES.md#fan-in-polarity-conflict-detection) | Conflicting positive/negative incoming weights | `addNeuron`, `addSynapse` |
 | [Gradient Discovery](docs/DISCOVERY_TYPES.md#gradient-based-synapse-adjustment) | Gradient-directed weight adjustments | `setWeight` |
+| [Compound Degradation](docs/DISCOVERY_TYPES.md#compound-degradation-detection) | Coordinated bias+weight degradation | `coordinatedStructural` |
 
 ### 🏗️ Structural & Topology
 
@@ -238,6 +239,8 @@ Modules that detect structural and topological issues in the network.
 | [Hard Sample Cluster](docs/DISCOVERY_TYPES.md#hard-sample-cluster-detection) | Observation groups consistently high-error | `addNeuron`, `addSynapse` |
 | [Multi-Hop](docs/DISCOVERY_TYPES.md#multi-hop-candidate-analysis) | Deeper structural improvements | `addNeuron`, `addSynapse` |
 | [Epistatic Pairs](docs/DISCOVERY_TYPES.md#combo-successful) | Complementary neuron pair interactions | `addSynapse` |
+| [Fan-in Candidates](docs/DISCOVERY_TYPES.md#fan-in-candidates) | Correlated input pairs converging to hidden neuron | `coordinatedStructural` |
+| [Cross-Detection Synthesis](docs/DISCOVERY_TYPES.md#cross-detection-synthesis) | Combined remediation for multi-flagged neurons | `coordinatedStructural` |
 
 ### 📊 Range & Input Analysis
 
@@ -261,6 +264,7 @@ Modules that score candidate quality and proactively recommend changes.
 | [Add Neurons](docs/DISCOVERY_TYPES.md#add-neurons) | Beneficial intermediate neurons | `addNeuron` |
 | [Add Synapses](docs/DISCOVERY_TYPES.md#add-synapses) | Beneficial direct connections | `addSynapse` |
 | [Remove Low-Impact](docs/DISCOVERY_TYPES.md#remove-low-impact-neurons) | Neurons below cost of growth | `removeNeuron` |
+| [Batch-Successful Grouping](docs/DISCOVERY_TYPES.md#batch-successful-grouping) | High-confidence candidates grouped for batch testing | `coordinatedStructural` |
 
 For detection criteria, recommended actions, output format, and production
 success rates, see [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md).

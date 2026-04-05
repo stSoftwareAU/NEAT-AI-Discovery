@@ -42,6 +42,12 @@ src/
 │   ├── analysis.rs           # Analysis business logic (analyze_parallel, rank_focus, calibration)
 │   ├── gpu.rs                # GPU probe and version business logic
 │   └── utilities.rs          # Utility business logic (merge, read, export)
+├── config/                   # Central environment variable configuration (Issue #717, #981)
+│   ├── mod.rs                # Public API, re-exports, env var documentation
+│   ├── user_facing.rs        # User-facing configuration accessors
+│   ├── detection.rs          # Detection-specific configuration helpers
+│   ├── observability.rs      # Observability configuration (logging, tracing)
+│   └── helpers.rs            # Shared parsing and validation helpers
 ├── types.rs                  # Core type definitions
 ├── activations.rs            # Activation function calculations
 ├── record/                   # Discovery data recording (Issue #604, #942)
@@ -108,6 +114,8 @@ src/
 │   │   └── gpu_info.rs       # GpuAdapterInfo, GpuDeviceType, ZeroCopyBufferConfig
 │   ├── synapse/              # Synapse analysis (Issue #482)
 │   │   ├── mod.rs            # Public API, entry points, orchestration
+│   │   ├── orchestration.rs  # Top-level synapse analysis orchestration
+│   │   ├── preparation.rs    # Focus target filtering, source loading
 │   │   ├── target_analysis/  # Per-target analysis loop (Issue #599)
 │   │   │   ├── mod.rs            # Public API, types, main analysis loop
 │   │   │   ├── evaluation.rs     # GPU work submission, result collection, candidate processing
@@ -117,12 +125,21 @@ src/
 │   │   │   ├── mod.rs            # Re-exports for backward compatibility
 │   │   │   ├── boost_functions.rs # Source/target/activation type boosts
 │   │   │   ├── improvement.rs    # Core improvement calculation, candidate dedup
-│   │   │   └── discounting.rs    # Pessimism discounting, prediction calibration
+│   │   │   ├── discounting.rs    # Pessimism discounting, prediction calibration
+│   │   │   ├── test_helpers.rs   # Shared test helpers for scoring tests
+│   │   │   └── tests.rs         # Unit tests for scoring pipeline
 │   │   ├── gpu_evaluation.rs # GPU batch orchestration
+│   │   ├── activation_evaluation.rs # Activation function evaluation for synapses
+│   │   ├── activation_subset_evaluation.rs # Subset-based activation evaluation
+│   │   ├── relu_evaluation.rs # ReLU-specific synapse evaluation
+│   │   ├── holdout_validation.rs # Hold-out validation for multi-weight search
 │   │   ├── candidate_generation.rs # Sample building, locality grouping
 │   │   ├── filtering.rs      # Candidate filtering, deduplication
 │   │   ├── structural_patterns.rs # Coordinated structural discovery
-│   │   └── post_processing.rs # Impact discounting, sorting, metadata
+│   │   ├── post_processing.rs # Impact discounting, sorting, metadata
+│   │   ├── metadata.rs       # Synapse analysis metadata types
+│   │   ├── results.rs        # Result types and assembly
+│   │   └── tests.rs          # Unit tests for synapse analysis
 │   ├── neuron/               # Neuron analysis (Issue #598)
 │   │   ├── mod.rs            # Public API, orchestration, parallel loop
 │   │   ├── preparation.rs    # Focus target filtering, neuron type maps, source loading
@@ -153,7 +170,9 @@ src/
 │   │   ├── bottleneck.rs     # Bottleneck neuron detection
 │   │   ├── bounded_range.rs  # Bounded range detection
 │   │   ├── co_adaptation.rs  # Redundant neuron pair co-adaptation detection
+│   │   ├── compound_degradation.rs # Compound bias+weight degradation detection (Issue #929)
 │   │   ├── correlated_error.rs # Correlated error patterns
+│   │   ├── cross_detection_synthesis.rs # Cross-detection candidate synthesis (Issue #963)
 │   │   ├── dead_neuron.rs    # Dead neuron detection
 │   │   ├── dormant_synapse.rs # Dormant synapse detection
 │   │   ├── error_plateau.rs  # Output error stagnation plateau detection
@@ -198,6 +217,11 @@ src/
 │   │   │   ├── pre_screening.rs  # Residual analysis, synergistic detection
 │   │   │   ├── deduplication.rs  # Dominant-neuron deduplication (Issue #509)
 │   │   │   └── scoring.rs       # Interference detection, filtering (Issue #415)
+│   │   ├── batch_successful/  # Batch-successful candidate grouping (Issue #965)
+│   │   │   ├── mod.rs            # Public API, orchestration
+│   │   │   ├── detection.rs      # Batch candidate detection logic
+│   │   │   └── grouping.rs      # Non-conflicting candidate grouping
+│   │   ├── fan_in.rs          # Fan-in candidate generation (Issue #908)
 │   │   ├── multi_hop.rs      # Multi-hop candidate analysis
 │   │   ├── gradient_discovery.rs # Gradient-based synapse adjustment
 │   │   └── sample_weighted.rs # Sample-weighted discovery
@@ -218,6 +242,12 @@ src/
 │   │   ├── compressed_cache.rs # CompressedLruRecordCache (LZ4)
 │   │   ├── tiered_cache.rs   # TieredRecordCache, auto strategy selection
 │   │   └── serialisation.rs  # Binary serialisation, CompressedCacheEntry
+│   ├── candidate_compression/ # Candidate compression (Issue #939)
+│   │   ├── mod.rs            # Public API, re-exports
+│   │   ├── identity.rs       # IDENTITY candidate compression
+│   │   ├── nonlinear.rs      # Non-linear squash function compression (TANH, GELU)
+│   │   ├── grouping.rs       # Compatible candidate grouping
+│   │   └── gain_estimation.rs # Gain estimation for compressed candidates
 │   ├── streaming.rs          # Streaming parquet loading
 │   ├── discovery_dispatch.rs # Generic discovery module dispatch (Issue #375)
 │   ├── candidate_clustering.rs # Redundancy reduction
@@ -225,6 +255,7 @@ src/
 │   ├── candidate_cache.rs    # Candidate outcome cache for success/failure tracking
 │   ├── ensemble_scoring.rs   # Cross-module ensemble scoring (Issue #572)
 │   ├── module_weights.rs     # Per-module success rate tracking for adaptive weighting
+│   ├── scale_outcomes.rs     # Per-scale success rate tracking for weight variants (Issue #964)
 │   ├── neuron_fingerprint.rs # Neuron structural fingerprinting for incremental analysis
 │   ├── system.rs             # System utilities facade (memory, GPU tier detection)
 │   ├── early_termination.rs  # SPRT-based early stopping
@@ -254,20 +285,20 @@ src/
 │       └── platform.rs       # Platform setup
 │
 └── shaders/                  # WGSL compute shaders
-    ├── activation.wgsl
+    ├── activation.wgsl / activation_reduce.wgsl
     ├── helpful.wgsl / helpful_reduce.wgsl
     ├── harmful.wgsl / harmful_reduce.wgsl
     ├── bias.wgsl
     ├── matching.wgsl
-    └── relu.wgsl
+    └── relu.wgsl / relu_reduce.wgsl
 ```
 
 ### Other Key Directories
 
 | Directory | Purpose |
 |-----------|---------|
-| `tests/` | Integration tests (~242 files) |
-| `benches/` | Criterion benchmarks (22 suites) |
+| `tests/` | Integration tests (~277 files) |
+| `benches/` | Criterion benchmarks (28 suites) |
 | `examples/` | Standalone examples (parquet inspection, snapshot generation) |
 | `scripts/` | Build and install helpers (`runlib.sh`) |
 | `docs/` | Supplementary documentation and PR summaries |

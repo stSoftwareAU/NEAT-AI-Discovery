@@ -4,7 +4,7 @@ This document is the **single source of truth** for all discovery types used by
 NEAT-AI-Discovery. It covers detection criteria, recommended actions, candidate
 output format, and production success/failure rates.
 
-> **Last updated**: 20 Mar 2026
+> **Last updated**: 5 Apr 2026
 
 ## 📑 Table of Contents
 
@@ -38,6 +38,7 @@ output format, and production success/failure rates.
     - [Noise-to-Signal Ratio Detection](#noise-to-signal-ratio-detection)
     - [Fan-in Polarity Conflict Detection](#fan-in-polarity-conflict-detection)
     - [Gradient-Based Synapse Adjustment](#gradient-based-synapse-adjustment)
+    - [Compound Degradation Detection](#compound-degradation-detection)
   - Structural & Topology
     - [Bottleneck Neuron Detection](#bottleneck-neuron-detection)
     - [Correlated Error Pattern Detection](#correlated-error-pattern-detection)
@@ -51,6 +52,8 @@ output format, and production success/failure rates.
     - [Hard Sample Cluster Detection](#hard-sample-cluster-detection)
     - [Multi-Hop Candidate Analysis](#multi-hop-candidate-analysis)
     - [Combo Successful](#combo-successful)
+    - [Fan-in Candidates](#fan-in-candidates)
+    - [Cross-Detection Synthesis](#cross-detection-synthesis)
   - Range & Input Analysis
     - [Bounded Range Detection](#bounded-range-detection)
     - [Sentinel Gating Detection](#sentinel-gating-detection)
@@ -64,6 +67,7 @@ output format, and production success/failure rates.
     - [Remove Low-Impact Neurons](#remove-low-impact-neurons)
     - [Remove Harmful Synapse](#remove-harmful-synapse)
     - [Remove Neuron (High Error)](#remove-neuron-high-error)
+    - [Batch-Successful Grouping](#batch-successful-grouping)
 - [Coordinated Structural Candidates](#coordinated-structural-candidates)
 - [Production Success Rates](#production-success-rates)
 - [Analysis and Recommendations](#analysis-and-recommendations)
@@ -138,6 +142,7 @@ graph LR
 | [Noise-to-Signal](#noise-to-signal-ratio-detection) | `detection/noise_signal.rs` | #434 | `removeNeuron`, `removeSynapse`, `setWeight` | 🟢 Active |
 | [Fan-in Polarity Conflict](#fan-in-polarity-conflict-detection) | `detection/fanin_polarity_conflict.rs` | #641 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Gradient Discovery](#gradient-based-synapse-adjustment) | `recommendation/gradient_discovery.rs` | #421 | `setWeight` | 🟢 Active |
+| [Compound Degradation](#compound-degradation-detection) | `detection/compound_degradation.rs` | #929 | `coordinatedStructural` (`setBias` + `setWeight`) | 🟢 Active |
 
 ### 🏗️ Structural & Topology
 
@@ -155,6 +160,8 @@ graph LR
 | [Hard Sample Cluster](#hard-sample-cluster-detection) | `detection/hard_sample_cluster.rs` | #642 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Multi-Hop](#multi-hop-candidate-analysis) | `recommendation/multi_hop.rs` | #230 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Combo Successful](#combo-successful) | `recommendation/epistatic/` | #415 | Multiple | 🟡 Fixed |
+| [Fan-in Candidates](#fan-in-candidates) | `recommendation/fan_in.rs` | #908 | `coordinatedStructural` (`addNeuron` + `addSynapse`) | 🟢 Active |
+| [Cross-Detection Synthesis](#cross-detection-synthesis) | `detection/cross_detection_synthesis.rs` | #963 | `coordinatedStructural` (multiple) | 🟢 Active |
 
 ### 📐 Range & Input Analysis
 
@@ -176,6 +183,7 @@ graph LR
 | [Remove Low-Impact](#remove-low-impact-neurons) | `neuron/` | — | `removeNeuron` | 🟢 Active |
 | [Remove Harmful Synapse](#remove-harmful-synapse) | `synapse/` | #416 | `removeSynapse` | 🟢 Active |
 | [Remove Neuron (Error)](#remove-neuron-high-error) | `focus/` | #414 | `removeNeuron` | ⛔ Disabled |
+| [Batch-Successful Grouping](#batch-successful-grouping) | `recommendation/batch_successful/` | #965 | `coordinatedStructural` (multiple) | 🟢 Active |
 
 ### 🏷️ Status Legend
 
@@ -1395,6 +1403,36 @@ more accurate than correlation-based methods for predicting improvement directio
 
 ---
 
+### Compound Degradation Detection
+
+**Source**: `src/analysis/detection/compound_degradation.rs` (Issue #929)
+
+Detects coordinated degradations where multiple parameters (bias + weight) need
+simultaneous correction. Neither fix alone fully explains the performance loss —
+both must be restored together.
+
+**Detection criteria**:
+
+1. **Bias drift**: A hidden neuron has consistent, non-zero mean error suggesting
+   the bias is wrong.
+2. **Weight error correlation**: A synapse has error correlated with its source
+   activation, suggesting the weight is wrong.
+3. **Same forward path**: Both corrections are on the same forward path to an
+   output neuron.
+4. **Combined improvement**: The combined correction is predicted to improve the
+   creature's score.
+
+**Recommended actions**:
+
+- **SetBias**: Correct the neuron's operating point.
+- **SetWeight**: Correct the synapse's contribution.
+- Both applied atomically as a `coordinatedStructural` candidate.
+
+**Expected improvement**: Addresses cases where individual `setBias` or
+`setWeight` candidates fail because only part of the degradation is corrected.
+
+---
+
 ### Bounded Range Detection
 
 **Source**: `src/analysis/detection/bounded_range.rs` (Issue #395)
@@ -1775,6 +1813,91 @@ no saturation risk).
 **Note**: The fix is in the Rust library's epistatic detection module. NEAT-AI
 (TypeScript) may still need to be updated to take advantage of the improved
 candidate filtering.
+
+---
+
+### Fan-in Candidates
+
+**Source**: `src/analysis/recommendation/fan_in.rs` (Issue #908)
+
+Generates "fan-in" candidates where multiple inputs converge to a single hidden
+neuron. When correlated input pairs are detected — i.e. inputs whose activations
+jointly predict a target's error — a fan-in candidate is emitted.
+
+```text
+input-A --+
+          +--> [hidden (non-linear)] --> target
+input-B --+
+```
+
+**Detection method**:
+
+1. **Identify target neurons** (output, hidden) with error records.
+2. **Find correlated inputs**: For each target, find input neurons whose activation
+   correlates with the target error.
+3. **Check complementarity**: For each pair of correlated inputs, check whether they
+   have complementary activation patterns (low mutual correlation) — this indicates
+   an interaction effect.
+4. **Estimate improvement**: Use least-squares regression on the target error to
+   estimate combined improvement from the input pair.
+5. **Emit candidate**: `coordinatedStructural` with `addNeuron` (non-linear hidden)
+   + two `addSynapse` (inputs → hidden) + one `addSynapse` (hidden → target).
+
+**Activation preference**: Non-linear activations (TANH, GELU) are preferred because
+IDENTITY would reduce the fan-in to a linear combination, missing interaction effects.
+
+---
+
+### Cross-Detection Synthesis
+
+**Source**: `src/analysis/detection/cross_detection_synthesis.rs` (Issue #963)
+
+When multiple detection modules independently flag the same neuron, this module
+synthesises combined remediation candidates that address multiple issues
+simultaneously rather than generating independent single-issue candidates.
+
+**Synthesis rules** — compatible operation combinations:
+
+| Combination | Example Triggers |
+|-------------|-----------------|
+| `changeSquash` + `setBias` | Saturation + restricted range |
+| `changeSquash` + `setWeight` | Saturation + weight magnitude |
+| `removeNeuron` + `removeSynapse` | Dead neuron + dormant synapse |
+| `setBias` + `setWeight` | Bias perturbation + weight issue |
+
+**Incompatible combinations** (not synthesised):
+- `removeNeuron` + any modification (`changeSquash`, `setBias`, `setWeight`) —
+  cannot modify a neuron that is being removed.
+
+**Integration**: Called from `orchestration::analyze_all` after discovery modules
+run and before ensemble scoring. Synthesised candidates are added alongside (not
+replacing) the individual candidates from each module.
+
+---
+
+### Batch-Successful Grouping
+
+**Source**: `src/analysis/recommendation/batch_successful/` (Issue #965)
+
+Groups multiple individually high-confidence candidates into combined operations
+for batch application. Unlike epistatic pair detection (which finds synergistic
+pairs that individually fail), this module batches proven winners for combined
+testing.
+
+**Detection strategy**:
+
+1. **Evaluate individual candidates**: Source → target pairs from recorded data.
+2. **Identify high-confidence candidates**: Candidates with high predicted
+   improvement (individually successful).
+3. **Check for conflicts**: No duplicate source → target pairs allowed.
+4. **Group non-conflicting candidates**: Batches of 2–4 operations.
+5. **Apply discount**: `COORDINATED_OPERATION_DISCOUNT^(N-1)` via the merge pipeline.
+
+**Rationale**: If adding synapse A improves the score and adding synapse B improves
+the score, adding both A and B together may produce an even better result.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with multiple `addSynapse`
+operations grouped together.
 
 ---
 
