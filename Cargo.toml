@@ -144,6 +144,10 @@ harness = false
 name = "analysis_pipeline_clones"
 harness = false
 
+[[bench]]
+name = "pipeline_utilisation"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
