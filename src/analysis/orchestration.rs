@@ -1,13 +1,11 @@
 //! Top-level analysis orchestration (Issue #562).
 //!
 //! Contains the `analyze_all` entry point and its supporting helpers:
-//! - `choose_deadline_order_synapse_first` — randomised analysis ordering
 //! - `run_optional_analysis` — guarded analysis phase execution
-//! - `dispatch_analyses` — parameterised synapse/neuron dispatch (Issue #774)
+//! - `dispatch_analyses` — concurrent synapse/neuron dispatch (Issue #1002)
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use anyhow::Result;
 
@@ -22,23 +20,6 @@ use super::{
     cache, candidate_aggregation, candidate_compression, module_dispatch_specs, module_weights,
     neuron, neuron_fingerprint, synapse, utils,
 };
-
-/// Choose analysis ordering when deadline-constrained.
-///
-/// Rationale (2 Jan 2026):
-/// - Production discovery runs are deadline-constrained and repeated over time.
-/// - We randomise (time-vary) the order so that, across repeated runs, both analyses get a turn
-///   running first under the same global deadline.
-///
-/// Notes:
-/// - `random_seed` is included to allow reproducibility in tests and debugging.
-/// - We deliberately mix in the current time so repeated calls with the same seed can still vary.
-pub(crate) fn choose_deadline_order_synapse_first(random_seed: Option<u64>, now_ms: u64) -> bool {
-    // A tiny, deterministic "coin flip": parity of (seed XOR time).
-    //
-    // This is good enough for long-run fairness (50/50 over time) and is easy to test.
-    ((random_seed.unwrap_or(0) ^ now_ms) & 1) == 0
-}
 
 pub(crate) fn run_optional_analysis<T>(
     enabled: bool,
@@ -60,71 +41,110 @@ pub(crate) fn run_optional_analysis<T>(
     }
 }
 
-/// Run synapse and neuron analyses in the specified order (Issue #774).
+/// Run synapse and neuron analyses concurrently when both are enabled (Issue #1002).
 ///
-/// When `synapse_first` is `true`, synapse analysis runs before neuron analysis;
-/// otherwise neuron runs first. This single function replaces the three
-/// near-identical dispatch blocks that previously existed in `analyze_all`.
+/// Uses `rayon::join` to run both analyses in parallel with a shared GPU queue,
+/// reducing wall-clock time. When only one analysis is enabled, it runs alone.
 fn dispatch_analyses(
-    synapse_first: bool,
     synapse_input: Option<AnalyzeSynapsesInput>,
     neuron_input: Option<AnalyzeNeuronsInput>,
     shared_cache: &Arc<cache::RecordCache>,
+    shared_gpu_queue: &Arc<super::gpu::GpuWorkQueue>,
 ) -> Result<(Option<AnalyzeSynapsesResult>, Option<AnalyzeNeuronsResult>)> {
-    let run_synapse = |si: Option<AnalyzeSynapsesInput>,
-                       cache: &Arc<cache::RecordCache>|
-     -> Result<Option<AnalyzeSynapsesResult>> {
-        run_optional_analysis(
-            si.is_some(),
+    let both_enabled = synapse_input.is_some() && neuron_input.is_some();
+
+    if both_enabled {
+        // Issue #1002: Run both analyses concurrently via rayon::join with a
+        // shared GPU queue. Both analyses are independent — they share only the
+        // read-only RecordCache and the thread-safe GpuWorkQueue.
+        let syn_input = synapse_input.expect("checked is_some");
+        let neu_input = neuron_input.expect("checked is_some");
+        let cache_for_syn = Arc::clone(shared_cache);
+        let cache_for_neu = Arc::clone(shared_cache);
+        let gpu_for_syn = Arc::clone(shared_gpu_queue);
+        let gpu_for_neu = Arc::clone(shared_gpu_queue);
+
+        let (syn_result, neu_result) = rayon::join(
+            || {
+                run_optional_analysis(
+                    true,
+                    "analysis::analyze_all → synapse analysis starting",
+                    "analysis::analyze_all → synapse analysis finished",
+                    "analysis::analyze_all → synapse analysis skipped",
+                    "synapse_analysis",
+                    || {
+                        synapse::analyze_synapses_with_cache_and_gpu_queue(
+                            &syn_input,
+                            cache_for_syn,
+                            gpu_for_syn,
+                        )
+                    },
+                )
+            },
+            || {
+                run_optional_analysis(
+                    true,
+                    "analysis::analyze_all → neuron analysis starting",
+                    "analysis::analyze_all → neuron analysis finished",
+                    "analysis::analyze_all → neuron analysis skipped",
+                    "neuron_analysis",
+                    || {
+                        neuron::analyze_neurons_with_cache_and_gpu_queue(
+                            &neu_input,
+                            cache_for_neu,
+                            gpu_for_neu,
+                        )
+                    },
+                )
+            },
+        );
+        Ok((syn_result?, neu_result?))
+    } else {
+        // Only one (or neither) analysis is enabled — run sequentially.
+        let synapse_result = run_optional_analysis(
+            synapse_input.is_some(),
             "analysis::analyze_all → synapse analysis starting",
             "analysis::analyze_all → synapse analysis finished",
             "analysis::analyze_all → synapse analysis skipped",
             "synapse_analysis",
             || {
-                let inner = si.expect("checked is_some");
-                synapse::analyze_synapses_with_cache(&inner, Arc::clone(cache))
+                let inner = synapse_input.expect("checked is_some");
+                synapse::analyze_synapses_with_cache_and_gpu_queue(
+                    &inner,
+                    Arc::clone(shared_cache),
+                    Arc::clone(shared_gpu_queue),
+                )
             },
-        )
-    };
+        )?;
 
-    let run_neuron = |ni: Option<AnalyzeNeuronsInput>,
-                      cache: &Arc<cache::RecordCache>|
-     -> Result<Option<AnalyzeNeuronsResult>> {
-        run_optional_analysis(
-            ni.is_some(),
+        let neuron_result = run_optional_analysis(
+            neuron_input.is_some(),
             "analysis::analyze_all → neuron analysis starting",
             "analysis::analyze_all → neuron analysis finished",
             "analysis::analyze_all → neuron analysis skipped",
             "neuron_analysis",
             || {
-                let inner = ni.expect("checked is_some");
-                neuron::analyze_neurons_with_cache(&inner, Arc::clone(cache))
+                let inner = neuron_input.expect("checked is_some");
+                neuron::analyze_neurons_with_cache_and_gpu_queue(
+                    &inner,
+                    Arc::clone(shared_cache),
+                    Arc::clone(shared_gpu_queue),
+                )
             },
-        )
-    };
+        )?;
 
-    if synapse_first {
-        let synapse_result = run_synapse(synapse_input, shared_cache)?;
-        let neuron_result = run_neuron(neuron_input, shared_cache)?;
-        Ok((synapse_result, neuron_result))
-    } else {
-        let neuron_result = run_neuron(neuron_input, shared_cache)?;
-        let synapse_result = run_synapse(synapse_input, shared_cache)?;
         Ok((synapse_result, neuron_result))
     }
 }
 
 /// Combined analysis function that runs both synapse and neuron analysis.
 ///
-/// # Analysis ordering
+/// # Concurrent execution (Issue #1002)
 ///
-/// When `analysis_deadline_ms` is set and both analyses are enabled, the library **randomises
-/// the run order** on each invocation. This means one run may return only synapse candidates
-/// (neuron starved) and the next may return only neuron candidates (synapse starved).
-///
-/// When no deadline is set, the original "neuron-first" ordering is preserved for
-/// backwards compatibility (neuron discovery creates new network structure and may be
-/// considered higher value when time is not constrained).
+/// When both analyses are enabled, they run **concurrently** via `rayon::join`
+/// sharing a single `GpuWorkQueue`. This reduces wall-clock time by overlapping
+/// CPU-bound work across both analyses while the shared GPU thread processes
+/// work from both submitters.
 #[tracing::instrument(skip_all, fields(focus_neurons = input.focus_neurons.len()))]
 pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Phase timer for total analysis (Issue #214)
@@ -249,41 +269,22 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         None
     };
 
-    // Determine analysis order based on whether a deadline is set.
-    // When deadline-constrained, we randomise ordering so that repeated runs provide
-    // long-run coverage even though an individual run can return partial results.
-    // Without a deadline, neuron analysis runs first (original behaviour).
-    let has_deadline = input.analysis_deadline_ms.is_some();
+    // Issue #1002: Create a shared GPU work queue for both analyses.
+    // The GpuWorkQueue is designed for concurrent submitters via crossbeam_channel,
+    // so a single GPU thread serves both synapse and neuron analyses.
+    let loading_deadline_for_gpu = utils::build_deadline(input.analysis_deadline_ms);
+    let shared_gpu_queue =
+        Arc::new(super::gpu::GpuWorkQueue::new()?.with_deadline(loading_deadline_for_gpu));
 
-    // Determine whether synapse analysis should run first (Issue #774).
-    // When deadline-constrained, we randomise ordering so that repeated runs
-    // provide long-run coverage even when an individual run returns partial
-    // results. Without a deadline, neuron analysis runs first (original
-    // behaviour — neuron discovery creates new network structure and may be
-    // considered higher value when time is not constrained).
-    let synapse_first = if has_deadline {
-        let now_ms = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .ok()
-            .map_or(0, |d| d.as_millis() as u64);
-        let sf = include_synapse
-            && include_neuron
-            && choose_deadline_order_synapse_first(input.random_seed, now_ms);
-
-        if utils::verbose_enabled() {
-            tracing::debug!(
-                deadline_ms = input.analysis_deadline_ms.unwrap_or(0),
-                first = if sf { "synapse" } else { "neuron" },
-                "deadline set — randomised analysis ordering"
-            );
-        }
-        sf
-    } else {
-        false
-    };
-
-    let (synapse_result, neuron_result) =
-        dispatch_analyses(synapse_first, synapse_input, neuron_input, &shared_cache)?;
+    // Issue #1002: Both analyses run concurrently via rayon::join when both are
+    // enabled, so randomised ordering is no longer needed — both get the full
+    // time budget.
+    let (synapse_result, neuron_result) = dispatch_analyses(
+        synapse_input,
+        neuron_input,
+        &shared_cache,
+        &shared_gpu_queue,
+    )?;
 
     // Post-process: convert certain add-neuron candidates into coordinated-structural replacements.
     let mut synapse_result = synapse_result;

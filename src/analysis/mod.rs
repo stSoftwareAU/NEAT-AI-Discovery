@@ -74,12 +74,13 @@ pub(crate) use candidate_aggregation::merge_coordinated_structural_replacements;
 #[cfg(test)]
 pub(crate) use candidate_aggregation::apply_kept_neuron_candidates;
 #[cfg(test)]
-pub(crate) use orchestration::{choose_deadline_order_synapse_first, run_optional_analysis};
+pub(crate) use orchestration::run_optional_analysis;
 
 // Core public API entry points
 pub use gpu::GpuAnalyzer;
 pub use gpu::supports_unified_memory;
 pub use neuron::analyze_neurons;
+pub use neuron::analyze_neurons_with_cache_and_gpu_queue;
 pub use synapse::analyze_synapses;
 // Re-export benchmark helper functions for use in benches/
 pub use synapse::analyze_synapses_with_cache_and_gpu_queue;
