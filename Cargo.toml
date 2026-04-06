@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.72.24"
+version = "0.72.25"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -146,6 +146,10 @@ harness = false
 
 [[bench]]
 name = "pipeline_utilisation"
+harness = false
+
+[[bench]]
+name = "simd_hot_paths"
 harness = false
 
 [profile.release]
