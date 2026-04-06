@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.72.25"
+version = "0.72.26"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -150,6 +150,10 @@ harness = false
 
 [[bench]]
 name = "simd_hot_paths"
+harness = false
+
+[[bench]]
+name = "vectorisation_audit"
 harness = false
 
 [profile.release]
