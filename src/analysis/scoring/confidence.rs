@@ -148,7 +148,7 @@ fn compute_sample_confidence(sample_count: usize) -> f32 {
 ///
 /// Higher source activation variance leads to more reliable correlation signals.
 /// Returns a value between 0.0 and 1.0.
-fn compute_source_variance_confidence(samples: &[HelpfulSample]) -> f32 {
+pub fn compute_source_variance_confidence(samples: &[HelpfulSample]) -> f32 {
     if samples.len() < 2 {
         return 0.0;
     }
@@ -264,7 +264,7 @@ fn compute_confidence_interval(samples: &[HelpfulSample], expected_score_gain: f
 }
 
 /// Compute variance of errors from samples.
-fn compute_error_variance(samples: &[HelpfulSample]) -> f32 {
+pub fn compute_error_variance(samples: &[HelpfulSample]) -> f32 {
     if samples.is_empty() {
         return 0.0;
     }

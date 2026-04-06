@@ -45,7 +45,7 @@ pub mod post_processing;
 mod preparation;
 mod relu_evaluation;
 mod results;
-mod scoring;
+pub mod scoring;
 mod structural_patterns;
 mod target_analysis;
 
@@ -73,19 +73,22 @@ pub(crate) use gpu_evaluation::{
 
 pub(crate) use scoring::upsert_candidate;
 
-#[cfg(test)]
-pub(crate) use scoring::compute_candidate_dedup_key;
+// Public re-exports for benchmark access (Issue #1006)
+pub use scoring::{
+    compute_activation_improvement_and_count, compute_relu_improvement_and_count,
+    compute_synapse_improvement_and_count,
+};
 
 #[cfg(test)]
-pub(crate) use scoring::compute_synapse_improvement_and_count;
+pub(crate) use scoring::compute_candidate_dedup_key;
 
 // Test-only re-exports used by implementation_tests
 #[cfg(test)]
 pub(crate) use candidate_generation::build_samples;
 #[cfg(test)]
 pub(crate) use scoring::{
-    compute_net_improvement_with_squash, compute_relu_improvement_and_count,
-    compute_synapse_improvement_with_target_squash, count_improved_samples,
+    compute_net_improvement_with_squash, compute_synapse_improvement_with_target_squash,
+    count_improved_samples,
 };
 
 // =============================================================================

@@ -115,7 +115,7 @@ pub(crate) fn upsert_candidate(
 /// both baseline and new error must be computed in ACTIVATION domain.
 ///
 /// Returns (`improvement_percentage`, `improved_count`, `total_count`)
-pub(crate) fn compute_relu_improvement_and_count(
+pub fn compute_relu_improvement_and_count(
     samples: &[HelpfulSample],
     incoming_weight: f32,
     outgoing_weight: f32,
@@ -217,7 +217,7 @@ pub(crate) fn compute_relu_improvement_and_count(
 /// both baseline and new error must be computed in ACTIVATION domain.
 ///
 /// Returns (`improvement_percentage`, `improved_count`, `total_count`)
-pub(crate) fn compute_activation_improvement_and_count(
+pub fn compute_activation_improvement_and_count(
     samples: &[HelpfulSample],
     incoming_weight: f32,
     outgoing_weight: f32,
@@ -312,7 +312,7 @@ pub(crate) fn compute_activation_improvement_and_count(
 /// domain baseline when simulating.
 ///
 /// Returns (`improvement_percentage`, `improved_count`, `worsened_count`, `total_count`)
-pub(crate) fn compute_synapse_improvement_and_count(
+pub fn compute_synapse_improvement_and_count(
     samples: &[HelpfulSample],
     weight: f32,
     total_baseline_error_sq: f32,

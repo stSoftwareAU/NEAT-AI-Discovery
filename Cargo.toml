@@ -148,6 +148,10 @@ harness = false
 name = "pipeline_utilisation"
 harness = false
 
+[[bench]]
+name = "simd_hot_paths"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

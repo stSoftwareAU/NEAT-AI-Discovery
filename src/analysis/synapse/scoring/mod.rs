@@ -12,7 +12,7 @@
 
 mod boost_functions;
 mod discounting;
-pub(crate) mod improvement;
+pub mod improvement;
 #[cfg(test)]
 mod test_helpers;
 
@@ -25,9 +25,10 @@ pub use discounting::{
     apply_synapse_pessimism_discount,
 };
 
-pub(crate) use improvement::{
+pub(crate) use improvement::upsert_candidate;
+pub use improvement::{
     compute_activation_improvement_and_count, compute_relu_improvement_and_count,
-    compute_synapse_improvement_and_count, upsert_candidate,
+    compute_synapse_improvement_and_count,
 };
 
 #[cfg(test)]
