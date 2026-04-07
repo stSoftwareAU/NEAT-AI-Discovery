@@ -83,6 +83,9 @@ pub(crate) struct TargetDiagnosticEntry {
     pub(crate) record_load_failures: u32,
     pub(crate) had_candidate: bool,
     pub(crate) best_rejection: Option<RejectionDetail>,
+    /// Issue #1018: Count of candidates accepted via Metropolis-Hastings
+    /// probabilistic acceptance despite being below the threshold.
+    pub(crate) accepted_below_threshold_count: u32,
 }
 
 impl TargetDiagnosticEntry {
@@ -98,6 +101,7 @@ impl TargetDiagnosticEntry {
             record_load_failures: 0,
             had_candidate: false,
             best_rejection: None,
+            accepted_below_threshold_count: 0,
         }
     }
 
@@ -258,6 +262,14 @@ impl TargetDiagnostics {
         }
     }
 
+    /// Issue #1018: Record that a candidate was accepted below threshold
+    /// via Metropolis-Hastings probabilistic acceptance.
+    pub(crate) fn record_accepted_below_threshold(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.accepted_below_threshold_count += 1;
+        }
+    }
+
     pub(crate) fn mark_candidate_selected(&self, target_uuid: &str) {
         if let Some(mut entry) = self.entries.get_mut(target_uuid) {
             entry.had_candidate = true;
@@ -271,6 +283,16 @@ impl TargetDiagnostics {
 
         for entry_ref in &self.entries {
             let entry = entry_ref.value();
+
+            // Issue #1018: Log Metropolis-Hastings acceptance counts
+            if entry.accepted_below_threshold_count > 0 {
+                tracing::trace!(
+                    target_uuid = %entry.target_uuid,
+                    accepted_below_threshold = entry.accepted_below_threshold_count,
+                    "Metropolis-Hastings accepted candidates below threshold"
+                );
+            }
+
             if entry.had_candidate {
                 continue;
             }

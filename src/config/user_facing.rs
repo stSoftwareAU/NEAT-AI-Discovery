@@ -286,6 +286,34 @@ pub fn streaming_enabled() -> bool {
     !preload_all()
 }
 
+/// Get the Metropolis-Hastings temperature for probabilistic acceptance (Issue #1018).
+///
+/// Set `NEAT_AI_DISCOVERY_MH_TEMPERATURE` to a positive finite number to enable
+/// probabilistic acceptance of marginal synapse candidates. When unset,
+/// deterministic threshold-based acceptance is used (existing behaviour).
+///
+/// Returns `None` when disabled (unset, empty, or invalid).
+pub fn mh_temperature() -> Option<f32> {
+    static VAL: OnceLock<Option<f32>> = OnceLock::new();
+    *VAL.get_or_init(|| {
+        let raw = std::env::var("NEAT_AI_DISCOVERY_MH_TEMPERATURE").ok()?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        match trimmed.parse::<f32>() {
+            Ok(v) if v.is_finite() && v > 0.0 => Some(v),
+            _ => {
+                tracing::debug!(
+                    raw_value = trimmed,
+                    "Ignoring invalid NEAT_AI_DISCOVERY_MH_TEMPERATURE (expected a finite number > 0)"
+                );
+                None
+            }
+        }
+    })
+}
+
 /// Get the macOS `sample` program path for thread dumps.
 ///
 /// Set `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` to override.

@@ -357,6 +357,40 @@ fn neuron_diagnostics_reports_input_neuron_filtered_not_hidden() {
 }
 
 #[test]
+fn diagnostics_tracks_accepted_below_threshold_count() {
+    // Issue #1018: Verify that the accepted_below_threshold counter
+    // correctly tracks Metropolis-Hastings acceptances.
+    let diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
+
+    // Record multiple below-threshold acceptances
+    diagnostics.record_accepted_below_threshold("output-0");
+    diagnostics.record_accepted_below_threshold("output-0");
+    diagnostics.record_accepted_below_threshold("output-0");
+
+    let entry = diagnostics
+        .entry_for("output-0")
+        .expect("diagnostics entry should exist");
+    assert_eq!(
+        entry.accepted_below_threshold_count, 3,
+        "Should track the number of below-threshold acceptances"
+    );
+}
+
+#[test]
+fn diagnostics_accepted_below_threshold_defaults_to_zero() {
+    // Issue #1018: Verify that the counter starts at zero.
+    let diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
+
+    let entry = diagnostics
+        .entry_for("output-0")
+        .expect("diagnostics entry should exist");
+    assert_eq!(
+        entry.accepted_below_threshold_count, 0,
+        "Counter should default to zero"
+    );
+}
+
+#[test]
 fn neuron_diagnostics_reports_constant_neuron_filtered_not_hidden() {
     // Test that when a constant neuron is in the focus list, it gets
     // ConstantNeuronFiltered reason (not HiddenNeuronFiltered).
