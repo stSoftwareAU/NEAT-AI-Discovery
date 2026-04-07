@@ -55,6 +55,17 @@ pub struct AnalyzeParallelInput {
     /// the returned tracker and pass it back on subsequent runs.
     #[serde(default)]
     pub module_outcome_tracker: Option<analysis::module_weights::ModuleOutcomeTracker>,
+    /// Temperature for exploration-exploitation balance (Issue #1020).
+    ///
+    /// Controls the strictness of candidate acceptance. Higher values (> 1.0)
+    /// favour exploration (accept more marginal candidates); lower values (< 1.0)
+    /// favour exploitation (only accept strong candidates). Default 1.0 preserves
+    /// existing behaviour.
+    ///
+    /// The caller tracks the evolutionary generation count and may use a cooling
+    /// schedule to compute this value (e.g., start at 2.0 and decay to 0.5).
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
 }
 
 /// Internal input structure for synapse analysis (used by `analyze_all`)
@@ -75,6 +86,12 @@ pub struct AnalyzeSynapsesInput {
     /// will explore different candidates over time.
     #[serde(default)]
     pub random_seed: Option<u64>,
+    /// Temperature for exploration-exploitation balance (Issue #1020).
+    ///
+    /// Default 1.0 preserves existing behaviour. See `AnalyzeParallelInput`
+    /// for full documentation.
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
 }
 
 /// Internal input structure for neuron analysis (used by `analyze_all`)
@@ -95,6 +112,12 @@ pub struct AnalyzeNeuronsInput {
     /// will explore different candidates over time.
     #[serde(default)]
     pub random_seed: Option<u64>,
+    /// Temperature for exploration-exploitation balance (Issue #1020).
+    ///
+    /// Default 1.0 preserves existing behaviour. See `AnalyzeParallelInput`
+    /// for full documentation.
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
 }
 
 /// Internal input structure for combined analysis (used by `analyze_parallel`)
@@ -132,6 +155,12 @@ pub struct AnalyzeAllInput {
     /// and module statistics in the response metadata.
     #[serde(default)]
     pub module_outcome_tracker: Option<analysis::module_weights::ModuleOutcomeTracker>,
+    /// Temperature for exploration-exploitation balance (Issue #1020).
+    ///
+    /// Default 1.0 preserves existing behaviour. See `AnalyzeParallelInput`
+    /// for full documentation.
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -176,6 +205,10 @@ pub struct ExportVisualisationSnapshotInput {
     /// Top-K worst reconstruction samples to include (default: 20)
     #[serde(default = "default_top_k")]
     pub top_k_worst_samples: Option<usize>,
+}
+
+fn default_temperature() -> f32 {
+    crate::analysis::constants::DEFAULT_TEMPERATURE
 }
 
 fn default_true() -> bool {

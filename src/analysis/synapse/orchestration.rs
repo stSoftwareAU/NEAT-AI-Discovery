@@ -105,6 +105,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         deadline,
         threshold: 0.0,
         acceptance_tracker,
+        temperature: input.temperature,
     });
 
     // Phase 6: Process each focus neuron in parallel — thread-local collection (Issue #744)

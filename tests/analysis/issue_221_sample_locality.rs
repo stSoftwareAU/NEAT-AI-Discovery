@@ -344,6 +344,7 @@ fn sample_locality_batching_produces_results() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     // Note: The benchmark has been moved to benches/sample_locality.rs
@@ -414,6 +415,7 @@ fn sample_locality_preserves_correctness() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -461,6 +463,7 @@ fn source_batching_90_percent_overlap_produces_results() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     // Note: The benchmark has been moved to benches/sample_locality.rs

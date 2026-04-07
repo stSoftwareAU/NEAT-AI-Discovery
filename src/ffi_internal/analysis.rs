@@ -179,6 +179,7 @@ pub(crate) fn build_analyze_all_input_from_parallel(
         random_seed: input.random_seed,
         previous_neuron_fingerprints: input.previous_neuron_fingerprints,
         module_outcome_tracker: input.module_outcome_tracker,
+        temperature: input.temperature,
     }
 }
 

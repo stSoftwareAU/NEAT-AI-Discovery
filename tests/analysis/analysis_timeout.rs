@@ -109,6 +109,7 @@ fn synapse_analysis_respects_deadline() {
         max_candidates: None,
         analysis_deadline_ms: Some(deadline_ms),
         random_seed: None,
+        temperature: 1.0,
     };
 
     let start = Instant::now();
@@ -197,6 +198,7 @@ fn neuron_analysis_respects_deadline() {
         max_candidates: None,
         analysis_deadline_ms: Some(deadline_ms),
         random_seed: None,
+        temperature: 1.0,
     };
 
     let start = Instant::now();
@@ -280,6 +282,7 @@ fn focus_neurons_are_randomised_across_runs() {
             max_candidates: None,
             analysis_deadline_ms: Some(60_000), // 1 minute - enough to complete
             random_seed: None,
+            temperature: 1.0,
         };
 
         let result = analyze_neurons(&input).expect("Analysis should complete successfully");

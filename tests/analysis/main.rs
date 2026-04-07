@@ -14,6 +14,7 @@ mod impact_calculation_production;
 mod impact_squash;
 mod issue_1003_parallel_candidate_compression;
 mod issue_1004_overlap_compression_discovery;
+mod issue_1020_temperature_scheduling;
 mod issue_199_dynamic_constant_source_threshold;
 mod issue_201_batched_activation;
 mod issue_204_activation_frequency_ranking;

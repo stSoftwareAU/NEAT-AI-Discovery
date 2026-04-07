@@ -122,6 +122,7 @@ fn synapse_analysis_runs_under_deadline() {
         random_seed: None,
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        temperature: 1.0,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -167,6 +168,7 @@ fn metadata_indicates_target_value_available() {
         random_seed: None,
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        temperature: 1.0,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -207,6 +209,7 @@ fn metadata_indicates_target_value_not_available() {
         random_seed: None,
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        temperature: 1.0,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -253,6 +256,7 @@ fn metadata_indicates_saturation_aware_simulation_used() {
         random_seed: None,
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        temperature: 1.0,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -296,6 +300,7 @@ fn candidate_counts_tracked_correctly() {
         random_seed: None,
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        temperature: 1.0,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -402,6 +407,7 @@ fn truncation_reflected_in_candidate_counts() {
         random_seed: None,
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        temperature: 1.0,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");

@@ -134,6 +134,7 @@ fn cache_locality_optimization_preserves_correctness() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -152,6 +153,7 @@ fn cache_locality_optimization_preserves_correctness() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: Some(123),
+        temperature: 1.0,
     };
 
     let result2 = analyze_synapses(&input2).expect("Analysis should succeed");

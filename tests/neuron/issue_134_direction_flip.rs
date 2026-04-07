@@ -79,6 +79,7 @@ fn issue_134_bent_identity_target_simulation_rejects_linear_false_positive() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
@@ -147,6 +148,7 @@ fn issue_134_identity_target_accepts_linear_candidate_sanity_check() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("Synapse analysis should succeed");

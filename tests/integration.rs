@@ -508,6 +508,7 @@ fn test_analyze_neurons_returns_non_zero_bias() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -603,6 +604,7 @@ fn test_bias_values_are_activation_specific() {
         max_candidates: Some(50), // Request many candidates to get variety
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -872,6 +874,7 @@ fn test_add_neuron_finds_candidates_with_correlated_errors() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -980,6 +983,7 @@ fn test_add_neuron_with_hard_tanh_target_uses_bias_aware_weight() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -1078,6 +1082,7 @@ fn test_bias_improves_neuron_performance() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -1207,6 +1212,7 @@ fn test_hidden_neurons_are_analysed_not_filtered() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -1369,6 +1375,7 @@ fn test_hidden_neuron_candidates_have_impact_discounted_predictions() {
         max_candidates: Some(20),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)

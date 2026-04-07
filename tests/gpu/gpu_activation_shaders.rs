@@ -130,6 +130,7 @@ fn test_mish_gpu_shader_produces_correct_results() {
         max_candidates: Some(100),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -238,6 +239,7 @@ fn test_all_new_activations_produce_candidates() {
         max_candidates: Some(500),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

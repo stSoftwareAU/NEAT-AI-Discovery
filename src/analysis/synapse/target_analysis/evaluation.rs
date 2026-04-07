@@ -311,27 +311,47 @@ pub(crate) fn collect_and_process_helpful_results(
 
             // Issue #730: Filter candidates where insufficient samples improve.
             // Candidates where worsened > improved have 0% success rate in production.
+            // Issue #1020: Temperature scales the effective ratio — high temperature
+            // lowers the bar (exploration), low temperature raises it (exploitation).
             {
                 use crate::analysis::constants::MIN_IMPROVED_RATIO;
+                use crate::analysis::constants::temperature::scale_ratio_by_temperature;
+                let effective_ratio =
+                    scale_ratio_by_temperature(MIN_IMPROVED_RATIO, ctx.temperature);
                 let improved_ratio = if total_count > 0 {
                     improved_count as f32 / total_count as f32
                 } else {
                     0.0
                 };
-                if improved_ratio < MIN_IMPROVED_RATIO {
+                if improved_ratio < effective_ratio {
                     continue;
                 }
             }
 
-            if neuron_error_improvement <= ctx.threshold {
+            // Issue #1020: Temperature scales the effective threshold — high temperature
+            // lowers it (accept more marginal candidates), low temperature raises it.
+            let effective_threshold =
+                crate::analysis::constants::temperature::scale_threshold_by_temperature(
+                    ctx.threshold,
+                    ctx.temperature,
+                );
+            if neuron_error_improvement <= effective_threshold {
                 // Issue #1018: Metropolis-Hastings probabilistic acceptance
                 // for marginal candidates (0 < improvement ≤ threshold).
                 // When MH temperature is configured, marginal candidates are
                 // accepted with probability proportional to their improvement.
                 // When unconfigured, existing deterministic behaviour is preserved.
-                if let Some(temperature) = crate::config::mh_temperature() {
-                    let acceptance_probability =
-                        (neuron_error_improvement / temperature).exp().min(1.0);
+                if let Some(base_mh_temp) = crate::config::mh_temperature() {
+                    // Issue #1020: Scale MH temperature by the schedule temperature.
+                    // Higher schedule temperature → more willing to accept marginal candidates.
+                    let effective_mh_temp =
+                        crate::analysis::constants::temperature::scale_mh_temperature(
+                            base_mh_temp,
+                            ctx.temperature,
+                        );
+                    let acceptance_probability = (neuron_error_improvement / effective_mh_temp)
+                        .exp()
+                        .min(1.0);
 
                     // Deterministic pseudo-random decision based on source+target UUIDs
                     // to ensure reproducibility across runs with the same data.

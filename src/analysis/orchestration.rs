@@ -251,6 +251,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             max_candidates: input.max_synapse_candidates,
             analysis_deadline_ms: input.analysis_deadline_ms,
             random_seed: input.random_seed,
+            temperature: input.temperature,
         })
     } else {
         None
@@ -264,6 +265,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             max_candidates: input.max_neuron_candidates,
             analysis_deadline_ms: input.analysis_deadline_ms,
             random_seed: input.random_seed,
+            temperature: input.temperature,
         })
     } else {
         None
