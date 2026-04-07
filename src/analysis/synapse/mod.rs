@@ -35,6 +35,7 @@
 
 mod activation_evaluation;
 mod activation_subset_evaluation;
+pub mod adaptive_proposal;
 mod candidate_generation;
 mod filtering;
 mod gpu_evaluation;

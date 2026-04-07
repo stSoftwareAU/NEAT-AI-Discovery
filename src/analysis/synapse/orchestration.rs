@@ -84,6 +84,9 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         preparation::compute_constant_source_threshold_from_cache(input, cache.as_ref());
 
     // Phase 5: Build shared context for per-target analysis
+    let acceptance_tracker = Arc::new(std::sync::Mutex::new(
+        crate::analysis::synapse::adaptive_proposal::AcceptanceTracker::new(),
+    ));
     let ctx = Arc::new(target_analysis::TargetAnalysisContext {
         ordered_neurons: Arc::new(lookups.ordered_neurons),
         order_map: Arc::new(lookups.order_map),
@@ -101,6 +104,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         timing_collector: timing_collector.clone(),
         deadline,
         threshold: 0.0,
+        acceptance_tracker,
     });
 
     // Phase 6: Process each focus neuron in parallel — thread-local collection (Issue #744)
