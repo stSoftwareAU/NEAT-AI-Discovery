@@ -210,6 +210,7 @@ fn issue_182_focus_unused_observations_prioritises_inputs_without_synapses() {
         max_candidates: Some(10),
         analysis_deadline_ms: Some(5000), // Short deadline to test prioritisation
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("analysis should succeed");
@@ -281,6 +282,7 @@ fn issue_182_without_env_var_no_prioritisation() {
         max_candidates: Some(10),
         analysis_deadline_ms: None, // No deadline - process all
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("analysis should succeed");

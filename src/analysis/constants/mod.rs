@@ -22,6 +22,7 @@ mod detection_thresholds;
 mod sample_thresholds;
 mod sentinel_detection;
 mod source_variance;
+pub mod temperature;
 
 // Re-export all constants and functions for backward compatibility.
 // Consumers can continue to use `crate::analysis::constants::CONSTANT_NAME`.
@@ -31,3 +32,4 @@ pub use detection_thresholds::*;
 pub use sample_thresholds::*;
 pub use sentinel_detection::*;
 pub use source_variance::*;
+pub use temperature::*;

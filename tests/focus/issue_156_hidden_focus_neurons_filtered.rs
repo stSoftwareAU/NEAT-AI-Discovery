@@ -123,6 +123,7 @@ fn issue_156_hidden_focus_neurons_are_filtered_when_output_only_mode_is_enabled(
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = analyze_neurons(&input).expect("analysis should succeed");

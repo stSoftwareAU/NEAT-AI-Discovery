@@ -71,6 +71,7 @@ fn target_with_only_constant_upstream_returns_empty_results() {
         max_candidates: None,
         analysis_deadline_ms: Some(60_000),
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input);

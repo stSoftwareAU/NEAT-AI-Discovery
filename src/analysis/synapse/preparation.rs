@@ -236,6 +236,7 @@ mod tests {
             focus_neurons: vec!["output-1".to_string()],
             max_candidates: None,
             random_seed: Some(42),
+            temperature: 1.0,
             analysis_deadline_ms: None,
         }
     }
@@ -309,6 +310,7 @@ mod tests {
             focus_neurons: vec![],
             max_candidates: None,
             random_seed: None,
+            temperature: 1.0,
             analysis_deadline_ms: None,
         };
         let lookups = build_creature_lookups(&input);

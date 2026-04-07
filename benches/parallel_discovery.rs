@@ -180,6 +180,7 @@ fn bench_parallel_discovery(c: &mut Criterion) {
                         random_seed: Some(42),
                         previous_neuron_fingerprints: None,
                         module_outcome_tracker: None,
+                        temperature: 1.0,
                     };
                     black_box(analyze_all(&input).expect("analyze_all failed"))
                 });

@@ -88,6 +88,7 @@ fn neuron_analysis_with_deadline_completes() {
         // adaptive timeouts instead of the 5-minute maximum.
         analysis_deadline_ms: Some(120_000),
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result = analyze_neurons(&input).expect("Neuron analysis with deadline should succeed");
@@ -116,6 +117,7 @@ fn synapse_analysis_with_deadline_completes() {
         // Issue #953: Set a 2-minute deadline
         analysis_deadline_ms: Some(120_000),
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("Synapse analysis with deadline should succeed");
@@ -151,6 +153,7 @@ fn analysis_with_expired_deadline_returns_promptly() {
         // analysis begins. The analysis should return quickly (not hang).
         analysis_deadline_ms: Some(1),
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let start = std::time::Instant::now();

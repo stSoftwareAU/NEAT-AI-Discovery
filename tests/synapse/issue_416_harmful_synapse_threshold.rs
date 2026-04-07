@@ -141,6 +141,7 @@ fn test_harmful_synapse_candidates_must_have_positive_expected_gain() {
         max_candidates: Some(100),
         analysis_deadline_ms: Some(30000),
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input);
@@ -237,6 +238,7 @@ fn test_helpful_synapse_is_not_marked_as_harmful() {
         max_candidates: Some(100),
         analysis_deadline_ms: Some(30000),
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input);
@@ -364,6 +366,7 @@ fn test_mixed_helpful_and_harmful_synapses() {
         max_candidates: Some(100),
         analysis_deadline_ms: Some(30000),
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input);

@@ -100,6 +100,7 @@ fn test_complement_is_discovered_as_identity_not_inverse() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)

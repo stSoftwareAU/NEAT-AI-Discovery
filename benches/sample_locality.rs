@@ -145,6 +145,7 @@ fn benchmark_sample_locality(c: &mut Criterion) {
                     max_candidates: Some(10),
                     analysis_deadline_ms: None,
                     random_seed: Some(42),
+                    temperature: 1.0,
                 };
                 let result = analyze_synapses(&input).expect("Analysis should succeed");
                 black_box(result);
@@ -173,6 +174,7 @@ fn benchmark_sample_locality(c: &mut Criterion) {
                     max_candidates: Some(10),
                     analysis_deadline_ms: None,
                     random_seed: Some(42),
+                    temperature: 1.0,
                 };
                 let result = analyze_synapses(&input).expect("Analysis should succeed");
                 black_box(result);

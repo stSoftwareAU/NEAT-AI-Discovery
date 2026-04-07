@@ -61,6 +61,11 @@ pub(crate) struct TargetAnalysisContext<'a> {
     /// Issue #1019: Adaptive proposal acceptance tracker for sigma adaptation.
     pub acceptance_tracker:
         Arc<std::sync::Mutex<crate::analysis::synapse::adaptive_proposal::AcceptanceTracker>>,
+    /// Issue #1020: Temperature for exploration-exploitation balance.
+    ///
+    /// Default 1.0 preserves existing behaviour. Higher values lower effective
+    /// thresholds (exploration); lower values raise them (exploitation).
+    pub temperature: f32,
 }
 
 /// Results from analysing a single target neuron.

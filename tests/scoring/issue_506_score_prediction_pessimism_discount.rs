@@ -210,6 +210,7 @@ fn test_issue_506_synapse_candidates_have_pessimism_discount() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input).unwrap();

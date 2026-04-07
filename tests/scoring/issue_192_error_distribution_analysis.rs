@@ -458,6 +458,7 @@ fn test_synapse_analysis_includes_error_distribution() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -568,6 +569,7 @@ fn test_candidate_includes_outlier_info_when_enabled() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -668,6 +670,7 @@ fn test_bimodal_error_pattern_detection() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");

@@ -123,6 +123,7 @@ fn timing_enabled_via_env_var() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -183,6 +184,7 @@ fn per_shader_timing_collected() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -322,6 +324,7 @@ fn neuron_analysis_timing_collected() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

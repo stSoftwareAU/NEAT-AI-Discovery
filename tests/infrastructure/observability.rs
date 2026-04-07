@@ -374,6 +374,7 @@ fn integration_timing_output() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result =
@@ -441,6 +442,7 @@ fn integration_gpu_metrics() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        temperature: 1.0,
     };
 
     let result =

@@ -149,6 +149,7 @@ fn test_non_relu_activations_use_split_error_evaluation() {
         max_candidates: Some(100),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -280,6 +281,7 @@ fn test_skewed_errors_return_candidates() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: None,
+        temperature: 1.0,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
