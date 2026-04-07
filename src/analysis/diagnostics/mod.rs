@@ -18,6 +18,7 @@
 
 #![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod focus_filter;
+pub(crate) mod mcmc_diagnostics;
 mod neuron_tracking;
 mod rejection;
 mod target_data;

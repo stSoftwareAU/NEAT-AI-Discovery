@@ -87,6 +87,9 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     let acceptance_tracker = Arc::new(std::sync::Mutex::new(
         crate::analysis::synapse::adaptive_proposal::AcceptanceTracker::new(),
     ));
+    // Issue #1021: MCMC diagnostics tracker for acceptance rate and diversity metrics
+    let mcmc_tracker =
+        Arc::new(crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsTracker::new());
     let ctx = Arc::new(target_analysis::TargetAnalysisContext {
         ordered_neurons: Arc::new(lookups.ordered_neurons),
         order_map: Arc::new(lookups.order_map),
@@ -106,6 +109,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         threshold: 0.0,
         acceptance_tracker,
         temperature: input.temperature,
+        mcmc_tracker: mcmc_tracker.clone(),
     });
 
     // Phase 6: Process each focus neuron in parallel — thread-local collection (Issue #744)
@@ -148,6 +152,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     );
 
     // Phase 8: Collect results and build final output
+    let mcmc_summary = mcmc_tracker.build_summary();
     finalise_synapse_results(FinaliseParams {
         collectors,
         completed_count,
@@ -157,5 +162,6 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         input,
         cache,
         order_map: &ctx.order_map,
+        mcmc_summary,
     })
 }

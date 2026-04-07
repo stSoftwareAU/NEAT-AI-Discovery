@@ -481,6 +481,9 @@ pub(crate) struct MetadataParams<'a> {
     pub input_max: usize,
     pub error_values: &'a [f32],
     pub timing_collector: &'a crate::analysis::shared::TimingCollector,
+    /// Issue #1021: MCMC diagnostics summary.
+    pub mcmc_summary:
+        Option<crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsSummary>,
 }
 
 /// Build the analysis metadata from collected atomic flags and timing data.
@@ -516,5 +519,6 @@ pub(crate) fn build_metadata(
         gpu_info: GpuAnalyzer::get_adapter_info(),
         error_distribution,
         discovery_module_stats: Vec::new(),
+        mcmc_diagnostics: params.mcmc_summary.clone(),
     }
 }
