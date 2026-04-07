@@ -407,6 +407,86 @@ pub const SYNAPSE_PESSIMISM_CURVE_EXPONENT: f32 = 0.85;
 pub const DEFAULT_MH_TEMPERATURE: f32 = 0.01;
 
 // =============================================================================
+// Adaptive Proposal Distribution (Issue #1019)
+// =============================================================================
+
+/// Default standard deviation (σ) for the Gaussian proposal distribution.
+///
+/// Controls the initial spread of proposed weight candidates around the
+/// computed optimal weight. A larger σ explores more broadly; a smaller σ
+/// focuses proposals near the optimum.
+///
+/// ## Valid Range
+/// Must be > 0.0. Values below 0.1 may under-explore. Values above 2.0
+/// may waste evaluations on extreme weights.
+pub const ADAPTIVE_PROPOSAL_INITIAL_SIGMA: f32 = 0.5;
+
+/// Number of weight candidates to sample from the adaptive proposal distribution.
+///
+/// Replaces the fixed 9-variant grid. More candidates improve coverage of the
+/// weight space at the cost of additional computation per target.
+///
+/// ## Valid Range
+/// Must be >= 3 to provide meaningful exploration. Values above 32 provide
+/// diminishing returns.
+pub const ADAPTIVE_PROPOSAL_CANDIDATE_COUNT: usize = 12;
+
+/// Minimum number of historical outcomes before using adaptive σ.
+///
+/// Below this threshold, the acceptance rate estimate is too noisy to
+/// adapt σ reliably. The system falls back to the fixed grid when
+/// insufficient data is available.
+///
+/// ## Valid Range
+/// Must be >= 5 to avoid noise and <= 100 to be responsive.
+pub const ADAPTIVE_PROPOSAL_MIN_HISTORY: usize = 15;
+
+/// Target acceptance rate for the adaptive σ controller.
+///
+/// When the observed acceptance rate exceeds this target, σ is decreased
+/// (focus around the current optimum). When below, σ is increased (explore
+/// more broadly). Derived from optimal acceptance rates for
+/// Metropolis-Hastings on unimodal targets (~0.234 for high-dimensional,
+/// ~0.44 for one-dimensional).
+///
+/// ## Valid Range
+/// Must be in (0.1, 0.8). Values outside this range cause σ to diverge.
+pub const ADAPTIVE_PROPOSAL_TARGET_ACCEPTANCE: f32 = 0.35;
+
+/// Multiplicative adaptation rate for σ adjustment.
+///
+/// When acceptance is too high, σ is multiplied by `1.0 / rate` (shrink).
+/// When acceptance is too low, σ is multiplied by `rate` (grow).
+/// Applied once per evaluation batch.
+///
+/// ## Valid Range
+/// Must be in (1.0, 2.0). Values near 1.0 adapt slowly; values near 2.0
+/// cause oscillation.
+pub const ADAPTIVE_PROPOSAL_ADAPTATION_RATE: f32 = 1.2;
+
+/// Minimum σ to prevent the proposal distribution from collapsing.
+///
+/// ## Valid Range
+/// Must be > 0.0 and < `ADAPTIVE_PROPOSAL_INITIAL_SIGMA`.
+pub const ADAPTIVE_PROPOSAL_MIN_SIGMA: f32 = 0.05;
+
+/// Maximum σ to prevent the proposal distribution from becoming too broad.
+///
+/// ## Valid Range
+/// Must be > `ADAPTIVE_PROPOSAL_INITIAL_SIGMA`.
+pub const ADAPTIVE_PROPOSAL_MAX_SIGMA: f32 = 3.0;
+
+/// Probability of proposing a sign-flipped (negative) weight.
+///
+/// Maintains exploration of negative weights that might be missed by
+/// a Gaussian centred on the positive optimal weight.
+///
+/// ## Valid Range
+/// Must be in (0.0, 0.5). Values above 0.3 waste too many candidates
+/// on unlikely negative weights.
+pub const ADAPTIVE_PROPOSAL_SIGN_FLIP_PROBABILITY: f32 = 0.15;
+
+// =============================================================================
 // NaN-safe Floating-Point Comparison Helpers (Issue #483)
 // =============================================================================
 

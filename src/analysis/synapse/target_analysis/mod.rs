@@ -58,6 +58,9 @@ pub(crate) struct TargetAnalysisContext<'a> {
     pub timing_collector: Arc<crate::analysis::shared::TimingCollector>,
     pub deadline: Option<SystemTime>,
     pub threshold: f32,
+    /// Issue #1019: Adaptive proposal acceptance tracker for sigma adaptation.
+    pub acceptance_tracker:
+        Arc<std::sync::Mutex<crate::analysis::synapse::adaptive_proposal::AcceptanceTracker>>,
 }
 
 /// Results from analysing a single target neuron.

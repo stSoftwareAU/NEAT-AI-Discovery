@@ -151,24 +151,38 @@ pub(crate) fn collect_and_process_helpful_results(
                 // Production data showed 0% success rate because a single computed
                 // weight often overshoots, especially with noisy samples.
                 //
-                // Issue #893: Hold-out validation to combat overfitting from the
-                // 9-variant search. Select weight on training samples, report
-                // improvement on held-out validation samples.
+                // Issue #893: Hold-out validation to combat overfitting.
+                // Select weight on training samples, report improvement on held-out
+                // validation samples.
+                //
+                // Issue #1019: Adaptive Gaussian proposal distribution replaces the
+                // fixed 9-variant grid when sufficient historical acceptance data is
+                // available. Falls back to the fixed grid otherwise.
                 use crate::analysis::synapse::holdout_validation::{
                     baseline_error_sq as compute_baseline, collect_samples, split_samples_holdout,
                 };
 
-                let weight_candidates: [f32; 9] = [
-                    weight * 0.1,
-                    weight * 0.25,
-                    weight * 0.5,
-                    weight * 0.75,
-                    weight,
-                    weight * 1.5,
-                    weight * 2.0,
-                    -weight * 0.5,
-                    -weight,
-                ];
+                // Issue #1019: Determine target type for acceptance tracking
+                let target_type = ctx
+                    .neuron_type_map
+                    .get(work.target_uuid.as_str())
+                    .copied()
+                    .unwrap_or("unknown");
+
+                // Issue #1019: Generate weight candidates using adaptive proposal
+                let weight_candidates = {
+                    let tracker = ctx
+                        .acceptance_tracker
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    crate::analysis::synapse::adaptive_proposal::generate_weight_candidates(
+                        weight,
+                        &work.source_uuid,
+                        &work.target_uuid,
+                        &tracker,
+                        target_type,
+                    )
+                };
 
                 if let Some(split) =
                     split_samples_holdout(&work.samples, &work.source_uuid, &work.target_uuid)
@@ -179,6 +193,7 @@ pub(crate) fn collect_and_process_helpful_results(
 
                     let mut best_weight = weight;
                     let mut best_train_improvement = f32::NEG_INFINITY;
+                    let mut accepted_count: u32 = 0;
 
                     for &w in &weight_candidates {
                         let clamped = w.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
@@ -191,10 +206,26 @@ pub(crate) fn collect_and_process_helpful_results(
                             train_baseline,
                             target_squash,
                         );
+                        if imp > 0.0 {
+                            accepted_count += 1;
+                        }
                         if imp > best_train_improvement {
                             best_train_improvement = imp;
                             best_weight = clamped;
                         }
+                    }
+
+                    // Issue #1019: Record acceptance outcome for sigma adaptation
+                    {
+                        let mut tracker = ctx
+                            .acceptance_tracker
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        tracker.record_batch(
+                            target_type,
+                            accepted_count,
+                            weight_candidates.len() as u32,
+                        );
                     }
 
                     // Phase 2: Report improvement on validation samples only
@@ -216,6 +247,7 @@ pub(crate) fn collect_and_process_helpful_results(
                     let mut best_improvement = f32::NEG_INFINITY;
                     let mut best_improved = 0u32;
                     let mut best_worsened = 0u32;
+                    let mut accepted_count: u32 = 0;
 
                     for &w in &weight_candidates {
                         let clamped = w.clamp(-MAX_OUTGOING_WEIGHT, MAX_OUTGOING_WEIGHT);
@@ -228,6 +260,9 @@ pub(crate) fn collect_and_process_helpful_results(
                             baseline_error_sq,
                             target_squash,
                         );
+                        if imp > 0.0 {
+                            accepted_count += 1;
+                        }
                         if imp > best_improvement {
                             best_improvement = imp;
                             best_weight = clamped;
@@ -235,6 +270,20 @@ pub(crate) fn collect_and_process_helpful_results(
                             best_worsened = worsened;
                         }
                     }
+
+                    // Issue #1019: Record acceptance outcome for sigma adaptation
+                    {
+                        let mut tracker = ctx
+                            .acceptance_tracker
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        tracker.record_batch(
+                            target_type,
+                            accepted_count,
+                            weight_candidates.len() as u32,
+                        );
+                    }
+
                     (
                         best_weight,
                         best_improvement,
