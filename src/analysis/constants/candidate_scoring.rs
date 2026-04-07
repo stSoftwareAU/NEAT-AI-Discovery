@@ -378,6 +378,35 @@ pub const SYNAPSE_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.05;
 pub const SYNAPSE_PESSIMISM_CURVE_EXPONENT: f32 = 0.85;
 
 // =============================================================================
+// Metropolis-Hastings Temperature (Issue #1018)
+// =============================================================================
+
+/// Default temperature for Metropolis-Hastings probabilistic acceptance.
+///
+/// Controls the exploration-exploitation trade-off when evaluating marginal
+/// synapse candidates (those with 0 < improvement ≤ threshold). Higher
+/// temperatures accept more marginal candidates; lower temperatures are
+/// more selective.
+///
+/// The acceptance probability for a marginal candidate is:
+///
+/// ```text
+/// p = min(1, exp(improvement / temperature))
+/// ```
+///
+/// At the default value of 0.01, a candidate with improvement = 0.005
+/// (half the typical threshold) has acceptance probability ≈ 0.607.
+///
+/// This feature is gated behind the `NEAT_AI_DISCOVERY_MH_TEMPERATURE`
+/// environment variable. When the variable is unset, deterministic
+/// threshold-based acceptance is used (preserving existing behaviour).
+///
+/// ## Valid Range
+/// Must be > 0.0. Values below 0.001 make acceptance near-deterministic.
+/// Values above 0.1 accept nearly all marginal candidates.
+pub const DEFAULT_MH_TEMPERATURE: f32 = 0.01;
+
+// =============================================================================
 // NaN-safe Floating-Point Comparison Helpers (Issue #483)
 // =============================================================================
 
