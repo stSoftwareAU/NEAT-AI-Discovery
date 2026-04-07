@@ -8,6 +8,7 @@ mod coordinated_structural_collapse_neuron_to_synapse;
 mod coordinated_structural_mercury_digital;
 mod coordinated_structural_noisy_vs_trusted_inputs;
 mod coordinated_structural_replace_synapse_with_relu;
+mod issue_1017_candidate_pipeline_mcmc_audit;
 mod issue_208_synapse_counts;
 mod issue_413_add_synapse_prediction_accuracy;
 mod issue_416_harmful_synapse_threshold;
