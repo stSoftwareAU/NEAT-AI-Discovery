@@ -66,6 +66,8 @@ pub(crate) struct TargetAnalysisContext<'a> {
     /// Default 1.0 preserves existing behaviour. Higher values lower effective
     /// thresholds (exploration); lower values raise them (exploitation).
     pub temperature: f32,
+    /// Issue #1021: MCMC diagnostics tracker for acceptance rate and diversity metrics.
+    pub mcmc_tracker: Arc<crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsTracker>,
 }
 
 /// Results from analysing a single target neuron.

@@ -124,6 +124,68 @@ pub struct SynapseAnalysisMetadataJson {
     /// Reports how many candidates each module produced and historical success rates.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub discovery_module_stats: Vec<analysis::module_weights::DiscoveryModuleStatsJson>,
+    /// MCMC diagnostics: acceptance rates, proposal quality, diversity (Issue #1021).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcmc_diagnostics: Option<McmcDiagnosticsJson>,
+}
+
+/// MCMC diagnostics summary for the analysis output JSON (Issue #1021).
+///
+/// Reports acceptance rates per candidate type, proposal quality distribution,
+/// and source/target diversity metrics for chain mixing analysis.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McmcDiagnosticsJson {
+    /// Synapse candidate acceptance rate.
+    pub synapse_acceptance: AcceptanceRateJson,
+    /// Neuron candidate acceptance rate.
+    pub neuron_acceptance: AcceptanceRateJson,
+    /// Coordinated candidate acceptance rate.
+    pub coordinated_acceptance: AcceptanceRateJson,
+    /// Total candidates proposed across all types.
+    pub total_proposed: u32,
+    /// Total candidates accepted across all types.
+    pub total_accepted: u32,
+    /// Overall acceptance rate (accepted / proposed).
+    pub overall_acceptance_rate: f32,
+    /// Distribution of improvement values among accepted candidates.
+    /// Only present when verbose mode is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal_quality: Option<ProposalQualityJson>,
+    /// Source/target diversity among evaluated vs accepted candidates.
+    /// Only present when verbose mode is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diversity: Option<DiversityMetricJson>,
+}
+
+/// Acceptance rate for a single candidate type (Issue #1021).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceptanceRateJson {
+    pub proposed: u32,
+    pub accepted: u32,
+    pub rate: f32,
+}
+
+/// Distribution statistics for improvement values (Issue #1021).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposalQualityJson {
+    pub count: usize,
+    pub min: f32,
+    pub max: f32,
+    pub mean: f32,
+    pub median: f32,
+}
+
+/// Source/target diversity metrics (Issue #1021).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiversityMetricJson {
+    pub evaluated_unique_sources: usize,
+    pub evaluated_unique_targets: usize,
+    pub accepted_unique_sources: usize,
+    pub accepted_unique_targets: usize,
 }
 
 /// JSON representation of neuron analysis metadata.
@@ -249,4 +311,48 @@ pub struct NeuronDiagnosticDetailJson {
     pub threshold: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outgoing_weight: Option<f32>,
+}
+
+// ============================================================================
+// MCMC diagnostics conversion (Issue #1021)
+// ============================================================================
+
+/// Convert internal MCMC diagnostics summary to JSON output format.
+pub(crate) fn mcmc_to_json(
+    summary: &crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsSummary,
+) -> McmcDiagnosticsJson {
+    McmcDiagnosticsJson {
+        synapse_acceptance: acceptance_snapshot_to_json(&summary.synapse_acceptance),
+        neuron_acceptance: acceptance_snapshot_to_json(&summary.neuron_acceptance),
+        coordinated_acceptance: acceptance_snapshot_to_json(&summary.coordinated_acceptance),
+        total_proposed: summary.total_proposed,
+        total_accepted: summary.total_accepted,
+        overall_acceptance_rate: summary.overall_acceptance_rate(),
+        proposal_quality: summary
+            .proposal_quality
+            .as_ref()
+            .map(|q| ProposalQualityJson {
+                count: q.count,
+                min: q.min,
+                max: q.max,
+                mean: q.mean,
+                median: q.median,
+            }),
+        diversity: summary.diversity.as_ref().map(|d| DiversityMetricJson {
+            evaluated_unique_sources: d.evaluated_unique_sources,
+            evaluated_unique_targets: d.evaluated_unique_targets,
+            accepted_unique_sources: d.accepted_unique_sources,
+            accepted_unique_targets: d.accepted_unique_targets,
+        }),
+    }
+}
+
+fn acceptance_snapshot_to_json(
+    snap: &crate::analysis::diagnostics::mcmc_diagnostics::AcceptanceSnapshot,
+) -> AcceptanceRateJson {
+    AcceptanceRateJson {
+        proposed: snap.proposed,
+        accepted: snap.accepted,
+        rate: snap.rate(),
+    }
 }

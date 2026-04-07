@@ -94,6 +94,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     timing: s.metadata.timing.as_ref().map(timing_to_json),
                     gpu_info: s.metadata.gpu_info.as_ref().map(gpu_info_to_json),
                     discovery_module_stats: s.metadata.discovery_module_stats.clone(),
+                    mcmc_diagnostics: s.metadata.mcmc_diagnostics.as_ref().map(mcmc_to_json),
                 }),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 synapse_weight_updates,

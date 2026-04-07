@@ -29,6 +29,8 @@ pub(super) struct FinaliseParams<'a> {
     pub input: &'a AnalyzeSynapsesInput,
     pub cache: Arc<RecordCache>,
     pub order_map: &'a HashMap<String, usize>,
+    /// Issue #1021: MCMC diagnostics summary for inclusion in metadata.
+    pub mcmc_summary: crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsSummary,
 }
 
 /// Collect results from merged state, apply post-processing, and build the final output.
@@ -84,6 +86,7 @@ pub(super) fn finalise_synapse_results(
         input_max,
         error_values: &error_values,
         timing_collector: &params.timing_collector,
+        mcmc_summary: Some(params.mcmc_summary),
     });
 
     Ok(AnalyzeSynapsesResult {

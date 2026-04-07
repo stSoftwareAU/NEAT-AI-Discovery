@@ -82,6 +82,10 @@ pub struct SynapseAnalysisMetadata {
     /// Reports how many candidates each discovery module produced, enabling
     /// operators to see which modules are most effective.
     pub discovery_module_stats: Vec<crate::analysis::module_weights::DiscoveryModuleStatsJson>,
+
+    /// MCMC diagnostics: acceptance rates, proposal quality, diversity (Issue #1021).
+    pub mcmc_diagnostics:
+        Option<crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsSummary>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.

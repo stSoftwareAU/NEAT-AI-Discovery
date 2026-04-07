@@ -24,6 +24,7 @@ use anyhow::Result;
 use super::statistics::PreparedHarmfulWork;
 use super::{HelpfulWork, TargetAnalysisContext, TargetAnalysisResults};
 
+use crate::analysis::diagnostics::mcmc_diagnostics::CandidateType;
 use crate::analysis::synapse::scoring::compute_synapse_improvement_and_count;
 
 /// Issue #568: Submit helpful GPU work non-blocking.
@@ -305,6 +306,15 @@ pub(crate) fn collect_and_process_helpful_results(
                 ));
             }
 
+            // Issue #1021: Record this candidate as evaluated (proposed) for MCMC diagnostics
+            let mcmc_type = if work.existing_weight.is_some() {
+                CandidateType::Coordinated
+            } else {
+                CandidateType::Synapse
+            };
+            ctx.mcmc_tracker
+                .record_evaluated(&work.source_uuid, &work.target_uuid, mcmc_type);
+
             if neuron_error_improvement <= 0.0 {
                 continue;
             }
@@ -405,6 +415,13 @@ pub(crate) fn collect_and_process_helpful_results(
                 else {
                     continue;
                 };
+                // Issue #1021: Record accepted coordinated candidate
+                ctx.mcmc_tracker.record_accepted(
+                    &work.source_uuid,
+                    &work.target_uuid,
+                    neuron_error_improvement,
+                    CandidateType::Coordinated,
+                );
                 coordinated_to_add.push(crate::CoordinatedStructuralCandidateJson {
                     operations: vec![crate::CoordinatedStructuralOpJson::SetWeight {
                         from_neuron_uuid: work.source_uuid.clone(),
@@ -450,6 +467,13 @@ pub(crate) fn collect_and_process_helpful_results(
                                 .unwrap_or(0.0);
                             let new_bias = old_bias + (applied_weight * mean_activation);
                             if new_bias.is_finite() {
+                                // Issue #1021: Record accepted coordinated (constant fold)
+                                ctx.mcmc_tracker.record_accepted(
+                                    &work.source_uuid,
+                                    &work.target_uuid,
+                                    neuron_error_improvement,
+                                    CandidateType::Coordinated,
+                                );
                                 coordinated_to_add.push(
                                     crate::CoordinatedStructuralCandidateJson {
                                         operations: vec![
@@ -470,6 +494,13 @@ pub(crate) fn collect_and_process_helpful_results(
                     }
                 }
 
+                // Issue #1021: Record accepted synapse candidate
+                ctx.mcmc_tracker.record_accepted(
+                    &work.source_uuid,
+                    &work.target_uuid,
+                    neuron_error_improvement,
+                    CandidateType::Synapse,
+                );
                 let confidence_metrics =
                     compute_confidence_metrics(&work.samples, neuron_error_improvement, None);
                 candidates_to_add.push(CandidateSynapseJson {
