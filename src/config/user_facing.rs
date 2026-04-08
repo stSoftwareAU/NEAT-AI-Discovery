@@ -170,10 +170,14 @@ pub fn focus_unused_observations() -> bool {
     parse_bool_env("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS")
 }
 
+/// Maximum valid source input index bias.
+pub const MAX_SOURCE_INPUT_INDEX_BIAS: f64 = 10.0;
+
 /// Get the source input index bias strength.
 ///
-/// Set `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` to a positive finite number.
-/// Returns `None` when disabled (unset, empty, or invalid).
+/// Set `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` to a positive finite number
+/// up to 10.0. Returns `None` when disabled (unset, empty, out of range, or
+/// invalid).
 pub fn source_input_index_bias() -> Option<f64> {
     let raw = std::env::var("NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS").ok()?;
     let trimmed = raw.trim();
@@ -181,11 +185,12 @@ pub fn source_input_index_bias() -> Option<f64> {
         return None;
     }
     match trimmed.parse::<f64>() {
-        Ok(v) if v.is_finite() && v > 0.0 => Some(v),
+        Ok(v) if v.is_finite() && v > 0.0 && v <= MAX_SOURCE_INPUT_INDEX_BIAS => Some(v),
         _ => {
             tracing::debug!(
                 raw_value = trimmed,
-                "Ignoring invalid NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS (expected a finite number > 0)"
+                "Ignoring invalid NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS \
+                 (expected a finite number in 0.0–{MAX_SOURCE_INPUT_INDEX_BIAS})"
             );
             None
         }
@@ -286,13 +291,19 @@ pub fn streaming_enabled() -> bool {
     !preload_all()
 }
 
+/// Minimum valid Metropolis-Hastings temperature.
+pub const MIN_MH_TEMPERATURE: f32 = 0.01;
+
+/// Maximum valid Metropolis-Hastings temperature.
+pub const MAX_MH_TEMPERATURE: f32 = 5.0;
+
 /// Get the Metropolis-Hastings temperature for probabilistic acceptance (Issue #1018).
 ///
-/// Set `NEAT_AI_DISCOVERY_MH_TEMPERATURE` to a positive finite number to enable
+/// Set `NEAT_AI_DISCOVERY_MH_TEMPERATURE` to a value in 0.01–5.0 to enable
 /// probabilistic acceptance of marginal synapse candidates. When unset,
 /// deterministic threshold-based acceptance is used (existing behaviour).
 ///
-/// Returns `None` when disabled (unset, empty, or invalid).
+/// Returns `None` when disabled (unset, empty, out of range, or invalid).
 pub fn mh_temperature() -> Option<f32> {
     static VAL: OnceLock<Option<f32>> = OnceLock::new();
     *VAL.get_or_init(|| {
@@ -302,11 +313,14 @@ pub fn mh_temperature() -> Option<f32> {
             return None;
         }
         match trimmed.parse::<f32>() {
-            Ok(v) if v.is_finite() && v > 0.0 => Some(v),
+            Ok(v) if v.is_finite() && (MIN_MH_TEMPERATURE..=MAX_MH_TEMPERATURE).contains(&v) => {
+                Some(v)
+            }
             _ => {
                 tracing::debug!(
                     raw_value = trimmed,
-                    "Ignoring invalid NEAT_AI_DISCOVERY_MH_TEMPERATURE (expected a finite number > 0)"
+                    "Ignoring invalid NEAT_AI_DISCOVERY_MH_TEMPERATURE \
+                     (expected a finite number in {MIN_MH_TEMPERATURE}–{MAX_MH_TEMPERATURE})"
                 );
                 None
             }
