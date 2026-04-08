@@ -25,7 +25,7 @@ src/
 │   ├── gpu.rs                # GPU probe entry points (check_gpu_available)
 │   ├── recording.rs          # Recording entry points (streaming and single-call)
 │   ├── analysis.rs           # Analysis entry points (rank_focus_neurons, analyze_parallel)
-│   └── utilities.rs          # Utility entry points (merge, read, export, version)
+│   └── utilities.rs          # Utility entry points (merge, read, export, version, memory usage)
 ├── ffi_types/                # JSON request/response structs for FFI boundary (Issue #596)
 │   ├── mod.rs                # Public API, re-exports, shared types (Creature, Neuron, Synapse)
 │   ├── requests.rs           # FFI request structs (input from NEAT-AI)

@@ -304,6 +304,31 @@ pub unsafe extern "C" fn get_calibration_summary(
 }
 
 // ============================================================================
+// Memory usage (Issue #1027)
+// ============================================================================
+
+/// Return the current Rust-side heap allocation in bytes.
+///
+/// This function is designed for periodic polling (every 5–30 seconds) by the
+/// Deno-side memory watchdog. It reads a single atomic counter maintained by
+/// the tracking allocator, so overhead is negligible.
+///
+/// The returned value reflects memory allocated through Rust's global
+/// allocator. It does **not** include V8/Deno heap usage — callers should
+/// combine this with `Deno.memoryUsage().heapUsed` for total process memory.
+#[unsafe(no_mangle)]
+pub extern "C" fn discovery_memory_usage_bytes() -> u64 {
+    use std::panic;
+
+    panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        #[allow(clippy::cast_possible_truncation)]
+        let bytes = crate::ALLOCATOR.allocated() as u64;
+        bytes
+    }))
+    .unwrap_or(0)
+}
+
+// ============================================================================
 // Library cleanup (Issue #994)
 // ============================================================================
 
