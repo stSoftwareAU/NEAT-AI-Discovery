@@ -14,9 +14,12 @@
 use anyhow::Result;
 use crossbeam_channel::Receiver;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use super::recovery::{get_gpu_retry_limit, is_device_lost_error};
+use super::recovery::{
+    DEFAULT_BACKOFF_INITIAL_MS, DEFAULT_BACKOFF_MAX_MS, backoff_delay_ms, get_gpu_retry_limit,
+    is_device_lost_error,
+};
 use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::analyzer::{GpuAnalyzer, GpuEvaluator};
 use crate::analysis::samples::{HelpfulSample, ReluStats};
@@ -280,11 +283,20 @@ impl GpuWorkQueue {
 
                     let mut recovered = false;
                     for attempt in 1..=retry_limit {
+                        let delay_ms = backoff_delay_ms(
+                            attempt,
+                            DEFAULT_BACKOFF_INITIAL_MS,
+                            DEFAULT_BACKOFF_MAX_MS,
+                        );
                         tracing::warn!(
                             attempt = attempt,
                             max_attempts = retry_limit,
-                            "Re-initialising GpuAnalyzer (attempt {attempt}/{retry_limit})"
+                            backoff_ms = delay_ms,
+                            error = %device_err,
+                            "GPU recovery attempt {attempt}/{retry_limit} — \
+                             waiting {delay_ms}ms before re-initialising GpuAnalyzer"
                         );
+                        std::thread::sleep(Duration::from_millis(delay_ms));
 
                         match GpuAnalyzer::new() {
                             Ok(new_analyzer) => {
