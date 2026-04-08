@@ -160,7 +160,7 @@ fn detect_returns_results_in_original_order() {
         ),
     ];
 
-    let results = detect_discovery_modules_parallel(modules);
+    let results = detect_discovery_modules_parallel(modules, None);
 
     assert_eq!(results.entries.len(), 3, "should have 3 entries");
     assert_eq!(results.entries[0].module_name, "mod_a");
@@ -213,7 +213,7 @@ fn split_detect_merge_matches_combined() {
         ),
         make_module("mod_c", None),
     ];
-    let detection_results = detect_discovery_modules_parallel(modules_split);
+    let detection_results = detect_discovery_modules_parallel(modules_split, None);
     merge_discovery_module_results(&mut syn_split, detection_results, None, false, &tracker);
 
     // Both should produce identical results.
@@ -261,7 +261,7 @@ fn merge_empty_detection_results_is_noop() {
 /// Verify that detect returns empty results for empty module list.
 #[test]
 fn detect_empty_modules_returns_empty() {
-    let results = detect_discovery_modules_parallel(Vec::new());
+    let results = detect_discovery_modules_parallel(Vec::new(), None);
     assert!(results.entries.is_empty());
 }
 
@@ -310,7 +310,7 @@ fn overlapped_compression_and_detection_produces_correct_results() {
                 make_module("mod_a", Some(vec![make_candidate(1.0)])),
                 make_module("mod_b", Some(vec![make_candidate(0.5)])),
             ];
-            detect_discovery_modules_parallel(modules)
+            detect_discovery_modules_parallel(modules, None)
         },
     );
 
@@ -371,7 +371,7 @@ fn overlapped_execution_is_deterministic_across_runs() {
                     make_module("mod_2", Some(vec![make_candidate(2.0)])),
                     make_module("mod_3", Some(vec![make_candidate(3.0)])),
                 ];
-                detect_discovery_modules_parallel(modules)
+                detect_discovery_modules_parallel(modules, None)
             },
         );
 
@@ -460,7 +460,7 @@ fn split_detect_merge_respects_max_candidates() {
         make_module("mod_b", Some(vec![make_candidate(1.0)])),
     ];
 
-    let detection_results = detect_discovery_modules_parallel(modules);
+    let detection_results = detect_discovery_modules_parallel(modules, None);
     merge_discovery_module_results(&mut syn, detection_results, Some(2), false, &tracker);
 
     let total = syn.helpful_synapses.len()

@@ -1,9 +1,13 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, SystemTime};
+
 use crate::analysis::shared;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
 use super::{
     DiscoveryDetectionResult, DiscoveryModuleSpec, ModuleOutcomeTracker,
-    run_discovery_modules_parallel,
+    detect_discovery_modules_parallel, run_discovery_modules_parallel,
 };
 
 fn empty_synapse_result() -> shared::AnalyzeSynapsesResult {
@@ -346,4 +350,193 @@ fn parallel_dispatch_filters_all_non_positive_returns_empty() {
         syn.coordinated_structural_candidates.is_empty(),
         "all-non-positive module should produce zero candidates"
     );
+}
+
+// =============================================================================
+// Issue #1029: Deadline-aware discovery module detection tests
+// =============================================================================
+
+#[test]
+fn parallel_detection_skips_modules_when_deadline_already_passed() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: Duration::from_secs(60),
+        abort_delay: Duration::from_secs(1),
+    });
+
+    // Track how many detection closures actually execute.
+    let execution_count = Arc::new(AtomicUsize::new(0));
+
+    let modules: Vec<DiscoveryModuleSpec> = (0..5)
+        .map(|i| {
+            let counter = Arc::clone(&execution_count);
+            DiscoveryModuleSpec {
+                module_name: format!("module_{i}"),
+                phase_name: "test_phase",
+                max_candidates: 0,
+                detect_fn: Box::new(move || {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    Some(DiscoveryDetectionResult {
+                        detected_count: 1,
+                        candidates: vec![make_candidate(1.0)],
+                    })
+                }),
+            }
+        })
+        .collect();
+
+    // Deadline is already in the past — all modules should be skipped.
+    let past_deadline = Some(SystemTime::now() - Duration::from_secs(10));
+    let results = detect_discovery_modules_parallel(modules, past_deadline);
+
+    // All entries should have result = None (skipped).
+    assert_eq!(results.entries.len(), 5);
+    for entry in &results.entries {
+        assert!(
+            entry.result.is_none(),
+            "Module '{}' should have been skipped due to past deadline",
+            entry.module_name
+        );
+    }
+
+    // No detection closures should have executed.
+    assert_eq!(
+        execution_count.load(Ordering::Relaxed),
+        0,
+        "No detection closures should execute when deadline has already passed"
+    );
+}
+
+#[test]
+fn parallel_detection_runs_all_modules_when_no_deadline() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: Duration::from_secs(60),
+        abort_delay: Duration::from_secs(1),
+    });
+
+    let execution_count = Arc::new(AtomicUsize::new(0));
+
+    let modules: Vec<DiscoveryModuleSpec> = (0..3)
+        .map(|i| {
+            let counter = Arc::clone(&execution_count);
+            DiscoveryModuleSpec {
+                module_name: format!("module_{i}"),
+                phase_name: "test_phase",
+                max_candidates: 0,
+                detect_fn: Box::new(move || {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    Some(DiscoveryDetectionResult {
+                        detected_count: 1,
+                        candidates: vec![make_candidate(1.0)],
+                    })
+                }),
+            }
+        })
+        .collect();
+
+    // No deadline — all modules should run.
+    let results = detect_discovery_modules_parallel(modules, None);
+
+    assert_eq!(results.entries.len(), 3);
+    assert_eq!(
+        execution_count.load(Ordering::Relaxed),
+        3,
+        "All detection closures should execute when no deadline is set"
+    );
+    for entry in &results.entries {
+        assert!(
+            entry.result.is_some(),
+            "Module '{}' should have produced results without a deadline",
+            entry.module_name
+        );
+    }
+}
+
+#[test]
+fn parallel_detection_runs_all_modules_when_deadline_is_far_future() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: Duration::from_secs(60),
+        abort_delay: Duration::from_secs(1),
+    });
+
+    let execution_count = Arc::new(AtomicUsize::new(0));
+
+    let modules: Vec<DiscoveryModuleSpec> = (0..3)
+        .map(|i| {
+            let counter = Arc::clone(&execution_count);
+            DiscoveryModuleSpec {
+                module_name: format!("module_{i}"),
+                phase_name: "test_phase",
+                max_candidates: 0,
+                detect_fn: Box::new(move || {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    Some(DiscoveryDetectionResult {
+                        detected_count: 1,
+                        candidates: vec![make_candidate(1.0)],
+                    })
+                }),
+            }
+        })
+        .collect();
+
+    // Deadline far in the future — all modules should run.
+    let future_deadline = Some(SystemTime::now() + Duration::from_secs(3600));
+    let results = detect_discovery_modules_parallel(modules, future_deadline);
+
+    assert_eq!(results.entries.len(), 3);
+    assert_eq!(
+        execution_count.load(Ordering::Relaxed),
+        3,
+        "All detection closures should execute when deadline is far in the future"
+    );
+}
+
+#[test]
+fn parallel_detection_preserves_module_metadata_when_skipped() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: Duration::from_secs(60),
+        abort_delay: Duration::from_secs(1),
+    });
+
+    let modules = vec![
+        DiscoveryModuleSpec {
+            module_name: "alpha".to_string(),
+            phase_name: "phase_alpha",
+            max_candidates: 10,
+            detect_fn: Box::new(|| {
+                Some(DiscoveryDetectionResult {
+                    detected_count: 1,
+                    candidates: vec![make_candidate(1.0)],
+                })
+            }),
+        },
+        DiscoveryModuleSpec {
+            module_name: "beta".to_string(),
+            phase_name: "phase_beta",
+            max_candidates: 20,
+            detect_fn: Box::new(|| {
+                Some(DiscoveryDetectionResult {
+                    detected_count: 1,
+                    candidates: vec![make_candidate(2.0)],
+                })
+            }),
+        },
+    ];
+
+    let past_deadline = Some(SystemTime::now() - Duration::from_secs(10));
+    let results = detect_discovery_modules_parallel(modules, past_deadline);
+
+    // Module metadata (name, phase, budget) should be preserved even when skipped.
+    assert_eq!(results.entries[0].module_name, "alpha");
+    assert_eq!(results.entries[0].phase_name, "phase_alpha");
+    assert_eq!(results.entries[0].max_candidates, 10);
+    assert!(results.entries[0].result.is_none());
+
+    assert_eq!(results.entries[1].module_name, "beta");
+    assert_eq!(results.entries[1].phase_name, "phase_beta");
+    assert_eq!(results.entries[1].max_candidates, 20);
+    assert!(results.entries[1].result.is_none());
 }

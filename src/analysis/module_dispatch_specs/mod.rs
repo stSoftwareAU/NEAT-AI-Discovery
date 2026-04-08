@@ -70,11 +70,18 @@ pub(crate) fn build_discovery_module_specs(
 ///
 /// This separation allows the detection phase to overlap with other concurrent
 /// work (e.g., candidate compression) before merging results sequentially.
+///
+/// ## Deadline enforcement (Issue #1029)
+///
+/// The `deadline` parameter is forwarded to [`discovery_dispatch::detect_discovery_modules_parallel`]
+/// so that modules are skipped when the analysis time budget is exhausted,
+/// preventing the detection phase from running indefinitely.
 pub(crate) fn prepare_and_detect_discovery_modules(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
     tracker: &ModuleOutcomeTracker,
+    deadline: Option<std::time::SystemTime>,
 ) -> discovery_dispatch::DiscoveryModuleDetectionResults {
     // Issue #754: Pre-compute topology cache once for all detection modules.
     let topo = Arc::new(CreatureTopologyCache::new(creature));
@@ -90,7 +97,7 @@ pub(crate) fn prepare_and_detect_discovery_modules(
         }
     }
 
-    discovery_dispatch::detect_discovery_modules_parallel(modules)
+    discovery_dispatch::detect_discovery_modules_parallel(modules, deadline)
 }
 
 /// Synthesise cross-detection candidates for co-flagged neurons (Issue #963).

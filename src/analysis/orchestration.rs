@@ -367,11 +367,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             },
             || {
                 // Issue #375 / #419: Discovery module detection phase only.
+                // Issue #1029: Pass the analysis deadline so detection modules
+                // are skipped when time runs out, preventing lockups.
+                let discovery_deadline = utils::build_deadline(input.analysis_deadline_ms);
                 module_dispatch_specs::prepare_and_detect_discovery_modules(
                     &creature,
                     &hidden_neurons,
                     &shared_cache,
                     &tracker,
+                    discovery_deadline,
                 )
             },
         );
