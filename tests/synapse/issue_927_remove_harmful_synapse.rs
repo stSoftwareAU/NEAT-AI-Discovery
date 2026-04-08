@@ -429,6 +429,7 @@ fn test_analyze_all_finds_harmful_synapse() {
         temperature: 1.0,
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        max_analysis_memory_mb: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");

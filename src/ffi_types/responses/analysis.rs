@@ -72,6 +72,13 @@ pub struct AnalyzeParallelOutput {
     /// `moduleOutcomeTracker` on the next discovery run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub module_outcome_tracker: Option<analysis::module_weights::ModuleOutcomeTracker>,
+    /// Whether the analysis was cut short because the Rust-side memory usage
+    /// approached or exceeded the configured `maxAnalysisMemoryMb` (Issue #1028).
+    ///
+    /// When `true`, the results are partial — some focus neurons or post-processing
+    /// steps may have been skipped. Always `false` when no budget is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_budget_exceeded: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Structured error classification for retry decisions (Issue #651).

@@ -509,6 +509,45 @@ pub fn get_work_queue_capacity() -> usize {
 }
 
 // =============================================================================
+// Memory Budget Checking (Issue #1028)
+// =============================================================================
+
+/// Threshold fraction of the memory budget at which we consider it exceeded.
+///
+/// We trigger at 90% to allow the analysis to return partial results before
+/// the OS kills the process.
+const MEMORY_BUDGET_THRESHOLD: f64 = 0.9;
+
+/// Check whether the current Rust heap usage exceeds the configured memory budget.
+///
+/// Returns `true` when `allocated_bytes` reaches 90% of `budget_mb` (converted to
+/// bytes). Returns `false` when no budget is set (`budget_mb` is `None`).
+///
+/// This is a pure function to enable deterministic testing without relying on
+/// the global allocator.
+pub fn check_memory_budget_exceeded(budget_mb: Option<u64>, allocated_bytes: u64) -> bool {
+    let Some(budget) = budget_mb else {
+        return false;
+    };
+    if budget == 0 {
+        return allocated_bytes > 0;
+    }
+    let budget_bytes = budget as f64 * 1024.0 * 1024.0;
+    let threshold_bytes = budget_bytes * MEMORY_BUDGET_THRESHOLD;
+    allocated_bytes as f64 >= threshold_bytes
+}
+
+/// Check memory budget against the live Rust heap allocator (Issue #1028).
+///
+/// Reads the current allocation from the global tracking allocator and
+/// compares it to `budget_mb`. Returns `true` if the budget is approached
+/// (90% threshold) or exceeded.
+pub fn is_memory_budget_exceeded(budget_mb: Option<u64>) -> bool {
+    let allocated = crate::ALLOCATOR.allocated() as u64;
+    check_memory_budget_exceeded(budget_mb, allocated)
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 

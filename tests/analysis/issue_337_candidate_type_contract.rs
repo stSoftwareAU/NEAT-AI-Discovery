@@ -316,6 +316,7 @@ fn analyze_parallel_output_contains_all_candidate_fields() {
         fingerprint_cache_hits: None,
         fingerprint_cache_misses: None,
         module_outcome_tracker: None,
+        memory_budget_exceeded: None,
         error: None,
         error_kind: None,
         retryable: None,

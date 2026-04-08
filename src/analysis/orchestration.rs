@@ -194,6 +194,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         return Ok(AnalyzeAllResult {
             synapse: None,
             neuron: None,
+            memory_budget_exceeded: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -209,6 +210,25 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         return Ok(AnalyzeAllResult {
             synapse: None,
             neuron: None,
+            memory_budget_exceeded: false,
+            neuron_fingerprints: Some(current_fingerprints),
+            fingerprint_cache_hits,
+            fingerprint_cache_misses,
+            module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+        });
+    }
+
+    // Issue #1028: Check memory budget before expensive GPU work.
+    if utils::is_memory_budget_exceeded(input.max_analysis_memory_mb) {
+        tracing::warn!(
+            budget_mb = input.max_analysis_memory_mb,
+            allocated_bytes = crate::ALLOCATOR.allocated(),
+            "memory budget exceeded before GPU analysis — returning early with no candidates"
+        );
+        return Ok(AnalyzeAllResult {
+            synapse: None,
+            neuron: None,
+            memory_budget_exceeded: true,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -242,6 +262,26 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         parquet_loading_start.elapsed().as_millis() as u64,
     );
     crate::watchdog::beat("analysis::analyze_all → parquet cache loaded");
+
+    // Issue #1028: Check memory budget after parquet loading (often the largest
+    // single allocation). If the cache already consumed most of the budget,
+    // return early with partial results rather than proceeding to GPU analysis.
+    if utils::is_memory_budget_exceeded(input.max_analysis_memory_mb) {
+        tracing::warn!(
+            budget_mb = input.max_analysis_memory_mb,
+            allocated_bytes = crate::ALLOCATOR.allocated(),
+            "memory budget exceeded after parquet loading — returning early"
+        );
+        return Ok(AnalyzeAllResult {
+            synapse: None,
+            neuron: None,
+            memory_budget_exceeded: true,
+            neuron_fingerprints: Some(current_fingerprints),
+            fingerprint_cache_hits,
+            fingerprint_cache_misses,
+            module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+        });
+    }
 
     let synapse_input = if include_synapse {
         Some(AnalyzeSynapsesInput {
@@ -288,11 +328,24 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         &shared_gpu_queue,
     )?;
 
+    // Issue #1028: Check memory budget after GPU analysis. If exceeded, skip
+    // post-processing and return the candidates we have so far.
+    let memory_budget_exceeded = utils::is_memory_budget_exceeded(input.max_analysis_memory_mb);
+    if memory_budget_exceeded {
+        tracing::warn!(
+            budget_mb = input.max_analysis_memory_mb,
+            allocated_bytes = crate::ALLOCATOR.allocated(),
+            "memory budget exceeded after GPU analysis — skipping post-processing"
+        );
+    }
+
     // Post-process: convert certain add-neuron candidates into coordinated-structural replacements.
     let mut synapse_result = synapse_result;
     let mut neuron_result = neuron_result;
 
-    if let (Some(syn), Some(neuron)) = (synapse_result.as_mut(), neuron_result.as_mut()) {
+    if !memory_budget_exceeded
+        && let (Some(syn), Some(neuron)) = (synapse_result.as_mut(), neuron_result.as_mut())
+    {
         candidate_aggregation::convert_neurons_to_coordinated_replacements(
             input,
             syn,
@@ -304,135 +357,141 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Issue #792: Resolve the module outcome tracker from input or use a default.
     let tracker = input.module_outcome_tracker.clone().unwrap_or_default();
 
-    // Issue #1004: Overlap candidate compression with discovery module detection.
-    //
-    // Both compression (reads `helpful_synapses` immutably) and discovery module
-    // detection (reads creature/cache, runs ~48 detection closures) are independent
-    // in their detection phases. We run them concurrently via `rayon::join`, then
-    // merge results sequentially (compression first, then discovery modules) to
-    // preserve deterministic ordering.
-    if let Some(syn) = synapse_result.as_mut() {
-        let max_candidates = input.max_synapse_candidates;
-        let diversify = input.analysis_deadline_ms.is_some();
+    // Issue #1028: Skip post-processing when memory budget is exceeded.
+    // The candidates from GPU analysis are still returned, but compression,
+    // discovery module detection, and reranking are skipped to avoid further
+    // memory growth.
+    if !memory_budget_exceeded {
+        // Issue #1004: Overlap candidate compression with discovery module detection.
+        //
+        // Both compression (reads `helpful_synapses` immutably) and discovery module
+        // detection (reads creature/cache, runs ~48 detection closures) are independent
+        // in their detection phases. We run them concurrently via `rayon::join`, then
+        // merge results sequentially (compression first, then discovery modules) to
+        // preserve deterministic ordering.
+        if let Some(syn) = synapse_result.as_mut() {
+            let max_candidates = input.max_synapse_candidates;
+            let diversify = input.analysis_deadline_ms.is_some();
 
-        // Snapshot data needed by compression (immutable reads).
-        let helpful_synapses_snapshot = syn.helpful_synapses.clone();
-        let creature_for_compression = input.creature.clone();
+            // Snapshot data needed by compression (immutable reads).
+            let helpful_synapses_snapshot = syn.helpful_synapses.clone();
+            let creature_for_compression = input.creature.clone();
 
-        // Data needed by discovery module detection.
-        let creature = Arc::new(input.creature.clone());
-        let hidden_neurons: Arc<Vec<(String, String, f32)>> = Arc::new(
-            input
-                .creature
-                .neurons
-                .iter()
-                .filter(|n| n.neuron_type == "hidden")
-                .map(|n| {
-                    // Issue #753: ensure squash is uppercase even for
-                    // programmatically constructed NeuronJson (serde path
-                    // normalises during deserialisation, this covers the rest).
-                    let squash = if n.squash.bytes().all(|b| !b.is_ascii_lowercase()) {
-                        n.squash.clone()
-                    } else {
-                        n.squash.to_ascii_uppercase()
-                    };
-                    (n.uuid.clone(), squash, n.bias)
-                })
-                .collect(),
-        );
+            // Data needed by discovery module detection.
+            let creature = Arc::new(input.creature.clone());
+            let hidden_neurons: Arc<Vec<(String, String, f32)>> = Arc::new(
+                input
+                    .creature
+                    .neurons
+                    .iter()
+                    .filter(|n| n.neuron_type == "hidden")
+                    .map(|n| {
+                        // Issue #753: ensure squash is uppercase even for
+                        // programmatically constructed NeuronJson (serde path
+                        // normalises during deserialisation, this covers the rest).
+                        let squash = if n.squash.bytes().all(|b| !b.is_ascii_lowercase()) {
+                            n.squash.clone()
+                        } else {
+                            n.squash.to_ascii_uppercase()
+                        };
+                        (n.uuid.clone(), squash, n.bias)
+                    })
+                    .collect(),
+            );
 
-        // Issue #1004: Run compression detection and discovery module detection
-        // concurrently. The heavier discovery dispatch (~48 parallel modules)
-        // overlaps with the lighter compression work.
-        let (all_compressed, discovery_results) = rayon::join(
-            || {
-                // Issue #921 / #922: Compress IDENTITY and non-linear candidates.
-                let (identity_compressed, nonlinear_compressed) = rayon::join(
-                    || {
-                        candidate_compression::compress_identity_candidates(
-                            &helpful_synapses_snapshot,
-                            &creature_for_compression,
-                        )
-                    },
-                    || {
-                        candidate_compression::compress_nonlinear_candidates(
-                            &helpful_synapses_snapshot,
-                            &creature_for_compression,
-                        )
-                    },
+            // Issue #1004: Run compression detection and discovery module detection
+            // concurrently. The heavier discovery dispatch (~48 parallel modules)
+            // overlaps with the lighter compression work.
+            let (all_compressed, discovery_results) = rayon::join(
+                || {
+                    // Issue #921 / #922: Compress IDENTITY and non-linear candidates.
+                    let (identity_compressed, nonlinear_compressed) = rayon::join(
+                        || {
+                            candidate_compression::compress_identity_candidates(
+                                &helpful_synapses_snapshot,
+                                &creature_for_compression,
+                            )
+                        },
+                        || {
+                            candidate_compression::compress_nonlinear_candidates(
+                                &helpful_synapses_snapshot,
+                                &creature_for_compression,
+                            )
+                        },
+                    );
+                    let mut all = identity_compressed;
+                    all.extend(nonlinear_compressed);
+                    all
+                },
+                || {
+                    // Issue #375 / #419: Discovery module detection phase only.
+                    // Issue #1029: Pass the analysis deadline so detection modules
+                    // are skipped when time runs out, preventing lockups.
+                    let discovery_deadline = utils::build_deadline(input.analysis_deadline_ms);
+                    module_dispatch_specs::prepare_and_detect_discovery_modules(
+                        &creature,
+                        &hidden_neurons,
+                        &shared_cache,
+                        &tracker,
+                        discovery_deadline,
+                    )
+                },
+            );
+
+            // Sequential merge phase: compression results first, then discovery modules.
+            // This preserves the same ordering as the previous sequential pipeline.
+            if !all_compressed.is_empty() {
+                candidate_aggregation::merge_coordinated_structural_replacements(
+                    syn,
+                    all_compressed,
+                    max_candidates,
+                    diversify,
                 );
-                let mut all = identity_compressed;
-                all.extend(nonlinear_compressed);
-                all
-            },
-            || {
-                // Issue #375 / #419: Discovery module detection phase only.
-                // Issue #1029: Pass the analysis deadline so detection modules
-                // are skipped when time runs out, preventing lockups.
-                let discovery_deadline = utils::build_deadline(input.analysis_deadline_ms);
-                module_dispatch_specs::prepare_and_detect_discovery_modules(
-                    &creature,
-                    &hidden_neurons,
-                    &shared_cache,
-                    &tracker,
-                    discovery_deadline,
-                )
-            },
-        );
+            }
 
-        // Sequential merge phase: compression results first, then discovery modules.
-        // This preserves the same ordering as the previous sequential pipeline.
-        if !all_compressed.is_empty() {
-            candidate_aggregation::merge_coordinated_structural_replacements(
+            discovery_dispatch::merge_discovery_module_results(
                 syn,
-                all_compressed,
+                discovery_results,
                 max_candidates,
                 diversify,
+                &tracker,
             );
         }
 
-        discovery_dispatch::merge_discovery_module_results(
-            syn,
-            discovery_results,
-            max_candidates,
-            diversify,
-            &tracker,
-        );
-    }
+        // Issue #963: Cross-detection candidate synthesis — synthesise combined
+        // candidates when multiple detection modules flag the same neuron.
+        if let Some(syn) = synapse_result.as_mut() {
+            module_dispatch_specs::synthesise_cross_detection_candidates(syn);
+        }
 
-    // Issue #963: Cross-detection candidate synthesis — synthesise combined
-    // candidates when multiple detection modules flag the same neuron.
-    if let Some(syn) = synapse_result.as_mut() {
-        module_dispatch_specs::synthesise_cross_detection_candidates(syn);
-    }
+        // Issue #489: Cross-module candidate deduplication.
+        if let Some(syn) = synapse_result.as_mut() {
+            module_dispatch_specs::deduplicate_cross_module_candidates(syn);
+        }
 
-    // Issue #489: Cross-module candidate deduplication.
-    if let Some(syn) = synapse_result.as_mut() {
-        module_dispatch_specs::deduplicate_cross_module_candidates(syn);
-    }
+        // Issue #572: Ensemble candidate scoring — combine predictions across modules.
+        if let Some(syn) = synapse_result.as_mut() {
+            module_dispatch_specs::apply_ensemble_scoring(syn, &tracker);
+        }
 
-    // Issue #572: Ensemble candidate scoring — combine predictions across modules.
-    if let Some(syn) = synapse_result.as_mut() {
-        module_dispatch_specs::apply_ensemble_scoring(syn, &tracker);
-    }
+        // Issue #792: Apply per-module boost factors to candidate expected gains.
+        if let Some(syn) = synapse_result.as_mut() {
+            module_weights::apply_module_boost_to_candidates(
+                &mut syn.coordinated_structural_candidates,
+                &tracker,
+            );
+        }
 
-    // Issue #792: Apply per-module boost factors to candidate expected gains.
-    if let Some(syn) = synapse_result.as_mut() {
-        module_weights::apply_module_boost_to_candidates(
-            &mut syn.coordinated_structural_candidates,
-            &tracker,
-        );
-    }
+        // Issue #610: Diversity-aware reranking — penalise structurally similar candidates.
+        if let Some(syn) = synapse_result.as_mut() {
+            module_dispatch_specs::apply_diversity_reranking(syn);
+        }
 
-    // Issue #610: Diversity-aware reranking — penalise structurally similar candidates.
-    if let Some(syn) = synapse_result.as_mut() {
-        module_dispatch_specs::apply_diversity_reranking(syn);
-    }
-
-    // Issue #224: Candidate clustering to reduce redundant ablation tests.
-    if let Some(syn) = synapse_result.as_mut() {
-        module_dispatch_specs::cluster_synapse_candidates(syn, &input.creature);
-    }
+        // Issue #224: Candidate clustering to reduce redundant ablation tests.
+        if let Some(syn) = synapse_result.as_mut() {
+            module_dispatch_specs::cluster_synapse_candidates(syn, &input.creature);
+        }
+    } // end if !memory_budget_exceeded (Issue #1028)
 
     // Collect final profile data (Issue #214)
     let synapse_candidates = synapse_result.as_ref().map_or(0, |s| {
@@ -484,6 +543,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     Ok(AnalyzeAllResult {
         synapse: synapse_result,
         neuron: neuron_result,
+        memory_budget_exceeded,
         neuron_fingerprints: Some(current_fingerprints),
         fingerprint_cache_hits,
         fingerprint_cache_misses,

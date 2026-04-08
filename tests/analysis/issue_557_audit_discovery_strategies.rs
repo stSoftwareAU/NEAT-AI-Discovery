@@ -137,6 +137,7 @@ fn all_candidates_have_positive_expected_score_gain() {
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        max_analysis_memory_mb: None,
         temperature: 1.0,
     };
 
@@ -222,6 +223,7 @@ fn metadata_consistent_after_positive_gain_filtering() {
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        max_analysis_memory_mb: None,
         temperature: 1.0,
     };
 

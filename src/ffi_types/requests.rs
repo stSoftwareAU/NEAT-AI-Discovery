@@ -66,6 +66,14 @@ pub struct AnalyzeParallelInput {
     /// schedule to compute this value (e.g., start at 2.0 and decay to 0.5).
     #[serde(default = "default_temperature")]
     pub temperature: f32,
+    /// Memory budget in megabytes for the analysis phase (Issue #1028).
+    ///
+    /// When set, the analysis phase periodically checks Rust-side heap usage
+    /// against this budget. If usage reaches 90% of the budget, remaining
+    /// analysis is skipped and partial results are returned. When `None`,
+    /// no memory limit is enforced (backwards compatible).
+    #[serde(default)]
+    pub max_analysis_memory_mb: Option<u64>,
 }
 
 /// Internal input structure for synapse analysis (used by `analyze_all`)
@@ -161,6 +169,11 @@ pub struct AnalyzeAllInput {
     /// for full documentation.
     #[serde(default = "default_temperature")]
     pub temperature: f32,
+    /// Memory budget in megabytes for the analysis phase (Issue #1028).
+    ///
+    /// See `AnalyzeParallelInput` for full documentation.
+    #[serde(default)]
+    pub max_analysis_memory_mb: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

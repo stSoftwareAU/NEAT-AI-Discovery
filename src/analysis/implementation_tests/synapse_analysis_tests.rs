@@ -702,6 +702,7 @@ fn analyze_all_runs_synapse_and_neuron_phases() {
         temperature: 1.0,
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        max_analysis_memory_mb: None,
     };
 
     let result = analyze_all(&input).expect("Combined analysis should succeed");

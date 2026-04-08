@@ -112,6 +112,7 @@ fn run_analysis(parquet_file: &str) -> Vec<f32> {
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        max_analysis_memory_mb: None,
         temperature: 1.0,
     };
 
@@ -206,6 +207,7 @@ fn parallel_discovery_metadata_consistent() {
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        max_analysis_memory_mb: None,
         temperature: 1.0,
     };
 

@@ -227,6 +227,7 @@ fn run_analysis() -> Vec<neat_ai_discovery::CoordinatedStructuralCandidateJson> 
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        max_analysis_memory_mb: None,
         temperature: 1.0,
     };
 
@@ -381,6 +382,7 @@ fn test_analyze_all_finds_change_squash_candidate() {
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        max_analysis_memory_mb: None,
         temperature: 1.0,
     };
 
