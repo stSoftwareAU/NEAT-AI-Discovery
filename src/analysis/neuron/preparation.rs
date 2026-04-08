@@ -88,7 +88,7 @@ pub(crate) fn prepare_neuron_analysis<'a>(
     }
 
     // Add all neurons from creature.neurons (hidden, output, constant)
-    // Re-use the Arc<str> from neuron_squash_map where possible for zero-cost sharing.
+    // Reuse the Arc<str> from neuron_squash_map where possible for zero-cost sharing.
     for neuron in &input.creature.neurons {
         let key: SharedUuid = if let Some((existing_key, _)) =
             neuron_squash_map.get_key_value(neuron.uuid.as_str())
