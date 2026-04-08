@@ -157,5 +157,5 @@ fn test_backoff_delay_does_not_overflow_on_large_attempt() {
 fn test_backoff_constants_are_sensible() {
     assert_eq!(DEFAULT_BACKOFF_INITIAL_MS, 10);
     assert_eq!(DEFAULT_BACKOFF_MAX_MS, 1_000);
-    assert!(DEFAULT_BACKOFF_INITIAL_MS < DEFAULT_BACKOFF_MAX_MS);
+    const { assert!(DEFAULT_BACKOFF_INITIAL_MS < DEFAULT_BACKOFF_MAX_MS) };
 }
