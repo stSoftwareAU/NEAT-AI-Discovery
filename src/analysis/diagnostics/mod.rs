@@ -201,10 +201,10 @@ mod tests {
         ];
         let focus_refs: Vec<&String> = focus.iter().collect();
 
-        let mut type_map = HashMap::new();
-        type_map.insert("output-1".to_string(), "output".to_string());
-        type_map.insert("hidden-1".to_string(), "hidden".to_string());
-        type_map.insert("input-0".to_string(), "input".to_string());
+        let mut type_map: HashMap<std::sync::Arc<str>, String> = HashMap::new();
+        type_map.insert(std::sync::Arc::from("output-1"), "output".to_string());
+        type_map.insert(std::sync::Arc::from("hidden-1"), "hidden".to_string());
+        type_map.insert(std::sync::Arc::from("input-0"), "input".to_string());
 
         let squash_map = HashMap::new();
 
@@ -221,9 +221,9 @@ mod tests {
         let focus = ["output-1".to_string(), "hidden-1".to_string()];
         let focus_refs: Vec<&String> = focus.iter().collect();
 
-        let mut type_map = HashMap::new();
-        type_map.insert("output-1".to_string(), "output".to_string());
-        type_map.insert("hidden-1".to_string(), "hidden".to_string());
+        let mut type_map: HashMap<std::sync::Arc<str>, String> = HashMap::new();
+        type_map.insert(std::sync::Arc::from("output-1"), "output".to_string());
+        type_map.insert(std::sync::Arc::from("hidden-1"), "hidden".to_string());
 
         let squash_map = HashMap::new();
 

@@ -12,6 +12,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
+/// Type alias for shared UUID keys used across preparation maps.
+/// Using `Arc<str>` avoids full string allocation when the same UUID
+/// is inserted into multiple hash maps (Issue #1036).
+pub(crate) type SharedUuid = Arc<str>;
+
 use crate::analysis::cache::RecordCache;
 use crate::analysis::diagnostics::{
     FocusTargetFilterResult, NeuronDiagnostics, filter_focus_targets_for_neuron_analysis,
@@ -28,9 +33,9 @@ use crate::analysis::utils::{
 /// Result of the preparation phase, containing all maps and filtered targets
 /// needed by the main analysis loop.
 pub(crate) struct NeuronPreparation<'a> {
-    pub neuron_squash_map: HashMap<String, String>,
-    pub neuron_type_map: HashMap<String, String>,
-    pub order_map: HashMap<String, usize>,
+    pub neuron_squash_map: HashMap<SharedUuid, String>,
+    pub neuron_type_map: HashMap<SharedUuid, String>,
+    pub order_map: HashMap<SharedUuid, usize>,
     pub focus_order: Vec<String>,
     pub unique_focus: Vec<&'a String>,
     pub original_focus_count: usize,
@@ -50,12 +55,17 @@ pub(crate) fn prepare_neuron_analysis<'a>(
     ordered_neurons: &[OrderedNeuron],
     cache: &Arc<RecordCache>,
 ) -> Result<NeuronPreparation<'a>> {
-    // Build a lookup map for neuron squash functions to identify discrete targets
-    let neuron_squash_map: HashMap<String, String> = input
+    // Issue #1036: Build lookup maps using Arc<str> keys so the same UUID string
+    // is shared across all three maps via cheap reference-count increments instead
+    // of full String allocations.
+    let neuron_squash_map: HashMap<SharedUuid, String> = input
         .creature
         .neurons
         .iter()
-        .map(|n| (n.uuid.clone(), n.squash.clone()))
+        .map(|n| {
+            let key: SharedUuid = Arc::from(n.uuid.as_str());
+            (key, n.squash.clone())
+        })
         .collect();
 
     // Build a comprehensive lookup map for ALL neuron UUIDs to their types.
@@ -68,16 +78,26 @@ pub(crate) fn prepare_neuron_analysis<'a>(
     // - Hidden neuron errors are backpropagated approximations that don't correlate
     //   reliably with actual output error reduction
     // - Input neurons are observation sources, not computation nodes
-    let mut neuron_type_map: HashMap<String, String> = HashMap::new();
+    let mut neuron_type_map: HashMap<SharedUuid, String> =
+        HashMap::with_capacity(input.creature.input + input.creature.neurons.len());
 
     // Add input neurons (they're not in creature.neurons, only represented by creature.input count)
     for input_index in 0..input.creature.input {
-        neuron_type_map.insert(format!("input-{input_index}"), "input".to_string());
+        let key: SharedUuid = Arc::from(format!("input-{input_index}").as_str());
+        neuron_type_map.insert(key, "input".to_string());
     }
 
     // Add all neurons from creature.neurons (hidden, output, constant)
+    // Re-use the Arc<str> from neuron_squash_map where possible for zero-cost sharing.
     for neuron in &input.creature.neurons {
-        neuron_type_map.insert(neuron.uuid.clone(), neuron.neuron_type.clone());
+        let key: SharedUuid = if let Some((existing_key, _)) =
+            neuron_squash_map.get_key_value(neuron.uuid.as_str())
+        {
+            Arc::clone(existing_key)
+        } else {
+            Arc::from(neuron.uuid.as_str())
+        };
+        neuron_type_map.insert(key, neuron.neuron_type.clone());
     }
 
     // Log creature configuration for debugging data issues
@@ -85,9 +105,23 @@ pub(crate) fn prepare_neuron_analysis<'a>(
         log_creature_config(input, cache);
     }
 
-    let order_map: HashMap<String, usize> = ordered_neurons
+    // Share Arc<str> keys from existing maps where possible.
+    let order_map: HashMap<SharedUuid, usize> = ordered_neurons
         .iter()
-        .map(|neuron| (neuron.uuid.clone(), neuron.index))
+        .map(|neuron| {
+            let key: SharedUuid = if let Some((existing_key, _)) =
+                neuron_squash_map.get_key_value(neuron.uuid.as_str())
+            {
+                Arc::clone(existing_key)
+            } else if let Some((existing_key, _)) =
+                neuron_type_map.get_key_value(neuron.uuid.as_str())
+            {
+                Arc::clone(existing_key)
+            } else {
+                Arc::from(neuron.uuid.as_str())
+            };
+            (key, neuron.index)
+        })
         .collect();
 
     let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_neurons")?;
@@ -442,5 +476,52 @@ fn build_empty_result(
             gpu_info: GpuAnalyzer::get_adapter_info(),
             error_distribution: None,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that `Arc<str>` map keys support lookup via `&str` (Issue #1036).
+    #[test]
+    fn test_shared_uuid_map_lookup() {
+        let mut map: HashMap<SharedUuid, String> = HashMap::new();
+        let key: SharedUuid = Arc::from("output-abc-123");
+        map.insert(Arc::clone(&key), "TANH".to_string());
+
+        // Lookup via &str (the pattern used in analysis hot paths)
+        assert_eq!(map.get("output-abc-123").map(String::as_str), Some("TANH"));
+
+        // Lookup via &String
+        let query = "output-abc-123".to_string();
+        assert_eq!(map.get(query.as_str()).map(String::as_str), Some("TANH"));
+
+        // Lookup for missing key
+        assert!(!map.contains_key("missing-uuid"));
+    }
+
+    /// Verify that `Arc<str>` keys are shared across maps (Issue #1036).
+    /// The same Arc pointer should be reused when building multiple maps
+    /// from the same neuron UUIDs.
+    #[test]
+    fn test_shared_uuid_arc_reuse() {
+        let key1: SharedUuid = Arc::from("hidden-neuron-1");
+        let key2 = Arc::clone(&key1);
+
+        // Both references point to the same allocation
+        assert!(Arc::ptr_eq(&key1, &key2));
+
+        // Insert into separate maps — both use the same backing allocation
+        let mut map_a: HashMap<SharedUuid, usize> = HashMap::new();
+        let mut map_b: HashMap<SharedUuid, String> = HashMap::new();
+        map_a.insert(Arc::clone(&key1), 42);
+        map_b.insert(Arc::clone(&key1), "output".to_string());
+
+        assert_eq!(map_a.get("hidden-neuron-1"), Some(&42));
+        assert_eq!(
+            map_b.get("hidden-neuron-1").map(String::as_str),
+            Some("output")
+        );
     }
 }

@@ -235,7 +235,7 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
             // STEP/BIPOLAR are discrete targets. Add-neuron discovery for these targets was
             // removed as dead code; add-synapse is the intended mechanism.
             let is_threshold_target = neuron_squash_map_arc
-                .get(target_uuid)
+                .get(target_uuid.as_str())
                 .is_some_and(|squash| crate::analysis::activation::is_threshold_activation(squash));
 
             let target_index = match order_map_arc.get(target_uuid.as_str()) {

@@ -26,8 +26,8 @@ pub(crate) struct NeuronResultParams<'a> {
     pub completed_count: &'a Arc<std::sync::atomic::AtomicUsize>,
     pub total_focus_count: usize,
     pub original_focus_count: usize,
-    pub order_map: &'a Arc<HashMap<String, usize>>,
-    pub neuron_type_map: &'a HashMap<String, String>,
+    pub order_map: &'a Arc<HashMap<super::preparation::SharedUuid, usize>>,
+    pub neuron_type_map: &'a HashMap<super::preparation::SharedUuid, String>,
     pub input: &'a AnalyzeNeuronsInput,
     pub cache: &'a Arc<RecordCache>,
     pub error_values_for_distribution: &'a [f32],
@@ -139,18 +139,22 @@ pub(crate) fn build_neuron_results(
 /// Hidden neurons have impact in [0, 1] based on their weighted paths to outputs.
 fn apply_impact_discounting(
     helpful_results: &mut [CandidateNeuronJson],
-    order_map_arc: &Arc<HashMap<String, usize>>,
-    neuron_type_map: &HashMap<String, String>,
+    order_map_arc: &Arc<HashMap<super::preparation::SharedUuid, usize>>,
+    neuron_type_map: &HashMap<super::preparation::SharedUuid, String>,
     input: &AnalyzeNeuronsInput,
     cache: &Arc<RecordCache>,
 ) {
     let impact_scores = compute_impact_scores_for_discounting(&input.creature, cache.as_ref());
     for candidate in helpful_results.iter_mut() {
-        candidate.source_neuron_index = order_map_arc.get(&candidate.source_neuron_uuid).copied();
-        candidate.target_neuron_index = order_map_arc.get(&candidate.target_neuron_uuid).copied();
+        candidate.source_neuron_index = order_map_arc
+            .get(candidate.source_neuron_uuid.as_str())
+            .copied();
+        candidate.target_neuron_index = order_map_arc
+            .get(candidate.target_neuron_uuid.as_str())
+            .copied();
 
         let is_hidden = neuron_type_map
-            .get(&candidate.target_neuron_uuid)
+            .get(candidate.target_neuron_uuid.as_str())
             .is_none_or(|t| t != "output");
 
         let impact = if is_hidden {

@@ -41,7 +41,7 @@ pub(crate) struct NeuronWorkResult<'a> {
 /// are passed through evaluate → `relu_split` / `activation_specs`.
 pub(crate) struct NeuronEvalContext<'a> {
     pub gpu: &'a GpuWorkQueue,
-    pub neuron_squash_map: &'a Arc<HashMap<String, String>>,
+    pub neuron_squash_map: &'a Arc<HashMap<super::preparation::SharedUuid, String>>,
     pub timing_collector: &'a Arc<super::super::shared::TimingCollector>,
     pub diagnostics: &'a Arc<NeuronDiagnostics>,
     pub helpful_map: &'a Arc<Mutex<HashMap<u64, CandidateNeuronJson>>>,
