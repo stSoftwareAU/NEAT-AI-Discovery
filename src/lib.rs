@@ -4,6 +4,12 @@
 //! during the discovery training phase, then scanning recorded data to identify
 //! beneficial new synapses/neurons that would reduce error.
 
+// Global tracking allocator — wraps the system allocator to report Rust-side
+// memory usage via FFI (Issue #1027). Overhead is a single atomic add/sub per
+// allocation, which is negligible for polling every 5-30 seconds.
+#[global_allocator]
+static ALLOCATOR: cap::Cap<std::alloc::System> = cap::Cap::new(std::alloc::System, usize::MAX);
+
 pub mod activations;
 pub mod analysis;
 pub mod config;

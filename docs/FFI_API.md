@@ -20,7 +20,35 @@ The most commonly used entry points are:
   - Single-call: `record_discovery` (avoid for large runs; prefer streaming to prevent JS/V8 string limits)
 - **Analysis**: `rank_focus_neurons`, `analyze_parallel`
 - **Utilities**: `merge_discovery_parquet`, `read_discovery_records_ffi`, `export_visualisation_snapshot`
+- **Memory usage**: `discovery_memory_usage_bytes()` (returns `u64`)
 - **Memory management**: `free_discovery_result`
+
+---
+
+## 🧠 Rust-side Memory Usage (Issue #1027)
+
+The Rust library allocates memory outside V8's heap, making it invisible to
+Deno-side memory monitors. Use `discovery_memory_usage_bytes()` to query the
+current Rust allocator usage and combine it with `Deno.memoryUsage().heapUsed`
+for accurate total-process memory monitoring.
+
+- **Symbol**: `discovery_memory_usage_bytes`
+- **Input**: no arguments
+- **Output**: `u64` — current Rust heap allocation in bytes
+- **Overhead**: reads a single atomic counter; suitable for polling every 5–30 seconds
+- **Panic safety**: catches panics and returns `0` on failure
+
+### Example (Deno FFI)
+
+```typescript
+const lib = Deno.dlopen("libneat_ai_discovery.dylib", {
+  discovery_memory_usage_bytes: { parameters: [], result: "u64" },
+});
+
+const rustBytes = lib.symbols.discovery_memory_usage_bytes();
+const v8Bytes = Deno.memoryUsage().heapUsed;
+const totalBytes = rustBytes + BigInt(v8Bytes);
+```
 
 ---
 
