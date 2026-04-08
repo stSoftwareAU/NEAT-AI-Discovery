@@ -5,8 +5,12 @@
 //! - `require_unique_focus` — validate that focus neurons are non-empty and unique
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::analysis::activation::is_threshold_activation;
+
+/// Type alias matching the shared UUID key type from neuron preparation (Issue #1036).
+type SharedUuid = Arc<str>;
 
 // =============================================================================
 // Focus Target Filtering
@@ -33,15 +37,15 @@ pub(crate) struct FocusTargetFilterResult {
 /// - STEP/BIPOLAR targets are tracked in `threshold_targets` for visibility (and potential future branching).
 pub(crate) fn filter_focus_targets_for_neuron_analysis(
     unique_focus: &[&String],
-    neuron_type_map: &HashMap<String, String>,
-    neuron_squash_map: &HashMap<String, String>,
+    neuron_type_map: &HashMap<SharedUuid, String>,
+    neuron_squash_map: &HashMap<SharedUuid, String>,
     output_only_targets: bool,
 ) -> FocusTargetFilterResult {
     let mut result = FocusTargetFilterResult::default();
 
     // Helper: record STEP/BIPOLAR targets consistently across output/hidden/unknown.
     let mut record_threshold_target = |uuid: &String| {
-        if let Some(squash) = neuron_squash_map.get(uuid)
+        if let Some(squash) = neuron_squash_map.get(uuid.as_str())
             && is_threshold_activation(squash)
         {
             result.threshold_targets.push(uuid.clone());
@@ -53,7 +57,7 @@ pub(crate) fn filter_focus_targets_for_neuron_analysis(
         .filter_map(|uuid| {
             // By default we analyse both output and hidden focus targets (hidden will be discounted).
             // If `output_only_targets` is set, hidden targets are filtered.
-            let neuron_type = neuron_type_map.get(*uuid).map(std::string::String::as_str);
+            let neuron_type = neuron_type_map.get(uuid.as_str()).map(String::as_str);
             match neuron_type {
                 Some("output") => {
                     record_threshold_target(uuid);

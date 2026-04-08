@@ -298,13 +298,22 @@ impl RecordCache {
 
     /// Load records for every neuron in the creature (Issue #493).
     ///
-    /// Extracts all neuron UUIDs from the creature and loads their records in one call.
+    /// Extracts all neuron UUIDs from the creature and loads their records.
+    /// Issue #1036: Inlined to avoid double-cloning (was: clone into `Vec<String>`,
+    /// then clone again in `load_records_for_uuids`).
     pub fn load_records_for_all_neurons(
         &self,
         creature: &CreatureJson,
     ) -> Vec<(String, Vec<DiscoverRecord>)> {
-        let uuids: Vec<String> = creature.neurons.iter().map(|n| n.uuid.clone()).collect();
-        self.load_records_for_uuids(&uuids)
+        creature
+            .neurons
+            .iter()
+            .filter_map(|n| {
+                self.get(&n.uuid)
+                    .ok()
+                    .map(|r| (n.uuid.clone(), r.as_ref().clone()))
+            })
+            .collect()
     }
 
     /// Load records for neurons matching any of the given type names (Issue #493).
@@ -312,36 +321,46 @@ impl RecordCache {
     /// Filters the creature's neurons by `neuron_type` then loads their records.
     /// Common usage: `&["output"]`, `&["input"]`, `&["input", "output"]`,
     /// `&["input", "hidden"]`.
+    /// Issue #1036: Inlined to avoid double-cloning (was: clone into `Vec<String>`,
+    /// then clone again in `load_records_for_uuids`).
     pub fn load_records_for_neuron_types(
         &self,
         creature: &CreatureJson,
         types: &[&str],
     ) -> Vec<(String, Vec<DiscoverRecord>)> {
-        let uuids: Vec<String> = creature
+        creature
             .neurons
             .iter()
             .filter(|n| types.contains(&n.neuron_type.as_str()))
-            .map(|n| n.uuid.clone())
-            .collect();
-        self.load_records_for_uuids(&uuids)
+            .filter_map(|n| {
+                self.get(&n.uuid)
+                    .ok()
+                    .map(|r| (n.uuid.clone(), r.as_ref().clone()))
+            })
+            .collect()
     }
 
     /// Load records for the unique set of synapse source neuron UUIDs (Issue #493).
     ///
     /// Collects the deduplicated `from_uuid` values from all creature synapses,
     /// then loads their records.
+    /// Issue #1036: Deduplicate via `HashSet<&str>` to avoid cloning UUIDs into a
+    /// temporary `HashSet<String>`, then clone only once for the output tuple.
     pub fn load_records_for_synapse_sources(
         &self,
         creature: &CreatureJson,
     ) -> Vec<(String, Vec<DiscoverRecord>)> {
-        let source_uuids: Vec<String> = creature
+        let mut seen = std::collections::HashSet::new();
+        creature
             .synapses
             .iter()
-            .map(|s| s.from_uuid.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-        self.load_records_for_uuids(&source_uuids)
+            .filter(|s| seen.insert(s.from_uuid.as_str()))
+            .filter_map(|s| {
+                self.get(&s.from_uuid)
+                    .ok()
+                    .map(|r| (s.from_uuid.clone(), r.as_ref().clone()))
+            })
+            .collect()
     }
 
     /// Create a cache with a custom loader function.

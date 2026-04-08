@@ -152,15 +152,15 @@ fn test_filter_focus_targets_tracks_threshold_targets_for_hidden_and_unknown_whe
     ];
     let unique_focus: Vec<&String> = focus.iter().collect();
 
-    let mut neuron_type_map: HashMap<String, String> = HashMap::new();
-    neuron_type_map.insert("hidden-step".to_string(), "hidden".to_string());
-    neuron_type_map.insert("output-tanh".to_string(), "output".to_string());
-    neuron_type_map.insert("unknown-bipolar".to_string(), "mystery".to_string());
+    let mut neuron_type_map: HashMap<Arc<str>, String> = HashMap::new();
+    neuron_type_map.insert(Arc::from("hidden-step"), "hidden".to_string());
+    neuron_type_map.insert(Arc::from("output-tanh"), "output".to_string());
+    neuron_type_map.insert(Arc::from("unknown-bipolar"), "mystery".to_string());
 
-    let mut neuron_squash_map: HashMap<String, String> = HashMap::new();
-    neuron_squash_map.insert("hidden-step".to_string(), "STEP".to_string());
-    neuron_squash_map.insert("output-tanh".to_string(), "TANH".to_string());
-    neuron_squash_map.insert("unknown-bipolar".to_string(), "BIPOLAR".to_string());
+    let mut neuron_squash_map: HashMap<Arc<str>, String> = HashMap::new();
+    neuron_squash_map.insert(Arc::from("hidden-step"), "STEP".to_string());
+    neuron_squash_map.insert(Arc::from("output-tanh"), "TANH".to_string());
+    neuron_squash_map.insert(Arc::from("unknown-bipolar"), "BIPOLAR".to_string());
 
     let result = filter_focus_targets_for_neuron_analysis(
         &unique_focus,
@@ -206,15 +206,15 @@ fn test_filter_focus_targets_respects_output_only_mode_for_hidden_and_unknown() 
     ];
     let unique_focus: Vec<&String> = focus.iter().collect();
 
-    let mut neuron_type_map: HashMap<String, String> = HashMap::new();
-    neuron_type_map.insert("hidden-relu".to_string(), "hidden".to_string());
-    neuron_type_map.insert("output-tanh".to_string(), "output".to_string());
-    neuron_type_map.insert("unknown-identity".to_string(), "mystery".to_string());
+    let mut neuron_type_map: HashMap<Arc<str>, String> = HashMap::new();
+    neuron_type_map.insert(Arc::from("hidden-relu"), "hidden".to_string());
+    neuron_type_map.insert(Arc::from("output-tanh"), "output".to_string());
+    neuron_type_map.insert(Arc::from("unknown-identity"), "mystery".to_string());
 
-    let mut neuron_squash_map: HashMap<String, String> = HashMap::new();
-    neuron_squash_map.insert("hidden-relu".to_string(), "RELU".to_string());
-    neuron_squash_map.insert("output-tanh".to_string(), "TANH".to_string());
-    neuron_squash_map.insert("unknown-identity".to_string(), "IDENTITY".to_string());
+    let mut neuron_squash_map: HashMap<Arc<str>, String> = HashMap::new();
+    neuron_squash_map.insert(Arc::from("hidden-relu"), "RELU".to_string());
+    neuron_squash_map.insert(Arc::from("output-tanh"), "TANH".to_string());
+    neuron_squash_map.insert(Arc::from("unknown-identity"), "IDENTITY".to_string());
 
     // With output-only mode enabled
     let result = filter_focus_targets_for_neuron_analysis(
