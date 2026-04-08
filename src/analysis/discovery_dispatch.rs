@@ -12,6 +12,9 @@
 //! via `rayon::into_par_iter()`, then merges results sequentially. This
 //! preserves deterministic ordering while utilising multiple CPU cores.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::SystemTime;
+
 use crate::CoordinatedStructuralCandidateJson;
 use crate::observability::PhaseTimer;
 use rayon::prelude::*;
@@ -116,10 +119,18 @@ pub struct DiscoveryModuleDetectionResults {
 /// are collected in original module order (rayon preserves indexed iterator order),
 /// ensuring deterministic output regardless of thread scheduling.
 ///
+/// ## Deadline enforcement (Issue #1029)
+///
+/// When a deadline is provided, each module checks `deadline_passed()` before
+/// executing its detection closure. Modules that start after the deadline are
+/// skipped (returning `None`), preventing the parallel detection phase from
+/// running indefinitely when the analysis time budget is exhausted.
+///
 /// Call [`merge_discovery_module_results`] afterwards to merge into `syn`.
 #[tracing::instrument(skip_all, fields(module_count = modules.len()))]
 pub fn detect_discovery_modules_parallel(
     modules: Vec<DiscoveryModuleSpec>,
+    deadline: Option<SystemTime>,
 ) -> DiscoveryModuleDetectionResults {
     if modules.is_empty() {
         return DiscoveryModuleDetectionResults {
@@ -130,11 +141,30 @@ pub fn detect_discovery_modules_parallel(
     crate::watchdog::beat("analysis::analyze_all → parallel discovery detection starting");
     let _timer = PhaseTimer::new("parallel_discovery_detection");
 
+    // Issue #1029: Shared flag so that once the deadline is observed by any thread,
+    // all remaining modules skip execution promptly without repeated syscalls.
+    let timed_out = AtomicBool::new(false);
+
     // Parallel detection phase: run all closures concurrently.
     // `into_par_iter().map().collect()` preserves input order for indexed iterators.
     let entries: Vec<DiscoveryModuleDetectionEntry> = modules
         .into_par_iter()
         .map(|spec| {
+            // Issue #1029: Skip detection if the analysis deadline has passed.
+            if timed_out.load(Ordering::Relaxed) || utils::deadline_passed(&deadline) {
+                timed_out.store(true, Ordering::Relaxed);
+                tracing::debug!(
+                    module = %spec.module_name,
+                    "Skipping discovery module — deadline passed (Issue #1029)"
+                );
+                return DiscoveryModuleDetectionEntry {
+                    module_name: spec.module_name,
+                    phase_name: spec.phase_name,
+                    max_candidates: spec.max_candidates,
+                    result: None,
+                };
+            }
+
             let result = (spec.detect_fn)();
             DiscoveryModuleDetectionEntry {
                 module_name: spec.module_name,
@@ -144,6 +174,16 @@ pub fn detect_discovery_modules_parallel(
             }
         })
         .collect();
+
+    let skipped = timed_out.load(Ordering::Relaxed);
+    if skipped {
+        let skipped_count = entries.iter().filter(|e| e.result.is_none()).count();
+        tracing::info!(
+            skipped_count,
+            total = entries.len(),
+            "Discovery detection reached deadline — some modules were skipped (Issue #1029)"
+        );
+    }
 
     crate::watchdog::beat("analysis::analyze_all → parallel discovery detection finished");
 
@@ -232,7 +272,7 @@ pub fn run_discovery_modules_parallel(
     diversify: bool,
     tracker: &ModuleOutcomeTracker,
 ) {
-    let detection_results = detect_discovery_modules_parallel(modules);
+    let detection_results = detect_discovery_modules_parallel(modules, None);
     merge_discovery_module_results(
         syn,
         detection_results,
