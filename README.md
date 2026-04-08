@@ -94,6 +94,7 @@ The library exposes a Deno FFI-friendly symbol set. The authoritative list lives
 | **Recording (single-call)** | `record_discovery` (avoid for large runs) |
 | **Analysis** | `rank_focus_neurons`, `analyze_parallel` |
 | **Utilities** | `merge_discovery_parquet`, `read_discovery_records_ffi`, `export_visualisation_snapshot` |
+| **Memory usage** | `discovery_memory_usage_bytes` |
 | **Memory management** | `free_discovery_result` |
 
 For the full JSON interface specification and streaming API details, see
@@ -134,10 +135,11 @@ flowchart TD
     subgraph RUST["🦀 Rust — this library"]
         R1["1. Find ALL candidates with positive expected improvement"]
         R2["2. Apply impact discounting — creature-level predictions"]
-        R3["3. Sort by expected improvement — best first"]
-        R4["4. Randomise within top-K under deadlines to avoid starvation"]
-        R5["5. Return candidates — optionally limited by max_candidates"]
-        R1 --> R2 --> R3 --> R4 --> R5
+        R3["3. Temperature-scaled acceptance (optional MH probabilistic)"]
+        R4["4. Sort by expected improvement — best first"]
+        R5["5. Randomise within top-K under deadlines to avoid starvation"]
+        R6["6. Return candidates — optionally limited by max_candidates"]
+        R1 --> R2 --> R3 --> R4 --> R5 --> R6
     end
 
     subgraph TS["📘 TypeScript — NEAT-AI"]
@@ -294,6 +296,7 @@ For impact calculation details, see
 | `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` | off | Bias toward newer input indices |
 | `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS` | off | Prioritise unused input neurons |
 | `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | dynamic | Constant-source folding threshold |
+| `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | off | Metropolis-Hastings temperature for probabilistic acceptance |
 | `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` | off | Stall watchdog timeout |
 | `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` | 2 | Delay between dump and abort |
 
@@ -496,6 +499,7 @@ All dependencies build automatically on remote, unattended machines.
 | [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) | GPU performance tuning, troubleshooting, and debugging |
 | [docs/FFI_API.md](docs/FFI_API.md) | Full FFI API reference and JSON interface |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark regression tracking and comparison workflow |
+| [docs/CANDIDATE_PIPELINE_MCMC_AUDIT.md](docs/CANDIDATE_PIPELINE_MCMC_AUDIT.md) | MCMC applicability audit for candidate selection pipeline |
 | [CodeWiki](https://codewiki.google/github.com/stsoftwareau/neat-ai-discovery) | AI-powered documentation and code exploration |
 
 ## 📄 Licence

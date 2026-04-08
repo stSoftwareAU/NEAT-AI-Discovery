@@ -4,6 +4,65 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v0.72.34]
+
+### Added
+
+#### Memory budget enforcement (Issue #1028)
+
+Analysis phase now accepts `max_analysis_memory_mb` to cap Rust-side memory
+consumption. When exceeded, analysis returns early with
+`memory_budget_exceeded: true`, preventing unbounded memory growth on
+constrained machines.
+
+#### Deadline enforcement for detection modules (Issue #1029)
+
+Detection modules now respect `analysis_deadline_ms`, aborting early when the
+wall-clock deadline is reached. Partial results are returned and coverage
+improves over repeated runs.
+
+#### Rust-side memory usage FFI (Issue #1027)
+
+New `discovery_memory_usage_bytes()` FFI symbol exposes the Rust allocator's
+current heap usage. Callers can combine this with `Deno.memoryUsage().heapUsed`
+for accurate total-process memory monitoring.
+
+#### MCMC-inspired candidate selection (Issues #1017–#1021)
+
+- **MCMC pipeline audit** (#1017): documented that the pipeline is deterministic
+  (not true MCMC) but can benefit from MCMC-inspired techniques.
+- **Metropolis-Hastings acceptance** (#1018): optional probabilistic acceptance
+  via `NEAT_AI_DISCOVERY_MH_TEMPERATURE` environment variable.
+- **Adaptive proposal distribution** (#1019): Gaussian proposals replace the
+  fixed 9-variant weight grid, with per-target-type sigma adaptation.
+- **Temperature scheduling** (#1020): linear and exponential cooling schedules
+  for exploration-exploitation balance.
+- **MCMC diagnostics** (#1021): lock-free acceptance rate tracking and diversity
+  metrics for monitoring candidate selection quality.
+
+### Performance
+
+#### Concurrent synapse/neuron analysis (Issue #1002)
+
+Synapse and neuron analyses now run concurrently via `rayon::join` with a shared
+GPU queue, reducing wall-clock time by overlapping CPU-bound sample building.
+
+#### Parallel candidate compression (Issue #1003)
+
+Identity and nonlinear candidate compression now run in parallel via
+`rayon::join`, both operating on immutable references.
+
+#### Overlapped compression and detection (Issue #1004)
+
+Candidate compression now overlaps with discovery module detection using a
+split-detect-merge pattern, further reducing wall-clock time.
+
+#### New benchmarks (Issues #1001, #1006, #1009)
+
+- Pipeline wall-clock utilisation benchmarks (#1001)
+- SIMD baseline micro-benchmarks for hot numerical loops (#1006)
+- Compiler auto-vectorisation audit benchmarks (#1009)
+
 ## [v0.2.18]
 
 ### Fixed

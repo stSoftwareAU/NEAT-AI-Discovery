@@ -106,7 +106,8 @@ src/
 │   │   ├── source_variance.rs    # Source variance filtering thresholds
 │   │   ├── candidate_scoring.rs  # Scoring boosts, pessimism, calibration, comparisons
 │   │   ├── compression.rs        # Candidate compression thresholds
-│   │   └── detection_thresholds.rs # Detection filtering (removal, weight constraints)
+│   │   ├── detection_thresholds.rs # Detection filtering (removal, weight constraints)
+│   │   └── temperature.rs        # Temperature scheduling for exploration-exploitation (Issue #1020)
 │   ├── shared/               # Common types, results, diagnostics (Issue #874)
 │   │   ├── mod.rs            # Re-exports for backward compatibility
 │   │   ├── timing.rs         # TimingCollector, TimingScope, ShaderTiming, timing breakdowns
@@ -139,6 +140,7 @@ src/
 │   │   ├── post_processing.rs # Impact discounting, sorting, metadata
 │   │   ├── metadata.rs       # Synapse analysis metadata types
 │   │   ├── results.rs        # Result types and assembly
+│   │   ├── adaptive_proposal.rs # Adaptive Gaussian proposal distribution (Issue #1019)
 │   │   └── tests.rs          # Unit tests for synapse analysis
 │   ├── neuron/               # Neuron analysis (Issue #598)
 │   │   ├── mod.rs            # Public API, orchestration, parallel loop
@@ -160,7 +162,8 @@ src/
 │   │   ├── rejection.rs      # Synapse rejection tracking and reporting
 │   │   ├── neuron_tracking.rs # Neuron rejection tracking and reporting
 │   │   ├── target_data.rs    # Target data structures for sample building
-│   │   └── focus_filter.rs   # Focus target filtering and validation
+│   │   ├── focus_filter.rs   # Focus target filtering and validation
+│   │   └── mcmc_diagnostics.rs # MCMC-style acceptance rate tracking (Issue #1021)
 │   ├── detection/            # Pattern detection modules (Issue #528)
 │   │   ├── mod.rs            # Module declarations
 │   │   ├── activation_mismatch.rs # Activation function mismatch detection
@@ -297,8 +300,8 @@ src/
 
 | Directory | Purpose |
 |-----------|---------|
-| `tests/` | Integration tests (~277 files) |
-| `benches/` | Criterion benchmarks (28 suites) |
+| `tests/` | Integration tests (~286 files) |
+| `benches/` | Criterion benchmarks (31 suites) |
 | `examples/` | Standalone examples (parquet inspection, snapshot generation) |
 | `scripts/` | Build and install helpers (`runlib.sh`) |
 | `docs/` | Supplementary documentation and PR summaries |
@@ -602,6 +605,7 @@ Key environment variables that control library behaviour:
 | `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` | Bias toward newer inputs |
 | `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY` | Output-only focus targets |
 | `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | Constant source folding threshold |
+| `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | Metropolis-Hastings probabilistic acceptance temperature |
 
 See [README.md — Troubleshooting](README.md#troubleshooting) and
 [README.md — GPU Performance Tuning](README.md#gpu-performance-tuning) for
