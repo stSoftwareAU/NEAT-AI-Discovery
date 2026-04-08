@@ -133,6 +133,7 @@ pub unsafe extern "C" fn analyze_parallel(
                     fingerprint_cache_hits: None,
                     fingerprint_cache_misses: None,
                     module_outcome_tracker: None,
+                    memory_budget_exceeded: None,
                     error: Some(err_msg),
                     error_kind,
                     retryable,

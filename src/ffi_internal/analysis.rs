@@ -34,6 +34,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 fingerprint_cache_hits: None,
                 fingerprint_cache_misses: None,
                 module_outcome_tracker: None,
+                memory_budget_exceeded: None,
                 error: Some(typed.to_string()),
                 error_kind: Some(kind),
                 retryable: Some(kind.is_retryable()),
@@ -71,6 +72,12 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     Some(s.candidate_clusters.clone())
                 }
             });
+
+            let memory_budget_exceeded = if result.memory_budget_exceeded {
+                Some(true)
+            } else {
+                None
+            };
 
             let output = AnalyzeParallelOutput {
                 success: true,
@@ -129,6 +136,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 } else {
                     Some(result.module_outcome_tracker)
                 },
+                memory_budget_exceeded,
                 error: None,
                 error_kind: None,
                 retryable: None,
@@ -156,6 +164,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 fingerprint_cache_hits: None,
                 fingerprint_cache_misses: None,
                 module_outcome_tracker: None,
+                memory_budget_exceeded: None,
                 error: Some(err_msg),
                 error_kind,
                 retryable,
@@ -181,6 +190,7 @@ pub(crate) fn build_analyze_all_input_from_parallel(
         previous_neuron_fingerprints: input.previous_neuron_fingerprints,
         module_outcome_tracker: input.module_outcome_tracker,
         temperature: input.temperature,
+        max_analysis_memory_mb: input.max_analysis_memory_mb,
     }
 }
 

@@ -162,6 +162,7 @@ fn async_pipeline_produces_valid_analysis_results() {
         random_seed: Some(42),
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        max_analysis_memory_mb: None,
         temperature: 1.0,
     };
 
@@ -221,6 +222,7 @@ fn async_pipeline_is_deterministic_with_fixed_seed() {
         random_seed: Some(12345),
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
+        max_analysis_memory_mb: None,
         temperature: 1.0,
     };
 
