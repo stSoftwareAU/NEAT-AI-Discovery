@@ -52,6 +52,51 @@ const totalBytes = rustBytes + BigInt(v8Bytes);
 
 ---
 
+## ⚡ Analysis Parameters (Issue #1028, #1029, #1020)
+
+The `analyze_parallel` input accepts additional parameters to control resource
+usage and candidate selection behaviour:
+
+### Memory Budget (`max_analysis_memory_mb`)
+
+Limits the Rust-side memory consumption during the analysis phase. When the
+allocated memory exceeds the budget, analysis returns early with
+`memory_budget_exceeded: true` in the output.
+
+- **Field**: `max_analysis_memory_mb` (optional `u64`)
+- **Default**: no limit
+- **Checkpoints**: before GPU work submission and after parquet loading
+- **Output field**: `memory_budget_exceeded` (`bool`) — `true` if analysis
+  aborted due to exceeding the budget
+
+### Analysis Deadline (`analysis_deadline_ms`)
+
+Sets a wall-clock deadline for the analysis phase. Detection modules abort
+early when the deadline is reached, returning whatever candidates have been
+found so far. Coverage improves over repeated runs.
+
+- **Field**: `analysis_deadline_ms` (optional `u64`)
+- **Default**: no deadline
+- **Behaviour**: deadline is passed to the record cache and detection dispatch
+
+### Temperature (`temperature`)
+
+Controls the exploration-exploitation balance during candidate selection.
+Higher temperatures encourage exploration of more diverse candidates; lower
+temperatures focus on the highest-scoring candidates.
+
+- **Field**: `temperature` (`f32`)
+- **Default**: `1.0` (neutral — no effect on thresholds)
+- **Range**: `0.01` to `5.0`
+- **Cooling**: callers can implement cooling schedules (linear or exponential)
+  by decreasing this value across generations
+
+When `NEAT_AI_DISCOVERY_MH_TEMPERATURE` is also set, Metropolis-Hastings
+probabilistic acceptance is applied to synapse candidates, allowing
+occasionally weaker candidates through to maintain search diversity.
+
+---
+
 ## 🖥️ Checking for a Usable GPU
 
 Discovery **requires a GPU** — there is no CPU fallback. On machines without a
