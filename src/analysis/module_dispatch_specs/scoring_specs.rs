@@ -172,11 +172,16 @@ pub(crate) fn append_scoring_specs(
     );
 
     // Issue #965: Batch-successful candidate grouping — batch proven winners
-    discovery_spec!(modules, "batch-successful grouping", "batch_successful_grouping",
-        cache = shared_cache, creature = creature =>
-        records: cache.load_records_for_all_neurons(&creature),
-        guard_records,
-        detect: |records| batch_successful::detect_batch_successful_groups(&creature, &records),
-        convert: |detected| batch_successful::batch_successful_to_coordinated_candidates(&detected),
-    );
+    // Issue #1059: Disabled by default — zero production successes across all
+    // 43 creatures in GRQ-sampler. Set NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL=1
+    // to re-enable for experimentation.
+    if crate::config::batch_successful_enabled() {
+        discovery_spec!(modules, "batch-successful grouping", "batch_successful_grouping",
+            cache = shared_cache, creature = creature =>
+            records: cache.load_records_for_all_neurons(&creature),
+            guard_records,
+            detect: |records| batch_successful::detect_batch_successful_groups(&creature, &records),
+            convert: |detected| batch_successful::batch_successful_to_coordinated_candidates(&detected),
+        );
+    }
 }

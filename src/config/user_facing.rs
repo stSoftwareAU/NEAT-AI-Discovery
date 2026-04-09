@@ -328,6 +328,15 @@ pub fn mh_temperature() -> Option<f32> {
     })
 }
 
+/// Check if the batch-successful discovery module is enabled (Issue #1059).
+///
+/// Disabled by default — zero production successes across all creatures in
+/// GRQ-sampler evidence. Set `NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL=1` to
+/// re-enable for experimentation.
+pub fn batch_successful_enabled() -> bool {
+    parse_bool_env("NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL")
+}
+
 /// Get the macOS `sample` program path for thread dumps.
 ///
 /// Set `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` to override.

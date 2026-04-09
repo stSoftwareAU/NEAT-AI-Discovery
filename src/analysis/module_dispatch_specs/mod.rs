@@ -380,11 +380,12 @@ mod tests {
 
         let specs = build_discovery_module_specs(&creature, &hidden, &cache, &topo);
 
-        // We expect exactly 48 modules across all four spec groups.
+        // We expect 47 modules across all four spec groups (batch-successful
+        // is disabled by default, Issue #1059).
         assert_eq!(
             specs.len(),
-            48,
-            "Expected 48 discovery module specs, got {}",
+            47,
+            "Expected 47 discovery module specs, got {}",
             specs.len()
         );
 
