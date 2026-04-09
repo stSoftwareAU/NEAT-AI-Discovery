@@ -1,16 +1,17 @@
 //! Tests for reduced coordinated-structural false positives (Issue #790).
 //!
 //! GRQ-sampler analysis shows coordinated-structural candidates have a 2.3% success
-//! rate (272 / 12,069). These tests verify tighter filtering:
+//! rate (272 / 12,069). These tests verify tighter filtering.
 //!
-//! 1. Reduced `COORDINATED_OPERATION_DISCOUNT` applies steeper per-op discount
-//! 2. Raised `MIN_COORDINATED_MULTI_OP_GAIN` filters near-zero predictions
-//! 3. `COORDINATED_PESSIMISM_DISCOUNT` flat discount applied to all coordinated candidates
+//! Issue #1058: Updated to reflect the simplified empirical discount model that
+//! replaces the three-layer compound discount (per-op × pessimism × calibration).
 
 use neat_ai_discovery::analysis::candidate_aggregation::{
     apply_operation_count_discount, validate_coordinated_candidate_gain,
 };
-use neat_ai_discovery::analysis::constants::COORDINATED_PESSIMISM_DISCOUNT;
+use neat_ai_discovery::analysis::constants::{
+    COORDINATED_EMPIRICAL_DISCOUNT_2OPS, COORDINATED_EMPIRICAL_DISCOUNT_4PLUS_OPS,
+};
 use neat_ai_discovery::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
 // ---------------------------------------------------------------------------
@@ -55,35 +56,31 @@ fn make_multi_op_candidate(op_count: usize, gain: f32) -> CoordinatedStructuralC
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tighter_operation_discount_reduces_4op_candidate_aggressively() {
-    // Issue #790: With the reduced COORDINATED_OPERATION_DISCOUNT, a 4-op candidate
-    // should receive substantially more discount than the old 0.8^3 = 0.512.
-    // With 0.65, the discount is 0.65^3 ≈ 0.274.
+fn empirical_discount_reduces_4op_candidate() {
+    // Issue #1058: 4-op candidate uses the 4+-op empirical factor (0.1).
+    // 0.01 × 0.1 = 0.001
     let candidate = make_multi_op_candidate(4, 0.01);
     let discounted = apply_operation_count_discount(&candidate);
 
-    // Must be well below old discount level (0.01 × 0.512 = 0.00512)
+    let expected = 0.01 * COORDINATED_EMPIRICAL_DISCOUNT_4PLUS_OPS;
     assert!(
-        discounted < 0.004,
-        "4-op candidate with tighter discount should be < 0.004, got {discounted}"
+        (discounted - expected).abs() < 1e-6,
+        "4-op candidate should use empirical factor: expected {expected}, got {discounted}"
     );
     assert!(discounted > 0.0, "discounted gain should remain positive");
 }
 
 #[test]
-fn tighter_operation_discount_reduces_2op_candidate() {
-    // Issue #790: A 2-op candidate gets discount^1 applied to its gain.
+fn empirical_discount_reduces_2op_candidate() {
+    // Issue #1058: 2-op candidate uses the 2-op empirical factor (0.5).
+    // 0.01 × 0.5 = 0.005
     let candidate = make_multi_op_candidate(2, 0.01);
     let discounted = apply_operation_count_discount(&candidate);
 
-    // With 0.65 factor: 0.01 × 0.65 = 0.0065
+    let expected = 0.01 * COORDINATED_EMPIRICAL_DISCOUNT_2OPS;
     assert!(
-        discounted < 0.007,
-        "2-op candidate with tighter discount should be < 0.007, got {discounted}"
-    );
-    assert!(
-        discounted > 0.005,
-        "2-op candidate should still have meaningful gain, got {discounted}"
+        (discounted - expected).abs() < 1e-6,
+        "2-op candidate should use empirical factor: expected {expected}, got {discounted}"
     );
 }
 
@@ -106,37 +103,36 @@ fn discount_increases_monotonically_with_operation_count() {
 }
 
 // ---------------------------------------------------------------------------
-// Minimum gain validation with raised threshold (Issue #790)
+// Minimum gain validation with lowered threshold (Issue #1058)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn marginal_gain_rejected_for_multi_op_with_raised_threshold() {
-    // A gain of 5e-4 on a 2-op candidate should be rejected after discounting
-    // because the discounted value falls below the raised minimum gain threshold.
+fn moderate_gain_passes_for_2op_with_lowered_threshold() {
+    // Issue #1058: A gain of 5e-4 on a 2-op candidate now passes since
+    // the threshold was lowered to 1e-5. Discounted: 5e-4 × 0.5 = 2.5e-4 > 1e-5.
     let candidate = make_multi_op_candidate(2, 5e-4);
     let valid = validate_coordinated_candidate_gain(&candidate);
     assert!(
-        !valid,
-        "marginal gain (5e-4) on 2-op candidate should be rejected with raised threshold"
+        valid,
+        "moderate gain (5e-4) on 2-op candidate should pass with lowered threshold"
     );
 }
 
 #[test]
-fn previously_passing_gain_now_rejected() {
-    // Under old thresholds (discount=0.8, min=1e-5): gain 1e-4 on 2-op passed.
-    // Under tighter thresholds: this should now be rejected.
+fn small_gain_passes_for_2op_with_lowered_threshold() {
+    // Issue #1058: A gain of 1e-4 on a 2-op candidate now passes.
+    // Discounted: 1e-4 × 0.5 = 5e-5 > 1e-5.
     let candidate = make_multi_op_candidate(2, 1e-4);
     let valid = validate_coordinated_candidate_gain(&candidate);
     assert!(
-        !valid,
-        "gain 1e-4 on 2-op should now be rejected with tighter thresholds"
+        valid,
+        "gain 1e-4 on 2-op should now pass with lowered threshold"
     );
 }
 
 #[test]
-fn strong_gain_still_passes_with_raised_threshold() {
-    // A strong gain of 0.01 on a 2-op candidate should still pass even with
-    // tighter thresholds — we only want to filter weak predictions.
+fn strong_gain_still_passes() {
+    // A strong gain of 0.01 on a 2-op candidate should still pass.
     let candidate = make_multi_op_candidate(2, 0.01);
     let valid = validate_coordinated_candidate_gain(&candidate);
     assert!(
@@ -146,64 +142,55 @@ fn strong_gain_still_passes_with_raised_threshold() {
 }
 
 #[test]
-fn very_small_4op_gain_rejected() {
-    // A 4-op candidate with gain 0.005 should be rejected because
-    // after discounting (0.005 × ~0.274 ≈ 0.00137) it barely exceeds the
-    // threshold. But gain 0.002 → 0.002 × 0.274 = 5.48e-4 < 1e-3 should fail.
-    let candidate = make_multi_op_candidate(4, 0.002);
+fn tiny_gain_4op_rejected() {
+    // Issue #1058: Very small gains on 4-op candidates should still be rejected.
+    // 1e-6 × 0.1 = 1e-7 < 1e-5 → rejected.
+    let candidate = make_multi_op_candidate(4, 1e-6);
     let valid = validate_coordinated_candidate_gain(&candidate);
     assert!(
         !valid,
-        "small gain (0.002) on 4-op candidate should be rejected"
+        "tiny gain (1e-6) on 4-op candidate should be rejected"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Pessimism discount application (Issue #790)
+// Simplified discount model replaces compound (Issue #1058)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn pessimism_discount_reduces_coordinated_candidate_gain() {
-    // The flat pessimism discount should reduce coordinated candidate gains
-    // substantially, reflecting the 2.3% success rate.
-    let gain = 0.01_f32;
-    let discounted = gain * COORDINATED_PESSIMISM_DISCOUNT;
+fn empirical_discount_reduces_coordinated_candidate_gain() {
+    // The empirical discount should reduce multi-op candidate gains.
+    let candidate = make_multi_op_candidate(2, 0.01);
+    let discounted = apply_operation_count_discount(&candidate);
     assert!(
-        discounted < gain,
-        "pessimism discount should reduce gain: {discounted} should be < {gain}"
+        discounted < 0.01,
+        "empirical discount should reduce gain: {discounted} should be < 0.01"
     );
     assert!(discounted > 0.0, "discounted gain should remain positive");
 }
 
 #[test]
-fn pessimism_discount_combined_with_operation_discount_filters_aggressively() {
-    // Combined effect: a 4-op candidate with gain 0.01
-    // After op discount: substantially reduced
-    // After pessimism: further reduced to a small fraction of original
+fn empirical_discount_on_4op_reduces_substantially() {
+    // 4-op candidate with gain 0.01 → 0.01 × 0.1 = 0.001.
     let candidate = make_multi_op_candidate(4, 0.01);
-    let after_op_discount = apply_operation_count_discount(&candidate);
-    let after_pessimism = after_op_discount * COORDINATED_PESSIMISM_DISCOUNT;
-
+    let discounted = apply_operation_count_discount(&candidate);
     assert!(
-        after_pessimism < 0.001,
-        "combined discounts on 4-op candidate should yield < 0.001, got {after_pessimism}"
+        discounted < 0.01,
+        "4-op discount should substantially reduce gain, got {discounted}"
     );
-    assert!(
-        after_pessimism > 0.0,
-        "combined discounts should still be positive"
-    );
+    assert!(discounted > 0.0, "discounted gain should be positive");
 }
 
 #[test]
-fn pessimism_discount_is_strictly_less_than_one() {
-    // Verify the pessimism discount actually reduces gains (not amplifies them).
-    // Apply to a runtime-computed value to avoid constant-assertion lint.
+fn empirical_discount_factors_reduce_gains() {
+    // Verify empirical factors actually reduce gains (not amplify them).
     let gains = [0.001_f32, 0.01, 0.1, 1.0];
     for gain in gains {
-        let discounted = gain * COORDINATED_PESSIMISM_DISCOUNT;
+        let candidate = make_multi_op_candidate(2, gain);
+        let discounted = apply_operation_count_discount(&candidate);
         assert!(
             discounted < gain,
-            "pessimism discount should reduce gain {gain}, got {discounted}"
+            "empirical discount should reduce gain {gain}, got {discounted}"
         );
     }
 }

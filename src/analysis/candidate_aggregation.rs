@@ -16,24 +16,19 @@ use crate::{
     CoordinatedStructuralOpJson,
 };
 
-use super::constants::{COORDINATED_OPERATION_DISCOUNT, MIN_COORDINATED_MULTI_OP_GAIN};
+use super::constants::{MIN_COORDINATED_MULTI_OP_GAIN, coordinated_empirical_discount};
 use super::{cache, shared, synapse};
 
-/// Compute the operation-count discount for a coordinated candidate (Issue #732).
+/// Compute the operation-count discount for a coordinated candidate (Issue #732, #1058).
 ///
-/// Multi-operation candidates suffer compounding prediction uncertainty.
-/// Each additional operation beyond the first applies a multiplicative discount
-/// of `COORDINATED_OPERATION_DISCOUNT`, so a 4-operation candidate receives
-/// `COORDINATED_OPERATION_DISCOUNT^3` ≈ 0.512 discount.
+/// Issue #1058: Replaced the three-layer compound discount (per-op exponential ×
+/// flat pessimism) with a single empirical lookup per operation count, derived
+/// from GRQ-sampler success rates.
 ///
 /// Single-operation candidates receive no discount (returns original gain).
 pub fn apply_operation_count_discount(candidate: &CoordinatedStructuralCandidateJson) -> f32 {
     let op_count = candidate.operations.len();
-    if op_count <= 1 {
-        return candidate.expected_creature_score_gain;
-    }
-    let exponent = (op_count - 1) as f32;
-    candidate.expected_creature_score_gain * COORDINATED_OPERATION_DISCOUNT.powf(exponent)
+    candidate.expected_creature_score_gain * coordinated_empirical_discount(op_count)
 }
 
 /// Validate whether a coordinated candidate's gain exceeds the minimum threshold (Issue #732).

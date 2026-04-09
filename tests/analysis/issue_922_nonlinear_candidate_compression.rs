@@ -13,7 +13,7 @@
 use neat_ai_discovery::analysis::candidate_compression::{
     compress_identity_candidates, compress_nonlinear_candidates,
 };
-use neat_ai_discovery::analysis::constants::COORDINATED_OPERATION_DISCOUNT;
+use neat_ai_discovery::analysis::constants::coordinated_empirical_discount;
 use neat_ai_discovery::{
     CandidateSynapseJson, CoordinatedStructuralOpJson, CreatureJson, NeuronJson, SynapseJson,
 };
@@ -334,9 +334,9 @@ fn test_nonlinear_operation_count_discount() {
 
     if !compressed.is_empty() {
         let c = &compressed[0];
-        // 4 operations → discount = 0.65^3.
+        // 4 operations → empirical discount for 4+ ops.
         // The gain should be significantly less than the raw combined gain.
-        let max_possible = (0.05_f32 + 0.06) * COORDINATED_OPERATION_DISCOUNT.powf(3.0);
+        let max_possible = (0.05_f32 + 0.06) * coordinated_empirical_discount(4);
         assert!(
             c.expected_creature_score_gain <= max_possible + 1e-6,
             "Discounted gain should not exceed max possible: {} > {}",

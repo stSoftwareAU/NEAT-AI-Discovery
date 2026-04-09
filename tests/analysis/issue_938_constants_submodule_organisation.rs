@@ -106,13 +106,19 @@ fn test_nan_safe_comparison_accessible() {
     assert_eq!(constants::cmp_f64_desc(&2.0, &1.0), Ordering::Less);
 }
 
-/// Verify coordinated-structural constants are accessible.
+/// Verify coordinated-structural constants are accessible (Issue #1058: updated).
 #[test]
 fn test_coordinated_structural_accessible() {
-    assert!((constants::COORDINATED_OPERATION_DISCOUNT - 0.65).abs() < f32::EPSILON);
-    assert!((constants::MIN_COORDINATED_MULTI_OP_GAIN - 1e-3).abs() < f32::EPSILON);
+    // Issue #1058: Empirical per-op-count factors replace compound discount.
+    assert!((constants::COORDINATED_EMPIRICAL_DISCOUNT_2OPS - 0.5).abs() < f32::EPSILON);
+    assert!((constants::COORDINATED_EMPIRICAL_DISCOUNT_3OPS - 0.2).abs() < f32::EPSILON);
+    assert!((constants::COORDINATED_EMPIRICAL_DISCOUNT_4PLUS_OPS - 0.1).abs() < f32::EPSILON);
+    // Issue #1058: Lowered from 1e-3 to 1e-5.
+    assert!((constants::MIN_COORDINATED_MULTI_OP_GAIN - 1e-5).abs() < f32::EPSILON);
     assert!((constants::COORDINATED_ESTIMATION_WEIGHT_SCALE - 0.2).abs() < f32::EPSILON);
-    assert!((constants::COORDINATED_PESSIMISM_DISCOUNT - 0.15).abs() < f32::EPSILON);
+    // Issue #1058: Verify empirical discount function is accessible.
+    let d = constants::coordinated_empirical_discount(2);
+    assert!((d - 0.5).abs() < f32::EPSILON);
 }
 
 /// Verify prediction calibration constants are accessible.

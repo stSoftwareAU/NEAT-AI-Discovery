@@ -131,7 +131,7 @@ pub fn detect_batch_successful_groups(
 /// Each batch becomes a single `CoordinatedStructuralCandidateJson` with
 /// `AddSynapse` operations for each candidate in the batch.
 ///
-/// The `COORDINATED_OPERATION_DISCOUNT^(N-1)` is applied automatically
+/// The per-op-count empirical discount is applied automatically
 /// during the merge step in `merge_coordinated_structural_replacements`.
 pub fn batch_successful_to_coordinated_candidates(
     groups: &[BatchSuccessfulGroup],
