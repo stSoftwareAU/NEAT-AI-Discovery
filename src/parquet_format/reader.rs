@@ -9,6 +9,25 @@ use std::fs::File;
 use crate::types::DiscoverRecord;
 use std::time::SystemTime;
 
+/// Open a parquet file, returning a clear "file removed" error if the file
+/// no longer exists on disk (Issue #1049).
+///
+/// This distinguishes external deletion (e.g., host cleaned up temp directory)
+/// from other I/O errors such as corruption or permission issues, allowing
+/// callers to return partial results instead of crashing.
+fn open_parquet_file(file_path: &str) -> Result<File> {
+    File::open(file_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!(
+                "Parquet file removed: the file '{file_path}' no longer exists on disk. \
+                 It may have been deleted by the host while analysis was still active."
+            )
+        } else {
+            anyhow::anyhow!("Failed to open Parquet file: {file_path}").context(e)
+        }
+    })
+}
+
 /// Read all discovery records from a Parquet file, grouped by neuron UUID.
 /// This is more efficient than calling `read_records_from_parquet` multiple times
 /// when you need records for multiple neurons.
@@ -36,8 +55,7 @@ pub fn read_all_records_grouped_by_neuron_with_deadline(
         anyhow::bail!("Parquet loading aborted: deadline already passed before loading started");
     }
 
-    let file = File::open(file_path)
-        .with_context(|| format!("Failed to open Parquet file: {file_path}"))?;
+    let file = open_parquet_file(file_path)?;
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .context("Failed to create Parquet reader builder")?;
@@ -146,8 +164,7 @@ pub fn read_records_from_parquet(
     file_path: &str,
     neuron_uuid: &str,
 ) -> Result<Vec<DiscoverRecord>> {
-    let file = File::open(file_path)
-        .with_context(|| format!("Failed to open Parquet file: {file_path}"))?;
+    let file = open_parquet_file(file_path)?;
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .context("Failed to create Parquet reader builder")?;
@@ -254,8 +271,7 @@ pub fn read_records_from_parquet_with_limit(
         return Ok(Vec::new());
     }
 
-    let file = File::open(file_path)
-        .with_context(|| format!("Failed to open Parquet file: {file_path}"))?;
+    let file = open_parquet_file(file_path)?;
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .context("Failed to create Parquet reader builder")?;
