@@ -150,7 +150,11 @@ fn test_no_candidates_for_low_improvement() {
             "output-1".to_string(),
             (0..n)
                 .map(|i| {
-                    let error = if i % 3 == 0 { 0.1 } else { -0.05 };
+                    // Zero-mean error ensures constant activation has zero
+                    // explanatory power (R² = 0). Issue #1059: previously used
+                    // non-zero-mean error which produced a tiny R² above the
+                    // new lowered threshold of 1e-5.
+                    let error = if i % 2 == 0 { 0.1 } else { -0.1 };
                     record("output-1", i, 0.5, vec![error])
                 })
                 .collect(),
