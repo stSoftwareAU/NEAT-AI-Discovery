@@ -61,7 +61,9 @@ usage and candidate selection behaviour:
 
 Limits the Rust-side memory consumption during the analysis phase. When the
 allocated memory exceeds the budget, analysis returns early with
-`memory_budget_exceeded: true` in the output.
+`memory_budget_exceeded: true` in the output. For guidance on how this
+interacts with cache tier selection, see
+[CACHE_TUNING.md](CACHE_TUNING.md).
 
 - **Field**: `max_analysis_memory_mb` (optional `u64`)
 - **Default**: no limit
@@ -261,6 +263,10 @@ FFI boundary.
 ---
 
 ## 🔄 Streaming Recording API (v0.2.8+)
+
+> **For a step-by-step guide** with TypeScript code examples, error handling
+> patterns, and best practices, see
+> [STREAMING_GUIDE.md](STREAMING_GUIDE.md).
 
 The streaming API solves the JavaScript "Invalid string length" error that occurs when
 trying to serialise large datasets (6+ minutes of recording) into a single JSON string.
