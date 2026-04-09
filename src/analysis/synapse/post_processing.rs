@@ -254,22 +254,21 @@ fn apply_impact_to_harmful(
     );
 }
 
-/// Apply impact-based discounting and pessimism discount to a coordinated structural candidate.
+/// Apply impact-based discounting and prediction calibration to a coordinated structural
+/// candidate.
 ///
 /// Uses the last operation's target neuron UUID to determine impact, since multi-op
 /// groups ultimately adjust the inputs of a target neuron.
 ///
-/// Issue #790: Also applies `COORDINATED_PESSIMISM_DISCOUNT` — a flat multiplicative
-/// discount to account for the 2.3% success rate of coordinated-structural candidates.
-/// Unlike synapse/neuron candidates which have per-sample improved ratios, coordinated
-/// candidates combine multiple operations whose predictions compound optimistically.
+/// Issue #1058: Removed the separate `COORDINATED_PESSIMISM_DISCOUNT` flat discount.
+/// The pessimism discount has been folded into the per-op-count empirical factors
+/// applied in `candidate_aggregation::apply_operation_count_discount`. This avoids
+/// the three-layer compound discount that was too aggressive and poorly calibrated.
 fn apply_impact_to_coordinated(
     candidate: &mut crate::CoordinatedStructuralCandidateJson,
     impact_scores: &HashMap<String, f32>,
     neuron_type_map: &HashMap<&str, &str>,
 ) {
-    use crate::analysis::constants::COORDINATED_PESSIMISM_DISCOUNT;
-
     let target_uuid = candidate
         .operations
         .iter()
@@ -312,11 +311,6 @@ fn apply_impact_to_coordinated(
     };
 
     candidate.expected_creature_score_gain *= impact;
-
-    // Issue #790: Apply coordinated-specific pessimism discount.
-    // Coordinated-structural candidates have a 2.3% success rate with near-negligible
-    // actual gains, indicating predictions are wildly over-estimated.
-    candidate.expected_creature_score_gain *= COORDINATED_PESSIMISM_DISCOUNT;
 
     // Issue #1056: Apply coordinated prediction calibration.
     // Coordinated candidates lack per-sample improved counts, so use flat calibration.

@@ -13,8 +13,8 @@ use crate::CandidateSynapseJson;
 use super::CompressibleGroup;
 use super::grouping::detect_compressible_groups;
 use crate::analysis::constants::{
-    COORDINATED_OPERATION_DISCOUNT, MAX_COMPRESSION_INPUTS, MIN_COMPRESSED_SOURCES,
-    MIN_COORDINATED_MULTI_OP_GAIN,
+    MAX_COMPRESSION_INPUTS, MIN_COMPRESSED_SOURCES, MIN_COORDINATED_MULTI_OP_GAIN,
+    coordinated_empirical_discount,
 };
 
 /// Compress a group of compatible IDENTITY candidates into a single coordinated
@@ -56,8 +56,7 @@ fn compress_group(
 
     // N inputs → N+2 operations (1 AddNeuron + N AddSynapse inputs + 1 AddSynapse output).
     let op_count = sorted_candidates.len() + 2;
-    let exponent = (op_count - 1) as f32;
-    let discounted_gain = combined_gain * COORDINATED_OPERATION_DISCOUNT.powf(exponent);
+    let discounted_gain = combined_gain * coordinated_empirical_discount(op_count);
 
     if discounted_gain <= MIN_COORDINATED_MULTI_OP_GAIN {
         return None;
@@ -145,7 +144,7 @@ pub fn compress_identity_candidates(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::constants::COORDINATED_OPERATION_DISCOUNT;
+    use crate::analysis::constants::coordinated_empirical_discount;
     use crate::{NeuronJson, SynapseJson};
 
     fn make_candidate(from: &str, to: &str, weight: f32, gain: f32) -> CandidateSynapseJson {
@@ -259,10 +258,9 @@ mod tests {
 
         let c = &compressed[0];
         // Combined gain = 0.05 + 0.06 = 0.11
-        // 4 operations → discount = 0.65^3 ≈ 0.274625
-        // Discounted gain ≈ 0.11 * 0.274625 ≈ 0.03021
+        // 4 operations → empirical discount for 4+ ops.
         let expected_combined = 0.05_f32 + 0.06;
-        let expected_discounted = expected_combined * COORDINATED_OPERATION_DISCOUNT.powf(3.0);
+        let expected_discounted = expected_combined * coordinated_empirical_discount(4);
         let tolerance = 1e-6;
         assert!(
             (c.expected_creature_score_gain - expected_discounted).abs() < tolerance,
@@ -273,10 +271,11 @@ mod tests {
 
     #[test]
     fn test_compress_below_min_gain_threshold() {
-        // Very small gains that after discounting will be below MIN_COORDINATED_MULTI_OP_GAIN.
+        // Issue #1058: With lowered threshold (1e-5) and empirical discount (0.1 for 4+ ops),
+        // use truly tiny gains. Combined = 2e-5, discounted = 2e-5 × 0.1 = 2e-6 < 1e-5.
         let candidates = vec![
-            make_candidate("input-a", "output-1", 0.3, 0.001),
-            make_candidate("input-b", "output-1", 0.5, 0.001),
+            make_candidate("input-a", "output-1", 0.3, 1e-5),
+            make_candidate("input-b", "output-1", 0.5, 1e-5),
         ];
         let creature = make_creature(
             vec![
@@ -291,8 +290,6 @@ mod tests {
         );
 
         let compressed = compress_identity_candidates(&candidates, &creature);
-        // Combined = 0.002, discounted = 0.002 * 0.65^3 ≈ 0.000549
-        // This is below MIN_COORDINATED_MULTI_OP_GAIN (1e-3), so should be empty.
         assert!(
             compressed.is_empty(),
             "Candidates below minimum gain threshold should be filtered out"

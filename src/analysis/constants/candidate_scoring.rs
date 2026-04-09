@@ -516,29 +516,69 @@ pub fn cmp_f64_desc(a: &f64, b: &f64) -> std::cmp::Ordering {
 }
 
 // =============================================================================
-// Coordinated-Structural Validation (Issue #732)
+// Coordinated-Structural Empirical Discount (Issue #732, #790, #1058)
 // =============================================================================
 
-/// Per-operation compounding uncertainty discount for multi-operation candidates.
+// Issue #1058: The previous three-layer compound discount (per-op exponential ×
+// flat pessimism × calibration) was too aggressive, creating a paradox: candidates
+// that survived filtering were still poorly calibrated, while potentially viable
+// candidates were filtered out entirely.
+//
+// GRQ-sampler cache evidence (creature 0e18e62c: 6/389 successes, creature
+// 066649c7: 0/519):
+// - Successful coordinated-structural candidates are predominantly 2-op
+// - 3+ op candidates have near-zero success rates in production
+// - Predictions overestimate by ~10,000× (handled by calibration factor)
+//
+// The new model uses a single empirical discount per operation count, derived
+// from GRQ-sampler success rates. The calibration factor
+// (`COORDINATED_PREDICTION_CALIBRATION`) remains separate to bridge the
+// prediction-to-reality magnitude gap.
+//
+// Old compound (per-op × pessimism):
+//   1-op: 1.0 × 0.15 = 0.15 | 2-op: 0.65 × 0.15 = 0.0975
+//   3-op: 0.4225 × 0.15 = 0.0634 | 4-op: 0.274 × 0.15 = 0.0411
+//
+// New empirical factors (single lookup, less aggressive):
+//   1-op: 1.0 | 2-op: 0.5 | 3-op: 0.2 | 4+-op: 0.1
+
+/// Empirical discount for 2-operation coordinated candidates (Issue #1058).
 ///
-/// Production analysis shows coordinated-structural candidates have a 2.3% success
-/// rate (272 / 12,069 in GRQ-sampler cache, Issue #787) because each operation's
-/// prediction uncertainty compounds when combined.
-/// For a candidate with N operations, the discount is:
-///
-/// ```text
-/// discount = COORDINATED_OPERATION_DISCOUNT ^ (N - 1)
-/// ```
-///
-/// Issue #790: Reduced from 0.8 to 0.65. The 2.3% success rate and near-negligible
-/// actual gains (~2.2e-14) on successful candidates demonstrate that multi-operation
-/// predictions are far less reliable than previously assumed. With 0.65, a 4-operation
-/// candidate receives 0.65^3 ≈ 0.274 discount, more aggressively filtering out
-/// candidates whose compounding uncertainty makes success unlikely.
+/// GRQ-sampler data shows 2-op candidates account for the majority of successful
+/// coordinated-structural candidates (creature 0e18e62c). The 0.5 factor replaces
+/// the old compound of `0.65^1 × 0.15 = 0.0975`, allowing ~5× more candidates
+/// through while relying on the calibration factor for magnitude correction.
 ///
 /// ## Valid Range
-/// Must be in (0.0, 1.0). Values below 0.5 may over-discount legitimate candidates.
-/// Values above 0.95 provide insufficient correction.
+/// Must be in (0.0, 1.0).
+pub const COORDINATED_EMPIRICAL_DISCOUNT_2OPS: f32 = 0.5;
+
+/// Empirical discount for 3-operation coordinated candidates (Issue #1058).
+///
+/// 3-op candidates have substantially lower success rates than 2-op in the
+/// GRQ-sampler cache. The 0.2 factor replaces the old compound of
+/// `0.65^2 × 0.15 = 0.0634`, still allowing ~3× more candidates through.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0).
+pub const COORDINATED_EMPIRICAL_DISCOUNT_3OPS: f32 = 0.2;
+
+/// Empirical discount for 4+ operation coordinated candidates (Issue #1058).
+///
+/// 4+ op candidates have near-zero success rates in GRQ-sampler production data.
+/// The 0.1 factor replaces the old compound of `0.65^3 × 0.15 = 0.0411`, still
+/// allowing ~2.4× more candidates through but remaining heavily discounted.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0).
+pub const COORDINATED_EMPIRICAL_DISCOUNT_4PLUS_OPS: f32 = 0.1;
+
+/// Legacy alias for backward compatibility with code referencing the old per-op
+/// discount constant (Issue #1058).
+///
+/// New code should use the empirical per-op-count factors directly via
+/// `coordinated_empirical_discount()`.
+#[deprecated(note = "Use COORDINATED_EMPIRICAL_DISCOUNT_*OPS constants (Issue #1058)")]
 pub const COORDINATED_OPERATION_DISCOUNT: f32 = 0.65;
 
 /// Minimum absolute gain required for a multi-operation coordinated candidate.
@@ -548,19 +588,37 @@ pub const COORDINATED_OPERATION_DISCOUNT: f32 = 0.65;
 /// after discounting. This prevents near-zero predictions from generating
 /// candidates that almost never succeed.
 ///
-/// Issue #790: Raised from 1e-5 to 1e-3. GRQ-sampler cache analysis (Issue #787)
-/// shows that successful coordinated candidates achieve only ~2.2e-14 actual gain,
-/// demonstrating an enormous prediction-to-reality gap. The previous threshold of
-/// 1e-5 allowed candidates with negligible predicted improvement through, wasting
-/// ablation testing time. The raised threshold filters out marginal predictions
-/// while still admitting candidates with meaningful expected gains.
+/// Issue #1058: Lowered from 1e-3 to 1e-5. The calibration factor
+/// (`COORDINATED_PREDICTION_CALIBRATION`) already accounts for the ~10,000×
+/// overestimation gap. The previous 1e-3 threshold was filtering out
+/// viable candidates whose post-calibration gains were legitimately small.
 ///
 /// ## Valid Range
-/// Must be > 0.0. Values above 1e-2 may filter too aggressively.
-pub const MIN_COORDINATED_MULTI_OP_GAIN: f32 = 1e-3;
+/// Must be > 0.0. Values above 1e-3 may filter too aggressively.
+pub const MIN_COORDINATED_MULTI_OP_GAIN: f32 = 1e-5;
+
+/// Return the single empirical discount factor for a given operation count (Issue #1058).
+///
+/// Replaces the old three-layer compound discount (per-op exponential × flat
+/// pessimism discount) with a single lookup by operation count, derived from
+/// GRQ-sampler success rates.
+///
+/// - 1 op: no discount (1.0)
+/// - 2 ops: moderate discount (0.5)
+/// - 3 ops: substantial discount (0.2)
+/// - 4+ ops: heavy discount (0.1)
+#[inline]
+pub fn coordinated_empirical_discount(op_count: usize) -> f32 {
+    match op_count {
+        0 | 1 => 1.0,
+        2 => COORDINATED_EMPIRICAL_DISCOUNT_2OPS,
+        3 => COORDINATED_EMPIRICAL_DISCOUNT_3OPS,
+        _ => COORDINATED_EMPIRICAL_DISCOUNT_4PLUS_OPS,
+    }
+}
 
 // =============================================================================
-// Coordinated-Structural Pessimism Discount (Issue #790)
+// Coordinated-Structural Weight Estimation (Issue #897)
 // =============================================================================
 
 /// Conservative weight scale used when estimating coordinated candidate gains (Issue #897).
@@ -575,23 +633,11 @@ pub const MIN_COORDINATED_MULTI_OP_GAIN: f32 = 1e-3;
 /// `variant_generation.rs`.
 pub const COORDINATED_ESTIMATION_WEIGHT_SCALE: f32 = 0.2;
 
-/// Flat pessimism discount applied to all coordinated-structural candidates.
+/// Legacy alias for backward compatibility (Issue #1058).
 ///
-/// GRQ-sampler analysis (Issue #787) shows coordinated-structural candidates have
-/// a 2.3% success rate (272 / 12,069), with successful candidates achieving only
-/// near-negligible score deltas (~2.2e-14). Unlike synapse and neuron candidates
-/// which have per-sample `improved_count/total_count` ratios, coordinated candidates
-/// combine multiple operations whose individual predictions compound optimistically.
-///
-/// This flat multiplicative discount is applied to all coordinated-structural
-/// candidates during post-processing, analogous to the pessimism discounts applied
-/// to synapse and neuron candidates but using a fixed factor rather than a
-/// ratio-based curve (since coordinated candidates lack per-sample counts).
-///
-/// ## Valid Range
-/// Must be in (0.0, 1.0). Values below 0.05 risk zeroing-out all coordinated
-/// candidates. Values above 0.30 provide insufficient correction given the
-/// 2.3% success rate.
+/// The flat pessimism discount has been folded into the per-op-count empirical
+/// factors. New code should not use this constant.
+#[deprecated(note = "Folded into empirical per-op-count factors (Issue #1058)")]
 pub const COORDINATED_PESSIMISM_DISCOUNT: f32 = 0.15;
 
 // =============================================================================
