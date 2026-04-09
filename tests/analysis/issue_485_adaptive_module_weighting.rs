@@ -83,6 +83,7 @@ fn bayesian_success_rate_converges_to_raw_rate() {
         attempts: 1000,
         successes: 360,
         candidates_produced: 0,
+        soft_failures: 0.0,
     };
     let rate = stats.success_rate();
     // Should be close to 0.36 with 1000 samples
@@ -98,6 +99,7 @@ fn bayesian_rate_never_exactly_zero_or_one() {
         attempts: 100,
         successes: 0,
         candidates_produced: 0,
+        soft_failures: 0.0,
     };
     assert!(all_fail.success_rate() > 0.0);
 
@@ -105,6 +107,7 @@ fn bayesian_rate_never_exactly_zero_or_one() {
         attempts: 100,
         successes: 100,
         candidates_produced: 0,
+        soft_failures: 0.0,
     };
     assert!(all_succeed.success_rate() < 1.0);
 }
@@ -307,9 +310,13 @@ fn discovery_module_stats_populated_after_parallel_dispatch() {
         },
     ];
 
-    let tracker = ModuleOutcomeTracker::new();
+    let mut tracker = ModuleOutcomeTracker::new();
     neat_ai_discovery::analysis::discovery_dispatch::run_discovery_modules_parallel(
-        &mut syn, modules, None, false, &tracker,
+        &mut syn,
+        modules,
+        None,
+        false,
+        &mut tracker,
     );
 
     // Metadata should now contain per-module stats

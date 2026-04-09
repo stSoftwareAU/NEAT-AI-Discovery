@@ -390,7 +390,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     let mut neuron_result = neuron_result;
 
     // Issue #792: Resolve the module outcome tracker from input or use a default.
-    let tracker = input.module_outcome_tracker.clone().unwrap_or_default();
+    let mut tracker = input.module_outcome_tracker.clone().unwrap_or_default();
 
     // Issue #1057: Gate add-synapse candidates based on historical success rate
     // and synapse density. When the ModuleOutcomeTracker shows consistent failure
@@ -511,7 +511,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 discovery_results,
                 max_candidates,
                 diversify,
-                &tracker,
+                &mut tracker,
             );
         }
 
