@@ -35,6 +35,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 fingerprint_cache_misses: None,
                 module_outcome_tracker: None,
                 memory_budget_exceeded: None,
+                cancelled: None,
                 error: Some(typed.to_string()),
                 error_kind: Some(kind),
                 retryable: Some(kind.is_retryable()),
@@ -137,6 +138,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     Some(result.module_outcome_tracker)
                 },
                 memory_budget_exceeded,
+                cancelled: if result.cancelled { Some(true) } else { None },
                 error: None,
                 error_kind: None,
                 retryable: None,
@@ -165,6 +167,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 fingerprint_cache_misses: None,
                 module_outcome_tracker: None,
                 memory_budget_exceeded: None,
+                cancelled: None,
                 error: Some(err_msg),
                 error_kind,
                 retryable,

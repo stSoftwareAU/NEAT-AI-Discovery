@@ -30,6 +30,9 @@ pub enum DiscoveryErrorKind {
     IoError,
     /// Internal panic caught at the FFI boundary — not retryable.
     InternalPanic,
+    /// Analysis was cancelled via `cancel_analysis()` FFI call (Issue #1047).
+    /// Not an error — the host requested graceful shutdown.
+    Cancelled,
     /// Unclassified error — check the error message for details.
     Unknown,
 }
@@ -41,6 +44,11 @@ impl DiscoveryErrorKind {
             self,
             Self::GpuTransient | Self::Timeout | Self::MemoryExhausted | Self::IoError
         )
+    }
+
+    /// Whether this kind represents a host-requested cancellation (Issue #1047).
+    pub fn is_cancelled(self) -> bool {
+        matches!(self, Self::Cancelled)
     }
 }
 
@@ -77,6 +85,10 @@ pub enum DiscoveryError {
     /// File I/O failure (parquet, file system).
     #[error("I/O error: {detail}")]
     Io { detail: String },
+
+    /// Analysis cancelled by host via `cancel_analysis()` (Issue #1047).
+    #[error("Analysis cancelled by host")]
+    Cancelled,
 }
 
 impl DiscoveryError {
@@ -89,6 +101,7 @@ impl DiscoveryError {
             Self::Timeout { .. } => DiscoveryErrorKind::Timeout,
             Self::MemoryExhausted { .. } => DiscoveryErrorKind::MemoryExhausted,
             Self::Io { .. } => DiscoveryErrorKind::IoError,
+            Self::Cancelled => DiscoveryErrorKind::Cancelled,
         }
     }
 }
@@ -125,6 +138,11 @@ pub fn error_fields_from_anyhow(
 /// deadline, and memory subsystems.
 pub fn classify_error(error_msg: &str) -> DiscoveryErrorKind {
     let lower = error_msg.to_lowercase();
+
+    // Host-requested cancellation (Issue #1047)
+    if lower.contains("cancelled by host") || lower.contains("analysis cancelled") {
+        return DiscoveryErrorKind::Cancelled;
+    }
 
     // GPU transient errors (device lost, driver issues)
     if is_gpu_transient_pattern(&lower) {

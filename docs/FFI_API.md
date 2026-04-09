@@ -18,7 +18,7 @@ The most commonly used entry points are:
 - **Recording**:
   - Streaming: `start_discovery_session`, `append_discovery_records`, `finish_discovery_session`, `cancel_discovery_session`
   - Single-call: `record_discovery` (avoid for large runs; prefer streaming to prevent JS/V8 string limits)
-- **Analysis**: `rank_focus_neurons`, `analyze_parallel`
+- **Analysis**: `rank_focus_neurons`, `analyze_parallel`, `cancel_analysis`, `reset_cancellation`
 - **Utilities**: `merge_discovery_parquet`, `read_discovery_records_ffi`, `export_visualisation_snapshot`
 - **Memory usage**: `discovery_memory_usage_bytes()` (returns `u64`)
 - **Memory management**: `free_discovery_result`
@@ -94,6 +94,26 @@ temperatures focus on the highest-scoring candidates.
 When `NEAT_AI_DISCOVERY_MH_TEMPERATURE` is also set, Metropolis-Hastings
 probabilistic acceptance is applied to synapse candidates, allowing
 occasionally weaker candidates through to maintain search diversity.
+
+### Cancellation Signal (Issue #1047)
+
+Allows the host process to request graceful shutdown of in-flight analysis
+(e.g. when SIGTERM arrives due to `max-task-hours exceeded`).
+
+- **Symbol**: `cancel_analysis` — sets a global `AtomicBool` flag
+  - **Input**: no arguments
+  - **Output**: no return value
+  - **Thread safety**: safe to call from any thread at any time
+- **Symbol**: `reset_cancellation` — clears the flag before a new analysis run
+  - Called automatically at the start of `analyze_all`, but can also be
+    called explicitly by the host
+- **Behaviour**: the analysis pipeline checks the flag at every
+  `deadline_passed()` call site and at parquet batch boundaries. When
+  cancelled, the pipeline returns a partial result with
+  `cancelled: true` instead of an error.
+- **Output field**: `cancelled` (`bool`) — `true` when the host requested
+  shutdown via `cancel_analysis()`; results are partial but valid.
+  The `error_kind` is `"cancelled"` (not retryable).
 
 ---
 

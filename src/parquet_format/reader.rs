@@ -47,6 +47,18 @@ pub fn read_all_records_grouped_by_neuron_with_deadline(
     let mut grouped_records: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
 
     for (batch_count, batch_result) in reader.enumerate() {
+        // Issue #1047: Check cancellation flag at each batch boundary so
+        // parquet loading stops promptly when the host sends SIGTERM.
+        if crate::cancellation::is_cancelled() {
+            let neurons_loaded = grouped_records.len();
+            tracing::info!(
+                batch_count,
+                neurons_loaded,
+                "Parquet loading cancelled by host after {batch_count} batches"
+            );
+            anyhow::bail!("Analysis cancelled by host");
+        }
+
         // Check deadline at each batch boundary (Issue #648)
         if let Some(dl) = deadline
             && SystemTime::now() >= dl

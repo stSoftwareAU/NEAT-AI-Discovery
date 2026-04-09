@@ -12,6 +12,7 @@ static ALLOCATOR: cap::Cap<std::alloc::System> = cap::Cap::new(std::alloc::Syste
 
 pub mod activations;
 pub mod analysis;
+pub mod cancellation;
 pub mod config;
 pub mod debug;
 pub mod discovery_history;
