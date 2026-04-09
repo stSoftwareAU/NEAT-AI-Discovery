@@ -7,6 +7,7 @@ mod issue_1002_concurrent_analysis;
 mod issue_1032_documentation_accuracy;
 mod issue_1037_config_validation;
 mod issue_1047_cancellation_signal;
+mod issue_1048_parquet_file_guard;
 mod issue_186_rwlock_cache;
 mod issue_196_cache_locality_benchmark;
 mod issue_228_zero_copy_buffer;

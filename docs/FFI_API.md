@@ -18,7 +18,7 @@ The most commonly used entry points are:
 - **Recording**:
   - Streaming: `start_discovery_session`, `append_discovery_records`, `finish_discovery_session`, `cancel_discovery_session`
   - Single-call: `record_discovery` (avoid for large runs; prefer streaming to prevent JS/V8 string limits)
-- **Analysis**: `rank_focus_neurons`, `analyze_parallel`, `cancel_analysis`, `reset_cancellation`
+- **Analysis**: `rank_focus_neurons`, `analyze_parallel`, `cancel_analysis`, `reset_cancellation`, `is_analysis_active`
 - **Utilities**: `merge_discovery_parquet`, `read_discovery_records_ffi`, `export_visualisation_snapshot`
 - **Memory usage**: `discovery_memory_usage_bytes()` (returns `u64`)
 - **Memory management**: `free_discovery_result`
@@ -114,6 +114,26 @@ Allows the host process to request graceful shutdown of in-flight analysis
 - **Output field**: `cancelled` (`bool`) — `true` when the host requested
   shutdown via `cancel_analysis()`; results are partial but valid.
   The `error_kind` is `"cancelled"` (not retryable).
+
+### Analysis Lifecycle Guard (Issue #1048)
+
+Prevents the host from deleting the parquet temp directory while analysis is
+still reading from it.
+
+- **Symbol**: `is_analysis_active` — returns `1` if any analysis invocation is
+  in-flight, `0` otherwise
+  - **Input**: no arguments
+  - **Output**: `i32` (`1` = active, `0` = idle)
+  - **Thread safety**: safe to call from any thread at any time
+- **Recommended shutdown sequence**:
+  1. Call `cancel_analysis()` when SIGTERM arrives
+  2. Wait for `analyze_parallel` / `rank_focus_neurons` FFI call to return
+  3. Optionally poll `is_analysis_active()` until it returns `0`
+  4. Delete the `.discovery/<uuid>/` temp directory
+- **Rust-side guard**: the `RecordCache`, `LruRecordCache`, and
+  `CompressedLruRecordCache` hold an open file handle to the parquet file.
+  On Unix, this keeps the inode alive even if the path is unlinked, so
+  in-flight reads succeed even under a race condition.
 
 ---
 

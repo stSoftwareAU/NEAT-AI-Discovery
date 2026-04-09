@@ -46,7 +46,14 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
 
     let combined_input = build_analyze_all_input_from_parallel(input);
 
-    match analysis::analyze_all(&combined_input) {
+    // Issue #1048: Track that an analysis is active so the host knows
+    // not to delete the parquet temp directory until we finish.
+    crate::cancellation::mark_analysis_started();
+
+    let analysis_result = analysis::analyze_all(&combined_input);
+    crate::cancellation::mark_analysis_finished();
+
+    match analysis_result {
         Ok(result) => {
             let synapse = result.synapse;
             let neuron = result.neuron;
@@ -223,12 +230,19 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
         }
     };
 
-    match focus::rank_focus_neurons(
+    // Issue #1048: Track that an analysis is active so the host knows
+    // not to delete the parquet temp directory until we finish.
+    crate::cancellation::mark_analysis_started();
+
+    let rank_result = focus::rank_focus_neurons(
         &input.parquet_file,
         &input.creature,
         input.max_results,
         input.cost_of_growth,
-    ) {
+    );
+    crate::cancellation::mark_analysis_finished();
+
+    match rank_result {
         Ok(stats) => {
             let neurons: Vec<RankedNeuronJson> = stats
                 .neurons
