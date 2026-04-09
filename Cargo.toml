@@ -161,6 +161,18 @@ harness = false
 name = "uuid_arc_preparation"
 harness = false
 
+[[bench]]
+name = "ffi_marshalling"
+harness = false
+
+[[bench]]
+name = "cache_eviction"
+harness = false
+
+[[bench]]
+name = "parquet_loading_comparison"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
