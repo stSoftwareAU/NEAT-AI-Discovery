@@ -97,7 +97,7 @@ pub(crate) fn prepare_and_detect_discovery_modules(
         }
     }
 
-    discovery_dispatch::detect_discovery_modules_parallel(modules, deadline)
+    discovery_dispatch::detect_discovery_modules_parallel(modules, deadline, Some(tracker))
 }
 
 /// Synthesise cross-detection candidates for co-flagged neurons (Issue #963).
@@ -380,11 +380,12 @@ mod tests {
 
         let specs = build_discovery_module_specs(&creature, &hidden, &cache, &topo);
 
-        // We expect exactly 48 modules across all four spec groups.
+        // We expect 47 modules across all four spec groups (batch-successful
+        // is disabled by default, Issue #1059).
         assert_eq!(
             specs.len(),
-            48,
-            "Expected 48 discovery module specs, got {}",
+            47,
+            "Expected 47 discovery module specs, got {}",
             specs.len()
         );
 

@@ -63,7 +63,7 @@ fn tracker_with_history() -> ModuleOutcomeTracker {
 
 #[test]
 fn tracker_stats_populate_metadata_in_parallel_dispatch() {
-    let tracker = tracker_with_history();
+    let mut tracker = tracker_with_history();
     let mut syn = empty_synapse_result();
 
     let modules = vec![
@@ -92,7 +92,11 @@ fn tracker_stats_populate_metadata_in_parallel_dispatch() {
     ];
 
     neat_ai_discovery::analysis::discovery_dispatch::run_discovery_modules_parallel(
-        &mut syn, modules, None, false, &tracker,
+        &mut syn,
+        modules,
+        None,
+        false,
+        &mut tracker,
     );
 
     // Metadata should contain per-module stats with historical data
@@ -303,6 +307,7 @@ fn module_stats_success_rate_for_known_data() {
         attempts: 100,
         successes: 65,
         candidates_produced: 200,
+        soft_failures: 0.0,
     };
     let rate = stats.success_rate();
     // Bayesian: (65 + 1) / (100 + 2) = 66/102 ≈ 0.647

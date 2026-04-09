@@ -10,7 +10,8 @@
 //! 5. Diversification (`shuffle_within_top_k`) provides exploration without MCMC
 
 use neat_ai_discovery::analysis::constants::{
-    COORDINATED_PESSIMISM_DISCOUNT, COORDINATED_PREDICTION_CALIBRATION, DIVERSIFY_TOP_K,
+    COORDINATED_EMPIRICAL_DISCOUNT_2OPS, COORDINATED_EMPIRICAL_DISCOUNT_3OPS,
+    COORDINATED_EMPIRICAL_DISCOUNT_4PLUS_OPS, COORDINATED_PREDICTION_CALIBRATION, DIVERSIFY_TOP_K,
     HOLDOUT_MIN_SAMPLE_COUNT, HOLDOUT_VALIDATION_FRACTION, MIN_IMPROVED_RATIO,
     NEURON_PESSIMISM_CURVE_EXPONENT, NEURON_PESSIMISM_DISCOUNT_FLOOR,
     NEURON_PREDICTION_CALIBRATION, PESSIMISM_CURVE_EXPONENT, PESSIMISM_DISCOUNT_FLOOR,
@@ -222,13 +223,17 @@ fn diversify_top_k_in_valid_range() {
     }
 }
 
-/// Issue #1017: Coordinated pessimism discount must be a positive scale-down factor.
-/// This flat discount accounts for the 2.3% success rate of coordinated candidates.
+/// Issue #1058: Coordinated empirical discount factors must be positive scale-down factors.
+/// These per-op-count factors replace the old flat pessimism discount.
 #[test]
-fn coordinated_pessimism_discount_is_scale_down() {
+fn coordinated_empirical_discounts_are_scale_down() {
     const {
-        assert!(COORDINATED_PESSIMISM_DISCOUNT > 0.0);
-        assert!(COORDINATED_PESSIMISM_DISCOUNT < 1.0);
+        assert!(COORDINATED_EMPIRICAL_DISCOUNT_2OPS > 0.0);
+        assert!(COORDINATED_EMPIRICAL_DISCOUNT_2OPS < 1.0);
+        assert!(COORDINATED_EMPIRICAL_DISCOUNT_3OPS > 0.0);
+        assert!(COORDINATED_EMPIRICAL_DISCOUNT_3OPS < 1.0);
+        assert!(COORDINATED_EMPIRICAL_DISCOUNT_4PLUS_OPS > 0.0);
+        assert!(COORDINATED_EMPIRICAL_DISCOUNT_4PLUS_OPS < 1.0);
     }
 }
 

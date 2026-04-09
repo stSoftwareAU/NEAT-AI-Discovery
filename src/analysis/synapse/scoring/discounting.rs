@@ -5,6 +5,7 @@
 
 #![allow(clippy::cast_precision_loss)] // Intentional u32→f32 casts for ratio computation (Issue #873)
 use crate::analysis::constants::{
+    LOGISTIC_CALIBRATION_FLOOR, LOGISTIC_CALIBRATION_MIDPOINT, LOGISTIC_CALIBRATION_STEEPNESS,
     NEURON_PESSIMISM_CURVE_EXPONENT, NEURON_PESSIMISM_DISCOUNT_FLOOR, PESSIMISM_CURVE_EXPONENT,
     PESSIMISM_DISCOUNT_FLOOR, SYNAPSE_PESSIMISM_CURVE_EXPONENT, SYNAPSE_PESSIMISM_DISCOUNT_FLOOR,
 };
@@ -134,4 +135,56 @@ pub fn apply_synapse_pessimism_discount(gain: f32, improved_count: u32, total_co
 #[inline]
 pub fn apply_prediction_calibration(gain: f32, calibration_factor: f32) -> f32 {
     gain * calibration_factor
+}
+
+// =============================================================================
+// Logistic Prediction Calibration (Issue #1056)
+// =============================================================================
+
+/// Apply non-linear (logistic) prediction calibration based on improved ratio (Issue #1056).
+///
+/// The linear `gain × calibration_factor` approach was insufficient to bridge the
+/// neuron-level → creature-level prediction gap. GRQ-sampler data (30+ creatures)
+/// shows the relationship between `improvedCount/totalCount` and actual success
+/// probability is non-linear — moderate improved ratios (0.3–0.6) are far more
+/// overestimated than high ratios (>0.8).
+///
+/// This function modulates the base calibration factor using a logistic (sigmoid)
+/// curve of the improved ratio:
+///
+/// ```text
+/// sigmoid = 1 / (1 + exp(-steepness × (ratio - midpoint)))
+/// modulator = floor + (1 - floor) × sigmoid
+/// result = gain × base_calibration × modulator
+/// ```
+///
+/// The effect:
+/// - Low ratios (< 0.3): modulator ≈ floor → heavy additional reduction
+/// - Moderate ratios (~0.5): modulator ≈ 0.37 → substantial reduction
+/// - High ratios (> 0.8): modulator ≈ 0.9+ → near-full base calibration
+///
+/// ## Arguments
+///
+/// * `gain` — The expected creature score gain after pessimism discounting
+/// * `improved_count` — Number of samples showing improvement
+/// * `total_count` — Total number of samples evaluated
+/// * `base_calibration` — Per-type calibration constant (e.g., `NEURON_PREDICTION_CALIBRATION`)
+///
+/// ## Returns
+///
+/// The calibrated gain, preserving the sign of the original.
+pub fn apply_logistic_prediction_calibration(
+    gain: f32,
+    improved_count: u32,
+    total_count: u32,
+    base_calibration: f32,
+) -> f32 {
+    if total_count == 0 {
+        return gain * base_calibration * LOGISTIC_CALIBRATION_FLOOR;
+    }
+    let ratio = improved_count as f32 / total_count as f32;
+    let sigmoid = 1.0
+        / (1.0 + (-LOGISTIC_CALIBRATION_STEEPNESS * (ratio - LOGISTIC_CALIBRATION_MIDPOINT)).exp());
+    let modulator = LOGISTIC_CALIBRATION_FLOOR + (1.0 - LOGISTIC_CALIBRATION_FLOOR) * sigmoid;
+    gain * base_calibration * modulator
 }

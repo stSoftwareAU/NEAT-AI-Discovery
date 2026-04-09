@@ -85,14 +85,16 @@ fn test_activation_boosts_accessible() {
 }
 
 /// Verify pessimism discount constants are accessible.
+///
+/// Issue #1056: Updated values to match production success rates from GRQ-sampler.
 #[test]
 fn test_pessimism_discounts_accessible() {
     assert!((constants::PESSIMISM_DISCOUNT_FLOOR - 0.15).abs() < f32::EPSILON);
     assert!((constants::PESSIMISM_CURVE_EXPONENT - 0.6).abs() < f32::EPSILON);
-    assert!((constants::NEURON_PESSIMISM_DISCOUNT_FLOOR - 0.10).abs() < f32::EPSILON);
-    assert!((constants::NEURON_PESSIMISM_CURVE_EXPONENT - 0.75).abs() < f32::EPSILON);
-    assert!((constants::SYNAPSE_PESSIMISM_DISCOUNT_FLOOR - 0.05).abs() < f32::EPSILON);
-    assert!((constants::SYNAPSE_PESSIMISM_CURVE_EXPONENT - 0.85).abs() < f32::EPSILON);
+    assert!((constants::NEURON_PESSIMISM_DISCOUNT_FLOOR - 0.08).abs() < f32::EPSILON);
+    assert!((constants::NEURON_PESSIMISM_CURVE_EXPONENT - 0.80).abs() < f32::EPSILON);
+    assert!((constants::SYNAPSE_PESSIMISM_DISCOUNT_FLOOR - 0.03).abs() < f32::EPSILON);
+    assert!((constants::SYNAPSE_PESSIMISM_CURVE_EXPONENT - 0.90).abs() < f32::EPSILON);
 }
 
 /// Verify NaN-safe comparison functions are accessible and correct.
@@ -104,21 +106,36 @@ fn test_nan_safe_comparison_accessible() {
     assert_eq!(constants::cmp_f64_desc(&2.0, &1.0), Ordering::Less);
 }
 
-/// Verify coordinated-structural constants are accessible.
+/// Verify coordinated-structural constants are accessible (Issue #1058: updated).
 #[test]
 fn test_coordinated_structural_accessible() {
-    assert!((constants::COORDINATED_OPERATION_DISCOUNT - 0.65).abs() < f32::EPSILON);
-    assert!((constants::MIN_COORDINATED_MULTI_OP_GAIN - 1e-3).abs() < f32::EPSILON);
+    // Issue #1058: Empirical per-op-count factors replace compound discount.
+    assert!((constants::COORDINATED_EMPIRICAL_DISCOUNT_2OPS - 0.5).abs() < f32::EPSILON);
+    assert!((constants::COORDINATED_EMPIRICAL_DISCOUNT_3OPS - 0.2).abs() < f32::EPSILON);
+    assert!((constants::COORDINATED_EMPIRICAL_DISCOUNT_4PLUS_OPS - 0.1).abs() < f32::EPSILON);
+    // Issue #1058: Lowered from 1e-3 to 1e-5.
+    assert!((constants::MIN_COORDINATED_MULTI_OP_GAIN - 1e-5).abs() < f32::EPSILON);
     assert!((constants::COORDINATED_ESTIMATION_WEIGHT_SCALE - 0.2).abs() < f32::EPSILON);
-    assert!((constants::COORDINATED_PESSIMISM_DISCOUNT - 0.15).abs() < f32::EPSILON);
+    // Issue #1058: Verify empirical discount function is accessible.
+    let d = constants::coordinated_empirical_discount(2);
+    assert!((d - 0.5).abs() < f32::EPSILON);
 }
 
 /// Verify prediction calibration constants are accessible.
+///
+/// Issue #1056: Updated values to match production success rates from GRQ-sampler.
 #[test]
 fn test_prediction_calibration_accessible() {
-    assert!((constants::SYNAPSE_PREDICTION_CALIBRATION - 0.001).abs() < f32::EPSILON);
-    assert!((constants::NEURON_PREDICTION_CALIBRATION - 0.01).abs() < f32::EPSILON);
-    assert!((constants::COORDINATED_PREDICTION_CALIBRATION - 0.0001).abs() < f32::EPSILON);
+    assert!((constants::SYNAPSE_PREDICTION_CALIBRATION - 0.0003).abs() < f32::EPSILON);
+    assert!((constants::NEURON_PREDICTION_CALIBRATION - 0.003).abs() < f32::EPSILON);
+    assert!((constants::COORDINATED_PREDICTION_CALIBRATION - 0.00005).abs() < f32::EPSILON);
+    // Issue #1056: Verify logistic calibration constants are also accessible.
+    let floor = constants::LOGISTIC_CALIBRATION_FLOOR;
+    let steepness = constants::LOGISTIC_CALIBRATION_STEEPNESS;
+    let midpoint = constants::LOGISTIC_CALIBRATION_MIDPOINT;
+    assert!(floor > 0.0, "floor should be positive");
+    assert!(steepness > 0.0, "steepness should be positive");
+    assert!(midpoint > 0.0, "midpoint should be positive");
 }
 
 /// Verify scoring boost multipliers are accessible.

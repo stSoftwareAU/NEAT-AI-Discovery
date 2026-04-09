@@ -18,7 +18,7 @@
 //! 2. Identify candidates with high predicted improvement (individually successful)
 //! 3. Check for structural conflicts (no duplicate source→target pairs)
 //! 4. Group non-conflicting candidates into batches of 2–4 operations
-//! 5. Apply `COORDINATED_OPERATION_DISCOUNT^(N-1)` via the merge pipeline
+//! 5. Apply per-op-count empirical discount via the merge pipeline
 //!
 //! ## Module Structure
 //!

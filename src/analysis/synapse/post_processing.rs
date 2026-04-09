@@ -11,8 +11,8 @@ use std::collections::HashMap;
 
 use super::filtering::truncate_combined_synapse_candidate_sets;
 use super::scoring::{
-    apply_prediction_calibration, apply_source_type_boost, apply_synapse_pessimism_discount,
-    apply_target_type_boost,
+    apply_logistic_prediction_calibration, apply_prediction_calibration, apply_source_type_boost,
+    apply_synapse_pessimism_discount, apply_target_type_boost,
 };
 use crate::analysis::cache::RecordCache;
 use crate::analysis::samples::EPSILON;
@@ -188,11 +188,14 @@ fn apply_impact_to_helpful(
         neuron_type_map,
     );
 
-    // Issue #891: Apply synapse prediction calibration to correct ~1,000× overestimation.
-    // Applied after pessimism discount and type boosts to scale the final prediction
-    // closer to observed actual gains, improving cross-type candidate ranking.
-    candidate.expected_creature_score_gain = apply_prediction_calibration(
+    // Issue #1056: Apply logistic prediction calibration to correct massive overestimation.
+    // The non-linear (logistic) calibration uses the improved ratio to modulate the
+    // base calibration factor, providing better correction than a flat multiplier.
+    // GRQ-sampler data shows add-synapses has ~0.1% actual success rate (3/1001).
+    candidate.expected_creature_score_gain = apply_logistic_prediction_calibration(
         candidate.expected_creature_score_gain,
+        candidate.improved_count,
+        candidate.total_count,
         crate::analysis::constants::SYNAPSE_PREDICTION_CALIBRATION,
     );
 
@@ -242,29 +245,30 @@ fn apply_impact_to_harmful(
         candidate.total_count,
     );
 
-    // Issue #891: Apply synapse prediction calibration to harmful candidates.
-    candidate.expected_creature_score_gain = apply_prediction_calibration(
+    // Issue #1056: Apply logistic prediction calibration to harmful candidates.
+    candidate.expected_creature_score_gain = apply_logistic_prediction_calibration(
         candidate.expected_creature_score_gain,
+        candidate.improved_count,
+        candidate.total_count,
         crate::analysis::constants::SYNAPSE_PREDICTION_CALIBRATION,
     );
 }
 
-/// Apply impact-based discounting and pessimism discount to a coordinated structural candidate.
+/// Apply impact-based discounting and prediction calibration to a coordinated structural
+/// candidate.
 ///
 /// Uses the last operation's target neuron UUID to determine impact, since multi-op
 /// groups ultimately adjust the inputs of a target neuron.
 ///
-/// Issue #790: Also applies `COORDINATED_PESSIMISM_DISCOUNT` — a flat multiplicative
-/// discount to account for the 2.3% success rate of coordinated-structural candidates.
-/// Unlike synapse/neuron candidates which have per-sample improved ratios, coordinated
-/// candidates combine multiple operations whose predictions compound optimistically.
+/// Issue #1058: Removed the separate `COORDINATED_PESSIMISM_DISCOUNT` flat discount.
+/// The pessimism discount has been folded into the per-op-count empirical factors
+/// applied in `candidate_aggregation::apply_operation_count_discount`. This avoids
+/// the three-layer compound discount that was too aggressive and poorly calibrated.
 fn apply_impact_to_coordinated(
     candidate: &mut crate::CoordinatedStructuralCandidateJson,
     impact_scores: &HashMap<String, f32>,
     neuron_type_map: &HashMap<&str, &str>,
 ) {
-    use crate::analysis::constants::COORDINATED_PESSIMISM_DISCOUNT;
-
     let target_uuid = candidate
         .operations
         .iter()
@@ -308,12 +312,8 @@ fn apply_impact_to_coordinated(
 
     candidate.expected_creature_score_gain *= impact;
 
-    // Issue #790: Apply coordinated-specific pessimism discount.
-    // Coordinated-structural candidates have a 2.3% success rate with near-negligible
-    // actual gains, indicating predictions are wildly over-estimated.
-    candidate.expected_creature_score_gain *= COORDINATED_PESSIMISM_DISCOUNT;
-
-    // Issue #891: Apply coordinated prediction calibration to correct ~10,000× overestimation.
+    // Issue #1056: Apply coordinated prediction calibration.
+    // Coordinated candidates lack per-sample improved counts, so use flat calibration.
     candidate.expected_creature_score_gain = apply_prediction_calibration(
         candidate.expected_creature_score_gain,
         crate::analysis::constants::COORDINATED_PREDICTION_CALIBRATION,

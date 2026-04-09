@@ -74,8 +74,8 @@ fn parallel_dispatch_merges_candidates_from_multiple_modules() {
         ),
     ];
 
-    let tracker = ModuleOutcomeTracker::new();
-    run_discovery_modules_parallel(&mut syn, modules, None, false, &tracker);
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
 
     assert_eq!(
         syn.coordinated_structural_candidates.len(),
@@ -102,8 +102,8 @@ fn parallel_dispatch_handles_mix_of_none_and_some() {
         make_module("returns_more", Some(vec![make_candidate(0.5)])),
     ];
 
-    let tracker = ModuleOutcomeTracker::new();
-    run_discovery_modules_parallel(&mut syn, modules, None, false, &tracker);
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
 
     assert_eq!(
         syn.coordinated_structural_candidates.len(),
@@ -130,8 +130,8 @@ fn parallel_dispatch_respects_max_synapse_candidates() {
         make_module("mod_b", Some(vec![make_candidate(1.0)])),
     ];
 
-    let tracker = ModuleOutcomeTracker::new();
-    run_discovery_modules_parallel(&mut syn, modules, Some(2), false, &tracker);
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, Some(2), false, &mut tracker);
 
     let total = syn.helpful_synapses.len()
         + syn.harmful_synapses.len()
@@ -152,8 +152,8 @@ fn parallel_dispatch_with_empty_modules_is_noop() {
 
     let mut syn = empty_synapse_result();
 
-    let tracker = ModuleOutcomeTracker::new();
-    run_discovery_modules_parallel(&mut syn, Vec::new(), None, false, &tracker);
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, Vec::new(), None, false, &mut tracker);
 
     assert!(syn.coordinated_structural_candidates.is_empty());
     assert_eq!(syn.metadata.candidates_returned, 0);
@@ -182,8 +182,8 @@ fn parallel_dispatch_preserves_deterministic_ordering() {
             make_module("mod_5", Some(vec![make_candidate(5.0)])),
         ];
 
-        let tracker = ModuleOutcomeTracker::new();
-        run_discovery_modules_parallel(&mut syn, modules, None, true, &tracker);
+        let mut tracker = ModuleOutcomeTracker::new();
+        run_discovery_modules_parallel(&mut syn, modules, None, true, &mut tracker);
 
         let gains: Vec<f32> = syn
             .coordinated_structural_candidates
@@ -216,8 +216,8 @@ fn parallel_dispatch_single_module_matches_sequential_behaviour() {
         "single",
         Some(vec![make_candidate(1.5), make_candidate(0.7)]),
     )];
-    let tracker = ModuleOutcomeTracker::new();
-    run_discovery_modules_parallel(&mut syn_parallel, modules, None, false, &tracker);
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn_parallel, modules, None, false, &mut tracker);
 
     // Sequential with one module (using existing run_discovery_module)
     let mut syn_sequential = empty_synapse_result();
@@ -281,8 +281,8 @@ fn parallel_dispatch_filters_zero_gain_candidates() {
         ]),
     )];
 
-    let tracker = ModuleOutcomeTracker::new();
-    run_discovery_modules_parallel(&mut syn, modules, None, false, &tracker);
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
 
     assert_eq!(
         syn.coordinated_structural_candidates.len(),
@@ -317,8 +317,8 @@ fn parallel_dispatch_filters_negative_gain_candidates() {
         ]),
     )];
 
-    let tracker = ModuleOutcomeTracker::new();
-    run_discovery_modules_parallel(&mut syn, modules, None, false, &tracker);
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
 
     assert_eq!(
         syn.coordinated_structural_candidates.len(),
@@ -343,8 +343,8 @@ fn parallel_dispatch_filters_all_non_positive_returns_empty() {
         Some(vec![make_candidate(0.0), make_candidate(-1.0)]),
     )];
 
-    let tracker = ModuleOutcomeTracker::new();
-    run_discovery_modules_parallel(&mut syn, modules, None, false, &tracker);
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
 
     assert!(
         syn.coordinated_structural_candidates.is_empty(),
@@ -387,7 +387,7 @@ fn parallel_detection_skips_modules_when_deadline_already_passed() {
 
     // Deadline is already in the past — all modules should be skipped.
     let past_deadline = Some(SystemTime::now() - Duration::from_secs(10));
-    let results = detect_discovery_modules_parallel(modules, past_deadline);
+    let results = detect_discovery_modules_parallel(modules, past_deadline, None);
 
     // All entries should have result = None (skipped).
     assert_eq!(results.entries.len(), 5);
@@ -436,7 +436,7 @@ fn parallel_detection_runs_all_modules_when_no_deadline() {
         .collect();
 
     // No deadline — all modules should run.
-    let results = detect_discovery_modules_parallel(modules, None);
+    let results = detect_discovery_modules_parallel(modules, None, None);
 
     assert_eq!(results.entries.len(), 3);
     assert_eq!(
@@ -483,7 +483,7 @@ fn parallel_detection_runs_all_modules_when_deadline_is_far_future() {
 
     // Deadline far in the future — all modules should run.
     let future_deadline = Some(SystemTime::now() + Duration::from_secs(3600));
-    let results = detect_discovery_modules_parallel(modules, future_deadline);
+    let results = detect_discovery_modules_parallel(modules, future_deadline, None);
 
     assert_eq!(results.entries.len(), 3);
     assert_eq!(
@@ -527,7 +527,7 @@ fn parallel_detection_preserves_module_metadata_when_skipped() {
     ];
 
     let past_deadline = Some(SystemTime::now() - Duration::from_secs(10));
-    let results = detect_discovery_modules_parallel(modules, past_deadline);
+    let results = detect_discovery_modules_parallel(modules, past_deadline, None);
 
     // Module metadata (name, phase, budget) should be preserved even when skipped.
     assert_eq!(results.entries[0].module_name, "alpha");

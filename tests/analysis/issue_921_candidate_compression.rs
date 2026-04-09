@@ -14,7 +14,7 @@ use neat_ai_discovery::analysis::candidate_compression::{
     compress_identity_candidates, detect_compressible_groups, generate_compression_uuid,
 };
 use neat_ai_discovery::analysis::constants::{
-    COORDINATED_OPERATION_DISCOUNT, MAX_COMPRESSION_INPUTS, MIN_COMPRESSED_SOURCES,
+    MAX_COMPRESSION_INPUTS, MIN_COMPRESSED_SOURCES, coordinated_empirical_discount,
 };
 use neat_ai_discovery::{
     CandidateSynapseJson, CoordinatedStructuralOpJson, CreatureJson, NeuronJson, SynapseJson,
@@ -197,8 +197,8 @@ fn test_operation_count_discount() {
 
     let c = &compressed[0];
     // Combined gain = 0.05 + 0.06 = 0.11
-    // 4 operations → discount = 0.65^3
-    let expected = (0.05_f32 + 0.06) * COORDINATED_OPERATION_DISCOUNT.powf(3.0);
+    // 4 operations → empirical discount for 4+ ops
+    let expected = (0.05_f32 + 0.06) * coordinated_empirical_discount(4);
     assert!(
         (c.expected_creature_score_gain - expected).abs() < 1e-6,
         "Discounted gain should be ~{expected}, got {}",
@@ -288,10 +288,12 @@ fn test_same_source_no_compression() {
 /// Test 9: Candidates below gain threshold after discounting are filtered.
 #[test]
 fn test_below_min_gain_filtered() {
-    // Tiny gains that will fall below MIN_COORDINATED_MULTI_OP_GAIN after discounting.
+    // Issue #1058: With lowered threshold (1e-5) and empirical discount (0.1 for 4+ ops),
+    // use truly tiny gains that will fall below the threshold.
+    // Combined = 2e-5, discounted = 2e-5 × 0.1 = 2e-6 < 1e-5.
     let candidates = vec![
-        candidate("input-a", "output-1", 0.3, 0.001),
-        candidate("input-b", "output-1", 0.5, 0.001),
+        candidate("input-a", "output-1", 0.3, 1e-5),
+        candidate("input-b", "output-1", 0.5, 1e-5),
     ];
     let creature = make_creature(
         vec![
@@ -306,7 +308,6 @@ fn test_below_min_gain_filtered() {
     );
 
     let compressed = compress_identity_candidates(&candidates, &creature);
-    // Combined = 0.002, discounted = 0.002 * 0.65^3 ≈ 0.000549 < 1e-3
     assert!(
         compressed.is_empty(),
         "Candidates below MIN_COORDINATED_MULTI_OP_GAIN after discounting should be filtered"

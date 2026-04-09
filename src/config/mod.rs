@@ -28,6 +28,7 @@
 //! | `NEAT_AI_DISCOVERY_ZERO_COPY` | Option\<bool\> | auto | Force-enable/disable zero-copy buffers |
 //! | `NEAT_AI_DISCOVERY_QUIET_GPU` | bool | `false` | Suppress Mesa/libEGL debug output (Linux) |
 //! | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | f32 | disabled | Metropolis-Hastings temperature for probabilistic acceptance (0.01–5.0) |
+//! | `NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL` | bool | `false` | Re-enable disabled batch-successful module (Issue #1059) |
 //!
 //! ## Observability Variables
 //!

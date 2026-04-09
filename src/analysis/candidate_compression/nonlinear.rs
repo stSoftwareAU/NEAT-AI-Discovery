@@ -17,8 +17,8 @@ use super::CompressibleGroup;
 use super::gain_estimation::estimate_nonlinear_gain;
 use super::grouping::detect_compressible_groups;
 use crate::analysis::constants::{
-    COORDINATED_OPERATION_DISCOUNT, MAX_COMPRESSION_INPUTS, MIN_COMPRESSED_SOURCES,
-    MIN_COORDINATED_MULTI_OP_GAIN,
+    MAX_COMPRESSION_INPUTS, MIN_COMPRESSED_SOURCES, MIN_COORDINATED_MULTI_OP_GAIN,
+    coordinated_empirical_discount,
 };
 
 /// Supported non-linear squash functions for compression.
@@ -80,8 +80,7 @@ fn compress_group_nonlinear(
 
     // N inputs → N+2 operations (1 AddNeuron + N AddSynapse inputs + 1 AddSynapse output).
     let op_count = sorted_candidates.len() + 2;
-    let exponent = (op_count - 1) as f32;
-    let discounted_gain = combined_gain * COORDINATED_OPERATION_DISCOUNT.powf(exponent);
+    let discounted_gain = combined_gain * coordinated_empirical_discount(op_count);
 
     if discounted_gain <= MIN_COORDINATED_MULTI_OP_GAIN {
         return None;
