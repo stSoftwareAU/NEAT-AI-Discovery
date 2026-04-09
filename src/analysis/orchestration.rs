@@ -317,6 +317,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             max_candidates: input.max_synapse_candidates,
             analysis_deadline_ms: input.analysis_deadline_ms,
             random_seed: input.random_seed,
+            module_outcome_tracker: input.module_outcome_tracker.clone(),
             temperature: input.temperature,
         })
     } else {

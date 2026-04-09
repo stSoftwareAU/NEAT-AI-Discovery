@@ -132,6 +132,7 @@ fn test_issue_413_add_synapse_hard_tanh_prediction_not_inverted() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -212,6 +213,7 @@ fn test_issue_413_add_synapse_prediction_direction_correct() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

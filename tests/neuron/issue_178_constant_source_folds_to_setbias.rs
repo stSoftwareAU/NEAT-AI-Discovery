@@ -78,6 +78,7 @@ fn issue_178_constant_source_becomes_setbias_candidate() {
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30_000),
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

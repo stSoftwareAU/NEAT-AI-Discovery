@@ -144,6 +144,7 @@ fn analyze_synapses_rejects_duplicate_focus_targets() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -254,6 +255,7 @@ fn analyze_synapses_reports_eligible_sources_correctly_for_non_input_neurons() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -394,6 +396,7 @@ fn analyze_synapses_reports_fully_connected_neuron_explicitly() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -445,6 +448,7 @@ fn analyze_synapses_requires_focus_targets() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -498,6 +502,7 @@ fn analyze_synapses_reports_diagnostics_when_no_candidates() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -609,6 +614,7 @@ fn analyze_synapses_stops_harmful_processing_after_deadline() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -1004,6 +1010,7 @@ fn analyze_synapses_uses_vertical_timeout_with_randomized_order() {
         // Any non-None deadline value will exercise the override sequence.
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -1101,6 +1108,7 @@ fn analyze_synapses_accepts_positive_improvements_below_threshold() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -1199,6 +1207,7 @@ fn analyze_synapses_rejects_non_positive_improvements() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -1273,6 +1282,7 @@ fn analyze_synapses_accepts_positive_improvements_above_threshold() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

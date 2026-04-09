@@ -126,6 +126,7 @@ fn benchmark_cache_locality(c: &mut Criterion) {
                         max_candidates: Some(10), // Limit candidates to reduce GPU time variance
                         analysis_deadline_ms: deadline_ms,
                         random_seed: Some(42),
+                        module_outcome_tracker: None,
                         temperature: 1.0,
                     };
 

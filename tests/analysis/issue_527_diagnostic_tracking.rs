@@ -228,6 +228,7 @@ fn synapse_diagnostics_include_rejection_reasons_for_unpromising_targets() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -412,6 +413,7 @@ fn multiple_focus_targets_each_get_separate_diagnostic_entry() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -474,6 +476,7 @@ fn fully_connected_neuron_reports_no_eligible_sources() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

@@ -179,6 +179,7 @@ fn test_synapse_candidate_hidden_neuron_is_impact_discounted() {
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30000),
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -294,6 +295,7 @@ fn test_synapse_candidate_output_neuron_no_discount() {
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30000),
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -384,6 +386,7 @@ fn test_harmful_synapse_candidate_is_impact_discounted() {
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30000),
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

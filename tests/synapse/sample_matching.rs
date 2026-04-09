@@ -74,6 +74,7 @@ fn analysis_handles_non_finite_values_gracefully() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -137,6 +138,7 @@ fn analysis_pairs_samples_by_obs_index() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -202,6 +204,7 @@ fn analysis_skips_neurons_without_errors() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

@@ -344,6 +344,7 @@ fn sample_locality_batching_produces_results() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -415,6 +416,7 @@ fn sample_locality_preserves_correctness() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -463,6 +465,7 @@ fn source_batching_90_percent_overlap_produces_results() {
         max_candidates: Some(10),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

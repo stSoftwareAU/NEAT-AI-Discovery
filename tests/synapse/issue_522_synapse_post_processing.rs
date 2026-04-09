@@ -126,6 +126,7 @@ fn output_targets_have_full_impact_hidden_targets_are_discounted() {
         max_candidates: Some(100),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -254,6 +255,7 @@ fn candidates_sorted_by_expected_score_gain_descending() {
         max_candidates: Some(100),
         analysis_deadline_ms: None, // No deadline = no diversification shuffle
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -366,6 +368,7 @@ fn max_candidates_limits_total_output() {
         max_candidates: Some(max_limit),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -457,6 +460,7 @@ fn pipeline_applies_pessimism_discount_to_candidates() {
         max_candidates: Some(100),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -560,6 +564,7 @@ fn metadata_contains_candidate_counts_and_timing() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

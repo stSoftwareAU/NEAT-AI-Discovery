@@ -117,6 +117,7 @@ fn synapse_analysis_with_deadline_completes() {
         // Issue #953: Set a 2-minute deadline
         analysis_deadline_ms: Some(120_000),
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

@@ -228,6 +228,7 @@ fn test_remove_harmful_synapse_discovery() {
         max_candidates: Some(100),
         analysis_deadline_ms: Some(30000),
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -355,6 +356,7 @@ fn test_harmful_synapse_identifies_correct_neurons() {
         max_candidates: Some(100),
         analysis_deadline_ms: Some(30000),
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

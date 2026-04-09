@@ -94,6 +94,13 @@ pub struct AnalyzeSynapsesInput {
     /// will explore different candidates over time.
     #[serde(default)]
     pub random_seed: Option<u64>,
+    /// Historical per-module outcome tracker for add-synapse gating (Issue #1057).
+    ///
+    /// When provided with sufficient history, the tracker's success rate for
+    /// add-synapse candidates is checked. If the rate falls below the
+    /// configurable threshold, add-synapse generation is skipped entirely.
+    #[serde(default)]
+    pub module_outcome_tracker: Option<analysis::module_weights::ModuleOutcomeTracker>,
     /// Temperature for exploration-exploitation balance (Issue #1020).
     ///
     /// Default 1.0 preserves existing behaviour. See `AnalyzeParallelInput`

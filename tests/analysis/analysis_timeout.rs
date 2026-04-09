@@ -109,6 +109,7 @@ fn synapse_analysis_respects_deadline() {
         max_candidates: None,
         analysis_deadline_ms: Some(deadline_ms),
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

@@ -134,6 +134,7 @@ fn cache_locality_optimization_preserves_correctness() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -153,6 +154,7 @@ fn cache_locality_optimization_preserves_correctness() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: Some(123),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

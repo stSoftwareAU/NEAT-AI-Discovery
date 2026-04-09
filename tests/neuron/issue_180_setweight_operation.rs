@@ -106,6 +106,7 @@ fn issue_180_setweight_replaces_remove_add_pattern() {
         max_candidates: Some(10),
         analysis_deadline_ms: Some(30_000),
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

@@ -49,6 +49,26 @@ pub(super) fn finalise_synapse_results(
         log_analysis_timeout("synapse", completed, params.total_focus_count);
     }
 
+    // Issue #1057: Gate add-synapse candidates based on historical success rate and
+    // synapse density. When the tracker shows a near-zero success rate or the
+    // creature's synapse density is too high, skip helpful add-synapse candidates
+    // entirely to save compute on candidates that will almost certainly fail.
+    let gating_result = super::add_synapse_gating::should_skip_add_synapse_candidates(
+        &params.input.module_outcome_tracker,
+        params.input.creature.neurons.len(),
+        params.input.creature.synapses.len(),
+        None, // use default success rate threshold
+        None, // use default density threshold
+    );
+    if gating_result.skip {
+        tracing::info!(
+            reason = %gating_result.reason,
+            helpful_candidates_dropped = helpful_results.len(),
+            "Add-synapse gating: skipping helpful candidates (Issue #1057)"
+        );
+        helpful_results.clear();
+    }
+
     // Collapse 1-in/1-out hidden neurons into direct synapses (Issue #425)
     let collapse_candidates =
         structural_patterns::detect_collapsible_hidden_neurons(params.input, params.cache.as_ref());

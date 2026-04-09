@@ -205,6 +205,7 @@ fn zero_copy_produces_correct_results() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
     let result_zero_copy =
@@ -224,6 +225,7 @@ fn zero_copy_produces_correct_results() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
     let result_copy = analyze_synapses(&input).expect("Analysis with copy should succeed");
@@ -324,6 +326,7 @@ fn metadata_includes_zero_copy_status() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -410,6 +413,7 @@ fn zero_copy_no_data_corruption() {
             max_candidates: Some(20),
             analysis_deadline_ms: None,
             random_seed: Some(seed),
+            module_outcome_tracker: None,
             temperature: 1.0,
         };
 

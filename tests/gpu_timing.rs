@@ -123,6 +123,7 @@ fn timing_enabled_via_env_var() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -184,6 +185,7 @@ fn per_shader_timing_collected() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

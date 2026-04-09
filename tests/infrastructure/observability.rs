@@ -374,6 +374,7 @@ fn integration_timing_output() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -442,6 +443,7 @@ fn integration_gpu_metrics() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: Some(42),
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

@@ -462,6 +462,7 @@ fn test_synapse_candidates_no_bias_optimisation() {
         max_candidates: Some(50),
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -523,6 +524,7 @@ fn test_synapse_weight_distribution() {
             max_candidates: Some(50),
             analysis_deadline_ms: None,
             random_seed: None,
+            module_outcome_tracker: None,
             temperature: 1.0,
         };
 

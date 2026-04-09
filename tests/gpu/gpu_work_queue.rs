@@ -85,6 +85,7 @@ fn synapse_analysis_works_with_gpu_work_queue() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -262,6 +263,7 @@ fn multiple_focus_neurons_work_with_shared_queue() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 
@@ -346,6 +348,7 @@ fn harmful_synapse_detection_works_with_queue() {
         max_candidates: None,
         analysis_deadline_ms: None,
         random_seed: None,
+        module_outcome_tracker: None,
         temperature: 1.0,
     };
 

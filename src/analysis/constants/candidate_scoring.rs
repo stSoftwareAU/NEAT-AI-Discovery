@@ -746,3 +746,50 @@ pub const LOGISTIC_CALIBRATION_STEEPNESS: f32 = 8.0;
 /// Must be in (0.2, 0.9). Values below 0.3 do not sufficiently discount
 /// moderate ratios. Values above 0.8 discount too aggressively.
 pub const LOGISTIC_CALIBRATION_MIDPOINT: f32 = 0.6;
+
+// =============================================================================
+// Add-Synapse Candidate Gating (Issue #1057)
+// =============================================================================
+
+// GRQ-sampler discovery cache shows add-synapse candidates have a near-zero success
+// rate (~0.1-0.3%) across most creatures. Only 3 of 43 creatures have any add-synapse
+// successes. These gates skip add-synapse generation when historical data or network
+// structure indicates the candidates will almost certainly fail, saving compute.
+
+/// Module name used to track add-synapse outcomes in the `ModuleOutcomeTracker`.
+///
+/// The NEAT-AI controller records accept/reject outcomes with this module name
+/// when ablation results are available for add-synapse candidates.
+pub const ADD_SYNAPSE_MODULE_NAME: &str = "addSynapse";
+
+/// Minimum Bayesian success rate required before add-synapse candidates are generated.
+///
+/// When the `ModuleOutcomeTracker` has sufficient history (>= `MIN_BOOST_SAMPLES`)
+/// and the success rate falls below this threshold, add-synapse candidate generation
+/// is skipped entirely to save compute.
+///
+/// GRQ-sampler data shows ~0.1% actual success rate (3/1001). Setting the threshold
+/// at 1% provides a reasonable margin above the observed rate while still filtering
+/// out creatures with consistently zero successes.
+///
+/// ## Valid Range
+/// Must be in (0.0, 0.5). Values above 0.1 risk skipping generation for creatures
+/// that have a genuine (if low) success rate. Values below 0.005 provide no benefit.
+pub const ADD_SYNAPSE_MIN_SUCCESS_RATE: f64 = 0.01;
+
+/// Maximum synapse-to-neuron ratio before add-synapse candidates are skipped.
+///
+/// Adding one synapse to a network with very high synapse density (many synapses
+/// per neuron) has minimal structural impact — the signal-to-noise ratio is
+/// extremely low. When the ratio exceeds this threshold, add-synapse generation
+/// is skipped.
+///
+/// GRQ-sampler creature 066649c7 has ~19,000 synapses and ~1,400 neurons
+/// (ratio ~13.6). Setting the threshold at 14 captures the most extreme cases
+/// while allowing generation for moderately dense networks.
+///
+/// ## Valid Range
+/// Must be > 1.0. Values below 5.0 risk skipping generation for networks
+/// that could genuinely benefit from new synapses. Values above 25.0 provide
+/// no filtering benefit.
+pub const ADD_SYNAPSE_MAX_DENSITY_RATIO: f64 = 14.0;
