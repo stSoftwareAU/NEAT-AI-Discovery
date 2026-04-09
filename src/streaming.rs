@@ -49,19 +49,26 @@ const STREAMING_MAX_CAPACITY: usize = i32::MAX as usize;
 static SESSIONS: LazyLock<Arc<Mutex<HashMap<String, RecordingSession>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
 
-/// A recording session that holds an open Parquet writer
+/// A recording session that holds an open Parquet writer.
+///
+/// If the session is dropped without calling `finish_session()`, the incomplete
+/// parquet file is automatically cleaned up to prevent orphaned files.
 pub struct RecordingSession {
-    writer: ParquetRecordWriter,
+    writer: Option<ParquetRecordWriter>,
     creature: CreatureJson,
     temp_dir: String,
+    parquet_path: String,
     records_written: u64,
+    finished: bool,
 }
 
 impl RecordingSession {
     fn new(creature: CreatureJson, temp_dir: String, parquet_path: &str) -> Result<Self> {
+        // Write to a temporary file; rename to final path on successful finish
+        let tmp_path = format!("{parquet_path}.tmp");
         let max_arrow_offset = i32::MAX as usize;
         let writer = ParquetRecordWriter::new(
-            parquet_path,
+            &tmp_path,
             max_arrow_offset,
             max_arrow_offset,
             STREAMING_MAX_CAPACITY,
@@ -69,11 +76,32 @@ impl RecordingSession {
         .context("Failed to initialise Parquet writer for streaming session")?;
 
         Ok(Self {
-            writer,
+            writer: Some(writer),
             creature,
             temp_dir,
+            parquet_path: parquet_path.to_string(),
             records_written: 0,
+            finished: false,
         })
+    }
+}
+
+impl Drop for RecordingSession {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        // Session was not finished normally — clean up the incomplete temporary file
+        let tmp_path = format!("{}.tmp", self.parquet_path);
+        if let Err(err) = fs::remove_file(&tmp_path)
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                path = %tmp_path,
+                error = %err,
+                "Failed to clean up incomplete parquet file on session drop"
+            );
+        }
     }
 }
 
@@ -180,6 +208,8 @@ pub fn append_records(
         if !batch_records.is_empty() {
             session
                 .writer
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("Session writer already consumed"))?
                 .write_records(&batch_records)
                 .context("Failed to write records to Parquet")?;
             records_in_batch += batch_records.len() as u64;
@@ -196,7 +226,7 @@ pub fn append_records(
 /// The session is removed from storage after this call.
 pub fn finish_session(session_id: &str) -> Result<(String, String, u64)> {
     let mut sessions = SESSIONS.lock();
-    let session = sessions
+    let mut session = sessions
         .remove(session_id)
         .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
 
@@ -204,15 +234,32 @@ pub fn finish_session(session_id: &str) -> Result<(String, String, u64)> {
         anyhow::bail!("No records were written to the session");
     }
 
-    session
+    let writer = session
         .writer
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("Session writer already consumed"))?;
+    writer
         .finish()
         .context("Failed to finalise Parquet writer")?;
 
+    // Atomically rename .parquet.tmp to .parquet so consumers never see partial files
+    let tmp_path = format!("{}.tmp", session.parquet_path);
+    fs::rename(&tmp_path, &session.parquet_path).with_context(|| {
+        format!(
+            "Failed to rename temporary file {tmp_path} to {}",
+            session.parquet_path
+        )
+    })?;
+
+    session.finished = true;
+
+    let temp_dir = session.temp_dir.clone();
+    let records_written = session.records_written;
+
     Ok((
-        session.temp_dir,
+        temp_dir,
         "discovery_data.parquet".to_string(),
-        session.records_written,
+        records_written,
     ))
 }
 
@@ -224,7 +271,7 @@ pub fn cancel_session(session_id: &str) -> Result<()> {
     sessions
         .remove(session_id)
         .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
-    // Session and writer are dropped, file may be incomplete but that's OK
+    // Session Drop impl cleans up the incomplete temporary file
     Ok(())
 }
 
@@ -414,6 +461,136 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("No records were written")
+        );
+    }
+
+    #[test]
+    fn test_cancel_session_cleans_up_incomplete_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let creature = create_test_creature();
+        let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+        let session_id = start_session(creature, temp_path.clone()).unwrap();
+
+        // Write some records so a partial file exists on disk
+        let batch = vec![(
+            0u32,
+            vec![NeuronData {
+                neuron_uuid: "hidden-1".to_string(),
+                activation: 0.5,
+                value: Some(0.4),
+                errors: vec![0.1],
+            }],
+            vec![0.1, 0.2],
+        )];
+        append_records(&session_id, batch).unwrap();
+
+        // The temporary file should exist before cancel
+        let tmp_file = Path::new(&temp_path).join("discovery_data.parquet.tmp");
+        assert!(
+            tmp_file.exists(),
+            "expected tmp file to exist before cancel"
+        );
+
+        // The final file should NOT exist (not yet finished)
+        let final_file = Path::new(&temp_path).join("discovery_data.parquet");
+        assert!(
+            !final_file.exists(),
+            "expected final file to not exist before finish"
+        );
+
+        // Cancel the session — Drop should clean up the tmp file
+        cancel_session(&session_id).unwrap();
+
+        assert!(
+            !tmp_file.exists(),
+            "expected tmp file to be cleaned up after cancel"
+        );
+        assert!(
+            !final_file.exists(),
+            "expected final file to not exist after cancel"
+        );
+    }
+
+    #[test]
+    fn test_drop_without_finish_cleans_up_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let creature = create_test_creature();
+        let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+        let session_id = start_session(creature, temp_path.clone()).unwrap();
+
+        // Write some records
+        let batch = vec![(
+            0u32,
+            vec![NeuronData {
+                neuron_uuid: "hidden-1".to_string(),
+                activation: 0.5,
+                value: Some(0.4),
+                errors: vec![0.1],
+            }],
+            vec![0.1, 0.2],
+        )];
+        append_records(&session_id, batch).unwrap();
+
+        let tmp_file = Path::new(&temp_path).join("discovery_data.parquet.tmp");
+        assert!(tmp_file.exists(), "expected tmp file to exist");
+
+        // Manually remove the session to trigger Drop (simulates panic/drop scenario)
+        {
+            let mut sessions = SESSIONS.lock();
+            sessions.remove(&session_id);
+            // Session is dropped here
+        }
+
+        assert!(
+            !tmp_file.exists(),
+            "expected tmp file to be cleaned up on drop"
+        );
+    }
+
+    #[test]
+    fn test_finished_session_preserves_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let creature = create_test_creature();
+        let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+        let session_id = start_session(creature, temp_path).unwrap();
+
+        let batch = vec![(
+            0u32,
+            vec![
+                NeuronData {
+                    neuron_uuid: "hidden-1".to_string(),
+                    activation: 0.5,
+                    value: Some(0.4),
+                    errors: vec![0.1],
+                },
+                NeuronData {
+                    neuron_uuid: "output-0".to_string(),
+                    activation: 0.5,
+                    value: Some(0.5),
+                    errors: vec![0.0],
+                },
+            ],
+            vec![0.1, 0.2],
+        )];
+        append_records(&session_id, batch).unwrap();
+
+        // Finish the session — file should be renamed and preserved
+        let (result_dir, file, _) = finish_session(&session_id).unwrap();
+
+        let final_file = Path::new(&result_dir).join(&file);
+        assert!(
+            final_file.exists(),
+            "expected final parquet file to exist after finish"
+        );
+
+        // The tmp file should no longer exist (renamed to final)
+        let tmp_file = Path::new(&result_dir).join("discovery_data.parquet.tmp");
+        assert!(
+            !tmp_file.exists(),
+            "expected tmp file to be gone after finish (renamed)"
         );
     }
 
