@@ -125,10 +125,14 @@ pub fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
         .and_then(|validated_ms| SystemTime::now().checked_add(Duration::from_millis(validated_ms)))
 }
 
-/// Check if the deadline has passed.
+/// Check if the deadline has passed or cancellation has been requested.
 ///
-/// Returns `true` if the current time is past the deadline.
-/// Returns `false` if there is no deadline or the deadline is in the future.
+/// Returns `true` if:
+/// - The current time is past the deadline, OR
+/// - The host has called `cancel_analysis()` (Issue #1047).
+///
+/// Returns `false` if there is no deadline, the deadline is in the future,
+/// and no cancellation has been requested.
 ///
 /// In test mode, this function first checks for deadline override values
 /// to allow deterministic testing of deadline-related behaviour.
@@ -138,6 +142,12 @@ pub fn deadline_passed(deadline: &Option<SystemTime>) -> bool {
         if let Some(value) = deadline_override::next_override_value() {
             return value;
         }
+    }
+
+    // Issue #1047: Check the global cancellation flag so that all
+    // deadline-guarded code paths also respect host-requested shutdown.
+    if crate::cancellation::is_cancelled() {
+        return true;
     }
 
     matches!(deadline, Some(limit) if SystemTime::now() >= *limit)

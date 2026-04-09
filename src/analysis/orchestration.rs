@@ -147,6 +147,10 @@ fn dispatch_analyses(
 /// work from both submitters.
 #[tracing::instrument(skip_all, fields(focus_neurons = input.focus_neurons.len()))]
 pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
+    // Issue #1047: Clear any stale cancellation flag from a previous run
+    // so that a prior SIGTERM does not immediately abort this invocation.
+    crate::cancellation::reset_cancellation();
+
     // Phase timer for total analysis (Issue #214)
     let _total_timer = PhaseTimer::new("total_analysis");
 
@@ -195,6 +199,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             synapse: None,
             neuron: None,
             memory_budget_exceeded: false,
+            cancelled: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -211,6 +216,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             synapse: None,
             neuron: None,
             memory_budget_exceeded: false,
+            cancelled: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -229,6 +235,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             synapse: None,
             neuron: None,
             memory_budget_exceeded: true,
+            cancelled: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -253,10 +260,28 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Issue #648: Pass the analysis deadline so loading can abort early if time runs out.
     let loading_deadline = utils::build_deadline(input.analysis_deadline_ms);
     let parquet_loading_start = std::time::Instant::now();
-    let shared_cache = Arc::new(cache::RecordCache::new_adaptive_with_deadline(
-        &input.parquet_file,
-        loading_deadline,
-    )?);
+    let cache_result =
+        cache::RecordCache::new_adaptive_with_deadline(&input.parquet_file, loading_deadline);
+
+    // Issue #1047: If parquet loading was cancelled, return a clean partial
+    // result instead of propagating the error.
+    let shared_cache = match cache_result {
+        Ok(c) => Arc::new(c),
+        Err(_e) if crate::cancellation::is_cancelled() => {
+            tracing::info!("parquet loading cancelled by host — returning empty result");
+            return Ok(AnalyzeAllResult {
+                synapse: None,
+                neuron: None,
+                memory_budget_exceeded: false,
+                cancelled: true,
+                neuron_fingerprints: Some(current_fingerprints),
+                fingerprint_cache_hits,
+                fingerprint_cache_misses,
+                module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            });
+        }
+        Err(e) => return Err(e),
+    };
     profile.record_phase(
         "parquet_loading",
         parquet_loading_start.elapsed().as_millis() as u64,
@@ -276,6 +301,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             synapse: None,
             neuron: None,
             memory_budget_exceeded: true,
+            cancelled: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -321,12 +347,32 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Issue #1002: Both analyses run concurrently via rayon::join when both are
     // enabled, so randomised ordering is no longer needed — both get the full
     // time budget.
-    let (synapse_result, neuron_result) = dispatch_analyses(
+    let dispatch_result = dispatch_analyses(
         synapse_input,
         neuron_input,
         &shared_cache,
         &shared_gpu_queue,
-    )?;
+    );
+
+    // Issue #1047: If analysis was cancelled during dispatch, return a clean
+    // partial result rather than propagating the error.
+    let (synapse_result, neuron_result) = match dispatch_result {
+        Ok(results) => results,
+        Err(_) if crate::cancellation::is_cancelled() => {
+            tracing::info!("analysis dispatch cancelled by host — returning empty result");
+            return Ok(AnalyzeAllResult {
+                synapse: None,
+                neuron: None,
+                memory_budget_exceeded: false,
+                cancelled: true,
+                neuron_fingerprints: Some(current_fingerprints),
+                fingerprint_cache_hits,
+                fingerprint_cache_misses,
+                module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            });
+        }
+        Err(e) => return Err(e),
+    };
 
     // Issue #1028: Check memory budget after GPU analysis. If exceeded, skip
     // post-processing and return the candidates we have so far.
@@ -544,6 +590,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         synapse: synapse_result,
         neuron: neuron_result,
         memory_budget_exceeded,
+        cancelled: crate::cancellation::is_cancelled(),
         neuron_fingerprints: Some(current_fingerprints),
         fingerprint_cache_hits,
         fingerprint_cache_misses,

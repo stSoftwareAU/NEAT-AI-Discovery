@@ -1,8 +1,43 @@
-//! Analysis FFI entry points — `rank_focus_neurons` and `analyze_parallel`.
+//! Analysis FFI entry points — `rank_focus_neurons`, `analyze_parallel`,
+//! `cancel_analysis`, and `reset_cancellation`.
 
 use super::helpers::{ffi_error_literal, panic_to_ffi_json, to_ffi_json};
 use crate::ffi_types::*;
 use crate::log_version_once;
+
+// ============================================================================
+// Cancellation control (Issue #1047)
+// ============================================================================
+
+/// Signal in-flight analysis to stop gracefully.
+///
+/// Call this from the host process when SIGTERM is received. The Rust
+/// analysis pipeline checks the flag at every deadline-check point and
+/// at parquet batch boundaries, returning a distinguishable cancellation
+/// result instead of an error.
+///
+/// # Safety
+///
+/// This function is safe to call from any thread at any time (the flag
+/// is an `AtomicBool`). No pointer arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn cancel_analysis() {
+    crate::cancellation::request_cancellation();
+}
+
+/// Clear a previous cancellation request.
+///
+/// The analysis pipeline calls this automatically at the start of each
+/// `analyze_parallel` / `rank_focus_neurons` invocation, but the host
+/// may also call it explicitly.
+///
+/// # Safety
+///
+/// No pointer arguments; safe to call from any thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn reset_cancellation() {
+    crate::cancellation::reset_cancellation();
+}
 
 // ============================================================================
 // Rank focus neurons
@@ -134,6 +169,7 @@ pub unsafe extern "C" fn analyze_parallel(
                     fingerprint_cache_misses: None,
                     module_outcome_tracker: None,
                     memory_budget_exceeded: None,
+                    cancelled: None,
                     error: Some(err_msg),
                     error_kind,
                     retryable,

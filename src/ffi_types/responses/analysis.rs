@@ -79,6 +79,11 @@ pub struct AnalyzeParallelOutput {
     /// steps may have been skipped. Always `false` when no budget is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_budget_exceeded: Option<bool>,
+    /// Whether the analysis was cancelled by the host via `cancel_analysis()`
+    /// (Issue #1047). When `true`, the result is partial but valid — the host
+    /// requested graceful shutdown (e.g. SIGTERM).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancelled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Structured error classification for retry decisions (Issue #651).

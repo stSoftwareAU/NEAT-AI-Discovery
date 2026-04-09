@@ -162,6 +162,9 @@ pub struct AnalyzeAllResult {
     /// Whether the analysis was cut short because the memory budget was
     /// approached or exceeded (Issue #1028). `false` when no budget is set.
     pub memory_budget_exceeded: bool,
+    /// Whether the analysis was cancelled by the host via `cancel_analysis()`
+    /// (Issue #1047). When `true`, the results are partial but valid.
+    pub cancelled: bool,
     /// Current neuron fingerprints for incremental analysis (Issue #490).
     ///
     /// Callers should store these and pass them back on the next run.
