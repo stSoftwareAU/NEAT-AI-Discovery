@@ -149,11 +149,11 @@ for (const trainingRecord of trainingData) {
 
   pendingObservations.push({
     obsIndex: trainingRecord.index,
-    neuronData: neuronData.map((nd) => ({
-      neuronUuid: nd.uuid,
-      activation: nd.activation,
-      value: nd.value,
-      errors: nd.errors,
+    neuronData: neuronData.map((item) => ({
+      neuronUuid: item.uuid,
+      activation: item.activation,
+      value: item.value,
+      errors: item.errors,
     })),
     inputs: trainingRecord.input,
   });
