@@ -19,6 +19,7 @@ use crate::CoordinatedStructuralCandidateJson;
 use crate::observability::PhaseTimer;
 use rayon::prelude::*;
 
+use super::constants::{MODULE_GATE_THRESHOLD, SOFT_FAILURE_WEIGHT};
 use super::module_weights::{DiscoveryModuleStatsJson, ModuleOutcomeTracker};
 use super::shared;
 use super::utils;
@@ -119,6 +120,12 @@ pub struct DiscoveryModuleDetectionResults {
 /// are collected in original module order (rayon preserves indexed iterator order),
 /// ensuring deterministic output regardless of thread scheduling.
 ///
+/// ## Module gating (Issue #1060)
+///
+/// When a tracker is provided, modules whose historical success rate is below
+/// [`MODULE_GATE_THRESHOLD`] are skipped entirely, saving compute on consistently
+/// failing modules.
+///
 /// ## Deadline enforcement (Issue #1029)
 ///
 /// When a deadline is provided, each module checks `deadline_passed()` before
@@ -131,6 +138,7 @@ pub struct DiscoveryModuleDetectionResults {
 pub fn detect_discovery_modules_parallel(
     modules: Vec<DiscoveryModuleSpec>,
     deadline: Option<SystemTime>,
+    tracker: Option<&ModuleOutcomeTracker>,
 ) -> DiscoveryModuleDetectionResults {
     if modules.is_empty() {
         return DiscoveryModuleDetectionResults {
@@ -150,6 +158,23 @@ pub fn detect_discovery_modules_parallel(
     let entries: Vec<DiscoveryModuleDetectionEntry> = modules
         .into_par_iter()
         .map(|spec| {
+            // Issue #1060: Skip detection if the module is gated (low success rate).
+            if let Some(t) = tracker
+                && t.is_gated(&spec.module_name, MODULE_GATE_THRESHOLD)
+            {
+                tracing::debug!(
+                    module = %spec.module_name,
+                    threshold = MODULE_GATE_THRESHOLD,
+                    "Skipping discovery module — gated by low success rate (Issue #1060)"
+                );
+                return DiscoveryModuleDetectionEntry {
+                    module_name: spec.module_name,
+                    phase_name: spec.phase_name,
+                    max_candidates: spec.max_candidates,
+                    result: None,
+                };
+            }
+
             // Issue #1029: Skip detection if the analysis deadline has passed.
             if timed_out.load(Ordering::Relaxed) || utils::deadline_passed(&deadline) {
                 timed_out.store(true, Ordering::Relaxed);
@@ -185,6 +210,22 @@ pub fn detect_discovery_modules_parallel(
         );
     }
 
+    // Issue #1060: Log gated modules for observability.
+    if let Some(t) = tracker {
+        let gated_count = entries
+            .iter()
+            .filter(|e| t.is_gated(&e.module_name, MODULE_GATE_THRESHOLD))
+            .count();
+        if gated_count > 0 {
+            tracing::info!(
+                gated_count,
+                total = entries.len(),
+                threshold = MODULE_GATE_THRESHOLD,
+                "Discovery detection: module(s) gated by low success rate (Issue #1060)"
+            );
+        }
+    }
+
     crate::watchdog::beat("analysis::analyze_all → parallel discovery detection finished");
 
     DiscoveryModuleDetectionResults { entries }
@@ -193,19 +234,21 @@ pub fn detect_discovery_modules_parallel(
 /// Merge previously-detected discovery module results into the synapse result (Issue #1004).
 ///
 /// Iterates entries in original order and merges non-empty results sequentially.
-/// Also collects per-module stats for metadata (Issue #485, #792).
+/// Also collects per-module stats for metadata (Issue #485, #792) and records
+/// pre-filtering soft failures in the tracker (Issue #1060).
 pub fn merge_discovery_module_results(
     syn: &mut shared::AnalyzeSynapsesResult,
     detection_results: DiscoveryModuleDetectionResults,
     max_synapse_candidates: Option<usize>,
     diversify: bool,
-    tracker: &ModuleOutcomeTracker,
+    tracker: &mut ModuleOutcomeTracker,
 ) {
     for entry in detection_results.entries {
         let candidates_produced = entry.result.as_ref().map_or(0, |r| r.candidates.len());
 
         // Record per-module stats in metadata from historical tracker (Issue #792).
         let historical = tracker.stats(&entry.module_name);
+        let gated = tracker.is_gated_default(&entry.module_name);
         syn.metadata
             .discovery_module_stats
             .push(DiscoveryModuleStatsJson {
@@ -214,11 +257,15 @@ pub fn merge_discovery_module_results(
                 attempts: historical.attempts,
                 successes: historical.successes,
                 success_rate: historical.success_rate(),
+                soft_failures: historical.soft_failures,
+                gated,
             });
 
         if let Some(mut result) = entry.result
             && !result.candidates.is_empty()
         {
+            let initial_count = result.candidates.len();
+
             // Issue #967: Truncate to per-module candidate budget if set.
             if entry.max_candidates > 0 && result.candidates.len() > entry.max_candidates {
                 if utils::verbose_enabled() {
@@ -232,22 +279,52 @@ pub fn merge_discovery_module_results(
                 result.candidates.truncate(entry.max_candidates);
             }
 
-            if utils::verbose_enabled() {
-                tracing::debug!(
-                    module = %entry.module_name,
-                    detections = result.detected_count,
-                    candidates = result.candidates.len(),
-                    budget = entry.max_candidates,
-                    "discovery module results"
+            // Issue #1060: Count candidates filtered by positive-gain check before merge.
+            let pre_filter_count = result.candidates.len();
+            result
+                .candidates
+                .retain(|c| c.expected_creature_score_gain > 0.0);
+            let post_filter_count = result.candidates.len();
+
+            // Issue #1060: Record pre-filtering soft failures for candidates that
+            // were truncated (budget exceeded) or filtered (non-positive gain).
+            let filtered_count = initial_count - post_filter_count;
+            if filtered_count > 0 {
+                tracker.record_soft_failures(
+                    &entry.module_name,
+                    filtered_count,
+                    SOFT_FAILURE_WEIGHT,
                 );
+                if utils::verbose_enabled() {
+                    tracing::debug!(
+                        module = %entry.module_name,
+                        filtered = filtered_count,
+                        truncated = initial_count - pre_filter_count,
+                        negative_gain = pre_filter_count - post_filter_count,
+                        weight = SOFT_FAILURE_WEIGHT,
+                        "Recorded pre-filtering soft failures (Issue #1060)"
+                    );
+                }
             }
 
-            super::merge_coordinated_structural_replacements(
-                syn,
-                result.candidates,
-                max_synapse_candidates,
-                diversify,
-            );
+            if !result.candidates.is_empty() {
+                if utils::verbose_enabled() {
+                    tracing::debug!(
+                        module = %entry.module_name,
+                        detections = result.detected_count,
+                        candidates = result.candidates.len(),
+                        budget = entry.max_candidates,
+                        "discovery module results"
+                    );
+                }
+
+                super::merge_coordinated_structural_replacements(
+                    syn,
+                    result.candidates,
+                    max_synapse_candidates,
+                    diversify,
+                );
+            }
         }
 
         let finished = format!("analysis::analyze_all → {} finished", entry.module_name);
@@ -270,9 +347,9 @@ pub fn run_discovery_modules_parallel(
     modules: Vec<DiscoveryModuleSpec>,
     max_synapse_candidates: Option<usize>,
     diversify: bool,
-    tracker: &ModuleOutcomeTracker,
+    tracker: &mut ModuleOutcomeTracker,
 ) {
-    let detection_results = detect_discovery_modules_parallel(modules, None);
+    let detection_results = detect_discovery_modules_parallel(modules, None, Some(tracker));
     merge_discovery_module_results(
         syn,
         detection_results,

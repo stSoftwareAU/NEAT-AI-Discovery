@@ -160,7 +160,7 @@ fn detect_returns_results_in_original_order() {
         ),
     ];
 
-    let results = detect_discovery_modules_parallel(modules, None);
+    let results = detect_discovery_modules_parallel(modules, None, None);
 
     assert_eq!(results.entries.len(), 3, "should have 3 entries");
     assert_eq!(results.entries[0].module_name, "mod_a");
@@ -189,8 +189,6 @@ fn detect_returns_results_in_original_order() {
 /// combined `run_discovery_modules_parallel`.
 #[test]
 fn split_detect_merge_matches_combined() {
-    let tracker = ModuleOutcomeTracker::new();
-
     // Combined approach.
     let mut syn_combined = empty_synapse_result();
     let modules_combined = vec![
@@ -201,7 +199,14 @@ fn split_detect_merge_matches_combined() {
         ),
         make_module("mod_c", None),
     ];
-    run_discovery_modules_parallel(&mut syn_combined, modules_combined, None, false, &tracker);
+    let mut tracker_combined = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(
+        &mut syn_combined,
+        modules_combined,
+        None,
+        false,
+        &mut tracker_combined,
+    );
 
     // Split approach.
     let mut syn_split = empty_synapse_result();
@@ -213,8 +218,15 @@ fn split_detect_merge_matches_combined() {
         ),
         make_module("mod_c", None),
     ];
-    let detection_results = detect_discovery_modules_parallel(modules_split, None);
-    merge_discovery_module_results(&mut syn_split, detection_results, None, false, &tracker);
+    let detection_results = detect_discovery_modules_parallel(modules_split, None, None);
+    let mut tracker_split = ModuleOutcomeTracker::new();
+    merge_discovery_module_results(
+        &mut syn_split,
+        detection_results,
+        None,
+        false,
+        &mut tracker_split,
+    );
 
     // Both should produce identical results.
     assert_eq!(
@@ -248,11 +260,11 @@ fn split_detect_merge_matches_combined() {
 #[test]
 fn merge_empty_detection_results_is_noop() {
     let mut syn = empty_synapse_result();
-    let tracker = ModuleOutcomeTracker::new();
+    let mut tracker = ModuleOutcomeTracker::new();
     let empty_results = DiscoveryModuleDetectionResults {
         entries: Vec::new(),
     };
-    merge_discovery_module_results(&mut syn, empty_results, None, false, &tracker);
+    merge_discovery_module_results(&mut syn, empty_results, None, false, &mut tracker);
 
     assert!(syn.coordinated_structural_candidates.is_empty());
     assert_eq!(syn.metadata.candidates_returned, 0);
@@ -261,7 +273,7 @@ fn merge_empty_detection_results_is_noop() {
 /// Verify that detect returns empty results for empty module list.
 #[test]
 fn detect_empty_modules_returns_empty() {
-    let results = detect_discovery_modules_parallel(Vec::new(), None);
+    let results = detect_discovery_modules_parallel(Vec::new(), None, None);
     assert!(results.entries.is_empty());
 }
 
@@ -290,9 +302,9 @@ fn overlapped_compression_and_detection_produces_correct_results() {
         make_module("mod_a", Some(vec![make_candidate(1.0)])),
         make_module("mod_b", Some(vec![make_candidate(0.5)])),
     ];
-    let tracker = ModuleOutcomeTracker::new();
     let mut syn_seq = empty_synapse_result();
-    run_discovery_modules_parallel(&mut syn_seq, modules_seq, None, false, &tracker);
+    let mut tracker_seq = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn_seq, modules_seq, None, false, &mut tracker_seq);
 
     // Overlapped: compression and detection run concurrently.
     let (par_compressed, par_detection) = rayon::join(
@@ -310,13 +322,13 @@ fn overlapped_compression_and_detection_produces_correct_results() {
                 make_module("mod_a", Some(vec![make_candidate(1.0)])),
                 make_module("mod_b", Some(vec![make_candidate(0.5)])),
             ];
-            detect_discovery_modules_parallel(modules, None)
+            detect_discovery_modules_parallel(modules, None, None)
         },
     );
 
     let mut syn_par = empty_synapse_result();
-    let tracker_par = ModuleOutcomeTracker::new();
-    merge_discovery_module_results(&mut syn_par, par_detection, None, false, &tracker_par);
+    let mut tracker_par = ModuleOutcomeTracker::new();
+    merge_discovery_module_results(&mut syn_par, par_detection, None, false, &mut tracker_par);
 
     // Compression results should be identical.
     assert_eq!(
@@ -371,7 +383,7 @@ fn overlapped_execution_is_deterministic_across_runs() {
                     make_module("mod_2", Some(vec![make_candidate(2.0)])),
                     make_module("mod_3", Some(vec![make_candidate(3.0)])),
                 ];
-                detect_discovery_modules_parallel(modules, None)
+                detect_discovery_modules_parallel(modules, None, None)
             },
         );
 
@@ -397,7 +409,7 @@ fn overlapped_execution_is_deterministic_across_runs() {
 #[test]
 fn merge_ordering_compression_before_discovery() {
     let mut syn = empty_synapse_result();
-    let tracker = ModuleOutcomeTracker::new();
+    let mut tracker = ModuleOutcomeTracker::new();
 
     // First merge compression results (gain = 5.0) — simulated by adding directly.
     syn.coordinated_structural_candidates
@@ -425,7 +437,7 @@ fn merge_ordering_compression_before_discovery() {
             }),
         }],
     };
-    merge_discovery_module_results(&mut syn, discovery_results, None, false, &tracker);
+    merge_discovery_module_results(&mut syn, discovery_results, None, false, &mut tracker);
 
     // Both candidates should be present.
     assert_eq!(
@@ -449,7 +461,7 @@ fn merge_ordering_compression_before_discovery() {
 /// Verify that the split detect + merge respects `max_synapse_candidates`.
 #[test]
 fn split_detect_merge_respects_max_candidates() {
-    let tracker = ModuleOutcomeTracker::new();
+    let mut tracker = ModuleOutcomeTracker::new();
     let mut syn = empty_synapse_result();
 
     let modules = vec![
@@ -460,8 +472,8 @@ fn split_detect_merge_respects_max_candidates() {
         make_module("mod_b", Some(vec![make_candidate(1.0)])),
     ];
 
-    let detection_results = detect_discovery_modules_parallel(modules, None);
-    merge_discovery_module_results(&mut syn, detection_results, Some(2), false, &tracker);
+    let detection_results = detect_discovery_modules_parallel(modules, None, None);
+    merge_discovery_module_results(&mut syn, detection_results, Some(2), false, &mut tracker);
 
     let total = syn.helpful_synapses.len()
         + syn.harmful_synapses.len()

@@ -97,7 +97,7 @@ pub(crate) fn prepare_and_detect_discovery_modules(
         }
     }
 
-    discovery_dispatch::detect_discovery_modules_parallel(modules, deadline)
+    discovery_dispatch::detect_discovery_modules_parallel(modules, deadline, Some(tracker))
 }
 
 /// Synthesise cross-detection candidates for co-flagged neurons (Issue #963).

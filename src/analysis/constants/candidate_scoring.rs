@@ -73,6 +73,32 @@ pub const HIDDEN_SOURCE_INTERLEAVE_INTERVAL: usize = 3;
 pub const MIN_BOOST_SAMPLES: usize = 10;
 
 // =============================================================================
+// Module Gating (Issue #1060)
+// =============================================================================
+
+/// Success rate threshold below which a module is gated (skipped entirely).
+///
+/// When a module's Bayesian success rate drops below this threshold and the
+/// module has at least `MIN_BOOST_SAMPLES` attempts, candidate generation for
+/// that module is skipped entirely to save compute.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Values above 0.05 may gate modules too eagerly.
+pub const MODULE_GATE_THRESHOLD: f64 = 0.005;
+
+/// Weight applied to pre-filtering failures when recording soft failures
+/// in the `ModuleOutcomeTracker` (Issue #1060).
+///
+/// Candidates filtered out during post-processing (e.g., below threshold,
+/// deduplicated, budget exceeded) are recorded as failures with this weight
+/// relative to a real ablation failure (weight 1.0).
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0]. Values close to 1.0 make pre-filtering failures
+/// nearly as impactful as real ablation failures.
+pub const SOFT_FAILURE_WEIGHT: f64 = 0.5;
+
+// =============================================================================
 // Target-Type Scoring (Issue #468)
 // =============================================================================
 

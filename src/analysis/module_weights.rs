@@ -26,12 +26,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::constants::MIN_BOOST_SAMPLES;
+use super::constants::{MIN_BOOST_SAMPLES, MODULE_GATE_THRESHOLD};
 
 /// Per-module success/failure statistics.
 ///
 /// Tracks how many candidates from each discovery module have been accepted or
-/// rejected, plus total candidates produced.
+/// rejected, plus total candidates produced and pre-filtering soft failures.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModuleStats {
@@ -42,21 +42,33 @@ pub struct ModuleStats {
     /// Total candidates produced by this module (may exceed attempts if some
     /// candidates have not yet been tested).
     pub candidates_produced: u32,
+    /// Weighted count of pre-filtering failures (Issue #1060).
+    ///
+    /// When candidates are filtered out during post-processing (e.g., below
+    /// threshold, deduplicated, budget exceeded), they are recorded here with
+    /// a configurable weight (default 0.5× a real ablation failure). This
+    /// provides negative feedback for modules that consistently generate
+    /// candidates that fail filtering, addressing survivorship bias.
+    #[serde(default)]
+    pub soft_failures: f64,
 }
 
 impl ModuleStats {
     /// Returns the Bayesian success rate using Beta distribution posterior mean.
     ///
-    /// Uses the same Beta(1,1) prior as `CandidateOutcomeCache::SourceTypeStats`:
+    /// Uses a Beta(1,1) prior, incorporating both real ablation failures and
+    /// weighted pre-filtering soft failures (Issue #1060):
     /// - No data → 0.5 (neutral prior)
     /// - Converges to raw success rate with many samples
+    /// - Soft failures increase the effective failure count
     /// - Never returns exactly 0.0 or 1.0
     pub fn success_rate(&self) -> f64 {
-        if self.attempts == 0 {
+        if self.attempts == 0 && self.soft_failures <= 0.0 {
             return 0.5;
         }
         let alpha = self.successes as f64 + 1.0;
-        let beta = (self.attempts - self.successes) as f64 + 1.0;
+        let real_failures = (self.attempts - self.successes) as f64;
+        let beta = real_failures + self.soft_failures + 1.0;
         alpha / (alpha + beta)
     }
 }
@@ -110,6 +122,26 @@ impl ModuleOutcomeTracker {
         stats.candidates_produced += count as u32;
     }
 
+    /// Records pre-filtering failures for a module (Issue #1060).
+    ///
+    /// When candidates are filtered out during post-processing (e.g., below
+    /// threshold, deduplicated, budget exceeded), they are recorded as soft
+    /// failures with a configurable weight. This provides negative feedback
+    /// for modules that consistently generate candidates that fail filtering.
+    ///
+    /// # Arguments
+    ///
+    /// * `module_name` — Name of the module whose candidates were filtered.
+    /// * `count` — Number of candidates filtered out.
+    /// * `weight` — Weight per filtered candidate (typically `SOFT_FAILURE_WEIGHT`).
+    pub fn record_soft_failures(&mut self, module_name: &str, count: usize, weight: f64) {
+        if count == 0 || weight <= 0.0 {
+            return;
+        }
+        let stats = self.modules.entry(module_name.to_string()).or_default();
+        stats.soft_failures += count as f64 * weight.clamp(0.0, 1.0);
+    }
+
     /// Returns the statistics for a given module.
     ///
     /// Returns default (empty) stats for unknown modules.
@@ -140,6 +172,7 @@ impl ModuleOutcomeTracker {
             stats.attempts = (stats.attempts as f64 * factor).round() as u32;
             stats.successes = (stats.successes as f64 * factor).round() as u32;
             stats.candidates_produced = (stats.candidates_produced as f64 * factor).round() as u32;
+            stats.soft_failures *= factor;
             // Ensure successes never exceeds attempts after rounding.
             if stats.successes > stats.attempts {
                 stats.successes = stats.attempts;
@@ -168,6 +201,33 @@ impl ModuleOutcomeTracker {
 
         let rate = stats.success_rate();
         (2.0 * rate).clamp(0.5, 2.0)
+    }
+
+    /// Returns whether a module is gated (should be skipped) based on its
+    /// historical success rate (Issue #1060).
+    ///
+    /// A module is gated when:
+    /// 1. It has at least [`MIN_BOOST_SAMPLES`] attempts (sufficient data)
+    /// 2. Its Bayesian success rate is below `threshold`
+    ///
+    /// Modules with insufficient data are never gated, allowing the system
+    /// to gather data before making gating decisions.
+    pub fn is_gated(&self, module_name: &str, threshold: f64) -> bool {
+        let Some(stats) = self.modules.get(module_name) else {
+            return false;
+        };
+
+        if (stats.attempts as usize) < MIN_BOOST_SAMPLES {
+            return false;
+        }
+
+        stats.success_rate() < threshold
+    }
+
+    /// Returns whether a module is gated using the default threshold
+    /// ([`MODULE_GATE_THRESHOLD`]).
+    pub fn is_gated_default(&self, module_name: &str) -> bool {
+        self.is_gated(module_name, MODULE_GATE_THRESHOLD)
     }
 }
 
@@ -398,6 +458,11 @@ pub struct DiscoveryModuleStatsJson {
     pub successes: u32,
     /// Bayesian success rate (0.0–1.0). 0.5 when no data available.
     pub success_rate: f64,
+    /// Weighted count of pre-filtering soft failures (Issue #1060).
+    pub soft_failures: f64,
+    /// Whether this module is currently gated (skipped) due to low success
+    /// rate (Issue #1060).
+    pub gated: bool,
 }
 
 /// Apply module boost factors to coordinated structural candidate expected gains (Issue #792).
