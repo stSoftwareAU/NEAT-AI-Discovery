@@ -40,6 +40,31 @@ pub extern "C" fn reset_cancellation() {
 }
 
 // ============================================================================
+// Analysis lifecycle tracking (Issue #1048)
+// ============================================================================
+
+/// Check whether any analysis invocation is currently in-flight.
+///
+/// The host process must call this before deleting the parquet temp
+/// directory. If it returns `true` (non-zero), the host should either:
+/// - Wait for the analysis FFI call to return, **or**
+/// - Call `cancel_analysis()` first and then wait.
+///
+/// Returns `1` if at least one analysis is active, `0` otherwise.
+///
+/// # Safety
+///
+/// No pointer arguments; safe to call from any thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn is_analysis_active() -> i32 {
+    if crate::cancellation::is_analysis_active() {
+        1
+    } else {
+        0
+    }
+}
+
+// ============================================================================
 // Rank focus neurons
 // ============================================================================
 

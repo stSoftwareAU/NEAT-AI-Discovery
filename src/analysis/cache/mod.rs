@@ -65,6 +65,7 @@ use crate::types::DiscoverRecord;
 use anyhow::{Context, Result};
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::fs::File;
 use std::sync::{Arc, OnceLock};
 
 use crate::analysis::utils::{check_memory_for_parquet, get_memory_info, verbose_enabled};
@@ -77,6 +78,13 @@ type CachedNeuronRecords = OnceLock<Result<Arc<Vec<DiscoverRecord>>, String>>;
 /// Uses `RwLock` to allow concurrent reads during the analysis phase, which is
 /// read-heavy after the initial cache population. This significantly improves
 /// throughput when multiple focus neurons are analysed in parallel using Rayon.
+///
+/// ## File Guard (Issue #1048)
+///
+/// Holds an open `File` handle to the parquet file for the cache's lifetime.
+/// On Unix, this prevents premature data loss: even if the TypeScript host
+/// deletes the temp directory path, the kernel keeps the inode alive while
+/// this handle exists, so in-flight reads still succeed.
 pub struct RecordCache {
     parquet_file: String,
     /// The cache uses `RwLock` instead of `Mutex` to allow concurrent reads.
@@ -85,6 +93,10 @@ pub struct RecordCache {
     /// focus neurons without serialising on lock acquisition.
     pub(crate) cache: RwLock<HashMap<String, Arc<CachedNeuronRecords>>>,
     loader: Arc<RecordCacheLoader>,
+    /// Held open to prevent the OS from reclaiming the file data while analysis
+    /// is active (Issue #1048). The field is never read — its `Drop` impl
+    /// closes the handle when the cache is dropped.
+    _file_guard: Option<File>,
 }
 
 impl RecordCache {
@@ -143,12 +155,17 @@ impl RecordCache {
 
         tracing::info!("using lazy-loading mode for parquet file");
 
+        // Issue #1048: Hold file open to prevent premature deletion.
+        let file_guard = File::open(parquet_file)
+            .with_context(|| format!("Failed to open parquet file guard: {parquet_file}"))?;
+
         Ok(Self {
             parquet_file: parquet_file.to_string(),
             cache: RwLock::new(HashMap::new()),
             loader: Arc::new(move |file: &str, neuron_uuid: &str| {
                 read_records_from_parquet(file, neuron_uuid)
             }),
+            _file_guard: Some(file_guard),
         })
     }
 
@@ -187,6 +204,10 @@ impl RecordCache {
             tracing::debug!(count, ?elapsed, "pre-loaded neurons from parquet");
         }
 
+        // Issue #1048: Hold file open to prevent premature deletion.
+        let file_guard = File::open(parquet_file)
+            .with_context(|| format!("Failed to open parquet file guard: {parquet_file}"))?;
+
         // In pre-loaded mode, if a neuron UUID wasn't in the parquet file,
         // return an empty vector. This matches the behaviour when the data simply
         // doesn't exist for that UUID.
@@ -197,6 +218,7 @@ impl RecordCache {
                 // This neuron UUID wasn't in the preloaded data - return empty
                 Ok(Vec::new())
             }),
+            _file_guard: Some(file_guard),
         })
     }
 
@@ -370,6 +392,7 @@ impl RecordCache {
             parquet_file: parquet_file.to_string(),
             cache: RwLock::new(HashMap::new()),
             loader,
+            _file_guard: None, // No file guard needed for test loaders
         }
     }
 
@@ -412,6 +435,12 @@ impl RecordCache {
                         .with_context(|| "Failed to create LRU cache")?,
                 );
                 let lru_clone = Arc::clone(&lru_cache);
+
+                // Issue #1048: Hold file open to prevent premature deletion.
+                let file_guard = File::open(parquet_file).with_context(|| {
+                    format!("Failed to open parquet file guard: {parquet_file}")
+                })?;
+
                 Ok(Self {
                     parquet_file: parquet_file.to_string(),
                     cache: RwLock::new(HashMap::new()),
@@ -420,6 +449,7 @@ impl RecordCache {
                         let records = lru_clone.get(neuron_uuid)?;
                         Ok((*records).clone())
                     }),
+                    _file_guard: Some(file_guard),
                 })
             }
             LoadingStrategy::Streaming => {

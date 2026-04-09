@@ -8,6 +8,7 @@ use crate::types::DiscoverRecord;
 use anyhow::{Context, Result};
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::fs::File;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
@@ -91,6 +92,9 @@ pub struct LruRecordCache {
     cache_misses: AtomicU64,
     /// Eviction counter.
     eviction_count: AtomicU64,
+    /// Held open to prevent the OS from reclaiming the file data while the
+    /// cache is alive (Issue #1048).
+    _file_guard: File,
 }
 
 impl LruRecordCache {
@@ -101,8 +105,8 @@ impl LruRecordCache {
     /// * `parquet_file` - Path to the parquet file
     /// * `capacity_bytes` - Maximum memory to use for caching (in bytes)
     pub fn new(parquet_file: &str, capacity_bytes: usize) -> Result<Self> {
-        // Verify the file exists
-        std::fs::metadata(parquet_file)
+        // Issue #1048: Open the file as a guard to keep the inode alive.
+        let file_guard = File::open(parquet_file)
             .with_context(|| format!("Parquet file not found: {parquet_file}"))?;
 
         if verbose_enabled() {
@@ -118,6 +122,7 @@ impl LruRecordCache {
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             eviction_count: AtomicU64::new(0),
+            _file_guard: file_guard,
         })
     }
 
