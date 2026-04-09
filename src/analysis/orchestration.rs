@@ -389,6 +389,20 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     let mut synapse_result = synapse_result;
     let mut neuron_result = neuron_result;
 
+    // Issue #792: Resolve the module outcome tracker from input or use a default.
+    let tracker = input.module_outcome_tracker.clone().unwrap_or_default();
+
+    // Issue #1057: Gate add-synapse candidates based on historical success rate
+    // and synapse density. When the ModuleOutcomeTracker shows consistent failure
+    // or the network is too dense, clear helpful_synapses to save compute.
+    if let Some(syn) = synapse_result.as_mut() {
+        synapse::add_synapse_gating::gate_add_synapse_candidates(
+            &mut syn.helpful_synapses,
+            &tracker,
+            &input.creature,
+        );
+    }
+
     if !memory_budget_exceeded
         && let (Some(syn), Some(neuron)) = (synapse_result.as_mut(), neuron_result.as_mut())
     {
@@ -399,9 +413,6 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             &shared_cache,
         );
     }
-
-    // Issue #792: Resolve the module outcome tracker from input or use a default.
-    let tracker = input.module_outcome_tracker.clone().unwrap_or_default();
 
     // Issue #1028: Skip post-processing when memory budget is exceeded.
     // The candidates from GPU analysis are still returned, but compression,
