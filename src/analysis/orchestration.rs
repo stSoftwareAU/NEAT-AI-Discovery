@@ -267,7 +267,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // result instead of propagating the error.
     let shared_cache = match cache_result {
         Ok(c) => Arc::new(c),
-        Err(e) if crate::cancellation::is_cancelled() => {
+        Err(_e) if crate::cancellation::is_cancelled() => {
             tracing::info!("parquet loading cancelled by host — returning empty result");
             return Ok(AnalyzeAllResult {
                 synapse: None,
