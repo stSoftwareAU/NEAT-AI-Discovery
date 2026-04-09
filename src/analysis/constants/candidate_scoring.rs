@@ -301,13 +301,12 @@ pub const PESSIMISM_CURVE_EXPONENT: f32 = 0.6;
 // Neuron-Specific Pessimism Discount (Issue #791)
 // =============================================================================
 
-/// Minimum pessimism discount floor for neuron candidates (Issue #791).
+/// Minimum pessimism discount floor for neuron candidates (Issue #791, #1056).
 ///
-/// GRQ-sampler analysis (Issue #787) shows add-neurons has a 15% success rate
-/// (3,812 / 25,812) — substantially lower than synapse candidates. The generic
-/// pessimism parameters (`PESSIMISM_DISCOUNT_FLOOR` = 0.15, `PESSIMISM_CURVE_EXPONENT`
-/// = 0.6) are calibrated for the overall candidate pool and are too generous for
-/// neuron candidates specifically.
+/// GRQ-sampler analysis shows add-neurons has a ~2.7% actual success rate
+/// (28/1028 in latest cache) — far lower than predicted. The previous floor
+/// of 0.10 was calibrated against a 15% success estimate (Issue #787) which
+/// proved to be overestimated when measured against production outcomes.
 ///
 /// A lower floor applies more aggressive base discounting to neuron predictions,
 /// reducing the expected gain for candidates with few samples improving.
@@ -315,67 +314,64 @@ pub const PESSIMISM_CURVE_EXPONENT: f32 = 0.6;
 /// ## Valid Range
 /// Must be in (0.0, `PESSIMISM_DISCOUNT_FLOOR`). Values below 0.05 risk
 /// zeroing-out legitimate neuron candidates.
-pub const NEURON_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.10;
+pub const NEURON_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.08;
 
-/// Exponent for the neuron-specific pessimism discount curve (Issue #791).
+/// Exponent for the neuron-specific pessimism discount curve (Issue #791, #1056).
 ///
 /// A higher exponent (closer to linear) produces a less forgiving curve at
-/// moderate ratios compared to the generic exponent (0.6). This is appropriate
-/// for neuron candidates because their 15% success rate suggests moderate
-/// improved ratios (30–60%) are less reliable predictors of actual success
-/// than they are for synapse candidates.
+/// moderate ratios compared to the generic exponent (0.6). Updated from 0.75
+/// to 0.80 based on GRQ-sampler data showing ~2.7% actual success rate
+/// (28/1028), indicating moderate improved ratios are even less reliable
+/// predictors of creature-level success than previously assumed.
 ///
-/// With exponent 0.75 and floor 0.10 (discount = 0.10 + 0.90 × ratio^0.75):
-/// - ratio 0.1 → 0.1^0.75 ≈ 0.178 → discount ≈ 0.260
-/// - ratio 0.4 → 0.4^0.75 ≈ 0.506 → discount ≈ 0.555
-/// - ratio 0.7 → 0.7^0.75 ≈ 0.744 → discount ≈ 0.770
+/// With exponent 0.80 and floor 0.08 (discount = 0.08 + 0.92 × ratio^0.80):
+/// - ratio 0.1 → 0.1^0.80 ≈ 0.158 → discount ≈ 0.226
+/// - ratio 0.4 → 0.4^0.80 ≈ 0.476 → discount ≈ 0.518
+/// - ratio 0.7 → 0.7^0.80 ≈ 0.745 → discount ≈ 0.765
 /// - ratio 1.0 → 1.0       → discount = 1.000
 ///
 /// ## Valid Range
 /// Must be in (`PESSIMISM_CURVE_EXPONENT`, 1.0]. Values above 0.9 give
 /// near-linear behaviour.
-pub const NEURON_PESSIMISM_CURVE_EXPONENT: f32 = 0.75;
+pub const NEURON_PESSIMISM_CURVE_EXPONENT: f32 = 0.80;
 
 // =============================================================================
 // Synapse-Specific Pessimism Discount (Issue #789)
 // =============================================================================
 
-/// Minimum pessimism discount floor for synapse candidates (Issue #789).
+/// Minimum pessimism discount floor for synapse candidates (Issue #789, #1056).
 ///
-/// GRQ-sampler analysis (Issue #787) shows add-synapses has a 0% success rate
-/// (0 / 31) — the worst of all candidate types. The generic pessimism parameters
-/// (`PESSIMISM_DISCOUNT_FLOOR` = 0.15, `PESSIMISM_CURVE_EXPONENT` = 0.6) and even the
-/// neuron-specific parameters (0.10, 0.75) are too generous for synapse candidates.
-///
-/// A lower floor applies more aggressive base discounting to synapse predictions,
-/// reducing the expected gain for candidates with marginal improved ratios. This
-/// accounts for the multi-weight search (9 variants) creating selection bias that
-/// overfits to sample data.
+/// GRQ-sampler analysis shows add-synapses has a ~0.1% actual success rate
+/// (3/1001 in latest cache). The multi-weight search creates selection bias
+/// that overfits to sample data, contributing to massive overestimation.
+/// Updated from 0.05 to 0.03 to match production reality.
 ///
 /// ## Valid Range
 /// Must be in (0.0, `NEURON_PESSIMISM_DISCOUNT_FLOOR`]. Values below 0.02 risk
 /// zeroing-out all synapse candidates.
-pub const SYNAPSE_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.05;
+pub const SYNAPSE_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.03;
 
-/// Exponent for the synapse-specific pessimism discount curve (Issue #789).
+/// Exponent for the synapse-specific pessimism discount curve (Issue #789, #1056).
 ///
 /// A higher exponent (closer to linear) produces a less forgiving curve at
-/// moderate ratios. With a 0% success rate, synapse candidates need the most
-/// aggressive discounting of all candidate types. The multi-weight search
-/// (9 weight variants) creates selection bias where the best weight for the
-/// sample data does not generalise to the full evaluation.
+/// moderate ratios. With a ~0.1% success rate (3/1001), synapse candidates
+/// need the most aggressive discounting of all candidate types. The
+/// multi-weight search creates selection bias where the best weight for
+/// the sample data does not generalise to the full evaluation.
 ///
-/// With exponent 0.85 and floor 0.05 (discount = 0.05 + 0.95 × ratio^0.85):
-/// - ratio 0.1 → 0.1^0.85 ≈ 0.141 → discount ≈ 0.184
-/// - ratio 0.4 → 0.4^0.85 ≈ 0.453 → discount ≈ 0.480
-/// - ratio 0.6 → 0.6^0.85 ≈ 0.641 → discount ≈ 0.659
-/// - ratio 0.7 → 0.7^0.85 ≈ 0.741 → discount ≈ 0.754
+/// Updated from 0.85 to 0.90 to match production data.
+///
+/// With exponent 0.90 and floor 0.03 (discount = 0.03 + 0.97 × ratio^0.90):
+/// - ratio 0.1 → 0.1^0.90 ≈ 0.126 → discount ≈ 0.152
+/// - ratio 0.4 → 0.4^0.90 ≈ 0.427 → discount ≈ 0.444
+/// - ratio 0.6 → 0.6^0.90 ≈ 0.621 → discount ≈ 0.632
+/// - ratio 0.7 → 0.7^0.90 ≈ 0.723 → discount ≈ 0.731
 /// - ratio 1.0 → 1.0       → discount = 1.000
 ///
 /// ## Valid Range
 /// Must be in (`NEURON_PESSIMISM_CURVE_EXPONENT`, 1.0]. Values above 0.95 give
 /// near-linear behaviour.
-pub const SYNAPSE_PESSIMISM_CURVE_EXPONENT: f32 = 0.85;
+pub const SYNAPSE_PESSIMISM_CURVE_EXPONENT: f32 = 0.90;
 
 // =============================================================================
 // Metropolis-Hastings Temperature (Issue #1018)
@@ -649,49 +645,104 @@ pub const REMOVAL_CANDIDATE_BOOST: f32 = 1.5;
 // suppressing genuinely strong candidates. The pessimism discount already handles
 // ratio-based corrections; these factors address the residual magnitude gap.
 
-/// Prediction calibration factor for synapse candidates (Issue #891).
+/// Prediction calibration factor for synapse candidates (Issue #891, #1056).
 ///
-/// Synapse predictions overestimate actual score gains by approximately 1,000×.
-/// Applied as a multiplicative factor to `expected_creature_score_gain` after
-/// pessimism discounting and type-specific boosts.
+/// GRQ-sampler discovery cache (30+ creatures) shows add-synapses has a ~0.1%
+/// actual success rate (3/1001), with massive overestimation of predicted gains.
+/// Updated from 0.001 to 0.0003 to match production reality.
 ///
-/// ## Derivation
-/// Actual/predicted ratio from cache evidence: ~0.001 (range 0.0001–0.01).
-/// Conservative choice: 0.001 (corrects the median overestimation without
-/// over-correcting edge cases).
-///
-/// ## Valid Range
-/// Must be in (0.0, 1.0). Values above 0.01 provide insufficient correction.
-/// Values below 0.0001 risk suppressing all synapse candidates.
-pub const SYNAPSE_PREDICTION_CALIBRATION: f32 = 0.001;
-
-/// Prediction calibration factor for neuron candidates (Issue #891).
-///
-/// Neuron predictions overestimate actual score gains by approximately 100×.
-/// The overestimation is less severe than synapses because neuron candidates
-/// involve more direct structural changes.
-///
-/// ## Derivation
-/// Actual/predicted ratio from cache evidence: ~0.01 (range 0.001–0.1).
-/// Conservative choice: 0.01 (corrects the median overestimation).
-///
-/// ## Valid Range
-/// Must be in (0.0, 1.0). Values above 0.1 provide insufficient correction.
-/// Values below 0.001 risk suppressing all neuron candidates.
-pub const NEURON_PREDICTION_CALIBRATION: f32 = 0.01;
-
-/// Prediction calibration factor for coordinated-structural candidates (Issue #891).
-///
-/// Coordinated predictions have the most severe overestimation (~10,000×)
-/// because multi-operation predictions compound optimistically. Successful
-/// coordinated candidates achieve only ~2.2e-14 actual gain despite
-/// predictions in the 0.001–0.01 range.
-///
-/// ## Derivation
-/// Actual/predicted ratio from cache evidence: ~0.0001 (range 0.00001–0.001).
-/// Conservative choice: 0.0001 (corrects the median overestimation).
+/// This is the base factor used by the logistic calibration function. The
+/// effective calibration is further modulated by the `improved_ratio` via a
+/// logistic curve (Issue #1056).
 ///
 /// ## Valid Range
 /// Must be in (0.0, 1.0). Values above 0.001 provide insufficient correction.
+/// Values below 0.0001 risk suppressing all synapse candidates.
+pub const SYNAPSE_PREDICTION_CALIBRATION: f32 = 0.0003;
+
+/// Prediction calibration factor for neuron candidates (Issue #891, #1056).
+///
+/// GRQ-sampler discovery cache shows add-neurons has a ~2.7% actual success
+/// rate (28/1028), with the predicted improved ratio (~50%) overestimating
+/// actual success by ~18×. Updated from 0.01 to 0.003 to account for this
+/// gap after measuring against production outcomes across 30+ creatures.
+///
+/// This is the base factor used by the logistic calibration function.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Values above 0.01 provide insufficient correction.
+/// Values below 0.001 risk suppressing all neuron candidates.
+pub const NEURON_PREDICTION_CALIBRATION: f32 = 0.003;
+
+/// Prediction calibration factor for coordinated-structural candidates (Issue #891, #1056).
+///
+/// GRQ-sampler discovery cache shows coordinated-structural has a ~1.1% actual
+/// success rate (6/525), with predictions overestimating by orders of magnitude.
+/// Updated from 0.0001 to 0.00005 to match production reality.
+///
+/// This is the base factor used by the logistic calibration function.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). Values above 0.0001 provide insufficient correction.
 /// Values below 0.00001 risk suppressing all coordinated candidates.
-pub const COORDINATED_PREDICTION_CALIBRATION: f32 = 0.0001;
+pub const COORDINATED_PREDICTION_CALIBRATION: f32 = 0.00005;
+
+// =============================================================================
+// Logistic Prediction Calibration (Issue #1056)
+// =============================================================================
+
+// The linear calibration multiplier (gain × factor) was insufficient to bridge
+// the neuron-level → creature-level prediction gap. The relationship between
+// `improvedCount/totalCount` and actual creature-level success probability is
+// non-linear — moderate improved ratios (0.3–0.6) are far more overestimated
+// than high ratios (>0.8).
+//
+// The logistic calibration modulates the base calibration factor using a sigmoid
+// of the improved_ratio:
+//
+//   effective = base_factor × (floor + (1 - floor) × sigmoid(steepness × (ratio - midpoint)))
+//
+// GRQ-sampler empirical evidence (30+ creatures):
+//
+// | Improved Ratio | Approximate Actual Success | Logistic Modulator |
+// |----------------|---------------------------|--------------------|
+// | 0.1            | Very unlikely             | ~0.12              |
+// | 0.3            | Rare                      | ~0.18              |
+// | 0.5            | Uncommon (~2.7% neurons)  | ~0.37              |
+// | 0.7            | Moderate                  | ~0.72              |
+// | 0.9            | More likely               | ~0.94              |
+
+/// Floor for the logistic calibration modulator (Issue #1056).
+///
+/// The minimum modulator value, applied when the improved ratio is very low.
+/// Prevents complete suppression of candidates that may still succeed despite
+/// few samples showing improvement.
+///
+/// ## Valid Range
+/// Must be in (0.0, 0.5). Values below 0.05 risk zeroing-out all candidates
+/// at low ratios.
+pub const LOGISTIC_CALIBRATION_FLOOR: f32 = 0.1;
+
+/// Steepness of the logistic calibration curve (Issue #1056).
+///
+/// Controls how sharply the modulator transitions from floor to 1.0 around
+/// the midpoint. Higher values produce a sharper transition. Derived from
+/// fitting against GRQ-sampler success rates: a steepness of 8.0 gives
+/// the best fit to the observed ratio → success relationship.
+///
+/// ## Valid Range
+/// Must be > 0.0. Values below 4.0 produce too gradual a transition.
+/// Values above 15.0 produce near-step-function behaviour.
+pub const LOGISTIC_CALIBRATION_STEEPNESS: f32 = 8.0;
+
+/// Midpoint of the logistic calibration curve (Issue #1056).
+///
+/// The improved ratio at which the modulator is at 50% between floor and 1.0.
+/// Set to 0.6 because GRQ-sampler data shows improved ratios below 60% are
+/// substantially overestimated (add-neurons has ~50% predicted vs ~2.7% actual),
+/// while ratios above 70% are relatively more reliable.
+///
+/// ## Valid Range
+/// Must be in (0.2, 0.9). Values below 0.3 do not sufficiently discount
+/// moderate ratios. Values above 0.8 discount too aggressively.
+pub const LOGISTIC_CALIBRATION_MIDPOINT: f32 = 0.6;

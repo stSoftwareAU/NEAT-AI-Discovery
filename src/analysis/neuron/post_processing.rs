@@ -14,7 +14,9 @@ use crate::analysis::cache::RecordCache;
 use crate::analysis::diagnostics::{NeuronDiagnostics, compute_impact_scores_for_discounting};
 use crate::analysis::gpu::GpuAnalyzer;
 use crate::analysis::shared::AnalyzeNeuronsResult;
-use crate::analysis::synapse::{apply_neuron_pessimism_discount, apply_prediction_calibration};
+use crate::analysis::synapse::{
+    apply_logistic_prediction_calibration, apply_neuron_pessimism_discount,
+};
 use crate::analysis::utils::{
     lock_or_bail, log_analysis_timeout, shuffle_within_top_k, verbose_enabled,
 };
@@ -184,11 +186,13 @@ fn apply_impact_discounting(
             candidate.total_count,
         );
 
-        // Issue #891: Apply neuron prediction calibration to correct ~100× overestimation.
-        // Applied after pessimism discount to scale the final prediction closer to
-        // observed actual gains, improving cross-type candidate ranking.
-        candidate.expected_creature_score_gain = apply_prediction_calibration(
+        // Issue #1056: Apply logistic prediction calibration to correct ~18× overestimation.
+        // The non-linear calibration uses the improved ratio to modulate the base
+        // factor, matching GRQ-sampler data showing ~2.7% actual success rate (28/1028).
+        candidate.expected_creature_score_gain = apply_logistic_prediction_calibration(
             candidate.expected_creature_score_gain,
+            candidate.improved_count,
+            candidate.total_count,
             crate::analysis::constants::NEURON_PREDICTION_CALIBRATION,
         );
 

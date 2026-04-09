@@ -85,14 +85,16 @@ fn test_activation_boosts_accessible() {
 }
 
 /// Verify pessimism discount constants are accessible.
+///
+/// Issue #1056: Updated values to match production success rates from GRQ-sampler.
 #[test]
 fn test_pessimism_discounts_accessible() {
     assert!((constants::PESSIMISM_DISCOUNT_FLOOR - 0.15).abs() < f32::EPSILON);
     assert!((constants::PESSIMISM_CURVE_EXPONENT - 0.6).abs() < f32::EPSILON);
-    assert!((constants::NEURON_PESSIMISM_DISCOUNT_FLOOR - 0.10).abs() < f32::EPSILON);
-    assert!((constants::NEURON_PESSIMISM_CURVE_EXPONENT - 0.75).abs() < f32::EPSILON);
-    assert!((constants::SYNAPSE_PESSIMISM_DISCOUNT_FLOOR - 0.05).abs() < f32::EPSILON);
-    assert!((constants::SYNAPSE_PESSIMISM_CURVE_EXPONENT - 0.85).abs() < f32::EPSILON);
+    assert!((constants::NEURON_PESSIMISM_DISCOUNT_FLOOR - 0.08).abs() < f32::EPSILON);
+    assert!((constants::NEURON_PESSIMISM_CURVE_EXPONENT - 0.80).abs() < f32::EPSILON);
+    assert!((constants::SYNAPSE_PESSIMISM_DISCOUNT_FLOOR - 0.03).abs() < f32::EPSILON);
+    assert!((constants::SYNAPSE_PESSIMISM_CURVE_EXPONENT - 0.90).abs() < f32::EPSILON);
 }
 
 /// Verify NaN-safe comparison functions are accessible and correct.
@@ -114,11 +116,20 @@ fn test_coordinated_structural_accessible() {
 }
 
 /// Verify prediction calibration constants are accessible.
+///
+/// Issue #1056: Updated values to match production success rates from GRQ-sampler.
 #[test]
 fn test_prediction_calibration_accessible() {
-    assert!((constants::SYNAPSE_PREDICTION_CALIBRATION - 0.001).abs() < f32::EPSILON);
-    assert!((constants::NEURON_PREDICTION_CALIBRATION - 0.01).abs() < f32::EPSILON);
-    assert!((constants::COORDINATED_PREDICTION_CALIBRATION - 0.0001).abs() < f32::EPSILON);
+    assert!((constants::SYNAPSE_PREDICTION_CALIBRATION - 0.0003).abs() < f32::EPSILON);
+    assert!((constants::NEURON_PREDICTION_CALIBRATION - 0.003).abs() < f32::EPSILON);
+    assert!((constants::COORDINATED_PREDICTION_CALIBRATION - 0.00005).abs() < f32::EPSILON);
+    // Issue #1056: Verify logistic calibration constants are also accessible.
+    let floor = constants::LOGISTIC_CALIBRATION_FLOOR;
+    let steepness = constants::LOGISTIC_CALIBRATION_STEEPNESS;
+    let midpoint = constants::LOGISTIC_CALIBRATION_MIDPOINT;
+    assert!(floor > 0.0, "floor should be positive");
+    assert!(steepness > 0.0, "steepness should be positive");
+    assert!(midpoint > 0.0, "midpoint should be positive");
 }
 
 /// Verify scoring boost multipliers are accessible.

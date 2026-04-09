@@ -21,8 +21,8 @@ pub use boost_functions::{
     apply_activation_neuron_boost, apply_source_type_boost, apply_target_type_boost,
 };
 pub use discounting::{
-    apply_neuron_pessimism_discount, apply_pessimism_discount, apply_prediction_calibration,
-    apply_synapse_pessimism_discount,
+    apply_logistic_prediction_calibration, apply_neuron_pessimism_discount,
+    apply_pessimism_discount, apply_prediction_calibration, apply_synapse_pessimism_discount,
 };
 
 pub(crate) use improvement::upsert_candidate;
