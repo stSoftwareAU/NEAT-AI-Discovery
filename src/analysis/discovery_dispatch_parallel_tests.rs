@@ -1,3 +1,5 @@
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for test data generation
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
@@ -539,4 +541,126 @@ fn parallel_detection_preserves_module_metadata_when_skipped() {
     assert_eq!(results.entries[1].phase_name, "phase_beta");
     assert_eq!(results.entries[1].max_candidates, 20);
     assert!(results.entries[1].result.is_none());
+}
+
+// =============================================================================
+// Issue #1074: Quality-based module skipping tests
+// =============================================================================
+
+#[test]
+fn quality_skip_skips_later_modules_when_enough_high_quality_candidates() {
+    use super::super::constants::{QUALITY_SKIP_GAIN_THRESHOLD, QUALITY_SKIP_MIN_CANDIDATES};
+
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: Duration::from_secs(60),
+        abort_delay: Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    // First module produces enough high-quality candidates to trigger skipping.
+    let high_quality_candidates: Vec<_> = (0..QUALITY_SKIP_MIN_CANDIDATES + 5)
+        .map(|i| make_candidate(QUALITY_SKIP_GAIN_THRESHOLD + 0.1 * (i as f32 + 1.0)))
+        .collect();
+
+    let modules = vec![
+        make_module("high_yield", Some(high_quality_candidates)),
+        make_module(
+            "should_be_skipped",
+            Some(vec![make_candidate(0.5), make_candidate(0.3)]),
+        ),
+    ];
+
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
+
+    // The first module's candidates should be merged.
+    // The second module's candidates should be skipped.
+    // With sorting, the exact count depends on filtering, but the second
+    // module's 2 candidates should NOT be present.
+    let total = syn.coordinated_structural_candidates.len();
+    assert!(
+        total <= QUALITY_SKIP_MIN_CANDIDATES + 5,
+        "Expected at most {} candidates (first module only), got {total}",
+        QUALITY_SKIP_MIN_CANDIDATES + 5,
+    );
+}
+
+#[test]
+fn quality_skip_does_not_skip_when_insufficient_high_quality_candidates() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: Duration::from_secs(60),
+        abort_delay: Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    // First module produces only 2 candidates — well below the threshold.
+    let modules = vec![
+        make_module(
+            "low_yield",
+            Some(vec![make_candidate(1.0), make_candidate(0.5)]),
+        ),
+        make_module("also_runs", Some(vec![make_candidate(0.3)])),
+    ];
+
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
+
+    // Both modules' candidates should be merged (no skipping).
+    assert_eq!(
+        syn.coordinated_structural_candidates.len(),
+        3,
+        "All modules should run when quality threshold not met"
+    );
+}
+
+#[test]
+fn quality_skip_still_records_stats_for_skipped_modules() {
+    use super::super::constants::{QUALITY_SKIP_GAIN_THRESHOLD, QUALITY_SKIP_MIN_CANDIDATES};
+
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: Duration::from_secs(60),
+        abort_delay: Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    // Enough high-quality candidates to trigger skipping.
+    let high_quality: Vec<_> = (0..QUALITY_SKIP_MIN_CANDIDATES + 5)
+        .map(|i| make_candidate(QUALITY_SKIP_GAIN_THRESHOLD + 0.5 * (i as f32 + 1.0)))
+        .collect();
+
+    let modules = vec![
+        make_module("producer", Some(high_quality)),
+        make_module("skipped_module", Some(vec![make_candidate(0.1)])),
+    ];
+
+    let mut tracker = ModuleOutcomeTracker::new();
+    super::merge_discovery_module_results(
+        &mut syn,
+        super::detect_discovery_modules_parallel(modules, None, None),
+        None,
+        false,
+        &mut tracker,
+    );
+
+    // Both modules should have stats recorded in metadata, even if skipped.
+    let module_names: Vec<&str> = syn
+        .metadata
+        .discovery_module_stats
+        .iter()
+        .map(|s| s.module_name.as_str())
+        .collect();
+    assert!(
+        module_names.contains(&"producer"),
+        "Producer module should have stats recorded"
+    );
+    assert!(
+        module_names.contains(&"skipped_module"),
+        "Skipped module should still have stats recorded"
+    );
 }

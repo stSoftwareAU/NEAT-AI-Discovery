@@ -99,6 +99,35 @@ pub const MODULE_GATE_THRESHOLD: f64 = 0.005;
 pub const SOFT_FAILURE_WEIGHT: f64 = 0.5;
 
 // =============================================================================
+// Quality-Based Module Skipping (Issue #1074)
+// =============================================================================
+
+/// Minimum expected gain for a candidate to be considered "high quality"
+/// during quality-based module skipping.
+///
+/// During the sequential merge phase, if the accumulated candidates already
+/// contain at least [`QUALITY_SKIP_MIN_CANDIDATES`] candidates whose
+/// `expected_creature_score_gain` exceeds this threshold, remaining
+/// lower-priority modules are skipped.
+///
+/// ## Valid Range
+/// Must be > 0.0. Values above 1.0 may be too aggressive and skip useful
+/// modules.
+pub const QUALITY_SKIP_GAIN_THRESHOLD: f32 = 0.01;
+
+/// Minimum number of high-quality candidates required before module skipping
+/// is triggered.
+///
+/// Quality-based skipping only activates when this many candidates with
+/// gain above [`QUALITY_SKIP_GAIN_THRESHOLD`] have been accumulated during
+/// the merge phase. This prevents premature skipping when only a few
+/// candidates have been found.
+///
+/// ## Valid Range
+/// Must be >= 1. Values above 50 may prevent skipping from ever triggering.
+pub const QUALITY_SKIP_MIN_CANDIDATES: usize = 15;
+
+// =============================================================================
 // Target-Type Scoring (Issue #468)
 // =============================================================================
 

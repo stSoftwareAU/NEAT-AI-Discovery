@@ -150,11 +150,29 @@ impl SequentialEvaluator {
     /// Returns `Accept` if there's sufficient evidence the candidate is beneficial,
     /// `Reject` if there's sufficient evidence the candidate is not beneficial,
     /// or `Continue` if more samples are needed.
+    ///
+    /// ## Heuristic fast path (Issue #1074)
+    ///
+    /// Before the full SPRT check (which requires `min_samples`), the
+    /// `is_strongly_beneficial()` and `is_strongly_harmful()` heuristics are
+    /// evaluated. These require only the `SequentialEvaluator`'s built-in
+    /// minimum of 30 samples and can trigger earlier Accept/Reject decisions
+    /// for extreme improvement ratios (>70% or <30%).
     #[must_use]
     pub fn should_stop(&self) -> EarlyTerminationDecision {
         let total = self.sample_count();
 
-        // Require minimum samples for statistical validity
+        // Issue #1074: Heuristic fast path — allows decisions before min_samples
+        // when the improvement ratio is extreme. The built-in min_samples (30)
+        // for the heuristic methods provides sufficient statistical foundation.
+        if self.is_strongly_beneficial() {
+            return EarlyTerminationDecision::Accept;
+        }
+        if self.is_strongly_harmful() {
+            return EarlyTerminationDecision::Reject;
+        }
+
+        // Require minimum samples for full SPRT statistical validity.
         if total < self.min_samples {
             return EarlyTerminationDecision::Continue;
         }
@@ -306,13 +324,18 @@ pub struct EarlyTerminationConfig {
 }
 
 impl Default for EarlyTerminationConfig {
+    /// Default configuration with reduced `min_samples` (Issue #1074).
+    ///
+    /// The `min_samples` was reduced from 100 to 50 to allow earlier
+    /// termination decisions when the `is_strongly_beneficial()` and
+    /// `is_strongly_harmful()` heuristics provide clear signals.
     fn default() -> Self {
         Self {
             enabled: true,
             alpha: 0.01,
             beta: 0.01,
             threshold: 0.0,
-            min_samples: 100,
+            min_samples: 50,
             check_interval: 1024,
         }
     }

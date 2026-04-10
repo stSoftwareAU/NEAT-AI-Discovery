@@ -19,7 +19,10 @@ use crate::CoordinatedStructuralCandidateJson;
 use crate::observability::PhaseTimer;
 use rayon::prelude::*;
 
-use super::constants::{MODULE_GATE_THRESHOLD, SOFT_FAILURE_WEIGHT};
+use super::constants::{
+    MODULE_GATE_THRESHOLD, QUALITY_SKIP_GAIN_THRESHOLD, QUALITY_SKIP_MIN_CANDIDATES,
+    SOFT_FAILURE_WEIGHT,
+};
 use super::module_weights::{DiscoveryModuleStatsJson, ModuleOutcomeTracker};
 use super::shared;
 use super::utils;
@@ -231,11 +234,28 @@ pub fn detect_discovery_modules_parallel(
     DiscoveryModuleDetectionResults { entries }
 }
 
+/// Count how many accumulated coordinated structural candidates exceed the
+/// quality gain threshold (Issue #1074).
+fn count_high_quality_candidates(syn: &shared::AnalyzeSynapsesResult, threshold: f32) -> usize {
+    syn.coordinated_structural_candidates
+        .iter()
+        .filter(|c| c.expected_creature_score_gain >= threshold)
+        .count()
+}
+
 /// Merge previously-detected discovery module results into the synapse result (Issue #1004).
 ///
 /// Iterates entries in original order and merges non-empty results sequentially.
 /// Also collects per-module stats for metadata (Issue #485, #792) and records
 /// pre-filtering soft failures in the tracker (Issue #1060).
+///
+/// ## Quality-based module skipping (Issue #1074)
+///
+/// After merging each module's results, checks whether the accumulated
+/// candidates already contain enough high-quality entries (at least
+/// [`QUALITY_SKIP_MIN_CANDIDATES`] candidates with gain above
+/// [`QUALITY_SKIP_GAIN_THRESHOLD`]). If so, remaining modules are skipped
+/// during the merge phase, saving post-processing time.
 pub fn merge_discovery_module_results(
     syn: &mut shared::AnalyzeSynapsesResult,
     detection_results: DiscoveryModuleDetectionResults,
@@ -243,6 +263,9 @@ pub fn merge_discovery_module_results(
     diversify: bool,
     tracker: &mut ModuleOutcomeTracker,
 ) {
+    let mut quality_skip_active = false;
+    let mut modules_skipped_by_quality: usize = 0;
+
     for entry in detection_results.entries {
         let candidates_produced = entry.result.as_ref().map_or(0, |r| r.candidates.len());
 
@@ -260,6 +283,16 @@ pub fn merge_discovery_module_results(
                 soft_failures: historical.soft_failures,
                 gated,
             });
+
+        // Issue #1074: Quality-based module skipping — once enough high-quality
+        // candidates have been accumulated, skip merging results from remaining
+        // modules. Stats are still recorded for observability.
+        if quality_skip_active {
+            modules_skipped_by_quality += 1;
+            let finished = format!("analysis::analyze_all → {} finished", entry.module_name);
+            crate::watchdog::beat(&finished);
+            continue;
+        }
 
         if let Some(mut result) = entry.result
             && !result.candidates.is_empty()
@@ -327,8 +360,28 @@ pub fn merge_discovery_module_results(
             }
         }
 
+        // Issue #1074: After merging this module's results, check if we have
+        // enough high-quality candidates to skip remaining modules.
+        let high_quality_count = count_high_quality_candidates(syn, QUALITY_SKIP_GAIN_THRESHOLD);
+        if high_quality_count >= QUALITY_SKIP_MIN_CANDIDATES {
+            quality_skip_active = true;
+            tracing::debug!(
+                high_quality_count,
+                threshold = QUALITY_SKIP_GAIN_THRESHOLD,
+                min_required = QUALITY_SKIP_MIN_CANDIDATES,
+                "Quality-based module skipping activated (Issue #1074)"
+            );
+        }
+
         let finished = format!("analysis::analyze_all → {} finished", entry.module_name);
         crate::watchdog::beat(&finished);
+    }
+
+    if modules_skipped_by_quality > 0 {
+        tracing::info!(
+            skipped = modules_skipped_by_quality,
+            "Discovery merge: skipped module(s) due to quality-based early exit (Issue #1074)"
+        );
     }
 }
 
