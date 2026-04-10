@@ -18,7 +18,9 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::cache::{
     LruRecordCache, RecordCache, StreamingRecordCache, TieredRecordCache,
 };
-use neat_ai_discovery::parquet_format::write_records_to_parquet;
+use neat_ai_discovery::parquet_format::{
+    ColumnProfile, read_all_records_grouped_by_neuron_with_profile, write_records_to_parquet,
+};
 use neat_ai_discovery::types::DiscoverRecord;
 use std::hint::black_box;
 use tempfile::tempdir;
@@ -222,10 +224,80 @@ fn bench_scaling(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark column pruning: full read vs without-errors read (Issue #1073).
+///
+/// The `errors` column is a `ListArray` requiring full materialisation.
+/// Skipping it when not needed should reduce I/O and deserialisation time.
+fn bench_column_pruning(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parquet_column_pruning");
+
+    // Use larger error arrays to amplify the ListArray deserialisation cost
+    for (neuron_count, records_per_neuron, errors_per_record) in
+        [(50, 200, 5), (100, 500, 10), (200, 500, 20)]
+    {
+        let temp_dir = tempdir().expect("Failed to create temp directory");
+        let parquet_path = temp_dir.path().join("pruning_bench.parquet");
+        let parquet_file = parquet_path.to_str().unwrap().to_string();
+
+        let mut records = Vec::with_capacity(neuron_count * records_per_neuron);
+        for neuron_idx in 0..neuron_count {
+            let neuron_uuid = format!("neuron-{neuron_idx}");
+            for obs_idx in 0..records_per_neuron {
+                let activation = (obs_idx as f32 % 100.0) / 100.0;
+                let errors: Vec<f32> = (0..errors_per_record)
+                    .map(|e| ((obs_idx + e) as f32 % 50.0 - 25.0) / 50.0)
+                    .collect();
+                records.push(DiscoverRecord::new(
+                    obs_idx as u32,
+                    neuron_uuid.clone(),
+                    Some(activation),
+                    activation,
+                    errors,
+                ));
+            }
+        }
+        write_records_to_parquet(&parquet_file, &records).expect("Failed to write parquet");
+
+        let total = neuron_count * records_per_neuron;
+        let id = format!("{neuron_count}n_{records_per_neuron}r_{errors_per_record}e_{total}total");
+
+        group.bench_with_input(
+            BenchmarkId::new("full_read", &id),
+            &parquet_file,
+            |b, pf| {
+                b.iter(|| {
+                    let grouped =
+                        read_all_records_grouped_by_neuron_with_profile(pf, ColumnProfile::Full)
+                            .expect("Failed to read");
+                    black_box(grouped.len());
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("without_errors", &id),
+            &parquet_file,
+            |b, pf| {
+                b.iter(|| {
+                    let grouped = read_all_records_grouped_by_neuron_with_profile(
+                        pf,
+                        ColumnProfile::WithoutErrors,
+                    )
+                    .expect("Failed to read");
+                    black_box(grouped.len());
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_small_dataset,
     bench_medium_dataset,
-    bench_scaling
+    bench_scaling,
+    bench_column_pruning
 );
 criterion_main!(benches);
