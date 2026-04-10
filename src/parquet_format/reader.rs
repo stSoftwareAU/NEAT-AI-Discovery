@@ -2,12 +2,42 @@
 
 use anyhow::{Context, Result};
 use arrow::array::{Array, Float32Array, ListArray, StringArray, UInt32Array};
+use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 
 use crate::types::DiscoverRecord;
 use std::time::SystemTime;
+
+/// Column projection profiles for Parquet reads (Issue #1073).
+///
+/// Different analysis paths need different subsets of columns.
+/// Skipping unused columns (particularly the `errors` `ListArray`)
+/// reduces I/O and deserialisation overhead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnProfile {
+    /// All columns: `obs_index`, `neuron_uuid`, `value`, `activation`, `errors`.
+    Full,
+    /// Core analysis columns without errors: `obs_index`, `neuron_uuid`, `value`, `activation`.
+    /// Records returned with this profile have an empty `errors` vec.
+    WithoutErrors,
+}
+
+impl ColumnProfile {
+    /// Root column indices for the discovery Parquet schema.
+    fn root_indices(self) -> Vec<usize> {
+        match self {
+            Self::Full => vec![0, 1, 2, 3, 4],
+            Self::WithoutErrors => vec![0, 1, 2, 3],
+        }
+    }
+
+    /// Whether this profile includes the errors column.
+    fn includes_errors(self) -> bool {
+        matches!(self, Self::Full)
+    }
+}
 
 /// Open a parquet file, returning a clear "file removed" error if the file
 /// no longer exists on disk (Issue #1049).
@@ -37,6 +67,15 @@ pub fn read_all_records_grouped_by_neuron(
     read_all_records_grouped_by_neuron_with_deadline(file_path, None)
 }
 
+/// Read all records grouped by neuron UUID, using a column projection profile
+/// to skip unnecessary columns (Issue #1073).
+pub fn read_all_records_grouped_by_neuron_with_profile(
+    file_path: &str,
+    profile: ColumnProfile,
+) -> Result<HashMap<String, Vec<DiscoverRecord>>> {
+    read_all_records_grouped_by_neuron_with_deadline_and_profile(file_path, None, profile)
+}
+
 /// Read all discovery records from a Parquet file, grouped by neuron UUID,
 /// with optional deadline checking and watchdog beats (Issue #648).
 ///
@@ -47,6 +86,24 @@ pub fn read_all_records_grouped_by_neuron(
 pub fn read_all_records_grouped_by_neuron_with_deadline(
     file_path: &str,
     deadline: Option<SystemTime>,
+) -> Result<HashMap<String, Vec<DiscoverRecord>>> {
+    read_all_records_grouped_by_neuron_with_deadline_and_profile(
+        file_path,
+        deadline,
+        ColumnProfile::Full,
+    )
+}
+
+/// Read all discovery records grouped by neuron UUID with deadline checking
+/// and column projection (Issue #1073).
+///
+/// When `profile` is `WithoutErrors`, the `errors` `ListArray` column is
+/// skipped entirely during I/O and deserialisation. Records returned with
+/// this profile have an empty `errors` vec.
+pub fn read_all_records_grouped_by_neuron_with_deadline_and_profile(
+    file_path: &str,
+    deadline: Option<SystemTime>,
+    profile: ColumnProfile,
 ) -> Result<HashMap<String, Vec<DiscoverRecord>>> {
     // Check deadline before starting
     if let Some(dl) = deadline
@@ -60,8 +117,13 @@ pub fn read_all_records_grouped_by_neuron_with_deadline(
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .context("Failed to create Parquet reader builder")?;
 
-    let reader = builder.build().context("Failed to build Parquet reader")?;
+    let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
+    let reader = builder
+        .with_projection(mask)
+        .build()
+        .context("Failed to build Parquet reader")?;
 
+    let include_errors = profile.includes_errors();
     let mut grouped_records: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
 
     for (batch_count, batch_result) in reader.enumerate() {
@@ -101,32 +163,52 @@ pub fn read_all_records_grouped_by_neuron_with_deadline(
 
         let batch = batch_result.context("Failed to read record batch")?;
 
-        // Get columns - use schema field names to find correct columns instead of hardcoded indices
+        // Column indices shift when projection is applied — use schema field names
+        let schema = batch.schema();
+        let obs_idx = schema
+            .index_of("obs_index")
+            .context("Missing obs_index column")?;
+        let uuid_idx = schema
+            .index_of("neuron_uuid")
+            .context("Missing neuron_uuid column")?;
+        let value_idx = schema.index_of("value").context("Missing value column")?;
+        let act_idx = schema
+            .index_of("activation")
+            .context("Missing activation column")?;
+
         let obs_index_col = batch
-            .column(0)
+            .column(obs_idx)
             .as_any()
             .downcast_ref::<UInt32Array>()
             .context("Failed to cast obs_index column")?;
         let neuron_uuid_col = batch
-            .column(1)
+            .column(uuid_idx)
             .as_any()
             .downcast_ref::<StringArray>()
             .context("Failed to cast neuron_uuid column")?;
         let value_col = batch
-            .column(2)
+            .column(value_idx)
             .as_any()
             .downcast_ref::<Float32Array>()
             .context("Failed to cast value column")?;
         let activation_col = batch
-            .column(3)
+            .column(act_idx)
             .as_any()
             .downcast_ref::<Float32Array>()
             .context("Failed to cast activation column")?;
-        let errors_col = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .context("Failed to cast errors column")?;
+
+        let errors_col = if include_errors {
+            let err_idx = schema.index_of("errors").context("Missing errors column")?;
+            Some(
+                batch
+                    .column(err_idx)
+                    .as_any()
+                    .downcast_ref::<ListArray>()
+                    .context("Failed to cast errors column")?,
+            )
+        } else {
+            None
+        };
 
         // Collect all records and group by neuron UUID
         for i in 0..batch.num_rows() {
@@ -139,15 +221,18 @@ pub fn read_all_records_grouped_by_neuron_with_deadline(
             };
             let activation = activation_col.value(i);
 
-            // Extract errors array
-            let errors_list = errors_col.value(i);
-            let errors_array = errors_list
-                .as_any()
-                .downcast_ref::<Float32Array>()
-                .context("Failed to cast errors array")?;
-            let errors: Vec<f32> = (0..errors_array.len())
-                .map(|j| errors_array.value(j))
-                .collect();
+            let errors = if let Some(errors_col) = errors_col {
+                let errors_list = errors_col.value(i);
+                let errors_array = errors_list
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .context("Failed to cast errors array")?;
+                (0..errors_array.len())
+                    .map(|j| errors_array.value(j))
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
             let record = DiscoverRecord::new(obs_index, uuid.clone(), value, activation, errors);
             grouped_records.entry(uuid).or_default().push(record);
@@ -164,44 +249,78 @@ pub fn read_records_from_parquet(
     file_path: &str,
     neuron_uuid: &str,
 ) -> Result<Vec<DiscoverRecord>> {
+    read_records_from_parquet_with_profile(file_path, neuron_uuid, ColumnProfile::Full)
+}
+
+/// Read discovery records filtered by neuron UUID, using a column projection
+/// profile to skip unnecessary columns (Issue #1073).
+pub fn read_records_from_parquet_with_profile(
+    file_path: &str,
+    neuron_uuid: &str,
+    profile: ColumnProfile,
+) -> Result<Vec<DiscoverRecord>> {
     let file = open_parquet_file(file_path)?;
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .context("Failed to create Parquet reader builder")?;
 
-    let reader = builder.build().context("Failed to build Parquet reader")?;
+    let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
+    let reader = builder
+        .with_projection(mask)
+        .build()
+        .context("Failed to build Parquet reader")?;
 
+    let include_errors = profile.includes_errors();
     let mut records = Vec::new();
 
     for batch_result in reader {
         let batch = batch_result.context("Failed to read record batch")?;
 
-        // Get columns - use schema field names to find correct columns instead of hardcoded indices
+        let schema = batch.schema();
+        let obs_idx = schema
+            .index_of("obs_index")
+            .context("Missing obs_index column")?;
+        let uuid_idx = schema
+            .index_of("neuron_uuid")
+            .context("Missing neuron_uuid column")?;
+        let value_idx = schema.index_of("value").context("Missing value column")?;
+        let act_idx = schema
+            .index_of("activation")
+            .context("Missing activation column")?;
+
         let obs_index_col = batch
-            .column(0)
+            .column(obs_idx)
             .as_any()
             .downcast_ref::<UInt32Array>()
             .context("Failed to cast obs_index column")?;
         let neuron_uuid_col = batch
-            .column(1)
+            .column(uuid_idx)
             .as_any()
             .downcast_ref::<StringArray>()
             .context("Failed to cast neuron_uuid column")?;
         let value_col = batch
-            .column(2)
+            .column(value_idx)
             .as_any()
             .downcast_ref::<Float32Array>()
             .context("Failed to cast value column")?;
         let activation_col = batch
-            .column(3)
+            .column(act_idx)
             .as_any()
             .downcast_ref::<Float32Array>()
             .context("Failed to cast activation column")?;
-        let errors_col = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .context("Failed to cast errors column")?;
+
+        let errors_col = if include_errors {
+            let err_idx = schema.index_of("errors").context("Missing errors column")?;
+            Some(
+                batch
+                    .column(err_idx)
+                    .as_any()
+                    .downcast_ref::<ListArray>()
+                    .context("Failed to cast errors column")?,
+            )
+        } else {
+            None
+        };
 
         // Filter by neuron UUID and collect records
         for i in 0..batch.num_rows() {
@@ -215,15 +334,18 @@ pub fn read_records_from_parquet(
                 };
                 let activation = activation_col.value(i);
 
-                // Extract errors array
-                let errors_list = errors_col.value(i);
-                let errors_array = errors_list
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .context("Failed to cast errors array")?;
-                let errors: Vec<f32> = (0..errors_array.len())
-                    .map(|j| errors_array.value(j))
-                    .collect();
+                let errors = if let Some(errors_col) = errors_col {
+                    let errors_list = errors_col.value(i);
+                    let errors_array = errors_list
+                        .as_any()
+                        .downcast_ref::<Float32Array>()
+                        .context("Failed to cast errors array")?;
+                    (0..errors_array.len())
+                        .map(|j| errors_array.value(j))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
 
                 records.push(DiscoverRecord::new(
                     obs_index,
@@ -266,6 +388,16 @@ pub fn read_records_from_parquet_with_limit(
     file_path: &str,
     max_obs: Option<u32>,
 ) -> Result<Vec<DiscoverRecord>> {
+    read_records_from_parquet_with_limit_and_profile(file_path, max_obs, ColumnProfile::Full)
+}
+
+/// Read discovery records with optional observation limit and column projection
+/// (Issue #1073).
+pub fn read_records_from_parquet_with_limit_and_profile(
+    file_path: &str,
+    max_obs: Option<u32>,
+    profile: ColumnProfile,
+) -> Result<Vec<DiscoverRecord>> {
     // Edge case: treat max_obs=0 as "return no rows".
     if matches!(max_obs, Some(0)) {
         return Ok(Vec::new());
@@ -276,39 +408,64 @@ pub fn read_records_from_parquet_with_limit(
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .context("Failed to create Parquet reader builder")?;
 
-    let reader = builder.build().context("Failed to build Parquet reader")?;
+    let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
+    let reader = builder
+        .with_projection(mask)
+        .build()
+        .context("Failed to build Parquet reader")?;
 
+    let include_errors = profile.includes_errors();
     let mut records = Vec::new();
     let mut accepted_obs_indices: HashSet<u32> = HashSet::new();
 
     for batch_result in reader {
         let batch = batch_result.context("Failed to read record batch")?;
 
+        let schema = batch.schema();
+        let obs_col_idx = schema
+            .index_of("obs_index")
+            .context("Missing obs_index column")?;
+        let uuid_col_idx = schema
+            .index_of("neuron_uuid")
+            .context("Missing neuron_uuid column")?;
+        let value_col_idx = schema.index_of("value").context("Missing value column")?;
+        let act_col_idx = schema
+            .index_of("activation")
+            .context("Missing activation column")?;
+
         let obs_index_col = batch
-            .column(0)
+            .column(obs_col_idx)
             .as_any()
             .downcast_ref::<UInt32Array>()
             .context("Failed to cast obs_index column")?;
         let neuron_uuid_col = batch
-            .column(1)
+            .column(uuid_col_idx)
             .as_any()
             .downcast_ref::<StringArray>()
             .context("Failed to cast neuron_uuid column")?;
         let value_col = batch
-            .column(2)
+            .column(value_col_idx)
             .as_any()
             .downcast_ref::<Float32Array>()
             .context("Failed to cast value column")?;
         let activation_col = batch
-            .column(3)
+            .column(act_col_idx)
             .as_any()
             .downcast_ref::<Float32Array>()
             .context("Failed to cast activation column")?;
-        let errors_col = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .context("Failed to cast errors column")?;
+
+        let errors_col = if include_errors {
+            let err_idx = schema.index_of("errors").context("Missing errors column")?;
+            Some(
+                batch
+                    .column(err_idx)
+                    .as_any()
+                    .downcast_ref::<ListArray>()
+                    .context("Failed to cast errors column")?,
+            )
+        } else {
+            None
+        };
 
         for i in 0..batch.num_rows() {
             let obs_index = obs_index_col.value(i);
@@ -343,15 +500,18 @@ pub fn read_records_from_parquet_with_limit(
             };
             let activation = activation_col.value(i);
 
-            // Extract errors array
-            let errors_list = errors_col.value(i);
-            let errors_array = errors_list
-                .as_any()
-                .downcast_ref::<Float32Array>()
-                .context("Failed to cast errors array")?;
-            let errors: Vec<f32> = (0..errors_array.len())
-                .map(|j| errors_array.value(j))
-                .collect();
+            let errors = if let Some(errors_col) = errors_col {
+                let errors_list = errors_col.value(i);
+                let errors_array = errors_list
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .context("Failed to cast errors array")?;
+                (0..errors_array.len())
+                    .map(|j| errors_array.value(j))
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
             records.push(DiscoverRecord::new(
                 obs_index,
