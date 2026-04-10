@@ -70,6 +70,10 @@ name = "parallel_discovery"
 harness = false
 
 [[bench]]
+name = "quality_skip_dispatch"
+harness = false
+
+[[bench]]
 name = "memory_streaming"
 harness = false
 
