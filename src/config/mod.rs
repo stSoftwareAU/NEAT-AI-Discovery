@@ -28,6 +28,7 @@
 //! | `NEAT_AI_DISCOVERY_ZERO_COPY` | Option\<bool\> | auto | Force-enable/disable zero-copy buffers |
 //! | `NEAT_AI_DISCOVERY_QUIET_GPU` | bool | `false` | Suppress Mesa/libEGL debug output (Linux) |
 //! | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | f32 | disabled | Metropolis-Hastings temperature for probabilistic acceptance (0.01–5.0) |
+//! | `NEAT_AI_DISCOVERY_SESSION_TTL_SECS` | u64 | `3600` | Streaming session TTL for orphan cleanup (60–86400) |
 //! | `NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL` | bool | `false` | Re-enable disabled batch-successful module (Issue #1059) |
 //!
 //! ## Observability Variables
@@ -127,6 +128,20 @@ mod tests {
         // (This test relies on the env var NOT being set in the test environment)
         let result = outlier_percentile();
         assert!(result > 0 && result < 100);
+    }
+
+    #[test]
+    fn session_ttl_default_values() {
+        assert_eq!(DEFAULT_SESSION_TTL_SECS, 3600);
+        assert_eq!(MIN_SESSION_TTL_SECS, 60);
+        assert_eq!(MAX_SESSION_TTL_SECS, 86400);
+    }
+
+    #[test]
+    fn session_ttl_returns_valid_value() {
+        // When no env var is set, should return the default (3600)
+        let result = session_ttl_secs();
+        assert!((MIN_SESSION_TTL_SECS..=MAX_SESSION_TTL_SECS).contains(&result));
     }
 
     #[test]

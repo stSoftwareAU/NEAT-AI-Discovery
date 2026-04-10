@@ -605,6 +605,7 @@ Key environment variables that control library behaviour:
 | `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` | Bias toward newer inputs |
 | `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY` | Output-only focus targets |
 | `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | Constant source folding threshold |
+| `NEAT_AI_DISCOVERY_SESSION_TTL_SECS` | Streaming session TTL for orphan cleanup (default 3600) |
 | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | Metropolis-Hastings probabilistic acceptance temperature |
 
 See [README.md — Troubleshooting](README.md#troubleshooting) and
