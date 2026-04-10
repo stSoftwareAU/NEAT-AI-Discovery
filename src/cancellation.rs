@@ -94,9 +94,50 @@ pub fn reset_analysis_active() {
     ANALYSIS_ACTIVE.store(0, Ordering::Release);
 }
 
+// ============================================================================
+// RAII guard for analysis-active tracking (Issue #1077)
+// ============================================================================
+
+/// RAII guard that increments the analysis-active counter on creation and
+/// decrements it on drop, even if the analysis panics.
+///
+/// Previously, `mark_analysis_started()` and `mark_analysis_finished()` were
+/// called manually before and after each analysis invocation. If the analysis
+/// panicked (e.g., from a rayon thread panic propagating through `rayon::join`),
+/// `mark_analysis_finished()` was never called. The host process would then
+/// wait forever for `is_analysis_active()` to return false, causing the
+/// "discovery locked up" symptom described in Issue #1077.
+///
+/// Using this guard ensures the counter is always decremented via the `Drop`
+/// trait, which runs even during stack unwinding from a panic.
+pub struct AnalysisActiveGuard {
+    _private: (),
+}
+
+impl Default for AnalysisActiveGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AnalysisActiveGuard {
+    /// Create a new guard, incrementing the analysis-active counter.
+    pub fn new() -> Self {
+        mark_analysis_started();
+        Self { _private: () }
+    }
+}
+
+impl Drop for AnalysisActiveGuard {
+    fn drop(&mut self) {
+        mark_analysis_finished();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_cancellation_flag_lifecycle() {
@@ -111,5 +152,63 @@ mod tests {
         // Reset clears the flag
         reset_cancellation();
         assert!(!is_cancelled());
+    }
+
+    /// Issue #1077: Verify that `AnalysisActiveGuard` increments on creation
+    /// and decrements on drop.
+    #[test]
+    #[serial]
+    fn test_analysis_active_guard_lifecycle() {
+        reset_analysis_active();
+        assert_eq!(analysis_active_count(), 0);
+
+        {
+            let _guard = AnalysisActiveGuard::new();
+            assert_eq!(analysis_active_count(), 1);
+        }
+        // Guard dropped — counter should be back to 0
+        assert_eq!(analysis_active_count(), 0);
+    }
+
+    /// Issue #1077: Verify that `AnalysisActiveGuard` decrements even when
+    /// a panic occurs, preventing the host from waiting forever.
+    #[test]
+    #[serial]
+    fn test_analysis_active_guard_decrements_on_panic() {
+        reset_analysis_active();
+        assert_eq!(analysis_active_count(), 0);
+
+        let result = std::panic::catch_unwind(|| {
+            let _guard = AnalysisActiveGuard::new();
+            assert_eq!(analysis_active_count(), 1);
+            panic!("simulated analysis panic");
+        });
+
+        assert!(result.is_err(), "should have caught the panic");
+        // Guard's Drop must have run during unwinding
+        assert_eq!(
+            analysis_active_count(),
+            0,
+            "counter must be decremented even after panic"
+        );
+    }
+
+    /// Issue #1077: Multiple guards can nest correctly.
+    #[test]
+    #[serial]
+    fn test_analysis_active_guard_multiple_guards() {
+        reset_analysis_active();
+
+        let _guard1 = AnalysisActiveGuard::new();
+        assert_eq!(analysis_active_count(), 1);
+
+        {
+            let _guard2 = AnalysisActiveGuard::new();
+            assert_eq!(analysis_active_count(), 2);
+        }
+        assert_eq!(analysis_active_count(), 1);
+
+        drop(_guard1);
+        assert_eq!(analysis_active_count(), 0);
     }
 }
