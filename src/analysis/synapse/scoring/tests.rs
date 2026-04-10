@@ -1,6 +1,6 @@
 //! Unit tests for the scoring improvement module.
 
-#![allow(clippy::cast_possible_truncation)] // Test sample counts are small
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Test sample counts are small
 use super::improvement::{
     compute_activation_improvement_and_count, compute_relu_improvement_and_count,
     compute_synapse_improvement_and_count,
@@ -111,5 +111,195 @@ fn test_relu_improvement_correct_with_complete_data() {
         compute_relu_improvement_and_count(&samples, 1.0, 0.5, 0.0, 0.5, Some(|x: f32| x.tanh()));
 
     assert!(improvement.is_finite());
+    assert_eq!(total, 2);
+}
+
+// =============================================================================
+// Issue #1075: Branchless variant correctness tests
+// =============================================================================
+
+/// Helper to build samples with some non-finite errors (NaN/Inf).
+fn build_samples_with_non_finite(count: usize) -> Vec<HelpfulSample> {
+    (0..count)
+        .map(|i| {
+            let phase = i as f32 * 0.1;
+            let avg_error = if i % 7 == 0 {
+                f32::NAN
+            } else if i % 11 == 0 {
+                f32::INFINITY
+            } else {
+                (phase * 0.7).cos() * 0.3
+            };
+            HelpfulSample {
+                activation: phase.sin() * 2.0,
+                avg_error,
+                target_value: Some(phase.cos()),
+                target_activation: Some(phase.cos().tanh()),
+            }
+        })
+        .collect()
+}
+
+/// Issue #1075: `ReLU` no-target path produces finite, reasonable results
+/// with samples containing non-finite error values.
+#[test]
+fn test_relu_no_target_branchless_handles_non_finite() {
+    let samples = build_samples_with_non_finite(100);
+    let baseline_sq: f32 = samples
+        .iter()
+        .filter(|s| s.avg_error.is_finite())
+        .map(|s| s.avg_error * s.avg_error)
+        .sum();
+
+    let (improvement, improved, total) =
+        compute_relu_improvement_and_count(&samples, 0.5, 0.3, 0.1, baseline_sq, None);
+
+    assert!(improvement.is_finite(), "improvement must be finite");
+    assert_eq!(total, 100);
+    assert!(improved <= total, "improved cannot exceed total");
+}
+
+/// Issue #1075: `ReLU` with-target path produces same results as no-target
+/// when target function is identity (f(x) = x).
+#[test]
+fn test_relu_with_target_identity_matches_no_target() {
+    // Use samples where all target_value equals avg_error baseline
+    let samples: Vec<HelpfulSample> = (0..50)
+        .map(|i| {
+            let phase = i as f32 * 0.1;
+            let activation = phase.sin() * 2.0;
+            let error = (phase * 0.7).cos() * 0.3;
+            // target_value = 0, target_activation = 0, so:
+            //   desired_value = 0 + error = error
+            //   expected = identity(error) = error
+            //   baseline_err = error - 0 = error  (matches no-target)
+            //   new_err = error - identity(contribution) = error - contribution (matches)
+            HelpfulSample {
+                activation,
+                avg_error: error,
+                target_value: Some(0.0),
+                target_activation: Some(0.0),
+            }
+        })
+        .collect();
+
+    let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+
+    let (imp_no_target, improved_no, _) =
+        compute_relu_improvement_and_count(&samples, 0.5, 0.3, 0.0, baseline_sq, None);
+
+    let (imp_with_target, improved_with, _) = compute_relu_improvement_and_count(
+        &samples,
+        0.5,
+        0.3,
+        0.0,
+        baseline_sq,
+        Some(|x: f32| x), // identity function
+    );
+
+    assert!(
+        (imp_no_target - imp_with_target).abs() < 1e-5,
+        "identity target should match no-target: {imp_no_target} vs {imp_with_target}"
+    );
+    assert_eq!(improved_no, improved_with);
+}
+
+/// Issue #1075: Synapse no-target branchless path produces finite results
+/// with non-finite error samples.
+#[test]
+fn test_synapse_no_target_branchless_handles_non_finite() {
+    let samples = build_samples_with_non_finite(100);
+    let baseline_sq: f32 = samples
+        .iter()
+        .filter(|s| s.avg_error.is_finite())
+        .map(|s| s.avg_error * s.avg_error)
+        .sum();
+
+    let (improvement, improved, worsened, total) =
+        compute_synapse_improvement_and_count(&samples, 0.35, baseline_sq, None);
+
+    assert!(improvement.is_finite(), "improvement must be finite");
+    assert_eq!(total, 100);
+    assert!(
+        improved + worsened <= total,
+        "improved + worsened cannot exceed total"
+    );
+}
+
+/// Issue #1075: Activation no-target branchless path produces correct results.
+#[test]
+fn test_activation_no_target_branchless_handles_non_finite() {
+    let samples = build_samples_with_non_finite(100);
+    let baseline_sq: f32 = samples
+        .iter()
+        .filter(|s| s.avg_error.is_finite())
+        .map(|s| s.avg_error * s.avg_error)
+        .sum();
+
+    let (improvement, improved, total) = compute_activation_improvement_and_count(
+        &samples,
+        0.4,
+        0.6,
+        -0.2,
+        |x: f32| x.tanh(),
+        baseline_sq,
+        None,
+    );
+
+    assert!(improvement.is_finite(), "improvement must be finite");
+    assert_eq!(total, 100);
+    assert!(improved <= total);
+}
+
+/// Issue #1075: All three functions return correct zero-improvement for empty samples.
+#[test]
+fn test_branchless_variants_empty_samples() {
+    let empty: Vec<HelpfulSample> = vec![];
+
+    let (imp, _, total) = compute_relu_improvement_and_count(&empty, 1.0, 1.0, 0.0, 1.0, None);
+    assert_eq!(imp, 0.0);
+    assert_eq!(total, 0);
+
+    let (imp, _, _, total) = compute_synapse_improvement_and_count(&empty, 0.5, 1.0, None);
+    assert_eq!(imp, 0.0);
+    assert_eq!(total, 0);
+
+    let (imp, _, total) = compute_activation_improvement_and_count(
+        &empty,
+        1.0,
+        1.0,
+        0.0,
+        |x: f32| x.tanh(),
+        1.0,
+        None,
+    );
+    assert_eq!(imp, 0.0);
+    assert_eq!(total, 0);
+}
+
+/// Issue #1075: Positive weight with positive errors should show improvement.
+#[test]
+fn test_synapse_improvement_positive_weight_reduces_positive_error() {
+    let samples = vec![
+        HelpfulSample {
+            activation: 1.0,
+            avg_error: 0.5,
+            target_value: None,
+            target_activation: None,
+        },
+        HelpfulSample {
+            activation: 0.8,
+            avg_error: 0.4,
+            target_value: None,
+            target_activation: None,
+        },
+    ];
+    let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+
+    let (improvement, improved, _, total) =
+        compute_synapse_improvement_and_count(&samples, 0.3, baseline_sq, None);
+
+    assert!(improvement > 0.0, "should show positive improvement");
+    assert!(improved > 0, "should have improved samples");
     assert_eq!(total, 2);
 }
