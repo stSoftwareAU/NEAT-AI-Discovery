@@ -46,12 +46,14 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
 
     let combined_input = build_analyze_all_input_from_parallel(input);
 
-    // Issue #1048: Track that an analysis is active so the host knows
-    // not to delete the parquet temp directory until we finish.
-    crate::cancellation::mark_analysis_started();
+    // Issue #1048 / #1077: Track that an analysis is active so the host
+    // knows not to delete the parquet temp directory until we finish.
+    // Uses an RAII guard so the counter is decremented even if the
+    // analysis panics (e.g., rayon thread panic), preventing the host
+    // from waiting forever ("discovery locked up").
+    let _active_guard = crate::cancellation::AnalysisActiveGuard::new();
 
     let analysis_result = analysis::analyze_all(&combined_input);
-    crate::cancellation::mark_analysis_finished();
 
     match analysis_result {
         Ok(result) => {
@@ -230,9 +232,10 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
         }
     };
 
-    // Issue #1048: Track that an analysis is active so the host knows
-    // not to delete the parquet temp directory until we finish.
-    crate::cancellation::mark_analysis_started();
+    // Issue #1048 / #1077: Track that an analysis is active so the host
+    // knows not to delete the parquet temp directory until we finish.
+    // Uses an RAII guard so the counter is decremented even on panic.
+    let _active_guard = crate::cancellation::AnalysisActiveGuard::new();
 
     let rank_result = focus::rank_focus_neurons(
         &input.parquet_file,
@@ -240,7 +243,6 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
         input.max_results,
         input.cost_of_growth,
     );
-    crate::cancellation::mark_analysis_finished();
 
     match rank_result {
         Ok(stats) => {
