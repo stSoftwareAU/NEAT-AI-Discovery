@@ -99,6 +99,29 @@ pub(crate) fn upsert_candidate(
 }
 
 // =============================================================================
+// Branchless Helpers (Issue #1075)
+// =============================================================================
+
+/// Branchless selection: returns `value` if finite, `0.0` otherwise.
+/// Avoids a data-dependent branch that inhibits auto-vectorisation.
+#[inline(always)]
+fn select_finite(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
+}
+
+/// Compute final improvement from accumulated error sums.
+/// Shared by all improvement functions to avoid repetition.
+#[inline(always)]
+fn finalise_improvement(effective_baseline: f32, new_error_sq_sum: f32) -> f32 {
+    if effective_baseline > EPSILON {
+        let imp = (effective_baseline - new_error_sq_sum) / effective_baseline;
+        select_finite(imp)
+    } else {
+        0.0
+    }
+}
+
+// =============================================================================
 // ReLU Improvement Calculation
 // =============================================================================
 
@@ -114,6 +137,9 @@ pub(crate) fn upsert_candidate(
 /// CRITICAL DOMAIN FIX (v0.1.120): When using `target_activation_fn` simulation,
 /// both baseline and new error must be computed in ACTIVATION domain.
 ///
+/// Issue #1075: Dispatches to specialised branchless variants to improve
+/// auto-vectorisation of the hot inner loop.
+///
 /// Returns (`improvement_percentage`, `improved_count`, `total_count`)
 pub fn compute_relu_improvement_and_count(
     samples: &[HelpfulSample],
@@ -127,80 +153,112 @@ pub fn compute_relu_improvement_and_count(
         return (0.0, 0, samples.len() as u32);
     }
 
-    let mut baseline_error_sq_sum = 0.0f32; // ACTIVATION domain when simulating
+    if let Some(target_fn) = target_activation_fn {
+        compute_relu_improvement_with_target(
+            samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            target_fn,
+        )
+    } else {
+        compute_relu_improvement_no_target(
+            samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            total_baseline_error_sq,
+        )
+    }
+}
+
+/// Branchless `ReLU` improvement for the no-target (VALUE domain) path.
+///
+/// Issue #1075: All samples are processed without `continue` or `Option` checks.
+/// The `is_finite()` guard uses branchless `select_finite` so the compiler can
+/// auto-vectorise the accumulation loop.
+#[inline]
+fn compute_relu_improvement_no_target(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    bias: f32,
+    total_baseline_error_sq: f32,
+) -> (f32, u32, u32) {
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
-    let mut worsened_count = 0u32;
 
     for sample in samples {
         let pre_activation = incoming_weight * sample.activation + bias;
         let relu_output = pre_activation.max(0.0);
         let contribution = outgoing_weight * relu_output;
 
-        let (baseline_error, new_error) = if let Some(target_fn) = target_activation_fn {
-            // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
-            // Gracefully skip samples missing target data (Issue #940).
-            let Some(target_value) = sample.target_value else {
-                continue;
-            };
-            let Some(target_activation) = sample.target_activation else {
-                continue;
-            };
-            let desired_value = target_value + sample.avg_error;
-            let expected = target_fn(desired_value);
+        let baseline_error = sample.avg_error;
+        let new_error = baseline_error - contribution;
 
-            // Baseline error in ACTIVATION domain
-            let baseline_err = expected - target_activation;
+        // Branchless accumulation — select_finite returns 0.0 for NaN/Inf
+        let new_err_safe = select_finite(new_error);
+        new_error_sq_sum += new_err_safe * new_err_safe;
 
-            // New error in ACTIVATION domain
-            let new_input = target_value + contribution;
-            let new_err = expected - target_fn(new_input);
-
-            (baseline_err, new_err)
-        } else {
-            // Linear approximation: both errors in VALUE domain
-            let baseline_err = sample.avg_error;
-            let new_err = sample.avg_error - contribution;
-
-            (baseline_err, new_err)
-        };
-
-        if baseline_error.is_finite() {
-            baseline_error_sq_sum += baseline_error * baseline_error;
-        }
-        if new_error.is_finite() {
-            new_error_sq_sum += new_error * new_error;
-        }
-
-        // Sample is improved if |new_error| < |baseline_error| (consistent domain)
         if new_error.abs() + EPSILON < baseline_error.abs() {
             improved_count += 1;
-        } else if new_error.abs() > baseline_error.abs() + EPSILON {
-            worsened_count += 1;
         }
     }
 
-    // Use computed ACTIVATION domain baseline when simulating, else use passed VALUE domain
-    let effective_baseline = if target_activation_fn.is_some() {
-        baseline_error_sq_sum
-    } else {
-        total_baseline_error_sq
-    };
+    let improvement = finalise_improvement(total_baseline_error_sq, new_error_sq_sum);
+    (improvement, improved_count, samples.len() as u32)
+}
 
-    let improvement = if effective_baseline > EPSILON {
-        (effective_baseline - new_error_sq_sum) / effective_baseline
-    } else {
-        0.0
-    };
-    let improvement = if improvement.is_finite() {
-        improvement
-    } else {
-        0.0
-    };
+/// `ReLU` improvement with target activation function (ACTIVATION domain).
+///
+/// Issue #1075: Separated from the no-target path to eliminate the per-sample
+/// `Option` branch. The `continue` on missing target data is inherent to this
+/// path and cannot be removed without changing semantics.
+#[inline]
+fn compute_relu_improvement_with_target(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    bias: f32,
+    target_fn: fn(f32) -> f32,
+) -> (f32, u32, u32) {
+    let mut baseline_error_sq_sum = 0.0f32;
+    let mut new_error_sq_sum = 0.0f32;
+    let mut improved_count = 0u32;
 
-    let total_count = samples.len() as u32;
-    let _ = worsened_count; // Kept for potential future use
-    (improvement, improved_count, total_count)
+    for sample in samples {
+        let pre_activation = incoming_weight * sample.activation + bias;
+        let relu_output = pre_activation.max(0.0);
+        let contribution = outgoing_weight * relu_output;
+
+        // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
+        // Gracefully skip samples missing target data (Issue #940).
+        let Some(target_value) = sample.target_value else {
+            continue;
+        };
+        let Some(target_activation) = sample.target_activation else {
+            continue;
+        };
+        let desired_value = target_value + sample.avg_error;
+        let expected = target_fn(desired_value);
+
+        let baseline_error = expected - target_activation;
+        let new_input = target_value + contribution;
+        let new_error = expected - target_fn(new_input);
+
+        // Branchless accumulation
+        let base_safe = select_finite(baseline_error);
+        baseline_error_sq_sum += base_safe * base_safe;
+        let new_safe = select_finite(new_error);
+        new_error_sq_sum += new_safe * new_safe;
+
+        if new_error.abs() + EPSILON < baseline_error.abs() {
+            improved_count += 1;
+        }
+    }
+
+    let improvement = finalise_improvement(baseline_error_sq_sum, new_error_sq_sum);
+    (improvement, improved_count, samples.len() as u32)
 }
 
 // =============================================================================
@@ -216,6 +274,9 @@ pub fn compute_relu_improvement_and_count(
 /// CRITICAL DOMAIN FIX (v0.1.120): When using `target_activation_fn` simulation,
 /// both baseline and new error must be computed in ACTIVATION domain.
 ///
+/// Issue #1075: Dispatches to specialised branchless variants to improve
+/// auto-vectorisation of the hot inner loop.
+///
 /// Returns (`improvement_percentage`, `improved_count`, `total_count`)
 pub fn compute_activation_improvement_and_count(
     samples: &[HelpfulSample],
@@ -230,73 +291,115 @@ pub fn compute_activation_improvement_and_count(
         return (0.0, 0, samples.len() as u32);
     }
 
-    let mut baseline_error_sq_sum = 0.0f32; // ACTIVATION domain when simulating
+    if let Some(target_fn) = target_activation_fn {
+        compute_activation_improvement_with_target(
+            samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            activation_fn,
+            target_fn,
+        )
+    } else {
+        compute_activation_improvement_no_target(
+            samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            activation_fn,
+            total_baseline_error_sq,
+        )
+    }
+}
+
+/// Branchless activation improvement for the no-target (VALUE domain) path.
+///
+/// Issue #1075: All samples are processed without `continue` or `Option` checks.
+/// The `is_finite()` guard uses branchless `select_finite` so the compiler can
+/// auto-vectorise the accumulation loop.
+#[inline]
+fn compute_activation_improvement_no_target(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    bias: f32,
+    activation_fn: fn(f32) -> f32,
+    total_baseline_error_sq: f32,
+) -> (f32, u32, u32) {
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
-    let total_count = samples.len() as u32;
 
     for sample in samples {
         let pre_activation = incoming_weight * sample.activation + bias;
         let neuron_output = activation_fn(pre_activation);
         let contribution = outgoing_weight * neuron_output;
 
-        let (baseline_error, new_error) = if let Some(target_fn) = target_activation_fn {
-            // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
-            // Gracefully skip samples missing target data (Issue #940).
-            let Some(target_value) = sample.target_value else {
-                continue;
-            };
-            let Some(target_activation) = sample.target_activation else {
-                continue;
-            };
-            let desired_value = target_value + sample.avg_error;
-            let expected = target_fn(desired_value);
+        let baseline_error = sample.avg_error;
+        let new_error = baseline_error - contribution;
 
-            // Baseline error in ACTIVATION domain
-            let baseline_err = expected - target_activation;
+        // Branchless accumulation
+        let new_err_safe = select_finite(new_error);
+        new_error_sq_sum += new_err_safe * new_err_safe;
 
-            // New error in ACTIVATION domain
-            let new_input = target_value + contribution;
-            let new_err = expected - target_fn(new_input);
-
-            (baseline_err, new_err)
-        } else {
-            // Linear approximation: both errors in VALUE domain
-            (sample.avg_error, sample.avg_error - contribution)
-        };
-
-        if baseline_error.is_finite() {
-            baseline_error_sq_sum += baseline_error * baseline_error;
-        }
-        if new_error.is_finite() {
-            new_error_sq_sum += new_error * new_error;
-        }
-
-        // Sample is improved if |new_error| < |baseline_error| (consistent domain)
         if new_error.abs() + EPSILON < baseline_error.abs() {
             improved_count += 1;
         }
     }
 
-    // Use computed ACTIVATION domain baseline when simulating, else use passed VALUE domain
-    let effective_baseline = if target_activation_fn.is_some() {
-        baseline_error_sq_sum
-    } else {
-        total_baseline_error_sq
-    };
+    let improvement = finalise_improvement(total_baseline_error_sq, new_error_sq_sum);
+    (improvement, improved_count, samples.len() as u32)
+}
 
-    let improvement = if effective_baseline > EPSILON {
-        (effective_baseline - new_error_sq_sum) / effective_baseline
-    } else {
-        0.0
-    };
-    let improvement = if improvement.is_finite() {
-        improvement
-    } else {
-        0.0
-    };
+/// Activation improvement with target function (ACTIVATION domain).
+///
+/// Issue #1075: Separated from the no-target path to eliminate the per-sample
+/// `Option` branch.
+#[inline]
+fn compute_activation_improvement_with_target(
+    samples: &[HelpfulSample],
+    incoming_weight: f32,
+    outgoing_weight: f32,
+    bias: f32,
+    activation_fn: fn(f32) -> f32,
+    target_fn: fn(f32) -> f32,
+) -> (f32, u32, u32) {
+    let mut baseline_error_sq_sum = 0.0f32;
+    let mut new_error_sq_sum = 0.0f32;
+    let mut improved_count = 0u32;
 
-    (improvement, improved_count, total_count)
+    for sample in samples {
+        let pre_activation = incoming_weight * sample.activation + bias;
+        let neuron_output = activation_fn(pre_activation);
+        let contribution = outgoing_weight * neuron_output;
+
+        // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
+        // Gracefully skip samples missing target data (Issue #940).
+        let Some(target_value) = sample.target_value else {
+            continue;
+        };
+        let Some(target_activation) = sample.target_activation else {
+            continue;
+        };
+        let desired_value = target_value + sample.avg_error;
+        let expected = target_fn(desired_value);
+
+        let baseline_error = expected - target_activation;
+        let new_input = target_value + contribution;
+        let new_error = expected - target_fn(new_input);
+
+        // Branchless accumulation
+        let base_safe = select_finite(baseline_error);
+        baseline_error_sq_sum += base_safe * base_safe;
+        let new_safe = select_finite(new_error);
+        new_error_sq_sum += new_safe * new_safe;
+
+        if new_error.abs() + EPSILON < baseline_error.abs() {
+            improved_count += 1;
+        }
+    }
+
+    let improvement = finalise_improvement(baseline_error_sq_sum, new_error_sq_sum);
+    (improvement, improved_count, samples.len() as u32)
 }
 
 // =============================================================================
@@ -311,6 +414,9 @@ pub fn compute_activation_improvement_and_count(
 /// `total_baseline_error_sq` is in VALUE domain, so we compute our own ACTIVATION
 /// domain baseline when simulating.
 ///
+/// Issue #1075: Dispatches to specialised branchless variants based on the
+/// `TargetSimulationMode` to improve auto-vectorisation of the hot inner loop.
+///
 /// Returns (`improvement_percentage`, `improved_count`, `worsened_count`, `total_count`)
 pub fn compute_synapse_improvement_and_count(
     samples: &[HelpfulSample],
@@ -324,92 +430,172 @@ pub fn compute_synapse_improvement_and_count(
 
     let target_sim = get_target_simulation_mode(samples, target_squash);
 
-    let mut baseline_error_sq_sum = 0.0f32; // ACTIVATION domain when simulating
+    match target_sim {
+        TargetSimulationMode::None => {
+            compute_synapse_improvement_no_target(samples, weight, total_baseline_error_sq)
+        }
+        TargetSimulationMode::Full(target_fn) => {
+            compute_synapse_improvement_with_target(samples, weight, target_fn)
+        }
+        TargetSimulationMode::ApproximateValueFromActivation {
+            activation_fn: target_fn,
+            inverse_fn,
+        } => compute_synapse_improvement_approximate(samples, weight, target_fn, inverse_fn),
+    }
+}
+
+/// Branchless synapse improvement for the no-target (VALUE domain) path.
+///
+/// Issue #1075: No `continue`, no `Option` checks, and `is_finite()` guards
+/// replaced with branchless `select_finite` for auto-vectorisation.
+#[inline]
+fn compute_synapse_improvement_no_target(
+    samples: &[HelpfulSample],
+    weight: f32,
+    total_baseline_error_sq: f32,
+) -> (f32, u32, u32, u32) {
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
     let mut worsened_count = 0u32;
-    let total_count = samples.len() as u32;
 
     for sample in samples {
         let contribution = weight * sample.activation;
+        let baseline_error = sample.avg_error;
+        let new_error = baseline_error - contribution;
 
-        let (baseline_error, new_error) = match target_sim {
-            TargetSimulationMode::None => {
-                // Linear approximation: both errors in VALUE domain.
-                (sample.avg_error, sample.avg_error - contribution)
-            }
-            TargetSimulationMode::Full(target_fn) => {
-                // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
-                // Gracefully skip samples missing target data (Issue #940).
-                let Some(target_value) = sample.target_value else {
-                    continue;
-                };
-                let Some(target_activation) = sample.target_activation else {
-                    continue;
-                };
-                let desired_value = target_value + sample.avg_error;
-                let expected = target_fn(desired_value);
+        // Branchless accumulation
+        let new_err_safe = select_finite(new_error);
+        new_error_sq_sum += new_err_safe * new_err_safe;
 
-                let baseline_err = expected - target_activation;
-                let new_input = target_value + contribution;
-                let new_err = expected - target_fn(new_input);
-
-                (baseline_err, new_err)
-            }
-            TargetSimulationMode::ApproximateValueFromActivation {
-                activation_fn: target_fn,
-                inverse_fn,
-            } => {
-                // As above, but approximate missing target_value using the inverse function
-                // (Issue #906). Gracefully skip samples missing target_activation (Issue #940).
-                let Some(target_activation) = sample.target_activation else {
-                    continue;
-                };
-                let target_value = sample
-                    .target_value
-                    .unwrap_or_else(|| inverse_fn(target_activation));
-                let desired_value = target_value + sample.avg_error;
-                let expected = target_fn(desired_value);
-
-                let baseline_err = expected - target_activation;
-                let new_input = target_value + contribution;
-                let new_err = expected - target_fn(new_input);
-
-                (baseline_err, new_err)
-            }
-        };
-
-        if baseline_error.is_finite() {
-            baseline_error_sq_sum += baseline_error * baseline_error;
-        }
-        if new_error.is_finite() {
-            new_error_sq_sum += new_error * new_error;
-        }
-
-        // Count improved/worsened samples using consistent domain comparison
-        if new_error.abs() + EPSILON < baseline_error.abs() {
+        let new_abs = new_error.abs();
+        let base_abs = baseline_error.abs();
+        if new_abs + EPSILON < base_abs {
             improved_count += 1;
-        } else if new_error.abs() > baseline_error.abs() + EPSILON {
+        } else if new_abs > base_abs + EPSILON {
             worsened_count += 1;
         }
     }
 
-    // Use computed ACTIVATION domain baseline when simulating, else use passed VALUE domain.
-    let effective_baseline = match target_sim {
-        TargetSimulationMode::None => total_baseline_error_sq,
-        _ => baseline_error_sq_sum,
-    };
+    let improvement = finalise_improvement(total_baseline_error_sq, new_error_sq_sum);
+    (
+        improvement,
+        improved_count,
+        worsened_count,
+        samples.len() as u32,
+    )
+}
 
-    let improvement = if effective_baseline > EPSILON {
-        (effective_baseline - new_error_sq_sum) / effective_baseline
-    } else {
-        0.0
-    };
-    let improvement = if improvement.is_finite() {
-        improvement
-    } else {
-        0.0
-    };
+/// Synapse improvement with full target simulation (ACTIVATION domain).
+///
+/// Issue #1075: Separated from the no-target path to eliminate the per-sample
+/// `TargetSimulationMode` match.
+#[inline]
+fn compute_synapse_improvement_with_target(
+    samples: &[HelpfulSample],
+    weight: f32,
+    target_fn: fn(f32) -> f32,
+) -> (f32, u32, u32, u32) {
+    let mut baseline_error_sq_sum = 0.0f32;
+    let mut new_error_sq_sum = 0.0f32;
+    let mut improved_count = 0u32;
+    let mut worsened_count = 0u32;
 
-    (improvement, improved_count, worsened_count, total_count)
+    for sample in samples {
+        let contribution = weight * sample.activation;
+
+        // CRITICAL: Use ACTIVATION domain for BOTH baseline and new error.
+        // Gracefully skip samples missing target data (Issue #940).
+        let Some(target_value) = sample.target_value else {
+            continue;
+        };
+        let Some(target_activation) = sample.target_activation else {
+            continue;
+        };
+        let desired_value = target_value + sample.avg_error;
+        let expected = target_fn(desired_value);
+
+        let baseline_error = expected - target_activation;
+        let new_input = target_value + contribution;
+        let new_error = expected - target_fn(new_input);
+
+        // Branchless accumulation
+        let base_safe = select_finite(baseline_error);
+        baseline_error_sq_sum += base_safe * base_safe;
+        let new_safe = select_finite(new_error);
+        new_error_sq_sum += new_safe * new_safe;
+
+        let new_abs = new_error.abs();
+        let base_abs = baseline_error.abs();
+        if new_abs + EPSILON < base_abs {
+            improved_count += 1;
+        } else if new_abs > base_abs + EPSILON {
+            worsened_count += 1;
+        }
+    }
+
+    let improvement = finalise_improvement(baseline_error_sq_sum, new_error_sq_sum);
+    (
+        improvement,
+        improved_count,
+        worsened_count,
+        samples.len() as u32,
+    )
+}
+
+/// Synapse improvement with approximate inverse simulation (ACTIVATION domain).
+///
+/// Issue #1075: Separated from other paths to eliminate the per-sample
+/// `TargetSimulationMode` match. Uses inverse function to recover `target_value`
+/// from `target_activation` when `target_value` is not recorded (Issue #906).
+#[inline]
+fn compute_synapse_improvement_approximate(
+    samples: &[HelpfulSample],
+    weight: f32,
+    target_fn: fn(f32) -> f32,
+    inverse_fn: fn(f32) -> f32,
+) -> (f32, u32, u32, u32) {
+    let mut baseline_error_sq_sum = 0.0f32;
+    let mut new_error_sq_sum = 0.0f32;
+    let mut improved_count = 0u32;
+    let mut worsened_count = 0u32;
+
+    for sample in samples {
+        let contribution = weight * sample.activation;
+
+        // Gracefully skip samples missing target_activation (Issue #940).
+        let Some(target_activation) = sample.target_activation else {
+            continue;
+        };
+        let target_value = sample
+            .target_value
+            .unwrap_or_else(|| inverse_fn(target_activation));
+        let desired_value = target_value + sample.avg_error;
+        let expected = target_fn(desired_value);
+
+        let baseline_error = expected - target_activation;
+        let new_input = target_value + contribution;
+        let new_error = expected - target_fn(new_input);
+
+        // Branchless accumulation
+        let base_safe = select_finite(baseline_error);
+        baseline_error_sq_sum += base_safe * base_safe;
+        let new_safe = select_finite(new_error);
+        new_error_sq_sum += new_safe * new_safe;
+
+        let new_abs = new_error.abs();
+        let base_abs = baseline_error.abs();
+        if new_abs + EPSILON < base_abs {
+            improved_count += 1;
+        } else if new_abs > base_abs + EPSILON {
+            worsened_count += 1;
+        }
+    }
+
+    let improvement = finalise_improvement(baseline_error_sq_sum, new_error_sq_sum);
+    (
+        improvement,
+        improved_count,
+        worsened_count,
+        samples.len() as u32,
+    )
 }
