@@ -36,6 +36,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
+use std::time::Instant;
 
 use crate::parquet_format::ParquetRecordWriter;
 use crate::types::DiscoverRecord;
@@ -60,6 +61,7 @@ pub struct RecordingSession {
     parquet_path: String,
     records_written: u64,
     finished: bool,
+    created_at: Instant,
 }
 
 impl RecordingSession {
@@ -82,6 +84,7 @@ impl RecordingSession {
             parquet_path: parquet_path.to_string(),
             records_written: 0,
             finished: false,
+            created_at: Instant::now(),
         })
     }
 }
@@ -105,10 +108,46 @@ impl Drop for RecordingSession {
     }
 }
 
+/// Remove streaming sessions that have exceeded the configured TTL.
+///
+/// This is called automatically at the start of each `start_session()` call
+/// to prevent orphaned sessions from leaking memory when the host process
+/// crashes or fails to call finish/cancel. Stale sessions are logged at
+/// `warn` level before removal; their temp files are cleaned up via the
+/// `Drop` implementation on `RecordingSession`.
+pub fn cleanup_stale_sessions() {
+    let ttl_secs = crate::config::session_ttl_secs();
+    let ttl = std::time::Duration::from_secs(ttl_secs);
+    let mut sessions = SESSIONS.lock();
+
+    let stale_ids: Vec<String> = sessions
+        .iter()
+        .filter_map(|(id, session)| {
+            let age = session.created_at.elapsed();
+            if age > ttl { Some(id.clone()) } else { None }
+        })
+        .collect();
+
+    for id in stale_ids {
+        if let Some(session) = sessions.remove(&id) {
+            let age_secs = session.created_at.elapsed().as_secs();
+            tracing::warn!(
+                session_id = %id,
+                age_secs = age_secs,
+                ttl_secs = ttl_secs,
+                "Removing stale streaming session (exceeded TTL)"
+            );
+            // Session `Drop` cleans up the incomplete temporary file
+        }
+    }
+}
+
 /// Start a new recording session
 ///
 /// Creates a Parquet file and returns a session ID for subsequent append/finish calls.
 pub fn start_session(creature: CreatureJson, temp_dir: String) -> Result<String> {
+    // Clean up any orphaned sessions that have exceeded the TTL
+    cleanup_stale_sessions();
     // Create temp directory
     let temp_path = Path::new(&temp_dir);
     fs::create_dir_all(temp_path)
@@ -284,6 +323,7 @@ pub fn active_session_count() -> usize {
 mod tests {
     use super::*;
     use crate::{NeuronData, NeuronJson};
+    use std::time::Duration;
     use tempfile::TempDir;
 
     fn session_exists(session_id: &str) -> bool {
@@ -632,5 +672,137 @@ mod tests {
 
         let (_, _, total) = finish_session(&session_id).unwrap();
         assert_eq!(total, written);
+    }
+
+    #[test]
+    fn test_cleanup_stale_sessions_removes_expired() {
+        let temp_dir = TempDir::new().unwrap();
+        let creature = create_test_creature();
+        let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+        // Start a session and manually backdate its creation time
+        let session_id = start_session(creature, temp_path).unwrap();
+        assert!(session_exists(&session_id));
+
+        // Backdate the session's created_at to be well past any TTL
+        {
+            let mut sessions = SESSIONS.lock();
+            if let Some(session) = sessions.get_mut(&session_id) {
+                // Set created_at to 2 hours ago (exceeds default 1-hour TTL)
+                session.created_at = Instant::now() - Duration::from_secs(7200);
+            }
+        }
+
+        // Run cleanup — should remove the stale session
+        cleanup_stale_sessions();
+
+        assert!(
+            !session_exists(&session_id),
+            "expected stale session to be removed after cleanup"
+        );
+    }
+
+    #[test]
+    fn test_cleanup_stale_sessions_preserves_fresh() {
+        let temp_dir = TempDir::new().unwrap();
+        let creature = create_test_creature();
+        let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+        // Start a fresh session (created_at is now)
+        let session_id = start_session(creature, temp_path).unwrap();
+        assert!(session_exists(&session_id));
+
+        // Run cleanup — fresh session should survive
+        cleanup_stale_sessions();
+
+        assert!(
+            session_exists(&session_id),
+            "expected fresh session to survive cleanup"
+        );
+
+        // Clean up
+        cancel_session(&session_id).unwrap();
+    }
+
+    #[test]
+    fn test_cleanup_stale_sessions_cleans_temp_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let creature = create_test_creature();
+        let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+        let session_id = start_session(creature, temp_path.clone()).unwrap();
+
+        // Write some records so a temp file exists on disk
+        let batch = vec![(
+            0u32,
+            vec![NeuronData {
+                neuron_uuid: "hidden-1".to_string(),
+                activation: 0.5,
+                value: Some(0.4),
+                errors: vec![0.1],
+            }],
+            vec![0.1, 0.2],
+        )];
+        append_records(&session_id, batch).unwrap();
+
+        let tmp_file = Path::new(&temp_path).join("discovery_data.parquet.tmp");
+        assert!(
+            tmp_file.exists(),
+            "expected tmp file to exist before cleanup"
+        );
+
+        // Backdate the session
+        {
+            let mut sessions = SESSIONS.lock();
+            if let Some(session) = sessions.get_mut(&session_id) {
+                session.created_at = Instant::now() - Duration::from_secs(7200);
+            }
+        }
+
+        // Run cleanup — should remove the session and its temp file via Drop
+        cleanup_stale_sessions();
+
+        assert!(
+            !session_exists(&session_id),
+            "expected stale session to be removed"
+        );
+        assert!(
+            !tmp_file.exists(),
+            "expected tmp file to be cleaned up when stale session is removed"
+        );
+    }
+
+    #[test]
+    fn test_start_session_triggers_cleanup() {
+        let temp_dir1 = TempDir::new().unwrap();
+        let temp_dir2 = TempDir::new().unwrap();
+        let creature1 = create_test_creature();
+        let creature2 = create_test_creature();
+
+        // Start first session and backdate it
+        let session_id1 =
+            start_session(creature1, temp_dir1.path().to_str().unwrap().to_string()).unwrap();
+        {
+            let mut sessions = SESSIONS.lock();
+            if let Some(session) = sessions.get_mut(&session_id1) {
+                session.created_at = Instant::now() - Duration::from_secs(7200);
+            }
+        }
+
+        // Starting a new session should trigger cleanup of the stale one
+        let session_id2 =
+            start_session(creature2, temp_dir2.path().to_str().unwrap().to_string()).unwrap();
+
+        assert!(
+            !session_exists(&session_id1),
+            "expected stale session to be cleaned up when starting new session"
+        );
+        assert!(
+            session_exists(&session_id2),
+            "expected new session to exist"
+        );
+
+        // Clean up
+        cancel_session(&session_id2).unwrap();
     }
 }

@@ -337,6 +337,31 @@ pub fn batch_successful_enabled() -> bool {
     parse_bool_env("NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL")
 }
 
+/// Default streaming session TTL in seconds (1 hour).
+pub const DEFAULT_SESSION_TTL_SECS: u64 = 3600;
+
+/// Minimum streaming session TTL in seconds (60 seconds).
+pub const MIN_SESSION_TTL_SECS: u64 = 60;
+
+/// Maximum streaming session TTL in seconds (24 hours).
+pub const MAX_SESSION_TTL_SECS: u64 = 86400;
+
+/// Get the streaming session TTL (time-to-live) in seconds.
+///
+/// Set `NEAT_AI_DISCOVERY_SESSION_TTL_SECS` to control how long orphaned
+/// streaming sessions are kept before automatic cleanup. Sessions older than
+/// this threshold are removed at the start of each new `start_discovery_session()`
+/// call.
+///
+/// Default: 3600 (1 hour). Clamped to 60–86400.
+pub fn session_ttl_secs() -> u64 {
+    std::env::var("NEAT_AI_DISCOVERY_SESSION_TTL_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_SESSION_TTL_SECS)
+        .clamp(MIN_SESSION_TTL_SECS, MAX_SESSION_TTL_SECS)
+}
+
 /// Get the macOS `sample` program path for thread dumps.
 ///
 /// Set `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` to override.
