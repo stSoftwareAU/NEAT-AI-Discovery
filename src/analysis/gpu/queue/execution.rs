@@ -17,8 +17,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use super::recovery::{
-    DEFAULT_BACKOFF_INITIAL_MS, DEFAULT_BACKOFF_MAX_MS, backoff_delay_ms, get_gpu_retry_limit,
-    is_device_lost_error,
+    DEFAULT_BACKOFF_INITIAL_MS, DEFAULT_BACKOFF_MAX_MS, MINIMUM_GPU_BATCH_SIZE, backoff_delay_ms,
+    get_gpu_retry_limit, is_device_lost_error, is_memory_exhaustion_error,
 };
 use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::analyzer::{GpuAnalyzer, GpuEvaluator};
@@ -297,12 +297,50 @@ impl GpuWorkQueue {
                     }
                 }
                 Err(device_err) => {
-                    // Device-lost detected — attempt recovery
+                    let is_oom = is_memory_exhaustion_error(&device_err);
+
                     tracing::warn!(
                         error = %device_err,
                         retry_limit = retry_limit,
+                        is_memory_exhaustion = is_oom,
                         "GPU device-lost detected — attempting recovery"
                     );
+
+                    // Issue #1083: On OOM, halve the batch size for retry.
+                    // Track the effective batch size so subsequent requests
+                    // also use the reduced value.
+                    let mut effective_batch_size = analyzer.batch_size();
+                    if is_oom {
+                        let new_size = effective_batch_size / 2;
+                        if new_size < MINIMUM_GPU_BATCH_SIZE {
+                            tracing::warn!(
+                                current_batch_size = effective_batch_size,
+                                minimum_batch_size = MINIMUM_GPU_BATCH_SIZE,
+                                "GPU batch size already at or below minimum — \
+                                 cannot reduce further, propagating OOM error"
+                            );
+                            send_error_to_request(
+                                &request,
+                                &format!(
+                                    "GPU memory exhaustion with batch size {effective_batch_size} \
+                                     (minimum {MINIMUM_GPU_BATCH_SIZE}) — cannot reduce further: \
+                                     {device_err}"
+                                ),
+                            );
+                            continue;
+                        }
+                        effective_batch_size = new_size;
+                        tracing::warn!(
+                            previous_batch_size = effective_batch_size * 2,
+                            new_batch_size = effective_batch_size,
+                            "Reducing GPU batch size due to memory exhaustion — \
+                             consider tuning NEAT_AI_DISCOVERY_GPU_BATCH_SIZE"
+                        );
+                        if track_metrics {
+                            let metrics = global_gpu_metrics();
+                            metrics.record_batch_size_reduction(effective_batch_size);
+                        }
+                    }
 
                     let mut recovered = false;
                     for attempt in 1..=retry_limit {
@@ -315,25 +353,33 @@ impl GpuWorkQueue {
                             attempt = attempt,
                             max_attempts = retry_limit,
                             backoff_ms = delay_ms,
+                            effective_batch_size = effective_batch_size,
                             error = %device_err,
                             "GPU recovery attempt {attempt}/{retry_limit} — \
                              waiting {delay_ms}ms before re-initialising GpuAnalyzer"
                         );
                         std::thread::sleep(Duration::from_millis(delay_ms));
 
-                        match GpuAnalyzer::new() {
+                        let init_result = if is_oom {
+                            GpuAnalyzer::new_with_batch_size(effective_batch_size)
+                        } else {
+                            GpuAnalyzer::new()
+                        };
+
+                        match init_result {
                             Ok(new_analyzer) => {
                                 analyzer = new_analyzer;
                                 tracing::warn!(
                                     attempt = attempt,
+                                    batch_size = analyzer.batch_size(),
                                     "GPU device recovered — retrying failed work item"
                                 );
 
-                                // Retry the failed request with the new analyser
                                 match execute_request(&analyzer, &request, track_metrics) {
                                     Ok(()) => {
                                         tracing::warn!(
                                             attempt = attempt,
+                                            batch_size = analyzer.batch_size(),
                                             "GPU work item succeeded after recovery"
                                         );
                                         recovered = true;
@@ -345,7 +391,6 @@ impl GpuWorkQueue {
                                             error = %retry_err,
                                             "GPU work item failed again after recovery"
                                         );
-                                        // Continue to next attempt
                                     }
                                 }
                             }
@@ -355,7 +400,6 @@ impl GpuWorkQueue {
                                     error = %init_err,
                                     "GpuAnalyzer re-initialisation failed"
                                 );
-                                // Continue to next attempt
                             }
                         }
                     }
@@ -366,9 +410,6 @@ impl GpuWorkQueue {
                             "GPU recovery exhausted all {retry_limit} attempts — \
                              error propagated to caller"
                         );
-                        // The error was already sent to the response channel
-                        // in execute_request (or the channel was dropped).
-                        // Send the error back if the response channel is still open.
                         send_error_to_request(
                             &request,
                             &format!(

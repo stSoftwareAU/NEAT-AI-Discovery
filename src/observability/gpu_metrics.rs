@@ -39,6 +39,8 @@ pub struct GpuMetrics {
     total_samples_processed: AtomicUsize,
     queue_wait_time_us: AtomicU64,
     gpu_busy_time_us: AtomicU64,
+    effective_batch_size: AtomicUsize,
+    batch_size_reductions: AtomicUsize,
 }
 
 impl GpuMetrics {
@@ -49,6 +51,8 @@ impl GpuMetrics {
             total_samples_processed: AtomicUsize::new(0),
             queue_wait_time_us: AtomicU64::new(0),
             gpu_busy_time_us: AtomicU64::new(0),
+            effective_batch_size: AtomicUsize::new(0),
+            batch_size_reductions: AtomicUsize::new(0),
         }
     }
 
@@ -96,6 +100,26 @@ impl GpuMetrics {
         self.gpu_busy_time_us.load(Ordering::Relaxed)
     }
 
+    /// Record a batch size reduction due to memory exhaustion (Issue #1083).
+    #[inline]
+    pub fn record_batch_size_reduction(&self, new_batch_size: usize) {
+        self.effective_batch_size
+            .store(new_batch_size, Ordering::Relaxed);
+        self.batch_size_reductions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get the current effective batch size (0 if never reduced).
+    #[inline]
+    pub fn effective_batch_size(&self) -> usize {
+        self.effective_batch_size.load(Ordering::Relaxed)
+    }
+
+    /// Get the number of batch size reductions due to memory exhaustion.
+    #[inline]
+    pub fn batch_size_reductions(&self) -> usize {
+        self.batch_size_reductions.load(Ordering::Relaxed)
+    }
+
     /// Calculate GPU utilisation as a percentage.
     ///
     /// Returns the percentage of time the GPU was busy vs total time
@@ -115,10 +139,14 @@ impl GpuMetrics {
     ///
     /// Output format: `[gpu] batches: N, samples: N, utilisation: N.N%`
     pub fn report(&self) {
+        let reductions = self.batch_size_reductions();
+        let effective = self.effective_batch_size();
         tracing::info!(
             batches = self.batch_count(),
             samples = self.total_samples_processed(),
             utilisation_percent = format_args!("{:.1}", self.utilisation_percent()),
+            batch_size_reductions = reductions,
+            effective_batch_size = effective,
             "GPU metrics"
         );
     }
