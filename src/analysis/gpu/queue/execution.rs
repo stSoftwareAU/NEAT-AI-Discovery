@@ -12,7 +12,7 @@
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{Receiver, RecvTimeoutError};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -29,6 +29,11 @@ use crate::observability::{global_gpu_metrics, gpu_metrics_enabled};
 /// takes longer than this, a warning is logged to help diagnose liveness issues
 /// before the outer task controller kills the process.
 const GPU_REQUEST_STALL_WARN_SECS: u64 = 30;
+
+/// Timeout for `recv_timeout()` in the GPU thread loop (Issue #1082). Long
+/// enough to avoid busy-waiting, short enough to detect a dropped sender or
+/// cancellation promptly.
+const GPU_RECV_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Return a short label describing the GPU work request variant.
 fn request_label(request: &GpuWorkRequest) -> &'static str {
@@ -235,7 +240,25 @@ impl GpuWorkQueue {
         let completed_count = AtomicU64::new(0);
         tracing::debug!("GPU thread loop started — waiting for work");
 
-        while let Ok(request) = work_rx.recv() {
+        loop {
+            let request = match work_rx.recv_timeout(GPU_RECV_TIMEOUT) {
+                Ok(req) => req,
+                Err(RecvTimeoutError::Timeout) => {
+                    crate::watchdog::beat("gpu-queue-idle");
+                    if crate::cancellation::is_cancelled() {
+                        tracing::info!("GPU thread exiting — cancellation requested");
+                        break;
+                    }
+                    tracing::debug!("GPU queue: recv timeout — channel idle, continuing");
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    tracing::warn!(
+                        "GPU queue: sender disconnected without Shutdown — exiting thread"
+                    );
+                    break;
+                }
+            };
             if matches!(request, GpuWorkRequest::Shutdown) {
                 let total = completed_count.load(Ordering::Relaxed);
                 tracing::debug!(
@@ -450,6 +473,38 @@ mod tests {
     use super::*;
     use crate::analysis::samples::{HarmfulStats, HelpfulStats};
     use crossbeam_channel::bounded;
+
+    /// Verify that the GPU thread exits cleanly when the sender is dropped
+    /// without sending a `Shutdown` request (Issue #1082). The
+    /// `recv_timeout()` detects the disconnected channel and breaks the loop.
+    #[test]
+    fn test_gpu_thread_exits_when_sender_dropped() {
+        if !crate::analysis::gpu::analyzer::GpuAnalyzer::gpu_is_available() {
+            eprintln!("Skipping test: no GPU available");
+            return;
+        }
+
+        let analyzer = match crate::analysis::gpu::analyzer::GpuAnalyzer::new() {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("Skipping test: GPU analyser init failed: {e}");
+                return;
+            }
+        };
+
+        let (tx, rx) = bounded::<GpuWorkRequest>(1);
+        drop(tx);
+
+        let handle = std::thread::spawn(move || {
+            GpuWorkQueue::gpu_thread_loop(analyzer, rx);
+        });
+
+        let join_result = handle.join();
+        assert!(
+            join_result.is_ok(),
+            "GPU thread should exit cleanly when sender is dropped"
+        );
+    }
 
     /// Verify that `send_error_to_request` does not panic when the receiver has
     /// been dropped (e.g., caller timed out). Each variant is tested.
