@@ -457,6 +457,22 @@ impl GpuAnalyzer {
             batch_size,
         })
     }
+
+    /// Create a new `GpuAnalyzer` with all pipelines initialised, overriding
+    /// the auto-detected batch size (Issue #1083).
+    ///
+    /// Used by the GPU recovery loop to re-initialise with a reduced batch size
+    /// after memory exhaustion.
+    pub fn new_with_batch_size(batch_size_override: usize) -> Result<Self> {
+        let mut analyzer = Self::new()?;
+        analyzer.batch_size = batch_size_override;
+        Ok(analyzer)
+    }
+
+    /// Return the current effective batch size.
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
+    }
 }
 
 #[cfg(test)]

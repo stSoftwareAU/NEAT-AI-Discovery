@@ -9,6 +9,10 @@
 /// propagating the error to the caller.
 pub const DEFAULT_GPU_RETRY_LIMIT: u32 = 3;
 
+/// Minimum GPU batch size floor (Issue #1083). Below this threshold, memory
+/// exhaustion errors are propagated rather than retrying with a smaller batch.
+pub const MINIMUM_GPU_BATCH_SIZE: usize = 64;
+
 /// Environment variable name for configuring the GPU retry limit.
 pub const GPU_RETRY_LIMIT_ENV: &str = "NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT";
 
@@ -65,6 +69,16 @@ pub fn is_device_lost_error(error: &anyhow::Error) -> bool {
         || msg.contains("device creation failed")
         || msg.contains("gpu driver")
         || msg.contains("driver may be unresponsive")
+}
+
+/// Check whether an error specifically indicates GPU memory exhaustion.
+///
+/// This is a subset of `is_device_lost_error` — it matches only memory-related
+/// patterns ("out of memory", "allocation failed"). Used by the retry loop
+/// (Issue #1083) to decide whether to reduce batch size before retrying.
+pub fn is_memory_exhaustion_error(error: &anyhow::Error) -> bool {
+    let msg = format!("{error:#}").to_lowercase();
+    msg.contains("out of memory") || msg.contains("allocation failed")
 }
 
 #[cfg(test)]
@@ -192,5 +206,50 @@ mod tests {
     fn test_default_backoff_constants() {
         assert_eq!(DEFAULT_BACKOFF_INITIAL_MS, 10);
         assert_eq!(DEFAULT_BACKOFF_MAX_MS, 1_000);
+    }
+
+    #[test]
+    fn test_minimum_gpu_batch_size_constant() {
+        assert_eq!(MINIMUM_GPU_BATCH_SIZE, 64);
+    }
+
+    #[test]
+    fn test_is_memory_exhaustion_error_detects_oom() {
+        let cases = vec![
+            "Out of memory allocating GPU buffer",
+            "wgpu: allocation failed for 256MB buffer",
+            "GPU allocation failed",
+        ];
+        for msg in cases {
+            let err = anyhow::anyhow!("{msg}");
+            assert!(
+                is_memory_exhaustion_error(&err),
+                "Expected memory exhaustion detection for: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_memory_exhaustion_error_ignores_non_memory_errors() {
+        let cases = vec![
+            "Device is lost",
+            "device lost during operation",
+            "Internal error in GPU pipeline",
+            "Too many command buffers in flight",
+            "Invalid input data",
+        ];
+        for msg in cases {
+            let err = anyhow::anyhow!("{msg}");
+            assert!(
+                !is_memory_exhaustion_error(&err),
+                "Should not detect memory exhaustion for: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_memory_exhaustion_error_case_insensitive() {
+        let err = anyhow::anyhow!("OUT OF MEMORY");
+        assert!(is_memory_exhaustion_error(&err));
     }
 }

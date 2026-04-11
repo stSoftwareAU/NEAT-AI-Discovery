@@ -61,7 +61,8 @@ pub use analyzer::{GPU_MAX_BATCH_ALLOC_BYTES, GpuAnalyzer, GpuEvaluator};
 pub use queue::GpuWorkQueue;
 pub use queue::recovery::{
     DEFAULT_BACKOFF_INITIAL_MS, DEFAULT_BACKOFF_MAX_MS, DEFAULT_GPU_RETRY_LIMIT,
-    GPU_RETRY_LIMIT_ENV, backoff_delay_ms, get_gpu_retry_limit, is_device_lost_error,
+    GPU_RETRY_LIMIT_ENV, MINIMUM_GPU_BATCH_SIZE, backoff_delay_ms, get_gpu_retry_limit,
+    is_device_lost_error, is_memory_exhaustion_error,
 };
 
 // Re-export shader module contents (Issue #277)
