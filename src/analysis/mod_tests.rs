@@ -323,3 +323,59 @@ fn merge_coordinated_structural_filters_zero_gain_candidates() {
     assert!(syn.coordinated_structural_candidates[0].expected_creature_score_gain > 0.0);
     assert_eq!(syn.metadata.candidates_returned, 1);
 }
+
+// =============================================================================
+// Issue #1086: Error context enrichment tests
+// =============================================================================
+
+#[test]
+fn run_optional_analysis_error_includes_phase_context() {
+    // When a phase closure returns an error, the propagated error chain should
+    // include the phase name so callers can identify which analysis phase failed.
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let result: Result<Option<()>> = run_optional_analysis(
+        true,
+        "starting",
+        "finished",
+        "skipped",
+        "synapse_analysis",
+        || Err(anyhow::anyhow!("inner GPU error")),
+    );
+
+    let err = result.expect_err("should propagate the error");
+    let err_chain = format!("{err:#}");
+    assert!(
+        err_chain.contains("synapse_analysis"),
+        "error chain should include the phase name, got: {err_chain}"
+    );
+    assert!(
+        err_chain.contains("inner GPU error"),
+        "error chain should preserve the original error, got: {err_chain}"
+    );
+}
+
+#[test]
+fn run_optional_analysis_success_does_not_add_spurious_context() {
+    // Successful phases should not wrap the result in extra error context.
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let result: Result<Option<i32>> = run_optional_analysis(
+        true,
+        "starting",
+        "finished",
+        "skipped",
+        "test_phase",
+        || Ok(42),
+    );
+
+    assert_eq!(result.unwrap(), Some(42));
+}

@@ -75,7 +75,7 @@ fn analyze_neurons_rejects_duplicate_focus_targets() {
 
     let err =
         analyze_neurons(&input).expect_err("Neuron analysis should refuse duplicate focus neurons");
-    let message = format!("{err}");
+    let message = format!("{err:#}");
     assert!(
         message.contains("duplicate focus neurons"),
         "Expected duplicate focus error, got: {message}",
@@ -149,7 +149,7 @@ fn analyze_synapses_rejects_duplicate_focus_targets() {
 
     let err = analyze_synapses(&input)
         .expect_err("Synapse analysis should refuse duplicate focus neurons");
-    let message = format!("{err}");
+    let message = format!("{err:#}");
     assert!(
         message.contains("duplicate focus neurons"),
         "Expected duplicate focus error, got: {message}",
@@ -450,7 +450,7 @@ fn analyze_synapses_requires_focus_targets() {
 
     let err =
         analyze_synapses(&input).expect_err("Synapse analysis should refuse empty focus lists");
-    let message = format!("{err}");
+    let message = format!("{err:#}");
     assert!(
         message.contains("at least one focus neuron"),
         "Expected missing focus error, got: {message}",
