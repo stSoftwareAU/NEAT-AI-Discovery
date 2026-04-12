@@ -17,7 +17,7 @@ mod post_processing;
 mod preparation;
 
 use crate::{AnalyzeNeuronsInput, CandidateNeuronJson};
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 // Import shared types from the analysis module structure
 use crate::analysis::shared::{AnalyzeNeuronsResult, TimingScope};
@@ -52,10 +52,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// This is the public entry point for neuron analysis.
 pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResult> {
     // Validate focus_neurons before expensive pre-loading
-    require_unique_focus(&input.focus_neurons, "Neuron analysis")?;
+    require_unique_focus(&input.focus_neurons, "Neuron analysis")
+        .context("neuron analysis input validation failed")?;
 
     // Pre-load all records for faster analysis (1 scan vs ~2000 scans)
-    let cache = Arc::new(RecordCache::new_adaptive(&input.parquet_file)?);
+    let cache = Arc::new(
+        RecordCache::new_adaptive(&input.parquet_file)
+            .context("failed to load parquet record cache for neuron analysis")?,
+    );
     analyze_neurons_with_cache(input, cache)
 }
 
@@ -67,7 +71,11 @@ pub(crate) fn analyze_neurons_with_cache(
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeNeuronsResult> {
     let deadline = build_deadline(input.analysis_deadline_ms);
-    let gpu_queue = Arc::new(GpuWorkQueue::new()?.with_deadline(deadline));
+    let gpu_queue = Arc::new(
+        GpuWorkQueue::new()
+            .context("failed to create GPU work queue for neuron analysis")?
+            .with_deadline(deadline),
+    );
     analyze_neurons_with_cache_and_gpu_queue(input, cache, gpu_queue)
 }
 
@@ -87,7 +95,8 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
     let ordered_neurons = build_ordered_neurons(&input.creature);
 
     // Build lookup maps and filter focus targets
-    let prep = preparation::prepare_neuron_analysis(input, &ordered_neurons, &cache)?;
+    let prep = preparation::prepare_neuron_analysis(input, &ordered_neurons, &cache)
+        .context("failed to prepare neuron analysis")?;
 
     // If no output neurons remain after filtering, return early with empty results
     if let Some(early_return) = prep.early_return {
@@ -254,7 +263,10 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
                 &deadline,
                 &analysis_timed_out,
                 &diagnostics,
-            )?;
+            )
+            .with_context(|| {
+                format!("failed to load source records for neuron {target_uuid}")
+            })?;
 
             // Check if timed out during pre-filtering
             if analysis_timed_out.load(Ordering::Relaxed) {
@@ -328,7 +340,10 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
                     &eval_ctx,
                     &deadline,
                     &analysis_timed_out,
-                )?;
+                )
+                .with_context(|| {
+                    format!("failed during GPU evaluation for neuron {target_uuid}")
+                })?;
             }
 
             // Track completion of this focus neuron for timeout reporting.

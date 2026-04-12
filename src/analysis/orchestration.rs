@@ -7,7 +7,7 @@
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::observability::{
     PhaseTimer, ProfileData, ProfileMode, global_gpu_metrics, profile_mode,
@@ -32,7 +32,7 @@ pub(crate) fn run_optional_analysis<T>(
     if enabled {
         crate::watchdog::beat(starting);
         let _timer = PhaseTimer::new(phase_name);
-        let result = f()?;
+        let result = f().with_context(|| format!("failed during {phase_name} phase"))?;
         crate::watchdog::beat(finished);
         Ok(Some(result))
     } else {
@@ -98,7 +98,10 @@ fn dispatch_analyses(
                 )
             },
         );
-        Ok((syn_result?, neu_result?))
+        Ok((
+            syn_result.context("failed during synapse analysis phase")?,
+            neu_result.context("failed during neuron analysis phase")?,
+        ))
     } else {
         // Only one (or neither) analysis is enabled — run sequentially.
         let synapse_result = run_optional_analysis(
@@ -280,7 +283,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
             });
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(e).context("failed to load parquet record cache for analysis"),
     };
     profile.record_phase(
         "parquet_loading",
@@ -341,8 +344,11 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // The GpuWorkQueue is designed for concurrent submitters via crossbeam_channel,
     // so a single GPU thread serves both synapse and neuron analyses.
     let loading_deadline_for_gpu = utils::build_deadline(input.analysis_deadline_ms);
-    let shared_gpu_queue =
-        Arc::new(super::gpu::GpuWorkQueue::new()?.with_deadline(loading_deadline_for_gpu));
+    let shared_gpu_queue = Arc::new(
+        super::gpu::GpuWorkQueue::new()
+            .context("failed to create GPU work queue for analysis dispatch")?
+            .with_deadline(loading_deadline_for_gpu),
+    );
 
     // Issue #1002: Both analyses run concurrently via rayon::join when both are
     // enabled, so randomised ordering is no longer needed — both get the full
@@ -371,7 +377,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
             });
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(e).context("failed during analysis dispatch"),
     };
 
     // Issue #1028: Check memory budget after GPU analysis. If exceeded, skip

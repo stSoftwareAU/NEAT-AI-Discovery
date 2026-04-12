@@ -3,7 +3,7 @@
 //! This module handles GPU thread lifecycle management including creation,
 //! initialisation with timeout, graceful shutdown, and cleanup via Drop.
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use std::thread;
 use std::time::Duration;
@@ -73,7 +73,9 @@ impl GpuWorkQueue {
         let init_timeout = Duration::from_secs(GPU_INIT_TIMEOUT_SECS);
         match init_rx.recv_timeout(init_timeout) {
             Ok(Ok(())) => {} // Success
-            Ok(Err(e)) => return Err(e),
+            Ok(Err(e)) => {
+                return Err(e).context("GPU analyser initialisation failed on GPU thread");
+            }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                 return Err(anyhow!(
                     "GPU initialisation timed out after {GPU_INIT_TIMEOUT_SECS}s. \
