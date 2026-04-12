@@ -7,6 +7,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 
+use crate::DiscoveryError;
 use crate::types::DiscoverRecord;
 use std::time::SystemTime;
 
@@ -42,10 +43,29 @@ impl ColumnProfile {
 /// Open a parquet file, returning a clear "file removed" error if the file
 /// no longer exists on disk (Issue #1049).
 ///
+/// Also rejects `.parquet.tmp` files which indicate incomplete writes from
+/// the streaming writer (Issue #1085).
+///
 /// This distinguishes external deletion (e.g., host cleaned up temp directory)
 /// from other I/O errors such as corruption or permission issues, allowing
 /// callers to return partial results instead of crashing.
 fn open_parquet_file(file_path: &str) -> Result<File> {
+    // Reject .parquet.tmp files — these are incomplete writes (Issue #1085)
+    if file_path.ends_with(".parquet.tmp") {
+        tracing::warn!(
+            file_path,
+            "Skipping incomplete Parquet file (still has .tmp suffix). \
+             This file was likely left behind by an interrupted recording session."
+        );
+        return Err(DiscoveryError::Io {
+            detail: format!(
+                "Parquet file '{file_path}' has a .tmp suffix indicating an incomplete write. \
+                 It may have been left behind by an interrupted recording session."
+            ),
+        }
+        .into());
+    }
+
     File::open(file_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             anyhow::anyhow!(
@@ -56,6 +76,83 @@ fn open_parquet_file(file_path: &str) -> Result<File> {
             anyhow::anyhow!("Failed to open Parquet file: {file_path}").context(e)
         }
     })
+}
+
+/// Expected column names for the discovery Parquet schema.
+const EXPECTED_COLUMNS: &[&str] = &["obs_index", "neuron_uuid", "value", "activation", "errors"];
+
+/// Validate that the Parquet file's schema matches the expected discovery schema
+/// (Issue #1085). Checks that required columns exist and that the file has the
+/// expected number of root columns for the requested projection profile.
+///
+/// This is a metadata-only check with no performance impact on valid files.
+fn validate_parquet_schema(
+    builder: &ParquetRecordBatchReaderBuilder<File>,
+    file_path: &str,
+    profile: ColumnProfile,
+) -> Result<()> {
+    let parquet_schema = builder.parquet_schema();
+    let num_columns = parquet_schema.num_columns();
+
+    // The discovery schema has 5 root columns (errors has a nested child, so
+    // the Parquet schema may report 6 columns). Check that we have at least
+    // the minimum required columns for the requested profile.
+    let required_count = match profile {
+        ColumnProfile::Full => 5,
+        ColumnProfile::WithoutErrors => 4,
+    };
+
+    if num_columns < required_count {
+        return Err(DiscoveryError::Io {
+            detail: format!(
+                "Parquet file '{file_path}' schema mismatch: expected at least \
+                 {required_count} columns but found {num_columns}. \
+                 The file may not be a valid discovery Parquet file."
+            ),
+        }
+        .into());
+    }
+
+    // Verify that the root column indices we need exist in the schema
+    let root_indices = profile.root_indices();
+    let max_index = root_indices.iter().copied().max().unwrap_or(0);
+
+    // Use the Arrow schema from the builder to check column names
+    let arrow_schema = builder.schema();
+    let field_count = arrow_schema.fields().len();
+
+    if max_index >= field_count {
+        return Err(DiscoveryError::Io {
+            detail: format!(
+                "Parquet file '{file_path}' schema mismatch: expected column index \
+                 {max_index} but file only has {field_count} columns. \
+                 The file may not be a valid discovery Parquet file."
+            ),
+        }
+        .into());
+    }
+
+    // Check that column names match expected names
+    let columns_to_check = match profile {
+        ColumnProfile::Full => EXPECTED_COLUMNS,
+        ColumnProfile::WithoutErrors => &EXPECTED_COLUMNS[..4],
+    };
+
+    for (idx, expected_name) in root_indices.iter().zip(columns_to_check.iter()) {
+        let actual_name = arrow_schema.field(*idx).name();
+        if actual_name != *expected_name {
+            return Err(DiscoveryError::Io {
+                detail: format!(
+                    "Parquet file '{file_path}' schema mismatch: expected column '{expected_name}' \
+                     at index {idx} but found '{actual_name}'. \
+                     The file may not be a valid discovery Parquet file."
+                ),
+            }
+            .into());
+        }
+    }
+
+    Ok(())
 }
 
 /// Read all discovery records from a Parquet file, grouped by neuron UUID.
@@ -116,6 +213,8 @@ pub fn read_all_records_grouped_by_neuron_with_deadline_and_profile(
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .context("Failed to create Parquet reader builder")?;
+
+    validate_parquet_schema(&builder, file_path, profile)?;
 
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
     let reader = builder
@@ -264,6 +363,8 @@ pub fn read_records_from_parquet_with_profile(
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .context("Failed to create Parquet reader builder")?;
 
+    validate_parquet_schema(&builder, file_path, profile)?;
+
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
     let reader = builder
         .with_projection(mask)
@@ -407,6 +508,8 @@ pub fn read_records_from_parquet_with_limit_and_profile(
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .context("Failed to create Parquet reader builder")?;
+
+    validate_parquet_schema(&builder, file_path, profile)?;
 
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
     let reader = builder
