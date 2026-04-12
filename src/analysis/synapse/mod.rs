@@ -98,7 +98,7 @@ pub(crate) use scoring::{
 // =============================================================================
 
 use crate::AnalyzeSynapsesInput;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::analysis::diagnostics::require_unique_focus;
 use crate::analysis::gpu::GpuWorkQueue;
@@ -116,10 +116,14 @@ use std::sync::Arc;
 /// This is the public entry point for synapse analysis.
 pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesResult> {
     // Validate focus_neurons before expensive pre-loading
-    require_unique_focus(&input.focus_neurons, "Synapse analysis")?;
+    require_unique_focus(&input.focus_neurons, "Synapse analysis")
+        .context("synapse analysis input validation failed")?;
 
     // Pre-load all records for faster analysis (1 scan vs ~2000 scans)
-    let cache = Arc::new(RecordCache::new_adaptive(&input.parquet_file)?);
+    let cache = Arc::new(
+        RecordCache::new_adaptive(&input.parquet_file)
+            .context("failed to load parquet record cache for synapse analysis")?,
+    );
     analyze_synapses_with_cache(input, cache)
 }
 
@@ -133,7 +137,11 @@ pub(crate) fn analyze_synapses_with_cache(
     // Issue #953: Propagate the analysis deadline so GpuEvaluator trait calls use
     // adaptive timeouts, preventing liveness stalls on slow GPU responses.
     let deadline = crate::analysis::utils::build_deadline(input.analysis_deadline_ms);
-    let gpu_queue = Arc::new(GpuWorkQueue::new()?.with_deadline(deadline));
+    let gpu_queue = Arc::new(
+        GpuWorkQueue::new()
+            .context("failed to create GPU work queue for synapse analysis")?
+            .with_deadline(deadline),
+    );
     orchestration::analyze_synapses_with_cache_impl(input, cache, gpu_queue)
 }
 

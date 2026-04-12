@@ -81,9 +81,10 @@ impl<T> GpuFuture<T> {
                 "GPU batch evaluation timed out after {timeout_secs}s. \
                  The GPU may be unresponsive. Consider reducing batch size or restarting."
             )),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                Err(anyhow::anyhow!("GPU response channel closed unexpectedly"))
-            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!(
+                "GPU response channel closed unexpectedly — \
+                 the GPU thread may have exited or panicked"
+            )),
         }
     }
 }

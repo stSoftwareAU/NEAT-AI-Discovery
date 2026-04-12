@@ -5,7 +5,7 @@
 //! up focus targets, running parallel per-target analysis, and assembling results.
 
 use crate::AnalyzeSynapsesInput;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::analysis::diagnostics::{TargetDiagnostics, require_unique_focus};
 use crate::analysis::gpu::{GpuAnalyzer, GpuWorkQueue};
@@ -41,7 +41,8 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     let lookups = preparation::build_creature_lookups(input);
 
     // Phase 2: Focus target and diagnostics setup
-    let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_synapses")?;
+    let unique_focus = require_unique_focus(&input.focus_neurons, "analyse_synapses")
+        .context("synapse analysis input validation failed")?;
     let diagnostics = Arc::new(TargetDiagnostics::new(&unique_focus));
     let timing_collector = Arc::new(crate::analysis::shared::TimingCollector::new(
         crate::analysis::utils::gpu_timing_enabled(),
@@ -130,7 +131,10 @@ pub(crate) fn analyze_synapses_with_cache_impl(
                 cache.as_ref(),
                 &gpu_queue,
                 &ctx,
-            )?;
+            )
+            .with_context(|| {
+                format!("failed during synapse analysis for target neuron {target_uuid}")
+            })?;
 
             // Update lock-free atomic metadata
             metadata.merge_atomic(&target_results);
