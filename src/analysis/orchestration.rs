@@ -5,6 +5,7 @@
 //! - `dispatch_analyses` — concurrent synapse/neuron dispatch (Issue #1002)
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -20,6 +21,17 @@ use super::{
     cache, candidate_aggregation, candidate_compression, discovery_dispatch, module_dispatch_specs,
     module_weights, neuron, neuron_fingerprint, synapse, utils,
 };
+
+/// Extract a human-readable message from a panic payload (Issue #1087).
+fn format_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        format!("{payload:?}")
+    }
+}
 
 pub(crate) fn run_optional_analysis<T>(
     enabled: bool,
@@ -64,38 +76,62 @@ fn dispatch_analyses(
         let gpu_for_syn = Arc::clone(shared_gpu_queue);
         let gpu_for_neu = Arc::clone(shared_gpu_queue);
 
+        // Issue #1087: Wrap each rayon::join branch with catch_unwind so a
+        // panic in one analysis does not corrupt results from the other.
         let (syn_result, neu_result) = rayon::join(
             || {
-                run_optional_analysis(
-                    true,
-                    "analysis::analyze_all → synapse analysis starting",
-                    "analysis::analyze_all → synapse analysis finished",
-                    "analysis::analyze_all → synapse analysis skipped",
-                    "synapse_analysis",
-                    || {
-                        synapse::analyze_synapses_with_cache_and_gpu_queue(
-                            &syn_input,
-                            cache_for_syn,
-                            gpu_for_syn,
-                        )
-                    },
-                )
+                std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    run_optional_analysis(
+                        true,
+                        "analysis::analyze_all → synapse analysis starting",
+                        "analysis::analyze_all → synapse analysis finished",
+                        "analysis::analyze_all → synapse analysis skipped",
+                        "synapse_analysis",
+                        || {
+                            synapse::analyze_synapses_with_cache_and_gpu_queue(
+                                &syn_input,
+                                cache_for_syn,
+                                gpu_for_syn,
+                            )
+                        },
+                    )
+                }))
+                .unwrap_or_else(|panic_payload| {
+                    let msg = format_panic_payload(&panic_payload);
+                    tracing::warn!(
+                        phase = "synapse_analysis",
+                        panic_message = %msg,
+                        "Synapse analysis panicked — caught and converted to error (Issue #1087)"
+                    );
+                    Err(anyhow::anyhow!("synapse analysis module panicked: {msg}"))
+                })
             },
             || {
-                run_optional_analysis(
-                    true,
-                    "analysis::analyze_all → neuron analysis starting",
-                    "analysis::analyze_all → neuron analysis finished",
-                    "analysis::analyze_all → neuron analysis skipped",
-                    "neuron_analysis",
-                    || {
-                        neuron::analyze_neurons_with_cache_and_gpu_queue(
-                            &neu_input,
-                            cache_for_neu,
-                            gpu_for_neu,
-                        )
-                    },
-                )
+                std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    run_optional_analysis(
+                        true,
+                        "analysis::analyze_all → neuron analysis starting",
+                        "analysis::analyze_all → neuron analysis finished",
+                        "analysis::analyze_all → neuron analysis skipped",
+                        "neuron_analysis",
+                        || {
+                            neuron::analyze_neurons_with_cache_and_gpu_queue(
+                                &neu_input,
+                                cache_for_neu,
+                                gpu_for_neu,
+                            )
+                        },
+                    )
+                }))
+                .unwrap_or_else(|panic_payload| {
+                    let msg = format_panic_payload(&panic_payload);
+                    tracing::warn!(
+                        phase = "neuron_analysis",
+                        panic_message = %msg,
+                        "Neuron analysis panicked — caught and converted to error (Issue #1087)"
+                    );
+                    Err(anyhow::anyhow!("neuron analysis module panicked: {msg}"))
+                })
             },
         );
         Ok((
@@ -465,41 +501,71 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             // Issue #1004: Run compression detection and discovery module detection
             // concurrently. The heavier discovery dispatch (~48 parallel modules)
             // overlaps with the lighter compression work.
-            let (all_compressed, discovery_results) = rayon::join(
+            // Issue #1087: Wrap both branches with catch_unwind to prevent panics
+            // in one branch from corrupting the other's results.
+            let (compressed_result, discovery_result) = rayon::join(
                 || {
-                    // Issue #921 / #922: Compress IDENTITY and non-linear candidates.
-                    let (identity_compressed, nonlinear_compressed) = rayon::join(
-                        || {
-                            candidate_compression::compress_identity_candidates(
-                                &helpful_synapses_snapshot,
-                                &creature_for_compression,
-                            )
-                        },
-                        || {
-                            candidate_compression::compress_nonlinear_candidates(
-                                &helpful_synapses_snapshot,
-                                &creature_for_compression,
-                            )
-                        },
-                    );
-                    let mut all = identity_compressed;
-                    all.extend(nonlinear_compressed);
-                    all
+                    std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        // Issue #921 / #922: Compress IDENTITY and non-linear candidates.
+                        let (identity_compressed, nonlinear_compressed) = rayon::join(
+                            || {
+                                candidate_compression::compress_identity_candidates(
+                                    &helpful_synapses_snapshot,
+                                    &creature_for_compression,
+                                )
+                            },
+                            || {
+                                candidate_compression::compress_nonlinear_candidates(
+                                    &helpful_synapses_snapshot,
+                                    &creature_for_compression,
+                                )
+                            },
+                        );
+                        let mut all = identity_compressed;
+                        all.extend(nonlinear_compressed);
+                        all
+                    }))
+                    .unwrap_or_else(|panic_payload| {
+                        let msg = format_panic_payload(&panic_payload);
+                        tracing::warn!(
+                            phase = "candidate_compression",
+                            panic_message = %msg,
+                            "Candidate compression panicked — returning empty results \
+                             (Issue #1087)"
+                        );
+                        Vec::new()
+                    })
                 },
                 || {
-                    // Issue #375 / #419: Discovery module detection phase only.
-                    // Issue #1029: Pass the analysis deadline so detection modules
-                    // are skipped when time runs out, preventing lockups.
-                    let discovery_deadline = utils::build_deadline(input.analysis_deadline_ms);
-                    module_dispatch_specs::prepare_and_detect_discovery_modules(
-                        &creature,
-                        &hidden_neurons,
-                        &shared_cache,
-                        &tracker,
-                        discovery_deadline,
-                    )
+                    std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        // Issue #375 / #419: Discovery module detection phase only.
+                        // Issue #1029: Pass the analysis deadline so detection modules
+                        // are skipped when time runs out, preventing lockups.
+                        let discovery_deadline = utils::build_deadline(input.analysis_deadline_ms);
+                        module_dispatch_specs::prepare_and_detect_discovery_modules(
+                            &creature,
+                            &hidden_neurons,
+                            &shared_cache,
+                            &tracker,
+                            discovery_deadline,
+                        )
+                    }))
+                    .unwrap_or_else(|panic_payload| {
+                        let msg = format_panic_payload(&panic_payload);
+                        tracing::warn!(
+                            phase = "discovery_module_detection",
+                            panic_message = %msg,
+                            "Discovery module detection panicked — returning empty results \
+                             (Issue #1087)"
+                        );
+                        discovery_dispatch::DiscoveryModuleDetectionResults {
+                            entries: Vec::new(),
+                        }
+                    })
                 },
             );
+            let all_compressed = compressed_result;
+            let discovery_results = discovery_result;
 
             // Sequential merge phase: compression results first, then discovery modules.
             // This preserves the same ordering as the previous sequential pipeline.

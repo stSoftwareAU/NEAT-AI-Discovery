@@ -617,6 +617,122 @@ fn quality_skip_does_not_skip_when_insufficient_high_quality_candidates() {
     );
 }
 
+// =============================================================================
+// Issue #1087: Panic catching in parallel discovery module detection
+// =============================================================================
+
+#[test]
+fn parallel_detection_catches_panic_in_module_and_returns_error_result() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: Duration::from_secs(60),
+        abort_delay: Duration::from_secs(1),
+    });
+
+    let modules = vec![
+        make_module("healthy_module", Some(vec![make_candidate(1.0)])),
+        DiscoveryModuleSpec {
+            module_name: "panicking_module".to_string(),
+            phase_name: "test_phase",
+            max_candidates: 0,
+            detect_fn: Box::new(|| {
+                panic!("simulated panic in discovery module");
+            }),
+        },
+        make_module("another_healthy", Some(vec![make_candidate(2.0)])),
+    ];
+
+    let results = detect_discovery_modules_parallel(modules, None, None);
+
+    // All three modules should have entries.
+    assert_eq!(results.entries.len(), 3);
+
+    // The healthy modules should have results.
+    assert!(
+        results.entries[0].result.is_some(),
+        "First healthy module should produce results"
+    );
+    assert!(
+        results.entries[2].result.is_some(),
+        "Third healthy module should produce results"
+    );
+
+    // The panicking module should have None result (panic was caught).
+    assert!(
+        results.entries[1].result.is_none(),
+        "Panicking module should have None result after panic is caught"
+    );
+    assert_eq!(results.entries[1].module_name, "panicking_module");
+}
+
+#[test]
+fn parallel_detection_panic_does_not_corrupt_sibling_module_results() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: Duration::from_secs(60),
+        abort_delay: Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    let modules = vec![
+        make_module(
+            "good_module_a",
+            Some(vec![make_candidate(3.0), make_candidate(2.0)]),
+        ),
+        DiscoveryModuleSpec {
+            module_name: "panicker".to_string(),
+            phase_name: "test_phase",
+            max_candidates: 0,
+            detect_fn: Box::new(|| {
+                panic!("boom in panicker module");
+            }),
+        },
+        make_module("good_module_b", Some(vec![make_candidate(1.0)])),
+    ];
+
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
+
+    // The two healthy modules should have their candidates merged (3 total).
+    // The panicking module should not contribute any candidates.
+    assert_eq!(
+        syn.coordinated_structural_candidates.len(),
+        3,
+        "Healthy modules' candidates should be merged despite sibling panic"
+    );
+}
+
+#[test]
+fn parallel_detection_panic_message_includes_module_context() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: Duration::from_secs(60),
+        abort_delay: Duration::from_secs(1),
+    });
+
+    // Use a module that panics — the panic should be logged with module context.
+    // We verify this indirectly by confirming the module name is preserved in
+    // the entry metadata (the tracing::warn log is checked via the module_name field).
+    let modules = vec![DiscoveryModuleSpec {
+        module_name: "named_panicking_module".to_string(),
+        phase_name: "test_phase",
+        max_candidates: 0,
+        detect_fn: Box::new(|| {
+            panic!("specific panic message for test");
+        }),
+    }];
+
+    let results = detect_discovery_modules_parallel(modules, None, None);
+
+    assert_eq!(results.entries.len(), 1);
+    assert_eq!(results.entries[0].module_name, "named_panicking_module");
+    assert!(
+        results.entries[0].result.is_none(),
+        "Panicking module should have None result"
+    );
+}
+
 #[test]
 fn quality_skip_still_records_stats_for_skipped_modules() {
     use super::super::constants::{QUALITY_SKIP_GAIN_THRESHOLD, QUALITY_SKIP_MIN_CANDIDATES};

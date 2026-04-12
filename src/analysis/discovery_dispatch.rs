@@ -12,6 +12,7 @@
 //! via `rayon::into_par_iter()`, then merges results sequentially. This
 //! preserves deterministic ordering while utilising multiple CPU cores.
 
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
@@ -193,7 +194,27 @@ pub fn detect_discovery_modules_parallel(
                 };
             }
 
-            let result = (spec.detect_fn)();
+            // Issue #1087: Wrap detection closure with catch_unwind so a panic
+            // in one module does not corrupt results from sibling modules.
+            let result = match std::panic::catch_unwind(AssertUnwindSafe(|| (spec.detect_fn)())) {
+                Ok(r) => r,
+                Err(panic_payload) => {
+                    let panic_msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                        (*s).to_string()
+                    } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        format!("{panic_payload:?}")
+                    };
+                    tracing::warn!(
+                        module = %spec.module_name,
+                        panic_message = %panic_msg,
+                        "Discovery module panicked — caught and converted to empty result \
+                         (Issue #1087)"
+                    );
+                    None
+                }
+            };
             DiscoveryModuleDetectionEntry {
                 module_name: spec.module_name,
                 phase_name: spec.phase_name,
