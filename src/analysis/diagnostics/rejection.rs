@@ -297,6 +297,17 @@ impl TargetDiagnostics {
                 continue;
             }
 
+            // Issue #1101: Log a specific warning when the target neuron has zero
+            // Parquet records — the recording phase likely timed out.
+            if entry.target_record_count == 0 && entry.evaluated_candidates == 0 {
+                tracing::warn!(
+                    target_uuid = %entry.target_uuid,
+                    "Target neuron has zero activation records in Parquet — \
+                     recording phase may have timed out or produced insufficient data"
+                );
+                continue;
+            }
+
             if entry.total_eligible_sources == 0 {
                 // This should never happen - input/constant neurons are skipped early
                 // and hidden/output neurons should always have at least input neurons as eligible sources
@@ -397,6 +408,22 @@ impl TargetDiagnostics {
             .filter(|entry_ref| !entry_ref.value().had_candidate)
             .map(|entry_ref| {
                 let entry = entry_ref.value();
+
+                // Issue #1101: When the target neuron has zero records in the Parquet
+                // file, report the specific reason rather than the misleading
+                // "NoEligibleSources". This typically occurs when the recording phase
+                // timed out before capturing data for this neuron.
+                if entry.target_record_count == 0 && entry.evaluated_candidates == 0 {
+                    return SynapseNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: SynapseNoCandidateReason::NoTargetRecords,
+                        evaluated_candidates: entry.evaluated_candidates,
+                        candidates_with_samples: entry.candidates_with_samples,
+                        target_record_count: entry.target_record_count,
+                        detail: None,
+                    };
+                }
+
                 // Only report "no eligible sources" if both total_eligible_sources and evaluated_candidates are 0
                 // This handles the case where total_eligible_sources might be 0 in tests but evaluated_candidates > 0
                 if entry.total_eligible_sources == 0 && entry.evaluated_candidates == 0 {

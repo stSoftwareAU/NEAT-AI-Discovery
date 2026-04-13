@@ -151,7 +151,14 @@ pub(crate) fn analyse_single_target(
 
     let target_records_arc = cache.get(target_uuid)?;
     if target_records_arc.is_empty() {
+        // Issue #1101: Set diagnostic count so the reporting layer can
+        // distinguish "no records" from "no eligible sources".
         ctx.diagnostics.set_target_record_count(target_uuid, 0);
+        tracing::warn!(
+            target_uuid = target_uuid,
+            "Target neuron has zero activation records in Parquet — \
+             recording phase may have timed out or produced insufficient data"
+        );
         return Ok(results);
     }
     let target_records = target_records_arc.as_ref();

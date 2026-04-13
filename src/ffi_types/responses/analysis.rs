@@ -252,6 +252,9 @@ pub enum SynapseDiagnosticReasonJson {
     NoSamples,
     ZeroImprovement,
     BelowThreshold,
+    /// Target neuron has zero activation records in the Parquet file
+    /// (recording may have timed out) (Issue #1101).
+    NoTargetRecords,
 }
 
 #[derive(Debug, Serialize)]

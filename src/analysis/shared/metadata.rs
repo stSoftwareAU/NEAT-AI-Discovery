@@ -194,6 +194,10 @@ pub enum SynapseNoCandidateReason {
     NoSamples,
     ZeroImprovement,
     BelowThreshold,
+    /// Target neuron has zero activation records in the Parquet file.
+    /// This typically occurs when the recording phase timed out or produced
+    /// insufficient data for this neuron (Issue #1101).
+    NoTargetRecords,
 }
 
 /// Detailed information about why a synapse candidate was rejected

@@ -131,6 +131,9 @@ pub(crate) fn synapse_diagnostics_json(
                     analysis_mod::shared::SynapseNoCandidateReason::BelowThreshold => {
                         SynapseDiagnosticReasonJson::BelowThreshold
                     }
+                    analysis_mod::shared::SynapseNoCandidateReason::NoTargetRecords => {
+                        SynapseDiagnosticReasonJson::NoTargetRecords
+                    }
                 },
                 evaluated_candidates: summary.evaluated_candidates,
                 candidates_with_samples: summary.candidates_with_samples,
