@@ -349,6 +349,210 @@ pub extern "C" fn cleanup_discovery_lib() {
 }
 
 // ============================================================================
+// Discovery directory cleanup (Issue #1100)
+// ============================================================================
+
+/// Atomically clean up a discovery temp directory (Issue #1100).
+///
+/// Removes the entire directory tree in a single recursive call so that the
+/// lock file is never absent while the directory still exists. If the directory
+/// has already been removed by another actor, the response reports
+/// `alreadyGone: true` with `success: true` (no error).
+///
+/// Input JSON:
+/// ```json
+/// { "tempDir": "/path/to/.discovery/abc123" }
+/// ```
+///
+/// Output JSON:
+/// ```json
+/// { "success": true, "alreadyGone": false }
+/// ```
+///
+/// # Safety
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cleanup_discovery_dir(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    use std::ffi::CStr;
+    use std::panic;
+
+    panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
+        let input_str = unsafe {
+            if input_json.is_null() {
+                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    return ffi_error_literal(
+                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
+                    );
+                }
+            }
+        };
+
+        let input: CleanupDiscoveryDirInput = match serde_json::from_str(input_str) {
+            Ok(input) => input,
+            Err(e) => {
+                let typed = DiscoveryError::InvalidInput {
+                    detail: format!("Failed to parse input JSON: {e}"),
+                };
+                let kind = typed.error_kind();
+                let output = CleanupDiscoveryDirOutput {
+                    success: false,
+                    already_gone: None,
+                    error: Some(typed.to_string()),
+                    error_kind: Some(kind),
+                    retryable: Some(kind.is_retryable()),
+                };
+                return to_ffi_json(&output);
+            }
+        };
+
+        let output = match crate::discovery_cleanup::cleanup_discovery_dir(&input.temp_dir) {
+            Ok(outcome) => {
+                let is_already_gone =
+                    outcome == crate::discovery_cleanup::CleanupOutcome::AlreadyGone;
+                let (error_kind, retryable) = no_error_fields();
+                CleanupDiscoveryDirOutput {
+                    success: true,
+                    already_gone: Some(is_already_gone),
+                    error: None,
+                    error_kind,
+                    retryable,
+                }
+            }
+            Err(e) => {
+                let (err_msg, error_kind, retryable) =
+                    error_fields_from_anyhow(&anyhow::anyhow!(e));
+                CleanupDiscoveryDirOutput {
+                    success: false,
+                    already_gone: None,
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
+                }
+            }
+        };
+
+        to_ffi_json(&output)
+    }))
+    .unwrap_or_else(panic_to_ffi_json)
+}
+
+/// Scan a base directory for orphaned discovery directories and remove them
+/// (Issue #1100).
+///
+/// A subdirectory is considered orphaned when it has no `discovery.lock` file.
+/// `NotFound` errors are suppressed because the async cleanup actor may have
+/// removed the directory between the orphan check and the removal call.
+///
+/// Input JSON:
+/// ```json
+/// { "baseDir": "/path/to/.discovery" }
+/// ```
+///
+/// Output JSON:
+/// ```json
+/// { "success": true, "removed": 2, "alreadyGone": 0, "removalErrors": [] }
+/// ```
+///
+/// # Safety
+///
+/// - `input_json` must be a valid, non-null pointer to a null-terminated C
+///   string containing valid UTF-8 JSON.
+/// - The returned pointer must be freed using `free_discovery_result`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn clean_orphaned_discovery_dirs(
+    input_json: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    use std::ffi::CStr;
+    use std::panic;
+
+    panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        // SAFETY: caller must provide a valid, non-null pointer to a
+        // null-terminated C string. We validate null and UTF-8 before use.
+        let input_str = unsafe {
+            if input_json.is_null() {
+                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
+            }
+            match CStr::from_ptr(input_json).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    return ffi_error_literal(
+                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
+                    );
+                }
+            }
+        };
+
+        let input: CleanOrphanedDirsInput = match serde_json::from_str(input_str) {
+            Ok(input) => input,
+            Err(e) => {
+                let typed = DiscoveryError::InvalidInput {
+                    detail: format!("Failed to parse input JSON: {e}"),
+                };
+                let kind = typed.error_kind();
+                let output = CleanOrphanedDirsOutput {
+                    success: false,
+                    removed: None,
+                    already_gone: None,
+                    removal_errors: None,
+                    error: Some(typed.to_string()),
+                    error_kind: Some(kind),
+                    retryable: Some(kind.is_retryable()),
+                };
+                return to_ffi_json(&output);
+            }
+        };
+
+        let output = match crate::discovery_cleanup::clean_orphaned_discovery_dirs(&input.base_dir)
+        {
+            Ok(result) => {
+                let removal_errors = if result.errors.is_empty() {
+                    None
+                } else {
+                    Some(result.errors)
+                };
+                let (error_kind, retryable) = no_error_fields();
+                CleanOrphanedDirsOutput {
+                    success: true,
+                    removed: Some(result.removed),
+                    already_gone: Some(result.already_gone),
+                    removal_errors,
+                    error: None,
+                    error_kind,
+                    retryable,
+                }
+            }
+            Err(e) => {
+                let (err_msg, error_kind, retryable) =
+                    error_fields_from_anyhow(&anyhow::anyhow!(e));
+                CleanOrphanedDirsOutput {
+                    success: false,
+                    removed: None,
+                    already_gone: None,
+                    removal_errors: None,
+                    error: Some(err_msg),
+                    error_kind,
+                    retryable,
+                }
+            }
+        };
+
+        to_ffi_json(&output)
+    }))
+    .unwrap_or_else(panic_to_ffi_json)
+}
+
+// ============================================================================
 // Library version
 // ============================================================================
 
