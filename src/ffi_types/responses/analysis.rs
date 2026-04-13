@@ -84,6 +84,11 @@ pub struct AnalyzeParallelOutput {
     /// requested graceful shutdown (e.g. SIGTERM).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cancelled: Option<bool>,
+    /// Whether the cancellation was specifically triggered by CRITICAL memory
+    /// pressure (Issue #1099). When `true`, the host should take additional
+    /// recovery actions such as clearing WASM caches and discovery buffers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_pressure_cancelled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Structured error classification for retry decisions (Issue #651).

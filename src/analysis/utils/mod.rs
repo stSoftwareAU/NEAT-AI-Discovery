@@ -46,10 +46,10 @@ pub fn into_inner_or_bail<T>(mutex: Mutex<T>, _context: &str) -> anyhow::Result<
 pub use memory::{
     DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE, LOW_MEMORY_GPU_BATCH_SIZE, MemoryPressure,
     MemoryTier, cap_gpu_batch_size_by_bytes, categorise_memory_pressure, categorise_memory_tier,
-    check_memory_budget_exceeded, check_memory_for_parquet, check_system_memory_requirements,
-    detect_memory_pressure, detect_memory_tier, get_memory_info, get_work_queue_capacity,
-    get_work_queue_capacity_for_tier, is_memory_budget_exceeded,
-    validate_parquet_memory_requirements,
+    check_memory_budget_exceeded, check_memory_for_parquet, check_memory_pressure_and_cancel,
+    check_system_memory_requirements, detect_memory_pressure, detect_memory_tier, get_memory_info,
+    get_work_queue_capacity, get_work_queue_capacity_for_tier, is_memory_budget_exceeded,
+    validate_parquet_memory_requirements, would_cancel_for_memory_pressure,
 };
 
 // Re-export platform setup functions

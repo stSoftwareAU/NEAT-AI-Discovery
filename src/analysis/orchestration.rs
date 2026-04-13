@@ -239,6 +239,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             neuron: None,
             memory_budget_exceeded: false,
             cancelled: false,
+            memory_pressure_cancelled: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -256,6 +257,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             neuron: None,
             memory_budget_exceeded: false,
             cancelled: false,
+            memory_pressure_cancelled: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -275,6 +277,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             neuron: None,
             memory_budget_exceeded: true,
             cancelled: false,
+            memory_pressure_cancelled: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -290,6 +293,24 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             reason: "No compatible GPU adapter found on this system".to_string(),
         }
         .into());
+    }
+
+    // Issue #1099: Check system memory pressure before expensive parquet I/O.
+    // If the system is under CRITICAL pressure (< 5% available), cancel early
+    // to prevent OOM. This self-monitoring complements the host-side
+    // `cancel_analysis_memory_pressure()` FFI call.
+    if utils::check_memory_pressure_and_cancel() {
+        return Ok(AnalyzeAllResult {
+            synapse: None,
+            neuron: None,
+            memory_budget_exceeded: false,
+            cancelled: true,
+            memory_pressure_cancelled: true,
+            neuron_fingerprints: Some(current_fingerprints),
+            fingerprint_cache_hits,
+            fingerprint_cache_misses,
+            module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+        });
     }
 
     crate::watchdog::beat("analysis::analyze_all → loading parquet cache");
@@ -313,6 +334,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 neuron: None,
                 memory_budget_exceeded: false,
                 cancelled: true,
+                memory_pressure_cancelled: crate::cancellation::is_memory_pressure_cancelled(),
                 neuron_fingerprints: Some(current_fingerprints),
                 fingerprint_cache_hits,
                 fingerprint_cache_misses,
@@ -341,6 +363,24 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             neuron: None,
             memory_budget_exceeded: true,
             cancelled: false,
+            memory_pressure_cancelled: false,
+            neuron_fingerprints: Some(current_fingerprints),
+            fingerprint_cache_hits,
+            fingerprint_cache_misses,
+            module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+        });
+    }
+
+    // Issue #1099: Re-check system memory pressure after parquet loading
+    // (the single largest allocation). Parquet loading may have pushed the
+    // system into CRITICAL pressure.
+    if utils::check_memory_pressure_and_cancel() {
+        return Ok(AnalyzeAllResult {
+            synapse: None,
+            neuron: None,
+            memory_budget_exceeded: false,
+            cancelled: true,
+            memory_pressure_cancelled: true,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -407,6 +447,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 neuron: None,
                 memory_budget_exceeded: false,
                 cancelled: true,
+                memory_pressure_cancelled: crate::cancellation::is_memory_pressure_cancelled(),
                 neuron_fingerprints: Some(current_fingerprints),
                 fingerprint_cache_hits,
                 fingerprint_cache_misses,
@@ -415,6 +456,12 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
         Err(e) => return Err(e).context("failed during analysis dispatch"),
     };
+
+    // Issue #1099: Check system memory pressure after GPU dispatch.
+    // The GPU analysis phase accumulates large candidate buffers that may
+    // push the system into CRITICAL pressure. If so, skip post-processing
+    // and return partial results.
+    utils::check_memory_pressure_and_cancel();
 
     // Issue #1028: Check memory budget after GPU analysis. If exceeded, skip
     // post-processing and return the candidates we have so far.
@@ -674,6 +721,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         neuron: neuron_result,
         memory_budget_exceeded,
         cancelled: crate::cancellation::is_cancelled(),
+        memory_pressure_cancelled: crate::cancellation::is_memory_pressure_cancelled(),
         neuron_fingerprints: Some(current_fingerprints),
         fingerprint_cache_hits,
         fingerprint_cache_misses,
