@@ -391,6 +391,65 @@ fn diagnostics_accepted_below_threshold_defaults_to_zero() {
 }
 
 #[test]
+fn synapse_diagnostics_reports_no_target_records_when_zero_records() {
+    // Issue #1101: When the target neuron has zero activation records in the
+    // Parquet file (e.g. recording phase timed out), the diagnostic should
+    // report NoTargetRecords rather than the misleading NoEligibleSources.
+    let diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
+
+    // Simulate the early-exit path: target_record_count is set to 0 and
+    // no eligible sources call is made (mirrors target_analysis/mod.rs).
+    diagnostics.set_target_record_count("output-0", 0);
+
+    let summaries = diagnostics.no_candidate_summaries();
+    assert_eq!(summaries.len(), 1, "Expected one diagnostic summary");
+
+    let summary = &summaries[0];
+    assert_eq!(
+        summary.reason,
+        SynapseNoCandidateReason::NoTargetRecords,
+        "Expected NoTargetRecords when target has zero Parquet records, got {:?}",
+        summary.reason
+    );
+    assert_eq!(summary.target_record_count, 0);
+    assert_eq!(summary.evaluated_candidates, 0);
+}
+
+#[test]
+fn synapse_diagnostics_no_target_records_does_not_mask_eligible_sources() {
+    // Issue #1101: When target_record_count > 0 but total_eligible_sources == 0,
+    // the reason should remain NoEligibleSources (not NoTargetRecords).
+    let diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
+    diagnostics.set_target_record_count("output-0", 50);
+    // total_eligible_sources defaults to 0, evaluated_candidates defaults to 0
+
+    let summaries = diagnostics.no_candidate_summaries();
+    assert_eq!(summaries.len(), 1);
+
+    let summary = &summaries[0];
+    assert_eq!(
+        summary.reason,
+        SynapseNoCandidateReason::NoEligibleSources,
+        "Expected NoEligibleSources when records exist but no sources, got {:?}",
+        summary.reason
+    );
+}
+
+#[test]
+fn synapse_diagnostics_no_target_records_json_serialises_correctly() {
+    // Issue #1101: Verify the new reason code serialises to snake_case "no_target_records"
+    // in the JSON output for the FFI boundary.
+    use crate::SynapseDiagnosticReasonJson;
+
+    let reason = SynapseDiagnosticReasonJson::NoTargetRecords;
+    let json = serde_json::to_string(&reason).expect("serialise reason");
+    assert_eq!(
+        json, "\"no_target_records\"",
+        "NoTargetRecords should serialise to snake_case 'no_target_records'"
+    );
+}
+
+#[test]
 fn neuron_diagnostics_reports_constant_neuron_filtered_not_hidden() {
     // Test that when a constant neuron is in the focus list, it gets
     // ConstantNeuronFiltered reason (not HiddenNeuronFiltered).
