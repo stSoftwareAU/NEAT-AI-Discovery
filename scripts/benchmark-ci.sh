@@ -108,11 +108,14 @@ discover_benchmarks() {
         fi
     done < "$PROJECT_ROOT/Cargo.toml"
     if [[ ${#benchmarks[@]} -gt 0 ]]; then
-        echo "${benchmarks[@]}"
+        printf '%s\n' "${benchmarks[@]}"
     fi
 }
 
-BENCHMARKS=($(discover_benchmarks))
+BENCHMARKS=()
+while IFS= read -r line; do
+    BENCHMARKS+=("$line")
+done < <(discover_benchmarks)
 
 if [[ ${#BENCHMARKS[@]} -eq 0 ]]; then
     echo "Error: No benchmark targets found in Cargo.toml"
