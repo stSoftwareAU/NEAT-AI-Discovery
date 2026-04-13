@@ -173,6 +173,7 @@ mod tests {
     use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_cancellation_flag_lifecycle() {
         // Start clean
         reset_cancellation();
@@ -190,6 +191,7 @@ mod tests {
     /// Issue #1099: Verify that memory-pressure cancellation sets both flags
     /// and that reset clears both.
     #[test]
+    #[serial]
     fn test_memory_pressure_cancellation_lifecycle() {
         reset_cancellation();
         assert!(!is_cancelled());
@@ -210,7 +212,12 @@ mod tests {
     }
 
     /// Issue #1099: A normal cancellation should not set the memory pressure flag.
+    ///
+    /// The cancellation flag is reset at the end to avoid leaving global state
+    /// dirty, which would cause other tests (e.g. parquet reader tests that check
+    /// the cancellation flag mid-read) to fail spuriously when running in parallel.
     #[test]
+    #[serial]
     fn test_normal_cancellation_does_not_set_memory_pressure() {
         reset_cancellation();
         request_cancellation();
@@ -219,6 +226,8 @@ mod tests {
             !is_memory_pressure_cancelled(),
             "memory pressure flag must NOT be set by normal cancellation"
         );
+        // Always clean up global state so concurrent tests are not affected.
+        reset_cancellation();
     }
 
     /// Issue #1077: Verify that `AnalysisActiveGuard` increments on creation
