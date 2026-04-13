@@ -362,6 +362,31 @@ pub fn session_ttl_secs() -> u64 {
         .clamp(MIN_SESSION_TTL_SECS, MAX_SESSION_TTL_SECS)
 }
 
+/// Default maximum wall-clock minutes for total discovery time (Issue #1098).
+pub const DEFAULT_MAX_WALL_CLOCK_MINUTES: u64 = 20;
+
+/// Minimum valid wall-clock cap in minutes.
+pub const MIN_WALL_CLOCK_MINUTES: u64 = 1;
+
+/// Maximum valid wall-clock cap in minutes.
+pub const MAX_WALL_CLOCK_MINUTES: u64 = 120;
+
+/// Get the maximum wall-clock cap for total discovery time in minutes (Issue #1098).
+///
+/// Set `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` to control the overall
+/// wall-clock cap for discovery (recording + analysis combined). This prevents
+/// total discovery from exceeding the configured limit regardless of how
+/// recording and analysis budgets are split.
+///
+/// Default: 20 minutes. Clamped to 1–120.
+pub fn max_wall_clock_minutes() -> u64 {
+    std::env::var("NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_MAX_WALL_CLOCK_MINUTES)
+        .clamp(MIN_WALL_CLOCK_MINUTES, MAX_WALL_CLOCK_MINUTES)
+}
+
 /// Get the macOS `sample` program path for thread dumps.
 ///
 /// Set `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` to override.

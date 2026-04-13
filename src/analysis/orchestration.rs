@@ -327,15 +327,20 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Discovery has two additive timeouts (recording + analysis) with no overall
     // cap. The wall-clock cap ensures total elapsed time never exceeds the
     // configured limit, even if recording consumed some of the budget.
+    // If the caller does not pass a cap, fall back to the environment variable
+    // NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES (default 20 min).
+    let wall_clock_minutes = input
+        .max_discovery_wall_clock_minutes
+        .unwrap_or_else(crate::config::max_wall_clock_minutes);
     let discovery_start = std::time::SystemTime::now();
     let overall_deadline = utils::cap_deadline_to_wall_clock(
         analysis_deadline,
         discovery_start,
-        input.max_discovery_wall_clock_minutes,
+        Some(wall_clock_minutes),
     );
-    if input.max_discovery_wall_clock_minutes.is_some() && analysis_deadline != overall_deadline {
+    if analysis_deadline != overall_deadline {
         tracing::info!(
-            wall_clock_cap_minutes = input.max_discovery_wall_clock_minutes,
+            wall_clock_cap_minutes = wall_clock_minutes,
             "Issue #1098: analysis deadline capped by wall-clock limit"
         );
     }

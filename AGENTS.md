@@ -607,6 +607,7 @@ Key environment variables that control library behaviour:
 | `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | Constant source folding threshold |
 | `NEAT_AI_DISCOVERY_SESSION_TTL_SECS` | Streaming session TTL for orphan cleanup (default 3600) |
 | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | Metropolis-Hastings probabilistic acceptance temperature |
+| `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` | Overall wall-clock cap for discovery time in minutes (default 20, range 1–120) |
 
 See [README.md — Troubleshooting](README.md#troubleshooting) and
 [README.md — GPU Performance Tuning](README.md#gpu-performance-tuning) for
