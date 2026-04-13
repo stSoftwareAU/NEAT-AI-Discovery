@@ -123,6 +123,7 @@ fn synapse_analysis_runs_under_deadline() {
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
+        max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
     };
 
@@ -170,6 +171,7 @@ fn metadata_indicates_target_value_available() {
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
+        max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
     };
 
@@ -212,6 +214,7 @@ fn metadata_indicates_target_value_not_available() {
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
+        max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
     };
 
@@ -260,6 +263,7 @@ fn metadata_indicates_saturation_aware_simulation_used() {
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
+        max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
     };
 
@@ -305,6 +309,7 @@ fn candidate_counts_tracked_correctly() {
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
+        max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
     };
 
@@ -413,6 +418,7 @@ fn truncation_reflected_in_candidate_counts() {
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
+        max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
     };
 

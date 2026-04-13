@@ -74,6 +74,14 @@ pub struct AnalyzeParallelInput {
     /// no memory limit is enforced (backwards compatible).
     #[serde(default)]
     pub max_analysis_memory_mb: Option<u64>,
+    /// Overall wall-clock cap in minutes for total discovery time (Issue #1098).
+    ///
+    /// When set, the total elapsed time from discovery start (recording +
+    /// analysis) is capped to this value. The analysis deadline is clamped
+    /// to `min(analysis_deadline, discovery_start + wall_clock_cap)`.
+    /// When `None`, no overall cap is enforced (backwards compatible).
+    #[serde(default)]
+    pub max_discovery_wall_clock_minutes: Option<u64>,
 }
 
 /// Internal input structure for synapse analysis (used by `analyze_all`)
@@ -174,6 +182,11 @@ pub struct AnalyzeAllInput {
     /// See `AnalyzeParallelInput` for full documentation.
     #[serde(default)]
     pub max_analysis_memory_mb: Option<u64>,
+    /// Overall wall-clock cap in minutes for total discovery time (Issue #1098).
+    ///
+    /// See `AnalyzeParallelInput` for full documentation.
+    #[serde(default)]
+    pub max_discovery_wall_clock_minutes: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -138,6 +138,7 @@ fn all_candidates_have_positive_expected_score_gain() {
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
+        max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
     };
 
@@ -224,6 +225,7 @@ fn metadata_consistent_after_positive_gain_filtering() {
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
+        max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
     };
 

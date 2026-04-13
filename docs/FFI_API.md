@@ -81,6 +81,18 @@ found so far. Coverage improves over repeated runs.
 - **Default**: no deadline
 - **Behaviour**: deadline is passed to the record cache and detection dispatch
 
+### Wall-Clock Cap (`maxDiscoveryWallClockMinutes`) — Issue #1098
+
+Caps the total elapsed time from discovery start (recording + analysis),
+regardless of how recording and analysis budgets are split. The analysis
+deadline is clamped to `min(analysis_deadline, discovery_start + wall_clock_cap)`.
+
+- **Field**: `maxDiscoveryWallClockMinutes` (optional `u64`, minutes)
+- **Default**: no cap (backwards compatible)
+- **Behaviour**: when set, `refreshAnalysisTimeout()` (TypeScript side) and
+  the Rust analysis engine both respect the overall wall-clock limit,
+  preventing total discovery time from exceeding the configured cap
+
 ### Temperature (`temperature`)
 
 Controls the exploration-exploitation balance during candidate selection.

@@ -139,6 +139,31 @@ pub fn deadline_to_absolute_ms(deadline: &Option<SystemTime>) -> Option<u64> {
     })
 }
 
+/// Cap an analysis deadline to an overall wall-clock limit (Issue #1098).
+///
+/// Discovery has two additive timeouts (recording + analysis) with no overall
+/// cap. This function enforces a single `max_discovery_wall_clock_minutes`
+/// limit that caps the total elapsed time from discovery start.
+///
+/// Returns `min(analysis_deadline, discovery_start + wall_clock_cap)`, or
+/// just the wall-clock cap if no analysis deadline is provided. Returns `None`
+/// only when both the analysis deadline and the wall-clock cap are `None`.
+pub fn cap_deadline_to_wall_clock(
+    analysis_deadline: Option<SystemTime>,
+    discovery_start: SystemTime,
+    wall_clock_cap_minutes: Option<u64>,
+) -> Option<SystemTime> {
+    let wall_clock_deadline = wall_clock_cap_minutes
+        .and_then(|minutes| discovery_start.checked_add(Duration::from_secs(minutes * 60)));
+
+    match (analysis_deadline, wall_clock_deadline) {
+        (Some(ad), Some(wd)) => Some(ad.min(wd)),
+        (Some(ad), None) => Some(ad),
+        (None, Some(wd)) => Some(wd),
+        (None, None) => None,
+    }
+}
+
 /// Check if the deadline has passed or cancellation has been requested.
 ///
 /// Returns `true` if:
