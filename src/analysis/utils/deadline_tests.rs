@@ -588,3 +588,86 @@ fn order_eligible_sources_no_op_for_single_element() {
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].uuid, "single");
 }
+
+// ============================================================================
+// deadline_to_absolute_ms tests (Issue #1097)
+// ============================================================================
+
+#[test]
+fn deadline_to_absolute_ms_returns_none_for_none() {
+    assert!(
+        deadline_to_absolute_ms(&None).is_none(),
+        "None deadline should return None"
+    );
+}
+
+#[test]
+fn deadline_to_absolute_ms_returns_absolute_timestamp() {
+    let now = SystemTime::now();
+    let deadline = Some(now + Duration::from_secs(300));
+    let abs_ms = deadline_to_absolute_ms(&deadline);
+    assert!(abs_ms.is_some(), "Valid deadline should return Some");
+
+    let now_ms = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let result = abs_ms.unwrap();
+    // Should be approximately now + 300 seconds
+    assert!(
+        result >= now_ms + 299_000 && result <= now_ms + 301_000,
+        "Absolute ms should be ~300s in the future, got delta {}ms",
+        result.saturating_sub(now_ms)
+    );
+}
+
+/// Issue #1097: Verify that converting a relative deadline to absolute ms and
+/// then rebuilding the deadline produces a consistent point in time, rather
+/// than re-adding the original duration again.
+#[test]
+fn shared_deadline_does_not_reset_on_rebuild() {
+    // Simulate the original relative duration (10 minutes).
+    let relative_ms = 600_000u64;
+
+    // Step 1: Build the overall deadline once (as analyze_all does).
+    let overall_deadline = build_deadline(Some(relative_ms));
+    assert!(overall_deadline.is_some());
+
+    // Step 2: Convert to absolute ms (the fix from Issue #1097).
+    let abs_ms = deadline_to_absolute_ms(&overall_deadline);
+    assert!(abs_ms.is_some());
+    let abs_ms_value = abs_ms.unwrap();
+
+    // The absolute value must be >= YEAR_2000_MS so that build_deadline treats
+    // it as an absolute timestamp rather than a relative duration.
+    assert!(
+        abs_ms_value >= YEAR_2000_MS,
+        "Absolute ms ({abs_ms_value}) should be >= YEAR_2000_MS ({YEAR_2000_MS})"
+    );
+
+    // Step 3: Rebuild the deadline from the absolute ms (as sub-phases do).
+    let rebuilt_deadline = build_deadline(abs_ms);
+    assert!(rebuilt_deadline.is_some());
+
+    // Step 4: The rebuilt deadline should be close to the original, NOT
+    // an additional 10 minutes in the future.
+    let original_ms = overall_deadline
+        .unwrap()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let rebuilt_ms = rebuilt_deadline
+        .unwrap()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+
+    let drift = rebuilt_ms.abs_diff(original_ms);
+
+    // Allow up to 2 seconds of drift from timing variance.
+    assert!(
+        drift < 2_000,
+        "Rebuilt deadline drifted {drift}ms from the original — the absolute \
+         timestamp should NOT re-add the duration (Issue #1097)"
+    );
+}
