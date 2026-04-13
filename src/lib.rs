@@ -15,6 +15,7 @@ pub mod analysis;
 pub mod cancellation;
 pub mod config;
 pub mod debug;
+pub mod discovery_cleanup;
 pub mod discovery_history;
 pub mod export;
 pub mod ffi;
