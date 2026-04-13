@@ -1,0 +1,8 @@
+# JSON Schema for `lints` in published Cargo.toml schemas is wrong for `[lints.*]`
+# (rust-lang/cargo#15030). Skip schema validation for those keys only.
+[[rule]]
+include = ["**/Cargo.toml"]
+keys = ["lints", "lints.*"]
+
+[rule.schema]
+enabled = false

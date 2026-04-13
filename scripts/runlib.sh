@@ -8,11 +8,11 @@ RUST_MSRV="1.92.0"
 # Returns 0 if v1 >= v2 (semver-style), 1 otherwise.
 _version_ge() {
   local v1="$1" v2="$2"
-  local IFS=.
   local i
   local -a a b
-  a=(${v1%%-*})  # strip any -pre suffix
-  b=(${v2%%-*})
+  local IFS='.'
+  read -r -a a <<< "${v1%%-*}"  # strip any -pre suffix
+  read -r -a b <<< "${v2%%-*}"
   for ((i=0; i<${#a[@]} || i<${#b[@]}; i++)); do
     local x=${a[i]:-0} y=${b[i]:-0}
     ((10#$x > 10#$y)) && return 0
@@ -95,12 +95,15 @@ _require_tools() {
     export PATH="$HOME/.cargo/bin:$PATH"
     # Ensure PATH is set for future invocations
     if [[ -f "$HOME/.bashrc" ]] && ! grep -q "\.cargo/bin" "$HOME/.bashrc" 2>/dev/null; then
+      # shellcheck disable=SC2016
       echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$HOME/.bashrc"
     fi
     if [[ -f "$HOME/.zshrc" ]] && ! grep -q "\.cargo/bin" "$HOME/.zshrc" 2>/dev/null; then
+      # shellcheck disable=SC2016
       echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$HOME/.zshrc"
     fi
     if [[ -f "$HOME/.bash_profile" ]] && ! grep -q "\.cargo/bin" "$HOME/.bash_profile" 2>/dev/null; then
+      # shellcheck disable=SC2016
       echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$HOME/.bash_profile"
     fi
     echo "Rust installed successfully" >&2
