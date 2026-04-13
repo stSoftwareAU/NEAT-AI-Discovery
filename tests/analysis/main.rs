@@ -18,6 +18,7 @@ mod issue_1020_temperature_scheduling;
 mod issue_1057_add_synapse_gating;
 mod issue_1060_prefilter_learning;
 mod issue_1097_shared_deadline;
+mod issue_1098_wall_clock_cap;
 mod issue_1101_no_target_records_diagnostic;
 mod issue_199_dynamic_constant_source_threshold;
 mod issue_201_batched_activation;

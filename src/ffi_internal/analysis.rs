@@ -210,6 +210,7 @@ pub(crate) fn build_analyze_all_input_from_parallel(
         module_outcome_tracker: input.module_outcome_tracker,
         temperature: input.temperature,
         max_analysis_memory_mb: input.max_analysis_memory_mb,
+        max_discovery_wall_clock_minutes: input.max_discovery_wall_clock_minutes,
     }
 }
 

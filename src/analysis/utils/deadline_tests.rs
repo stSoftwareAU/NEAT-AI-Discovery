@@ -521,6 +521,76 @@ fn effective_timeout_zero_defaults_to_ten_minutes() {
 }
 
 // ============================================================================
+// cap_deadline_to_wall_clock tests (Issue #1098)
+// ============================================================================
+
+#[test]
+fn cap_deadline_clamps_when_analysis_exceeds_wall_clock() {
+    let start = SystemTime::now();
+    let analysis = Some(start + Duration::from_secs(30 * 60)); // 30 min
+    let capped = cap_deadline_to_wall_clock(analysis, start, Some(20)); // 20 min cap
+    let expected = start + Duration::from_secs(20 * 60);
+    let capped_time = capped.expect("should be Some");
+    let drift = capped_time
+        .duration_since(expected)
+        .or_else(|_| expected.duration_since(capped_time))
+        .unwrap_or(Duration::ZERO);
+    assert!(
+        drift < Duration::from_secs(1),
+        "Should clamp to wall-clock cap"
+    );
+}
+
+#[test]
+fn cap_deadline_preserves_when_analysis_within_wall_clock() {
+    let start = SystemTime::now();
+    let analysis = Some(start + Duration::from_secs(10 * 60)); // 10 min
+    let capped = cap_deadline_to_wall_clock(analysis, start, Some(20)); // 20 min cap
+    let expected = start + Duration::from_secs(10 * 60);
+    let capped_time = capped.expect("should be Some");
+    let drift = capped_time
+        .duration_since(expected)
+        .or_else(|_| expected.duration_since(capped_time))
+        .unwrap_or(Duration::ZERO);
+    assert!(
+        drift < Duration::from_secs(1),
+        "Should preserve analysis deadline"
+    );
+}
+
+#[test]
+fn cap_deadline_no_cap_leaves_analysis_unchanged() {
+    let start = SystemTime::now();
+    let analysis_time = start + Duration::from_secs(30 * 60);
+    let capped = cap_deadline_to_wall_clock(Some(analysis_time), start, None);
+    assert!(capped.is_some());
+    let drift = capped
+        .unwrap()
+        .duration_since(analysis_time)
+        .unwrap_or(Duration::ZERO);
+    assert!(drift < Duration::from_millis(10));
+}
+
+#[test]
+fn cap_deadline_no_analysis_applies_wall_clock_only() {
+    let start = SystemTime::now();
+    let capped = cap_deadline_to_wall_clock(None, start, Some(15));
+    let expected = start + Duration::from_secs(15 * 60);
+    let capped_time = capped.expect("should produce deadline from cap");
+    let drift = capped_time
+        .duration_since(expected)
+        .or_else(|_| expected.duration_since(capped_time))
+        .unwrap_or(Duration::ZERO);
+    assert!(drift < Duration::from_secs(1));
+}
+
+#[test]
+fn cap_deadline_both_none_returns_none() {
+    let start = SystemTime::now();
+    assert!(cap_deadline_to_wall_clock(None, start, None).is_none());
+}
+
+// ============================================================================
 // OrderedNeuron tests
 // ============================================================================
 

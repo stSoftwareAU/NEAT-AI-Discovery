@@ -30,6 +30,7 @@
 //! | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | f32 | disabled | Metropolis-Hastings temperature for probabilistic acceptance (0.01–5.0) |
 //! | `NEAT_AI_DISCOVERY_SESSION_TTL_SECS` | u64 | `3600` | Streaming session TTL for orphan cleanup (60–86400) |
 //! | `NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL` | bool | `false` | Re-enable disabled batch-successful module (Issue #1059) |
+//! | `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` | u64 | `20` | Overall wall-clock cap for discovery time in minutes (1–120) (Issue #1098) |
 //!
 //! ## Observability Variables
 //!
@@ -196,5 +197,18 @@ mod tests {
         // When env var is not set, should return 2 seconds
         let delay = watchdog_abort_delay();
         assert!(delay.as_secs() >= 1);
+    }
+
+    #[test]
+    fn wall_clock_minutes_default_values() {
+        assert_eq!(DEFAULT_MAX_WALL_CLOCK_MINUTES, 20);
+        assert_eq!(MIN_WALL_CLOCK_MINUTES, 1);
+        assert_eq!(MAX_WALL_CLOCK_MINUTES, 120);
+    }
+
+    #[test]
+    fn wall_clock_minutes_returns_valid_value() {
+        let result = max_wall_clock_minutes();
+        assert!((MIN_WALL_CLOCK_MINUTES..=MAX_WALL_CLOCK_MINUTES).contains(&result));
     }
 }

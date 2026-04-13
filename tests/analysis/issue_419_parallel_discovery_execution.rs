@@ -113,6 +113,7 @@ fn run_analysis(parquet_file: &str) -> Vec<f32> {
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
+        max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
     };
 
@@ -208,6 +209,7 @@ fn parallel_discovery_metadata_consistent() {
         previous_neuron_fingerprints: None,
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
+        max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
     };
 

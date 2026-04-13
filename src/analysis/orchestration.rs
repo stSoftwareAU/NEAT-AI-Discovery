@@ -321,7 +321,29 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // minutes from now" by each phase independently. Without this, parquet
     // loading, synapse analysis, and neuron analysis each got a fresh 10-minute
     // window, allowing total analysis to exceed 24 minutes on a 10-minute budget.
-    let overall_deadline = utils::build_deadline(input.analysis_deadline_ms);
+    let analysis_deadline = utils::build_deadline(input.analysis_deadline_ms);
+
+    // Issue #1098: Cap the analysis deadline to the overall wall-clock limit.
+    // Discovery has two additive timeouts (recording + analysis) with no overall
+    // cap. The wall-clock cap ensures total elapsed time never exceeds the
+    // configured limit, even if recording consumed some of the budget.
+    // If the caller does not pass a cap, fall back to the environment variable
+    // NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES (default 20 min).
+    let wall_clock_minutes = input
+        .max_discovery_wall_clock_minutes
+        .unwrap_or_else(crate::config::max_wall_clock_minutes);
+    let discovery_start = std::time::SystemTime::now();
+    let overall_deadline = utils::cap_deadline_to_wall_clock(
+        analysis_deadline,
+        discovery_start,
+        Some(wall_clock_minutes),
+    );
+    if analysis_deadline != overall_deadline {
+        tracing::info!(
+            wall_clock_cap_minutes = wall_clock_minutes,
+            "Issue #1098: analysis deadline capped by wall-clock limit"
+        );
+    }
     let shared_deadline_abs_ms = utils::deadline_to_absolute_ms(&overall_deadline);
 
     // Pre-load ALL records from parquet in one pass. This is MUCH faster than
