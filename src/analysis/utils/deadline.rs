@@ -125,6 +125,20 @@ pub fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
         .and_then(|validated_ms| SystemTime::now().checked_add(Duration::from_millis(validated_ms)))
 }
 
+/// Convert a `SystemTime` deadline to an absolute millisecond timestamp (Issue #1097).
+///
+/// This is the inverse of `build_deadline`: given a `SystemTime`, return the
+/// equivalent absolute milliseconds since UNIX epoch. This allows the deadline
+/// to be shared across sub-phases without each phase re-interpreting a relative
+/// duration as "N milliseconds from now" (which would reset the deadline).
+pub fn deadline_to_absolute_ms(deadline: &Option<SystemTime>) -> Option<u64> {
+    deadline.as_ref().and_then(|d| {
+        d.duration_since(SystemTime::UNIX_EPOCH)
+            .ok()
+            .map(|dur| dur.as_millis() as u64)
+    })
+}
+
 /// Check if the deadline has passed or cancellation has been requested.
 ///
 /// Returns `true` if:

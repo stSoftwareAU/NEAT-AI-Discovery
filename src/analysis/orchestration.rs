@@ -315,10 +315,19 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
     crate::watchdog::beat("analysis::analyze_all → loading parquet cache");
 
+    // Issue #1097: Build the overall deadline ONCE and convert to an absolute
+    // timestamp. All sub-phases share this single deadline so that a relative
+    // duration (e.g., 600_000ms = 10 minutes) is not re-interpreted as "10
+    // minutes from now" by each phase independently. Without this, parquet
+    // loading, synapse analysis, and neuron analysis each got a fresh 10-minute
+    // window, allowing total analysis to exceed 24 minutes on a 10-minute budget.
+    let overall_deadline = utils::build_deadline(input.analysis_deadline_ms);
+    let shared_deadline_abs_ms = utils::deadline_to_absolute_ms(&overall_deadline);
+
     // Pre-load ALL records from parquet in one pass. This is MUCH faster than
     // lazy-loading each neuron separately (1 scan vs ~2000 scans for large creatures).
     // Issue #648: Pass the analysis deadline so loading can abort early if time runs out.
-    let loading_deadline = utils::build_deadline(input.analysis_deadline_ms);
+    let loading_deadline = overall_deadline;
     let parquet_loading_start = std::time::Instant::now();
     let cache_result =
         cache::RecordCache::new_adaptive_with_deadline(&input.parquet_file, loading_deadline);
@@ -388,13 +397,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         });
     }
 
+    // Issue #1097: Pass the shared absolute deadline to sub-phases so they
+    // all count down from the same point in time.
     let synapse_input = if include_synapse {
         Some(AnalyzeSynapsesInput {
             parquet_file: input.parquet_file.clone(),
             creature: input.creature.clone(),
             focus_neurons: effective_focus_neurons.clone(),
             max_candidates: input.max_synapse_candidates,
-            analysis_deadline_ms: input.analysis_deadline_ms,
+            analysis_deadline_ms: shared_deadline_abs_ms,
             random_seed: input.random_seed,
             temperature: input.temperature,
         })
@@ -408,7 +419,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             creature: input.creature.clone(),
             focus_neurons: effective_focus_neurons,
             max_candidates: input.max_neuron_candidates,
-            analysis_deadline_ms: input.analysis_deadline_ms,
+            analysis_deadline_ms: shared_deadline_abs_ms,
             random_seed: input.random_seed,
             temperature: input.temperature,
         })
@@ -419,7 +430,9 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Issue #1002: Create a shared GPU work queue for both analyses.
     // The GpuWorkQueue is designed for concurrent submitters via crossbeam_channel,
     // so a single GPU thread serves both synapse and neuron analyses.
-    let loading_deadline_for_gpu = utils::build_deadline(input.analysis_deadline_ms);
+    // Issue #1097: Reuse the already-computed overall deadline instead of
+    // building a new one (which would reset a relative duration).
+    let loading_deadline_for_gpu = overall_deadline;
     let shared_gpu_queue = Arc::new(
         super::gpu::GpuWorkQueue::new()
             .context("failed to create GPU work queue for analysis dispatch")?
@@ -503,11 +516,23 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         );
     }
 
+    // Issue #1097: Check overall deadline before post-processing. If the
+    // analysis phases consumed the entire time budget, skip the heavyweight
+    // post-processing to stay within the configured timeout.
+    let post_processing_deadline_passed = utils::deadline_passed(&overall_deadline);
+    if post_processing_deadline_passed {
+        tracing::info!(
+            "Analysis deadline reached before post-processing — skipping discovery \
+             modules, compression, and reranking to stay within timeout (Issue #1097)"
+        );
+    }
+
     // Issue #1028: Skip post-processing when memory budget is exceeded.
+    // Issue #1097: Also skip when the analysis deadline has passed.
     // The candidates from GPU analysis are still returned, but compression,
     // discovery module detection, and reranking are skipped to avoid further
-    // memory growth.
-    if !memory_budget_exceeded {
+    // memory growth or exceeding the timeout.
+    if !memory_budget_exceeded && !post_processing_deadline_passed {
         // Issue #1004: Overlap candidate compression with discovery module detection.
         //
         // Both compression (reads `helpful_synapses` immutably) and discovery module
@@ -588,7 +613,8 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                         // Issue #375 / #419: Discovery module detection phase only.
                         // Issue #1029: Pass the analysis deadline so detection modules
                         // are skipped when time runs out, preventing lockups.
-                        let discovery_deadline = utils::build_deadline(input.analysis_deadline_ms);
+                        // Issue #1097: Use the shared absolute deadline.
+                        let discovery_deadline = utils::build_deadline(shared_deadline_abs_ms);
                         module_dispatch_specs::prepare_and_detect_discovery_modules(
                             &creature,
                             &hidden_neurons,
