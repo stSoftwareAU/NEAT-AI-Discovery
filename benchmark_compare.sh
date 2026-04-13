@@ -87,10 +87,15 @@ discover_benchmarks() {
             in_bench_block=false
         fi
     done < Cargo.toml
-    echo "${benchmarks[@]}"
+    if [[ ${#benchmarks[@]} -gt 0 ]]; then
+        printf '%s\n' "${benchmarks[@]}"
+    fi
 }
 
-BENCHMARKS=($(discover_benchmarks))
+BENCHMARKS=()
+while IFS= read -r line; do
+    BENCHMARKS+=("$line")
+done < <(discover_benchmarks)
 
 if [[ "$LIST_ONLY" == true ]]; then
     echo "Available benchmark suites (${#BENCHMARKS[@]}):"
