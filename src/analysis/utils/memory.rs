@@ -548,6 +548,51 @@ pub fn is_memory_budget_exceeded(budget_mb: Option<u64>) -> bool {
 }
 
 // =============================================================================
+// Memory Pressure Cancellation (Issue #1099)
+// =============================================================================
+
+/// Check system memory pressure and cancel in-flight analysis if CRITICAL.
+///
+/// This is called at key phase boundaries in the analysis pipeline to
+/// self-monitor memory pressure. When the system has less than 5% available
+/// memory (CRITICAL), it triggers cancellation so the analysis returns partial
+/// results and frees its buffers, preventing OOM.
+///
+/// Returns `true` if cancellation was triggered (or was already active).
+pub fn check_memory_pressure_and_cancel() -> bool {
+    // Short-circuit if already cancelled — avoid the system call.
+    if crate::cancellation::is_cancelled() {
+        return true;
+    }
+
+    let pressure = detect_memory_pressure();
+    if pressure == MemoryPressure::Critical {
+        let (available, total) = get_memory_info();
+        let pct = if total > 0 {
+            (available as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+        tracing::warn!(
+            available_mb = available / (1024 * 1024),
+            total_mb = total / (1024 * 1024),
+            available_pct = format!("{pct:.1}%"),
+            "CRITICAL memory pressure detected — cancelling in-flight analysis (Issue #1099)"
+        );
+        crate::cancellation::request_cancellation_memory_pressure();
+        return true;
+    }
+
+    false
+}
+
+/// Pure function variant for testing: check whether the given memory values
+/// represent CRITICAL pressure and would trigger cancellation (Issue #1099).
+pub fn would_cancel_for_memory_pressure(available_bytes: u64, total_bytes: u64) -> bool {
+    categorise_memory_pressure(available_bytes, total_bytes) == MemoryPressure::Critical
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 

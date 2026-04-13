@@ -11,6 +11,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 /// checked by `is_cancelled()`, and cleared by `reset_cancellation()`.
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 
+/// Tracks whether the cancellation was triggered by memory pressure (Issue #1099).
+///
+/// When the host's memory monitor detects CRITICAL memory pressure, it calls
+/// `cancel_analysis_memory_pressure()` which sets both `CANCELLED` and this flag.
+/// The analysis pipeline can then report the specific reason in the result.
+static MEMORY_PRESSURE_CANCELLED: AtomicBool = AtomicBool::new(false);
+
 /// Tracks the number of concurrently active analysis invocations (Issue #1048).
 ///
 /// The TypeScript host can query this via the `is_analysis_active` FFI export
@@ -38,12 +45,38 @@ pub fn request_cancellation() {
     tracing::info!("cancellation requested — analysis will stop at the next check point");
 }
 
+/// Returns `true` if cancellation was triggered by memory pressure (Issue #1099).
+///
+/// When `true`, the host's memory monitor detected CRITICAL pressure and
+/// requested cancellation. The analysis result should report this so the
+/// host can take additional recovery actions (e.g., clearing WASM caches).
+#[inline]
+pub fn is_memory_pressure_cancelled() -> bool {
+    MEMORY_PRESSURE_CANCELLED.load(Ordering::Relaxed)
+}
+
+/// Request cancellation due to CRITICAL memory pressure (Issue #1099).
+///
+/// Sets both the general cancellation flag and the memory-pressure-specific
+/// flag. Called either from the `cancel_analysis_memory_pressure` FFI export
+/// (when the host detects CRITICAL pressure) or from the Rust-side memory
+/// pressure self-check in the analysis pipeline.
+pub fn request_cancellation_memory_pressure() {
+    MEMORY_PRESSURE_CANCELLED.store(true, Ordering::Relaxed);
+    CANCELLED.store(true, Ordering::Relaxed);
+    tracing::warn!(
+        "cancellation requested due to CRITICAL memory pressure — \
+         analysis will stop at the next check point (Issue #1099)"
+    );
+}
+
 /// Clear the cancellation flag before starting a new analysis run.
 ///
 /// Must be called at the start of each analysis invocation so that a
 /// previous cancellation does not immediately abort the next run.
 pub fn reset_cancellation() {
     CANCELLED.store(false, Ordering::Relaxed);
+    MEMORY_PRESSURE_CANCELLED.store(false, Ordering::Relaxed);
 }
 
 // ============================================================================
@@ -140,6 +173,7 @@ mod tests {
     use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_cancellation_flag_lifecycle() {
         // Start clean
         reset_cancellation();
@@ -152,6 +186,48 @@ mod tests {
         // Reset clears the flag
         reset_cancellation();
         assert!(!is_cancelled());
+    }
+
+    /// Issue #1099: Verify that memory-pressure cancellation sets both flags
+    /// and that reset clears both.
+    #[test]
+    #[serial]
+    fn test_memory_pressure_cancellation_lifecycle() {
+        reset_cancellation();
+        assert!(!is_cancelled());
+        assert!(!is_memory_pressure_cancelled());
+
+        // Request memory-pressure cancellation
+        request_cancellation_memory_pressure();
+        assert!(is_cancelled(), "general cancellation flag must be set");
+        assert!(
+            is_memory_pressure_cancelled(),
+            "memory pressure flag must be set"
+        );
+
+        // Reset clears both flags
+        reset_cancellation();
+        assert!(!is_cancelled());
+        assert!(!is_memory_pressure_cancelled());
+    }
+
+    /// Issue #1099: A normal cancellation should not set the memory pressure flag.
+    ///
+    /// The cancellation flag is reset at the end to avoid leaving global state
+    /// dirty, which would cause other tests (e.g. parquet reader tests that check
+    /// the cancellation flag mid-read) to fail spuriously when running in parallel.
+    #[test]
+    #[serial]
+    fn test_normal_cancellation_does_not_set_memory_pressure() {
+        reset_cancellation();
+        request_cancellation();
+        assert!(is_cancelled());
+        assert!(
+            !is_memory_pressure_cancelled(),
+            "memory pressure flag must NOT be set by normal cancellation"
+        );
+        // Always clean up global state so concurrent tests are not affected.
+        reset_cancellation();
     }
 
     /// Issue #1077: Verify that `AnalysisActiveGuard` increments on creation

@@ -25,6 +25,23 @@ pub extern "C" fn cancel_analysis() {
     crate::cancellation::request_cancellation();
 }
 
+/// Signal in-flight analysis to stop due to CRITICAL memory pressure (Issue #1099).
+///
+/// Call this from the host process when the memory monitor detects CRITICAL
+/// memory pressure (e.g., ≥85% heap usage). This sets both the general
+/// cancellation flag and the memory-pressure-specific flag, so the analysis
+/// pipeline can report the specific reason and the host can take additional
+/// recovery actions (e.g., clearing WASM caches, evicting discovery buffers).
+///
+/// # Safety
+///
+/// This function is safe to call from any thread at any time (the flags
+/// are `AtomicBool`). No pointer arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn cancel_analysis_memory_pressure() {
+    crate::cancellation::request_cancellation_memory_pressure();
+}
+
 /// Clear a previous cancellation request.
 ///
 /// The analysis pipeline calls this automatically at the start of each
@@ -195,6 +212,7 @@ pub unsafe extern "C" fn analyze_parallel(
                     module_outcome_tracker: None,
                     memory_budget_exceeded: None,
                     cancelled: None,
+                    memory_pressure_cancelled: None,
                     error: Some(err_msg),
                     error_kind,
                     retryable,
