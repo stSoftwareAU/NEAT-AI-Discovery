@@ -31,10 +31,20 @@ pub const MIN_IMPROVED_RATIO: f32 = 0.6;
 /// than `MIN_IMPROVED_RATIO` allows moderate-quality candidates through while
 /// still filtering out clearly bad ones.
 ///
+/// Issue #1109: Raised from 0.4 to 0.55. Production failure data from GRQ-sampler
+/// (commit 50a2909) showed neuron candidates with improved ratios of 52-54%
+/// (267-274 out of 510) consistently producing negative actual error reductions
+/// despite positive predictions. The previous 0.4 threshold was too permissive —
+/// candidates barely above 50/50 are indistinguishable from random chance and
+/// waste evaluation budget. Raising the neuron threshold to 0.55 aligns with the
+/// observed failure patterns while still allowing moderately confident candidates
+/// through (it remains below `MIN_IMPROVED_RATIO = 0.6` because neuron candidates
+/// are noisier than synapse candidates).
+///
 /// ## Valid Range
 /// Must be in (0.0, 1.0). Values below 0.3 provide insufficient filtering.
 /// Values above `MIN_IMPROVED_RATIO` may be too strict for neuron candidates.
-pub const NEURON_MIN_IMPROVED_RATIO: f32 = 0.4;
+pub const NEURON_MIN_IMPROVED_RATIO: f32 = 0.55;
 
 // =============================================================================
 // Remove-Low-Impact Candidate Thresholds (Issue #892)

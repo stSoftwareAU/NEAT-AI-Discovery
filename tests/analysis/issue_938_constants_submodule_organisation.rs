@@ -153,7 +153,7 @@ fn test_scoring_boosts_accessible() {
 #[test]
 fn test_detection_thresholds_accessible() {
     assert!((constants::MIN_IMPROVED_RATIO - 0.6).abs() < f32::EPSILON);
-    assert!((constants::NEURON_MIN_IMPROVED_RATIO - 0.4).abs() < f32::EPSILON);
+    assert!((constants::NEURON_MIN_IMPROVED_RATIO - 0.55).abs() < f32::EPSILON);
     assert!((constants::REMOVAL_MEAN_ACTIVATION_THRESHOLD - 0.04).abs() < f32::EPSILON);
     assert!((constants::REMOVAL_IMPACT_THRESHOLD - 6e-5).abs() < f32::EPSILON);
     assert!((constants::MAX_INCOMING_WEIGHT - 5.0).abs() < f32::EPSILON);

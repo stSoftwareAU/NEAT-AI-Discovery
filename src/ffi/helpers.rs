@@ -34,9 +34,7 @@ pub fn to_ffi_json<T: Serialize>(value: &T) -> *mut std::ffi::c_char {
 /// a null pointer as a last resort — the Deno FFI layer treats null as an
 /// empty string, which is safer than unwinding across the FFI boundary.
 pub fn ffi_error_literal(msg: &str) -> *mut std::ffi::c_char {
-    CString::new(msg)
-        .map(CString::into_raw)
-        .unwrap_or(std::ptr::null_mut())
+    CString::new(msg).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
 /// Build an FFI-safe error response from a caught panic.

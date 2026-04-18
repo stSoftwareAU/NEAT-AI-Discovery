@@ -172,7 +172,7 @@ impl CalibrationTracker {
             })
             .collect();
 
-        entries.sort_by(|a, b| b.sample_count.cmp(&a.sample_count));
+        entries.sort_by_key(|b| std::cmp::Reverse(b.sample_count));
         entries
     }
 }

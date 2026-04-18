@@ -250,8 +250,7 @@ pub fn log_analysis_start(
     {
         let now_ms = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_millis() as u64);
         if raw_ms >= YEAR_2000_MS {
             // Absolute timestamp
             let elapsed_secs =
