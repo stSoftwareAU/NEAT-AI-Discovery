@@ -21,8 +21,8 @@ use crate::observability::PhaseTimer;
 use rayon::prelude::*;
 
 use super::constants::{
-    MODULE_GATE_THRESHOLD, QUALITY_SKIP_GAIN_THRESHOLD, QUALITY_SKIP_MIN_CANDIDATES,
-    SOFT_FAILURE_WEIGHT,
+    COORDINATED_MIN_EXPECTED_GAIN, MODULE_GATE_THRESHOLD, QUALITY_SKIP_GAIN_THRESHOLD,
+    QUALITY_SKIP_MIN_CANDIDATES, SOFT_FAILURE_WEIGHT,
 };
 use super::module_weights::{DiscoveryModuleStatsJson, ModuleOutcomeTracker};
 use super::shared;
@@ -63,9 +63,16 @@ pub fn run_discovery_module(
     crate::watchdog::beat(&starting);
     let _timer = PhaseTimer::new(phase_name);
 
-    if let Some(result) = detect_fn()
+    if let Some(mut result) = detect_fn()
         && !result.candidates.is_empty()
     {
+        // Issue #1110: Filter coordinated candidates below the minimum
+        // expected-gain floor. Gains at 1e-8 to 1e-7 are indistinguishable
+        // from numerical noise and harm the network in production.
+        result
+            .candidates
+            .retain(|c| c.expected_creature_score_gain >= COORDINATED_MIN_EXPECTED_GAIN);
+
         if utils::verbose_enabled() {
             tracing::debug!(
                 module = module_name,
@@ -75,12 +82,14 @@ pub fn run_discovery_module(
             );
         }
 
-        super::merge_coordinated_structural_replacements(
-            syn,
-            result.candidates,
-            max_synapse_candidates,
-            diversify,
-        );
+        if !result.candidates.is_empty() {
+            super::merge_coordinated_structural_replacements(
+                syn,
+                result.candidates,
+                max_synapse_candidates,
+                diversify,
+            );
+        }
     }
 
     crate::watchdog::beat(&finished);
@@ -333,11 +342,13 @@ pub fn merge_discovery_module_results(
                 result.candidates.truncate(entry.max_candidates);
             }
 
-            // Issue #1060: Count candidates filtered by positive-gain check before merge.
+            // Issue #1060, #1110: Filter coordinated candidates below the minimum
+            // expected-gain floor. Gains at 1e-8 to 1e-7 are indistinguishable
+            // from numerical noise and harm the network in production.
             let pre_filter_count = result.candidates.len();
             result
                 .candidates
-                .retain(|c| c.expected_creature_score_gain > 0.0);
+                .retain(|c| c.expected_creature_score_gain >= COORDINATED_MIN_EXPECTED_GAIN);
             let post_filter_count = result.candidates.len();
 
             // Issue #1060: Record pre-filtering soft failures for candidates that
