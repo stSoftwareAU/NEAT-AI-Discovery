@@ -35,8 +35,7 @@ pub fn to_ffi_json<T: Serialize>(value: &T) -> *mut std::ffi::c_char {
 /// empty string, which is safer than unwinding across the FFI boundary.
 pub fn ffi_error_literal(msg: &str) -> *mut std::ffi::c_char {
     CString::new(msg)
-        .map(CString::into_raw)
-        .unwrap_or(std::ptr::null_mut())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
 /// Build an FFI-safe error response from a caught panic.

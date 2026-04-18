@@ -341,8 +341,7 @@ pub fn validate_parquet_memory_requirements(
 /// This is a public function so it can be used by focus.rs and analysis.rs.
 pub fn check_memory_for_parquet(parquet_file: &str) -> Result<()> {
     let file_size_bytes = std::fs::metadata(parquet_file)
-        .map(|m| m.len())
-        .unwrap_or(0);
+        .map_or(0, |m| m.len());
 
     let (available_bytes, total_bytes) = get_memory_info();
 

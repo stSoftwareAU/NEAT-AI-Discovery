@@ -381,7 +381,7 @@ fn detect_modes_histogram(errors: &[f32]) -> Vec<ErrorMode> {
     modes.retain(|m| m.proportion >= 0.05);
 
     // Sort by sample count (largest first)
-    modes.sort_by(|a, b| b.sample_count.cmp(&a.sample_count));
+    modes.sort_by_key(|b| std::cmp::Reverse(b.sample_count));
 
     modes
 }

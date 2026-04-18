@@ -169,12 +169,11 @@ fn compute_activation_gradient(squash: &str, value: f32) -> (f32, bool) {
             let gradient = sigmoid * (1.0 - sigmoid);
             (gradient, false)
         }
+        "HARD_TANH" | "CLIPPED" if value.abs() >= saturation_thresholds::HARD_TANH_THRESHOLD => {
+            (0.0, false) // Saturated but not "dead"
+        }
         "HARD_TANH" | "CLIPPED" => {
-            if value.abs() >= saturation_thresholds::HARD_TANH_THRESHOLD {
-                (0.0, false) // Saturated but not "dead"
-            } else {
-                (1.0, false)
-            }
+            (1.0, false)
         }
         "BIPOLAR_SIGMOID" => {
             // 2 * sigmoid(x) - 1, derivative = 2 * sigmoid(x) * (1 - sigmoid(x))
