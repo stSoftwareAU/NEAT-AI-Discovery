@@ -538,6 +538,25 @@ pub const ADAPTIVE_PROPOSAL_MAX_SIGMA: f32 = 3.0;
 pub const ADAPTIVE_PROPOSAL_SIGN_FLIP_PROBABILITY: f32 = 0.15;
 
 // =============================================================================
+// Coordinated Candidate Minimum Expected Gain (Issue #1110)
+// =============================================================================
+
+/// Minimum expected-gain floor for coordinated structural candidates (Issue #1110).
+///
+/// Production failure data from GRQ-sampler (commit 50a2909) shows coordinated
+/// structural candidates with `expectedCreatureScoreGain` of ~8e-8 and ~4e-8
+/// (after 0.2× weight scaling) that produced actual error changes of -0.0008
+/// and -0.0004 respectively — harming the network rather than helping.
+///
+/// Expected gains at 1e-8 to 1e-7 are indistinguishable from numerical noise
+/// and should never be proposed. This floor filters noise-level proposals while
+/// preserving genuinely promising candidates.
+///
+/// ## Valid Range
+/// Must be > 0.0. Values above 1e-3 may filter too aggressively.
+pub const COORDINATED_MIN_EXPECTED_GAIN: f32 = 1e-5;
+
+// =============================================================================
 // NaN-safe Floating-Point Comparison Helpers (Issue #483)
 // =============================================================================
 

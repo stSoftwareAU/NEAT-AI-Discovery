@@ -188,6 +188,151 @@ fn run_discovery_module_accumulates_across_multiple_calls() {
 }
 
 // =============================================================================
+// Issue #1110: Coordinated minimum expected-gain floor tests
+// =============================================================================
+
+#[test]
+fn coordinated_min_expected_gain_constant_is_1e_minus_5() {
+    use crate::analysis::constants::COORDINATED_MIN_EXPECTED_GAIN;
+    assert!(
+        (COORDINATED_MIN_EXPECTED_GAIN - 1e-5).abs() < f32::EPSILON,
+        "COORDINATED_MIN_EXPECTED_GAIN should be 1e-5, got {COORDINATED_MIN_EXPECTED_GAIN}",
+    );
+}
+
+/// Production failure data shows gains at ~8e-8 produce negative actual
+/// outcomes. These noise-level candidates must be rejected.
+#[test]
+fn noise_level_gain_8e_minus_8_is_rejected() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    run_discovery_module(
+        &mut syn,
+        "noise level module",
+        "test_phase",
+        None,
+        false,
+        || {
+            Some(DiscoveryDetectionResult {
+                detected_count: 2,
+                candidates: vec![
+                    make_candidate(8e-8), // noise — should be rejected
+                    make_candidate(1e-4), // genuine — should be accepted
+                ],
+            })
+        },
+    );
+
+    assert_eq!(
+        syn.coordinated_structural_candidates.len(),
+        1,
+        "noise-level candidate at 8e-8 should be filtered, genuine at 1e-4 kept"
+    );
+    assert!(syn.coordinated_structural_candidates[0].expected_creature_score_gain >= 1e-5);
+}
+
+/// Candidates at 1e-4 are well above the floor and should be accepted.
+#[test]
+fn genuine_gain_1e_minus_4_is_accepted() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    run_discovery_module(
+        &mut syn,
+        "genuine gain module",
+        "test_phase",
+        None,
+        false,
+        || {
+            Some(DiscoveryDetectionResult {
+                detected_count: 1,
+                candidates: vec![make_candidate(1e-4)],
+            })
+        },
+    );
+
+    assert_eq!(
+        syn.coordinated_structural_candidates.len(),
+        1,
+        "candidate at 1e-4 should be accepted"
+    );
+}
+
+/// Candidates exactly at the threshold (1e-5) should be accepted (>= check).
+#[test]
+fn gain_exactly_at_threshold_is_accepted() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    run_discovery_module(
+        &mut syn,
+        "exact threshold module",
+        "test_phase",
+        None,
+        false,
+        || {
+            Some(DiscoveryDetectionResult {
+                detected_count: 1,
+                candidates: vec![make_candidate(1e-5)],
+            })
+        },
+    );
+
+    assert_eq!(
+        syn.coordinated_structural_candidates.len(),
+        1,
+        "candidate exactly at threshold 1e-5 should be accepted"
+    );
+}
+
+/// Candidates just below the threshold should be rejected.
+#[test]
+fn gain_just_below_threshold_is_rejected() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    run_discovery_module(
+        &mut syn,
+        "below threshold module",
+        "test_phase",
+        None,
+        false,
+        || {
+            Some(DiscoveryDetectionResult {
+                detected_count: 1,
+                candidates: vec![make_candidate(9e-6)],
+            })
+        },
+    );
+
+    assert!(
+        syn.coordinated_structural_candidates.is_empty(),
+        "candidate at 9e-6 (below 1e-5 threshold) should be rejected"
+    );
+}
+
+// =============================================================================
 // Issue #557: Positive gain filtering tests
 // =============================================================================
 
