@@ -66,6 +66,7 @@ fn make_test_candidate(incoming: f32, outgoing: f32, bias: f32) -> CandidateNeur
         prediction_confidence: 0.5,
         expected_score_gain_confidence_interval: [0.005, 0.015],
         comment: None,
+        target_saturation_factor: None,
     }
 }
 

@@ -201,6 +201,7 @@ fn test_upsert_keeps_complementary_relu_candidates_by_incoming_weight() {
         target_neuron_stats: None,
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
+        target_saturation_factor: None,
     };
 
     // Negative-orientation ReLU candidate
@@ -222,6 +223,7 @@ fn test_upsert_keeps_complementary_relu_candidates_by_incoming_weight() {
         target_neuron_stats: None,
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
+        target_saturation_factor: None,
     };
 
     // Insert both candidates
@@ -279,6 +281,7 @@ fn test_upsert_keeps_split_error_complementary_pairs() {
         target_neuron_stats: None,
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
+        target_saturation_factor: None,
     };
 
     // Candidate for negative-error samples (negative outgoing weight)
@@ -300,6 +303,7 @@ fn test_upsert_keeps_split_error_complementary_pairs() {
         target_neuron_stats: None,
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
+        target_saturation_factor: None,
     };
 
     // Insert both candidates

@@ -241,6 +241,15 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
                 );
             }
 
+            // Issue #1111: Compute target saturation before candidate generation.
+            // This detects targets operating near activation bounds and adjusts
+            // candidate generation accordingly.
+            let target_saturation = neuron_squash_map_arc
+                .get(target_uuid.as_str())
+                .map_or(preparation::TargetSaturationInfo::NOT_SATURATED, |squash| {
+                    preparation::compute_target_saturation(target_records, squash)
+                });
+
             // STEP/BIPOLAR are discrete targets. Add-neuron discovery for these targets was
             // removed as dead code; add-synapse is the intended mechanism.
             let is_threshold_target = neuron_squash_map_arc
@@ -333,6 +342,7 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
                     diagnostics: &diagnostics,
                     helpful_map: &helpful_map,
                     threshold,
+                    target_saturation,
                 };
                 evaluation::evaluate_neuron_candidates(
                     &work_results,

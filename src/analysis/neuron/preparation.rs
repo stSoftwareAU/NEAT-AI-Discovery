@@ -1,9 +1,11 @@
 //! Neuron analysis preparation — focus target filtering, neuron type maps,
-//! source ordering, and record loading.
+//! source ordering, record loading, and target saturation pre-check.
 //!
 //! Extracted from neuron.rs as part of issue #598.
+//! Target saturation pre-check added as part of issue #1111.
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for neural network computation (Issue #873)
 use crate::AnalyzeNeuronsInput;
 use crate::types::DiscoverRecord;
 use anyhow::Result;
@@ -479,6 +481,151 @@ fn build_empty_result(
     }
 }
 
+// =============================================================================
+// Target saturation pre-check (Issue #1111)
+// =============================================================================
+
+/// Threshold for the fraction of activation output range that is covered.
+/// When a target neuron's observed activation range covers more than this
+/// fraction of the activation function's output range, it is flagged as
+/// near-saturated.
+const TARGET_SATURATION_RANGE_THRESHOLD: f32 = 0.90;
+
+/// Information about a target neuron's saturation state (Issue #1111).
+///
+/// Computed from the target neuron's recorded activation min/max and its
+/// activation function's output bounds. Used to adjust candidate generation
+/// for targets operating near activation limits.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TargetSaturationInfo {
+    /// Whether the target neuron is near saturation (activation range covers
+    /// >`TARGET_SATURATION_RANGE_THRESHOLD` of the output range).
+    pub is_near_saturated: bool,
+    /// Saturation factor (0.0 = not saturated, 1.0 = fully saturated).
+    /// Measures how much of the output range is already consumed.
+    pub saturation_factor: f32,
+}
+
+impl TargetSaturationInfo {
+    /// A non-saturated target.
+    pub const NOT_SATURATED: Self = Self {
+        is_near_saturated: false,
+        saturation_factor: 0.0,
+    };
+}
+
+/// Returns the output range `(min, max)` for a bounded activation function.
+///
+/// Returns `None` for unbounded activations (IDENTITY, RELU, ELU, etc.)
+/// where saturation is not applicable.
+fn bounded_output_range(squash: &str) -> Option<(f32, f32)> {
+    match squash {
+        "HARD_TANH" | "CLIPPED" => Some((-1.0, 1.0)),
+        "TANH" | "BIPOLAR_SIGMOID" => Some((-1.0, 1.0)),
+        "LOGISTIC" => Some((0.0, 1.0)),
+        "SOFTSIGN" => Some((-1.0, 1.0)),
+        "ARCTAN" | "ArcTan" => {
+            let half_pi = std::f32::consts::FRAC_PI_2;
+            Some((-half_pi, half_pi))
+        }
+        "RELU6" => Some((0.0, 6.0)),
+        "BIPOLAR" | "STEP" => Some((-1.0, 1.0)),
+        _ => None, // Unbounded: IDENTITY, RELU, GELU, ELU, Softplus, Mish, etc.
+    }
+}
+
+/// Returns `true` if a candidate activation function's output range compounds
+/// clipping with the target's bounded activation (Issue #1111).
+///
+/// For example, `ABSOLUTE` feeding into `HARD_TANH`: `ABSOLUTE` outputs [0, ∞), but
+/// `HARD_TANH` clips to [-1, 1]. The positive-only output of `ABSOLUTE` means
+/// only [0, 1] is useful, halving the effective target range and worsening
+/// saturation.
+pub(crate) fn compounds_target_clipping(candidate_squash: &str, target_squash: &str) -> bool {
+    let Some((target_min, _)) = bounded_output_range(target_squash) else {
+        return false;
+    };
+    // ABSOLUTE outputs [0, ∞) — for targets with negative lower bound,
+    // the positive-only output wastes the negative half of the target range.
+    if candidate_squash == "ABSOLUTE" && target_min < 0.0 {
+        return true;
+    }
+    false
+}
+
+/// Compute the saturation state of a target neuron from its recorded data.
+///
+/// Examines `activation_min` and `activation_max` from the target's records
+/// and compares them against the activation function's output bounds to
+/// determine whether the target is operating near saturation.
+///
+/// Reuses the `HARD_TANH` saturation threshold (0.95) from
+/// `detection/saturation.rs` where applicable.
+pub(crate) fn compute_target_saturation(
+    target_records: &[DiscoverRecord],
+    target_squash: &str,
+) -> TargetSaturationInfo {
+    let Some((out_min, out_max)) = bounded_output_range(target_squash) else {
+        return TargetSaturationInfo::NOT_SATURATED;
+    };
+
+    if target_records.is_empty() {
+        return TargetSaturationInfo::NOT_SATURATED;
+    }
+
+    // Compute observed activation min/max from records
+    let mut act_min = f32::INFINITY;
+    let mut act_max = f32::NEG_INFINITY;
+    let mut valid_count = 0u32;
+
+    for record in target_records {
+        let a = record.activation;
+        if a.is_finite() {
+            if a < act_min {
+                act_min = a;
+            }
+            if a > act_max {
+                act_max = a;
+            }
+            valid_count += 1;
+        }
+    }
+
+    if valid_count < 2 {
+        return TargetSaturationInfo::NOT_SATURATED;
+    }
+
+    let output_range = out_max - out_min;
+    if output_range <= 0.0 {
+        return TargetSaturationInfo::NOT_SATURATED;
+    }
+
+    let observed_range = act_max - act_min;
+    let range_coverage = observed_range / output_range;
+
+    // Saturation factor: how much of the output range is consumed (clamped to [0, 1])
+    let saturation_factor = range_coverage.clamp(0.0, 1.0);
+    let is_near_saturated = saturation_factor > TARGET_SATURATION_RANGE_THRESHOLD;
+
+    if is_near_saturated {
+        tracing::debug!(
+            target_squash,
+            act_min = format_args!("{act_min:.4}"),
+            act_max = format_args!("{act_max:.4}"),
+            out_min = format_args!("{out_min:.4}"),
+            out_max = format_args!("{out_max:.4}"),
+            range_coverage = format_args!("{range_coverage:.4}"),
+            saturation_factor = format_args!("{saturation_factor:.4}"),
+            "Target neuron near saturation — adjusting candidate generation"
+        );
+    }
+
+    TargetSaturationInfo {
+        is_near_saturated,
+        saturation_factor,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,5 +670,136 @@ mod tests {
             map_b.get("hidden-neuron-1").map(String::as_str),
             Some("output")
         );
+    }
+
+    // =========================================================================
+    // Target saturation pre-check tests (Issue #1111)
+    // =========================================================================
+
+    /// Helper to create a `DiscoverRecord` with a given activation value.
+    fn make_record(activation: f32) -> DiscoverRecord {
+        DiscoverRecord {
+            obs_index: 0,
+            neuron_uuid: "test".to_string(),
+            value: None,
+            activation,
+            errors: vec![0.1],
+        }
+    }
+
+    /// `HARD_TANH` target with activations spanning [-1, 1] triggers the
+    /// saturation pre-check (full range coverage).
+    #[test]
+    fn test_hard_tanh_saturated_target_triggers_precheck() {
+        let records: Vec<DiscoverRecord> = vec![
+            make_record(-1.0),
+            make_record(-0.5),
+            make_record(0.0),
+            make_record(0.5),
+            make_record(1.0),
+        ];
+        let info = compute_target_saturation(&records, "HARD_TANH");
+        assert!(
+            info.is_near_saturated,
+            "HARD_TANH at full range should be near-saturated"
+        );
+        assert!(
+            (info.saturation_factor - 1.0).abs() < 0.01,
+            "Saturation factor should be ~1.0, got {}",
+            info.saturation_factor
+        );
+    }
+
+    /// IDENTITY target (unbounded) does NOT trigger the pre-check.
+    #[test]
+    fn test_identity_target_not_saturated() {
+        let records: Vec<DiscoverRecord> =
+            vec![make_record(-100.0), make_record(0.0), make_record(100.0)];
+        let info = compute_target_saturation(&records, "IDENTITY");
+        assert!(
+            !info.is_near_saturated,
+            "IDENTITY target should never be flagged as near-saturated"
+        );
+        assert!(
+            info.saturation_factor < 0.01,
+            "IDENTITY saturation factor should be ~0.0, got {}",
+            info.saturation_factor
+        );
+    }
+
+    /// TANH target with narrow activation range (e.g., [-0.3, 0.3]) is not saturated.
+    #[test]
+    fn test_tanh_narrow_range_not_saturated() {
+        let records: Vec<DiscoverRecord> =
+            vec![make_record(-0.3), make_record(0.0), make_record(0.3)];
+        let info = compute_target_saturation(&records, "TANH");
+        assert!(
+            !info.is_near_saturated,
+            "TANH with narrow range should not be near-saturated"
+        );
+        assert!(
+            info.saturation_factor < TARGET_SATURATION_RANGE_THRESHOLD,
+            "Saturation factor {} should be below {}",
+            info.saturation_factor,
+            TARGET_SATURATION_RANGE_THRESHOLD
+        );
+    }
+
+    /// LOGISTIC target spanning [0.02, 0.98] covers 96% of [0, 1] — saturated.
+    #[test]
+    fn test_logistic_near_saturated() {
+        let records: Vec<DiscoverRecord> =
+            vec![make_record(0.02), make_record(0.5), make_record(0.98)];
+        let info = compute_target_saturation(&records, "LOGISTIC");
+        assert!(
+            info.is_near_saturated,
+            "LOGISTIC spanning 96% of range should be near-saturated"
+        );
+        assert!(
+            info.saturation_factor > 0.90,
+            "Saturation factor should be >0.90, got {}",
+            info.saturation_factor
+        );
+    }
+
+    /// Empty records return non-saturated.
+    #[test]
+    fn test_empty_records_not_saturated() {
+        let info = compute_target_saturation(&[], "HARD_TANH");
+        assert!(!info.is_near_saturated);
+        assert!(info.saturation_factor < 0.01);
+    }
+
+    /// `ABSOLUTE` feeding into `HARD_TANH` compounds clipping.
+    #[test]
+    fn test_absolute_compounds_hard_tanh_clipping() {
+        assert!(compounds_target_clipping("ABSOLUTE", "HARD_TANH"));
+        assert!(compounds_target_clipping("ABSOLUTE", "TANH"));
+        assert!(!compounds_target_clipping("IDENTITY", "HARD_TANH"));
+        // LOGISTIC has min=0 (non-negative), so ABSOLUTE doesn't compound
+        assert!(!compounds_target_clipping("ABSOLUTE", "LOGISTIC"));
+        // Unbounded target — no clipping to compound
+        assert!(!compounds_target_clipping("ABSOLUTE", "IDENTITY"));
+    }
+
+    /// Verify `bounded_output_range` returns correct ranges for known activations.
+    #[test]
+    fn test_bounded_output_range() {
+        assert_eq!(bounded_output_range("HARD_TANH"), Some((-1.0, 1.0)));
+        assert_eq!(bounded_output_range("CLIPPED"), Some((-1.0, 1.0)));
+        assert_eq!(bounded_output_range("TANH"), Some((-1.0, 1.0)));
+        assert_eq!(bounded_output_range("LOGISTIC"), Some((0.0, 1.0)));
+        assert_eq!(bounded_output_range("RELU6"), Some((0.0, 6.0)));
+        assert!(bounded_output_range("IDENTITY").is_none());
+        assert!(bounded_output_range("RELU").is_none());
+        assert!(bounded_output_range("GELU").is_none());
+    }
+
+    /// RELU target (unbounded) returns not-saturated.
+    #[test]
+    fn test_relu_target_not_saturated() {
+        let records = vec![make_record(0.0), make_record(5.0), make_record(10.0)];
+        let info = compute_target_saturation(&records, "RELU");
+        assert!(!info.is_near_saturated);
     }
 }

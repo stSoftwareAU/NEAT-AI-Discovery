@@ -206,6 +206,7 @@ pub(crate) fn evaluate_all_activation_specs_batched<G: GpuEvaluator>(
                 prediction_confidence: confidence_metrics.prediction_confidence,
                 expected_score_gain_confidence_interval: confidence_metrics
                     .expected_score_gain_confidence_interval,
+                target_saturation_factor: None,
             };
             best_candidates[spec_idx] = Some((candidate, net_improvement));
         }

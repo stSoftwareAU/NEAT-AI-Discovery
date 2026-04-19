@@ -197,6 +197,7 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
                     prediction_confidence: confidence_metrics.prediction_confidence,
                     expected_score_gain_confidence_interval: confidence_metrics
                         .expected_score_gain_confidence_interval,
+                    target_saturation_factor: None,
                 });
             }
         }

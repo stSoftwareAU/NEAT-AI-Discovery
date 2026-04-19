@@ -91,6 +91,7 @@ fn candidate_neuron_json_serialisation_contract() {
         target_neuron_stats: None,
         prediction_confidence: 0.85,
         expected_score_gain_confidence_interval: [0.01, 0.03],
+        target_saturation_factor: None,
     };
 
     let json = serde_json::to_value(&candidate).expect("serialisation should succeed");

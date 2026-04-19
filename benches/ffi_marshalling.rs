@@ -115,6 +115,7 @@ fn create_neuron_candidates(count: usize) -> Vec<CandidateNeuronJson> {
             target_neuron_stats: None,
             prediction_confidence: 0.75,
             expected_score_gain_confidence_interval: [0.01, 0.07],
+            target_saturation_factor: None,
         })
         .collect()
 }
