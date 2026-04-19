@@ -264,6 +264,15 @@ fn evaluate_activation_specs(
             &candidate.squash,
         );
 
+        // Issue #1113: Apply activation compatibility scoring — penalises candidate
+        // squash functions that compound clipping with bounded target activations.
+        if let Some(ts) = target_squash {
+            let compat =
+                crate::analysis::activation::activation_compatibility_score(&candidate.squash, ts);
+            candidate.expected_creature_error_reduction *= compat;
+            candidate.expected_creature_score_gain *= compat;
+        }
+
         // Issue #791: Apply cross-validation brittleness penalty
         apply_cross_validation_penalty(&mut candidate, samples);
 
