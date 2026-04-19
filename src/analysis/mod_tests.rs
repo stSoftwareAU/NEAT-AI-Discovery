@@ -226,6 +226,7 @@ fn postprocess_updates_neuron_candidates_returned_after_filtering_replacements()
         target_neuron_stats: None,
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
+        target_saturation_factor: None,
     };
 
     let cand_b = CandidateNeuronJson {
@@ -246,6 +247,7 @@ fn postprocess_updates_neuron_candidates_returned_after_filtering_replacements()
         target_neuron_stats: None,
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
+        target_saturation_factor: None,
     };
 
     let mut neuron = shared::AnalyzeNeuronsResult {

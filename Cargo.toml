@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.4"
+version = "0.74.5"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -18,7 +18,7 @@ arrow = { version = "58.1", default-features = false }  # Arrow arrays for Parqu
 wgpu = "29"
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
-rayon = "1.11"
+rayon = "1.12"
 rand = "0.10"
 uuid = { version = "1.23", features = ["v4"] }  # Session ID generation for streaming API
 

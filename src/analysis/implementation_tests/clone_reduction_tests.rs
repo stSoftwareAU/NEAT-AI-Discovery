@@ -35,6 +35,7 @@ fn make_candidate(
         target_neuron_stats: None,
         prediction_confidence: 0.5,
         expected_score_gain_confidence_interval: [0.01, 0.09],
+        target_saturation_factor: None,
     }
 }
 

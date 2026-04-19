@@ -42,6 +42,7 @@ fn make_test_neuron_candidate(incoming: f32, outgoing: f32, bias: f32) -> Candid
         target_neuron_stats: None,
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
+        target_saturation_factor: None,
     }
 }
 

@@ -229,6 +229,13 @@ pub struct CandidateNeuronJson {
     /// The first element is the lower bound, the second is the upper bound.
     /// The point estimate (expectedCreatureScoreGain) should fall within this interval.
     pub expected_score_gain_confidence_interval: [f32; 2],
+    /// Target saturation factor (0.0–1.0) for downstream scoring (Issue #1111).
+    ///
+    /// Indicates how close the target neuron's activation range is to spanning
+    /// its full output range. 0.0 = not saturated; 1.0 = fully saturated.
+    /// Candidates targeting near-saturated neurons have reduced expected gains.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_saturation_factor: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]

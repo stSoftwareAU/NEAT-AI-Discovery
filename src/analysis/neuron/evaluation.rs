@@ -46,6 +46,8 @@ pub(crate) struct NeuronEvalContext<'a> {
     pub diagnostics: &'a Arc<NeuronDiagnostics>,
     pub helpful_map: &'a Arc<Mutex<HashMap<u64, CandidateNeuronJson>>>,
     pub threshold: f32,
+    /// Target saturation info from the pre-check (Issue #1111).
+    pub target_saturation: super::preparation::TargetSaturationInfo,
 }
 
 /// Evaluate neuron candidates for all sources with samples against a single
@@ -147,6 +149,9 @@ fn evaluate_relu_split(
             candidate.expected_creature_error_reduction *= source_variance_discount;
             candidate.expected_creature_score_gain *= source_variance_discount;
 
+            // Issue #1111: Apply target saturation discount
+            apply_target_saturation_discount(&mut candidate, &ctx.target_saturation);
+
             // Issue #791: Apply cross-validation brittleness penalty
             apply_cross_validation_penalty(&mut candidate, samples);
 
@@ -183,6 +188,9 @@ fn evaluate_relu_split(
             // Issue #130: Apply source variance discount
             candidate.expected_creature_error_reduction *= source_variance_discount;
             candidate.expected_creature_score_gain *= source_variance_discount;
+
+            // Issue #1111: Apply target saturation discount
+            apply_target_saturation_discount(&mut candidate, &ctx.target_saturation);
 
             // Issue #791: Apply cross-validation brittleness penalty
             apply_cross_validation_penalty(&mut candidate, samples);
@@ -233,9 +241,22 @@ fn evaluate_activation_specs(
             continue;
         }
 
+        // Issue #1111: Skip activation specs that compound clipping with a
+        // near-saturated target (e.g., ABSOLUTE feeding into HARD_TANH).
+        if ctx.target_saturation.is_near_saturated
+            && target_squash.is_some_and(|ts| {
+                super::preparation::compounds_target_clipping(&candidate.squash, ts)
+            })
+        {
+            continue;
+        }
+
         // Issue #130: Apply source variance discount
         candidate.expected_creature_error_reduction *= source_variance_discount;
         candidate.expected_creature_score_gain *= source_variance_discount;
+
+        // Issue #1111: Apply target saturation discount
+        apply_target_saturation_discount(&mut candidate, &ctx.target_saturation);
 
         // Issue #887: Apply activation-function-aware boost/penalty
         candidate.expected_creature_score_gain = apply_activation_neuron_boost(
@@ -252,6 +273,28 @@ fn evaluate_activation_specs(
     }
 
     Ok(())
+}
+
+/// Issue #1111: Apply target saturation adjustments to a neuron candidate.
+///
+/// When the target neuron is near saturation, we:
+/// 1. Set `target_saturation_factor` on the candidate for downstream scoring
+/// 2. Discount expected gains proportionally to how saturated the target is
+fn apply_target_saturation_discount(
+    candidate: &mut CandidateNeuronJson,
+    saturation: &super::preparation::TargetSaturationInfo,
+) {
+    if !saturation.is_near_saturated {
+        return;
+    }
+
+    candidate.target_saturation_factor = Some(saturation.saturation_factor);
+
+    // Discount: a target at saturation_factor=1.0 gets a 50% discount;
+    // at 0.9 (threshold) the discount is small (~5%).
+    let discount = 1.0 - (saturation.saturation_factor * 0.5);
+    candidate.expected_creature_error_reduction *= discount;
+    candidate.expected_creature_score_gain *= discount;
 }
 
 /// Issue #733: Check whether a neuron candidate passes the minimum improved ratio threshold.
