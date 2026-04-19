@@ -380,8 +380,7 @@ fn run_sample_command(pid: u32) {
         "neat_ai_discovery.sample.{pid}.{}.txt",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
+            .map_or(0, |d| d.as_millis())
     ));
     let out_path_str = out_path.to_string_lossy().to_string();
 
