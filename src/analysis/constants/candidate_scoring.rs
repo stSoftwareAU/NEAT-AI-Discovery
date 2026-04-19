@@ -300,6 +300,29 @@ pub const ACTIVATION_BOOST_MIN: f64 = 0.5;
 pub const ACTIVATION_BOOST_MAX: f64 = 2.0;
 
 // =============================================================================
+// Saturation-Aware Prediction Discount (Issue #1112)
+// =============================================================================
+
+/// Discount floor for predictions targeting near-saturated neurons (Issue #1112).
+///
+/// When a target neuron is operating near its activation saturation bounds
+/// (e.g., `HARD_TANH` at [-1, 1]), its output physically cannot move much in
+/// response to small perturbations, so predictions are heavily over-estimated.
+///
+/// Production data shows predictions of ~0.01 for neuron candidates targeting
+/// `HARD_TANH` at full range, while actual results are ~-0.00005 (negative —
+/// making things worse). This discount is applied multiplicatively after
+/// pessimism discounting and before logistic calibration.
+///
+/// The discount interpolates linearly from 1.0 (at the saturation threshold)
+/// down to this floor (at full saturation, factor = 1.0).
+///
+/// ## Valid Range
+/// Must be in (0.0, 0.5). Values below 0.05 risk zeroing-out all saturated
+/// candidates. Values above 0.5 provide insufficient correction.
+pub const SATURATION_DISCOUNT_AGGRESSIVE: f32 = 0.15;
+
+// =============================================================================
 // Pessimism Discount (Issue #506)
 // =============================================================================
 

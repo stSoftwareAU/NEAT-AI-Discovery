@@ -16,6 +16,7 @@ use crate::analysis::gpu::GpuAnalyzer;
 use crate::analysis::shared::AnalyzeNeuronsResult;
 use crate::analysis::synapse::{
     apply_logistic_prediction_calibration, apply_neuron_pessimism_discount,
+    apply_saturation_prediction_discount,
 };
 use crate::analysis::utils::{
     lock_or_bail, log_analysis_timeout, shuffle_within_top_k, verbose_enabled,
@@ -184,6 +185,14 @@ fn apply_impact_discounting(
             candidate.expected_creature_score_gain,
             candidate.improved_count,
             candidate.total_count,
+        );
+
+        // Issue #1112: Apply saturation-aware prediction discount.
+        // Targets near activation saturation bounds cannot respond to perturbations,
+        // so predictions are heavily over-estimated and need proportional discounting.
+        candidate.expected_creature_score_gain = apply_saturation_prediction_discount(
+            candidate.expected_creature_score_gain,
+            candidate.target_saturation_factor,
         );
 
         // Issue #1056: Apply logistic prediction calibration to correct ~18× overestimation.
