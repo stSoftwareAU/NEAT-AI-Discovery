@@ -7,7 +7,8 @@
 use crate::analysis::constants::{
     LOGISTIC_CALIBRATION_FLOOR, LOGISTIC_CALIBRATION_MIDPOINT, LOGISTIC_CALIBRATION_STEEPNESS,
     NEURON_PESSIMISM_CURVE_EXPONENT, NEURON_PESSIMISM_DISCOUNT_FLOOR, PESSIMISM_CURVE_EXPONENT,
-    PESSIMISM_DISCOUNT_FLOOR, SYNAPSE_PESSIMISM_CURVE_EXPONENT, SYNAPSE_PESSIMISM_DISCOUNT_FLOOR,
+    PESSIMISM_DISCOUNT_FLOOR, SATURATION_DISCOUNT_AGGRESSIVE, SYNAPSE_PESSIMISM_CURVE_EXPONENT,
+    SYNAPSE_PESSIMISM_DISCOUNT_FLOOR,
 };
 
 // =============================================================================
@@ -187,4 +188,57 @@ pub fn apply_logistic_prediction_calibration(
         / (1.0 + (-LOGISTIC_CALIBRATION_STEEPNESS * (ratio - LOGISTIC_CALIBRATION_MIDPOINT)).exp());
     let modulator = LOGISTIC_CALIBRATION_FLOOR + (1.0 - LOGISTIC_CALIBRATION_FLOOR) * sigmoid;
     gain * base_calibration * modulator
+}
+
+// =============================================================================
+// Saturation-Aware Prediction Discount (Issue #1112)
+// =============================================================================
+
+/// Compute the saturation discount multiplier for a given saturation factor.
+///
+/// Linearly interpolates from 1.0 (no discount) at the saturation threshold
+/// (0.9) down to `SATURATION_DISCOUNT_AGGRESSIVE` at full saturation (1.0).
+///
+/// Returns 1.0 for non-saturated targets (factor ≤ threshold or `None`).
+#[inline]
+fn saturation_discount(factor: f32) -> f32 {
+    // Threshold matches TARGET_SATURATION_RANGE_THRESHOLD in preparation.rs
+    const THRESHOLD: f32 = 0.90;
+
+    if factor <= THRESHOLD {
+        return 1.0;
+    }
+
+    // Normalise to [0, 1] within the saturated range
+    let normalised = ((factor - THRESHOLD) / (1.0 - THRESHOLD)).clamp(0.0, 1.0);
+
+    // Interpolate from 1.0 down to the aggressive floor
+    1.0 - normalised * (1.0 - SATURATION_DISCOUNT_AGGRESSIVE)
+}
+
+/// Apply saturation-aware prediction discount for neuron candidates (Issue #1112).
+///
+/// When the target neuron is operating near its activation saturation bounds,
+/// predictions are heavily over-estimated because the target physically cannot
+/// move much in response to small perturbations. This function applies an
+/// additional multiplicative discount proportional to the saturation level.
+///
+/// ## Arguments
+///
+/// * `gain` — The expected creature score gain after pessimism discounting
+/// * `target_saturation_factor` — The saturation factor from candidate
+///   preparation (`None` for non-saturated targets)
+///
+/// ## Returns
+///
+/// The discounted gain. Non-saturated targets (factor = `None`) are returned
+/// unchanged.
+pub fn apply_saturation_prediction_discount(
+    gain: f32,
+    target_saturation_factor: Option<f32>,
+) -> f32 {
+    match target_saturation_factor {
+        Some(factor) => gain * saturation_discount(factor),
+        None => gain,
+    }
 }

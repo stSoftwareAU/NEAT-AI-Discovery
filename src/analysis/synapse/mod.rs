@@ -55,7 +55,8 @@ mod target_analysis;
 pub use scoring::{
     apply_activation_neuron_boost, apply_logistic_prediction_calibration,
     apply_neuron_pessimism_discount, apply_pessimism_discount, apply_prediction_calibration,
-    apply_source_type_boost, apply_synapse_pessimism_discount, apply_target_type_boost,
+    apply_saturation_prediction_discount, apply_source_type_boost,
+    apply_synapse_pessimism_discount, apply_target_type_boost,
 };
 
 pub(crate) use candidate_generation::{

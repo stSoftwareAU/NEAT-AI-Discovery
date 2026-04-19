@@ -22,7 +22,8 @@ pub use boost_functions::{
 };
 pub use discounting::{
     apply_logistic_prediction_calibration, apply_neuron_pessimism_discount,
-    apply_pessimism_discount, apply_prediction_calibration, apply_synapse_pessimism_discount,
+    apply_pessimism_discount, apply_prediction_calibration, apply_saturation_prediction_discount,
+    apply_synapse_pessimism_discount,
 };
 
 pub(crate) use improvement::upsert_candidate;
