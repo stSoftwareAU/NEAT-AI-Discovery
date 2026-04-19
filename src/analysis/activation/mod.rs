@@ -17,11 +17,13 @@
 //! - `specs` — Activation candidate specifications, GPU ID mapping, bias helpers
 //! - `simulation` — Target simulation, predicates, variance checking
 
+pub mod compatibility;
 pub mod functions;
 pub mod simulation;
 pub mod specs;
 
 // Re-export all public items to maintain backward compatibility
+pub use compatibility::*;
 pub use functions::*;
 pub use simulation::*;
 pub use specs::*;
