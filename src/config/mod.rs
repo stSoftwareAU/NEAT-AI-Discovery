@@ -48,6 +48,8 @@
 //! | `NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD` | f32 | module default | Input dominance detection threshold |
 //! | `NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD` | f32 | module default | Gradient detection threshold |
 //! | `NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD` | f32 | module default | Noise-to-signal ratio threshold |
+//! | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES` | u32 | `3` | Consecutive target-neuron failures before cooldown (Issue #1130) |
+//! | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` | u64 | `10` | Cooldown duration in epochs for skipped targets (Issue #1130) |
 //!
 //! ## Internal/Debug Variables
 //!

@@ -1,0 +1,346 @@
+//! Target-neuron cooldown tracker for repeated discovery failures (Issue #1130).
+//!
+//! In GRQ-sampler commit `4c4fbdc560ad6b3070c5c48613ea1393aee2f225`, 17 of 18
+//! `add-neurons` failure cache entries in a single commit all targeted the same
+//! neuron (`neuron-1063112866`). Different sources, different activations — all
+//! failing. Evaluation budget was spent repeatedly probing a target that was
+//! clearly not going to yield an improvement.
+//!
+//! This module records per-target consecutive failures and provides a cooldown
+//! check so the preparation layers can skip targets that have failed too many
+//! times in a row.
+//!
+//! # Design
+//!
+//! - Keyed by `target_neuron_uuid`.
+//! - Tracks: consecutive failure count, last failure epoch, last success epoch.
+//! - A target enters cooldown after
+//!   [`TargetFailureTracker::cooldown_consecutive_failures`] consecutive
+//!   failures. It stays in cooldown for
+//!   [`TargetFailureTracker::cooldown_epochs`] epochs after the last failure.
+//! - A success resets the consecutive failure counter to zero, clearing the
+//!   cooldown immediately.
+//! - The two thresholds are env-var overridable via
+//!   `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES` and
+//!   `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS`.
+//!
+//! # Global Tracker
+//!
+//! A process-global tracker is exposed via [`global_tracker`]. The FFI
+//! `record_discovery_result` hook (and analogues inside Rust) should forward
+//! per-target pass/fail signals to the global tracker so preparation layers
+//! consult a consistent view.
+
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
+use crate::analysis::constants::{TARGET_COOLDOWN_CONSECUTIVE_FAILURES, TARGET_COOLDOWN_EPOCHS};
+use crate::config::{target_cooldown_consecutive_failures_env, target_cooldown_epochs_env};
+
+/// Per-target failure state.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TargetState {
+    /// Number of consecutive failures since the last success (or ever).
+    pub consecutive_failures: u32,
+    /// Epoch at which the most recent failure was recorded. `None` if never.
+    pub last_failure_epoch: Option<u64>,
+    /// Epoch at which the most recent success (improvement) was recorded.
+    pub last_improvement_epoch: Option<u64>,
+}
+
+/// Tracks per-target failure streaks to enable cooldown skipping.
+#[derive(Debug, Clone, Default)]
+pub struct TargetFailureTracker {
+    states: HashMap<String, TargetState>,
+    /// Cooldown trigger — enter cooldown after this many consecutive failures.
+    cooldown_consecutive_failures: u32,
+    /// Cooldown duration — stay in cooldown for this many epochs after the
+    /// most recent failure.
+    cooldown_epochs: u64,
+    /// Monotonic epoch counter used by the `_now` convenience methods. Callers
+    /// that don't track their own epoch can call [`advance_epoch`] once per
+    /// discovery run.
+    current_epoch: u64,
+}
+
+impl TargetFailureTracker {
+    /// Creates a new tracker using the effective thresholds (env-var override
+    /// if set, otherwise the compiled defaults).
+    pub fn new() -> Self {
+        Self {
+            states: HashMap::new(),
+            cooldown_consecutive_failures: target_cooldown_consecutive_failures_env()
+                .unwrap_or(TARGET_COOLDOWN_CONSECUTIVE_FAILURES),
+            cooldown_epochs: target_cooldown_epochs_env().unwrap_or(TARGET_COOLDOWN_EPOCHS),
+            current_epoch: 0,
+        }
+    }
+
+    /// Creates a new tracker with explicit thresholds (for tests).
+    pub fn with_thresholds(cooldown_consecutive_failures: u32, cooldown_epochs: u64) -> Self {
+        Self {
+            states: HashMap::new(),
+            cooldown_consecutive_failures,
+            cooldown_epochs,
+            current_epoch: 0,
+        }
+    }
+
+    /// Returns the internal monotonic epoch counter.
+    pub fn current_epoch(&self) -> u64 {
+        self.current_epoch
+    }
+
+    /// Increments the internal epoch and returns the new value.
+    ///
+    /// Call this once per discovery run before consulting the tracker so the
+    /// cooldown window advances. Externally-provided epochs (via the explicit
+    /// `record_failure` / `is_in_cooldown` methods) are unaffected.
+    pub fn advance_epoch(&mut self) -> u64 {
+        self.current_epoch = self.current_epoch.saturating_add(1);
+        self.current_epoch
+    }
+
+    /// Records a failure against `target_uuid` using the internal epoch.
+    pub fn record_failure_now(&mut self, target_uuid: &str) {
+        self.record_failure(target_uuid, self.current_epoch);
+    }
+
+    /// Records a success for `target_uuid` using the internal epoch.
+    pub fn record_success_now(&mut self, target_uuid: &str) {
+        self.record_success(target_uuid, self.current_epoch);
+    }
+
+    /// Checks cooldown using the internal epoch.
+    pub fn is_in_cooldown_now(&self, target_uuid: &str) -> bool {
+        self.is_in_cooldown(target_uuid, self.current_epoch)
+    }
+
+    /// Returns the configured consecutive-failure threshold.
+    pub fn cooldown_consecutive_failures(&self) -> u32 {
+        self.cooldown_consecutive_failures
+    }
+
+    /// Returns the configured cooldown duration in epochs.
+    pub fn cooldown_epochs(&self) -> u64 {
+        self.cooldown_epochs
+    }
+
+    /// Returns the number of tracked targets.
+    pub fn len(&self) -> usize {
+        self.states.len()
+    }
+
+    /// Returns `true` when no targets are tracked.
+    pub fn is_empty(&self) -> bool {
+        self.states.is_empty()
+    }
+
+    /// Returns the current state for a target, if any.
+    pub fn state(&self, target_uuid: &str) -> Option<&TargetState> {
+        self.states.get(target_uuid)
+    }
+
+    /// Records a discovery failure against `target_uuid` at `epoch`.
+    ///
+    /// Increments the consecutive-failure counter and updates the last
+    /// failure epoch.
+    pub fn record_failure(&mut self, target_uuid: &str, epoch: u64) {
+        let entry = self.states.entry(target_uuid.to_string()).or_default();
+        entry.consecutive_failures = entry.consecutive_failures.saturating_add(1);
+        entry.last_failure_epoch = Some(epoch);
+    }
+
+    /// Records a successful improvement for `target_uuid` at `epoch`.
+    ///
+    /// Resets the consecutive-failure counter to zero (clearing any active
+    /// cooldown) and records the epoch.
+    pub fn record_success(&mut self, target_uuid: &str, epoch: u64) {
+        let entry = self.states.entry(target_uuid.to_string()).or_default();
+        entry.consecutive_failures = 0;
+        entry.last_improvement_epoch = Some(epoch);
+    }
+
+    /// Returns `true` when `target_uuid` is currently in cooldown at `current_epoch`.
+    ///
+    /// A target is in cooldown when:
+    /// 1. Consecutive failures ≥ [`Self::cooldown_consecutive_failures`], AND
+    /// 2. `current_epoch` < `last_failure_epoch + cooldown_epochs`.
+    ///
+    /// Targets never-seen or below the consecutive-failure threshold are NOT
+    /// in cooldown. A prior success (counter reset) also clears cooldown.
+    pub fn is_in_cooldown(&self, target_uuid: &str, current_epoch: u64) -> bool {
+        let Some(state) = self.states.get(target_uuid) else {
+            return false;
+        };
+        if state.consecutive_failures < self.cooldown_consecutive_failures {
+            return false;
+        }
+        let Some(failure_epoch) = state.last_failure_epoch else {
+            return false;
+        };
+        current_epoch < failure_epoch.saturating_add(self.cooldown_epochs)
+    }
+}
+
+/// Remove focus targets currently in cooldown.
+///
+/// Returns the number of targets dropped so callers can emit a diagnostic
+/// counter (the `cooldown_skipped` reason-name per Issue #1129's convention).
+pub fn filter_cooldown_targets(
+    focus_order: &mut Vec<String>,
+    tracker: &TargetFailureTracker,
+    current_epoch: u64,
+) -> u32 {
+    let before = focus_order.len();
+    focus_order.retain(|target| !tracker.is_in_cooldown(target, current_epoch));
+    let after = focus_order.len();
+    let skipped = u32::try_from(before.saturating_sub(after)).unwrap_or(u32::MAX);
+    if skipped > 0 {
+        tracing::info!(
+            cooldown_skipped = skipped,
+            remaining_targets = after,
+            cooldown_epochs = tracker.cooldown_epochs(),
+            cooldown_consecutive_failures = tracker.cooldown_consecutive_failures(),
+            "Dropped focus targets currently in cooldown"
+        );
+    }
+    skipped
+}
+
+/// Process-global target failure tracker.
+///
+/// Preparation layers consult this tracker to skip targets in cooldown. The
+/// FFI `record_discovery_result` pathway (or any Rust caller) updates it with
+/// per-target pass/fail outcomes so the next discovery run can skip repeat
+/// losers.
+pub fn global_tracker() -> &'static Mutex<TargetFailureTracker> {
+    static TRACKER: OnceLock<Mutex<TargetFailureTracker>> = OnceLock::new();
+    TRACKER.get_or_init(|| Mutex::new(TargetFailureTracker::new()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_tracker_is_empty_and_has_defaults() {
+        let tracker = TargetFailureTracker::with_thresholds(3, 10);
+        assert!(tracker.is_empty());
+        assert_eq!(tracker.len(), 0);
+        assert_eq!(tracker.cooldown_consecutive_failures(), 3);
+        assert_eq!(tracker.cooldown_epochs(), 10);
+    }
+
+    /// Transition 1: `record_failure` increments the counter.
+    #[test]
+    fn record_failure_increments_consecutive_counter() {
+        let mut tracker = TargetFailureTracker::with_thresholds(3, 10);
+        tracker.record_failure("T", 0);
+        tracker.record_failure("T", 1);
+        let state = tracker.state("T").expect("state must exist");
+        assert_eq!(state.consecutive_failures, 2);
+        assert_eq!(state.last_failure_epoch, Some(1));
+        assert!(state.last_improvement_epoch.is_none());
+    }
+
+    /// Transition 2: hitting the consecutive-failure threshold triggers cooldown.
+    #[test]
+    fn threshold_triggers_cooldown() {
+        let mut tracker = TargetFailureTracker::with_thresholds(3, 10);
+
+        // Below threshold -> not in cooldown.
+        tracker.record_failure("T", 0);
+        tracker.record_failure("T", 1);
+        assert!(!tracker.is_in_cooldown("T", 2));
+
+        // At threshold and within window -> in cooldown.
+        tracker.record_failure("T", 2);
+        assert!(tracker.is_in_cooldown("T", 2));
+        assert!(tracker.is_in_cooldown("T", 11));
+
+        // Past the cooldown window -> released.
+        assert!(!tracker.is_in_cooldown("T", 12));
+    }
+
+    /// Transition 3: a success resets the consecutive-failure counter and
+    /// clears cooldown immediately.
+    #[test]
+    fn success_resets_counter_and_clears_cooldown() {
+        let mut tracker = TargetFailureTracker::with_thresholds(3, 10);
+        tracker.record_failure("T", 0);
+        tracker.record_failure("T", 1);
+        tracker.record_failure("T", 2);
+        assert!(tracker.is_in_cooldown("T", 2));
+
+        tracker.record_success("T", 3);
+        let state = tracker.state("T").expect("state must exist");
+        assert_eq!(state.consecutive_failures, 0);
+        assert_eq!(state.last_improvement_epoch, Some(3));
+        assert!(!tracker.is_in_cooldown("T", 3));
+    }
+
+    #[test]
+    fn unknown_target_is_not_in_cooldown() {
+        let tracker = TargetFailureTracker::with_thresholds(3, 10);
+        assert!(!tracker.is_in_cooldown("never-seen", 5));
+    }
+
+    #[test]
+    fn filter_cooldown_targets_drops_only_cooldown_entries() {
+        let mut tracker = TargetFailureTracker::with_thresholds(3, 10);
+        // Target A: 3 failures -> cooldown.
+        tracker.record_failure("A", 0);
+        tracker.record_failure("A", 1);
+        tracker.record_failure("A", 2);
+        // Target B: only 2 failures -> not in cooldown.
+        tracker.record_failure("B", 0);
+        tracker.record_failure("B", 1);
+        // Target C: untracked -> not in cooldown.
+        let mut focus = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+
+        let skipped = filter_cooldown_targets(&mut focus, &tracker, 3);
+
+        assert_eq!(skipped, 1);
+        assert_eq!(focus, vec!["B".to_string(), "C".to_string()]);
+    }
+
+    #[test]
+    fn filter_cooldown_targets_respects_epoch_window() {
+        let mut tracker = TargetFailureTracker::with_thresholds(2, 5);
+        tracker.record_failure("A", 0);
+        tracker.record_failure("A", 1);
+        // Within window.
+        let mut focus = vec!["A".to_string()];
+        assert_eq!(filter_cooldown_targets(&mut focus, &tracker, 3), 1);
+        assert!(focus.is_empty());
+
+        // Past window -> no longer skipped.
+        let mut focus = vec!["A".to_string()];
+        assert_eq!(filter_cooldown_targets(&mut focus, &tracker, 10), 0);
+        assert_eq!(focus, vec!["A".to_string()]);
+    }
+
+    /// Integration-style: a sequence of 3 consecutive failures on target T
+    /// causes T to be skipped on the next discovery preparation within the
+    /// cooldown window, while a different target is retained.
+    #[test]
+    fn three_consecutive_failures_skip_target_on_next_run() {
+        let mut tracker = TargetFailureTracker::with_thresholds(3, 10);
+
+        // Epochs 0..=2: all failures on target T.
+        for epoch in 0..3u64 {
+            tracker.record_failure("target-1063112866", epoch);
+        }
+
+        // Epoch 3 represents the next discovery run's preparation.
+        let mut focus = vec![
+            "target-1063112866".to_string(),
+            "target-healthy".to_string(),
+        ];
+        let skipped = filter_cooldown_targets(&mut focus, &tracker, 3);
+
+        assert_eq!(skipped, 1);
+        assert_eq!(focus, vec!["target-healthy".to_string()]);
+    }
+}

@@ -151,6 +151,19 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
         );
     }
 
+    // Issue #1130: surface the number of targets dropped for cooldown so
+    // long-run observability can track the savings. `filter_cooldown_targets`
+    // already emits an info-level log on non-zero counts; this line ties the
+    // counter to the neuron analysis phase for downstream diagnostics.
+    if prep.cooldown_skipped > 0 {
+        tracing::debug!(
+            phase = "neuron",
+            cooldown_skipped = prep.cooldown_skipped,
+            remaining_targets = focus_order.len(),
+            "Neuron analysis preparation dropped targets in cooldown (Issue #1130)"
+        );
+    }
+
     shuffle_slice(&mut focus_order, input.random_seed, "neuron:focus_order");
 
     // Log analysis start with timeout duration and randomised order

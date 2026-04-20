@@ -139,3 +139,36 @@ pub const MAX_BIAS_MAGNITUDE: f32 = 2.0;
 /// ## Valid Range
 /// Must be >= 0.0 to exclude all harmful individual sources from pairing.
 pub const MAX_INDIVIDUAL_HARM_FOR_PAIRING: f32 = 0.0;
+
+// =============================================================================
+// Target-Neuron Cooldown (Issue #1130)
+// =============================================================================
+
+/// Number of consecutive failures on a target before it enters cooldown.
+///
+/// Issue #1130: GRQ-sampler commit `4c4fbdc560ad6b3070c5c48613ea1393aee2f225`
+/// had 17 of 18 `add-neurons` failure cache entries targeting the same neuron
+/// (`neuron-1063112866`). Budget was spent repeatedly probing a target that
+/// was clearly not going to yield an improvement. Tracking per-target failure
+/// streaks lets the preparation layers skip targets after N consecutive
+/// failures.
+///
+/// ## Valid Range
+/// Must be >= 1. Values below 3 trigger cooldown too aggressively and may
+/// skip targets before the evidence is conclusive. Values above 10 give
+/// little practical benefit because the budget is wasted before the target
+/// gets parked.
+pub const TARGET_COOLDOWN_CONSECUTIVE_FAILURES: u32 = 3;
+
+/// Cooldown duration in epochs after the last failure.
+///
+/// Issue #1130: after a target enters cooldown, it is skipped for this many
+/// epochs. The creature evolves over time, so a previously-struggling target
+/// may become viable after other structural changes land. Ten epochs balances
+/// "don't waste budget" with "don't permanently strand a target".
+///
+/// ## Valid Range
+/// Must be >= 1. Values below 3 release the target before the structural
+/// landscape has meaningfully changed. Values above 100 risk stranding a
+/// target for too long.
+pub const TARGET_COOLDOWN_EPOCHS: u64 = 10;

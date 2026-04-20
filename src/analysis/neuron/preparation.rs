@@ -46,6 +46,8 @@ pub(crate) struct NeuronPreparation<'a> {
     pub skipped_constant: Vec<String>,
     pub threshold_targets: Vec<String>,
     pub used_inputs: HashSet<String>,
+    /// Number of focus targets dropped because they are in cooldown (Issue #1130).
+    pub cooldown_skipped: u32,
     /// If set, the caller should return this immediately (early exit path).
     pub early_return: Option<AnalyzeNeuronsResult>,
 }
@@ -132,7 +134,7 @@ pub(crate) fn prepare_neuron_analysis<'a>(
     let original_focus_count = unique_focus.len();
     let output_only_targets = crate::config::neuron_targets_output_only();
     let FocusTargetFilterResult {
-        focus_order,
+        mut focus_order,
         skipped_hidden,
         skipped_input,
         skipped_constant,
@@ -151,6 +153,9 @@ pub(crate) fn prepare_neuron_analysis<'a>(
         &skipped_constant,
         &focus_order,
     );
+
+    // Issue #1130: drop targets currently in cooldown after focus filtering.
+    let cooldown_skipped = apply_target_cooldown(&mut focus_order);
 
     // If no output neurons remain after filtering, return early with empty results
     let early_return = if focus_order.is_empty() {
@@ -185,8 +190,28 @@ pub(crate) fn prepare_neuron_analysis<'a>(
         skipped_constant,
         threshold_targets,
         used_inputs,
+        cooldown_skipped,
         early_return,
     })
+}
+
+/// Drop focus targets in cooldown via the global target-failure tracker
+/// (Issue #1130). Returns the number of targets removed so callers can include
+/// it in diagnostics alongside the `cooldown_skipped` reason-name convention
+/// from Issue #1129.
+fn apply_target_cooldown(focus_order: &mut Vec<String>) -> u32 {
+    use crate::analysis::target_failure_tracker::{filter_cooldown_targets, global_tracker};
+
+    let tracker_lock = match global_tracker().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if tracker_lock.is_empty() {
+        // Nothing to skip — avoid unnecessary work in the common case.
+        return 0;
+    }
+    let current_epoch = tracker_lock.current_epoch();
+    filter_cooldown_targets(focus_order, &tracker_lock, current_epoch)
 }
 
 /// Load source neuron records for a given target, filtering by eligibility

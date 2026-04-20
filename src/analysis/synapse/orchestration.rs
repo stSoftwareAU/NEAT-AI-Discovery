@@ -57,6 +57,11 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         .map(|n| (n.uuid.as_str(), n.neuron_type.as_str()))
         .collect();
     order_focus_targets(&mut focus_order, input.random_seed, &focus_neuron_type_map);
+
+    // Issue #1130: drop targets currently in cooldown after focus filtering,
+    // before we incur any per-target analysis cost.
+    let _cooldown_skipped = apply_target_cooldown(&mut focus_order);
+
     log_analysis_start(
         "synapse",
         input.analysis_deadline_ms,
@@ -168,4 +173,22 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         order_map: &ctx.order_map,
         mcmc_summary,
     })
+}
+
+/// Drop focus targets in cooldown via the global target-failure tracker
+/// (Issue #1130). Returns the number of targets removed so callers can include
+/// it in diagnostics alongside the `cooldown_skipped` reason-name convention
+/// from Issue #1129.
+fn apply_target_cooldown(focus_order: &mut Vec<String>) -> u32 {
+    use crate::analysis::target_failure_tracker::{filter_cooldown_targets, global_tracker};
+
+    let tracker_lock = match global_tracker().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if tracker_lock.is_empty() {
+        return 0;
+    }
+    let current_epoch = tracker_lock.current_epoch();
+    filter_cooldown_targets(focus_order, &tracker_lock, current_epoch)
 }
