@@ -115,6 +115,7 @@ fn run_analysis(parquet_file: &str) -> Vec<f32> {
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");
@@ -211,6 +212,7 @@ fn parallel_discovery_metadata_consistent() {
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");

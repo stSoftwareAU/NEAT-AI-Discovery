@@ -524,6 +524,7 @@ fn build_empty_result(
             error_distribution: None,
             rejection_breakdown,
             top_level_summary,
+            calibration_corrections: std::collections::HashMap::new(),
         },
     }
 }

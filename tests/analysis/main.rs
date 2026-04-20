@@ -21,6 +21,7 @@ mod issue_1097_shared_deadline;
 mod issue_1098_wall_clock_cap;
 mod issue_1101_no_target_records_diagnostic;
 mod issue_1109_neuron_min_improved_ratio_raise;
+mod issue_1131_calibration_correction;
 mod issue_199_dynamic_constant_source_threshold;
 mod issue_201_batched_activation;
 mod issue_204_activation_frequency_ranking;

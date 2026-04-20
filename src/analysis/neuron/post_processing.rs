@@ -13,6 +13,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::analysis::cache::RecordCache;
 use crate::analysis::diagnostics::{NeuronDiagnostics, compute_impact_scores_for_discounting};
 use crate::analysis::gpu::GpuAnalyzer;
+use crate::analysis::scoring::calibration_correction::{
+    CHANGE_TYPE_ADD_NEURONS, CalibrationCorrection,
+};
 use crate::analysis::shared::AnalyzeNeuronsResult;
 use crate::analysis::synapse::{
     apply_logistic_prediction_calibration, apply_neuron_pessimism_discount,
@@ -59,6 +62,11 @@ pub(crate) fn build_neuron_results(
 
     let mut helpful_results: Vec<CandidateNeuronJson> = helpful_map.into_values().collect();
 
+    // Issue #1131: Derive per-creature calibration correction from the failure cache.
+    let calibration_correction = CalibrationCorrection::from_failure_cache(
+        params.input.failure_cache.as_deref().unwrap_or(&[]),
+    );
+
     // Issue #128: Apply impact-based discounting and set creature-level metrics.
     apply_impact_discounting(
         &mut helpful_results,
@@ -66,6 +74,7 @@ pub(crate) fn build_neuron_results(
         params.neuron_type_map,
         params.input,
         params.cache,
+        &calibration_correction,
     );
 
     // Issue #557: Filter out candidates with non-positive expected_creature_score_gain.
@@ -136,6 +145,8 @@ pub(crate) fn build_neuron_results(
             // summaries after the result is built.
             rejection_breakdown: crate::analysis::diagnostics::RejectionBreakdown::new(),
             top_level_summary: None,
+            // Issue #1131: per-creature calibration corrections derived from failure cache.
+            calibration_corrections: calibration_correction.as_map().clone(),
         },
     })
 }
@@ -150,6 +161,7 @@ fn apply_impact_discounting(
     neuron_type_map: &HashMap<super::preparation::SharedUuid, String>,
     input: &AnalyzeNeuronsInput,
     cache: &Arc<RecordCache>,
+    calibration_correction: &CalibrationCorrection,
 ) {
     let impact_scores = compute_impact_scores_for_discounting(&input.creature, cache.as_ref());
     for candidate in helpful_results.iter_mut() {
@@ -202,11 +214,17 @@ fn apply_impact_discounting(
         // Issue #1056: Apply logistic prediction calibration to correct ~18× overestimation.
         // The non-linear calibration uses the improved ratio to modulate the base
         // factor, matching GRQ-sampler data showing ~2.7% actual success rate (28/1028).
+        //
+        // Issue #1131: Multiplied by the per-creature calibration correction derived
+        // from the failure cache so creatures with poor recent prediction accuracy
+        // receive additional discounting.
+        let neuron_calibration = crate::analysis::constants::NEURON_PREDICTION_CALIBRATION
+            * calibration_correction.get_correction(CHANGE_TYPE_ADD_NEURONS);
         candidate.expected_creature_score_gain = apply_logistic_prediction_calibration(
             candidate.expected_creature_score_gain,
             candidate.improved_count,
             candidate.total_count,
-            crate::analysis::constants::NEURON_PREDICTION_CALIBRATION,
+            neuron_calibration,
         );
 
         if verbose_enabled() && is_hidden {

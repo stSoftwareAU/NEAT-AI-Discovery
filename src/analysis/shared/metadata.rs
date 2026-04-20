@@ -98,6 +98,17 @@ pub struct SynapseAnalysisMetadata {
     /// One-sentence summary naming the dominant rejection reason, when any
     /// candidate was rejected (Issue #1129).
     pub top_level_summary: Option<String>,
+
+    /// Per-change-type calibration correction factors derived from the
+    /// failure cache (Issue #1131).
+    ///
+    /// Keys are the stable change-type identifiers (`add-neurons`,
+    /// `add-synapses`, `coordinated-structural`, ...). Values are the
+    /// scalar correction factors that multiplied the compiled
+    /// `*_PREDICTION_CALIBRATION` constants for this run. Empty when no
+    /// failure cache was supplied. Callers can log this to observe
+    /// prediction calibration drift across discovery runs.
+    pub calibration_corrections: std::collections::HashMap<String, f32>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.
@@ -144,6 +155,11 @@ pub struct NeuronAnalysisMetadata {
     /// One-sentence summary naming the dominant rejection reason, when any
     /// candidate was rejected (Issue #1129).
     pub top_level_summary: Option<String>,
+
+    /// Per-change-type calibration correction factors (Issue #1131).
+    ///
+    /// See `SynapseAnalysisMetadata::calibration_corrections` for full docs.
+    pub calibration_corrections: std::collections::HashMap<String, f32>,
 }
 
 /// Result of synapse analysis

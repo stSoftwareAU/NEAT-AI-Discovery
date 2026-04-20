@@ -183,6 +183,7 @@ fn bench_parallel_discovery(c: &mut Criterion) {
                         max_analysis_memory_mb: None,
                         max_discovery_wall_clock_minutes: None,
                         temperature: 1.0,
+                        failure_cache: None,
                     };
                     black_box(analyze_all(&input).expect("analyze_all failed"))
                 });

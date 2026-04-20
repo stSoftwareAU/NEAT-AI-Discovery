@@ -76,6 +76,7 @@ fn add_neuron_candidates_do_not_include_relu_adjacent_squashes() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)

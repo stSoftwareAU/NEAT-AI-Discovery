@@ -16,6 +16,9 @@ use super::scoring::{
 };
 use crate::analysis::cache::RecordCache;
 use crate::analysis::samples::EPSILON;
+use crate::analysis::scoring::calibration_correction::{
+    CHANGE_TYPE_ADD_SYNAPSES, CHANGE_TYPE_COORDINATED_STRUCTURAL, CalibrationCorrection,
+};
 
 /// Log the distribution of synapse candidates by source type (Issue #910).
 ///
@@ -127,6 +130,7 @@ fn apply_impact_to_helpful(
     order_map: &HashMap<String, usize>,
     target_error_sq: f32,
     total_error_sq: f32,
+    calibration_correction: &CalibrationCorrection,
 ) {
     // Populate indices for debugging/analysis (consistent with CandidateNeuronJson).
     candidate.from_neuron_index = order_map.get(&candidate.from_neuron_uuid).copied();
@@ -192,11 +196,17 @@ fn apply_impact_to_helpful(
     // The non-linear (logistic) calibration uses the improved ratio to modulate the
     // base calibration factor, providing better correction than a flat multiplier.
     // GRQ-sampler data shows add-synapses has ~0.1% actual success rate (3/1001).
+    //
+    // Issue #1131: Multiplied by the per-creature calibration correction derived
+    // from the failure cache, so creatures drifting from the global baseline
+    // receive additional per-creature discounting.
+    let synapse_calibration = crate::analysis::constants::SYNAPSE_PREDICTION_CALIBRATION
+        * calibration_correction.get_correction(CHANGE_TYPE_ADD_SYNAPSES);
     candidate.expected_creature_score_gain = apply_logistic_prediction_calibration(
         candidate.expected_creature_score_gain,
         candidate.improved_count,
         candidate.total_count,
-        crate::analysis::constants::SYNAPSE_PREDICTION_CALIBRATION,
+        synapse_calibration,
     );
 
     if verbose_enabled() && is_hidden {
@@ -216,6 +226,7 @@ fn apply_impact_to_harmful(
     impact_scores: &HashMap<String, f32>,
     neuron_type_map: &HashMap<&str, &str>,
     order_map: &HashMap<String, usize>,
+    calibration_correction: &CalibrationCorrection,
 ) {
     candidate.from_neuron_index = order_map.get(&candidate.from_neuron_uuid).copied();
     candidate.to_neuron_index = order_map.get(&candidate.to_neuron_uuid).copied();
@@ -246,11 +257,14 @@ fn apply_impact_to_harmful(
     );
 
     // Issue #1056: Apply logistic prediction calibration to harmful candidates.
+    // Issue #1131: Scaled by the per-creature failure-cache correction.
+    let synapse_calibration = crate::analysis::constants::SYNAPSE_PREDICTION_CALIBRATION
+        * calibration_correction.get_correction(CHANGE_TYPE_ADD_SYNAPSES);
     candidate.expected_creature_score_gain = apply_logistic_prediction_calibration(
         candidate.expected_creature_score_gain,
         candidate.improved_count,
         candidate.total_count,
-        crate::analysis::constants::SYNAPSE_PREDICTION_CALIBRATION,
+        synapse_calibration,
     );
 }
 
@@ -268,6 +282,7 @@ fn apply_impact_to_coordinated(
     candidate: &mut crate::CoordinatedStructuralCandidateJson,
     impact_scores: &HashMap<String, f32>,
     neuron_type_map: &HashMap<&str, &str>,
+    calibration_correction: &CalibrationCorrection,
 ) {
     let target_uuid = candidate
         .operations
@@ -314,9 +329,12 @@ fn apply_impact_to_coordinated(
 
     // Issue #1056: Apply coordinated prediction calibration.
     // Coordinated candidates lack per-sample improved counts, so use flat calibration.
+    // Issue #1131: Scaled by the per-creature failure-cache correction.
+    let coordinated_calibration = crate::analysis::constants::COORDINATED_PREDICTION_CALIBRATION
+        * calibration_correction.get_correction(CHANGE_TYPE_COORDINATED_STRUCTURAL);
     candidate.expected_creature_score_gain = apply_prediction_calibration(
         candidate.expected_creature_score_gain,
-        crate::analysis::constants::COORDINATED_PREDICTION_CALIBRATION,
+        coordinated_calibration,
     );
 }
 
@@ -346,6 +364,13 @@ pub(crate) fn apply_post_processing(
     let error_sq_map = compute_neuron_error_sq_map(input, cache);
     let total_error_sq: f32 = error_sq_map.values().sum();
 
+    // Issue #1131: Derive per-creature calibration correction from the failure cache.
+    // This scales the global *_PREDICTION_CALIBRATION constants multiplicatively so
+    // creatures whose recent predictions over-estimated actual outcomes receive
+    // additional discounting on subsequent candidates.
+    let calibration_correction =
+        CalibrationCorrection::from_failure_cache(input.failure_cache.as_deref().unwrap_or(&[]));
+
     // Apply impact discounting to helpful synapse candidates
     for candidate in helpful_results.iter_mut() {
         let target_error_sq = error_sq_map
@@ -359,17 +384,29 @@ pub(crate) fn apply_post_processing(
             order_map,
             target_error_sq,
             total_error_sq,
+            &calibration_correction,
         );
     }
 
     // Apply impact discounting to harmful synapse candidates
     for candidate in harmful_results.iter_mut() {
-        apply_impact_to_harmful(candidate, &impact_scores, &neuron_type_map, order_map);
+        apply_impact_to_harmful(
+            candidate,
+            &impact_scores,
+            &neuron_type_map,
+            order_map,
+            &calibration_correction,
+        );
     }
 
     // Apply impact discounting to coordinated candidates
     for candidate in coordinated_structural_results.iter_mut() {
-        apply_impact_to_coordinated(candidate, &impact_scores, &neuron_type_map);
+        apply_impact_to_coordinated(
+            candidate,
+            &impact_scores,
+            &neuron_type_map,
+            &calibration_correction,
+        );
     }
 
     // Issue #557: Filter out candidates with non-positive expected_creature_score_gain.
@@ -467,6 +504,7 @@ pub(crate) fn apply_post_processing(
     PostProcessingMetrics {
         candidates_found,
         candidates_returned,
+        calibration_corrections: calibration_correction.as_map().clone(),
     }
 }
 
@@ -474,6 +512,10 @@ pub(crate) fn apply_post_processing(
 pub(crate) struct PostProcessingMetrics {
     pub candidates_found: usize,
     pub candidates_returned: usize,
+    /// Issue #1131: Per-change-type calibration corrections derived from the
+    /// failure cache and applied multiplicatively to the global prediction
+    /// calibration constants. Exposed via analysis metadata for observability.
+    pub calibration_corrections: HashMap<String, f32>,
 }
 
 /// Parameters for building analysis metadata.
@@ -493,6 +535,8 @@ pub(crate) struct MetadataParams<'a> {
     /// Issue #1021: MCMC diagnostics summary.
     pub mcmc_summary:
         Option<crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsSummary>,
+    /// Issue #1131: Per-change-type calibration corrections from the failure cache.
+    pub calibration_corrections: HashMap<String, f32>,
 }
 
 /// Build the analysis metadata from collected atomic flags and timing data.
@@ -532,5 +576,7 @@ pub(crate) fn build_metadata(
         // Issue #1129: populated by orchestration after metadata is built.
         rejection_breakdown: crate::analysis::diagnostics::RejectionBreakdown::new(),
         top_level_summary: None,
+        // Issue #1131: per-creature calibration corrections derived from failure cache.
+        calibration_corrections: params.calibration_corrections.clone(),
     }
 }

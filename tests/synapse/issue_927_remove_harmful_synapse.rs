@@ -229,6 +229,7 @@ fn test_remove_harmful_synapse_discovery() {
         analysis_deadline_ms: Some(30000),
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -356,6 +357,7 @@ fn test_harmful_synapse_identifies_correct_neurons() {
         analysis_deadline_ms: Some(30000),
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -431,6 +433,7 @@ fn test_analyze_all_finds_harmful_synapse() {
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
+        failure_cache: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");

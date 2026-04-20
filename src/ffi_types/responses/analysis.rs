@@ -154,6 +154,16 @@ pub struct SynapseAnalysisMetadataJson {
     /// One-sentence summary naming the dominant rejection reason (Issue #1129).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_level_summary: Option<String>,
+    /// Per-change-type calibration correction factors derived from the
+    /// failure cache (Issue #1131).
+    ///
+    /// Keyed by the stable change-type identifiers (`add-neurons`,
+    /// `add-synapses`, `coordinated-structural`, ...). Values are scalar
+    /// correction factors that multiplied the compiled
+    /// `*_PREDICTION_CALIBRATION` constants for this run. Empty when no
+    /// failure cache was supplied.
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub calibration_corrections: std::collections::HashMap<String, f32>,
 }
 
 /// MCMC diagnostics summary for the analysis output JSON (Issue #1021).
@@ -242,6 +252,10 @@ pub struct NeuronAnalysisMetadataJson {
     /// One-sentence summary naming the dominant rejection reason (Issue #1129).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_level_summary: Option<String>,
+    /// Per-change-type calibration correction factors (Issue #1131). See
+    /// `SynapseAnalysisMetadataJson::calibration_corrections` for full docs.
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub calibration_corrections: std::collections::HashMap<String, f32>,
 }
 
 // ============================================================================

@@ -84,6 +84,7 @@ fn synapse_analysis_with_target_map_optimization_succeeds() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -163,6 +164,7 @@ fn multiple_focus_neurons_share_target_map_optimization() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result =
@@ -263,6 +265,7 @@ fn target_map_filters_non_finite_values() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     // Analysis should complete without errors from non-finite values
@@ -334,6 +337,7 @@ fn empty_target_records_skips_source_processing() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     // Should complete quickly without processing sources

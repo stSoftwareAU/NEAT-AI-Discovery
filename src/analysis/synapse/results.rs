@@ -87,6 +87,7 @@ pub(super) fn finalise_synapse_results(
         error_values: &error_values,
         timing_collector: &params.timing_collector,
         mcmc_summary: Some(params.mcmc_summary),
+        calibration_corrections: pp_metrics.calibration_corrections,
     });
 
     Ok(AnalyzeSynapsesResult {

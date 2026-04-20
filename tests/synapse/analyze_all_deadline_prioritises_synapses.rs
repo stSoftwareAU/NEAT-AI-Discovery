@@ -125,6 +125,7 @@ fn synapse_analysis_runs_under_deadline() {
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -173,6 +174,7 @@ fn metadata_indicates_target_value_available() {
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -216,6 +218,7 @@ fn metadata_indicates_target_value_not_available() {
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -265,6 +268,7 @@ fn metadata_indicates_saturation_aware_simulation_used() {
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -311,6 +315,7 @@ fn candidate_counts_tracked_correctly() {
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -420,6 +425,7 @@ fn truncation_reflected_in_candidate_counts() {
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");

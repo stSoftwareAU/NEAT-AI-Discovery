@@ -71,6 +71,7 @@ fn analyze_neurons_rejects_duplicate_focus_targets() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let err =
@@ -145,6 +146,7 @@ fn analyze_synapses_rejects_duplicate_focus_targets() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let err = analyze_synapses(&input)
@@ -255,6 +257,7 @@ fn analyze_synapses_reports_eligible_sources_correctly_for_non_input_neurons() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
@@ -395,6 +398,7 @@ fn analyze_synapses_reports_fully_connected_neuron_explicitly() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
@@ -446,6 +450,7 @@ fn analyze_synapses_requires_focus_targets() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let err =
@@ -499,6 +504,7 @@ fn analyze_synapses_reports_diagnostics_when_no_candidates() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result =
@@ -610,6 +616,7 @@ fn analyze_synapses_stops_harmful_processing_after_deadline() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = pool
@@ -704,6 +711,7 @@ fn analyze_all_runs_synapse_and_neuron_phases() {
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
+        failure_cache: None,
     };
 
     let result = analyze_all(&input).expect("Combined analysis should succeed");
@@ -761,6 +769,7 @@ fn analyze_neurons_reports_diagnostics_when_no_candidates() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result =
@@ -872,6 +881,7 @@ fn analyze_neurons_uses_vertical_timeout_with_randomized_order() {
         analysis_deadline_ms: Some(1_000_000),
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = pool
@@ -1006,6 +1016,7 @@ fn analyze_synapses_uses_vertical_timeout_with_randomized_order() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = pool
@@ -1103,6 +1114,7 @@ fn analyze_synapses_accepts_positive_improvements_below_threshold() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
@@ -1201,6 +1213,7 @@ fn analyze_synapses_rejects_non_positive_improvements() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
@@ -1275,6 +1288,7 @@ fn analyze_synapses_accepts_positive_improvements_above_threshold() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
