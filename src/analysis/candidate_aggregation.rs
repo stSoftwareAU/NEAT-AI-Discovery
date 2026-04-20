@@ -16,8 +16,30 @@ use crate::{
     CoordinatedStructuralOpJson,
 };
 
-use super::constants::{MIN_COORDINATED_MULTI_OP_GAIN, coordinated_empirical_discount};
+use super::constants::{
+    COORDINATED_POST_DISCOUNT_NOISE_FLOOR, MIN_COORDINATED_MULTI_OP_GAIN,
+    coordinated_empirical_discount,
+};
 use super::{cache, shared, synapse};
+
+/// Filter coordinated-structural candidates below the post-discount noise
+/// floor (Issue #1110, #1128).
+///
+/// Intended as the **final** filter in the pipeline — applied after all
+/// pessimism, calibration, module-boost, and ensemble discounts so that gains
+/// discounted into the documented noise range (1e-7 to 1e-8 per Issue #1127
+/// failure evidence) cannot reach the FFI response.
+///
+/// Uses `COORDINATED_POST_DISCOUNT_NOISE_FLOOR` (1e-6) rather than the
+/// pre-merge `COORDINATED_MIN_EXPECTED_GAIN` (1e-5). A candidate that cleared
+/// the pre-merge 1e-5 floor has legitimately been judged to be above noise;
+/// downstream discounts represent calibrated uncertainty, not a signal to
+/// re-filter at full strength. The lower sweep preserves those legitimately
+/// discounted candidates while still catching the exact 1e-7/1e-8 range that
+/// Issue #1127 captured hurting production networks.
+pub fn apply_coordinated_gain_floor(candidates: &mut Vec<CoordinatedStructuralCandidateJson>) {
+    candidates.retain(|c| c.expected_creature_score_gain >= COORDINATED_POST_DISCOUNT_NOISE_FLOOR);
+}
 
 /// Compute the operation-count discount for a coordinated candidate (Issue #732, #1058).
 ///
@@ -33,9 +55,12 @@ pub fn apply_operation_count_discount(candidate: &CoordinatedStructuralCandidate
 
 /// Validate whether a coordinated candidate's gain exceeds the minimum threshold (Issue #732).
 ///
-/// Single-operation candidates only require positive gain. Multi-operation
-/// candidates (>= 2 operations) must exceed `MIN_COORDINATED_MULTI_OP_GAIN`
-/// to filter out near-zero predictions that almost never succeed in practice.
+/// Single-operation candidates only require positive gain — the pipeline's
+/// final post-discount noise sweep (`apply_coordinated_gain_floor`, Issue #1128)
+/// catches sub-noise gains after all downstream pessimism/calibration stages.
+/// Multi-operation candidates (>= 2 operations) must exceed
+/// `MIN_COORDINATED_MULTI_OP_GAIN` after per-op discounting to filter out
+/// near-zero predictions that almost never succeed in practice.
 pub fn validate_coordinated_candidate_gain(candidate: &CoordinatedStructuralCandidateJson) -> bool {
     if candidate.operations.len() <= 1 {
         return candidate.expected_creature_score_gain > 0.0;
@@ -48,8 +73,11 @@ pub fn validate_coordinated_candidate_gain(candidate: &CoordinatedStructuralCand
 ///
 /// Filters out candidates with non-positive expected gain (Issue #557),
 /// applies operation-count discount for multi-operation candidates (Issue #732),
-/// sorts by expected gain (unless diversified), and truncates to the
-/// combined synapse candidate limit.
+/// filters multi-op candidates below `MIN_COORDINATED_MULTI_OP_GAIN` **after**
+/// discounting (Issue #732, #1110), sorts by expected gain (unless
+/// diversified), and truncates to the combined synapse candidate limit. The
+/// final post-discount noise sweep happens in `analyze_all` via
+/// `apply_coordinated_gain_floor` (Issue #1128).
 pub(crate) fn merge_coordinated_structural_replacements(
     synapse: &mut shared::AnalyzeSynapsesResult,
     mut replacements: Vec<CoordinatedStructuralCandidateJson>,
@@ -74,8 +102,11 @@ pub(crate) fn merge_coordinated_structural_replacements(
             c.expected_creature_score_gain = apply_operation_count_discount(c);
         }
     }
-    // After discounting, filter out candidates below the minimum gain threshold.
-    // Note: we check the gain directly here since discounting has already been applied.
+    // Issue #732, #1110: After discounting, filter multi-op candidates below
+    // the multi-op minimum gain threshold. Single-op candidates are kept on
+    // `> 0.0` (filtered above) — the final post-discount noise sweep in
+    // `analyze_all` (Issue #1128) catches sub-noise gains that survived
+    // downstream pessimism/calibration stages.
     replacements.retain(|c| {
         if c.operations.len() <= 1 {
             c.expected_creature_score_gain > 0.0

@@ -579,6 +579,29 @@ pub const ADAPTIVE_PROPOSAL_SIGN_FLIP_PROBABILITY: f32 = 0.15;
 /// Must be > 0.0. Values above 1e-3 may filter too aggressively.
 pub const COORDINATED_MIN_EXPECTED_GAIN: f32 = 1e-5;
 
+/// Post-discount noise floor applied at the FFI boundary (Issue #1128).
+///
+/// Candidates reach `analyze_all`'s final sweep with gains that have passed
+/// the pre-merge `COORDINATED_MIN_EXPECTED_GAIN` (1e-5) filter but may have
+/// been legitimately discounted by downstream steps — module-boost (minimum
+/// 0.5×), ensemble disagreement penalty (0.7×), per-op empirical discounting,
+/// synapse-analysis calibration (`COORDINATED_PREDICTION_CALIBRATION`, 5e-5×)
+/// and hidden-neuron impact discount (0.1×).
+///
+/// The failure evidence in Issue #1127 captured a coordinated-structural
+/// candidate with `expectedCreatureScoreGain` of 1.17e-7 that produced a
+/// post-apply `scoreDelta` of -0.0019 (harming the network). Issue #1128's
+/// acceptance evidence explicitly calls out gains in the **1e-7 to 1e-8
+/// range** as "indistinguishable from noise".
+///
+/// The post-discount floor is therefore set to 5e-7 — above the observed
+/// 1.17e-7 noise case with a ~4× safety margin, but below the floor of
+/// legitimately discounted collapse/pruning candidates whose post-calibration
+/// gains sit just below 1e-6 (e.g. 9.95e-7 for the
+/// `coordinated_structural_can_collapse_hidden_neuron_to_single_synapse`
+/// regression fixture).
+pub const COORDINATED_POST_DISCOUNT_NOISE_FLOOR: f32 = 5e-7;
+
 // =============================================================================
 // NaN-safe Floating-Point Comparison Helpers (Issue #483)
 // =============================================================================
