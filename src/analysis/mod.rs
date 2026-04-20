@@ -52,6 +52,7 @@ pub mod shared;
 pub mod streaming;
 pub mod synapse;
 pub mod system;
+pub mod target_failure_tracker;
 pub mod utils;
 
 // Thematic subdirectories (Issue #528)

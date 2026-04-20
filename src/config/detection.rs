@@ -32,3 +32,29 @@ pub fn gradient_threshold(default: f32) -> f32 {
         .and_then(|s| s.parse().ok())
         .unwrap_or(default)
 }
+
+/// Read the env-var override for target-neuron cooldown consecutive failures
+/// (Issue #1130).
+///
+/// Returns `Some(n)` when `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES` is set
+/// to a valid `u32`, otherwise `None` so callers fall back to the compiled
+/// default `TARGET_COOLDOWN_CONSECUTIVE_FAILURES`.
+pub fn target_cooldown_consecutive_failures_env() -> Option<u32> {
+    std::env::var("NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .filter(|v| *v >= 1)
+}
+
+/// Read the env-var override for target-neuron cooldown duration in epochs
+/// (Issue #1130).
+///
+/// Returns `Some(n)` when `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` is set to
+/// a valid `u64`, otherwise `None` so callers fall back to the compiled default
+/// `TARGET_COOLDOWN_EPOCHS`.
+pub fn target_cooldown_epochs_env() -> Option<u64> {
+    std::env::var("NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .filter(|v| *v >= 1)
+}
