@@ -711,6 +711,23 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             module_dispatch_specs::apply_diversity_reranking(syn);
         }
 
+        // Issue #1110, #1128: Final coordinated-structural gain floor.
+        // Applied AFTER module boost and diversity reranking so that gains
+        // which started above the floor but were discounted by those steps
+        // cannot reach the FFI response. Production failure evidence
+        // (GRQ-sampler failures cache) shows sub-1e-5 gains harm the network.
+        // Metadata must be refreshed after the sweep since
+        // `merge_coordinated_structural_replacements` wrote
+        // `candidates_returned` before these downstream filters ran.
+        if let Some(syn) = synapse_result.as_mut() {
+            candidate_aggregation::apply_coordinated_gain_floor(
+                &mut syn.coordinated_structural_candidates,
+            );
+            syn.metadata.candidates_returned = syn.helpful_synapses.len()
+                + syn.harmful_synapses.len()
+                + syn.coordinated_structural_candidates.len();
+        }
+
         // Issue #224: Candidate clustering to reduce redundant ablation tests.
         if let Some(syn) = synapse_result.as_mut() {
             module_dispatch_specs::cluster_synapse_candidates(syn, &input.creature);

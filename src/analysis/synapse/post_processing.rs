@@ -377,6 +377,15 @@ pub(crate) fn apply_post_processing(
     // would waste the evaluation budget if returned.
     helpful_results.retain(|c| c.expected_creature_score_gain > 0.0);
     harmful_results.retain(|c| c.expected_creature_score_gain > 0.0);
+    // Issue #1110, #1128: Synapse-analysis-internal coordinated candidates
+    // (e.g. `detect_collapsible_hidden_neurons`, `detect_noisy_vs_trusted`)
+    // keep the `> 0.0` filter here because their raw pre-calibration gains
+    // can be legitimately small (low-signal unit-test inputs) while still
+    // being meaningful candidates worth testing. The 1e-5 production floor
+    // is applied by the orchestration (`analyze_all`) final sweep via
+    // `apply_coordinated_gain_floor`, after module boost and diversity
+    // reranking, which is the FFI-facing path that issue #1127 evidence
+    // was captured from.
     coordinated_structural_results.retain(|c| c.expected_creature_score_gain > 0.0);
 
     // Issue #910: Log distribution of synapse candidates by source type

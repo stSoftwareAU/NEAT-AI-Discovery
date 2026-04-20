@@ -70,6 +70,10 @@ pub use orchestration::analyze_all;
 
 // Re-export candidate aggregation functions used by discovery_dispatch and sub-modules
 pub(crate) use candidate_aggregation::merge_coordinated_structural_replacements;
+// Issue #1128: The coordinated gain-floor helper is public so that the final
+// orchestration step and integration tests can apply it after downstream
+// discount passes (module boost, diversity reranking, calibration).
+pub use candidate_aggregation::apply_coordinated_gain_floor;
 
 // Re-export helper functions for unit tests (accessed via `super::*` in mod_tests)
 #[cfg(test)]
