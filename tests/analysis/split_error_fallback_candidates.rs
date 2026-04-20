@@ -155,6 +155,7 @@ fn regression_split_error_must_return_fallback_candidates() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -331,6 +332,7 @@ fn test_fallback_candidates_below_threshold_are_returned() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

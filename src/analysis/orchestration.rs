@@ -494,6 +494,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             analysis_deadline_ms: shared_deadline_abs_ms,
             random_seed: input.random_seed,
             temperature: input.temperature,
+            failure_cache: input.failure_cache.clone(),
         })
     } else {
         None
@@ -508,6 +509,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             analysis_deadline_ms: shared_deadline_abs_ms,
             random_seed: input.random_seed,
             temperature: input.temperature,
+            failure_cache: input.failure_cache.clone(),
         })
     } else {
         None

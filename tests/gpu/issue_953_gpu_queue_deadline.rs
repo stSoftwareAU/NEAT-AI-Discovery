@@ -89,6 +89,7 @@ fn neuron_analysis_with_deadline_completes() {
         analysis_deadline_ms: Some(120_000),
         random_seed: Some(42),
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_neurons(&input).expect("Neuron analysis with deadline should succeed");
@@ -118,6 +119,7 @@ fn synapse_analysis_with_deadline_completes() {
         analysis_deadline_ms: Some(120_000),
         random_seed: Some(42),
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("Synapse analysis with deadline should succeed");
@@ -154,6 +156,7 @@ fn analysis_with_expired_deadline_returns_promptly() {
         analysis_deadline_ms: Some(1),
         random_seed: Some(42),
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let start = std::time::Instant::now();

@@ -154,6 +154,7 @@ fn test_optimised_params_vary_by_sample() {
             analysis_deadline_ms: None,
             random_seed: None,
             temperature: 1.0,
+            failure_cache: None,
         };
 
         let result = analyze_neurons(&input).unwrap();
@@ -232,6 +233,7 @@ fn test_conservative_params_more_stable_across_samples() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let subset_result = analyze_neurons(&subset_input).unwrap();
@@ -365,6 +367,7 @@ fn test_relu_fixed_params_consistent_across_samples() {
             analysis_deadline_ms: None,
             random_seed: None,
             temperature: 1.0,
+            failure_cache: None,
         };
 
         let result = analyze_neurons(&input).unwrap();
@@ -463,6 +466,7 @@ fn test_synapse_candidates_no_bias_optimisation() {
         analysis_deadline_ms: None,
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).unwrap();
@@ -524,6 +528,7 @@ fn test_synapse_weight_distribution() {
             analysis_deadline_ms: None,
             random_seed: None,
             temperature: 1.0,
+            failure_cache: None,
         };
 
         let result = analyze_synapses(&input).unwrap();

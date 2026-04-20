@@ -211,6 +211,7 @@ fn issue_182_focus_unused_observations_prioritises_inputs_without_synapses() {
         analysis_deadline_ms: Some(5000), // Short deadline to test prioritisation
         random_seed: Some(42),
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("analysis should succeed");
@@ -283,6 +284,7 @@ fn issue_182_without_env_var_no_prioritisation() {
         analysis_deadline_ms: None, // No deadline - process all
         random_seed: Some(42),
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("analysis should succeed");

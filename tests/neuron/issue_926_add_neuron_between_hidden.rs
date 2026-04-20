@@ -218,6 +218,7 @@ fn test_add_neuron_between_hidden_neurons() {
         analysis_deadline_ms: None,
         random_seed: Some(42),
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -328,6 +329,7 @@ fn test_hidden_neuron_candidate_properties() {
         analysis_deadline_ms: None,
         random_seed: Some(42),
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -430,6 +432,7 @@ fn test_analyze_all_finds_hidden_neuron_candidate() {
         module_outcome_tracker: None,
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
+        failure_cache: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");

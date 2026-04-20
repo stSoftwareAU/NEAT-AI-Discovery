@@ -82,6 +82,17 @@ pub struct AnalyzeParallelInput {
     /// When `None`, no overall cap is enforced (backwards compatible).
     #[serde(default)]
     pub max_discovery_wall_clock_minutes: Option<u64>,
+    /// Per-creature failure cache feeding the prediction calibration
+    /// correction (Issue #1131).
+    ///
+    /// Each entry records what the library predicted vs what actually
+    /// happened post-apply, keyed by change-type (`add-neurons`,
+    /// `add-synapses`, `coordinated-structural`, ...). When supplied, the
+    /// calibration pipeline computes a per-change-type correction factor
+    /// that multiplies the compiled `*_PREDICTION_CALIBRATION` constants.
+    /// When absent or empty, the compiled constants are used unchanged.
+    #[serde(default)]
+    pub failure_cache: Option<Vec<analysis::scoring::calibration_correction::FailureCacheEntry>>,
 }
 
 /// Internal input structure for synapse analysis (used by `analyze_all`)
@@ -108,6 +119,9 @@ pub struct AnalyzeSynapsesInput {
     /// for full documentation.
     #[serde(default = "default_temperature")]
     pub temperature: f32,
+    /// Per-creature failure cache (Issue #1131). See `AnalyzeParallelInput`.
+    #[serde(default)]
+    pub failure_cache: Option<Vec<analysis::scoring::calibration_correction::FailureCacheEntry>>,
 }
 
 /// Internal input structure for neuron analysis (used by `analyze_all`)
@@ -134,6 +148,9 @@ pub struct AnalyzeNeuronsInput {
     /// for full documentation.
     #[serde(default = "default_temperature")]
     pub temperature: f32,
+    /// Per-creature failure cache (Issue #1131). See `AnalyzeParallelInput`.
+    #[serde(default)]
+    pub failure_cache: Option<Vec<analysis::scoring::calibration_correction::FailureCacheEntry>>,
 }
 
 /// Internal input structure for combined analysis (used by `analyze_parallel`)
@@ -187,6 +204,11 @@ pub struct AnalyzeAllInput {
     /// See `AnalyzeParallelInput` for full documentation.
     #[serde(default)]
     pub max_discovery_wall_clock_minutes: Option<u64>,
+    /// Per-creature failure cache feeding calibration correction (Issue #1131).
+    ///
+    /// See `AnalyzeParallelInput` for full documentation.
+    #[serde(default)]
+    pub failure_cache: Option<Vec<analysis::scoring::calibration_correction::FailureCacheEntry>>,
 }
 
 #[derive(Debug, Deserialize)]

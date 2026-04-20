@@ -107,6 +107,7 @@ fn issue_180_setweight_replaces_remove_add_pattern() {
         analysis_deadline_ms: Some(30_000),
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input)

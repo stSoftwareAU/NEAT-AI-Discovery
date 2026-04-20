@@ -77,6 +77,7 @@ fn benchmark_zero_copy_vs_copying(c: &mut Criterion) {
                 analysis_deadline_ms: None,
                 random_seed: Some(42),
                 temperature: 1.0,
+                failure_cache: None,
             };
             let result = analyze_synapses(&input).expect("Analysis should succeed");
             black_box(result);
@@ -98,6 +99,7 @@ fn benchmark_zero_copy_vs_copying(c: &mut Criterion) {
                     analysis_deadline_ms: None,
                     random_seed: Some(42),
                     temperature: 1.0,
+                    failure_cache: None,
                 };
                 let result = analyze_synapses(&input).expect("Analysis should succeed");
                 black_box(result);

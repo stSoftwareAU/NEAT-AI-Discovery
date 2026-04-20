@@ -79,6 +79,7 @@ fn issue_178_constant_source_becomes_setbias_candidate() {
         analysis_deadline_ms: Some(30_000),
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input)

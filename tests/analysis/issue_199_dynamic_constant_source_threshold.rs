@@ -99,6 +99,7 @@ fn issue_199_low_variance_sources_use_default_threshold() {
         analysis_deadline_ms: Some(60_000),
         random_seed: Some(42),
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input)
@@ -202,6 +203,7 @@ fn issue_199_high_variance_sources_scale_threshold() {
         analysis_deadline_ms: Some(30_000),
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input)
@@ -303,6 +305,7 @@ fn issue_199_env_var_override_takes_precedence() {
         analysis_deadline_ms: Some(30_000),
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input)
@@ -384,6 +387,7 @@ fn issue_199_env_var_zero_disables_folding() {
         analysis_deadline_ms: Some(30_000),
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input)

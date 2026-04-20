@@ -106,6 +106,7 @@ fn synapse_candidates_populate_from_and_to_indices() {
         analysis_deadline_ms: Some(30000),
         random_seed: None,
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input)

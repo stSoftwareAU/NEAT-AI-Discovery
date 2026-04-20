@@ -206,6 +206,7 @@ fn zero_copy_produces_correct_results() {
         analysis_deadline_ms: None,
         random_seed: Some(42),
         temperature: 1.0,
+        failure_cache: None,
     };
     let result_zero_copy =
         analyze_synapses(&input).expect("Analysis with zero-copy should succeed");
@@ -225,6 +226,7 @@ fn zero_copy_produces_correct_results() {
         analysis_deadline_ms: None,
         random_seed: Some(42),
         temperature: 1.0,
+        failure_cache: None,
     };
     let result_copy = analyze_synapses(&input).expect("Analysis with copy should succeed");
     unsafe {
@@ -325,6 +327,7 @@ fn metadata_includes_zero_copy_status() {
         analysis_deadline_ms: None,
         random_seed: Some(42),
         temperature: 1.0,
+        failure_cache: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -411,6 +414,7 @@ fn zero_copy_no_data_corruption() {
             analysis_deadline_ms: None,
             random_seed: Some(seed),
             temperature: 1.0,
+            failure_cache: None,
         };
 
         let result = analyze_synapses(&input).expect("Analysis should succeed");

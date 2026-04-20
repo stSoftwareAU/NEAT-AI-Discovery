@@ -238,6 +238,7 @@ mod tests {
             random_seed: Some(42),
             temperature: 1.0,
             analysis_deadline_ms: None,
+            failure_cache: None,
         }
     }
 
@@ -312,6 +313,7 @@ mod tests {
             random_seed: None,
             temperature: 1.0,
             analysis_deadline_ms: None,
+            failure_cache: None,
         };
         let lookups = build_creature_lookups(&input);
 
