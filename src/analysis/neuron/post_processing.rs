@@ -132,6 +132,10 @@ pub(crate) fn build_neuron_results(
             timing: params.timing_collector.finalize(),
             gpu_info: GpuAnalyzer::get_adapter_info(),
             error_distribution,
+            // Issue #1129: populated by orchestration from neuron no-candidate
+            // summaries after the result is built.
+            rejection_breakdown: crate::analysis::diagnostics::RejectionBreakdown::new(),
+            top_level_summary: None,
         },
     })
 }

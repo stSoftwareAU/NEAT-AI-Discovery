@@ -22,6 +22,70 @@ use super::{
     module_weights, neuron, neuron_fingerprint, synapse, utils,
 };
 
+/// Aggregate rejection counts from synapse `no_candidate_reasons` into the
+/// structured breakdown and compute the one-sentence `top_level_summary`
+/// (Issue #1129).
+fn aggregate_synapse_rejection_breakdown(syn: &mut AnalyzeSynapsesResult) {
+    use super::diagnostics::rejection_reasons::{
+        REJECTION_BELOW_THRESHOLD, REJECTION_NO_DIAGNOSTICS, REJECTION_NO_ELIGIBLE_SOURCES,
+        REJECTION_NO_SAMPLES, REJECTION_NO_TARGET_RECORDS, REJECTION_ZERO_IMPROVEMENT,
+        top_level_summary,
+    };
+    use super::shared::SynapseNoCandidateReason;
+
+    for summary in &syn.no_candidate_reasons {
+        let reason_name = match summary.reason {
+            SynapseNoCandidateReason::NoEligibleSources => REJECTION_NO_ELIGIBLE_SOURCES,
+            SynapseNoCandidateReason::NoDiagnostics => REJECTION_NO_DIAGNOSTICS,
+            SynapseNoCandidateReason::NoSamples => REJECTION_NO_SAMPLES,
+            SynapseNoCandidateReason::ZeroImprovement => REJECTION_ZERO_IMPROVEMENT,
+            SynapseNoCandidateReason::BelowThreshold => REJECTION_BELOW_THRESHOLD,
+            SynapseNoCandidateReason::NoTargetRecords => REJECTION_NO_TARGET_RECORDS,
+        };
+        syn.metadata.rejection_breakdown.record(reason_name);
+    }
+    // Denominator is rejections + returned: the total number of candidate
+    // decisions the pipeline made. This lets "N of M" read naturally.
+    let denom = syn.metadata.rejection_breakdown.total()
+        + u32::try_from(syn.metadata.candidates_returned).unwrap_or(u32::MAX);
+    syn.metadata.top_level_summary =
+        top_level_summary(&syn.metadata.rejection_breakdown, Some(denom));
+}
+
+/// Aggregate rejection counts from neuron `no_candidate_reasons` into the
+/// structured breakdown and compute the one-sentence `top_level_summary`
+/// (Issue #1129).
+fn aggregate_neuron_rejection_breakdown(neu: &mut AnalyzeNeuronsResult) {
+    use super::diagnostics::rejection_reasons::{
+        REJECTION_BELOW_THRESHOLD, REJECTION_CONSTANT_NEURON_FILTERED,
+        REJECTION_HIDDEN_NEURON_FILTERED, REJECTION_INPUT_NEURON_FILTERED,
+        REJECTION_NO_DIAGNOSTICS, REJECTION_NO_ELIGIBLE_SOURCES, REJECTION_NO_SAMPLES,
+        top_level_summary,
+    };
+    use super::shared::NeuronNoCandidateReason;
+
+    for summary in &neu.no_candidate_reasons {
+        let reason_name = match summary.reason {
+            NeuronNoCandidateReason::NoEligibleSources => REJECTION_NO_ELIGIBLE_SOURCES,
+            NeuronNoCandidateReason::NoDiagnostics => REJECTION_NO_DIAGNOSTICS,
+            NeuronNoCandidateReason::NoSamples | NeuronNoCandidateReason::NotEnoughActivations => {
+                REJECTION_NO_SAMPLES
+            }
+            NeuronNoCandidateReason::WeightDegenerate | NeuronNoCandidateReason::BelowThreshold => {
+                REJECTION_BELOW_THRESHOLD
+            }
+            NeuronNoCandidateReason::HiddenNeuronFiltered => REJECTION_HIDDEN_NEURON_FILTERED,
+            NeuronNoCandidateReason::InputNeuronFiltered => REJECTION_INPUT_NEURON_FILTERED,
+            NeuronNoCandidateReason::ConstantNeuronFiltered => REJECTION_CONSTANT_NEURON_FILTERED,
+        };
+        neu.metadata.rejection_breakdown.record(reason_name);
+    }
+    let denom = neu.metadata.rejection_breakdown.total()
+        + u32::try_from(neu.metadata.candidates_returned).unwrap_or(u32::MAX);
+    neu.metadata.top_level_summary =
+        top_level_summary(&neu.metadata.rejection_breakdown, Some(denom));
+}
+
 /// Extract a human-readable message from a panic payload (Issue #1087).
 fn format_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
@@ -520,10 +584,16 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // and synapse density. When the ModuleOutcomeTracker shows consistent failure
     // or the network is too dense, clear helpful_synapses to save compute.
     if let Some(syn) = synapse_result.as_mut() {
-        synapse::add_synapse_gating::gate_add_synapse_candidates(
+        let removed = synapse::add_synapse_gating::gate_add_synapse_candidates(
             &mut syn.helpful_synapses,
             &tracker,
             &input.creature,
+        );
+        // Issue #1129: Record the gating drop in the structured rejection
+        // breakdown so downstream callers can see why helpful synapses vanished.
+        syn.metadata.rejection_breakdown.record_many_u32(
+            super::diagnostics::rejection_reasons::REJECTION_ADD_SYNAPSE_GATED,
+            u32::try_from(removed).unwrap_or(u32::MAX),
         );
     }
 
@@ -720,8 +790,12 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         // `merge_coordinated_structural_replacements` wrote
         // `candidates_returned` before these downstream filters ran.
         if let Some(syn) = synapse_result.as_mut() {
-            candidate_aggregation::apply_coordinated_gain_floor(
+            let removed = candidate_aggregation::apply_coordinated_gain_floor(
                 &mut syn.coordinated_structural_candidates,
+            );
+            syn.metadata.rejection_breakdown.record_many_u32(
+                super::diagnostics::rejection_reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR,
+                removed,
             );
             syn.metadata.candidates_returned = syn.helpful_synapses.len()
                 + syn.harmful_synapses.len()
@@ -779,6 +853,16 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // Output profile data if JSON profiling is enabled (Issue #214)
     if profile_mode() == ProfileMode::Json {
         profile.report();
+    }
+
+    // Issue #1129: Aggregate per-target rejection reasons into the structured
+    // breakdown and compute a one-sentence top-level summary so downstream
+    // tooling can root-cause "no candidates found" without re-running analysis.
+    if let Some(syn) = synapse_result.as_mut() {
+        aggregate_synapse_rejection_breakdown(syn);
+    }
+    if let Some(neu) = neuron_result.as_mut() {
+        aggregate_neuron_rejection_breakdown(neu);
     }
 
     Ok(AnalyzeAllResult {

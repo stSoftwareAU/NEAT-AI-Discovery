@@ -21,6 +21,7 @@ mod focus_filter;
 pub(crate) mod mcmc_diagnostics;
 mod neuron_tracking;
 mod rejection;
+pub mod rejection_reasons;
 mod target_data;
 
 // Re-export all public items to maintain the existing API
@@ -29,6 +30,7 @@ pub(crate) use focus_filter::{
 };
 pub(crate) use neuron_tracking::NeuronDiagnostics;
 pub(crate) use rejection::{TargetDiagnostics, ThresholdContext};
+pub use rejection_reasons::RejectionBreakdown;
 pub(crate) use target_data::TargetMap;
 
 // RejectionReason is only used by test modules (implementation_tests, inline tests)

@@ -86,6 +86,18 @@ pub struct SynapseAnalysisMetadata {
     /// MCMC diagnostics: acceptance rates, proposal quality, diversity (Issue #1021).
     pub mcmc_diagnostics:
         Option<crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsSummary>,
+
+    /// Structured rejection-reason breakdown (Issue #1129).
+    ///
+    /// Keyed by the stable reason names documented in
+    /// `analysis::diagnostics::rejection_reasons`. Populated even when
+    /// `candidates_returned == 0` so downstream tooling can root-cause
+    /// "no candidates found" without re-running analysis.
+    pub rejection_breakdown: crate::analysis::diagnostics::RejectionBreakdown,
+
+    /// One-sentence summary naming the dominant rejection reason, when any
+    /// candidate was rejected (Issue #1129).
+    pub top_level_summary: Option<String>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.
@@ -122,6 +134,16 @@ pub struct NeuronAnalysisMetadata {
     /// Provides percentiles, skewness, kurtosis and other distribution metrics
     /// to enable targeted discovery for specific error patterns like outliers.
     pub error_distribution: Option<ErrorDistribution>,
+
+    /// Structured rejection-reason breakdown (Issue #1129).
+    ///
+    /// Keyed by the stable reason names documented in
+    /// `analysis::diagnostics::rejection_reasons`.
+    pub rejection_breakdown: crate::analysis::diagnostics::RejectionBreakdown,
+
+    /// One-sentence summary naming the dominant rejection reason, when any
+    /// candidate was rejected (Issue #1129).
+    pub top_level_summary: Option<String>,
 }
 
 /// Result of synapse analysis
