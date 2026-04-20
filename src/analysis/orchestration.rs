@@ -580,7 +580,34 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     let mut neuron_result = neuron_result;
 
     // Issue #792: Resolve the module outcome tracker from input or use a default.
-    let mut tracker = input.module_outcome_tracker.clone().unwrap_or_default();
+    let base_tracker = input.module_outcome_tracker.clone().unwrap_or_default();
+
+    // Issue #1132: Compute creature-level discovery mode from the caller-supplied
+    // rolling outcome log. When the rolling success rate has fallen below the
+    // configured threshold, bias the module tracker toward low-risk change types
+    // before it is consumed by downstream allocation and boost passes.
+    let outcome_log = input.discovery_outcome_log.clone().unwrap_or_default();
+    let rolling_success_rate = outcome_log.rolling_success_rate();
+    let discovery_mode = super::discovery_mode::decide_mode(
+        &outcome_log,
+        crate::config::low_success_rate_threshold(),
+        crate::config::conservative_mode_max_epochs(),
+    );
+    if discovery_mode == super::discovery_mode::DiscoveryMode::Conservative
+        && utils::verbose_enabled()
+    {
+        tracing::info!(
+            rolling_success_rate,
+            "Issue #1132: conservative discovery mode engaged — biasing module weights \
+             toward low-risk change types"
+        );
+    }
+    let mut tracker = match discovery_mode {
+        super::discovery_mode::DiscoveryMode::Normal => base_tracker,
+        super::discovery_mode::DiscoveryMode::Conservative => {
+            super::discovery_mode::biased_tracker_for_conservative_mode(&base_tracker)
+        }
+    };
 
     // Issue #1057: Gate add-synapse candidates based on historical success rate
     // and synapse density. When the ModuleOutcomeTracker shows consistent failure
@@ -792,8 +819,16 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         // `merge_coordinated_structural_replacements` wrote
         // `candidates_returned` before these downstream filters ran.
         if let Some(syn) = synapse_result.as_mut() {
-            let removed = candidate_aggregation::apply_coordinated_gain_floor(
+            // Issue #1132: In conservative mode, tighten the post-discount
+            // noise floor by the configured multiplier so only obviously
+            // promising structural candidates survive.
+            let gain_multiplier = super::discovery_mode::coordinated_gain_multiplier_for_mode(
+                discovery_mode,
+                crate::config::conservative_gain_multiplier(),
+            );
+            let removed = candidate_aggregation::apply_coordinated_gain_floor_with_multiplier(
                 &mut syn.coordinated_structural_candidates,
+                gain_multiplier,
             );
             syn.metadata.rejection_breakdown.record_many_u32(
                 super::diagnostics::rejection_reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR,
@@ -865,6 +900,18 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     }
     if let Some(neu) = neuron_result.as_mut() {
         aggregate_neuron_rejection_breakdown(neu);
+    }
+
+    // Issue #1132: Expose the creature-level discovery mode and rolling
+    // success rate on the response metadata so callers can observe when the
+    // pipeline has entered conservative mode.
+    if let Some(syn) = synapse_result.as_mut() {
+        syn.metadata.discovery_mode = discovery_mode;
+        syn.metadata.rolling_success_rate = rolling_success_rate;
+    }
+    if let Some(neu) = neuron_result.as_mut() {
+        neu.metadata.discovery_mode = discovery_mode;
+        neu.metadata.rolling_success_rate = rolling_success_rate;
     }
 
     Ok(AnalyzeAllResult {

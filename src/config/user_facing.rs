@@ -394,3 +394,59 @@ pub fn max_wall_clock_minutes() -> u64 {
 pub fn sample_program() -> String {
     std::env::var("NEAT_AI_DISCOVERY_SAMPLE_PROGRAM").unwrap_or_else(|_| "sample".to_string())
 }
+
+// =============================================================================
+// Issue #1132 — creature-level discovery strategy adaptation
+// =============================================================================
+
+/// Rolling success-rate threshold below which conservative mode engages
+/// (Issue #1132).
+///
+/// Set `NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD` to override. Values
+/// outside (0.0, 1.0] are ignored and the default is used.
+///
+/// Default:
+/// [`crate::analysis::discovery_mode::DEFAULT_LOW_SUCCESS_RATE_THRESHOLD`]
+/// (0.2).
+pub fn low_success_rate_threshold() -> f32 {
+    std::env::var("NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0 && *v <= 1.0)
+        .unwrap_or(crate::analysis::discovery_mode::DEFAULT_LOW_SUCCESS_RATE_THRESHOLD)
+}
+
+/// Maximum number of consecutive failed passes before conservative mode is
+/// abandoned as ineffective (Issue #1132).
+///
+/// Set `NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS` to override.
+///
+/// Default:
+/// [`crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS`]
+/// (20).
+pub fn conservative_mode_max_epochs() -> u32 {
+    std::env::var("NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|v| *v >= 1)
+        .unwrap_or(crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS)
+}
+
+/// Multiplier applied to `COORDINATED_MIN_EXPECTED_GAIN` when conservative
+/// mode is active (Issue #1132).
+///
+/// Set `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` to override. Values
+/// below `1.0` are clamped to `1.0` so the floor is never relaxed below the
+/// base constant.
+///
+/// Default:
+/// [`crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_GAIN_MULTIPLIER`]
+/// (10.0).
+pub fn conservative_gain_multiplier() -> f32 {
+    let raw = std::env::var("NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+        .unwrap_or(crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_GAIN_MULTIPLIER);
+    raw.max(1.0)
+}

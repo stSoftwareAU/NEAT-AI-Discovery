@@ -116,6 +116,8 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     rejection_breakdown: s.metadata.rejection_breakdown.counts().clone(),
                     top_level_summary: s.metadata.top_level_summary.clone(),
                     calibration_corrections: s.metadata.calibration_corrections.clone(),
+                    discovery_mode: s.metadata.discovery_mode,
+                    rolling_success_rate: s.metadata.rolling_success_rate,
                 }),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 synapse_weight_updates,
@@ -136,6 +138,8 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     rejection_breakdown: n.metadata.rejection_breakdown.counts().clone(),
                     top_level_summary: n.metadata.top_level_summary.clone(),
                     calibration_corrections: n.metadata.calibration_corrections.clone(),
+                    discovery_mode: n.metadata.discovery_mode,
+                    rolling_success_rate: n.metadata.rolling_success_rate,
                 }),
                 neuron_fingerprints: result.neuron_fingerprints,
                 fingerprint_cache_hits: if result.fingerprint_cache_hits > 0 {
@@ -218,6 +222,7 @@ pub(crate) fn build_analyze_all_input_from_parallel(
         max_analysis_memory_mb: input.max_analysis_memory_mb,
         max_discovery_wall_clock_minutes: input.max_discovery_wall_clock_minutes,
         failure_cache: input.failure_cache,
+        discovery_outcome_log: input.discovery_outcome_log,
     }
 }
 

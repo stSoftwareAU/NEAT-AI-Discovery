@@ -109,6 +109,25 @@ pub struct SynapseAnalysisMetadata {
     /// failure cache was supplied. Callers can log this to observe
     /// prediction calibration drift across discovery runs.
     pub calibration_corrections: std::collections::HashMap<String, f32>,
+
+    /// Current creature-level discovery mode (Issue #1132).
+    ///
+    /// [`crate::analysis::discovery_mode::DiscoveryMode::Normal`] under
+    /// ordinary operation,
+    /// [`crate::analysis::discovery_mode::DiscoveryMode::Conservative`]
+    /// when the rolling success rate has fallen below the threshold and
+    /// the pipeline is biasing candidates away from high-failure-rate
+    /// structural modules.
+    pub discovery_mode: crate::analysis::discovery_mode::DiscoveryMode,
+
+    /// Rolling success rate over the most recent
+    /// [`crate::analysis::discovery_mode::ROLLING_WINDOW`] discovery passes
+    /// (Issue #1132).
+    ///
+    /// Computed from the caller-supplied `discovery_outcome_log`. Defaults
+    /// to `1.0` when no log is supplied (neutral — no reason to trigger
+    /// conservative mode).
+    pub rolling_success_rate: f32,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.
@@ -160,6 +179,16 @@ pub struct NeuronAnalysisMetadata {
     ///
     /// See `SynapseAnalysisMetadata::calibration_corrections` for full docs.
     pub calibration_corrections: std::collections::HashMap<String, f32>,
+
+    /// Current creature-level discovery mode (Issue #1132).
+    ///
+    /// See `SynapseAnalysisMetadata::discovery_mode` for full docs.
+    pub discovery_mode: crate::analysis::discovery_mode::DiscoveryMode,
+
+    /// Rolling success rate over the most recent discovery passes (Issue #1132).
+    ///
+    /// See `SynapseAnalysisMetadata::rolling_success_rate` for full docs.
+    pub rolling_success_rate: f32,
 }
 
 /// Result of synapse analysis

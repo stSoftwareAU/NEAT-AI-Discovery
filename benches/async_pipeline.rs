@@ -177,6 +177,7 @@ fn bench_async_pipeline(c: &mut Criterion) {
                         max_discovery_wall_clock_minutes: None,
                         temperature: 1.0,
                         failure_cache: None,
+                        discovery_outcome_log: None,
                     };
                     black_box(analyze_all(&input).expect("analyze_all failed"))
                 });

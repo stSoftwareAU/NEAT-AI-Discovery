@@ -166,6 +166,7 @@ fn async_pipeline_produces_valid_analysis_results() {
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");
@@ -228,6 +229,7 @@ fn async_pipeline_is_deterministic_with_fixed_seed() {
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result1 = analyze_all(&make_input()).expect("Run 1 should succeed");

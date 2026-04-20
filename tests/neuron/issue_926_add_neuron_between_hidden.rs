@@ -433,6 +433,7 @@ fn test_analyze_all_finds_hidden_neuron_candidate() {
         max_analysis_memory_mb: None,
         max_discovery_wall_clock_minutes: None,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");
