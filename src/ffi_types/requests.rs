@@ -93,6 +93,17 @@ pub struct AnalyzeParallelInput {
     /// When absent or empty, the compiled constants are used unchanged.
     #[serde(default)]
     pub failure_cache: Option<Vec<analysis::scoring::calibration_correction::FailureCacheEntry>>,
+    /// Per-creature rolling log of discovery pass outcomes (Issue #1132).
+    ///
+    /// Chronological booleans where `true` = at least one candidate was
+    /// accepted in that pass and `false` = empty response. The library
+    /// derives a rolling success rate over the last
+    /// [`analysis::discovery_mode::ROLLING_WINDOW`] entries and, when it
+    /// falls below the configured threshold, biases the candidate mix
+    /// toward lower-risk change types. When absent or empty, the pipeline
+    /// runs in [`analysis::discovery_mode::DiscoveryMode::Normal`].
+    #[serde(default)]
+    pub discovery_outcome_log: Option<analysis::discovery_mode::DiscoveryOutcomeLog>,
 }
 
 /// Internal input structure for synapse analysis (used by `analyze_all`)
@@ -209,6 +220,11 @@ pub struct AnalyzeAllInput {
     /// See `AnalyzeParallelInput` for full documentation.
     #[serde(default)]
     pub failure_cache: Option<Vec<analysis::scoring::calibration_correction::FailureCacheEntry>>,
+    /// Per-creature discovery outcome log for adaptive strategy (Issue #1132).
+    ///
+    /// See `AnalyzeParallelInput` for full documentation.
+    #[serde(default)]
+    pub discovery_outcome_log: Option<analysis::discovery_mode::DiscoveryOutcomeLog>,
 }
 
 #[derive(Debug, Deserialize)]

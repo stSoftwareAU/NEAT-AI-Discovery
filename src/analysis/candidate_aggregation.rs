@@ -43,8 +43,24 @@ use super::{cache, shared, synapse};
 pub fn apply_coordinated_gain_floor(
     candidates: &mut Vec<CoordinatedStructuralCandidateJson>,
 ) -> u32 {
+    apply_coordinated_gain_floor_with_multiplier(candidates, 1.0)
+}
+
+/// Variant of [`apply_coordinated_gain_floor`] that multiplies the base floor
+/// by a caller-supplied factor before filtering (Issue #1132).
+///
+/// The `multiplier` must be `>= 1.0`; values below 1.0 are clamped to 1.0 so
+/// the floor can never become looser than the default. Conservative discovery
+/// mode passes a multiplier above 1.0 to bias away from borderline structural
+/// candidates when the creature has a low recent success rate.
+pub fn apply_coordinated_gain_floor_with_multiplier(
+    candidates: &mut Vec<CoordinatedStructuralCandidateJson>,
+    multiplier: f32,
+) -> u32 {
+    let factor = multiplier.max(1.0);
+    let floor = COORDINATED_POST_DISCOUNT_NOISE_FLOOR * factor;
     let before = candidates.len();
-    candidates.retain(|c| c.expected_creature_score_gain >= COORDINATED_POST_DISCOUNT_NOISE_FLOOR);
+    candidates.retain(|c| c.expected_creature_score_gain >= floor);
     u32::try_from(before.saturating_sub(candidates.len())).unwrap_or(u32::MAX)
 }
 

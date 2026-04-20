@@ -147,6 +147,9 @@ pub(crate) fn build_neuron_results(
             top_level_summary: None,
             // Issue #1131: per-creature calibration corrections derived from failure cache.
             calibration_corrections: calibration_correction.as_map().clone(),
+            // Issue #1132: populated by orchestration once the outcome log is decided.
+            discovery_mode: crate::analysis::discovery_mode::DiscoveryMode::Normal,
+            rolling_success_rate: 1.0,
         },
     })
 }

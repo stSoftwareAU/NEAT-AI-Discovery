@@ -525,6 +525,9 @@ fn build_empty_result(
             rejection_breakdown,
             top_level_summary,
             calibration_corrections: std::collections::HashMap::new(),
+            // Issue #1132: populated by orchestration once the outcome log is decided.
+            discovery_mode: crate::analysis::discovery_mode::DiscoveryMode::Normal,
+            rolling_success_rate: 1.0,
         },
     }
 }

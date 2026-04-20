@@ -40,6 +40,7 @@ pub mod candidate_diversity;
 pub mod constants;
 pub mod diagnostics;
 pub mod discovery_dispatch;
+pub mod discovery_mode;
 pub mod early_termination;
 pub mod ensemble_scoring;
 pub mod gpu;

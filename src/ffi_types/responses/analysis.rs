@@ -164,6 +164,17 @@ pub struct SynapseAnalysisMetadataJson {
     /// failure cache was supplied.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub calibration_corrections: std::collections::HashMap<String, f32>,
+    /// Current creature-level discovery mode (Issue #1132).
+    ///
+    /// `"normal"` under ordinary operation, `"conservative"` when the rolling
+    /// success rate has fallen below the configured threshold and the
+    /// pipeline has biased the candidate mix away from high-failure-rate
+    /// structural modules.
+    pub discovery_mode: analysis::discovery_mode::DiscoveryMode,
+    /// Rolling success rate over the most recent
+    /// [`analysis::discovery_mode::ROLLING_WINDOW`] discovery passes
+    /// (Issue #1132).
+    pub rolling_success_rate: f32,
 }
 
 /// MCMC diagnostics summary for the analysis output JSON (Issue #1021).
@@ -256,6 +267,12 @@ pub struct NeuronAnalysisMetadataJson {
     /// `SynapseAnalysisMetadataJson::calibration_corrections` for full docs.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub calibration_corrections: std::collections::HashMap<String, f32>,
+    /// Current creature-level discovery mode (Issue #1132). See
+    /// `SynapseAnalysisMetadataJson::discovery_mode` for full docs.
+    pub discovery_mode: analysis::discovery_mode::DiscoveryMode,
+    /// Rolling success rate over the most recent discovery passes
+    /// (Issue #1132).
+    pub rolling_success_rate: f32,
 }
 
 // ============================================================================

@@ -179,6 +179,7 @@ fn analyze_all_exposes_calibration_corrections_in_metadata() {
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
         failure_cache: Some(failure_cache),
+        discovery_outcome_log: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");
@@ -264,6 +265,7 @@ fn calibration_corrections_are_deterministic() {
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
         failure_cache: Some(failure_cache.clone()),
+        discovery_outcome_log: None,
     };
 
     let r1 = analyze_all(&make_input()).expect("run 1");
@@ -323,6 +325,7 @@ fn no_failure_cache_leaves_corrections_empty() {
         max_discovery_wall_clock_minutes: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");
