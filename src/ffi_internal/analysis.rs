@@ -113,6 +113,8 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     gpu_info: s.metadata.gpu_info.as_ref().map(gpu_info_to_json),
                     discovery_module_stats: s.metadata.discovery_module_stats.clone(),
                     mcmc_diagnostics: s.metadata.mcmc_diagnostics.as_ref().map(mcmc_to_json),
+                    rejection_breakdown: s.metadata.rejection_breakdown.counts().clone(),
+                    top_level_summary: s.metadata.top_level_summary.clone(),
                 }),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 synapse_weight_updates,
@@ -130,6 +132,8 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     total_focus_neurons: n.metadata.total_focus_neurons,
                     timing: n.metadata.timing.as_ref().map(timing_to_json),
                     gpu_info: n.metadata.gpu_info.as_ref().map(gpu_info_to_json),
+                    rejection_breakdown: n.metadata.rejection_breakdown.counts().clone(),
+                    top_level_summary: n.metadata.top_level_summary.clone(),
                 }),
                 neuron_fingerprints: result.neuron_fingerprints,
                 fingerprint_cache_hits: if result.fingerprint_cache_hits > 0 {

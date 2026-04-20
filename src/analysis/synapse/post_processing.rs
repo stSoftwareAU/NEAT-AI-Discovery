@@ -529,5 +529,8 @@ pub(crate) fn build_metadata(
         error_distribution,
         discovery_module_stats: Vec::new(),
         mcmc_diagnostics: params.mcmc_summary.clone(),
+        // Issue #1129: populated by orchestration after metadata is built.
+        rejection_breakdown: crate::analysis::diagnostics::RejectionBreakdown::new(),
+        top_level_summary: None,
     }
 }

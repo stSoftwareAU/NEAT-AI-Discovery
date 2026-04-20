@@ -37,8 +37,15 @@ use super::{cache, shared, synapse};
 /// re-filter at full strength. The lower sweep preserves those legitimately
 /// discounted candidates while still catching the exact 1e-7/1e-8 range that
 /// Issue #1127 captured hurting production networks.
-pub fn apply_coordinated_gain_floor(candidates: &mut Vec<CoordinatedStructuralCandidateJson>) {
+///
+/// Issue #1129: Returns the number of candidates removed so callers can
+/// record the drop in the structured rejection breakdown.
+pub fn apply_coordinated_gain_floor(
+    candidates: &mut Vec<CoordinatedStructuralCandidateJson>,
+) -> u32 {
+    let before = candidates.len();
     candidates.retain(|c| c.expected_creature_score_gain >= COORDINATED_POST_DISCOUNT_NOISE_FLOOR);
+    u32::try_from(before.saturating_sub(candidates.len())).unwrap_or(u32::MAX)
 }
 
 /// Compute the operation-count discount for a coordinated candidate (Issue #732, #1058).
@@ -78,19 +85,34 @@ pub fn validate_coordinated_candidate_gain(candidate: &CoordinatedStructuralCand
 /// diversified), and truncates to the combined synapse candidate limit. The
 /// final post-discount noise sweep happens in `analyze_all` via
 /// `apply_coordinated_gain_floor` (Issue #1128).
+///
+/// Issue #1129: Records a structured breakdown of removed candidates in
+/// `synapse.metadata.rejection_breakdown` so the FFI caller can root-cause
+/// "no candidates found" failures without re-running analysis.
 pub(crate) fn merge_coordinated_structural_replacements(
     synapse: &mut shared::AnalyzeSynapsesResult,
     mut replacements: Vec<CoordinatedStructuralCandidateJson>,
     max_synapse_candidates: Option<usize>,
     diversify: bool,
 ) {
+    use crate::analysis::diagnostics::rejection_reasons::{
+        REJECTION_BELOW_MULTI_OP_FLOOR, REJECTION_NON_POSITIVE_GAIN,
+    };
+
     if replacements.is_empty() {
         return;
     }
 
     // Issue #557: Filter out candidates with non-positive expected_creature_score_gain.
     // Only candidates predicted to improve the creature's score should be returned.
+    let before_positive = replacements.len();
     replacements.retain(|c| c.expected_creature_score_gain > 0.0);
+    let dropped_non_positive =
+        u32::try_from(before_positive.saturating_sub(replacements.len())).unwrap_or(u32::MAX);
+    synapse
+        .metadata
+        .rejection_breakdown
+        .record_many_u32(REJECTION_NON_POSITIVE_GAIN, dropped_non_positive);
     if replacements.is_empty() {
         return;
     }
@@ -107,6 +129,7 @@ pub(crate) fn merge_coordinated_structural_replacements(
     // `> 0.0` (filtered above) — the final post-discount noise sweep in
     // `analyze_all` (Issue #1128) catches sub-noise gains that survived
     // downstream pessimism/calibration stages.
+    let before_multi = replacements.len();
     replacements.retain(|c| {
         if c.operations.len() <= 1 {
             c.expected_creature_score_gain > 0.0
@@ -114,6 +137,12 @@ pub(crate) fn merge_coordinated_structural_replacements(
             c.expected_creature_score_gain > MIN_COORDINATED_MULTI_OP_GAIN
         }
     });
+    let dropped_multi =
+        u32::try_from(before_multi.saturating_sub(replacements.len())).unwrap_or(u32::MAX);
+    synapse
+        .metadata
+        .rejection_breakdown
+        .record_many_u32(REJECTION_BELOW_MULTI_OP_FLOOR, dropped_multi);
     if replacements.is_empty() {
         return;
     }

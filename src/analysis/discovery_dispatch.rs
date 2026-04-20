@@ -24,6 +24,9 @@ use super::constants::{
     COORDINATED_MIN_EXPECTED_GAIN, MODULE_GATE_THRESHOLD, QUALITY_SKIP_GAIN_THRESHOLD,
     QUALITY_SKIP_MIN_CANDIDATES, SOFT_FAILURE_WEIGHT,
 };
+use super::diagnostics::rejection_reasons::{
+    REJECTION_BELOW_EXPECTED_GAIN_FLOOR, REJECTION_BUDGET_TRUNCATED,
+};
 use super::module_weights::{DiscoveryModuleStatsJson, ModuleOutcomeTracker};
 use super::shared;
 use super::utils;
@@ -69,9 +72,15 @@ pub fn run_discovery_module(
         // Issue #1110: Filter coordinated candidates below the minimum
         // expected-gain floor. Gains at 1e-8 to 1e-7 are indistinguishable
         // from numerical noise and harm the network in production.
+        let before_floor = result.candidates.len();
         result
             .candidates
             .retain(|c| c.expected_creature_score_gain >= COORDINATED_MIN_EXPECTED_GAIN);
+        let dropped_floor =
+            u32::try_from(before_floor.saturating_sub(result.candidates.len())).unwrap_or(u32::MAX);
+        syn.metadata
+            .rejection_breakdown
+            .record_many_u32(REJECTION_BELOW_EXPECTED_GAIN_FLOOR, dropped_floor);
 
         if utils::verbose_enabled() {
             tracing::debug!(
@@ -339,6 +348,12 @@ pub fn merge_discovery_module_results(
                         "Truncating candidates to module budget (Issue #967)"
                     );
                 }
+                let truncated =
+                    u32::try_from(result.candidates.len().saturating_sub(entry.max_candidates))
+                        .unwrap_or(u32::MAX);
+                syn.metadata
+                    .rejection_breakdown
+                    .record_many_u32(REJECTION_BUDGET_TRUNCATED, truncated);
                 result.candidates.truncate(entry.max_candidates);
             }
 
@@ -350,6 +365,11 @@ pub fn merge_discovery_module_results(
                 .candidates
                 .retain(|c| c.expected_creature_score_gain >= COORDINATED_MIN_EXPECTED_GAIN);
             let post_filter_count = result.candidates.len();
+            let dropped_floor = u32::try_from(pre_filter_count.saturating_sub(post_filter_count))
+                .unwrap_or(u32::MAX);
+            syn.metadata
+                .rejection_breakdown
+                .record_many_u32(REJECTION_BELOW_EXPECTED_GAIN_FLOOR, dropped_floor);
 
             // Issue #1060: Record pre-filtering soft failures for candidates that
             // were truncated (budget exceeded) or filtered (non-positive gain).

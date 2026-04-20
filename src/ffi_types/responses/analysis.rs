@@ -144,6 +144,16 @@ pub struct SynapseAnalysisMetadataJson {
     /// MCMC diagnostics: acceptance rates, proposal quality, diversity (Issue #1021).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcmc_diagnostics: Option<McmcDiagnosticsJson>,
+    /// Structured rejection-reason breakdown (Issue #1129).
+    ///
+    /// Keyed by the stable reason names in
+    /// `analysis::diagnostics::rejection_reasons`. Populated even when
+    /// `candidatesReturned == 0`.
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub rejection_breakdown: std::collections::HashMap<String, u32>,
+    /// One-sentence summary naming the dominant rejection reason (Issue #1129).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_level_summary: Option<String>,
 }
 
 /// MCMC diagnostics summary for the analysis output JSON (Issue #1021).
@@ -226,6 +236,12 @@ pub struct NeuronAnalysisMetadataJson {
     /// Information about the GPU adapter used (Issue #228).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu_info: Option<GpuAdapterInfoJson>,
+    /// Structured rejection-reason breakdown (Issue #1129).
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub rejection_breakdown: std::collections::HashMap<String, u32>,
+    /// One-sentence summary naming the dominant rejection reason (Issue #1129).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_level_summary: Option<String>,
 }
 
 // ============================================================================

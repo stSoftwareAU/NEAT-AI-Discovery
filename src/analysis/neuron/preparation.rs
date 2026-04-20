@@ -489,6 +489,26 @@ fn build_empty_result(
             detail: None,
         });
     }
+    // Issue #1129: populate rejection breakdown from the neuron pre-filter
+    // reasons so callers can see why zero candidates were returned.
+    let mut rejection_breakdown = crate::analysis::diagnostics::RejectionBreakdown::new();
+    rejection_breakdown.record_many_u32(
+        crate::analysis::diagnostics::rejection_reasons::REJECTION_INPUT_NEURON_FILTERED,
+        u32::try_from(skipped_input.len()).unwrap_or(u32::MAX),
+    );
+    rejection_breakdown.record_many_u32(
+        crate::analysis::diagnostics::rejection_reasons::REJECTION_HIDDEN_NEURON_FILTERED,
+        u32::try_from(skipped_hidden.len()).unwrap_or(u32::MAX),
+    );
+    rejection_breakdown.record_many_u32(
+        crate::analysis::diagnostics::rejection_reasons::REJECTION_CONSTANT_NEURON_FILTERED,
+        u32::try_from(skipped_constant.len()).unwrap_or(u32::MAX),
+    );
+    let top_level_summary = crate::analysis::diagnostics::rejection_reasons::top_level_summary(
+        &rejection_breakdown,
+        None,
+    );
+
     AnalyzeNeuronsResult {
         helpful_neurons: Vec::new(),
         gpu_used: true,
@@ -502,6 +522,8 @@ fn build_empty_result(
             timing: None,
             gpu_info: GpuAnalyzer::get_adapter_info(),
             error_distribution: None,
+            rejection_breakdown,
+            top_level_summary,
         },
     }
 }
