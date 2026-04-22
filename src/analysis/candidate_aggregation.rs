@@ -64,6 +64,55 @@ pub fn apply_coordinated_gain_floor_with_multiplier(
     u32::try_from(before.saturating_sub(candidates.len())).unwrap_or(u32::MAX)
 }
 
+/// Apply the final coordinated-structural gain floor to a synapse result and
+/// refresh dependent metadata (Issue #1139).
+///
+/// This is the FFI-facing safety net: it must always run after variant
+/// generation (`pair_coordinated_structural_with_weight_variants`) because the
+/// `0.75×`/`0.5×`/`0.25×`/`0.1×` expected-gain multipliers can pull a variant
+/// below `COORDINATED_POST_DISCOUNT_NOISE_FLOOR` even when its base candidate
+/// is above the floor. Production evidence (GRQ-sampler discoveryVersion
+/// 0.74.16) captured `Gentle Nudge` variants with gains of ~1.3e-7 damaging
+/// creatures when tested.
+///
+/// The floor was previously applied only inside the
+/// `!memory_budget_exceeded && !post_processing_deadline_passed` fast-path
+/// guard in `analyze_all`, so sub-floor variants leaked whenever the memory
+/// budget or deadline was exceeded. Moving the call out of that guard means:
+///
+/// - `expected_creature_score_gain` is screened in both the fast-path and the
+///   skipped-post-processing fallback.
+/// - `metadata.rejection_breakdown[REJECTION_BELOW_EXPECTED_GAIN_FLOOR]` is
+///   updated with the drop count.
+/// - `metadata.candidates_returned` is refreshed so the FFI caller sees an
+///   accurate total after filtering.
+///
+/// Returns the number of coordinated-structural candidates removed.
+pub fn apply_final_coordinated_gain_floor(
+    synapse: &mut shared::AnalyzeSynapsesResult,
+    discovery_mode: super::discovery_mode::DiscoveryMode,
+    conservative_multiplier: f32,
+) -> u32 {
+    use super::diagnostics::rejection_reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR;
+
+    let gain_multiplier = super::discovery_mode::coordinated_gain_multiplier_for_mode(
+        discovery_mode,
+        conservative_multiplier,
+    );
+    let removed = apply_coordinated_gain_floor_with_multiplier(
+        &mut synapse.coordinated_structural_candidates,
+        gain_multiplier,
+    );
+    synapse
+        .metadata
+        .rejection_breakdown
+        .record_many_u32(REJECTION_BELOW_EXPECTED_GAIN_FLOOR, removed);
+    synapse.metadata.candidates_returned = synapse.helpful_synapses.len()
+        + synapse.harmful_synapses.len()
+        + synapse.coordinated_structural_candidates.len();
+    removed
+}
+
 /// Compute the operation-count discount for a coordinated candidate (Issue #732, #1058).
 ///
 /// Issue #1058: Replaced the three-layer compound discount (per-op exponential ×
