@@ -810,40 +810,32 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             module_dispatch_specs::apply_diversity_reranking(syn);
         }
 
-        // Issue #1110, #1128: Final coordinated-structural gain floor.
-        // Applied AFTER module boost and diversity reranking so that gains
-        // which started above the floor but were discounted by those steps
-        // cannot reach the FFI response. Production failure evidence
-        // (GRQ-sampler failures cache) shows sub-1e-5 gains harm the network.
-        // Metadata must be refreshed after the sweep since
-        // `merge_coordinated_structural_replacements` wrote
-        // `candidates_returned` before these downstream filters ran.
-        if let Some(syn) = synapse_result.as_mut() {
-            // Issue #1132: In conservative mode, tighten the post-discount
-            // noise floor by the configured multiplier so only obviously
-            // promising structural candidates survive.
-            let gain_multiplier = super::discovery_mode::coordinated_gain_multiplier_for_mode(
-                discovery_mode,
-                crate::config::conservative_gain_multiplier(),
-            );
-            let removed = candidate_aggregation::apply_coordinated_gain_floor_with_multiplier(
-                &mut syn.coordinated_structural_candidates,
-                gain_multiplier,
-            );
-            syn.metadata.rejection_breakdown.record_many_u32(
-                super::diagnostics::rejection_reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR,
-                removed,
-            );
-            syn.metadata.candidates_returned = syn.helpful_synapses.len()
-                + syn.harmful_synapses.len()
-                + syn.coordinated_structural_candidates.len();
-        }
-
         // Issue #224: Candidate clustering to reduce redundant ablation tests.
         if let Some(syn) = synapse_result.as_mut() {
             module_dispatch_specs::cluster_synapse_candidates(syn, &input.creature);
         }
     } // end if !memory_budget_exceeded (Issue #1028)
+
+    // Issue #1110, #1128, #1139: Final coordinated-structural gain floor.
+    //
+    // MUST run unconditionally — outside the memory/deadline guard — because
+    // `pair_coordinated_structural_with_weight_variants` (invoked earlier in
+    // synapse post-processing) produces `Gentle Nudge`/`Micro Nudge` variants
+    // whose `expected_creature_score_gain` is multiplied by 0.25× / 0.1× and
+    // can fall below `COORDINATED_POST_DISCOUNT_NOISE_FLOOR` (5e-7). Running
+    // this filter only in the fast-path guard leaked sub-floor variants to
+    // the FFI response whenever the memory budget or deadline was exceeded
+    // (GRQ-sampler discoveryVersion 0.74.16 captured 1.3e-7 gains damaging
+    // creatures). Applying it here ensures the floor holds in both the
+    // fast-path and the skipped-post-processing fallback, and refreshes
+    // `candidates_returned` + the rejection breakdown in either path.
+    if let Some(syn) = synapse_result.as_mut() {
+        candidate_aggregation::apply_final_coordinated_gain_floor(
+            syn,
+            discovery_mode,
+            crate::config::conservative_gain_multiplier(),
+        );
+    }
 
     // Collect final profile data (Issue #214)
     let synapse_candidates = synapse_result.as_ref().map_or(0, |s| {
