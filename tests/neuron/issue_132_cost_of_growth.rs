@@ -9,7 +9,39 @@ use neat_ai_discovery::focus::rank_focus_neurons;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 use tempfile::NamedTempFile;
+
+/// RAII guard that disables the Issue #1142 remove-low-impact noise floor
+/// for tests whose scenarios deliberately use tiny magnitudes (below 1e-5)
+/// to exercise the pre-#1142 impact/savings contract. Tests using this
+/// guard must be marked `#[serial]` so env var access is not racy.
+struct NoiseFloorOffGuard {
+    previous: Option<String>,
+}
+
+impl NoiseFloorOffGuard {
+    fn new() -> Self {
+        let key = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR";
+        let previous = std::env::var(key).ok();
+        // SAFETY: serialised via #[serial] — no concurrent env access.
+        unsafe {
+            std::env::set_var(key, "0");
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for NoiseFloorOffGuard {
+    fn drop(&mut self) {
+        let key = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR";
+        // SAFETY: serialised via #[serial] — no concurrent env access.
+        match &self.previous {
+            Some(v) => unsafe { std::env::set_var(key, v) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
+}
 
 /// Helper to create a simple creature with specified neurons and synapses
 fn create_creature(
@@ -267,7 +299,9 @@ fn test_cost_of_growth_uses_default_when_not_specified() {
 /// DO NOT change this test to match a different default. If this test fails,
 /// the default costOfGrowth has been incorrectly changed.
 #[test]
+#[serial]
 fn regression_default_cost_of_growth_must_be_1e7_not_001() {
+    let _guard = NoiseFloorOffGuard::new();
     // Create two neurons with different impacts:
     // - "medium-impact": impact ≈ 1e-5 (between 1e-7 and 0.01)
     // - "negligible": impact ≈ 1e-9 (below 1e-7)

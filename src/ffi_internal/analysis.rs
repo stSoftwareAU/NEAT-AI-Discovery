@@ -244,6 +244,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 processed_neurons: None,
                 total_neurons: None,
                 duration_ms: None,
+                rejection_breakdown: None,
                 error: Some(typed.to_string()),
                 error_kind: Some(kind),
                 retryable: Some(kind.is_retryable()),
@@ -313,6 +314,14 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 processed_neurons: Some(stats.processed_neurons),
                 total_neurons: Some(stats.total_neurons),
                 duration_ms: Some(stats.duration_ms.min(u64::MAX as u128) as u64),
+                // Issue #1142: Surface rejection counts (e.g. removal candidates
+                // dropped by the noise-floor gate) so operators can root-cause
+                // "no candidates found" failures without re-running analysis.
+                rejection_breakdown: if stats.rejection_breakdown.is_empty() {
+                    None
+                } else {
+                    Some(stats.rejection_breakdown)
+                },
                 error: None,
                 error_kind,
                 retryable,
@@ -331,6 +340,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 processed_neurons: None,
                 total_neurons: None,
                 duration_ms: None,
+                rejection_breakdown: None,
                 error: Some(err_msg),
                 error_kind,
                 retryable,

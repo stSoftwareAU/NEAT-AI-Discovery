@@ -132,6 +132,7 @@ pub unsafe extern "C" fn rank_focus_neurons(
                     processed_neurons: None,
                     total_neurons: None,
                     duration_ms: None,
+                    rejection_breakdown: None,
                     error: Some(err_msg),
                     error_kind,
                     retryable,

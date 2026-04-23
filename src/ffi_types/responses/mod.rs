@@ -90,6 +90,18 @@ pub struct RankFocusNeuronsOutput {
     pub total_neurons: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Aggregate rejection counts keyed by stable reason name (Issue #1142).
+    ///
+    /// Reuses the Issue #1129 rejection-reason vocabulary so FFI consumers can
+    /// merge these counts with the `analyze_all` `metadata.rejection_breakdown`
+    /// maps. Currently populated with
+    /// [`REJECTION_REMOVAL_BELOW_NOISE_FLOOR`][r] counts for
+    /// removal candidates dropped by the noise-floor gate; empty maps are
+    /// omitted from the serialised JSON.
+    ///
+    /// [r]: crate::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rejection_breakdown: Option<std::collections::HashMap<String, u32>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Structured error classification for retry decisions (Issue #651).

@@ -14,7 +14,39 @@ use neat_ai_discovery::focus::rank_focus_neurons;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 use tempfile::NamedTempFile;
+
+/// RAII guard that disables the Issue #1142 noise floor for tests whose
+/// scenarios deliberately use tiny magnitudes (below 1e-5) to exercise
+/// the pre-#1142 impact/savings contract. Tests using this guard must be
+/// marked `#[serial]` so env var access is not racy.
+struct NoiseFloorOffGuard {
+    previous: Option<String>,
+}
+
+impl NoiseFloorOffGuard {
+    fn new() -> Self {
+        let key = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR";
+        let previous = std::env::var(key).ok();
+        // SAFETY: serialised via #[serial] — no concurrent env access.
+        unsafe {
+            std::env::set_var(key, "0");
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for NoiseFloorOffGuard {
+    fn drop(&mut self) {
+        let key = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR";
+        // SAFETY: serialised via #[serial] — no concurrent env access.
+        match &self.previous {
+            Some(v) => unsafe { std::env::set_var(key, v) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
+}
 
 /// Helper to create a simple creature with specified neurons and synapses
 ///
@@ -325,7 +357,9 @@ fn test_impact_epsilon_prevents_zero_impact_neurons_from_being_ignored() {
 }
 
 #[test]
+#[serial]
 fn test_disconnected_neurons_are_removal_candidates() {
+    let _guard = NoiseFloorOffGuard::new();
     // Scenario: A neuron disconnected from outputs (zero impact) should be flagged
     // as a removal candidate because impact < costOfGrowth means removing it
     // improves the creature's score.
@@ -480,7 +514,9 @@ fn test_only_low_impact_neurons_returned_as_removal_candidates() {
 }
 
 #[test]
+#[serial]
 fn test_negligible_impact_neurons_sorted_first_as_best_removal_candidates() {
+    let _guard = NoiseFloorOffGuard::new();
     // Scenario: A neuron with NEGLIGIBLE impact should be sorted FIRST in the
     // removal candidates list (lowest impact = best candidate for removal).
     //
@@ -558,7 +594,9 @@ fn test_negligible_impact_neurons_sorted_first_as_best_removal_candidates() {
 }
 
 #[test]
+#[serial]
 fn test_activation_weighted_impact_prevents_false_removal_candidates() {
+    let _guard = NoiseFloorOffGuard::new();
     // Scenario: A neuron with moderate STRUCTURAL impact and HIGH activation should NOT be
     // a removal candidate because actual_contribution ≈ weight × activation.
     //
@@ -674,7 +712,9 @@ fn test_activation_weighted_impact_prevents_false_removal_candidates() {
 }
 
 #[test]
+#[serial]
 fn test_removal_candidates_sorted_by_activation_weighted_impact() {
+    let _guard = NoiseFloorOffGuard::new();
     // Verify that removal candidates are sorted by activation-weighted impact (ascending)
     // so the safest candidates (lowest impact) come first.
     let creature = create_creature(
@@ -1110,7 +1150,9 @@ fn test_cumulative_impact_mixed_direct_and_indirect_paths() {
 /// creature-level error change from removing the neuron. For removal candidates (low-impact
 /// neurons), this should be very small - approximately equal to `activation_weighted_impact`.
 #[test]
+#[serial]
 fn test_removal_candidate_expected_error_reduction_is_impact_based_not_neuron_error() {
+    let _guard = NoiseFloorOffGuard::new();
     // Scenario: A neuron with HIGH error (0.27 normalised) but NEGLIGIBLE impact (< 1e-7).
     // The bug would predict 27% error reduction, but actual reduction is tiny.
     //
@@ -1421,7 +1463,9 @@ fn test_issue_235_return_all_removal_candidates_expected_to_improve_score() {
 /// Old behaviour: Only neurons with impact < 1e-7 are returned.
 /// New behaviour: Neurons where `removal_savings` > impact are returned.
 #[test]
+#[serial]
 fn test_issue_235_neuron_above_threshold_but_removal_improves_score() {
+    let _guard = NoiseFloorOffGuard::new();
     // Create a creature with a hidden neuron that has:
     // - activation_weighted_impact slightly above threshold (2e-7)
     // - Many synapses so removal_savings > impact (20 synapses → 3e-7 savings)
@@ -1557,7 +1601,9 @@ fn test_issue_235_neuron_above_threshold_but_removal_improves_score() {
 /// While we return ALL candidates expected to improve score, we should still
 /// have sensible limits to prevent overwhelming the caller.
 #[test]
+#[serial]
 fn test_issue_235_removal_candidates_have_sensible_limits() {
+    let _guard = NoiseFloorOffGuard::new();
     // Create a creature with many neurons that could be removal candidates
     // to verify we don't return an excessive number.
     let mut neurons: Vec<(&str, &str)> = vec![("output-0", "output")];
