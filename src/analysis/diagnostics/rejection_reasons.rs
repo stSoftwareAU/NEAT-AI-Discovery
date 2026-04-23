@@ -62,6 +62,14 @@ pub const REJECTION_BUDGET_TRUNCATED: &str = "budget_truncated";
 /// target neuron in the current batch (Issue #1140).
 pub const REJECTION_PER_TARGET_CAP: &str = "per_target_cap";
 
+/// Add-neuron candidate was dropped because a higher-gain candidate for the
+/// same `(target_uuid, squash)` pair already exists in the current batch
+/// (Issue #1141). Without this filter, multiple near-duplicate proposals
+/// targeting the same neuron with the same squash function (e.g. 17
+/// candidates all using `ReLU6`) would consume the controller's ablation
+/// budget on near-identical failing bets.
+pub const REJECTION_SAME_TARGET_SQUASH_DUPLICATE: &str = "same_target_squash_duplicate";
+
 /// Synapse: no overlapping discovery samples between source and target.
 pub const REJECTION_NO_SAMPLES: &str = "no_samples";
 
@@ -107,6 +115,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_ADD_SYNAPSE_GATED,
     REJECTION_BUDGET_TRUNCATED,
     REJECTION_PER_TARGET_CAP,
+    REJECTION_SAME_TARGET_SQUASH_DUPLICATE,
     REJECTION_NO_SAMPLES,
     REJECTION_ZERO_IMPROVEMENT,
     REJECTION_BELOW_THRESHOLD,
@@ -259,6 +268,7 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_ADD_SYNAPSE_GATED => "add-synapse historical-gating filter".to_string(),
         REJECTION_BUDGET_TRUNCATED => "per-module candidate budget".to_string(),
         REJECTION_PER_TARGET_CAP => "per-target add-neuron cap".to_string(),
+        REJECTION_SAME_TARGET_SQUASH_DUPLICATE => "duplicate squash within same target".to_string(),
         REJECTION_NO_SAMPLES => "no overlapping discovery samples".to_string(),
         REJECTION_ZERO_IMPROVEMENT => "zero consistent improvement in GPU stats".to_string(),
         REJECTION_BELOW_THRESHOLD => "expected-improvement per-target threshold".to_string(),

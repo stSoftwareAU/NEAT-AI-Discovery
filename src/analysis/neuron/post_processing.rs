@@ -6,7 +6,7 @@
 use crate::{AnalyzeNeuronsInput, CandidateNeuronJson};
 use anyhow::Result;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -95,6 +95,14 @@ pub(crate) fn build_neuron_results(
     // Production guard rail (Dec 2025): only return candidates within sensible parameter ranges.
     helpful_results = crate::analysis::utils::filter_candidates_to_sensible_ranges(helpful_results);
 
+    // Issue #1141: Enforce squash diversity within each target before the
+    // per-target cap. If 17 candidates all propose the same `ReLU6` squash
+    // for the same target neuron and `ReLU6` is the wrong squash for that
+    // target, that is 17 near-identical failing bets. Keep only the
+    // highest-gain candidate per `(target_uuid, squash)` pair so the
+    // remaining cap budget is spent on genuinely distinct proposals.
+    let same_target_squash_drops = apply_same_target_squash_diversity(&mut helpful_results);
+
     // Issue #1140: Cap add-neuron candidates per target within a single
     // discovery batch. Without this cap, a single hopeless target can consume
     // most of the budget with minor variants (e.g. 17 of 19 failed add-neuron
@@ -158,6 +166,13 @@ pub(crate) fn build_neuron_results(
                 breakdown.record_many_u32(
                     crate::analysis::diagnostics::rejection_reasons::REJECTION_PER_TARGET_CAP,
                     u32::try_from(per_target_cap_drops).unwrap_or(u32::MAX),
+                );
+                // Issue #1141: surface squash-diversity drops in the structured
+                // rejection breakdown so operators can see how many duplicate
+                // (target, squash) candidates were filtered.
+                breakdown.record_many_u32(
+                    crate::analysis::diagnostics::rejection_reasons::REJECTION_SAME_TARGET_SQUASH_DUPLICATE,
+                    u32::try_from(same_target_squash_drops).unwrap_or(u32::MAX),
                 );
                 breakdown
             },
@@ -259,6 +274,45 @@ fn apply_impact_discounting(
     }
 }
 
+/// Enforce squash diversity within each target neuron (Issue #1141).
+///
+/// Sorts `candidates` by `expected_creature_score_gain` descending (NaN-safe
+/// via `total_cmp`), then retains only the highest-gain candidate for each
+/// distinct `(target_neuron_uuid, squash)` pair. Lower-gain candidates whose
+/// squash matches that of an already-retained candidate for the same target
+/// are dropped. Returns the number of candidates dropped so callers can
+/// record it in the rejection breakdown.
+///
+/// This filter runs before [`apply_per_target_cap`] so the remaining
+/// per-target budget is spent on genuinely distinct squash proposals rather
+/// than near-duplicate variants of the same squash.
+pub(crate) fn apply_same_target_squash_diversity(
+    candidates: &mut Vec<CandidateNeuronJson>,
+) -> usize {
+    if candidates.is_empty() {
+        return 0;
+    }
+
+    // Sort by gain descending so retained candidates per (target, squash) are
+    // the highest-gain ones. `total_cmp` provides a total order including NaN
+    // and ties break deterministically.
+    candidates.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+
+    let original_len = candidates.len();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    candidates.retain(|candidate| {
+        let key = (
+            candidate.target_neuron_uuid.clone(),
+            candidate.squash.clone(),
+        );
+        seen.insert(key)
+    });
+    original_len - candidates.len()
+}
+
 /// Cap add-neuron candidates per target neuron within a single discovery
 /// batch (Issue #1140).
 ///
@@ -304,19 +358,23 @@ pub(crate) fn apply_per_target_cap(candidates: &mut Vec<CandidateNeuronJson>) ->
 
 #[cfg(test)]
 mod tests {
-    use super::apply_per_target_cap;
+    use super::{apply_per_target_cap, apply_same_target_squash_diversity};
     use crate::CandidateNeuronJson;
     use serial_test::serial;
 
-    fn test_candidate(target_uuid: &str, gain: f32) -> CandidateNeuronJson {
+    fn test_candidate_with_squash(
+        target_uuid: &str,
+        gain: f32,
+        squash: &str,
+    ) -> CandidateNeuronJson {
         CandidateNeuronJson {
-            source_neuron_uuid: format!("source-{gain}"),
+            source_neuron_uuid: format!("source-{gain}-{squash}"),
             target_neuron_uuid: target_uuid.to_string(),
             source_neuron_index: None,
             target_neuron_index: None,
             incoming_weight: 1.0,
             outgoing_weight: 1.0,
-            squash: "TANH".to_string(),
+            squash: squash.to_string(),
             bias: 0.0,
             comment: None,
             target_neuron_impact: 1.0,
@@ -329,6 +387,14 @@ mod tests {
             expected_score_gain_confidence_interval: [gain, gain],
             target_saturation_factor: None,
         }
+    }
+
+    /// Build a candidate using a squash that varies with the gain so cap
+    /// tests are not unintentionally affected by squash dedup. Each test
+    /// candidate ends up with a unique squash within its target.
+    fn test_candidate(target_uuid: &str, gain: f32) -> CandidateNeuronJson {
+        let squash = format!("SQUASH-{gain}");
+        test_candidate_with_squash(target_uuid, gain, &squash)
     }
 
     #[test]
@@ -414,6 +480,95 @@ mod tests {
                 .get(crate::analysis::diagnostics::rejection_reasons::REJECTION_PER_TARGET_CAP,),
             Some(&2),
             "rejection breakdown should report two per-target-cap drops"
+        );
+        assert_eq!(breakdown.total(), 2);
+    }
+
+    #[test]
+    fn squash_diversity_keeps_one_candidate_per_distinct_squash() {
+        // Five candidates targeting the same neuron with squashes
+        // [ReLU6, ReLU6, SOFTSIGN, ReLU6, ArcTan]. Highest-gain ReLU6 should
+        // survive plus SOFTSIGN and ArcTan — three distinct squashes.
+        let mut candidates = vec![
+            test_candidate_with_squash("target-A", 0.9, "ReLU6"),
+            test_candidate_with_squash("target-A", 0.5, "ReLU6"),
+            test_candidate_with_squash("target-A", 0.7, "SOFTSIGN"),
+            test_candidate_with_squash("target-A", 0.3, "ReLU6"),
+            test_candidate_with_squash("target-A", 0.6, "ArcTan"),
+        ];
+
+        let dropped = apply_same_target_squash_diversity(&mut candidates);
+
+        assert_eq!(
+            dropped, 2,
+            "two duplicate-squash ReLU6 candidates should be dropped"
+        );
+        assert_eq!(candidates.len(), 3);
+
+        // Order is gain-descending after sort: ReLU6(0.9), SOFTSIGN(0.7), ArcTan(0.6).
+        let kept: Vec<(&str, f32)> = candidates
+            .iter()
+            .map(|c| (c.squash.as_str(), c.expected_creature_score_gain))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![("ReLU6", 0.9), ("SOFTSIGN", 0.7), ("ArcTan", 0.6)],
+            "highest-gain ReLU6 plus SOFTSIGN plus ArcTan should remain"
+        );
+    }
+
+    #[test]
+    fn squash_diversity_independent_targets_not_collapsed() {
+        // Same squash on different targets must not be deduplicated.
+        let mut candidates = vec![
+            test_candidate_with_squash("target-A", 0.5, "ReLU6"),
+            test_candidate_with_squash("target-B", 0.4, "ReLU6"),
+            test_candidate_with_squash("target-C", 0.3, "ReLU6"),
+        ];
+
+        let dropped = apply_same_target_squash_diversity(&mut candidates);
+
+        assert_eq!(dropped, 0, "different targets must not collide");
+        assert_eq!(candidates.len(), 3);
+    }
+
+    #[test]
+    fn squash_diversity_empty_input_is_safe() {
+        let mut candidates: Vec<CandidateNeuronJson> = Vec::new();
+        let dropped = apply_same_target_squash_diversity(&mut candidates);
+        assert_eq!(dropped, 0);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn squash_diversity_breakdown_reports_drop() {
+        // Three duplicate-squash candidates targeting the same neuron.
+        let mut candidates = vec![
+            test_candidate_with_squash("target-A", 0.9, "ReLU6"),
+            test_candidate_with_squash("target-A", 0.8, "ReLU6"),
+            test_candidate_with_squash("target-A", 0.7, "ReLU6"),
+            test_candidate_with_squash("target-A", 0.6, "TANH"),
+        ];
+
+        let dropped = apply_same_target_squash_diversity(&mut candidates);
+        assert_eq!(
+            dropped, 2,
+            "two duplicate ReLU6 candidates should be dropped"
+        );
+
+        // Feed into a RejectionBreakdown exactly as build_neuron_results does.
+        let mut breakdown = crate::analysis::diagnostics::RejectionBreakdown::new();
+        breakdown.record_many_u32(
+            crate::analysis::diagnostics::rejection_reasons::REJECTION_SAME_TARGET_SQUASH_DUPLICATE,
+            u32::try_from(dropped).expect("fits in u32"),
+        );
+
+        assert_eq!(
+            breakdown.counts().get(
+                crate::analysis::diagnostics::rejection_reasons::REJECTION_SAME_TARGET_SQUASH_DUPLICATE,
+            ),
+            Some(&2),
+            "rejection breakdown should report two squash-duplicate drops"
         );
         assert_eq!(breakdown.total(), 2);
     }
