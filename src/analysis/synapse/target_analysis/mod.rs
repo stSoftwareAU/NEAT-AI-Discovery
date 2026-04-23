@@ -292,13 +292,37 @@ pub(crate) fn analyse_single_target(
     );
 
     // Pre-filter sources and collect their records
-    let (sources_to_process, existing_sources_to_process) = statistics::filter_and_load_sources(
+    let (mut sources_to_process, existing_sources_to_process) = statistics::filter_and_load_sources(
         &eligible_sources,
         target_uuid,
         cache,
         ctx,
         &mut results.input_metadata,
     );
+
+    // Issue #1143: When the target neuron is already saturated (its observed
+    // activation covers the full bounded range of its squash), adding a new
+    // upstream edge cannot produce a usable gradient — the target cannot
+    // move. Drop all new-edge sources for this target while preserving
+    // existing-edge weight-update candidates (those can still adjust the
+    // existing contribution without introducing new input). See
+    // `compute_target_saturation` in `neuron/preparation.rs`.
+    if !sources_to_process.is_empty() {
+        let target_saturation = ctx.neuron_squash_map.get(target_uuid).map_or(
+            crate::analysis::neuron::preparation::TargetSaturationInfo::NOT_SATURATED,
+            |squash| {
+                crate::analysis::neuron::preparation::compute_target_saturation(
+                    target_records,
+                    squash,
+                )
+            },
+        );
+        if target_saturation.rejects_candidates() {
+            let dropped = u32::try_from(sources_to_process.len()).unwrap_or(u32::MAX);
+            ctx.diagnostics.record_target_saturated_drops(dropped);
+            sources_to_process.clear();
+        }
+    }
 
     // Build target map once, reuse for all sources
     let target_map = TargetMap::from_records(target_records);

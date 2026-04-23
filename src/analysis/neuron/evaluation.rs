@@ -131,6 +131,17 @@ fn evaluate_relu_split(
         )?
     };
 
+    // Issue #1143: Hard-reject ReLU-split candidates when the target is
+    // saturated. Independent of the intermediate squash: a saturated
+    // HARD_TANH output cannot absorb new gradient from a `ReLU` intermediate
+    // any more than from `ArcTan` or `BENT_IDENTITY`.
+    if ctx.target_saturation.rejects_candidates() {
+        let dropped = u32::from(split_result.positive_error_candidate.is_some())
+            + u32::from(split_result.negative_error_candidate.is_some());
+        ctx.diagnostics.record_target_saturated_drops(dropped);
+        return Ok(());
+    }
+
     if let Some(mut candidate) = split_result.positive_error_candidate {
         // Issue #733: Filter neuron candidates where insufficient samples improve.
         if !passes_neuron_improved_ratio(&candidate) {
@@ -235,6 +246,20 @@ fn evaluate_activation_specs(
         )?
     };
 
+    // Issue #1143: Hard-reject every activation-spec candidate when the
+    // target neuron is saturated. The gate is deliberately independent of
+    // the candidate/intermediate squash — a saturated HARD_TANH output
+    // cannot produce a usable gradient from any new intermediate neuron,
+    // including ArcTan and BENT_IDENTITY (the GRQ-sampler `744ac60d`
+    // evidence). Count the drops so they surface in the rejection
+    // breakdown under `REJECTION_TARGET_SATURATED`.
+    if ctx.target_saturation.rejects_candidates() {
+        ctx.diagnostics.record_target_saturated_drops(
+            u32::try_from(batched_candidates.len()).unwrap_or(u32::MAX),
+        );
+        return Ok(());
+    }
+
     for mut candidate in batched_candidates {
         // Issue #733: Filter neuron candidates where insufficient samples improve.
         if !passes_neuron_improved_ratio(&candidate) {
@@ -243,6 +268,9 @@ fn evaluate_activation_specs(
 
         // Issue #1111: Skip activation specs that compound clipping with a
         // near-saturated target (e.g., ABSOLUTE feeding into HARD_TANH).
+        // Kept for targets that are close to but not over the saturation
+        // threshold — the hard reject above handles the fully-saturated
+        // case.
         if ctx.target_saturation.is_near_saturated
             && target_squash.is_some_and(|ts| {
                 super::preparation::compounds_target_clipping(&candidate.squash, ts)

@@ -131,6 +131,10 @@ pub(crate) struct TargetDiagnostics {
     /// Each focus neuron is processed by a separate thread, and diagnostics
     /// are recorded without contention using `DashMap`'s sharded internal structure.
     pub(crate) entries: DashMap<String, TargetDiagnosticEntry>,
+    /// Count of new add-synapse sources skipped because the target neuron
+    /// is saturated (Issue #1143). Surfaced via the
+    /// `REJECTION_TARGET_SATURATED` entry on `synapseMetadata`.
+    target_saturated_drops: std::sync::atomic::AtomicU32,
 }
 
 impl TargetDiagnostics {
@@ -143,6 +147,7 @@ impl TargetDiagnostics {
         Self {
             log_enabled,
             entries,
+            target_saturated_drops: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -155,7 +160,23 @@ impl TargetDiagnostics {
         Self {
             log_enabled: true,
             entries,
+            target_saturated_drops: std::sync::atomic::AtomicU32::new(0),
         }
+    }
+
+    /// Record that `count` new add-synapse sources were dropped because the
+    /// target neuron is saturated (Issue #1143).
+    pub(crate) fn record_target_saturated_drops(&self, count: u32) {
+        if count > 0 {
+            self.target_saturated_drops
+                .fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Snapshot of the target-saturated-drop counter (Issue #1143).
+    pub(crate) fn target_saturated_drop_count(&self) -> u32 {
+        self.target_saturated_drops
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub(crate) fn set_target_record_count(&self, target_uuid: &str, count: usize) {

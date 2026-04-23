@@ -8,6 +8,7 @@
 //! Uses `DashMap` for lock-free concurrent access from parallel analysis threads.
 
 use dashmap::DashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::analysis::shared::{
     NeuronNoCandidateDetail, NeuronNoCandidateReason, NeuronNoCandidateSummary,
@@ -98,6 +99,10 @@ pub(crate) struct NeuronDiagnostics {
     /// Each focus neuron is processed by a separate thread, and diagnostics
     /// are recorded without contention using `DashMap`'s sharded internal structure.
     pub(crate) entries: DashMap<String, NeuronDiagnosticEntry>,
+    /// Count of add-neuron candidates dropped by the target-saturation
+    /// pre-check (Issue #1143). Surfaced through the
+    /// `REJECTION_TARGET_SATURATED` rejection breakdown entry.
+    target_saturated_drops: AtomicU32,
 }
 
 impl NeuronDiagnostics {
@@ -110,6 +115,7 @@ impl NeuronDiagnostics {
         Self {
             log_enabled,
             entries,
+            target_saturated_drops: AtomicU32::new(0),
         }
     }
 
@@ -122,6 +128,7 @@ impl NeuronDiagnostics {
         Self {
             log_enabled: true,
             entries,
+            target_saturated_drops: AtomicU32::new(0),
         }
     }
 
@@ -161,6 +168,20 @@ impl NeuronDiagnostics {
                 expected_improvement: f32::NEG_INFINITY,
             });
         }
+    }
+
+    /// Record that `count` add-neuron candidates were dropped because the
+    /// target neuron is saturated (Issue #1143).
+    pub(crate) fn record_target_saturated_drops(&self, count: u32) {
+        if count > 0 {
+            self.target_saturated_drops
+                .fetch_add(count, Ordering::Relaxed);
+        }
+    }
+
+    /// Snapshot of the target-saturated-drop counter (Issue #1143).
+    pub(crate) fn target_saturated_drop_count(&self) -> u32 {
+        self.target_saturated_drops.load(Ordering::Relaxed)
     }
 
     pub(crate) fn mark_candidate_selected(&self, target_uuid: &str) {

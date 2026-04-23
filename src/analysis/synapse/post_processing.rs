@@ -537,6 +537,9 @@ pub(crate) struct MetadataParams<'a> {
         Option<crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsSummary>,
     /// Issue #1131: Per-change-type calibration corrections from the failure cache.
     pub calibration_corrections: HashMap<String, f32>,
+    /// Issue #1143: count of new add-synapse sources dropped because their
+    /// target neuron was already saturated.
+    pub target_saturated_drops: u32,
 }
 
 /// Build the analysis metadata from collected atomic flags and timing data.
@@ -574,7 +577,18 @@ pub(crate) fn build_metadata(
         discovery_module_stats: Vec::new(),
         mcmc_diagnostics: params.mcmc_summary.clone(),
         // Issue #1129: populated by orchestration after metadata is built.
-        rejection_breakdown: crate::analysis::diagnostics::RejectionBreakdown::new(),
+        //
+        // Issue #1143: seed the breakdown with the target-saturated drop
+        // count here so it survives `aggregate_synapse_rejection_breakdown`,
+        // which only appends per-target `no_candidate_reasons`.
+        rejection_breakdown: {
+            let mut b = crate::analysis::diagnostics::RejectionBreakdown::new();
+            b.record_many_u32(
+                crate::analysis::diagnostics::rejection_reasons::REJECTION_TARGET_SATURATED,
+                params.target_saturated_drops,
+            );
+            b
+        },
         top_level_summary: None,
         // Issue #1131: per-creature calibration corrections derived from failure cache.
         calibration_corrections: params.calibration_corrections.clone(),
