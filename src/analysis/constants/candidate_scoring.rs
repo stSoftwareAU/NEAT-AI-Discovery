@@ -50,7 +50,7 @@ pub const MAX_ADD_NEURON_CANDIDATES_PER_TARGET_CEILING: usize = 32;
 /// Reads `NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET` at call time so tests
 /// can override the default. Values outside the permitted range are clamped
 /// to `[MIN_ADD_NEURON_CANDIDATES_PER_TARGET,
-/// MAX_ADD_NEURON_CANDIDATES_PER_TARGET_CEILING]`. Unparseable or missing
+/// MAX_ADD_NEURON_CANDIDATES_PER_TARGET_CEILING]`. Unparsable or missing
 /// values fall back to `MAX_ADD_NEURON_CANDIDATES_PER_TARGET`.
 #[must_use]
 pub fn max_add_neuron_candidates_per_target() -> usize {
