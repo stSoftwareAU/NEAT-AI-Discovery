@@ -6,7 +6,9 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::record_providers::get_records_or_error;
 use super::score_calculation::activation_mean_and_variance_from_records;
-use crate::analysis::constants::{REMOVAL_CANDIDATE_BOOST, REMOVAL_MEAN_ACTIVATION_THRESHOLD};
+use crate::analysis::constants::{
+    REMOVAL_CANDIDATE_BOOST, REMOVAL_MEAN_ACTIVATION_THRESHOLD, remove_low_impact_noise_floor,
+};
 use crate::{
     CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson, NeuronJson,
 };
@@ -137,6 +139,17 @@ impl<'a> SynapseCounts<'a> {
     }
 }
 
+/// Outcome of [`identify_removal_candidates`] — the surviving removal
+/// candidates plus rejection counts for diagnostic surfacing (Issue #1142).
+#[derive(Debug, Default)]
+pub(super) struct RemovalCandidateOutcome {
+    /// Removal candidates that passed every filter.
+    pub candidates: Vec<RemovalCandidate>,
+    /// Number of candidates dropped because `boosted_savings - impact` fell
+    /// below [`remove_low_impact_noise_floor`] (Issue #1142).
+    pub noise_floor_rejections: u32,
+}
+
 /// Identify removal candidates from ranked neurons.
 ///
 /// Issue #235: Return ALL neurons where removal improves the creature's score.
@@ -146,21 +159,45 @@ impl<'a> SynapseCounts<'a> {
 /// Successful removals (21.5% success rate) have low mean activation (≤ 0.04)
 /// and low structural impact (≤ 6e-5). Candidates passing these thresholds
 /// receive a scoring boost to prioritise them over other candidate types.
+///
+/// Issue #1142: Apply a `REMOVE_LOW_IMPACT_NOISE_FLOOR` gate on the
+/// post-boost `net_improvement = boosted_savings - activation_weighted_impact`.
+/// The `REMOVAL_CANDIDATE_BOOST` multiplier is applied to raw savings **before**
+/// the savings-vs-impact comparison, so boost-inflated noise (net improvements
+/// in the 1e-8 range) would otherwise survive the pipeline. The dropped-count
+/// is surfaced under [`REJECTION_REMOVAL_BELOW_NOISE_FLOOR`] in
+/// `metadata.rejection_breakdown`.
 pub(super) fn identify_removal_candidates(
     neurons: &[RankedNeuron],
     synapse_counts: &SynapseCounts,
     cost_of_growth_threshold: f32,
-) -> Vec<RemovalCandidate> {
-    let mut removal_candidates: Vec<RemovalCandidate> = neurons
+) -> RemovalCandidateOutcome {
+    let noise_floor = remove_low_impact_noise_floor();
+
+    // Each neuron maps to `Option<Result<RemovalCandidate, NoiseFloorReject>>`
+    // so we can collect both surviving candidates and rejection counts in a
+    // single parallel pass.
+    #[derive(Debug)]
+    enum Emit {
+        Candidate(Box<RemovalCandidate>),
+        NoiseFloorReject,
+    }
+
+    let emitted: Vec<Emit> = neurons
         .par_iter()
         .filter_map(|n| {
             // Issue #208: Use pre-computed synapse counts for O(1) lookup
             let (incoming, outgoing) = synapse_counts.get(&n.neuron_uuid);
             let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
 
-            // Issue #235: Filter on savings > impact (removal improves score)
-            // instead of impact < threshold (may miss valid candidates)
-            if savings <= n.activation_weighted_impact {
+            // Issue #892: Apply boost to savings BEFORE the savings-vs-impact check.
+            // The 21.5% success rate justifies prioritising these candidates, but
+            // see Issue #1142 — we must re-check against a noise floor below.
+            let boosted_savings = savings * REMOVAL_CANDIDATE_BOOST;
+
+            // Issue #235: Filter on boosted savings > impact (removal improves score)
+            // instead of impact < threshold (may miss valid candidates).
+            if boosted_savings <= n.activation_weighted_impact {
                 return None;
             }
 
@@ -177,17 +214,21 @@ pub(super) fn identify_removal_candidates(
                 return None;
             }
 
+            // Net score improvement = boosted_savings - impact
+            let net_improvement = boosted_savings - n.activation_weighted_impact;
+
+            // Issue #1142: Gate on a noise floor to drop boost-inflated candidates
+            // whose net improvement is indistinguishable from numerical noise
+            // (e.g. 6.64e-8 in GRQ-sampler commit 744ac60d).
+            if net_improvement < noise_floor {
+                return Some(Emit::NoiseFloorReject);
+            }
+
             // Issue #117: expected_error_reduction should be based on activation_weighted_impact,
             // NOT total_error.
             let expected_error_reduction = n.activation_weighted_impact;
 
-            // Net score improvement = savings - impact
-            // Issue #892: Apply boost to savings for high-quality removal candidates.
-            // The 21.5% success rate justifies prioritising these candidates.
-            let boosted_savings = savings * REMOVAL_CANDIDATE_BOOST;
-            let net_improvement = boosted_savings - n.activation_weighted_impact;
-
-            Some(RemovalCandidate {
+            Some(Emit::Candidate(Box::new(RemovalCandidate {
                 neuron_uuid: n.neuron_uuid.clone(),
                 total_error: n.total_error,
                 impact: n.impact,
@@ -206,9 +247,20 @@ pub(super) fn identify_removal_candidates(
                     incoming + outgoing,
                     cost_of_growth_threshold,
                 ),
-            })
+            })))
         })
         .collect();
+
+    let mut removal_candidates: Vec<RemovalCandidate> = Vec::with_capacity(emitted.len());
+    let mut noise_floor_rejections: u32 = 0;
+    for emit in emitted {
+        match emit {
+            Emit::Candidate(c) => removal_candidates.push(*c),
+            Emit::NoiseFloorReject => {
+                noise_floor_rejections = noise_floor_rejections.saturating_add(1);
+            }
+        }
+    }
 
     // Issue #235: Sort by net improvement (removal_savings - activation_weighted_impact).
     // Higher net improvement = better candidate (removing it saves more than its contribution).
@@ -225,7 +277,10 @@ pub(super) fn identify_removal_candidates(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    removal_candidates
+    RemovalCandidateOutcome {
+        candidates: removal_candidates,
+        noise_floor_rejections,
+    }
 }
 
 /// Threshold for considering a neuron as "constant" (near-zero variance).
@@ -339,4 +394,197 @@ pub(super) fn detect_constant_neuron_removals(
             })
         })
         .collect()
+}
+
+// =============================================================================
+// Unit tests for Issue #1142 noise-floor gating
+// =============================================================================
+
+#[cfg(test)]
+mod noise_floor_tests {
+    //! Issue #1142: Remove-low-impact candidates with net improvement below
+    //! `REMOVE_LOW_IMPACT_NOISE_FLOOR` must be dropped before emission and the
+    //! drop count must be surfaced under `REJECTION_REMOVAL_BELOW_NOISE_FLOOR`.
+
+    use super::*;
+    use crate::focus::gradient::GradientFlowStats;
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
+
+    /// Craft a [`RankedNeuron`] with the exact impact/activation values needed
+    /// to produce a targeted `activation_weighted_impact` without touching
+    /// the production record-derived code paths.
+    fn ranked_neuron(uuid: &str, impact: f32, activation_weighted_impact: f32) -> RankedNeuron {
+        // mean_activation is derived so that structural impact × mean_activation
+        // equals the desired activation_weighted_impact. Tests use impact ≈ 0
+        // (disconnected neurons) so the `mean_activation` filter never fires.
+        let mean_activation = if impact > 0.0 {
+            activation_weighted_impact / impact
+        } else {
+            0.0
+        };
+        RankedNeuron {
+            neuron_uuid: uuid.to_string(),
+            total_error: 0.0,
+            raw_error: 0.0,
+            impact,
+            mean_activation,
+            activation_weighted_impact,
+            gradient_flow: GradientFlowStats::default(),
+            activation_frequency: 0.5,
+        }
+    }
+
+    /// Build a minimal `CreatureJson` with the given (incoming, outgoing)
+    /// synapse counts for the neuron named `uuid`.
+    fn creature_with_synapse_counts(uuid: &str, incoming: usize, outgoing: usize) -> CreatureJson {
+        let mut neurons: Vec<NeuronJson> = vec![NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: "hidden".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }];
+        let mut synapses: Vec<SynapseJson> = Vec::new();
+
+        for i in 0..incoming {
+            let source = format!("in-{i}");
+            neurons.push(NeuronJson {
+                uuid: source.clone(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            });
+            synapses.push(SynapseJson {
+                from_uuid: source,
+                to_uuid: uuid.to_string(),
+                weight: 0.1,
+                synapse_type: None,
+            });
+        }
+        for i in 0..outgoing {
+            let target = format!("out-{i}");
+            neurons.push(NeuronJson {
+                uuid: target.clone(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            });
+            synapses.push(SynapseJson {
+                from_uuid: uuid.to_string(),
+                to_uuid: target,
+                weight: 0.1,
+                synapse_type: None,
+            });
+        }
+
+        let input = neurons.iter().filter(|n| n.neuron_type == "input").count();
+        let output = neurons.iter().filter(|n| n.neuron_type == "output").count();
+        CreatureJson {
+            neurons,
+            synapses,
+            input,
+            output,
+        }
+    }
+
+    /// Scenario from Issue #1142 evidence (`v2_remove-low-impact_0ce92a87…`):
+    /// raw `savings = 1.20e-7`, boosted to `1.8e-7` by the 1.5× multiplier,
+    /// `impact = 1.14e-7`, giving net `+6.6e-8` — indistinguishable from
+    /// floating-point noise and therefore dropped.
+    ///
+    /// With cost-of-growth `1e-7` and 2 synapses (1 incoming, 1 outgoing):
+    ///   savings  = 1e-7 × (1 + 2/10)         = 1.2e-7   ✓ matches evidence
+    ///   boosted  = 1.2e-7 × `REMOVAL_CANDIDATE_BOOST`(1.5) = 1.8e-7
+    ///   net      = 1.8e-7 − 1.14e-7           ≈ 6.6e-8
+    #[test]
+    fn issue_1142_evidence_candidate_is_dropped() {
+        let growth = 1e-7_f32;
+        let creature = creature_with_synapse_counts("h1", 1, 1);
+        let synapse_counts = SynapseCounts::new(&creature);
+
+        let neuron = ranked_neuron("h1", 0.0, 1.14e-7);
+        let outcome = identify_removal_candidates(&[neuron], &synapse_counts, growth);
+
+        assert!(
+            outcome.candidates.is_empty(),
+            "net-improvement ≈ 6.6e-8 is indistinguishable from noise and must be dropped; got {} candidates",
+            outcome.candidates.len()
+        );
+        assert_eq!(
+            outcome.noise_floor_rejections, 1,
+            "the dropped candidate must be counted under noise_floor_rejections"
+        );
+    }
+
+    /// Candidates well above the noise floor (net improvement ≈ 1.5e-5)
+    /// must survive.
+    ///
+    /// Targets the issue's second scenario: boosted `savings ≈ 2e-5`,
+    /// `impact = 5e-6`, `net ≈ 1.5e-5`.
+    ///
+    /// With 2 synapses (1 in + 1 out) the savings multiplier is `1.2`, and
+    /// `REMOVAL_CANDIDATE_BOOST`(1.5) gives an effective multiplier of `1.8`,
+    /// so pick `growth = 2e-5 / 1.8 ≈ 1.111e-5`.
+    #[test]
+    fn well_above_noise_floor_candidate_is_kept() {
+        let growth = 2e-5_f32 / 1.8;
+        let creature = creature_with_synapse_counts("h1", 1, 1);
+        let synapse_counts = SynapseCounts::new(&creature);
+
+        let neuron = ranked_neuron("h1", 0.0, 5e-6);
+        let outcome = identify_removal_candidates(&[neuron], &synapse_counts, growth);
+
+        assert_eq!(
+            outcome.candidates.len(),
+            1,
+            "net-improvement ≈ 1.5e-5 is well above noise floor and must be kept"
+        );
+        assert_eq!(
+            outcome.noise_floor_rejections, 0,
+            "no candidates should be rejected by the noise floor"
+        );
+        assert_eq!(outcome.candidates[0].neuron_uuid, "h1");
+    }
+
+    /// Environment-variable override lets operators loosen the noise floor
+    /// (or tighten it) without recompiling (Issue #1142 acceptance criterion).
+    ///
+    /// This test locks the env-var around the two `identify_removal_candidates`
+    /// calls so concurrent tests are not affected.
+    #[test]
+    fn env_var_override_changes_effective_floor() {
+        use std::sync::{Mutex, OnceLock};
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+
+        let growth = 1e-7_f32 / 1.5;
+        let creature = creature_with_synapse_counts("h1", 1, 1);
+        let synapse_counts = SynapseCounts::new(&creature);
+
+        let neuron = ranked_neuron("h1", 0.0, 1.14e-7);
+
+        // Default floor (1e-5) → dropped.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
+        }
+        let dropped =
+            identify_removal_candidates(std::slice::from_ref(&neuron), &synapse_counts, growth);
+        assert!(dropped.candidates.is_empty());
+        assert_eq!(dropped.noise_floor_rejections, 1);
+
+        // Loosened floor (1e-10) → kept.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR", "1e-10");
+        }
+        let kept =
+            identify_removal_candidates(std::slice::from_ref(&neuron), &synapse_counts, growth);
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
+        }
+        assert_eq!(
+            kept.candidates.len(),
+            1,
+            "candidate should survive when the env-var lowers the noise floor"
+        );
+        assert_eq!(kept.noise_floor_rejections, 0);
+    }
 }

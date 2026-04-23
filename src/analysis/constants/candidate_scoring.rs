@@ -831,9 +831,61 @@ pub const MICRO_NUDGE_VARIANT_BOOST: f32 = 1.5;
 /// overall baseline: 21.5% / 10.7% ≈ 2.0, dampened with square-root to 1.41,
 /// then rounded to 1.5 for conservatism.
 ///
+/// Issue #1142 note: the boost is applied to raw complexity savings **before** the
+/// noise-floor check (`REMOVE_LOW_IMPACT_NOISE_FLOOR`), so candidates whose raw
+/// savings would not clear impact still survive the savings-vs-impact test thanks
+/// to the boost. The noise-floor gate below ensures such marginal candidates do
+/// not reach the FFI response.
+///
 /// ## Valid Range
 /// Must be >= 1.0 (boost) and <= 3.0 (avoid over-biasing).
 pub const REMOVAL_CANDIDATE_BOOST: f32 = 1.5;
+
+/// Minimum net improvement required for a `remove-low-impact` candidate to
+/// survive (Issue #1142).
+///
+/// GRQ-sampler commit `744ac60d` (failure cache entry
+/// `v2_remove-low-impact_0ce92a87-a048-49d0-9b53-43487d123817.json`) captured a
+/// removal candidate with:
+/// - `boosted_savings = 1.20e-7`
+/// - `activation_weighted_impact = 1.14e-7`
+/// - `net_improvement = +6.64e-8`
+/// - `actualErrorReduction = -2.39e-7` (the removal harmed the creature)
+///
+/// A predicted net improvement of ~6e-8 is numerically indistinguishable from
+/// floating-point noise — the `REMOVAL_CANDIDATE_BOOST` of 1.5× on raw savings
+/// is what pushed that candidate above the `savings > impact` gate. Dropping
+/// candidates whose `net_improvement` is below this floor prevents
+/// boost-inflated noise from reaching the FFI response.
+///
+/// The default matches `COORDINATED_MIN_EXPECTED_GAIN` (1e-5) so that
+/// remove-low-impact candidates face at least the same floor as coordinated
+/// structural candidates (Issue #1110).
+///
+/// Overridable via the `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR`
+/// environment variable.
+///
+/// ## Valid Range
+/// Must be > 0.0. Values above 1e-3 may filter genuinely useful removals.
+/// Values below 1e-8 defeat the purpose of the floor.
+pub const REMOVE_LOW_IMPACT_NOISE_FLOOR: f32 = 1e-5;
+
+/// Return the effective remove-low-impact noise-floor (Issue #1142).
+///
+/// Reads `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR` at call time so
+/// tests and operators can override the default without recompiling. `0.0`
+/// is accepted as a valid "disable the floor" value for tests that exercise
+/// the pre-#1142 impact/savings contract at tiny magnitudes. A value that
+/// fails to parse, is non-finite, or is negative falls back to the
+/// compile-time default [`REMOVE_LOW_IMPACT_NOISE_FLOOR`].
+#[must_use]
+pub fn remove_low_impact_noise_floor() -> f32 {
+    std::env::var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .unwrap_or(REMOVE_LOW_IMPACT_NOISE_FLOOR)
+}
 
 // =============================================================================
 // Prediction Calibration Scaling (Issue #891)

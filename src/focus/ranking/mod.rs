@@ -44,7 +44,7 @@ use rayon::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct RankFocusStats {
     pub neurons: Vec<RankedNeuron>,
     /// Neurons with impact below costOfGrowth - candidates for removal
@@ -60,6 +60,13 @@ pub struct RankFocusStats {
     pub processed_neurons: usize,
     pub total_neurons: usize,
     pub duration_ms: u128,
+    /// Aggregate rejection counts keyed by stable reason name (Issue #1142,
+    /// reusing the Issue #1129 rejection-reason vocabulary).
+    ///
+    /// Currently populated with [`crate::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR`] counts
+    /// for removal candidates dropped by the noise-floor gate. Surfaced
+    /// verbatim into `RankFocusNeuronsOutput.rejection_breakdown`.
+    pub rejection_breakdown: std::collections::HashMap<String, u32>,
 }
 
 pub(super) fn is_selectable_type(neuron_type: &str) -> bool {
@@ -191,6 +198,7 @@ pub fn rank_focus_neurons(
             processed_neurons: 0,
             total_neurons: 0,
             duration_ms: start.elapsed().as_millis(),
+            rejection_breakdown: std::collections::HashMap::new(),
         });
     }
 
@@ -294,7 +302,7 @@ pub fn rank_focus_neurons(
     //
     // The legitimate removal candidate detection (based on activation_weighted_impact
     // < costOfGrowth) remains active and has a 17.6% success rate.
-    let removal_candidates =
+    let removal_outcome =
         identify_removal_candidates(&neurons, &synapse_counts, cost_of_growth_threshold);
 
     if let Some(limit) = max_results
@@ -313,15 +321,38 @@ pub fn rank_focus_neurons(
         cost_of_growth_threshold,
     );
 
+    let rejection_breakdown = build_rejection_breakdown(&removal_outcome);
+
     Ok(RankFocusStats {
         neurons,
-        removal_candidates,
+        removal_candidates: removal_outcome.candidates,
         constant_neuron_removals,
         max_output_error,
         processed_neurons: total_neurons,
         total_neurons,
         duration_ms: start.elapsed().as_millis(),
+        rejection_breakdown,
     })
+}
+
+/// Build a stable-keyed rejection breakdown from a [`RemovalCandidateOutcome`]
+/// (Issue #1142).
+///
+/// Reuses the Issue #1129 rejection-reason vocabulary so downstream tooling
+/// (FFI consumers, observability dashboards) can merge these counts into the
+/// existing `metadata.rejection_breakdown` map without any special-casing.
+fn build_rejection_breakdown(
+    outcome: &removal_candidates::RemovalCandidateOutcome,
+) -> std::collections::HashMap<String, u32> {
+    use crate::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR;
+    let mut map = std::collections::HashMap::new();
+    if outcome.noise_floor_rejections > 0 {
+        map.insert(
+            REJECTION_REMOVAL_BELOW_NOISE_FLOOR.to_string(),
+            outcome.noise_floor_rejections,
+        );
+    }
+    map
 }
 
 /// Rank focus neurons with optional historical discovery success data.
@@ -399,6 +430,7 @@ pub fn rank_focus_neurons_with_history(
             processed_neurons: 0,
             total_neurons: 0,
             duration_ms: start.elapsed().as_millis(),
+            rejection_breakdown: std::collections::HashMap::new(),
         });
     }
 
@@ -486,7 +518,7 @@ pub fn rank_focus_neurons_with_history(
 
     // Issue #414: High-error exploratory ablation DISABLED (see rank_focus_neurons for rationale)
 
-    let removal_candidates =
+    let removal_outcome =
         identify_removal_candidates(&neurons, &synapse_counts, cost_of_growth_threshold);
 
     if let Some(limit) = max_results
@@ -504,6 +536,9 @@ pub fn rank_focus_neurons_with_history(
         cost_of_growth_threshold,
     );
 
+    let rejection_breakdown = build_rejection_breakdown(&removal_outcome);
+    let removal_candidates = removal_outcome.candidates;
+
     Ok(RankFocusStats {
         neurons,
         removal_candidates,
@@ -512,6 +547,7 @@ pub fn rank_focus_neurons_with_history(
         processed_neurons: total_neurons,
         total_neurons,
         duration_ms: start.elapsed().as_millis(),
+        rejection_breakdown,
     })
 }
 

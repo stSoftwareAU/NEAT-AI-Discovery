@@ -22,7 +22,39 @@ use neat_ai_discovery::focus::rank_focus_neurons;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 use tempfile::NamedTempFile;
+
+/// RAII guard that disables the Issue #1142 remove-low-impact noise floor
+/// for tests whose scenarios deliberately use tiny magnitudes (below 1e-5)
+/// to exercise the pre-#1142 impact/savings contract. Tests using this
+/// guard must be marked `#[serial]` so env var access is not racy.
+struct NoiseFloorOffGuard {
+    previous: Option<String>,
+}
+
+impl NoiseFloorOffGuard {
+    fn new() -> Self {
+        let key = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR";
+        let previous = std::env::var(key).ok();
+        // SAFETY: serialised via #[serial] — no concurrent env access.
+        unsafe {
+            std::env::set_var(key, "0");
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for NoiseFloorOffGuard {
+    fn drop(&mut self) {
+        let key = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR";
+        // SAFETY: serialised via #[serial] — no concurrent env access.
+        match &self.previous {
+            Some(v) => unsafe { std::env::set_var(key, v) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
+}
 
 /// Test that high-error neurons are NOT returned as exploratory ablation candidates.
 ///
@@ -132,7 +164,9 @@ fn high_error_neuron_is_not_returned_as_exploratory_ablation_candidate() {
 /// Low-impact neurons (`activation_weighted_impact` < costOfGrowth) should still
 /// be suggested for removal because they genuinely don't contribute to the network.
 #[test]
+#[serial]
 fn low_impact_neurons_still_returned_as_removal_candidates() {
+    let _guard = NoiseFloorOffGuard::new();
     // Creature with a low-impact hidden neuron:
     // input-0 -> low-impact-hidden -> output-0
     //            (but dormant/low activation)
@@ -224,7 +258,9 @@ fn low_impact_neurons_still_returned_as_removal_candidates() {
 /// Removal candidates should be based on `activation_weighted_impact` being below
 /// the costOfGrowth threshold, not on error magnitude.
 #[test]
+#[serial]
 fn removal_candidate_reason_reflects_impact_not_error() {
+    let _guard = NoiseFloorOffGuard::new();
     // Creature with a truly low-impact hidden neuron
     let creature = CreatureJson {
         neurons: vec![

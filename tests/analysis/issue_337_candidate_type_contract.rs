@@ -369,6 +369,7 @@ fn rank_focus_neurons_output_contains_removal_candidate_fields() {
         processed_neurons: Some(5),
         total_neurons: Some(10),
         duration_ms: Some(100),
+        rejection_breakdown: None,
         error: None,
         error_kind: None,
         retryable: None,
