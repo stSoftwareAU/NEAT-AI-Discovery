@@ -95,6 +95,13 @@ pub(crate) fn build_neuron_results(
     // Production guard rail (Dec 2025): only return candidates within sensible parameter ranges.
     helpful_results = crate::analysis::utils::filter_candidates_to_sensible_ranges(helpful_results);
 
+    // Issue #1140: Cap add-neuron candidates per target within a single
+    // discovery batch. Without this cap, a single hopeless target can consume
+    // most of the budget with minor variants (e.g. 17 of 19 failed add-neuron
+    // candidates in GRQ-sampler commit 744ac60d targeted the same neuron).
+    // The cross-batch cooldown (Issue #1130) does not help within a batch.
+    let per_target_cap_drops = apply_per_target_cap(&mut helpful_results);
+
     // Deadline coverage (Jan 2026): diversify within the top-K
     if params.input.analysis_deadline_ms.is_some() {
         use crate::analysis::constants::DIVERSIFY_TOP_K;
@@ -143,7 +150,17 @@ pub(crate) fn build_neuron_results(
             error_distribution,
             // Issue #1129: populated by orchestration from neuron no-candidate
             // summaries after the result is built.
-            rejection_breakdown: crate::analysis::diagnostics::RejectionBreakdown::new(),
+            rejection_breakdown: {
+                let mut breakdown = crate::analysis::diagnostics::RejectionBreakdown::new();
+                // Issue #1140: surface per-target cap drops in the structured
+                // rejection breakdown so operators can see why candidates
+                // were removed.
+                breakdown.record_many_u32(
+                    crate::analysis::diagnostics::rejection_reasons::REJECTION_PER_TARGET_CAP,
+                    u32::try_from(per_target_cap_drops).unwrap_or(u32::MAX),
+                );
+                breakdown
+            },
             top_level_summary: None,
             // Issue #1131: per-creature calibration corrections derived from failure cache.
             calibration_corrections: calibration_correction.as_map().clone(),
@@ -239,5 +256,190 @@ fn apply_impact_discounting(
                 "Neuron candidate impact discount applied"
             );
         }
+    }
+}
+
+/// Cap add-neuron candidates per target neuron within a single discovery
+/// batch (Issue #1140).
+///
+/// Sorts `candidates` by `expected_creature_score_gain` descending (NaN-safe
+/// via `total_cmp`), then retains only the top-K candidates per
+/// `target_neuron_uuid`, where K is
+/// [`max_add_neuron_candidates_per_target`]. The retained candidates remain
+/// in gain-descending order. Returns the number of candidates dropped by the
+/// cap so callers can record it in the rejection breakdown.
+pub(crate) fn apply_per_target_cap(candidates: &mut Vec<CandidateNeuronJson>) -> usize {
+    let cap = crate::analysis::constants::max_add_neuron_candidates_per_target();
+    if candidates.is_empty() || cap == 0 {
+        return 0;
+    }
+
+    // Sort by gain descending so that retained candidates per target are the
+    // highest-gain ones. `total_cmp` provides a total order including NaN,
+    // breaking ties deterministically.
+    candidates.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+
+    let original_len = candidates.len();
+    let mut per_target: HashMap<String, usize> = HashMap::new();
+    candidates.retain(|candidate| {
+        let count = per_target
+            .entry(candidate.target_neuron_uuid.clone())
+            .or_insert(0);
+        if *count < cap {
+            *count += 1;
+            true
+        } else {
+            false
+        }
+    });
+    original_len - candidates.len()
+}
+
+// =============================================================================
+// Tests (Issue #1140)
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::apply_per_target_cap;
+    use crate::CandidateNeuronJson;
+    use serial_test::serial;
+
+    fn test_candidate(target_uuid: &str, gain: f32) -> CandidateNeuronJson {
+        CandidateNeuronJson {
+            source_neuron_uuid: format!("source-{gain}"),
+            target_neuron_uuid: target_uuid.to_string(),
+            source_neuron_index: None,
+            target_neuron_index: None,
+            incoming_weight: 1.0,
+            outgoing_weight: 1.0,
+            squash: "TANH".to_string(),
+            bias: 0.0,
+            comment: None,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: gain,
+            expected_creature_score_gain: gain,
+            improved_count: 10,
+            total_count: 10,
+            target_neuron_stats: None,
+            prediction_confidence: 0.5,
+            expected_score_gain_confidence_interval: [gain, gain],
+            target_saturation_factor: None,
+        }
+    }
+
+    #[test]
+    fn per_target_cap_truncates_target_over_limit() {
+        // Seven candidates for one target; cap defaults to 3.
+        let mut candidates = vec![
+            test_candidate("target-A", 0.1),
+            test_candidate("target-A", 0.5),
+            test_candidate("target-A", 0.2),
+            test_candidate("target-A", 0.9),
+            test_candidate("target-A", 0.3),
+            test_candidate("target-A", 0.7),
+            test_candidate("target-A", 0.4),
+        ];
+
+        let dropped = apply_per_target_cap(&mut candidates);
+
+        assert_eq!(candidates.len(), 3, "target-A should be capped to 3");
+        assert_eq!(dropped, 4, "four candidates should be dropped");
+
+        // Retained candidates must be the highest-gain ones (0.9, 0.7, 0.5).
+        let retained_gains: Vec<f32> = candidates
+            .iter()
+            .map(|c| c.expected_creature_score_gain)
+            .collect();
+        assert_eq!(retained_gains, vec![0.9, 0.7, 0.5]);
+    }
+
+    #[test]
+    fn per_target_cap_leaves_targets_under_limit_unchanged() {
+        // Two candidates for target-A, one for target-B; both under the cap of 3.
+        let mut candidates = vec![
+            test_candidate("target-A", 0.5),
+            test_candidate("target-A", 0.2),
+            test_candidate("target-B", 0.8),
+        ];
+
+        let dropped = apply_per_target_cap(&mut candidates);
+
+        assert_eq!(candidates.len(), 3, "no candidate should be dropped");
+        assert_eq!(dropped, 0, "zero candidates should be dropped");
+
+        // Per-target counts must be preserved.
+        let target_a: Vec<f32> = candidates
+            .iter()
+            .filter(|c| c.target_neuron_uuid == "target-A")
+            .map(|c| c.expected_creature_score_gain)
+            .collect();
+        assert_eq!(target_a.len(), 2);
+        let target_b: Vec<f32> = candidates
+            .iter()
+            .filter(|c| c.target_neuron_uuid == "target-B")
+            .map(|c| c.expected_creature_score_gain)
+            .collect();
+        assert_eq!(target_b.len(), 1);
+    }
+
+    #[test]
+    fn per_target_cap_breakdown_reports_drop() {
+        // Build a mix: target-A exceeds the cap, target-B is under it.
+        let mut candidates = vec![
+            test_candidate("target-A", 0.9),
+            test_candidate("target-A", 0.8),
+            test_candidate("target-A", 0.7),
+            test_candidate("target-A", 0.6),
+            test_candidate("target-A", 0.5),
+            test_candidate("target-B", 0.4),
+        ];
+
+        let dropped = apply_per_target_cap(&mut candidates);
+        assert_eq!(dropped, 2, "two target-A candidates should be dropped");
+
+        // Feed into a RejectionBreakdown exactly as build_neuron_results does.
+        let mut breakdown = crate::analysis::diagnostics::RejectionBreakdown::new();
+        breakdown.record_many_u32(
+            crate::analysis::diagnostics::rejection_reasons::REJECTION_PER_TARGET_CAP,
+            u32::try_from(dropped).expect("fits in u32"),
+        );
+
+        assert_eq!(
+            breakdown
+                .counts()
+                .get(crate::analysis::diagnostics::rejection_reasons::REJECTION_PER_TARGET_CAP,),
+            Some(&2),
+            "rejection breakdown should report two per-target-cap drops"
+        );
+        assert_eq!(breakdown.total(), 2);
+    }
+
+    #[test]
+    #[serial]
+    fn per_target_cap_env_override_controls_limit() {
+        // SAFETY: env access is serialised via `#[serial]`.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET", "1");
+        }
+
+        let mut candidates = vec![
+            test_candidate("target-A", 0.9),
+            test_candidate("target-A", 0.8),
+            test_candidate("target-A", 0.7),
+        ];
+        let dropped = apply_per_target_cap(&mut candidates);
+
+        // SAFETY: env access is serialised via `#[serial]`.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET");
+        }
+
+        assert_eq!(candidates.len(), 1, "cap=1 should leave only one candidate");
+        assert_eq!(dropped, 2);
+        assert!((candidates[0].expected_creature_score_gain - 0.9).abs() < f32::EPSILON);
     }
 }

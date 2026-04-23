@@ -3,6 +3,7 @@ use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson, analyze_parallel_internal};
+use serial_test::serial;
 
 /// Regression/integration test for Issue #173 (7-Jan-2026).
 ///
@@ -13,11 +14,31 @@ use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson, analyze_parallel_
 /// - addSynapse(source -> hidden)
 /// - addSynapse(hidden -> target)
 #[test]
+#[serial]
 fn coordinated_structural_can_replace_synapse_with_hidden_relu_neuron() {
     // Discovery is GPU-only. On machines without GPU, we skip.
     if !GpuAnalyzer::gpu_is_available() {
         return;
     }
+
+    // Issue #1140: Single-output creature → all add-neuron candidates target
+    // output-0. The default per-target cap of 3 can drop the ReLU candidate
+    // in favour of boosted activations (GELU 2.0×, ABSOLUTE 1.95×) before
+    // the coordinated-structural conversion runs.
+    // SAFETY: env access is serialised via `#[serial]`.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET", "32");
+    }
+    struct EnvGuard;
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: env access is serialised via `#[serial]`.
+            unsafe {
+                std::env::remove_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET");
+            }
+        }
+    }
+    let _guard = EnvGuard;
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let parquet_file = temp_dir

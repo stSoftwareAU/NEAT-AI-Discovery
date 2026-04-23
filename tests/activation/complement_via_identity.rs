@@ -12,11 +12,35 @@
 use crate::skip_without_gpu;
 use neat_ai_discovery::record_discovery_internal;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson};
+use serial_test::serial;
 use tempfile::TempDir;
 
 #[test]
+#[serial]
 fn test_complement_is_discovered_as_identity_not_inverse() {
     skip_without_gpu!();
+
+    // Issue #1140: This test exercises a single-output creature so every
+    // candidate targets the same neuron. The new per-target add-neuron cap
+    // (default 3) would drop the IDENTITY candidate in favour of higher-gain
+    // activations (Mish, SOFTSIGN) and prevent this regression from being
+    // exercised. Raise the cap for this test so the full candidate pool is
+    // available to search for an IDENTITY representation of complement.
+    // SAFETY: env access is serialised via `#[serial]`.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET", "32");
+    }
+    // Guard that restores the previous behaviour if the test panics.
+    struct EnvGuard;
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: env access is serialised via `#[serial]`.
+            unsafe {
+                std::env::remove_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET");
+            }
+        }
+    }
+    let _guard = EnvGuard;
 
     let temp_dir = TempDir::new().expect("Failed to create temporary directory");
     let temp_path = temp_dir.path();
