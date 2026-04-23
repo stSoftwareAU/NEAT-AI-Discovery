@@ -57,6 +57,11 @@ pub const REJECTION_ADD_SYNAPSE_GATED: &str = "add_synapse_gated";
 /// was already full.
 pub const REJECTION_BUDGET_TRUNCATED: &str = "budget_truncated";
 
+/// Add-neuron candidate was dropped because the per-target cap
+/// (`MAX_ADD_NEURON_CANDIDATES_PER_TARGET`) was already reached for this
+/// target neuron in the current batch (Issue #1140).
+pub const REJECTION_PER_TARGET_CAP: &str = "per_target_cap";
+
 /// Synapse: no overlapping discovery samples between source and target.
 pub const REJECTION_NO_SAMPLES: &str = "no_samples";
 
@@ -101,6 +106,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_DUPLICATE_OF_FAILURE_CACHE,
     REJECTION_ADD_SYNAPSE_GATED,
     REJECTION_BUDGET_TRUNCATED,
+    REJECTION_PER_TARGET_CAP,
     REJECTION_NO_SAMPLES,
     REJECTION_ZERO_IMPROVEMENT,
     REJECTION_BELOW_THRESHOLD,
@@ -252,6 +258,7 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_DUPLICATE_OF_FAILURE_CACHE => "duplicate of failure cache".to_string(),
         REJECTION_ADD_SYNAPSE_GATED => "add-synapse historical-gating filter".to_string(),
         REJECTION_BUDGET_TRUNCATED => "per-module candidate budget".to_string(),
+        REJECTION_PER_TARGET_CAP => "per-target add-neuron cap".to_string(),
         REJECTION_NO_SAMPLES => "no overlapping discovery samples".to_string(),
         REJECTION_ZERO_IMPROVEMENT => "zero consistent improvement in GPU stats".to_string(),
         REJECTION_BELOW_THRESHOLD => "expected-improvement per-target threshold".to_string(),

@@ -22,6 +22,7 @@ use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 use tempfile::NamedTempFile;
 
 /// Skip test if no GPU available
@@ -168,8 +169,29 @@ fn test_mish_gpu_shader_produces_correct_results() {
 /// some candidates, which wouldn't happen if the GPU shader fell back to
 /// IDENTITY and produced nonsensical weight calculations.
 #[test]
+#[serial]
 fn test_all_new_activations_produce_candidates() {
     skip_without_gpu!();
+
+    // Issue #1140: This test uses a single-output creature so every
+    // candidate targets the same neuron. The default per-target add-neuron
+    // cap (3) would drop most activations and defeat the purpose of this
+    // test (verifying 3+ distinct activations produce candidates). Raise the
+    // cap for this test so the full candidate pool is preserved.
+    // SAFETY: env access is serialised via `#[serial]`.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET", "32");
+    }
+    struct EnvGuard;
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: env access is serialised via `#[serial]`.
+            unsafe {
+                std::env::remove_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET");
+            }
+        }
+    }
+    let _guard = EnvGuard;
 
     let creature = create_test_creature(
         vec![

@@ -20,6 +20,51 @@
 pub const DIVERSIFY_TOP_K: usize = 64;
 
 // =============================================================================
+// Per-Target Add-Neuron Cap (Issue #1140)
+// =============================================================================
+
+/// Default maximum number of `add-neurons` candidates returned per target
+/// neuron in a single discovery batch (Issue #1140).
+///
+/// GRQ-sampler commit `744ac60d` showed 17 of 19 `add-neurons` failures in one
+/// submission targeted the same neuron, differing only by source input. All 17
+/// failed. The cross-batch cooldown (Issue #1130) cannot fire within a single
+/// batch, so a per-target within-batch cap is required to avoid wasting budget
+/// on clearly-hopeless targets.
+///
+/// Overridable via the `NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET`
+/// environment variable.
+///
+/// ## Valid Range
+/// Must be >= 1. Values above ~10 defeat the purpose of the cap.
+pub const MAX_ADD_NEURON_CANDIDATES_PER_TARGET: usize = 3;
+
+/// Minimum permitted per-target cap after env-var override clamping.
+pub const MIN_ADD_NEURON_CANDIDATES_PER_TARGET: usize = 1;
+
+/// Maximum permitted per-target cap after env-var override clamping.
+pub const MAX_ADD_NEURON_CANDIDATES_PER_TARGET_CEILING: usize = 32;
+
+/// Return the effective per-target add-neuron cap (Issue #1140).
+///
+/// Reads `NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET` at call time so tests
+/// can override the default. Values outside the permitted range are clamped
+/// to `[MIN_ADD_NEURON_CANDIDATES_PER_TARGET,
+/// MAX_ADD_NEURON_CANDIDATES_PER_TARGET_CEILING]`. Unparsable or missing
+/// values fall back to `MAX_ADD_NEURON_CANDIDATES_PER_TARGET`.
+#[must_use]
+pub fn max_add_neuron_candidates_per_target() -> usize {
+    std::env::var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(MAX_ADD_NEURON_CANDIDATES_PER_TARGET)
+        .clamp(
+            MIN_ADD_NEURON_CANDIDATES_PER_TARGET,
+            MAX_ADD_NEURON_CANDIDATES_PER_TARGET_CEILING,
+        )
+}
+
+// =============================================================================
 // Source-Type Scoring (Issue #465)
 // =============================================================================
 

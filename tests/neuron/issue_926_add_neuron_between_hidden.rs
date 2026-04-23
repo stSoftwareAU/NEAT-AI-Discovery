@@ -25,7 +25,32 @@ use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 use tempfile::NamedTempFile;
+
+/// RAII guard (Issue #1140) that raises the per-target add-neuron cap so that
+/// tests with a small number of target neurons can still exercise diverse
+/// activation proposals. Removes the override when dropped.
+struct PerTargetCapOverride;
+
+impl PerTargetCapOverride {
+    fn new(cap: &str) -> Self {
+        // SAFETY: env access is serialised via `#[serial]` on the call site.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET", cap);
+        }
+        Self
+    }
+}
+
+impl Drop for PerTargetCapOverride {
+    fn drop(&mut self) {
+        // SAFETY: env access is serialised via `#[serial]` on the call site.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET");
+        }
+    }
+}
 
 /// Skip test if no GPU available.
 macro_rules! skip_without_gpu {
@@ -404,8 +429,17 @@ fn test_hidden_neuron_candidate_properties() {
 /// Verify that the full analysis pipeline (`analyze_all`) also finds hidden-to-hidden
 /// neuron candidates through the combined synapse + neuron analysis path.
 #[test]
+#[serial]
 fn test_analyze_all_finds_hidden_neuron_candidate() {
     skip_without_gpu!();
+
+    // Issue #1140: Raise the per-target cap so the test's tiny creature
+    // (2 focus targets) can still see the hidden-C candidates that
+    // `convert_neurons_to_coordinated_replacements` may convert to
+    // coordinated candidates. At the default cap of 3 the hidden-C slots
+    // are exhausted before the conversion step, leaving no hidden-C
+    // candidates in `helpful_neurons`.
+    let _cap_guard = PerTargetCapOverride::new("32");
 
     use neat_ai_discovery::AnalyzeAllInput;
     use neat_ai_discovery::analysis::analyze_all;
