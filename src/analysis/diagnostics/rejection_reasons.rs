@@ -101,6 +101,17 @@ pub const REJECTION_CONSTANT_NEURON_FILTERED: &str = "constant_neuron_filtered";
 /// diagnostic detail. Corresponds to `SynapseNoCandidateReason::NoDiagnostics`.
 pub const REJECTION_NO_DIAGNOSTICS: &str = "no_diagnostics";
 
+/// Candidate was dropped because the target neuron's observed activation
+/// distribution already covered the bulk of its bounded squash output range
+/// (Issue #1143).
+///
+/// A saturated target cannot respond to additional inputs with a usable
+/// gradient — the pre-check rejects every add-neuron (and new add-synapse)
+/// candidate for that target regardless of the candidate/intermediate
+/// squash. See `compute_target_saturation` in
+/// `src/analysis/neuron/preparation.rs`.
+pub const REJECTION_TARGET_SATURATED: &str = "target_saturated";
+
 /// Remove-low-impact: the net improvement
 /// (`boosted_savings - activation_weighted_impact`) fell below
 /// `REMOVE_LOW_IMPACT_NOISE_FLOOR` (Issue #1142).
@@ -136,6 +147,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_HIDDEN_NEURON_FILTERED,
     REJECTION_CONSTANT_NEURON_FILTERED,
     REJECTION_NO_DIAGNOSTICS,
+    REJECTION_TARGET_SATURATED,
     REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
 ];
 
@@ -290,6 +302,10 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_HIDDEN_NEURON_FILTERED => "hidden-neuron pre-filter".to_string(),
         REJECTION_CONSTANT_NEURON_FILTERED => "constant-neuron pre-filter".to_string(),
         REJECTION_NO_DIAGNOSTICS => "no diagnostics recorded".to_string(),
+        REJECTION_TARGET_SATURATED => {
+            "target neuron already saturated (observed activation covers the full bounded range)"
+                .to_string()
+        }
         REJECTION_REMOVAL_BELOW_NOISE_FLOOR => format!(
             "remove-low-impact noise floor of {:e}",
             crate::analysis::constants::remove_low_impact_noise_floor()

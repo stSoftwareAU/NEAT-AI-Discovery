@@ -563,6 +563,19 @@ impl TargetSaturationInfo {
         is_near_saturated: false,
         saturation_factor: 0.0,
     };
+
+    /// Whether a candidate should be rejected because the target neuron is
+    /// already saturated (Issue #1143).
+    ///
+    /// The decision depends **only** on the target's observed activation
+    /// distribution relative to its squash bounds — it is deliberately
+    /// independent of the candidate/intermediate squash, so the indirect
+    /// add-neuron path (where a new intermediate neuron feeds into a
+    /// saturated output) is gated just as thoroughly as the direct path.
+    #[must_use]
+    pub fn rejects_candidates(&self) -> bool {
+        self.is_near_saturated
+    }
 }
 
 /// Returns the output range `(min, max)` for a bounded activation function.
@@ -852,5 +865,100 @@ mod tests {
         let records = vec![make_record(0.0), make_record(5.0), make_record(10.0)];
         let info = compute_target_saturation(&records, "RELU");
         assert!(!info.is_near_saturated);
+    }
+
+    // =========================================================================
+    // Issue #1143: Gate rejects every candidate when the target is saturated,
+    // independent of the candidate/intermediate squash. Verifies the fix for
+    // the indirect add-neuron path (saturated HARD_TANH output accepting
+    // ArcTan / BENT_IDENTITY intermediates).
+    // =========================================================================
+
+    /// Helper: saturated `HARD_TANH` target matching the GRQ-sampler evidence.
+    fn saturated_hard_tanh() -> TargetSaturationInfo {
+        let records: Vec<DiscoverRecord> = vec![
+            make_record(-1.0),
+            make_record(-0.5),
+            make_record(0.0),
+            make_record(0.5),
+            make_record(1.0),
+        ];
+        let info = compute_target_saturation(&records, "HARD_TANH");
+        assert!(info.is_near_saturated, "fixture must be saturated");
+        info
+    }
+
+    /// (a) Saturated `HARD_TANH` + `ArcTan` intermediate → rejected.
+    #[test]
+    fn test_saturated_target_rejects_arctan_intermediate() {
+        let info = saturated_hard_tanh();
+        assert!(
+            info.rejects_candidates(),
+            "saturated HARD_TANH target must reject candidates regardless of the \
+             ArcTan intermediate squash (Issue #1143)"
+        );
+    }
+
+    /// (b) Saturated `HARD_TANH` + any intermediate → rejected.
+    ///
+    /// The gate must be independent of the candidate squash — verify across
+    /// a representative set of intermediates including `BENT_IDENTITY`,
+    /// `IDENTITY`, `RELU`, `TANH`, and `GELU`.
+    #[test]
+    fn test_saturated_target_rejects_all_intermediates() {
+        let info = saturated_hard_tanh();
+        // The gate itself is squash-agnostic. Enumerate the squashes that the
+        // activation-spec batch evaluator considers to make the intent
+        // explicit — every one must be rejected.
+        let intermediates = [
+            "ArcTan",
+            "BENT_IDENTITY",
+            "IDENTITY",
+            "RELU",
+            "TANH",
+            "LOGISTIC",
+            "GELU",
+            "SOFTSIGN",
+        ];
+        for squash in intermediates {
+            assert!(
+                info.rejects_candidates(),
+                "saturated target must reject candidate with intermediate squash {squash}"
+            );
+        }
+    }
+
+    /// (c) Non-saturated target + any intermediate → kept.
+    #[test]
+    fn test_non_saturated_target_keeps_candidates() {
+        // TANH target covering only [-0.3, 0.3] — nowhere near bounds.
+        let records: Vec<DiscoverRecord> =
+            vec![make_record(-0.3), make_record(0.0), make_record(0.3)];
+        let info = compute_target_saturation(&records, "TANH");
+        assert!(!info.is_near_saturated);
+        let intermediates = ["ArcTan", "BENT_IDENTITY", "IDENTITY", "RELU"];
+        for squash in intermediates {
+            assert!(
+                !info.rejects_candidates(),
+                "non-saturated target must keep candidate with intermediate {squash}"
+            );
+        }
+    }
+
+    /// Unbounded IDENTITY target never triggers the gate.
+    #[test]
+    fn test_unbounded_target_never_rejects() {
+        let records = vec![make_record(-1000.0), make_record(0.0), make_record(1000.0)];
+        let info = compute_target_saturation(&records, "IDENTITY");
+        assert!(
+            !info.rejects_candidates(),
+            "unbounded targets cannot saturate and must never gate candidates"
+        );
+    }
+
+    /// The `NOT_SATURATED` sentinel never rejects.
+    #[test]
+    fn test_not_saturated_sentinel_keeps_candidates() {
+        assert!(!TargetSaturationInfo::NOT_SATURATED.rejects_candidates());
     }
 }

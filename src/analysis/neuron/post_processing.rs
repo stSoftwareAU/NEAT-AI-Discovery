@@ -174,6 +174,13 @@ pub(crate) fn build_neuron_results(
                     crate::analysis::diagnostics::rejection_reasons::REJECTION_SAME_TARGET_SQUASH_DUPLICATE,
                     u32::try_from(same_target_squash_drops).unwrap_or(u32::MAX),
                 );
+                // Issue #1143: surface target-saturation drops so operators
+                // can see when the pre-check gated proposals against a fully
+                // saturated target neuron.
+                breakdown.record_many_u32(
+                    crate::analysis::diagnostics::rejection_reasons::REJECTION_TARGET_SATURATED,
+                    params.diagnostics.target_saturated_drop_count(),
+                );
                 breakdown
             },
             top_level_summary: None,

@@ -88,6 +88,7 @@ pub(super) fn finalise_synapse_results(
         timing_collector: &params.timing_collector,
         mcmc_summary: Some(params.mcmc_summary),
         calibration_corrections: pp_metrics.calibration_corrections,
+        target_saturated_drops: params.diagnostics.target_saturated_drop_count(),
     });
 
     Ok(AnalyzeSynapsesResult {
