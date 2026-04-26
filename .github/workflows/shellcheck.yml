@@ -1,5 +1,9 @@
 name: ShellCheck
 
+# Lints all bash scripts using ShellCheck (upstream: koalaman/shellcheck —
+# https://github.com/koalaman/shellcheck). The ludeeus/action-shellcheck
+# action wraps the official koalaman/shellcheck binary.
+
 on:
   pull_request:
     branches: ["*"]
@@ -12,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run ShellCheck
+      - name: Run ShellCheck (koalaman/shellcheck)
         uses: ludeeus/action-shellcheck@master
         with:
           scandir: .
