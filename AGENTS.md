@@ -488,10 +488,10 @@ GitHub Actions runs on every pull request to `Develop`:
 - `version-increment` — auto-bumps patch version when changes exist (uses
   `ACTIONS_PUSH` PAT so the push re-triggers workflows, matching NEAT-AI)
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
-- `shell-checks` — validates bash script syntax
 - `spell-check` — runs codespell on the codebase
 - `validation` — checks required files and `Cargo.toml`
 - `security` — runs security audit workflow
+- `shellcheck` (separate workflow `.github/workflows/shellcheck.yml`) — lints bash scripts via ShellCheck
 
 **Do NOT modify `.github/workflows/ci.yml` without explicit approval.**
 

@@ -365,39 +365,10 @@ jobs:
       if: steps.check_changes.outputs.has_changes == 'true'
       run: git push origin ${{ github.head_ref }}
 
-  shell-checks:
-    name: Shell Script Quality
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    needs: [version-increment]
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.head_ref }}
-        fetch-depth: 0
-        token: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: Check bash script syntax
-      run: |
-        echo "🔍 Checking bash script syntax with bash -n..."
-        EXIT_CODE=0
-        while IFS= read -r script; do
-          echo "Checking $script..."
-          if bash -n "$script"; then
-            echo "✅ $script passed syntax check"
-          else
-            echo "❌ $script has syntax errors"
-            EXIT_CODE=1
-          fi
-        done < <(find . -name "*.sh" -not -path "./target/*" -not -path "./.git/*")
-        if [ $EXIT_CODE -eq 0 ]; then
-          echo "✅ All bash scripts passed syntax checks"
-        else
-          echo "❌ Some bash scripts have syntax errors"
-          exit 1
-        fi
+  # Shell script linting is handled by .github/workflows/shellcheck.yml
+  # (ludeeus/action-shellcheck), which is a strict superset of `bash -n`
+  # syntax checking. The previous `shell-checks` job duplicated that work
+  # and was removed in #1158.
 
   spell-check:
     name: Spell Check
