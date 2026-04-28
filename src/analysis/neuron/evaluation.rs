@@ -48,6 +48,9 @@ pub(crate) struct NeuronEvalContext<'a> {
     pub threshold: f32,
     /// Target saturation info from the pre-check (Issue #1111).
     pub target_saturation: super::preparation::TargetSaturationInfo,
+    /// Issue #1164: Within-batch target-failure short-circuit tracker.
+    pub within_batch_failures:
+        &'a Arc<crate::analysis::within_batch_failures::WithinBatchFailureTracker>,
 }
 
 /// Evaluate neuron candidates for all sources with samples against a single
@@ -70,6 +73,13 @@ pub(crate) fn evaluate_neuron_candidates(
         }
 
         if result.samples.is_empty() {
+            continue;
+        }
+
+        // Issue #1164: short-circuit subsequent same-target candidates if
+        // an earlier candidate for this target failed within this batch.
+        if ctx.within_batch_failures.should_skip(target_uuid) {
+            ctx.within_batch_failures.record_skip();
             continue;
         }
 
@@ -145,6 +155,9 @@ fn evaluate_relu_split(
     if let Some(mut candidate) = split_result.positive_error_candidate {
         // Issue #733: Filter neuron candidates where insufficient samples improve.
         if !passes_neuron_improved_ratio(&candidate) {
+            // Issue #1164: a rejected candidate counts as a within-batch failure
+            // for the target so subsequent same-target candidates can be skipped.
+            ctx.within_batch_failures.record_failure(target_uuid);
             if verbose_enabled() {
                 tracing::trace!(
                     direction = "push UP",
@@ -185,6 +198,8 @@ fn evaluate_relu_split(
     if let Some(mut candidate) = split_result.negative_error_candidate {
         // Issue #733: Filter neuron candidates where insufficient samples improve.
         if !passes_neuron_improved_ratio(&candidate) {
+            // Issue #1164: rejected candidate → within-batch failure for target.
+            ctx.within_batch_failures.record_failure(target_uuid);
             if verbose_enabled() {
                 tracing::trace!(
                     direction = "push DOWN",
@@ -263,6 +278,8 @@ fn evaluate_activation_specs(
     for mut candidate in batched_candidates {
         // Issue #733: Filter neuron candidates where insufficient samples improve.
         if !passes_neuron_improved_ratio(&candidate) {
+            // Issue #1164: rejected candidate → within-batch failure for target.
+            ctx.within_batch_failures.record_failure(target_uuid);
             continue;
         }
 

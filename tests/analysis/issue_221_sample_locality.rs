@@ -22,8 +22,43 @@
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use serial_test::serial;
 use std::collections::HashSet;
 use tempfile::tempdir;
+
+/// Issue #1164: locality tests submit 100 sources for a single target. With
+/// the default within-batch failure limit of 1, the very first failing source
+/// short-circuits all subsequent same-target candidates and the test sees no
+/// candidates. Locality tests are unrelated to the within-batch short-circuit,
+/// so they raise the limit while running. Restored on drop to avoid leaking
+/// the env var into other tests.
+struct WithinBatchLimitGuard {
+    previous: Option<String>,
+}
+
+impl WithinBatchLimitGuard {
+    fn high() -> Self {
+        let previous = std::env::var("NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT").ok();
+        // SAFETY: tests using this guard are gated by `#[serial]` so no other
+        // thread mutates the same variable concurrently.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT", "10000");
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for WithinBatchLimitGuard {
+    fn drop(&mut self) {
+        // SAFETY: see `high` — guarded by `#[serial]`.
+        unsafe {
+            match &self.previous {
+                Some(v) => std::env::set_var("NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT", v),
+                None => std::env::remove_var("NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT"),
+            }
+        }
+    }
+}
 
 /// Skip test if no GPU available
 macro_rules! skip_without_gpu {
@@ -320,8 +355,12 @@ fn group_sources_by_locality_test(
 /// Benchmark test to verify that sample locality batching improves performance.
 /// Test that sample locality batching produces correct results with correlated inputs.
 #[test]
+#[serial]
 fn sample_locality_batching_produces_results() {
     skip_without_gpu!();
+    // Issue #1164: locality test submits 100 sources for one target — keep the
+    // within-batch short-circuit out of the way so all sources are evaluated.
+    let _within_batch_guard = WithinBatchLimitGuard::high();
 
     let temp_dir = tempdir().expect("Failed to create temp directory");
     let parquet_path = temp_dir.path().join("records.parquet");
@@ -362,8 +401,12 @@ fn sample_locality_batching_produces_results() {
 /// Test that sample locality optimisation preserves correctness.
 /// Results should be identical whether or not batching is applied.
 #[test]
+#[serial]
 fn sample_locality_preserves_correctness() {
     skip_without_gpu!();
+    // Issue #1164: keep the within-batch short-circuit out of the way so the
+    // correctness comparison sees the full set of source candidates.
+    let _within_batch_guard = WithinBatchLimitGuard::high();
 
     let temp_dir = tempdir().expect("Failed to create temp directory");
     let parquet_path = temp_dir.path().join("records.parquet");
@@ -440,8 +483,13 @@ fn sample_locality_preserves_correctness() {
 /// Test the specific scenario from the issue: 100 sources with 90% sample overlap.
 /// Verifies that analysis produces correct results with high overlap.
 #[test]
+#[serial]
 fn source_batching_90_percent_overlap_produces_results() {
     skip_without_gpu!();
+    // Issue #1164: keep the within-batch short-circuit out of the way so all
+    // 100 same-target sources are evaluated; this test exercises locality
+    // batching, not the within-batch failure short-circuit.
+    let _within_batch_guard = WithinBatchLimitGuard::high();
 
     let temp_dir = tempdir().expect("Failed to create temp directory");
     let parquet_path = temp_dir.path().join("records.parquet");

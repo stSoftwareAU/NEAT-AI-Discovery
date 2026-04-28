@@ -58,3 +58,16 @@ pub fn target_cooldown_epochs_env() -> Option<u64> {
         .and_then(|s| s.trim().parse().ok())
         .filter(|v| *v >= 1)
 }
+
+/// Read the env-var override for the within-batch target-failure short-circuit
+/// limit (Issue #1164).
+///
+/// Returns `Some(n)` when `NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT` is set
+/// to a valid `u32 >= 1`, otherwise `None` so callers fall back to the
+/// compiled default `WITHIN_BATCH_TARGET_FAILURE_LIMIT`.
+pub fn within_batch_target_failure_limit_env() -> Option<u32> {
+    std::env::var("NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .filter(|v| *v >= 1)
+}
