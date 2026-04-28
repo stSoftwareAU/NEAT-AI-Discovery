@@ -26,7 +26,7 @@ fn test_relu_improvement_skips_samples_with_none_target_value() {
         },
     ];
 
-    let (improvement, _improved, total) =
+    let (improvement, _improved, total, _) =
         compute_relu_improvement_and_count(&samples, 1.0, 1.0, 0.0, 1.0, Some(|x: f32| x.tanh()));
 
     assert!(
@@ -47,7 +47,7 @@ fn test_activation_improvement_skips_samples_with_none_target_activation() {
         target_activation: None,
     }];
 
-    let (improvement, _improved, total) = compute_activation_improvement_and_count(
+    let (improvement, _improved, total, _) = compute_activation_improvement_and_count(
         &samples,
         1.0,
         1.0,
@@ -82,7 +82,7 @@ fn test_synapse_improvement_handles_mixed_none_target_data() {
 
     // Should not panic — the TargetSimulationMode checks require all samples
     // to have target data, so it falls back to linear mode.
-    let (improvement, _improved, _worsened, total) =
+    let (improvement, _improved, _worsened, total, _) =
         compute_synapse_improvement_and_count(&samples, 0.5, 1.0, Some("HARD_TANH"));
 
     assert!(improvement.is_finite());
@@ -107,7 +107,7 @@ fn test_relu_improvement_correct_with_complete_data() {
         },
     ];
 
-    let (improvement, _improved, total) =
+    let (improvement, _improved, total, _) =
         compute_relu_improvement_and_count(&samples, 1.0, 0.5, 0.0, 0.5, Some(|x: f32| x.tanh()));
 
     assert!(improvement.is_finite());
@@ -151,7 +151,7 @@ fn test_relu_no_target_branchless_handles_non_finite() {
         .map(|s| s.avg_error * s.avg_error)
         .sum();
 
-    let (improvement, improved, total) =
+    let (improvement, improved, total, _) =
         compute_relu_improvement_and_count(&samples, 0.5, 0.3, 0.1, baseline_sq, None);
 
     assert!(improvement.is_finite(), "improvement must be finite");
@@ -185,10 +185,10 @@ fn test_relu_with_target_identity_matches_no_target() {
 
     let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
 
-    let (imp_no_target, improved_no, _) =
+    let (imp_no_target, improved_no, _, _) =
         compute_relu_improvement_and_count(&samples, 0.5, 0.3, 0.0, baseline_sq, None);
 
-    let (imp_with_target, improved_with, _) = compute_relu_improvement_and_count(
+    let (imp_with_target, improved_with, _, _) = compute_relu_improvement_and_count(
         &samples,
         0.5,
         0.3,
@@ -215,7 +215,7 @@ fn test_synapse_no_target_branchless_handles_non_finite() {
         .map(|s| s.avg_error * s.avg_error)
         .sum();
 
-    let (improvement, improved, worsened, total) =
+    let (improvement, improved, worsened, total, _) =
         compute_synapse_improvement_and_count(&samples, 0.35, baseline_sq, None);
 
     assert!(improvement.is_finite(), "improvement must be finite");
@@ -236,7 +236,7 @@ fn test_activation_no_target_branchless_handles_non_finite() {
         .map(|s| s.avg_error * s.avg_error)
         .sum();
 
-    let (improvement, improved, total) = compute_activation_improvement_and_count(
+    let (improvement, improved, total, _) = compute_activation_improvement_and_count(
         &samples,
         0.4,
         0.6,
@@ -256,15 +256,15 @@ fn test_activation_no_target_branchless_handles_non_finite() {
 fn test_branchless_variants_empty_samples() {
     let empty: Vec<HelpfulSample> = vec![];
 
-    let (imp, _, total) = compute_relu_improvement_and_count(&empty, 1.0, 1.0, 0.0, 1.0, None);
+    let (imp, _, total, _) = compute_relu_improvement_and_count(&empty, 1.0, 1.0, 0.0, 1.0, None);
     assert_eq!(imp, 0.0);
     assert_eq!(total, 0);
 
-    let (imp, _, _, total) = compute_synapse_improvement_and_count(&empty, 0.5, 1.0, None);
+    let (imp, _, _, total, _) = compute_synapse_improvement_and_count(&empty, 0.5, 1.0, None);
     assert_eq!(imp, 0.0);
     assert_eq!(total, 0);
 
-    let (imp, _, total) = compute_activation_improvement_and_count(
+    let (imp, _, total, _) = compute_activation_improvement_and_count(
         &empty,
         1.0,
         1.0,
@@ -296,10 +296,192 @@ fn test_synapse_improvement_positive_weight_reduces_positive_error() {
     ];
     let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
 
-    let (improvement, improved, _, total) =
+    let (improvement, improved, _, total, _) =
         compute_synapse_improvement_and_count(&samples, 0.3, baseline_sq, None);
 
     assert!(improvement > 0.0, "should show positive improvement");
     assert!(improved > 0, "should have improved samples");
     assert_eq!(total, 2);
+}
+
+// =============================================================================
+// Issue #1161: magnitude-weighted improvement metric tests
+// =============================================================================
+
+use super::discounting::{apply_neuron_pessimism_discount, apply_synapse_pessimism_discount};
+
+/// Build samples with a fixed-magnitude baseline error and a fixed-magnitude
+/// new error per sample. Used by the noise/substantial/mixed scenarios below.
+///
+/// Each sample has `avg_error = baseline`. We then drive the new error via a
+/// straight-through linear synapse (`weight = 1`, no target activation) so
+/// that `new_error = baseline - activation`. Choosing `activation = baseline -
+/// new_error` for each sample produces the desired post-candidate error.
+fn samples_with_errors(pairs: &[(f32, f32)]) -> Vec<HelpfulSample> {
+    pairs
+        .iter()
+        .map(|&(baseline, new_err)| HelpfulSample {
+            activation: baseline - new_err,
+            avg_error: baseline,
+            target_value: None,
+            target_activation: None,
+        })
+        .collect()
+}
+
+/// All-noise improvements: 76% of samples improve, but only by ≈ 0% of the
+/// baseline magnitude. Magnitude ratio must be near zero, and the resulting
+/// neuron pessimism discount should kill almost all of the input gain
+/// (Issue #1160 failure pattern).
+#[test]
+fn test_magnitude_ratio_noise_level_improvements_collapse_neuron_gain() {
+    // 100 samples baseline = 1.0. 76 improve by 1e-6, 24 stay flat.
+    let mut pairs = Vec::with_capacity(100);
+    for _ in 0..76 {
+        pairs.push((1.0_f32, 1.0_f32 - 1e-6));
+    }
+    for _ in 0..24 {
+        pairs.push((1.0_f32, 1.0_f32));
+    }
+    let samples = samples_with_errors(&pairs);
+    let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+
+    let (_imp, improved, _worsened, total, magnitude_ratio) = compute_synapse_improvement_and_count(
+        &samples,
+        1.0, // weight that produces new_error = avg_error - activation
+        baseline_sq,
+        None,
+    );
+
+    assert_eq!(total, 100);
+    assert_eq!(improved, 76, "76% binary improvement");
+    assert!(
+        magnitude_ratio < 1e-3,
+        "magnitude ratio should be near zero, got {magnitude_ratio}"
+    );
+
+    // The combined discount must collapse the input gain to <1% — see issue
+    // body acceptance criterion.
+    let raw_gain = 0.003_f32;
+    let discounted =
+        apply_neuron_pessimism_discount(raw_gain, improved, total, Some(magnitude_ratio));
+    assert!(
+        discounted.abs() < 0.01 * raw_gain.abs(),
+        "discounted gain ({discounted}) should be <1% of input ({raw_gain})"
+    );
+    let synapse_discounted =
+        apply_synapse_pessimism_discount(raw_gain, improved, total, Some(magnitude_ratio));
+    assert!(
+        synapse_discounted.abs() < 0.01 * raw_gain.abs(),
+        "synapse-discounted gain ({synapse_discounted}) should be <1% of input ({raw_gain})"
+    );
+}
+
+/// All-substantial improvements: every sample improves by half its baseline
+/// magnitude. Both binary and magnitude ratios must be high and the discount
+/// should preserve most of the gain.
+#[test]
+fn test_magnitude_ratio_substantial_improvements_preserve_gain() {
+    let pairs: Vec<(f32, f32)> = (0..100).map(|_| (1.0_f32, 0.5_f32)).collect();
+    let samples = samples_with_errors(&pairs);
+    let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+
+    let (_imp, improved, _worsened, total, magnitude_ratio) =
+        compute_synapse_improvement_and_count(&samples, 1.0, baseline_sq, None);
+
+    assert_eq!(total, 100);
+    assert_eq!(improved, 100, "all samples improve");
+    assert!(
+        (magnitude_ratio - 0.5).abs() < 1e-3,
+        "magnitude ratio should be ≈ 0.5, got {magnitude_ratio}"
+    );
+
+    // Compare with the legacy (binary-only) discount: the magnitude-aware
+    // discount should be no smaller than 50% of the binary-only discount,
+    // i.e. it must not unfairly penalise candidates whose magnitude and
+    // binary signals agree at a moderate-to-high level.
+    let raw_gain = 1.0_f32;
+    let combined =
+        apply_neuron_pessimism_discount(raw_gain, improved, total, Some(magnitude_ratio));
+    let binary_only = apply_neuron_pessimism_discount(raw_gain, improved, total, None);
+    assert!(
+        combined > 0.5 * binary_only,
+        "combined ({combined}) should retain >50% of binary-only ({binary_only})"
+    );
+}
+
+/// Mixed improvements: half the samples improve substantially, half by
+/// noise. The combined discount should fall between the noise-only and the
+/// substantial-only scenarios.
+#[test]
+fn test_magnitude_ratio_mixed_improvements_intermediate_discount() {
+    let mut pairs = Vec::with_capacity(100);
+    for _ in 0..50 {
+        pairs.push((1.0_f32, 0.5_f32)); // substantial
+    }
+    for _ in 0..50 {
+        pairs.push((1.0_f32, 1.0_f32 - 1e-6)); // noise
+    }
+    let samples = samples_with_errors(&pairs);
+    let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
+
+    let (_imp, improved, _worsened, total, magnitude_ratio) =
+        compute_synapse_improvement_and_count(&samples, 1.0, baseline_sq, None);
+
+    assert_eq!(total, 100);
+    assert_eq!(improved, 100);
+    // Half-substantial, half-noise → magnitude ≈ 0.25.
+    assert!(
+        (magnitude_ratio - 0.25).abs() < 0.01,
+        "magnitude ratio should be ≈ 0.25, got {magnitude_ratio}"
+    );
+
+    let raw_gain = 1.0_f32;
+    let mixed = apply_neuron_pessimism_discount(raw_gain, improved, total, Some(magnitude_ratio));
+    let substantial = apply_neuron_pessimism_discount(raw_gain, improved, total, Some(0.5_f32));
+    let noise = apply_neuron_pessimism_discount(raw_gain, improved, total, Some(1e-4_f32));
+    assert!(
+        mixed > noise && mixed < substantial,
+        "mixed ({mixed}) should fall between noise ({noise}) and substantial ({substantial})"
+    );
+}
+
+/// `None` magnitude ratio preserves the legacy (binary-only) behaviour: the
+/// legacy floor is not scaled, and the geometric-mean term reduces to
+/// `improved_ratio` so the resulting discount must equal the discount produced
+/// by the original 3-arg formula.
+#[test]
+fn test_magnitude_ratio_none_falls_back_to_binary_only() {
+    use crate::analysis::constants::{
+        NEURON_PESSIMISM_CURVE_EXPONENT, NEURON_PESSIMISM_DISCOUNT_FLOOR,
+    };
+
+    let raw_gain = 1.0_f32;
+    let with_none = apply_neuron_pessimism_discount(raw_gain, 70, 100, None);
+    // Recompute the legacy formula directly so the assertion is independent of
+    // any future refactor of the production function.
+    let legacy_ratio = (0.7_f32).powf(NEURON_PESSIMISM_CURVE_EXPONENT);
+    let legacy =
+        NEURON_PESSIMISM_DISCOUNT_FLOOR + (1.0 - NEURON_PESSIMISM_DISCOUNT_FLOOR) * legacy_ratio;
+    assert!(
+        (with_none - legacy).abs() < 1e-5,
+        "None must preserve legacy formula: {with_none} vs {legacy}"
+    );
+}
+
+/// Magnitude ratio is clamped to `[0, 1]`. Negative or NaN ratios must not
+/// produce non-finite discounts.
+#[test]
+fn test_magnitude_ratio_invalid_inputs_remain_finite() {
+    let raw_gain = 1.0_f32;
+    let neg = apply_neuron_pessimism_discount(raw_gain, 50, 100, Some(-0.5_f32));
+    let nan = apply_neuron_pessimism_discount(raw_gain, 50, 100, Some(f32::NAN));
+    assert!(
+        neg.is_finite(),
+        "negative magnitude must yield a finite discount"
+    );
+    assert!(
+        nan.is_finite(),
+        "NaN magnitude must yield a finite discount"
+    );
 }

@@ -243,6 +243,8 @@ fn apply_impact_discounting(
             candidate.expected_creature_score_gain,
             candidate.improved_count,
             candidate.total_count,
+            // Issue #1161: combine the binary improved-ratio with the magnitude-weighted ratio.
+            candidate.improvement_magnitude_ratio,
         );
 
         // Issue #1112: Apply saturation-aware prediction discount.
@@ -389,6 +391,7 @@ mod tests {
             expected_creature_score_gain: gain,
             improved_count: 10,
             total_count: 10,
+            improvement_magnitude_ratio: None,
             target_neuron_stats: None,
             prediction_confidence: 0.5,
             expected_score_gain_confidence_interval: [gain, gain],

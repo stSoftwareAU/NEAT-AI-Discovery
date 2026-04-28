@@ -32,6 +32,7 @@ fn make_candidate(
         expected_creature_score_gain: gain,
         improved_count: 50,
         total_count: 100,
+        improvement_magnitude_ratio: None,
         target_neuron_stats: None,
         prediction_confidence: 0.5,
         expected_score_gain_confidence_interval: [0.01, 0.09],

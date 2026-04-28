@@ -97,16 +97,19 @@ pub(crate) fn evaluate_relu_candidates_split<G: GpuEvaluator>(
             ) {
                 // Compute net improvement across ALL samples (single pass)
                 // CRITICAL: Include candidate.bias for accurate prediction
-                let (net_improvement, improved, total) = compute_relu_improvement_and_count(
-                    samples,
-                    candidate.incoming_weight,
-                    candidate.outgoing_weight,
-                    candidate.bias,
-                    total_baseline_error_sq,
-                    target_activation_fn,
-                );
+                let (net_improvement, improved, total, magnitude_ratio) =
+                    compute_relu_improvement_and_count(
+                        samples,
+                        candidate.incoming_weight,
+                        candidate.outgoing_weight,
+                        candidate.bias,
+                        total_baseline_error_sq,
+                        target_activation_fn,
+                    );
                 candidate.improved_count = improved;
                 candidate.total_count = total;
+                // Issue #1161: persist magnitude-weighted ratio for pessimism discounting.
+                candidate.improvement_magnitude_ratio = Some(magnitude_ratio);
 
                 // Issue #128: Update creature-level metrics
                 if net_improvement > best_improvement {
@@ -141,16 +144,19 @@ pub(crate) fn evaluate_relu_candidates_split<G: GpuEvaluator>(
             ) {
                 // Compute net improvement across ALL samples (single pass)
                 // CRITICAL: Include candidate.bias for accurate prediction
-                let (net_improvement, improved, total) = compute_relu_improvement_and_count(
-                    samples,
-                    candidate.incoming_weight,
-                    candidate.outgoing_weight,
-                    candidate.bias,
-                    total_baseline_error_sq,
-                    target_activation_fn,
-                );
+                let (net_improvement, improved, total, magnitude_ratio) =
+                    compute_relu_improvement_and_count(
+                        samples,
+                        candidate.incoming_weight,
+                        candidate.outgoing_weight,
+                        candidate.bias,
+                        total_baseline_error_sq,
+                        target_activation_fn,
+                    );
                 candidate.improved_count = improved;
                 candidate.total_count = total;
+                // Issue #1161: persist magnitude-weighted ratio for pessimism discounting.
+                candidate.improvement_magnitude_ratio = Some(magnitude_ratio);
 
                 // Issue #128: Update creature-level metrics
                 if net_improvement > best_improvement {

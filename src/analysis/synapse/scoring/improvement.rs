@@ -121,6 +121,31 @@ fn finalise_improvement(effective_baseline: f32, new_error_sq_sum: f32) -> f32 {
     }
 }
 
+/// Compute the magnitude-weighted improvement ratio (Issue #1161).
+///
+/// Whereas `improved_count` only asks "did this sample improve?" (binary),
+/// the magnitude ratio answers "by how much did it improve?". A population of
+/// noise-level reductions gets a near-zero magnitude ratio even though the
+/// binary `improved_count` may be near 1.0.
+///
+/// ## Formula
+///
+/// ```text
+/// magnitude_ratio = sum(|baseline_error| - |new_error|) for improved samples
+///                 / sum(|baseline_error|) over all samples
+/// ```
+///
+/// Returns a value in `[0, 1]`. Returns `0.0` when the baseline magnitude is
+/// negligible (no signal to improve).
+#[inline(always)]
+fn finalise_magnitude_ratio(improved_magnitude_sum: f32, baseline_magnitude_sum: f32) -> f32 {
+    if baseline_magnitude_sum > EPSILON {
+        select_finite(improved_magnitude_sum / baseline_magnitude_sum).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
 // =============================================================================
 // ReLU Improvement Calculation
 // =============================================================================
@@ -140,7 +165,14 @@ fn finalise_improvement(effective_baseline: f32, new_error_sq_sum: f32) -> f32 {
 /// Issue #1075: Dispatches to specialised branchless variants to improve
 /// auto-vectorisation of the hot inner loop.
 ///
-/// Returns (`improvement_percentage`, `improved_count`, `total_count`)
+/// Returns (`improvement_percentage`, `improved_count`, `total_count`,
+/// `magnitude_ratio`).
+///
+/// Issue #1161: The fourth tuple element is a magnitude-weighted improvement
+/// ratio in `[0, 1]`. The ratio is
+/// `sum(|baseline_error| - |new_error|)` over improved samples divided by
+/// `sum(|baseline_error|)` over all samples, complementing the binary
+/// `improved_count`.
 pub fn compute_relu_improvement_and_count(
     samples: &[HelpfulSample],
     incoming_weight: f32,
@@ -148,9 +180,9 @@ pub fn compute_relu_improvement_and_count(
     bias: f32,
     total_baseline_error_sq: f32,
     target_activation_fn: Option<fn(f32) -> f32>,
-) -> (f32, u32, u32) {
+) -> (f32, u32, u32, f32) {
     if total_baseline_error_sq <= EPSILON || samples.is_empty() {
-        return (0.0, 0, samples.len() as u32);
+        return (0.0, 0, samples.len() as u32, 0.0);
     }
 
     if let Some(target_fn) = target_activation_fn {
@@ -184,9 +216,12 @@ fn compute_relu_improvement_no_target(
     outgoing_weight: f32,
     bias: f32,
     total_baseline_error_sq: f32,
-) -> (f32, u32, u32) {
+) -> (f32, u32, u32, f32) {
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
+    // Issue #1161: magnitude-weighted improvement accumulators.
+    let mut baseline_magnitude_sum = 0.0f32;
+    let mut improved_magnitude_sum = 0.0f32;
 
     for sample in samples {
         let pre_activation = incoming_weight * sample.activation + bias;
@@ -200,13 +235,23 @@ fn compute_relu_improvement_no_target(
         let new_err_safe = select_finite(new_error);
         new_error_sq_sum += new_err_safe * new_err_safe;
 
-        if new_error.abs() + EPSILON < baseline_error.abs() {
+        let base_abs = baseline_error.abs();
+        let new_abs = new_error.abs();
+        baseline_magnitude_sum += base_abs;
+        if new_abs + EPSILON < base_abs {
             improved_count += 1;
+            improved_magnitude_sum += base_abs - new_abs;
         }
     }
 
     let improvement = finalise_improvement(total_baseline_error_sq, new_error_sq_sum);
-    (improvement, improved_count, samples.len() as u32)
+    let magnitude_ratio = finalise_magnitude_ratio(improved_magnitude_sum, baseline_magnitude_sum);
+    (
+        improvement,
+        improved_count,
+        samples.len() as u32,
+        magnitude_ratio,
+    )
 }
 
 /// `ReLU` improvement with target activation function (ACTIVATION domain).
@@ -221,10 +266,13 @@ fn compute_relu_improvement_with_target(
     outgoing_weight: f32,
     bias: f32,
     target_fn: fn(f32) -> f32,
-) -> (f32, u32, u32) {
+) -> (f32, u32, u32, f32) {
     let mut baseline_error_sq_sum = 0.0f32;
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
+    // Issue #1161: magnitude-weighted improvement accumulators.
+    let mut baseline_magnitude_sum = 0.0f32;
+    let mut improved_magnitude_sum = 0.0f32;
 
     for sample in samples {
         let pre_activation = incoming_weight * sample.activation + bias;
@@ -252,13 +300,23 @@ fn compute_relu_improvement_with_target(
         let new_safe = select_finite(new_error);
         new_error_sq_sum += new_safe * new_safe;
 
-        if new_error.abs() + EPSILON < baseline_error.abs() {
+        let base_abs = baseline_error.abs();
+        let new_abs = new_error.abs();
+        baseline_magnitude_sum += base_abs;
+        if new_abs + EPSILON < base_abs {
             improved_count += 1;
+            improved_magnitude_sum += base_abs - new_abs;
         }
     }
 
     let improvement = finalise_improvement(baseline_error_sq_sum, new_error_sq_sum);
-    (improvement, improved_count, samples.len() as u32)
+    let magnitude_ratio = finalise_magnitude_ratio(improved_magnitude_sum, baseline_magnitude_sum);
+    (
+        improvement,
+        improved_count,
+        samples.len() as u32,
+        magnitude_ratio,
+    )
 }
 
 // =============================================================================
@@ -277,7 +335,14 @@ fn compute_relu_improvement_with_target(
 /// Issue #1075: Dispatches to specialised branchless variants to improve
 /// auto-vectorisation of the hot inner loop.
 ///
-/// Returns (`improvement_percentage`, `improved_count`, `total_count`)
+/// Returns (`improvement_percentage`, `improved_count`, `total_count`,
+/// `magnitude_ratio`).
+///
+/// Issue #1161: The fourth tuple element is a magnitude-weighted improvement
+/// ratio in `[0, 1]`. The ratio is
+/// `sum(|baseline_error| - |new_error|)` over improved samples divided by
+/// `sum(|baseline_error|)` over all samples, complementing the binary
+/// `improved_count`.
 pub fn compute_activation_improvement_and_count(
     samples: &[HelpfulSample],
     incoming_weight: f32,
@@ -286,9 +351,9 @@ pub fn compute_activation_improvement_and_count(
     activation_fn: fn(f32) -> f32,
     total_baseline_error_sq: f32,
     target_activation_fn: Option<fn(f32) -> f32>,
-) -> (f32, u32, u32) {
+) -> (f32, u32, u32, f32) {
     if total_baseline_error_sq <= EPSILON || samples.is_empty() {
-        return (0.0, 0, samples.len() as u32);
+        return (0.0, 0, samples.len() as u32, 0.0);
     }
 
     if let Some(target_fn) = target_activation_fn {
@@ -325,9 +390,12 @@ fn compute_activation_improvement_no_target(
     bias: f32,
     activation_fn: fn(f32) -> f32,
     total_baseline_error_sq: f32,
-) -> (f32, u32, u32) {
+) -> (f32, u32, u32, f32) {
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
+    // Issue #1161: magnitude-weighted improvement accumulators.
+    let mut baseline_magnitude_sum = 0.0f32;
+    let mut improved_magnitude_sum = 0.0f32;
 
     for sample in samples {
         let pre_activation = incoming_weight * sample.activation + bias;
@@ -341,13 +409,23 @@ fn compute_activation_improvement_no_target(
         let new_err_safe = select_finite(new_error);
         new_error_sq_sum += new_err_safe * new_err_safe;
 
-        if new_error.abs() + EPSILON < baseline_error.abs() {
+        let base_abs = baseline_error.abs();
+        let new_abs = new_error.abs();
+        baseline_magnitude_sum += base_abs;
+        if new_abs + EPSILON < base_abs {
             improved_count += 1;
+            improved_magnitude_sum += base_abs - new_abs;
         }
     }
 
     let improvement = finalise_improvement(total_baseline_error_sq, new_error_sq_sum);
-    (improvement, improved_count, samples.len() as u32)
+    let magnitude_ratio = finalise_magnitude_ratio(improved_magnitude_sum, baseline_magnitude_sum);
+    (
+        improvement,
+        improved_count,
+        samples.len() as u32,
+        magnitude_ratio,
+    )
 }
 
 /// Activation improvement with target function (ACTIVATION domain).
@@ -362,10 +440,13 @@ fn compute_activation_improvement_with_target(
     bias: f32,
     activation_fn: fn(f32) -> f32,
     target_fn: fn(f32) -> f32,
-) -> (f32, u32, u32) {
+) -> (f32, u32, u32, f32) {
     let mut baseline_error_sq_sum = 0.0f32;
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
+    // Issue #1161: magnitude-weighted improvement accumulators.
+    let mut baseline_magnitude_sum = 0.0f32;
+    let mut improved_magnitude_sum = 0.0f32;
 
     for sample in samples {
         let pre_activation = incoming_weight * sample.activation + bias;
@@ -393,13 +474,23 @@ fn compute_activation_improvement_with_target(
         let new_safe = select_finite(new_error);
         new_error_sq_sum += new_safe * new_safe;
 
-        if new_error.abs() + EPSILON < baseline_error.abs() {
+        let base_abs = baseline_error.abs();
+        let new_abs = new_error.abs();
+        baseline_magnitude_sum += base_abs;
+        if new_abs + EPSILON < base_abs {
             improved_count += 1;
+            improved_magnitude_sum += base_abs - new_abs;
         }
     }
 
     let improvement = finalise_improvement(baseline_error_sq_sum, new_error_sq_sum);
-    (improvement, improved_count, samples.len() as u32)
+    let magnitude_ratio = finalise_magnitude_ratio(improved_magnitude_sum, baseline_magnitude_sum);
+    (
+        improvement,
+        improved_count,
+        samples.len() as u32,
+        magnitude_ratio,
+    )
 }
 
 // =============================================================================
@@ -417,15 +508,19 @@ fn compute_activation_improvement_with_target(
 /// Issue #1075: Dispatches to specialised branchless variants based on the
 /// `TargetSimulationMode` to improve auto-vectorisation of the hot inner loop.
 ///
-/// Returns (`improvement_percentage`, `improved_count`, `worsened_count`, `total_count`)
+/// Returns (`improvement_percentage`, `improved_count`, `worsened_count`,
+/// `total_count`, `magnitude_ratio`).
+///
+/// Issue #1161: The fifth tuple element is the magnitude-weighted improvement
+/// ratio (see [`compute_relu_improvement_and_count`] for the exact formula).
 pub fn compute_synapse_improvement_and_count(
     samples: &[HelpfulSample],
     weight: f32,
     total_baseline_error_sq: f32,
     target_squash: Option<&str>,
-) -> (f32, u32, u32, u32) {
+) -> (f32, u32, u32, u32, f32) {
     if total_baseline_error_sq <= EPSILON || samples.is_empty() {
-        return (0.0, 0, 0, samples.len() as u32);
+        return (0.0, 0, 0, samples.len() as u32, 0.0);
     }
 
     let target_sim = get_target_simulation_mode(samples, target_squash);
@@ -453,10 +548,13 @@ fn compute_synapse_improvement_no_target(
     samples: &[HelpfulSample],
     weight: f32,
     total_baseline_error_sq: f32,
-) -> (f32, u32, u32, u32) {
+) -> (f32, u32, u32, u32, f32) {
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
     let mut worsened_count = 0u32;
+    // Issue #1161: magnitude-weighted improvement accumulators.
+    let mut baseline_magnitude_sum = 0.0f32;
+    let mut improved_magnitude_sum = 0.0f32;
 
     for sample in samples {
         let contribution = weight * sample.activation;
@@ -469,19 +567,23 @@ fn compute_synapse_improvement_no_target(
 
         let new_abs = new_error.abs();
         let base_abs = baseline_error.abs();
+        baseline_magnitude_sum += base_abs;
         if new_abs + EPSILON < base_abs {
             improved_count += 1;
+            improved_magnitude_sum += base_abs - new_abs;
         } else if new_abs > base_abs + EPSILON {
             worsened_count += 1;
         }
     }
 
     let improvement = finalise_improvement(total_baseline_error_sq, new_error_sq_sum);
+    let magnitude_ratio = finalise_magnitude_ratio(improved_magnitude_sum, baseline_magnitude_sum);
     (
         improvement,
         improved_count,
         worsened_count,
         samples.len() as u32,
+        magnitude_ratio,
     )
 }
 
@@ -494,11 +596,14 @@ fn compute_synapse_improvement_with_target(
     samples: &[HelpfulSample],
     weight: f32,
     target_fn: fn(f32) -> f32,
-) -> (f32, u32, u32, u32) {
+) -> (f32, u32, u32, u32, f32) {
     let mut baseline_error_sq_sum = 0.0f32;
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
     let mut worsened_count = 0u32;
+    // Issue #1161: magnitude-weighted improvement accumulators.
+    let mut baseline_magnitude_sum = 0.0f32;
+    let mut improved_magnitude_sum = 0.0f32;
 
     for sample in samples {
         let contribution = weight * sample.activation;
@@ -526,19 +631,23 @@ fn compute_synapse_improvement_with_target(
 
         let new_abs = new_error.abs();
         let base_abs = baseline_error.abs();
+        baseline_magnitude_sum += base_abs;
         if new_abs + EPSILON < base_abs {
             improved_count += 1;
+            improved_magnitude_sum += base_abs - new_abs;
         } else if new_abs > base_abs + EPSILON {
             worsened_count += 1;
         }
     }
 
     let improvement = finalise_improvement(baseline_error_sq_sum, new_error_sq_sum);
+    let magnitude_ratio = finalise_magnitude_ratio(improved_magnitude_sum, baseline_magnitude_sum);
     (
         improvement,
         improved_count,
         worsened_count,
         samples.len() as u32,
+        magnitude_ratio,
     )
 }
 
@@ -553,11 +662,14 @@ fn compute_synapse_improvement_approximate(
     weight: f32,
     target_fn: fn(f32) -> f32,
     inverse_fn: fn(f32) -> f32,
-) -> (f32, u32, u32, u32) {
+) -> (f32, u32, u32, u32, f32) {
     let mut baseline_error_sq_sum = 0.0f32;
     let mut new_error_sq_sum = 0.0f32;
     let mut improved_count = 0u32;
     let mut worsened_count = 0u32;
+    // Issue #1161: magnitude-weighted improvement accumulators.
+    let mut baseline_magnitude_sum = 0.0f32;
+    let mut improved_magnitude_sum = 0.0f32;
 
     for sample in samples {
         let contribution = weight * sample.activation;
@@ -584,18 +696,22 @@ fn compute_synapse_improvement_approximate(
 
         let new_abs = new_error.abs();
         let base_abs = baseline_error.abs();
+        baseline_magnitude_sum += base_abs;
         if new_abs + EPSILON < base_abs {
             improved_count += 1;
+            improved_magnitude_sum += base_abs - new_abs;
         } else if new_abs > base_abs + EPSILON {
             worsened_count += 1;
         }
     }
 
     let improvement = finalise_improvement(baseline_error_sq_sum, new_error_sq_sum);
+    let magnitude_ratio = finalise_magnitude_ratio(improved_magnitude_sum, baseline_magnitude_sum);
     (
         improvement,
         improved_count,
         worsened_count,
         samples.len() as u32,
+        magnitude_ratio,
     )
 }

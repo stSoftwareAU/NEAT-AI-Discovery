@@ -41,8 +41,8 @@ fn accept_reject_is_deterministic_threshold() {
 
     // Verify determinism: same inputs always produce same accept/reject decision
     let gain = 0.05_f32;
-    let result_a = apply_synapse_pessimism_discount(gain, 70, 100);
-    let result_b = apply_synapse_pessimism_discount(gain, 70, 100);
+    let result_a = apply_synapse_pessimism_discount(gain, 70, 100, None);
+    let result_b = apply_synapse_pessimism_discount(gain, 70, 100, None);
     assert_eq!(
         result_a, result_b,
         "Issue #1017: Pessimism discount must be deterministic (no random acceptance)"
@@ -56,8 +56,8 @@ fn accept_reject_is_deterministic_threshold() {
 fn zero_improvement_always_produces_zero_or_negative_gain() {
     // A candidate with 0 improved samples out of 100
     let gain = 0.0_f32;
-    let synapse = apply_synapse_pessimism_discount(gain, 0, 100);
-    let neuron = apply_neuron_pessimism_discount(gain, 0, 100);
+    let synapse = apply_synapse_pessimism_discount(gain, 0, 100, None);
+    let neuron = apply_neuron_pessimism_discount(gain, 0, 100, None);
     let generic = apply_pessimism_discount(gain, 0, 100);
 
     assert_eq!(
@@ -111,8 +111,8 @@ fn pessimism_discount_ordering_at_moderate_ratio() {
     let total = 100_u32;
 
     let generic = apply_pessimism_discount(gain, improved, total);
-    let neuron = apply_neuron_pessimism_discount(gain, improved, total);
-    let synapse = apply_synapse_pessimism_discount(gain, improved, total);
+    let neuron = apply_neuron_pessimism_discount(gain, improved, total, None);
+    let synapse = apply_synapse_pessimism_discount(gain, improved, total, None);
 
     assert!(
         synapse < neuron,
@@ -252,7 +252,7 @@ fn full_synapse_calibration_stack_reduces_prediction() {
     let total = 100_u32;
 
     // Step 1: Pessimism discount
-    let after_pessimism = apply_synapse_pessimism_discount(raw_gain, improved, total);
+    let after_pessimism = apply_synapse_pessimism_discount(raw_gain, improved, total, None);
     assert!(
         after_pessimism < raw_gain,
         "Issue #1017: Pessimism should reduce gain"
@@ -285,11 +285,11 @@ fn calibration_stack_is_stateless() {
     let total = 100_u32;
 
     let run1 = apply_prediction_calibration(
-        apply_synapse_pessimism_discount(gain, improved, total),
+        apply_synapse_pessimism_discount(gain, improved, total, None),
         SYNAPSE_PREDICTION_CALIBRATION,
     );
     let run2 = apply_prediction_calibration(
-        apply_synapse_pessimism_discount(gain, improved, total),
+        apply_synapse_pessimism_discount(gain, improved, total, None),
         SYNAPSE_PREDICTION_CALIBRATION,
     );
 

@@ -127,24 +127,27 @@ pub(crate) fn collect_and_process_helpful_results(
                 improved_count,
                 worsened_count,
                 total_count,
+                magnitude_ratio,
             ) = if let Some(old_weight) = work.existing_weight {
                 let Some((_new_weight, delta_weight)) =
                     clamp_weight_update_delta(old_weight, weight)
                 else {
                     continue;
                 };
-                let (improvement, improved, worsened, _) = compute_synapse_improvement_and_count(
-                    &work.samples,
-                    delta_weight,
-                    baseline_error_sq,
-                    target_squash,
-                );
+                let (improvement, improved, worsened, _, magnitude) =
+                    compute_synapse_improvement_and_count(
+                        &work.samples,
+                        delta_weight,
+                        baseline_error_sq,
+                        target_squash,
+                    );
                 (
                     delta_weight,
                     improvement,
                     improved,
                     worsened,
                     full_total_count,
+                    magnitude,
                 )
             } else {
                 // Issue #730: Multi-weight search for ALL new synapse candidates.
@@ -201,7 +204,7 @@ pub(crate) fn collect_and_process_helpful_results(
                         if clamped.abs() <= EPSILON {
                             continue;
                         }
-                        let (imp, _, _, _) = compute_synapse_improvement_and_count(
+                        let (imp, _, _, _, _) = compute_synapse_improvement_and_count(
                             &train_samples,
                             clamped,
                             train_baseline,
@@ -234,20 +237,28 @@ pub(crate) fn collect_and_process_helpful_results(
                     let validate_baseline = compute_baseline(&split.validate);
                     let val_total = validate_samples.len() as u32;
 
-                    let (val_imp, val_improved, val_worsened, _) =
+                    let (val_imp, val_improved, val_worsened, _, val_magnitude) =
                         compute_synapse_improvement_and_count(
                             &validate_samples,
                             best_weight,
                             validate_baseline,
                             target_squash,
                         );
-                    (best_weight, val_imp, val_improved, val_worsened, val_total)
+                    (
+                        best_weight,
+                        val_imp,
+                        val_improved,
+                        val_worsened,
+                        val_total,
+                        val_magnitude,
+                    )
                 } else {
                     // Fallback: below hold-out threshold, use all samples
                     let mut best_weight = weight;
                     let mut best_improvement = f32::NEG_INFINITY;
                     let mut best_improved = 0u32;
                     let mut best_worsened = 0u32;
+                    let mut best_magnitude = 0.0f32;
                     let mut accepted_count: u32 = 0;
 
                     for &w in &weight_candidates {
@@ -255,12 +266,13 @@ pub(crate) fn collect_and_process_helpful_results(
                         if clamped.abs() <= EPSILON {
                             continue;
                         }
-                        let (imp, improved, worsened, _) = compute_synapse_improvement_and_count(
-                            &work.samples,
-                            clamped,
-                            baseline_error_sq,
-                            target_squash,
-                        );
+                        let (imp, improved, worsened, _, magnitude) =
+                            compute_synapse_improvement_and_count(
+                                &work.samples,
+                                clamped,
+                                baseline_error_sq,
+                                target_squash,
+                            );
                         if imp > 0.0 {
                             accepted_count += 1;
                         }
@@ -269,6 +281,7 @@ pub(crate) fn collect_and_process_helpful_results(
                             best_weight = clamped;
                             best_improved = improved;
                             best_worsened = worsened;
+                            best_magnitude = magnitude;
                         }
                     }
 
@@ -291,6 +304,7 @@ pub(crate) fn collect_and_process_helpful_results(
                         best_improved,
                         best_worsened,
                         full_total_count,
+                        best_magnitude,
                     )
                 }
             };
@@ -514,6 +528,8 @@ pub(crate) fn collect_and_process_helpful_results(
                     expected_creature_score_gain: neuron_error_improvement,
                     improved_count,
                     total_count,
+                    // Issue #1161: magnitude-weighted ratio for downstream pessimism discounting.
+                    improvement_magnitude_ratio: Some(magnitude_ratio),
                     target_neuron_stats: target_stats,
                     outlier_reduction_info: None,
                     prediction_confidence: confidence_metrics.prediction_confidence,
@@ -613,6 +629,9 @@ pub(crate) fn process_harmful_batch_from_prepared(
             expected_creature_score_gain: neuron_error_improvement,
             improved_count: stats.harmful_count,
             total_count,
+            // Issue #1161: harmful path has no per-sample magnitude data, fall back to legacy
+            // (binary-only) discounting via `None`.
+            improvement_magnitude_ratio: None,
             target_neuron_stats: target_stats,
             outlier_reduction_info: None,
             prediction_confidence: confidence_metrics.prediction_confidence,

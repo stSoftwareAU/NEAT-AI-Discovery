@@ -110,7 +110,7 @@ pub(crate) fn expected_gain_replace_synapse_with_hidden_neuron(
     }
 
     if params.squash.eq_ignore_ascii_case("ReLU") {
-        let (improvement, _improved, _total) = compute_relu_improvement_and_count(
+        let (improvement, _improved, _total, _magnitude) = compute_relu_improvement_and_count(
             samples.as_slice(),
             params.incoming_weight,
             params.outgoing_weight,
@@ -141,7 +141,7 @@ pub(crate) fn expected_gain_replace_synapse_with_hidden_neuron(
         _ => return None,
     };
 
-    let (improvement, _improved, _total) = compute_activation_improvement_and_count(
+    let (improvement, _improved, _total, _magnitude) = compute_activation_improvement_and_count(
         samples.as_slice(),
         params.incoming_weight,
         params.outgoing_weight,

@@ -240,7 +240,7 @@ fn neuron_pessimism_more_aggressive_at_typical_ratio() {
     let improved_count = 50_u32;
     let total_count = 100_u32;
 
-    let discounted = apply_neuron_pessimism_discount(gain, improved_count, total_count);
+    let discounted = apply_neuron_pessimism_discount(gain, improved_count, total_count, None);
 
     // With floor=0.08, exponent=0.80, ratio=0.5:
     // adjusted = 0.5^0.80 ≈ 0.574
@@ -263,7 +263,7 @@ fn synapse_pessimism_more_aggressive_at_typical_ratio() {
     let improved_count = 50_u32;
     let total_count = 100_u32;
 
-    let discounted = apply_synapse_pessimism_discount(gain, improved_count, total_count);
+    let discounted = apply_synapse_pessimism_discount(gain, improved_count, total_count, None);
 
     // With floor=0.03, exponent=0.90, ratio=0.5:
     // adjusted = 0.5^0.90 ≈ 0.536
@@ -296,7 +296,8 @@ fn end_to_end_neuron_pipeline_realistic_range() {
     let total_count = 100_u32;
 
     // Step 1: Apply neuron pessimism discount
-    let after_pessimism = apply_neuron_pessimism_discount(raw_gain, improved_count, total_count);
+    let after_pessimism =
+        apply_neuron_pessimism_discount(raw_gain, improved_count, total_count, None);
 
     // Step 2: Apply logistic prediction calibration
     let after_calibration = apply_logistic_prediction_calibration(
@@ -335,7 +336,8 @@ fn end_to_end_synapse_pipeline_realistic_range() {
     let improved_count = 40_u32;
     let total_count = 100_u32;
 
-    let after_pessimism = apply_synapse_pessimism_discount(raw_gain, improved_count, total_count);
+    let after_pessimism =
+        apply_synapse_pessimism_discount(raw_gain, improved_count, total_count, None);
     let after_calibration = apply_logistic_prediction_calibration(
         after_pessimism,
         improved_count,

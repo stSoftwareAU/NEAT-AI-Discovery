@@ -74,14 +74,15 @@ fn prediction_matches_manual_simulation_linear_region() {
     );
 
     // Predict improvement using production function
-    let (predicted_improvement, improved_count, total_count) = compute_relu_improvement_and_count(
-        &samples,
-        incoming_weight,
-        outgoing_weight,
-        bias,
-        baseline_error_sq,
-        Some(test_hard_tanh),
-    );
+    let (predicted_improvement, improved_count, total_count, _) =
+        compute_relu_improvement_and_count(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            baseline_error_sq,
+            Some(test_hard_tanh),
+        );
 
     // MANUALLY simulate what the actual improvement would be
     // This is what TypeScript evaluation does
@@ -172,14 +173,15 @@ fn prediction_matches_manual_simulation_saturation_region() {
     );
 
     // Predict improvement
-    let (predicted_improvement, improved_count, total_count) = compute_relu_improvement_and_count(
-        &samples,
-        incoming_weight,
-        outgoing_weight,
-        bias,
-        baseline_error_sq,
-        Some(test_hard_tanh),
-    );
+    let (predicted_improvement, improved_count, total_count, _) =
+        compute_relu_improvement_and_count(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            baseline_error_sq,
+            Some(test_hard_tanh),
+        );
 
     // Manual simulation
     let mut manual_baseline_error_sq = 0.0f32;
@@ -261,14 +263,15 @@ fn prediction_matches_manual_simulation_negative_error() {
     );
 
     // Predict improvement
-    let (predicted_improvement, improved_count, total_count) = compute_relu_improvement_and_count(
-        &samples,
-        incoming_weight,
-        outgoing_weight,
-        bias,
-        baseline_error_sq,
-        Some(test_hard_tanh),
-    );
+    let (predicted_improvement, improved_count, total_count, _) =
+        compute_relu_improvement_and_count(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            baseline_error_sq,
+            Some(test_hard_tanh),
+        );
 
     // Manual simulation
     let mut manual_baseline_error_sq = 0.0f32;
@@ -386,14 +389,15 @@ fn prediction_matches_manual_simulation_mixed_errors() {
     );
 
     // Predict improvement
-    let (predicted_improvement, improved_count, total_count) = compute_relu_improvement_and_count(
-        &samples,
-        incoming_weight,
-        outgoing_weight,
-        bias,
-        baseline_error_sq,
-        Some(test_hard_tanh),
-    );
+    let (predicted_improvement, improved_count, total_count, _) =
+        compute_relu_improvement_and_count(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            baseline_error_sq,
+            Some(test_hard_tanh),
+        );
 
     // Manual simulation
     let mut manual_baseline_error_sq = 0.0f32;
@@ -483,14 +487,15 @@ fn prediction_matches_simulated_typescript_evaluation() {
     let bias = 0.0;
 
     // Predict improvement (what Rust returns)
-    let (predicted_improvement, _improved_count, _total_count) = compute_relu_improvement_and_count(
-        &samples,
-        incoming_weight,
-        outgoing_weight,
-        bias,
-        baseline_error_sq,
-        Some(test_hard_tanh),
-    );
+    let (predicted_improvement, _improved_count, _total_count, _) =
+        compute_relu_improvement_and_count(
+            &samples,
+            incoming_weight,
+            outgoing_weight,
+            bias,
+            baseline_error_sq,
+            Some(test_hard_tanh),
+        );
 
     // Simulate TypeScript evaluation
     // TypeScript computes: actualErrorReduction = originalError - candidateError

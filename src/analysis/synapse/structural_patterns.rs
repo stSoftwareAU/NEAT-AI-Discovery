@@ -177,7 +177,7 @@ pub(crate) fn detect_noisy_vs_trusted(
             // Move the noisy weight onto the trusted input:
             // Δoutput = w_noisy * (trusted - noisy)
             let moved_weight = noisy.weight;
-            let (improvement, _, _, _) = compute_synapse_improvement_and_count(
+            let (improvement, _, _, _, _) = compute_synapse_improvement_and_count(
                 delta_samples.as_slice(),
                 moved_weight,
                 baseline_sq,
@@ -368,7 +368,7 @@ pub(crate) fn detect_collapsible_hidden_neurons(
             continue;
         };
 
-        let (improvement, _improved, _worsened, _total) =
+        let (improvement, _improved, _worsened, _total, _magnitude) =
             compute_synapse_improvement_and_count(&samples, weight, baseline_sq, None);
         if improvement <= 0.0 {
             continue;

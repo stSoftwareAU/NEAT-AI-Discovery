@@ -77,7 +77,7 @@ fn synapse_pessimism_more_aggressive_at_all_moderate_ratios() {
     // Test at various ratios from 5% to 95%
     for improved in (5..=95).step_by(5) {
         let generic_result = apply_pessimism_discount(gain, improved, 100);
-        let synapse_result = apply_synapse_pessimism_discount(gain, improved, 100);
+        let synapse_result = apply_synapse_pessimism_discount(gain, improved, 100, None);
 
         assert!(
             synapse_result <= generic_result,
@@ -91,7 +91,7 @@ fn synapse_pessimism_more_aggressive_at_all_moderate_ratios() {
 #[test]
 fn synapse_pessimism_full_ratio_gives_full_gain() {
     let gain = 0.10;
-    let result = apply_synapse_pessimism_discount(gain, 100, 100);
+    let result = apply_synapse_pessimism_discount(gain, 100, 100, None);
     assert!(
         (result - gain).abs() < 1e-6,
         "Issue #789: All samples improved should give full gain: expected {gain}, got {result}"
@@ -102,9 +102,9 @@ fn synapse_pessimism_full_ratio_gives_full_gain() {
 #[test]
 fn synapse_pessimism_monotonically_increasing() {
     let gain = 0.10;
-    let mut prev = apply_synapse_pessimism_discount(gain, 0, 100);
+    let mut prev = apply_synapse_pessimism_discount(gain, 0, 100, None);
     for improved in (5..=100).step_by(5) {
-        let current = apply_synapse_pessimism_discount(gain, improved, 100);
+        let current = apply_synapse_pessimism_discount(gain, improved, 100, None);
         assert!(
             current >= prev - 1e-7,
             "Issue #789: Synapse discount should be monotonically non-decreasing: \
@@ -118,7 +118,7 @@ fn synapse_pessimism_monotonically_increasing() {
 #[test]
 fn synapse_pessimism_zero_total_gives_floor() {
     let gain = 0.10;
-    let result = apply_synapse_pessimism_discount(gain, 0, 0);
+    let result = apply_synapse_pessimism_discount(gain, 0, 0, None);
     let expected = gain * SYNAPSE_PESSIMISM_DISCOUNT_FLOOR;
     assert!(
         (result - expected).abs() < 1e-6,
@@ -133,7 +133,7 @@ fn synapse_pessimism_practical_difference() {
     let gain = 0.02; // Typical small synapse gain
 
     let generic_discounted = apply_pessimism_discount(gain, 60, 100);
-    let synapse_discounted = apply_synapse_pessimism_discount(gain, 60, 100);
+    let synapse_discounted = apply_synapse_pessimism_discount(gain, 60, 100, None);
 
     assert!(
         synapse_discounted < generic_discounted,

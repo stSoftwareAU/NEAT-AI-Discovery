@@ -27,7 +27,7 @@ pub(crate) fn compute_net_improvement_with_squash(
     target_squash: Option<&str>,
 ) -> f32 {
     let target_activation_fn = get_target_simulation_fn(samples, target_squash);
-    let (improvement, _, _) = compute_relu_improvement_and_count(
+    let (improvement, _, _, _) = compute_relu_improvement_and_count(
         samples,
         incoming_weight,
         outgoing_weight,
@@ -138,7 +138,7 @@ pub(crate) fn count_improved_samples(
 ) -> (u32, u32) {
     let total_baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
     let target_activation_fn = get_target_simulation_fn(samples, target_squash);
-    let (_, improved, total) = compute_relu_improvement_and_count(
+    let (_, improved, total, _) = compute_relu_improvement_and_count(
         samples,
         incoming_weight,
         outgoing_weight,

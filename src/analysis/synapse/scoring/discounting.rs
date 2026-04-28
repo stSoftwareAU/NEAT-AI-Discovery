@@ -15,6 +15,63 @@ use crate::analysis::constants::{
 // Pessimism Discount (Issue #506)
 // =============================================================================
 
+/// Combine the binary `improved_ratio` with the magnitude-weighted ratio
+/// (Issue #1161) so that 76% of samples improving by noise-level amounts no
+/// longer scores like 76% of samples improving meaningfully.
+///
+/// The combined ratio is the geometric mean
+/// `sqrt(improved_ratio × magnitude_ratio)` when `magnitude_ratio` is provided.
+/// When the magnitude ratio is `None` (legacy callers, or paths that have not
+/// computed it), the function falls back to the binary `improved_ratio` to
+/// preserve the previous behaviour.
+///
+/// The geometric mean is chosen because it strongly penalises imbalanced
+/// signals: a candidate where 76% of samples improve but only by ~0% of the
+/// baseline magnitude collapses to ≈ 0.0, while a candidate where both signals
+/// agree at 0.7 stays at 0.7.
+///
+/// `magnitude_ratio` values that are negative or NaN are clamped to `0.0` so
+/// callers cannot accidentally produce non-finite discounts.
+#[inline]
+fn combined_ratio(improved_ratio: f32, magnitude_ratio: Option<f32>) -> f32 {
+    match magnitude_ratio {
+        Some(m) => {
+            let safe_m = if m.is_finite() { m.max(0.0) } else { 0.0 };
+            (improved_ratio.max(0.0) * safe_m).sqrt()
+        }
+        None => improved_ratio,
+    }
+}
+
+/// Scale the pessimism floor by the magnitude ratio when one is supplied
+/// (Issue #1161).
+///
+/// The legacy floor (`base_floor`) is the minimum discount that would otherwise
+/// guarantee gain × `base_floor` for any non-empty sample set. For noise-level
+/// candidates whose magnitude ratio is ≈ 0, this floor masks the underlying
+/// signal that the candidate's improvements are not meaningful — discounted
+/// gains stay at ≥ `base_floor` × gain even when the actual error reduction is
+/// negligible. Multiplying the floor by the magnitude ratio collapses it to
+/// near-zero exactly when the candidate's improvements are noise-level, so the
+/// final discount can fall below the legacy floor and reach < 1% of the input
+/// gain (issue #1160 acceptance criterion).
+///
+/// `None` magnitude ratio preserves the legacy floor unchanged.
+#[inline]
+fn effective_floor(base_floor: f32, magnitude_ratio: Option<f32>) -> f32 {
+    match magnitude_ratio {
+        Some(m) => {
+            let safe_m = if m.is_finite() {
+                m.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            base_floor * safe_m
+        }
+        None => base_floor,
+    }
+}
+
 /// Apply a pessimism discount to an expected score gain based on sample improvement ratio.
 ///
 /// Production data (creature b2ff6e45) showed that raw improvement percentages
@@ -65,20 +122,41 @@ pub fn apply_pessimism_discount(gain: f32, improved_count: u32, total_count: u32
 ///
 /// ## Formula
 ///
+/// Issue #1161: The binary `improved_ratio` is combined with a
+/// magnitude-weighted ratio via geometric mean before raising to the pessimism
+/// exponent. This collapses the score for candidates where many samples
+/// improve by noise-level amounts (high binary ratio, low magnitude ratio)
+/// while preserving credit for candidates whose improvements are both broad
+/// and substantial.
+///
 /// ```text
-/// improved_ratio = improved_count / total_count
-/// adjusted_ratio = improved_ratio ^ NEURON_PESSIMISM_CURVE_EXPONENT
-/// discount = NEURON_PESSIMISM_DISCOUNT_FLOOR + (1 - NEURON_PESSIMISM_DISCOUNT_FLOOR) × adjusted_ratio
-/// result = gain × discount
+/// improved_ratio   = improved_count / total_count
+/// combined_ratio   = sqrt(improved_ratio × magnitude_ratio)        # if magnitude is supplied
+/// adjusted_ratio   = combined_ratio ^ NEURON_PESSIMISM_CURVE_EXPONENT
+/// discount         = NEURON_PESSIMISM_DISCOUNT_FLOOR
+///                  + (1 - NEURON_PESSIMISM_DISCOUNT_FLOOR) × adjusted_ratio
+/// result           = gain × discount
 /// ```
-pub fn apply_neuron_pessimism_discount(gain: f32, improved_count: u32, total_count: u32) -> f32 {
+///
+/// `improvement_magnitude_ratio` of `None` falls back to the legacy behaviour
+/// (binary ratio only) so callers that have not yet been updated keep their
+/// previous discount.
+pub fn apply_neuron_pessimism_discount(
+    gain: f32,
+    improved_count: u32,
+    total_count: u32,
+    improvement_magnitude_ratio: Option<f32>,
+) -> f32 {
     if total_count == 0 {
         return gain * NEURON_PESSIMISM_DISCOUNT_FLOOR;
     }
     let improved_ratio = improved_count as f32 / total_count as f32;
-    let adjusted_ratio = improved_ratio.powf(NEURON_PESSIMISM_CURVE_EXPONENT);
-    let discount =
-        NEURON_PESSIMISM_DISCOUNT_FLOOR + (1.0 - NEURON_PESSIMISM_DISCOUNT_FLOOR) * adjusted_ratio;
+    let combined = combined_ratio(improved_ratio, improvement_magnitude_ratio);
+    let adjusted_ratio = combined.powf(NEURON_PESSIMISM_CURVE_EXPONENT);
+    // Issue #1161: scale the floor by the magnitude ratio so noise-level
+    // candidates (low magnitude) can be discounted below the legacy floor.
+    let floor = effective_floor(NEURON_PESSIMISM_DISCOUNT_FLOOR, improvement_magnitude_ratio);
+    let discount = floor + (1.0 - floor) * adjusted_ratio;
     gain * discount
 }
 
@@ -97,20 +175,38 @@ pub fn apply_neuron_pessimism_discount(gain: f32, improved_count: u32, total_cou
 ///
 /// ## Formula
 ///
+/// Issue #1161: The binary `improved_ratio` is combined with the
+/// magnitude-weighted ratio via geometric mean before raising to the pessimism
+/// exponent (see [`apply_neuron_pessimism_discount`] for the detailed
+/// description and rationale).
+///
 /// ```text
-/// improved_ratio = improved_count / total_count
-/// adjusted_ratio = improved_ratio ^ SYNAPSE_PESSIMISM_CURVE_EXPONENT
-/// discount = SYNAPSE_PESSIMISM_DISCOUNT_FLOOR + (1 - SYNAPSE_PESSIMISM_DISCOUNT_FLOOR) × adjusted_ratio
-/// result = gain × discount
+/// improved_ratio   = improved_count / total_count
+/// combined_ratio   = sqrt(improved_ratio × magnitude_ratio)        # if magnitude is supplied
+/// adjusted_ratio   = combined_ratio ^ SYNAPSE_PESSIMISM_CURVE_EXPONENT
+/// discount         = SYNAPSE_PESSIMISM_DISCOUNT_FLOOR
+///                  + (1 - SYNAPSE_PESSIMISM_DISCOUNT_FLOOR) × adjusted_ratio
+/// result           = gain × discount
 /// ```
-pub fn apply_synapse_pessimism_discount(gain: f32, improved_count: u32, total_count: u32) -> f32 {
+pub fn apply_synapse_pessimism_discount(
+    gain: f32,
+    improved_count: u32,
+    total_count: u32,
+    improvement_magnitude_ratio: Option<f32>,
+) -> f32 {
     if total_count == 0 {
         return gain * SYNAPSE_PESSIMISM_DISCOUNT_FLOOR;
     }
     let improved_ratio = improved_count as f32 / total_count as f32;
-    let adjusted_ratio = improved_ratio.powf(SYNAPSE_PESSIMISM_CURVE_EXPONENT);
-    let discount = SYNAPSE_PESSIMISM_DISCOUNT_FLOOR
-        + (1.0 - SYNAPSE_PESSIMISM_DISCOUNT_FLOOR) * adjusted_ratio;
+    let combined = combined_ratio(improved_ratio, improvement_magnitude_ratio);
+    let adjusted_ratio = combined.powf(SYNAPSE_PESSIMISM_CURVE_EXPONENT);
+    // Issue #1161: scale the floor by the magnitude ratio so noise-level
+    // candidates (low magnitude) can be discounted below the legacy floor.
+    let floor = effective_floor(
+        SYNAPSE_PESSIMISM_DISCOUNT_FLOOR,
+        improvement_magnitude_ratio,
+    );
+    let discount = floor + (1.0 - floor) * adjusted_ratio;
     gain * discount
 }
 

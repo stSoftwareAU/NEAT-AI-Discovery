@@ -76,6 +76,7 @@ fn create_synapse_candidates(count: usize) -> Vec<CandidateSynapseJson> {
             expected_creature_score_gain: 0.05 - (i as f32) * 0.00003,
             improved_count: (100 - i as u32 % 50),
             total_count: 200,
+            improvement_magnitude_ratio: None,
             target_neuron_stats: Some(NeuronStatsJson {
                 mean_error: 0.1,
                 error_variance: 0.02,
@@ -112,6 +113,7 @@ fn create_neuron_candidates(count: usize) -> Vec<CandidateNeuronJson> {
             expected_creature_score_gain: 0.04,
             improved_count: 80,
             total_count: 200,
+            improvement_magnitude_ratio: None,
             target_neuron_stats: None,
             prediction_confidence: 0.75,
             expected_score_gain_confidence_interval: [0.01, 0.07],

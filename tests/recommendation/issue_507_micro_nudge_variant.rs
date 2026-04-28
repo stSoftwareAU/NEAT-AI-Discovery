@@ -37,6 +37,7 @@ fn make_extreme_candidate(
         expected_creature_score_gain: 0.2,
         improved_count: 10,
         total_count: 20,
+        improvement_magnitude_ratio: None,
         target_neuron_stats: None,
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
