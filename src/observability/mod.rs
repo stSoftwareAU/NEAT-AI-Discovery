@@ -22,6 +22,7 @@
 //! | `NEAT_AI_DISCOVERY_TIMING` | `1` | Print phase timing to stderr |
 //! | `NEAT_AI_DISCOVERY_PROFILE` | `json` | Output structured profile as JSON |
 //! | `NEAT_AI_DISCOVERY_GPU_METRICS` | `1` | Print GPU metrics to stderr |
+//! | `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | f32 (>1) | Threshold (default 10) above which prediction-vs-actual mismatches are logged via `tracing::warn!` (Issue #1165) |
 
 pub mod gpu_metrics;
 pub mod phase_timer;
