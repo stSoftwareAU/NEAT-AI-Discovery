@@ -184,16 +184,21 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
 
             // For non-linear targets, search for best outgoing_weight
             let target_activation_fn = get_target_simulation_fn(samples, params.target_squash);
-            let (outgoing_weight, optimal_bias, neuron_error_improvement, final_improved_count) =
-                if spec.name == "IDENTITY" {
-                    let (outgoing_weight, optimal_bias) =
-                        match calculate_optimal_identity_outgoing_and_bias(samples, incoming_weight)
-                        {
-                            Some((w, b)) => (w, b),
-                            None => continue,
-                        };
+            let (
+                outgoing_weight,
+                optimal_bias,
+                neuron_error_improvement,
+                final_improved_count,
+                final_magnitude_ratio,
+            ) = if spec.name == "IDENTITY" {
+                let (outgoing_weight, optimal_bias) =
+                    match calculate_optimal_identity_outgoing_and_bias(samples, incoming_weight) {
+                        Some((w, b)) => (w, b),
+                        None => continue,
+                    };
 
-                    let (improvement, improved_count, _) = compute_activation_improvement_and_count(
+                let (improvement, improved_count, _, magnitude_ratio) =
+                    compute_activation_improvement_and_count(
                         samples,
                         incoming_weight,
                         outgoing_weight,
@@ -203,194 +208,209 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                         target_activation_fn,
                     );
 
-                    (outgoing_weight, optimal_bias, improvement, improved_count)
-                } else if target_activation_fn.is_some() {
-                    // Issue #905: Use activation-aware weight calculation
-                    let base_weight = match calculate_activation_aware_outgoing_weight(
-                        sum_error_activation,
-                        sum_activation_sq,
-                        incoming_weight,
-                        spec.name,
-                    ) {
-                        Some(w) => w,
-                        None => continue,
-                    };
+                (
+                    outgoing_weight,
+                    optimal_bias,
+                    improvement,
+                    improved_count,
+                    magnitude_ratio,
+                )
+            } else if target_activation_fn.is_some() {
+                // Issue #905: Use activation-aware weight calculation
+                let base_weight = match calculate_activation_aware_outgoing_weight(
+                    sum_error_activation,
+                    sum_activation_sq,
+                    incoming_weight,
+                    spec.name,
+                ) {
+                    Some(w) => w,
+                    None => continue,
+                };
 
-                    // Weight candidates: base weight and scaled versions
-                    let weight_candidates: [f32; 9] = [
-                        base_weight * 0.1,
-                        base_weight * 0.25,
-                        base_weight * 0.5,
-                        base_weight * 0.75,
-                        base_weight,
-                        base_weight * 1.5,
-                        base_weight * 2.0,
-                        -base_weight * 0.5,
-                        -base_weight,
-                    ];
+                // Weight candidates: base weight and scaled versions
+                let weight_candidates: [f32; 9] = [
+                    base_weight * 0.1,
+                    base_weight * 0.25,
+                    base_weight * 0.5,
+                    base_weight * 0.75,
+                    base_weight,
+                    base_weight * 1.5,
+                    base_weight * 2.0,
+                    -base_weight * 0.5,
+                    -base_weight,
+                ];
 
-                    // Issue #893: Hold-out validation to combat overfitting from the
-                    // 9-variant search. Select weight on training samples, report
-                    // improvement on held-out validation samples.
-                    use crate::analysis::synapse::holdout_validation::{
-                        baseline_error_sq as compute_baseline, collect_samples,
-                        split_samples_holdout,
-                    };
+                // Issue #893: Hold-out validation to combat overfitting from the
+                // 9-variant search. Select weight on training samples, report
+                // improvement on held-out validation samples.
+                use crate::analysis::synapse::holdout_validation::{
+                    baseline_error_sq as compute_baseline, collect_samples, split_samples_holdout,
+                };
 
-                    if let Some(split) =
-                        split_samples_holdout(samples, params.source_uuid, params.target_uuid)
-                    {
-                        // Phase 1: Select best weight+bias using training samples only
-                        let train_samples = collect_samples(&split.train);
-                        let train_baseline = compute_baseline(&split.train);
+                if let Some(split) =
+                    split_samples_holdout(samples, params.source_uuid, params.target_uuid)
+                {
+                    // Phase 1: Select best weight+bias using training samples only
+                    let train_samples = collect_samples(&split.train);
+                    let train_baseline = compute_baseline(&split.train);
 
-                        let mut best_weight = base_weight;
-                        let mut best_bias = 0.0f32;
-                        let mut best_train_improvement = f32::NEG_INFINITY;
+                    let mut best_weight = base_weight;
+                    let mut best_bias = 0.0f32;
+                    let mut best_train_improvement = f32::NEG_INFINITY;
 
-                        let max_out = max_outgoing_weight_for_activation(spec.name);
-                        for &weight in &weight_candidates {
-                            let clamped_weight = weight.clamp(-max_out, max_out);
-                            if clamped_weight.abs() <= EPSILON {
-                                continue;
-                            }
+                    let max_out = max_outgoing_weight_for_activation(spec.name);
+                    for &weight in &weight_candidates {
+                        let clamped_weight = weight.clamp(-max_out, max_out);
+                        if clamped_weight.abs() <= EPSILON {
+                            continue;
+                        }
 
-                            let bias = calculate_optimal_bias(
-                                &train_samples,
-                                incoming_weight,
-                                clamped_weight,
-                                spec.activation,
-                                spec.name,
-                                None,
-                                params.target_squash,
-                            );
+                        let bias = calculate_optimal_bias(
+                            &train_samples,
+                            incoming_weight,
+                            clamped_weight,
+                            spec.activation,
+                            spec.name,
+                            None,
+                            params.target_squash,
+                        );
 
-                            let (improvement, _, _) = compute_activation_improvement_and_count(
-                                &train_samples,
+                        let (improvement, _, _, _) = compute_activation_improvement_and_count(
+                            &train_samples,
+                            incoming_weight,
+                            clamped_weight,
+                            bias,
+                            spec.activation,
+                            train_baseline,
+                            target_activation_fn,
+                        );
+
+                        if improvement > best_train_improvement {
+                            best_train_improvement = improvement;
+                            best_weight = clamped_weight;
+                            best_bias = bias;
+                        }
+                    }
+
+                    // Phase 2: Report improvement on validation samples only
+                    let validate_samples = collect_samples(&split.validate);
+                    let validate_baseline = compute_baseline(&split.validate);
+
+                    let (val_improvement, val_improved, _, val_magnitude_ratio) =
+                        compute_activation_improvement_and_count(
+                            &validate_samples,
+                            incoming_weight,
+                            best_weight,
+                            best_bias,
+                            spec.activation,
+                            validate_baseline,
+                            target_activation_fn,
+                        );
+
+                    (
+                        best_weight,
+                        best_bias,
+                        val_improvement,
+                        val_improved,
+                        val_magnitude_ratio,
+                    )
+                } else {
+                    // Fallback: below hold-out threshold, use all samples
+                    let mut best_weight = base_weight;
+                    let mut best_bias = 0.0f32;
+                    let mut best_improvement = f32::NEG_INFINITY;
+                    let mut best_improved_count = 0u32;
+                    let mut best_magnitude_ratio = 0.0f32;
+
+                    let max_out_fb = max_outgoing_weight_for_activation(spec.name);
+                    for &weight in &weight_candidates {
+                        let clamped_weight = weight.clamp(-max_out_fb, max_out_fb);
+                        if clamped_weight.abs() <= EPSILON {
+                            continue;
+                        }
+
+                        let bias = calculate_optimal_bias(
+                            samples,
+                            incoming_weight,
+                            clamped_weight,
+                            spec.activation,
+                            spec.name,
+                            None,
+                            params.target_squash,
+                        );
+
+                        let (improvement, improved, _, magnitude_ratio) =
+                            compute_activation_improvement_and_count(
+                                samples,
                                 incoming_weight,
                                 clamped_weight,
                                 bias,
                                 spec.activation,
-                                train_baseline,
+                                baseline_sq,
                                 target_activation_fn,
                             );
 
-                            if improvement > best_train_improvement {
-                                best_train_improvement = improvement;
-                                best_weight = clamped_weight;
-                                best_bias = bias;
-                            }
-                        }
-
-                        // Phase 2: Report improvement on validation samples only
-                        let validate_samples = collect_samples(&split.validate);
-                        let validate_baseline = compute_baseline(&split.validate);
-
-                        let (val_improvement, val_improved, _) =
-                            compute_activation_improvement_and_count(
-                                &validate_samples,
-                                incoming_weight,
-                                best_weight,
-                                best_bias,
-                                spec.activation,
-                                validate_baseline,
-                                target_activation_fn,
-                            );
-
-                        (best_weight, best_bias, val_improvement, val_improved)
-                    } else {
-                        // Fallback: below hold-out threshold, use all samples
-                        let mut best_weight = base_weight;
-                        let mut best_bias = 0.0f32;
-                        let mut best_improvement = f32::NEG_INFINITY;
-                        let mut best_improved_count = 0u32;
-
-                        let max_out_fb = max_outgoing_weight_for_activation(spec.name);
-                        for &weight in &weight_candidates {
-                            let clamped_weight = weight.clamp(-max_out_fb, max_out_fb);
-                            if clamped_weight.abs() <= EPSILON {
-                                continue;
-                            }
-
-                            let bias = calculate_optimal_bias(
-                                samples,
-                                incoming_weight,
-                                clamped_weight,
-                                spec.activation,
-                                spec.name,
-                                None,
-                                params.target_squash,
-                            );
-
-                            let (improvement, improved, _) =
-                                compute_activation_improvement_and_count(
-                                    samples,
-                                    incoming_weight,
-                                    clamped_weight,
-                                    bias,
-                                    spec.activation,
-                                    baseline_sq,
-                                    target_activation_fn,
-                                );
-
-                            if improvement > best_improvement {
-                                best_improvement = improvement;
-                                best_weight = clamped_weight;
-                                best_bias = bias;
-                                best_improved_count = improved;
-                            }
-                        }
-
-                        (
-                            best_weight,
-                            best_bias,
-                            best_improvement,
-                            best_improved_count,
-                        )
-                    }
-                } else {
-                    // Issue #905: Use activation-aware weight calculation
-                    let base_weight = match calculate_activation_aware_outgoing_weight(
-                        sum_error_activation,
-                        sum_activation_sq,
-                        incoming_weight,
-                        spec.name,
-                    ) {
-                        Some(w) => w,
-                        None => continue,
-                    };
-
-                    let optimal_bias = calculate_optimal_bias(
-                        samples,
-                        incoming_weight,
-                        base_weight,
-                        spec.activation,
-                        spec.name,
-                        None,
-                        params.target_squash,
-                    );
-
-                    // CRITICAL FIX: Recompute optimal weight WITH the bias included.
-                    let mut sum_activation_sq_with_bias = 0.0f32;
-                    let mut sum_error_activation_with_bias = 0.0f32;
-                    for sample in samples {
-                        let pre_activation = incoming_weight * sample.activation + optimal_bias;
-                        let output = (spec.activation)(pre_activation);
-                        if output.is_finite() {
-                            sum_activation_sq_with_bias += output * output;
-                            sum_error_activation_with_bias += output * sample.avg_error;
+                        if improvement > best_improvement {
+                            best_improvement = improvement;
+                            best_weight = clamped_weight;
+                            best_bias = bias;
+                            best_improved_count = improved;
+                            best_magnitude_ratio = magnitude_ratio;
                         }
                     }
-                    // Issue #905: Use activation-aware function for bias-adjusted weight
-                    let outgoing_weight = calculate_activation_aware_outgoing_weight(
-                        sum_error_activation_with_bias,
-                        sum_activation_sq_with_bias,
-                        incoming_weight,
-                        spec.name,
+
+                    (
+                        best_weight,
+                        best_bias,
+                        best_improvement,
+                        best_improved_count,
+                        best_magnitude_ratio,
                     )
-                    .unwrap_or(base_weight);
+                }
+            } else {
+                // Issue #905: Use activation-aware weight calculation
+                let base_weight = match calculate_activation_aware_outgoing_weight(
+                    sum_error_activation,
+                    sum_activation_sq,
+                    incoming_weight,
+                    spec.name,
+                ) {
+                    Some(w) => w,
+                    None => continue,
+                };
 
-                    let (improvement, improved_count, _) = compute_activation_improvement_and_count(
+                let optimal_bias = calculate_optimal_bias(
+                    samples,
+                    incoming_weight,
+                    base_weight,
+                    spec.activation,
+                    spec.name,
+                    None,
+                    params.target_squash,
+                );
+
+                // CRITICAL FIX: Recompute optimal weight WITH the bias included.
+                let mut sum_activation_sq_with_bias = 0.0f32;
+                let mut sum_error_activation_with_bias = 0.0f32;
+                for sample in samples {
+                    let pre_activation = incoming_weight * sample.activation + optimal_bias;
+                    let output = (spec.activation)(pre_activation);
+                    if output.is_finite() {
+                        sum_activation_sq_with_bias += output * output;
+                        sum_error_activation_with_bias += output * sample.avg_error;
+                    }
+                }
+                // Issue #905: Use activation-aware function for bias-adjusted weight
+                let outgoing_weight = calculate_activation_aware_outgoing_weight(
+                    sum_error_activation_with_bias,
+                    sum_activation_sq_with_bias,
+                    incoming_weight,
+                    spec.name,
+                )
+                .unwrap_or(base_weight);
+
+                let (improvement, improved_count, _, magnitude_ratio) =
+                    compute_activation_improvement_and_count(
                         samples,
                         incoming_weight,
                         outgoing_weight,
@@ -400,8 +420,14 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                         None, // Linear approximation
                     );
 
-                    (outgoing_weight, optimal_bias, improvement, improved_count)
-                };
+                (
+                    outgoing_weight,
+                    optimal_bias,
+                    improvement,
+                    improved_count,
+                    magnitude_ratio,
+                )
+            };
 
             // Skip invalid weights
             if outgoing_weight.abs() <= EPSILON {
@@ -463,6 +489,8 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                     expected_creature_score_gain: neuron_error_improvement,
                     improved_count: final_improved_count,
                     total_count,
+                    // Issue #1161: magnitude-weighted ratio for downstream pessimism discounting.
+                    improvement_magnitude_ratio: Some(final_magnitude_ratio),
                     target_neuron_stats: target_stats,
                     prediction_confidence: confidence_metrics.prediction_confidence,
                     expected_score_gain_confidence_interval: confidence_metrics
@@ -497,6 +525,8 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                     expected_creature_score_gain: neuron_error_improvement,
                     improved_count: final_improved_count,
                     total_count,
+                    // Issue #1161: magnitude-weighted ratio for downstream pessimism discounting.
+                    improvement_magnitude_ratio: Some(final_magnitude_ratio),
                     target_neuron_stats: target_stats,
                     prediction_confidence: confidence_metrics.prediction_confidence,
                     expected_score_gain_confidence_interval: confidence_metrics

@@ -38,6 +38,18 @@ pub struct CandidateSynapseJson {
     pub expected_creature_score_gain: f32,
     pub improved_count: u32,
     pub total_count: u32,
+    /// Magnitude-weighted improvement ratio in `[0, 1]` (Issue #1161).
+    ///
+    /// Whereas `improved_count / total_count` only counts whether a sample
+    /// improved (binary), this ratio measures *by how much* each sample
+    /// improved relative to its baseline error magnitude. A population of
+    /// noise-level reductions yields a near-zero ratio, while a population
+    /// of substantial reductions approaches 1.0.
+    ///
+    /// Internal-only: skipped from the FFI/JSON wire schema. `None` means the
+    /// metric was not computed for this candidate (legacy paths).
+    #[serde(skip)]
+    pub improvement_magnitude_ratio: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_neuron_stats: Option<NeuronStatsJson>,
     /// Information about how this candidate affects outlier samples (Issue #192).
@@ -214,6 +226,12 @@ pub struct CandidateNeuronJson {
     pub expected_creature_score_gain: f32,
     pub improved_count: u32,
     pub total_count: u32,
+    /// Magnitude-weighted improvement ratio in `[0, 1]` (Issue #1161).
+    ///
+    /// See [`CandidateSynapseJson::improvement_magnitude_ratio`] for the full
+    /// description. Internal-only: skipped from the FFI/JSON wire schema.
+    #[serde(skip)]
+    pub improvement_magnitude_ratio: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_neuron_stats: Option<NeuronStatsJson>,
     /// Overall confidence score for this prediction (Issue #194).

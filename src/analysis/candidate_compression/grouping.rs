@@ -72,6 +72,7 @@ mod tests {
             expected_creature_score_gain: gain,
             improved_count: 80,
             total_count: 100,
+            improvement_magnitude_ratio: None,
             target_neuron_stats: None,
             outlier_reduction_info: None,
             prediction_confidence: 0.8,

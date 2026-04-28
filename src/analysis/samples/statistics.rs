@@ -372,6 +372,9 @@ impl ReluStats {
             expected_creature_score_gain: expected_improvement,
             improved_count,
             total_count,
+            // Issue #1161: legacy ReLU stats path doesn't compute magnitude data; let
+            // discounting fall back to the legacy binary-only behaviour.
+            improvement_magnitude_ratio: None,
             target_neuron_stats: target_stats,
             prediction_confidence: confidence_metrics.prediction_confidence,
             expected_score_gain_confidence_interval: confidence_metrics

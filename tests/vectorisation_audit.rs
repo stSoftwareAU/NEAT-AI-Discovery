@@ -194,7 +194,7 @@ fn test_soa_synapse_improvement_matches_aos_value_domain() {
         let baseline = compute_baseline_error_sq(&samples);
         let weight = 0.35;
 
-        let (aos_imp, aos_improved, aos_worsened, aos_total) =
+        let (aos_imp, aos_improved, aos_worsened, aos_total, _) =
             compute_synapse_improvement_and_count(&samples, weight, baseline, None);
 
         let activations: Vec<f32> = samples.iter().map(|s| s.activation).collect();

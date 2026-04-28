@@ -41,7 +41,7 @@ fn relu_improvement_with_target_simulation_uses_safe_access() {
 
     let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
 
-    let (improvement, improved_count, total_count) = compute_relu_improvement_and_count(
+    let (improvement, improved_count, total_count, _) = compute_relu_improvement_and_count(
         &samples,
         1.0, // incoming_weight
         0.2, // outgoing_weight
@@ -75,11 +75,11 @@ fn relu_improvement_target_simulation_activation_domain() {
     let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
 
     // Without target simulation (linear approximation)
-    let (improvement_linear, _, _) =
+    let (improvement_linear, _, _, _) =
         compute_relu_improvement_and_count(&samples, 1.0, 0.3, 0.0, baseline_error_sq, None);
 
     // With target simulation (saturation-aware)
-    let (improvement_sim, _, _) = compute_relu_improvement_and_count(
+    let (improvement_sim, _, _, _) = compute_relu_improvement_and_count(
         &samples,
         1.0,
         0.3,
@@ -124,7 +124,7 @@ fn activation_improvement_with_target_simulation_uses_safe_access() {
 
     let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
 
-    let (improvement, improved_count, total_count) = compute_activation_improvement_and_count(
+    let (improvement, improved_count, total_count, _) = compute_activation_improvement_and_count(
         &samples,
         1.0,           // incoming_weight
         0.2,           // outgoing_weight
@@ -157,7 +157,7 @@ fn activation_improvement_target_simulation_near_saturation() {
     let baseline_error_sq: f32 = samples.iter().map(|s| s.avg_error.powi(2)).sum();
 
     // Without target simulation
-    let (improvement_linear, _, _) = compute_activation_improvement_and_count(
+    let (improvement_linear, _, _, _) = compute_activation_improvement_and_count(
         &samples,
         1.0,
         0.3,
@@ -168,7 +168,7 @@ fn activation_improvement_target_simulation_near_saturation() {
     );
 
     // With target simulation
-    let (improvement_sim, _, _) = compute_activation_improvement_and_count(
+    let (improvement_sim, _, _, _) = compute_activation_improvement_and_count(
         &samples,
         1.0,
         0.3,

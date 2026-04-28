@@ -132,7 +132,7 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
             }
 
             // CRITICAL: Evaluate NET improvement across ALL samples
-            let (net_improvement, improved_count, total_count) =
+            let (net_improvement, improved_count, total_count, magnitude_ratio) =
                 compute_activation_improvement_and_count(
                     params.all_samples,
                     incoming_weight,
@@ -193,6 +193,8 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
                     expected_creature_score_gain: net_improvement,
                     improved_count,
                     total_count,
+                    // Issue #1161: magnitude-weighted ratio for downstream pessimism discounting.
+                    improvement_magnitude_ratio: Some(magnitude_ratio),
                     target_neuron_stats: target_stats,
                     prediction_confidence: confidence_metrics.prediction_confidence,
                     expected_score_gain_confidence_interval: confidence_metrics

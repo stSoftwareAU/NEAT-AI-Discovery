@@ -108,7 +108,7 @@ fn test_issue_413_positive_correlation_gives_positive_improvement() {
     let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
     let weight = compute_linear_optimal_weight(&samples);
 
-    let (improvement, improved, _worsened, total) =
+    let (improvement, improved, _worsened, total, _) =
         compute_synapse_improvement_and_count(&samples, weight, baseline_sq, None);
 
     assert!(
@@ -144,7 +144,7 @@ fn test_issue_413_negative_correlation_gives_positive_improvement() {
         "Anti-correlated source should have negative weight"
     );
 
-    let (improvement, improved, _worsened, total) =
+    let (improvement, improved, _worsened, total, _) =
         compute_synapse_improvement_and_count(&samples, weight, baseline_sq, None);
 
     assert!(
@@ -176,7 +176,7 @@ fn test_issue_413_hard_tanh_saturated_no_inversion() {
     let weight = compute_linear_optimal_weight(&samples);
 
     // With saturation-aware simulation, prediction should NOT be inverted
-    let (improvement, _improved, _worsened, _total) =
+    let (improvement, _improved, _worsened, _total, _) =
         compute_synapse_improvement_and_count(&samples, weight, baseline_sq, Some("HARD_TANH"));
 
     assert!(
@@ -204,7 +204,7 @@ fn test_issue_413_deeply_saturated_not_inverted() {
     let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
     let weight = compute_linear_optimal_weight(&samples);
 
-    let (improvement, _improved, _worsened, _total) =
+    let (improvement, _improved, _worsened, _total, _) =
         compute_synapse_improvement_and_count(&samples, weight, baseline_sq, Some("HARD_TANH"));
 
     assert!(
@@ -233,9 +233,9 @@ fn test_issue_413_prediction_sign_consistency_in_linear_region() {
     let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
     let weight = compute_linear_optimal_weight(&samples);
 
-    let (linear_imp, _, _, _) =
+    let (linear_imp, _, _, _, _) =
         compute_synapse_improvement_and_count(&samples, weight, baseline_sq, None);
-    let (sat_imp, _, _, _) =
+    let (sat_imp, _, _, _, _) =
         compute_synapse_improvement_and_count(&samples, weight, baseline_sq, Some("HARD_TANH"));
 
     assert!(
@@ -277,7 +277,7 @@ fn test_issue_413_weight_search_finds_non_negative_for_saturated_target() {
         if w.abs() <= EPSILON {
             continue;
         }
-        let (imp, _, _, _) =
+        let (imp, _, _, _, _) =
             compute_synapse_improvement_and_count(&samples, w, baseline_sq, Some("HARD_TANH"));
         if imp > best_improvement {
             best_improvement = imp;
@@ -335,7 +335,7 @@ fn test_issue_413_uncorrelated_source_near_zero_improvement() {
     let baseline_sq: f32 = samples.iter().map(|s| s.avg_error * s.avg_error).sum();
     let weight = compute_linear_optimal_weight(&samples);
 
-    let (improvement, _, _, _) =
+    let (improvement, _, _, _, _) =
         compute_synapse_improvement_and_count(&samples, weight, baseline_sq, None);
 
     assert!(
@@ -375,7 +375,7 @@ fn test_issue_730_multi_weight_search_finds_better_improvement() {
     let optimal_weight = compute_linear_optimal_weight(&samples);
 
     // Single weight evaluation
-    let (single_imp, _, _, _) =
+    let (single_imp, _, _, _, _) =
         compute_synapse_improvement_and_count(&samples, optimal_weight, baseline_sq, None);
 
     // Multi-weight search
@@ -387,7 +387,8 @@ fn test_issue_730_multi_weight_search_finds_better_improvement() {
         if w.abs() <= EPSILON {
             continue;
         }
-        let (imp, _, _, _) = compute_synapse_improvement_and_count(&samples, w, baseline_sq, None);
+        let (imp, _, _, _, _) =
+            compute_synapse_improvement_and_count(&samples, w, baseline_sq, None);
         if imp > best_improvement {
             best_improvement = imp;
         }
@@ -421,7 +422,7 @@ fn test_issue_730_multi_weight_improves_ratio() {
     let optimal_weight = compute_linear_optimal_weight(&samples);
 
     // Single weight
-    let (_, single_improved, single_worsened, _) =
+    let (_, single_improved, single_worsened, _, _) =
         compute_synapse_improvement_and_count(&samples, optimal_weight, baseline_sq, None);
 
     // Multi-weight: find best by improvement
@@ -435,7 +436,7 @@ fn test_issue_730_multi_weight_improves_ratio() {
         if w.abs() <= EPSILON {
             continue;
         }
-        let (imp, improved, worsened, _) =
+        let (imp, improved, worsened, _, _) =
             compute_synapse_improvement_and_count(&samples, w, baseline_sq, None);
         if imp > best_imp {
             best_imp = imp;
@@ -480,7 +481,7 @@ fn test_issue_730_worsened_exceeds_improved_poor_score() {
     // the overall improvement should be low
     let test_weights = [0.01f32, 0.05, 0.1, -0.01, -0.05, -0.1];
     for &w in &test_weights {
-        let (improvement, improved, worsened, _) =
+        let (improvement, improved, worsened, _, _) =
             compute_synapse_improvement_and_count(&samples, w, baseline_sq, None);
 
         if worsened > improved {

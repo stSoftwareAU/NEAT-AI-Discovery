@@ -63,7 +63,7 @@ fn neuron_pessimism_more_aggressive_at_all_moderate_ratios() {
     // Test at various ratios from 5% to 95%
     for improved in (5..=95).step_by(5) {
         let synapse_result = apply_pessimism_discount(gain, improved, 100);
-        let neuron_result = apply_neuron_pessimism_discount(gain, improved, 100);
+        let neuron_result = apply_neuron_pessimism_discount(gain, improved, 100, None);
 
         assert!(
             neuron_result <= synapse_result,
@@ -77,7 +77,7 @@ fn neuron_pessimism_more_aggressive_at_all_moderate_ratios() {
 #[test]
 fn neuron_pessimism_full_ratio_gives_full_gain() {
     let gain = 0.10;
-    let result = apply_neuron_pessimism_discount(gain, 100, 100);
+    let result = apply_neuron_pessimism_discount(gain, 100, 100, None);
     assert!(
         (result - gain).abs() < 1e-6,
         "Issue #791: All samples improved should give full gain: expected {gain}, got {result}"
@@ -88,9 +88,9 @@ fn neuron_pessimism_full_ratio_gives_full_gain() {
 #[test]
 fn neuron_pessimism_monotonically_increasing() {
     let gain = 0.10;
-    let mut prev = apply_neuron_pessimism_discount(gain, 0, 100);
+    let mut prev = apply_neuron_pessimism_discount(gain, 0, 100, None);
     for improved in (5..=100).step_by(5) {
-        let current = apply_neuron_pessimism_discount(gain, improved, 100);
+        let current = apply_neuron_pessimism_discount(gain, improved, 100, None);
         assert!(
             current >= prev - 1e-7,
             "Issue #791: Neuron discount should be monotonically non-decreasing: \
@@ -104,7 +104,7 @@ fn neuron_pessimism_monotonically_increasing() {
 #[test]
 fn neuron_pessimism_zero_total_gives_floor() {
     let gain = 0.10;
-    let result = apply_neuron_pessimism_discount(gain, 0, 0);
+    let result = apply_neuron_pessimism_discount(gain, 0, 0, None);
     let expected = gain * NEURON_PESSIMISM_DISCOUNT_FLOOR;
     assert!(
         (result - expected).abs() < 1e-6,
@@ -119,7 +119,7 @@ fn neuron_pessimism_practical_difference() {
     let gain = 0.02; // Typical small add-neuron gain
 
     let synapse_discounted = apply_pessimism_discount(gain, 45, 100);
-    let neuron_discounted = apply_neuron_pessimism_discount(gain, 45, 100);
+    let neuron_discounted = apply_neuron_pessimism_discount(gain, 45, 100, None);
 
     assert!(
         neuron_discounted < synapse_discounted,

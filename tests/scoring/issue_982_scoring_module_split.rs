@@ -88,7 +88,7 @@ fn test_pessimism_discount_accessible_after_split() {
 /// Verify `apply_neuron_pessimism_discount` is accessible.
 #[test]
 fn test_neuron_pessimism_discount_accessible_after_split() {
-    let discounted = apply_neuron_pessimism_discount(1.0, 5, 10);
+    let discounted = apply_neuron_pessimism_discount(1.0, 5, 10, None);
     assert!(
         discounted < 1.0,
         "Neuron pessimism discount should reduce gain, got {discounted}"
@@ -98,7 +98,7 @@ fn test_neuron_pessimism_discount_accessible_after_split() {
 /// Verify `apply_synapse_pessimism_discount` is accessible.
 #[test]
 fn test_synapse_pessimism_discount_accessible_after_split() {
-    let discounted = apply_synapse_pessimism_discount(1.0, 5, 10);
+    let discounted = apply_synapse_pessimism_discount(1.0, 5, 10, None);
     assert!(
         discounted < 1.0,
         "Synapse pessimism discount should reduce gain, got {discounted}"
@@ -124,8 +124,8 @@ fn test_prediction_calibration_accessible_after_split() {
 #[test]
 fn test_discount_ordering_preserved_after_split() {
     let generic = apply_pessimism_discount(1.0, 5, 10);
-    let neuron = apply_neuron_pessimism_discount(1.0, 5, 10);
-    let synapse = apply_synapse_pessimism_discount(1.0, 5, 10);
+    let neuron = apply_neuron_pessimism_discount(1.0, 5, 10, None);
+    let synapse = apply_synapse_pessimism_discount(1.0, 5, 10, None);
 
     assert!(
         synapse <= neuron,

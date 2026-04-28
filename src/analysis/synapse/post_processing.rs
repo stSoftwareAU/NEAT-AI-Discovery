@@ -177,6 +177,8 @@ fn apply_impact_to_helpful(
         candidate.expected_creature_score_gain,
         candidate.improved_count,
         candidate.total_count,
+        // Issue #1161: combine the binary improved-ratio with the magnitude-weighted ratio.
+        candidate.improvement_magnitude_ratio,
     );
 
     // Issue #467: Apply source-type prioritisation boost for input-neuron sources.
@@ -254,6 +256,8 @@ fn apply_impact_to_harmful(
         candidate.expected_creature_score_gain,
         candidate.improved_count,
         candidate.total_count,
+        // Issue #1161: combine the binary improved-ratio with the magnitude-weighted ratio.
+        candidate.improvement_magnitude_ratio,
     );
 
     // Issue #1056: Apply logistic prediction calibration to harmful candidates.

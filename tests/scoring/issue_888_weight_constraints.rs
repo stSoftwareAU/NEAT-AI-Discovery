@@ -62,6 +62,7 @@ fn make_test_candidate(incoming: f32, outgoing: f32, bias: f32) -> CandidateNeur
         expected_creature_score_gain: 0.01,
         improved_count: 10,
         total_count: 20,
+        improvement_magnitude_ratio: None,
         target_neuron_stats: None,
         prediction_confidence: 0.5,
         expected_score_gain_confidence_interval: [0.005, 0.015],
