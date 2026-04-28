@@ -77,7 +77,9 @@ pub(crate) use variant_generation::sensible_bias_abs_max_for_squash;
 pub use variant_generation::{
     filter_candidates_to_sensible_ranges, pair_coordinated_structural_with_weight_variants,
     pair_extreme_candidates_with_conservative_variants,
+    pair_extreme_candidates_with_conservative_variants_calibrated,
     pair_synapse_candidates_with_weight_variants,
+    pair_synapse_candidates_with_weight_variants_calibrated,
 };
 
 /// Check if verbose logging is enabled. Result is cached for performance.

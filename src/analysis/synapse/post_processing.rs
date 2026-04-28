@@ -480,10 +480,14 @@ pub(crate) fn apply_post_processing(
     // Issue #513: Generate weight variants for helpful synapse candidates.
     // Each candidate gets conservative (0.5×), gentle-nudge (0.25×), and micro-nudge (0.1×)
     // weight variants. This maximises the pay-off from the expensive discovery process.
-    *helpful_results = crate::analysis::utils::pair_synapse_candidates_with_weight_variants(
-        std::mem::take(helpful_results),
-        input.max_candidates,
-    );
+    // Issue #1163: pass the per-variant calibration so the effective
+    // expected-improvement multiplier is `min(static, calibrated)`.
+    *helpful_results =
+        crate::analysis::utils::pair_synapse_candidates_with_weight_variants_calibrated(
+            std::mem::take(helpful_results),
+            input.max_candidates,
+            Some(&calibration_correction),
+        );
 
     // Issue #510: Generate conservative weight variants for coordinated-structural candidates.
     // AddSynapse weights are scaled to 0.2× (conservative), 0.1× (gentle nudge), 0.05× (micro-nudge).

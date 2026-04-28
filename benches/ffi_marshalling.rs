@@ -91,6 +91,7 @@ fn create_synapse_candidates(count: usize) -> Vec<CandidateSynapseJson> {
             prediction_confidence: 0.85,
             expected_score_gain_confidence_interval: [0.01, 0.09],
             comment: Some(format!("candidate-{i}")),
+            variant_key: None,
         })
         .collect()
 }
@@ -118,6 +119,7 @@ fn create_neuron_candidates(count: usize) -> Vec<CandidateNeuronJson> {
             prediction_confidence: 0.75,
             expected_score_gain_confidence_interval: [0.01, 0.07],
             target_saturation_factor: None,
+            variant_key: None,
         })
         .collect()
 }

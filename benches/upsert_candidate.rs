@@ -33,6 +33,7 @@ fn make_candidate(source_idx: usize, target_idx: usize, squash: &str) -> Candida
         prediction_confidence: 0.5,
         expected_score_gain_confidence_interval: [0.01, 0.09],
         target_saturation_factor: None,
+        variant_key: None,
     }
 }
 

@@ -78,6 +78,16 @@ pub struct CandidateSynapseJson {
     /// comment lists which variants were included.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Stable variant identifier (Issue #1163).
+    ///
+    /// When a synapse candidate is produced by `variant_generation`, this
+    /// field carries the canonical variant key (e.g., `gentle-nudge`,
+    /// `micro-nudge`, `conservative`) — the canonical identifier the
+    /// failure-cache calibrator groups by. The `comment` string remains
+    /// human-readable; `variant_key` is the machine-readable label.
+    /// `None` for original (non-variant) candidates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant_key: Option<String>,
 }
 
 /// Candidate to update the weight of an existing synapse (delta-based).
@@ -254,6 +264,16 @@ pub struct CandidateNeuronJson {
     /// Candidates targeting near-saturated neurons have reduced expected gains.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_saturation_factor: Option<f32>,
+    /// Stable variant identifier (Issue #1163).
+    ///
+    /// When an add-neuron candidate is produced by `variant_generation`, this
+    /// field carries the canonical variant key (e.g., `gentle-nudge`,
+    /// `micro-nudge`, `conservative`, `feather-touch`, `whisper`) — the
+    /// canonical identifier the failure-cache calibrator groups by. The
+    /// `comment` string remains human-readable; `variant_key` is the
+    /// machine-readable label. `None` for original (non-variant) candidates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

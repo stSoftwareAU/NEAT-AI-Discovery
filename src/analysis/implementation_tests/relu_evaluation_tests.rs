@@ -203,6 +203,7 @@ fn test_upsert_keeps_complementary_relu_candidates_by_incoming_weight() {
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     };
 
     // Negative-orientation ReLU candidate
@@ -226,6 +227,7 @@ fn test_upsert_keeps_complementary_relu_candidates_by_incoming_weight() {
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     };
 
     // Insert both candidates
@@ -285,6 +287,7 @@ fn test_upsert_keeps_split_error_complementary_pairs() {
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     };
 
     // Candidate for negative-error samples (negative outgoing weight)
@@ -308,6 +311,7 @@ fn test_upsert_keeps_split_error_complementary_pairs() {
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     };
 
     // Insert both candidates

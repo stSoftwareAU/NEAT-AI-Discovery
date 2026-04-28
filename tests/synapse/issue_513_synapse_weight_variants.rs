@@ -33,6 +33,7 @@ fn make_synapse_candidate(
         prediction_confidence: 0.8,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         comment: None,
+        variant_key: None,
     }
 }
 

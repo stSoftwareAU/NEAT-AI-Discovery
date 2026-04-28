@@ -117,6 +117,7 @@ fn twenty_over_estimations_clamp_to_minimum_correction() {
             expected_error_reduction: 0.001,
             actual_error_reduction: 0.000_001,
             target_squash: None,
+            variant_key: None,
         })
         .collect();
     let correction = CalibrationCorrection::from_failure_cache(&cache);
@@ -154,6 +155,7 @@ fn analyze_all_exposes_calibration_corrections_in_metadata() {
                 expected_error_reduction: 0.001,
                 actual_error_reduction: 0.000_001,
                 target_squash: None,
+                variant_key: None,
             });
         }
     }
@@ -242,6 +244,7 @@ fn calibration_corrections_are_deterministic() {
             // Vary slightly so the EWMA is a non-trivial value.
             actual_error_reduction: 0.002 + (i as f32) * 0.000_05,
             target_squash: None,
+            variant_key: None,
         })
         .collect();
 

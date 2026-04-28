@@ -425,6 +425,7 @@ mod tests {
             prediction_confidence: 0.5,
             expected_score_gain_confidence_interval: [0.005, 0.015],
             comment: None,
+            variant_key: None,
         }
     }
 

@@ -92,6 +92,17 @@ pub const CALIBRATION_CORRECTION_EWMA_ALPHA: f32 = 0.3;
 /// to the per-`change_type` correction.
 pub const MIN_SPECIFIC_TARGET_SQUASH_SAMPLES: usize = 3;
 
+/// Minimum number of usable failure-cache entries required for a
+/// `(change_type, variant_key)` group before its specific correction is
+/// applied to variant generators (Issue #1163).
+///
+/// Three entries is the same threshold as
+/// [`MIN_SPECIFIC_TARGET_SQUASH_SAMPLES`]: enough to establish a per-variant
+/// trend without letting a single noisy outlier dominate the static
+/// `expected_multiplier`. Smaller groups fall through to the static value
+/// (the issue specifies the static multiplier as a ceiling).
+pub const MIN_SPECIFIC_VARIANT_KEY_SAMPLES: usize = 3;
+
 // =============================================================================
 // Change-type identifiers
 // =============================================================================
@@ -142,6 +153,16 @@ pub struct FailureCacheEntry {
     /// compatibility (Issue #1162).
     #[serde(default)]
     pub target_squash: Option<String>,
+
+    /// Variant key identifying which `variant_generation` strategy produced
+    /// the candidate (Issue #1163).
+    ///
+    /// When supplied this lets the calibration learn that, say, the
+    /// `gentle-nudge` neuron variant against a particular history of
+    /// failures should have its static `expected_multiplier` discounted.
+    /// `None` for legacy entries and for original (non-variant) candidates.
+    #[serde(default)]
+    pub variant_key: Option<String>,
 }
 
 /// Wire-format helper for [`FailureCacheEntry`] (Issue #1162).
@@ -159,6 +180,10 @@ struct FailureCacheEntryRaw {
     target_neuron_info: Option<TargetNeuronInfoRaw>,
     #[serde(default)]
     target_squash: Option<String>,
+    #[serde(default)]
+    variant_key: Option<String>,
+    #[serde(default)]
+    variant_info: Option<VariantInfoRaw>,
 }
 
 #[derive(Deserialize)]
@@ -168,6 +193,18 @@ struct TargetNeuronInfoRaw {
     squash: Option<String>,
 }
 
+/// Wire-format helper for nested `variantInfo.key` payloads (Issue #1163).
+///
+/// The upstream NEAT-AI emitter may nest the variant identifier under a
+/// `variantInfo` object. This struct lets us accept either layout while the
+/// in-memory [`FailureCacheEntry`] keeps a flat `variant_key`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VariantInfoRaw {
+    #[serde(default)]
+    key: Option<String>,
+}
+
 impl From<FailureCacheEntryRaw> for FailureCacheEntry {
     fn from(raw: FailureCacheEntryRaw) -> Self {
         // Prefer an explicit top-level `targetSquash`, fall back to the
@@ -175,11 +212,17 @@ impl From<FailureCacheEntryRaw> for FailureCacheEntry {
         let target_squash = raw
             .target_squash
             .or_else(|| raw.target_neuron_info.and_then(|info| info.squash));
+        // Issue #1163: prefer top-level `variantKey`, fall back to
+        // `variantInfo.key`. Both are optional for backward compatibility.
+        let variant_key = raw
+            .variant_key
+            .or_else(|| raw.variant_info.and_then(|info| info.key));
         Self {
             change_type: raw.change_type,
             expected_error_reduction: raw.expected_error_reduction,
             actual_error_reduction: raw.actual_error_reduction,
             target_squash,
+            variant_key,
         }
     }
 }
@@ -210,6 +253,10 @@ impl From<FailureCacheEntryRaw> for FailureCacheEntry {
 pub struct CalibrationCorrection {
     corrections: HashMap<String, f32>,
     specific_corrections: HashMap<(String, String), f32>,
+    /// Per-variant corrections keyed by `(change_type, variant_key)`
+    /// (Issue #1163). Only populated for groups with at least
+    /// [`MIN_SPECIFIC_VARIANT_KEY_SAMPLES`] usable entries.
+    variant_corrections: HashMap<(String, String), f32>,
 }
 
 impl CalibrationCorrection {
@@ -245,6 +292,8 @@ impl CalibrationCorrection {
         // group so the EWMA reflects oldest -> newest.
         let mut grouped: HashMap<&str, Vec<f32>> = HashMap::new();
         let mut grouped_specific: HashMap<(&str, &str), Vec<f32>> = HashMap::new();
+        // Issue #1163: per-variant grouping keyed by (change_type, variant_key).
+        let mut grouped_variant: HashMap<(&str, &str), Vec<f32>> = HashMap::new();
         for entry in cache {
             // Skip entries with undefined ratios.
             if entry.expected_error_reduction == 0.0 {
@@ -262,6 +311,12 @@ impl CalibrationCorrection {
             if let Some(squash) = entry.target_squash.as_deref() {
                 grouped_specific
                     .entry((entry.change_type.as_str(), squash))
+                    .or_default()
+                    .push(ratio);
+            }
+            if let Some(variant) = entry.variant_key.as_deref() {
+                grouped_variant
+                    .entry((entry.change_type.as_str(), variant))
                     .or_default()
                     .push(ratio);
             }
@@ -287,9 +342,23 @@ impl CalibrationCorrection {
             specific_corrections.insert((change_type.to_string(), squash.to_string()), clamped);
         }
 
+        let mut variant_corrections: HashMap<(String, String), f32> = HashMap::new();
+        for ((change_type, variant), ratios) in grouped_variant {
+            // Issue #1163: only retain per-variant corrections backed by enough
+            // samples; smaller groups fall through to the static multiplier
+            // ceiling at lookup time.
+            if ratios.len() < MIN_SPECIFIC_VARIANT_KEY_SAMPLES {
+                continue;
+            }
+            let ewma = ewma(&ratios, CALIBRATION_CORRECTION_EWMA_ALPHA);
+            let clamped = ewma.clamp(MIN_CALIBRATION_CORRECTION, NEUTRAL_CORRECTION);
+            variant_corrections.insert((change_type.to_string(), variant.to_string()), clamped);
+        }
+
         Self {
             corrections,
             specific_corrections,
+            variant_corrections,
         }
     }
 
@@ -352,6 +421,36 @@ impl CalibrationCorrection {
         &self.specific_corrections
     }
 
+    /// Returns a reference to the per-(`change_type`, `variant_key`) map
+    /// (Issue #1163). Exposed for diagnostic tests; the FFI metadata only
+    /// includes the per-`change_type` map for backward compatibility.
+    #[must_use]
+    pub fn variant_as_map(&self) -> &HashMap<(String, String), f32> {
+        &self.variant_corrections
+    }
+
+    /// Look up the per-variant correction factor (Issue #1163).
+    ///
+    /// Resolution:
+    ///
+    /// 1. If `variant_key` is supplied **and** at least
+    ///    [`MIN_SPECIFIC_VARIANT_KEY_SAMPLES`] usable failure-cache entries
+    ///    exist for `(change_type, variant_key)`, return that calibrated
+    ///    correction.
+    /// 2. Otherwise return [`NEUTRAL_CORRECTION`] (= 1.0). This neutral value
+    ///    means the static `expected_multiplier` is used unchanged at the
+    ///    call site (the issue specifies the static value as a ceiling).
+    ///
+    /// Callers wanting the per-variant correction combined with the static
+    /// multiplier should compute `min(static, variant_correction_for(...))`.
+    #[must_use]
+    pub fn variant_correction_for(&self, change_type: &str, variant_key: &str) -> f32 {
+        self.variant_corrections
+            .get(&(change_type.to_string(), variant_key.to_string()))
+            .copied()
+            .unwrap_or(NEUTRAL_CORRECTION)
+    }
+
     /// True when no change-type has a correction recorded.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -393,6 +492,7 @@ mod tests {
             expected_error_reduction: predicted,
             actual_error_reduction: actual,
             target_squash: None,
+            variant_key: None,
         }
     }
 
@@ -407,6 +507,22 @@ mod tests {
             expected_error_reduction: predicted,
             actual_error_reduction: actual,
             target_squash: Some(squash.to_string()),
+            variant_key: None,
+        }
+    }
+
+    fn entry_with_variant(
+        change_type: &str,
+        predicted: f32,
+        actual: f32,
+        variant: &str,
+    ) -> FailureCacheEntry {
+        FailureCacheEntry {
+            change_type: change_type.to_string(),
+            expected_error_reduction: predicted,
+            actual_error_reduction: actual,
+            target_squash: None,
+            variant_key: Some(variant.to_string()),
         }
     }
 
@@ -709,6 +825,154 @@ mod tests {
         assert!(
             (value - NEUTRAL_CORRECTION).abs() < 1e-9,
             "expected NEUTRAL_CORRECTION, got {value}"
+        );
+    }
+
+    // =========================================================================
+    // Issue #1163 — per-(change_type, variant_key) calibration tracking
+    // =========================================================================
+
+    #[test]
+    fn variant_key_parsed_from_top_level_field() {
+        // Top-level `variantKey` should be honoured.
+        let json = r#"{
+            "changeType": "add-neurons",
+            "expectedErrorReduction": 0.001,
+            "actualErrorReduction": 0.000001,
+            "variantKey": "gentle-nudge"
+        }"#;
+        let parsed: FailureCacheEntry = serde_json::from_str(json).expect("parse");
+        assert_eq!(parsed.variant_key.as_deref(), Some("gentle-nudge"));
+    }
+
+    #[test]
+    fn variant_key_parsed_from_nested_variant_info() {
+        // Nested `variantInfo.key` is also accepted (Issue #1163).
+        let json = r#"{
+            "changeType": "add-neurons",
+            "expectedErrorReduction": 0.001,
+            "actualErrorReduction": 0.000001,
+            "variantInfo": { "key": "micro-nudge" }
+        }"#;
+        let parsed: FailureCacheEntry = serde_json::from_str(json).expect("parse");
+        assert_eq!(parsed.variant_key.as_deref(), Some("micro-nudge"));
+    }
+
+    #[test]
+    fn variant_key_optional_for_legacy_entries() {
+        // Entries without any variant identifier must still parse.
+        let json = r#"{
+            "changeType": "add-neurons",
+            "expectedErrorReduction": 0.001,
+            "actualErrorReduction": 0.000001
+        }"#;
+        let parsed: FailureCacheEntry = serde_json::from_str(json).expect("parse");
+        assert!(parsed.variant_key.is_none());
+    }
+
+    #[test]
+    fn variant_correction_neutral_when_no_history() {
+        // No variant history -> neutral so the static multiplier wins.
+        let correction = CalibrationCorrection::neutral();
+        let value = correction.variant_correction_for(CHANGE_TYPE_ADD_NEURONS, "gentle-nudge");
+        assert!(
+            (value - NEUTRAL_CORRECTION).abs() < 1e-9,
+            "expected NEUTRAL_CORRECTION, got {value}"
+        );
+    }
+
+    #[test]
+    fn insufficient_variant_history_falls_back_to_neutral() {
+        // Fewer than MIN_SPECIFIC_VARIANT_KEY_SAMPLES variant entries — no
+        // calibrated value should be retained.
+        const _: () = assert!(MIN_SPECIFIC_VARIANT_KEY_SAMPLES >= 2);
+        let mut cache = Vec::new();
+        for _ in 0..(MIN_SPECIFIC_VARIANT_KEY_SAMPLES - 1) {
+            cache.push(entry_with_variant(
+                CHANGE_TYPE_ADD_NEURONS,
+                1.0,
+                0.001,
+                "gentle-nudge",
+            ));
+        }
+        let correction = CalibrationCorrection::from_failure_cache(&cache);
+        assert!(
+            correction.variant_as_map().is_empty(),
+            "variant corrections must not be retained below the sample threshold"
+        );
+        let lookup = correction.variant_correction_for(CHANGE_TYPE_ADD_NEURONS, "gentle-nudge");
+        assert!(
+            (lookup - NEUTRAL_CORRECTION).abs() < 1e-9,
+            "expected NEUTRAL_CORRECTION fallback, got {lookup}"
+        );
+    }
+
+    #[test]
+    fn long_variant_failure_history_drives_calibrated_value() {
+        // 10 SELU-against-Gentle-Nudge failures with 1000× over-estimation should
+        // produce a calibrated value at the floor (0.001).
+        let cache: Vec<FailureCacheEntry> = (0..10)
+            .map(|_| entry_with_variant(CHANGE_TYPE_ADD_NEURONS, 0.001, 0.000_001, "gentle-nudge"))
+            .collect();
+        let correction = CalibrationCorrection::from_failure_cache(&cache);
+        let value = correction.variant_correction_for(CHANGE_TYPE_ADD_NEURONS, "gentle-nudge");
+        assert!(
+            (value - MIN_CALIBRATION_CORRECTION).abs() < 1e-6,
+            "expected MIN_CALIBRATION_CORRECTION, got {value}"
+        );
+    }
+
+    #[test]
+    fn long_variant_success_history_clamps_at_neutral() {
+        // A run where every variant outcome over-shot the prediction must be
+        // clamped to NEUTRAL_CORRECTION (= 1.0). The calibrated value never
+        // inflates predictions above the static `expected_multiplier` ceiling.
+        let cache: Vec<FailureCacheEntry> = (0..10)
+            .map(|_| entry_with_variant(CHANGE_TYPE_ADD_NEURONS, 0.001, 0.01, "gentle-nudge"))
+            .collect();
+        let correction = CalibrationCorrection::from_failure_cache(&cache);
+        let value = correction.variant_correction_for(CHANGE_TYPE_ADD_NEURONS, "gentle-nudge");
+        assert!(
+            (value - NEUTRAL_CORRECTION).abs() < 1e-9,
+            "expected NEUTRAL_CORRECTION ceiling, got {value}"
+        );
+    }
+
+    #[test]
+    fn variant_key_buckets_are_independent() {
+        // Two variants for the same change_type must keep separate corrections.
+        let mut cache = Vec::new();
+        for _ in 0..MIN_SPECIFIC_VARIANT_KEY_SAMPLES {
+            cache.push(entry_with_variant(
+                CHANGE_TYPE_ADD_NEURONS,
+                1.0,
+                0.001,
+                "gentle-nudge",
+            ));
+        }
+        for _ in 0..MIN_SPECIFIC_VARIANT_KEY_SAMPLES {
+            cache.push(entry_with_variant(
+                CHANGE_TYPE_ADD_NEURONS,
+                1.0,
+                0.5,
+                "conservative",
+            ));
+        }
+        let correction = CalibrationCorrection::from_failure_cache(&cache);
+        let gentle = correction.variant_correction_for(CHANGE_TYPE_ADD_NEURONS, "gentle-nudge");
+        let conservative =
+            correction.variant_correction_for(CHANGE_TYPE_ADD_NEURONS, "conservative");
+        assert!(
+            (gentle - 0.001).abs() < 1e-4,
+            "gentle-nudge should be near floor, got {gentle}"
+        );
+        assert!(
+            (conservative - 0.5).abs() < 1e-4,
+            "conservative should be near 0.5, got {conservative}"
+        );
+        assert!(
+            conservative > gentle,
+            "conservative ({conservative}) should exceed gentle-nudge ({gentle})"
         );
     }
 

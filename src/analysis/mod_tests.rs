@@ -109,6 +109,7 @@ fn postprocess_truncates_across_all_synapse_buckets_not_just_coordinated() {
             prediction_confidence: 0.0,
             expected_score_gain_confidence_interval: [0.0, 0.0],
             comment: None,
+            variant_key: None,
         }],
         harmful_synapses: Vec::new(),
         synapse_weight_updates: Vec::new(),
@@ -170,6 +171,7 @@ fn postprocess_updates_candidates_returned_after_merging_neuron_replacements() {
             prediction_confidence: 0.0,
             expected_score_gain_confidence_interval: [0.0, 0.0],
             comment: None,
+            variant_key: None,
         }],
         harmful_synapses: Vec::new(),
         synapse_weight_updates: Vec::new(),
@@ -230,6 +232,7 @@ fn postprocess_updates_neuron_candidates_returned_after_filtering_replacements()
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     };
 
     let cand_b = CandidateNeuronJson {
@@ -252,6 +255,7 @@ fn postprocess_updates_neuron_candidates_returned_after_filtering_replacements()
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     };
 
     let mut neuron = shared::AnalyzeNeuronsResult {

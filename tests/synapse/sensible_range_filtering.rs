@@ -32,6 +32,7 @@ fn extreme_candidate_is_not_returned_after_sensible_range_filtering() {
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     };
 
     // Existing production experiment: pair with safety variants.
@@ -89,6 +90,7 @@ fn absurd_identity_bias_is_filtered_out() {
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     };
 
     let filtered = filter_candidates_to_sensible_ranges(vec![absurd]);

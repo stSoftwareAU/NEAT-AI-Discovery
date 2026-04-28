@@ -496,6 +496,7 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                     expected_score_gain_confidence_interval: confidence_metrics
                         .expected_score_gain_confidence_interval,
                     target_saturation_factor: None,
+                    variant_key: None,
                 });
             }
 
@@ -532,6 +533,7 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                     expected_score_gain_confidence_interval: confidence_metrics
                         .expected_score_gain_confidence_interval,
                     target_saturation_factor: None,
+                    variant_key: None,
                 });
             }
         }
