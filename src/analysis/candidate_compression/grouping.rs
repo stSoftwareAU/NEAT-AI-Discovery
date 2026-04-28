@@ -78,6 +78,7 @@ mod tests {
             prediction_confidence: 0.8,
             expected_score_gain_confidence_interval: [gain * 0.5, gain * 1.5],
             comment: None,
+            variant_key: None,
         }
     }
 

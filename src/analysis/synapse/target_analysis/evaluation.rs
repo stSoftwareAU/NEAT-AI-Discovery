@@ -554,6 +554,7 @@ pub(crate) fn collect_and_process_helpful_results(
                     expected_score_gain_confidence_interval: confidence_metrics
                         .expected_score_gain_confidence_interval,
                     comment: None,
+                    variant_key: None,
                 });
             }
         } // End timing scope for result processing
@@ -663,6 +664,7 @@ pub(crate) fn process_harmful_batch_from_prepared(
             expected_score_gain_confidence_interval: confidence_metrics
                 .expected_score_gain_confidence_interval,
             comment: None,
+            variant_key: None,
         });
     }
 

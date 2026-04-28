@@ -44,6 +44,7 @@ fn make_test_neuron_candidate(incoming: f32, outgoing: f32, bias: f32) -> Candid
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     }
 }
 
@@ -66,6 +67,7 @@ fn make_test_synapse_candidate(weight: f32, expected_gain: f32) -> CandidateSyna
         prediction_confidence: 0.8,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         comment: None,
+        variant_key: None,
     }
 }
 

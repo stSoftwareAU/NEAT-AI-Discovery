@@ -45,6 +45,7 @@ fn candidate_synapse_json_serialisation_contract() {
         prediction_confidence: 0.9,
         expected_score_gain_confidence_interval: [0.005, 0.015],
         comment: None,
+        variant_key: None,
     };
 
     let json = serde_json::to_value(&candidate).expect("serialisation should succeed");
@@ -94,6 +95,7 @@ fn candidate_neuron_json_serialisation_contract() {
         prediction_confidence: 0.85,
         expected_score_gain_confidence_interval: [0.01, 0.03],
         target_saturation_factor: None,
+        variant_key: None,
     };
 
     let json = serde_json::to_value(&candidate).expect("serialisation should succeed");

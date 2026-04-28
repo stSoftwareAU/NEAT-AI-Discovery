@@ -14,6 +14,29 @@ use crate::CandidateNeuronJson;
 use crate::CandidateSynapseJson;
 use crate::CoordinatedStructuralCandidateJson;
 use crate::CoordinatedStructuralOpJson;
+use crate::analysis::scoring::calibration_correction::{
+    CHANGE_TYPE_ADD_NEURONS, CHANGE_TYPE_ADD_SYNAPSES, CalibrationCorrection,
+};
+
+// =============================================================================
+// Stable variant keys (Issue #1163)
+// =============================================================================
+//
+// These keys are the canonical machine-readable identifiers for each variant
+// strategy. They replace the comment string as the calibration grouping key
+// so that wording changes in the user-facing comment cannot silently re-key
+// the failure-cache history.
+
+/// Variant key for the `Conservative` strategy.
+pub const VARIANT_KEY_CONSERVATIVE: &str = "conservative";
+/// Variant key for the `Gentle Nudge` strategy.
+pub const VARIANT_KEY_GENTLE_NUDGE: &str = "gentle-nudge";
+/// Variant key for the `Micro-Nudge` strategy.
+pub const VARIANT_KEY_MICRO_NUDGE: &str = "micro-nudge";
+/// Variant key for the `Feather-Touch` strategy.
+pub const VARIANT_KEY_FEATHER_TOUCH: &str = "feather-touch";
+/// Variant key for the `Whisper` strategy.
+pub const VARIANT_KEY_WHISPER: &str = "whisper";
 
 // ============================================================================
 // Neuron variant configuration and generation
@@ -23,6 +46,14 @@ use crate::CoordinatedStructuralOpJson;
 ///
 /// Each variant strategy (conservative, gentle nudge, micro-nudge) is expressed
 /// as a static `NeuronVariantConfig` instance rather than a separate function.
+///
+/// Issue #1163: `expected_multiplier` is now an **upper bound**, not a fixed
+/// value. When a calibrated correction is supplied via
+/// [`make_neuron_variant_with_correction`], the multiplier actually applied
+/// is `min(expected_multiplier, calibrated_correction)` so a long failure
+/// history can drive predictions further toward the noise floor while a long
+/// success streak cannot inflate them above the static ceiling. The variant
+/// is identified by [`Self::variant_key`], not the comment string.
 pub struct NeuronVariantConfig {
     /// Maximum absolute incoming weight (clamped symmetrically).
     pub incoming_abs_max: f32,
@@ -32,12 +63,20 @@ pub struct NeuronVariantConfig {
     pub outgoing_abs_max: f32,
     /// Scale factor applied to outgoing weight before clamping.
     pub outgoing_scale: f32,
-    /// Multiplier for expected improvement (lower = less displacement in ranking).
+    /// Upper bound on the expected-improvement multiplier (Issue #1163).
+    ///
+    /// Lower = less displacement in ranking. Acts as a ceiling: the
+    /// calibrated per-variant correction (when available) can drive the
+    /// effective multiplier lower, but never higher.
     pub expected_multiplier: f32,
     /// Minimum non-zero outgoing weight fallback when scaling produces near-zero.
     pub min_outgoing_fallback: f32,
     /// Comment text applied to the variant.
     pub comment: &'static str,
+    /// Stable variant key used for failure-cache calibration grouping
+    /// (Issue #1163). This is the canonical machine-readable identifier;
+    /// the [`Self::comment`] is human-readable only.
+    pub variant_key: &'static str,
 }
 
 /// Conservative: tight clamps on all parameters.
@@ -52,6 +91,7 @@ pub static CONSERVATIVE_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
     expected_multiplier: 0.5,
     min_outgoing_fallback: 0.001,
     comment: "Conservative variant (clamped incoming/bias, outgoing scaled)",
+    variant_key: VARIANT_KEY_CONSERVATIVE,
 };
 
 /// Gentle Nudge: moderate incoming/bias range, very small outgoing.
@@ -67,6 +107,7 @@ pub static GENTLE_NUDGE_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
     expected_multiplier: 0.75,
     min_outgoing_fallback: 0.002,
     comment: "Gentle Nudge variant (tight outgoing, bias tamed)",
+    variant_key: VARIANT_KEY_GENTLE_NUDGE,
 };
 
 /// Micro-Nudge: ultra-conservative, targeting ±0.002–0.005 outgoing range.
@@ -83,6 +124,7 @@ pub static MICRO_NUDGE_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
     expected_multiplier: 0.5,
     min_outgoing_fallback: 0.002,
     comment: "Micro-Nudge variant (ultra-conservative outgoing, tight incoming/bias)",
+    variant_key: VARIANT_KEY_MICRO_NUDGE,
 };
 
 /// Feather-Touch: finer-grained variant for near-equilibrium networks (Issue #962).
@@ -97,6 +139,7 @@ pub static FEATHER_TOUCH_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
     expected_multiplier: 0.25,
     min_outgoing_fallback: 0.0005,
     comment: "Feather-Touch variant (near-equilibrium outgoing, minimal perturbation)",
+    variant_key: VARIANT_KEY_FEATHER_TOUCH,
 };
 
 /// Whisper: the most conservative variant tier (Issue #962).
@@ -111,15 +154,36 @@ pub static WHISPER_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
     expected_multiplier: 0.1,
     min_outgoing_fallback: 0.0002,
     comment: "Whisper variant (minimal outgoing, near-zero perturbation)",
+    variant_key: VARIANT_KEY_WHISPER,
 };
 
 /// Create a variant of an add-neuron candidate using the given configuration.
 ///
 /// Clamps incoming weight, bias, and outgoing weight according to the config,
 /// scales expected improvement, and sets the comment.
+///
+/// Equivalent to [`make_neuron_variant_with_correction`] called with `None` —
+/// only the static `expected_multiplier` (the upper bound) is applied.
 pub fn make_neuron_variant(
     candidate: &CandidateNeuronJson,
     config: &NeuronVariantConfig,
+) -> CandidateNeuronJson {
+    make_neuron_variant_with_correction(candidate, config, None)
+}
+
+/// Create a variant of an add-neuron candidate, optionally consulting the
+/// per-variant calibration history (Issue #1163).
+///
+/// When `calibration` is supplied and reports a per-variant correction for
+/// `(add-neurons, config.variant_key)` the effective multiplier becomes
+/// `min(config.expected_multiplier, calibrated_correction)` — the static
+/// value remains a ceiling so a long success streak cannot inflate
+/// predictions, while a long failure history drives the multiplier toward
+/// the noise floor.
+pub fn make_neuron_variant_with_correction(
+    candidate: &CandidateNeuronJson,
+    config: &NeuronVariantConfig,
+    calibration: Option<&CalibrationCorrection>,
 ) -> CandidateNeuronJson {
     let incoming_sign = if candidate.incoming_weight >= 0.0 {
         1.0
@@ -145,14 +209,37 @@ pub fn make_neuron_variant(
         outgoing_weight = outgoing_sign * config.min_outgoing_fallback;
     }
 
+    // Issue #1163: apply min(static_multiplier, calibrated_correction).
+    let effective_multiplier = effective_multiplier_for_neuron(config, calibration);
+
     let mut variant = candidate.clone();
     variant.incoming_weight = incoming_weight;
     variant.bias = bias;
     variant.outgoing_weight = outgoing_weight;
-    variant.expected_creature_error_reduction *= config.expected_multiplier;
+    variant.expected_creature_error_reduction *= effective_multiplier;
     variant.expected_creature_score_gain = variant.expected_creature_error_reduction;
     variant.comment = Some(config.comment.to_string());
+    variant.variant_key = Some(config.variant_key.to_string());
     variant
+}
+
+/// Resolve the effective expected-improvement multiplier for a neuron variant
+/// (Issue #1163).
+///
+/// Returns `min(config.expected_multiplier, calibrated_correction)` when a
+/// calibration is supplied and reports a per-variant correction, otherwise
+/// the static multiplier alone.
+fn effective_multiplier_for_neuron(
+    config: &NeuronVariantConfig,
+    calibration: Option<&CalibrationCorrection>,
+) -> f32 {
+    match calibration {
+        Some(c) => {
+            let calibrated = c.variant_correction_for(CHANGE_TYPE_ADD_NEURONS, config.variant_key);
+            config.expected_multiplier.min(calibrated)
+        }
+        None => config.expected_multiplier,
+    }
 }
 
 // ============================================================================
@@ -160,13 +247,21 @@ pub fn make_neuron_variant(
 // ============================================================================
 
 /// Configuration for generating a scaled variant of a synapse candidate.
+///
+/// Issue #1163: `expected_multiplier` is now an **upper bound**, mirroring
+/// [`NeuronVariantConfig`]. The calibrated per-variant correction (when
+/// available) can drive the effective multiplier lower but not higher. The
+/// canonical identifier is [`Self::variant_key`], not the comment string.
 pub struct SynapseVariantConfig {
     /// Scale factor applied to the synapse weight.
     pub weight_scale: f32,
-    /// Multiplier for expected improvement.
+    /// Upper bound on the expected-improvement multiplier (Issue #1163).
     pub expected_multiplier: f32,
     /// Comment text applied to the variant.
     pub comment: &'static str,
+    /// Stable variant key used for failure-cache calibration grouping
+    /// (Issue #1163).
+    pub variant_key: &'static str,
 }
 
 /// Conservative: halve the weight.
@@ -174,6 +269,7 @@ pub static SYNAPSE_CONSERVATIVE_CONFIG: SynapseVariantConfig = SynapseVariantCon
     weight_scale: 0.5,
     expected_multiplier: 0.5,
     comment: "Conservative variant (weight scaled to 0.5\u{00d7})",
+    variant_key: VARIANT_KEY_CONSERVATIVE,
 };
 
 /// Gentle Nudge: quarter the weight.
@@ -181,6 +277,7 @@ pub static SYNAPSE_GENTLE_NUDGE_CONFIG: SynapseVariantConfig = SynapseVariantCon
     weight_scale: 0.25,
     expected_multiplier: 0.75,
     comment: "Gentle Nudge variant (weight scaled to 0.25\u{00d7})",
+    variant_key: VARIANT_KEY_GENTLE_NUDGE,
 };
 
 /// Micro-Nudge: tenth of the weight.
@@ -188,6 +285,7 @@ pub static SYNAPSE_MICRO_NUDGE_CONFIG: SynapseVariantConfig = SynapseVariantConf
     weight_scale: 0.1,
     expected_multiplier: 0.25,
     comment: "Micro-Nudge variant (weight scaled to 0.1\u{00d7})",
+    variant_key: VARIANT_KEY_MICRO_NUDGE,
 };
 
 /// Feather-Touch: 5% of the weight (Issue #962).
@@ -197,6 +295,7 @@ pub static SYNAPSE_FEATHER_TOUCH_CONFIG: SynapseVariantConfig = SynapseVariantCo
     weight_scale: 0.05,
     expected_multiplier: 0.25,
     comment: "Feather-Touch variant (weight scaled to 0.05\u{00d7})",
+    variant_key: VARIANT_KEY_FEATHER_TOUCH,
 };
 
 /// Whisper: 2% of the weight (Issue #962).
@@ -206,19 +305,57 @@ pub static SYNAPSE_WHISPER_CONFIG: SynapseVariantConfig = SynapseVariantConfig {
     weight_scale: 0.02,
     expected_multiplier: 0.1,
     comment: "Whisper variant (weight scaled to 0.02\u{00d7})",
+    variant_key: VARIANT_KEY_WHISPER,
 };
 
 /// Create a variant of a synapse candidate using the given configuration.
+///
+/// Equivalent to [`make_synapse_variant_with_correction`] called with
+/// `None` — only the static `expected_multiplier` (the upper bound) is
+/// applied.
 pub fn make_synapse_variant(
     candidate: &CandidateSynapseJson,
     config: &SynapseVariantConfig,
 ) -> CandidateSynapseJson {
+    make_synapse_variant_with_correction(candidate, config, None)
+}
+
+/// Create a variant of a synapse candidate, optionally consulting the
+/// per-variant calibration history (Issue #1163).
+///
+/// When `calibration` is supplied and reports a per-variant correction for
+/// `(add-synapses, config.variant_key)` the effective multiplier becomes
+/// `min(config.expected_multiplier, calibrated_correction)` — the static
+/// value remains a ceiling.
+pub fn make_synapse_variant_with_correction(
+    candidate: &CandidateSynapseJson,
+    config: &SynapseVariantConfig,
+    calibration: Option<&CalibrationCorrection>,
+) -> CandidateSynapseJson {
+    let effective_multiplier = effective_multiplier_for_synapse(config, calibration);
+
     let mut variant = candidate.clone();
     variant.weight = candidate.weight * config.weight_scale;
-    variant.expected_creature_error_reduction *= config.expected_multiplier;
-    variant.expected_creature_score_gain *= config.expected_multiplier;
+    variant.expected_creature_error_reduction *= effective_multiplier;
+    variant.expected_creature_score_gain *= effective_multiplier;
     variant.comment = Some(config.comment.to_string());
+    variant.variant_key = Some(config.variant_key.to_string());
     variant
+}
+
+/// Resolve the effective expected-improvement multiplier for a synapse
+/// variant (Issue #1163).
+fn effective_multiplier_for_synapse(
+    config: &SynapseVariantConfig,
+    calibration: Option<&CalibrationCorrection>,
+) -> f32 {
+    match calibration {
+        Some(c) => {
+            let calibrated = c.variant_correction_for(CHANGE_TYPE_ADD_SYNAPSES, config.variant_key);
+            config.expected_multiplier.min(calibrated)
+        }
+        None => config.expected_multiplier,
+    }
 }
 
 // ============================================================================
@@ -316,6 +453,22 @@ pub fn pair_extreme_candidates_with_conservative_variants(
     sorted_candidates: Vec<CandidateNeuronJson>,
     max_candidates: Option<usize>,
 ) -> Vec<CandidateNeuronJson> {
+    pair_extreme_candidates_with_conservative_variants_calibrated(
+        sorted_candidates,
+        max_candidates,
+        None,
+    )
+}
+
+/// Like [`pair_extreme_candidates_with_conservative_variants`] but consults
+/// the per-variant failure-cache calibration when generating each variant
+/// (Issue #1163). Pass `None` for the original behaviour.
+#[doc(hidden)]
+pub fn pair_extreme_candidates_with_conservative_variants_calibrated(
+    sorted_candidates: Vec<CandidateNeuronJson>,
+    max_candidates: Option<usize>,
+    calibration: Option<&CalibrationCorrection>,
+) -> Vec<CandidateNeuronJson> {
     let limit = max_candidates.unwrap_or(usize::MAX);
     if limit == 0 {
         return Vec::new();
@@ -336,7 +489,8 @@ pub fn pair_extreme_candidates_with_conservative_variants(
         let mut added_gentle_nudge = false;
         let mut added_micro_nudge = false;
         if should_pair && output.len() < limit {
-            let conservative = make_neuron_variant(&candidate, &CONSERVATIVE_CONFIG);
+            let conservative =
+                make_neuron_variant_with_correction(&candidate, &CONSERVATIVE_CONFIG, calibration);
             if candidates_meaningfully_differ(&conservative, &candidate) {
                 output.push(conservative);
                 added_conservative = true;
@@ -344,7 +498,8 @@ pub fn pair_extreme_candidates_with_conservative_variants(
         }
 
         if should_pair && output.len() < limit {
-            let gentle = make_neuron_variant(&candidate, &GENTLE_NUDGE_CONFIG);
+            let gentle =
+                make_neuron_variant_with_correction(&candidate, &GENTLE_NUDGE_CONFIG, calibration);
             if candidates_meaningfully_differ(&gentle, &candidate)
                 && output
                     .iter()
@@ -356,7 +511,8 @@ pub fn pair_extreme_candidates_with_conservative_variants(
         }
 
         if should_pair && output.len() < limit && should_generate_micro_nudge(&candidate) {
-            let micro = make_neuron_variant(&candidate, &MICRO_NUDGE_CONFIG);
+            let micro =
+                make_neuron_variant_with_correction(&candidate, &MICRO_NUDGE_CONFIG, calibration);
             if candidates_meaningfully_differ(&micro, &candidate)
                 && output
                     .iter()
@@ -374,7 +530,8 @@ pub fn pair_extreme_candidates_with_conservative_variants(
             candidate.outgoing_weight.abs() >= ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD;
 
         if should_pair && output.len() < limit && base_weight_above_threshold {
-            let feather = make_neuron_variant(&candidate, &FEATHER_TOUCH_CONFIG);
+            let feather =
+                make_neuron_variant_with_correction(&candidate, &FEATHER_TOUCH_CONFIG, calibration);
             if candidates_meaningfully_differ(&feather, &candidate)
                 && output
                     .iter()
@@ -386,7 +543,8 @@ pub fn pair_extreme_candidates_with_conservative_variants(
         }
 
         if should_pair && output.len() < limit && base_weight_above_threshold {
-            let whisper = make_neuron_variant(&candidate, &WHISPER_CONFIG);
+            let whisper =
+                make_neuron_variant_with_correction(&candidate, &WHISPER_CONFIG, calibration);
             if candidates_meaningfully_differ(&whisper, &candidate)
                 && output
                     .iter()
@@ -470,6 +628,18 @@ pub fn pair_synapse_candidates_with_weight_variants(
     sorted_candidates: Vec<CandidateSynapseJson>,
     max_candidates: Option<usize>,
 ) -> Vec<CandidateSynapseJson> {
+    pair_synapse_candidates_with_weight_variants_calibrated(sorted_candidates, max_candidates, None)
+}
+
+/// Like [`pair_synapse_candidates_with_weight_variants`] but consults the
+/// per-variant failure-cache calibration when generating each variant
+/// (Issue #1163). Pass `None` for the original behaviour.
+#[doc(hidden)]
+pub fn pair_synapse_candidates_with_weight_variants_calibrated(
+    sorted_candidates: Vec<CandidateSynapseJson>,
+    max_candidates: Option<usize>,
+    calibration: Option<&CalibrationCorrection>,
+) -> Vec<CandidateSynapseJson> {
     let limit = max_candidates.unwrap_or(usize::MAX);
     if limit == 0 {
         return Vec::new();
@@ -500,7 +670,7 @@ pub fn pair_synapse_candidates_with_weight_variants(
             if output.len() >= limit {
                 break;
             }
-            let variant = make_synapse_variant(&candidate, config);
+            let variant = make_synapse_variant_with_correction(&candidate, config, calibration);
             if variant.weight.abs() > SYNAPSE_VARIANT_MIN_WEIGHT
                 && synapse_candidates_meaningfully_differ(&variant, &candidate)
                 && output
@@ -519,7 +689,7 @@ pub fn pair_synapse_candidates_with_weight_variants(
                 if output.len() >= limit {
                     break;
                 }
-                let variant = make_synapse_variant(&candidate, config);
+                let variant = make_synapse_variant_with_correction(&candidate, config, calibration);
                 if variant.weight.abs() > SYNAPSE_VARIANT_MIN_WEIGHT
                     && synapse_candidates_meaningfully_differ(&variant, &candidate)
                     && output
@@ -744,4 +914,320 @@ pub fn pair_coordinated_structural_with_weight_variants(
     }
 
     output
+}
+
+// =============================================================================
+// Tests for per-variant calibration (Issue #1163)
+// =============================================================================
+
+#[cfg(test)]
+mod calibrated_variant_tests {
+    use super::*;
+    use crate::analysis::scoring::calibration_correction::FailureCacheEntry;
+
+    fn neuron_candidate(gain: f32) -> CandidateNeuronJson {
+        CandidateNeuronJson {
+            source_neuron_uuid: "src".to_string(),
+            target_neuron_uuid: "tgt".to_string(),
+            source_neuron_index: None,
+            target_neuron_index: None,
+            incoming_weight: 1.0,
+            outgoing_weight: 0.1,
+            squash: "TANH".to_string(),
+            bias: 0.0,
+            comment: None,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: gain,
+            expected_creature_score_gain: gain,
+            improved_count: 10,
+            total_count: 20,
+            improvement_magnitude_ratio: None,
+            target_neuron_stats: None,
+            prediction_confidence: 0.0,
+            expected_score_gain_confidence_interval: [0.0, 0.0],
+            target_saturation_factor: None,
+            variant_key: None,
+        }
+    }
+
+    fn synapse_candidate(gain: f32) -> CandidateSynapseJson {
+        CandidateSynapseJson {
+            from_neuron_uuid: "from".to_string(),
+            to_neuron_uuid: "to".to_string(),
+            from_neuron_index: None,
+            to_neuron_index: None,
+            weight: 0.5,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: gain,
+            expected_creature_score_gain: gain,
+            improved_count: 10,
+            total_count: 20,
+            improvement_magnitude_ratio: None,
+            target_neuron_stats: None,
+            outlier_reduction_info: None,
+            prediction_confidence: 0.8,
+            expected_score_gain_confidence_interval: [0.0, 0.0],
+            comment: None,
+            variant_key: None,
+        }
+    }
+
+    /// Helper: build a failure-cache entry with a variant key.
+    fn fc_entry(
+        change_type: &str,
+        predicted: f32,
+        actual: f32,
+        variant: &str,
+    ) -> FailureCacheEntry {
+        FailureCacheEntry {
+            change_type: change_type.to_string(),
+            expected_error_reduction: predicted,
+            actual_error_reduction: actual,
+            target_squash: None,
+            variant_key: Some(variant.to_string()),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Acceptance criterion 1: insufficient history → static multiplier used.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn neuron_variant_uses_static_multiplier_when_history_insufficient() {
+        // Two failure entries — below MIN_SPECIFIC_VARIANT_KEY_SAMPLES (3).
+        let cache = vec![
+            fc_entry(
+                CHANGE_TYPE_ADD_NEURONS,
+                1.0,
+                0.001,
+                VARIANT_KEY_GENTLE_NUDGE,
+            ),
+            fc_entry(
+                CHANGE_TYPE_ADD_NEURONS,
+                1.0,
+                0.001,
+                VARIANT_KEY_GENTLE_NUDGE,
+            ),
+        ];
+        let calibration = CalibrationCorrection::from_failure_cache(&cache);
+
+        let candidate = neuron_candidate(0.2);
+        let variant = make_neuron_variant_with_correction(
+            &candidate,
+            &GENTLE_NUDGE_CONFIG,
+            Some(&calibration),
+        );
+
+        // Static multiplier (0.75) wins because the calibrated lookup falls
+        // back to NEUTRAL_CORRECTION (1.0); min(0.75, 1.0) == 0.75.
+        let expected = 0.2 * GENTLE_NUDGE_CONFIG.expected_multiplier;
+        assert!(
+            (variant.expected_creature_error_reduction - expected).abs() < 1e-6,
+            "expected static multiplier ({expected}), got {}",
+            variant.expected_creature_error_reduction
+        );
+        assert_eq!(
+            variant.variant_key.as_deref(),
+            Some(VARIANT_KEY_GENTLE_NUDGE),
+            "variant_key should be populated even without calibration data"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Acceptance criterion 2: long failure history → calibrated value used.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn neuron_variant_uses_calibrated_multiplier_when_history_indicates_failure() {
+        // 10 failure entries with 1000× over-estimation — the calibrated value
+        // should drop to the floor (0.001), which is far below the static
+        // 0.75 ceiling.
+        let cache: Vec<FailureCacheEntry> = (0..10)
+            .map(|_| {
+                fc_entry(
+                    CHANGE_TYPE_ADD_NEURONS,
+                    0.001,
+                    0.000_001,
+                    VARIANT_KEY_GENTLE_NUDGE,
+                )
+            })
+            .collect();
+        let calibration = CalibrationCorrection::from_failure_cache(&cache);
+
+        let candidate = neuron_candidate(0.2);
+        let static_variant =
+            make_neuron_variant_with_correction(&candidate, &GENTLE_NUDGE_CONFIG, None);
+        let calibrated_variant = make_neuron_variant_with_correction(
+            &candidate,
+            &GENTLE_NUDGE_CONFIG,
+            Some(&calibration),
+        );
+
+        assert!(
+            calibrated_variant.expected_creature_error_reduction
+                < static_variant.expected_creature_error_reduction,
+            "calibrated reduction ({}) must be smaller than static ({})",
+            calibrated_variant.expected_creature_error_reduction,
+            static_variant.expected_creature_error_reduction
+        );
+
+        // The calibrated multiplier should be at the floor (~0.001).
+        let expected = 0.2_f32 * 0.001;
+        assert!(
+            (calibrated_variant.expected_creature_error_reduction - expected).abs() < 1e-5,
+            "expected calibrated reduction near floor ({expected}), got {}",
+            calibrated_variant.expected_creature_error_reduction
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Acceptance criterion 3: long success history → static multiplier as ceiling.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn neuron_variant_static_multiplier_acts_as_ceiling_for_long_success_history() {
+        // 10 entries where actual exceeds predicted — the calibrated value
+        // would clamp to NEUTRAL_CORRECTION (1.0), but min(0.75, 1.0) = 0.75
+        // means the static ceiling holds.
+        let cache: Vec<FailureCacheEntry> = (0..10)
+            .map(|_| {
+                fc_entry(
+                    CHANGE_TYPE_ADD_NEURONS,
+                    0.001,
+                    0.01,
+                    VARIANT_KEY_GENTLE_NUDGE,
+                )
+            })
+            .collect();
+        let calibration = CalibrationCorrection::from_failure_cache(&cache);
+
+        let candidate = neuron_candidate(0.2);
+        let variant = make_neuron_variant_with_correction(
+            &candidate,
+            &GENTLE_NUDGE_CONFIG,
+            Some(&calibration),
+        );
+
+        let expected = 0.2 * GENTLE_NUDGE_CONFIG.expected_multiplier;
+        assert!(
+            (variant.expected_creature_error_reduction - expected).abs() < 1e-6,
+            "static ceiling violated: expected {expected}, got {}",
+            variant.expected_creature_error_reduction
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Synapse variants — same three regimes, mirrored for add-synapses.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn synapse_variant_uses_static_multiplier_when_history_insufficient() {
+        let cache = vec![fc_entry(
+            CHANGE_TYPE_ADD_SYNAPSES,
+            1.0,
+            0.001,
+            VARIANT_KEY_GENTLE_NUDGE,
+        )];
+        let calibration = CalibrationCorrection::from_failure_cache(&cache);
+
+        let candidate = synapse_candidate(0.4);
+        let variant = make_synapse_variant_with_correction(
+            &candidate,
+            &SYNAPSE_GENTLE_NUDGE_CONFIG,
+            Some(&calibration),
+        );
+
+        let expected = 0.4 * SYNAPSE_GENTLE_NUDGE_CONFIG.expected_multiplier;
+        assert!(
+            (variant.expected_creature_error_reduction - expected).abs() < 1e-6,
+            "expected static synapse multiplier ({expected}), got {}",
+            variant.expected_creature_error_reduction
+        );
+        assert_eq!(
+            variant.variant_key.as_deref(),
+            Some(VARIANT_KEY_GENTLE_NUDGE)
+        );
+    }
+
+    #[test]
+    fn synapse_variant_uses_calibrated_multiplier_for_long_failure_history() {
+        let cache: Vec<FailureCacheEntry> = (0..10)
+            .map(|_| {
+                fc_entry(
+                    CHANGE_TYPE_ADD_SYNAPSES,
+                    0.001,
+                    0.000_001,
+                    VARIANT_KEY_GENTLE_NUDGE,
+                )
+            })
+            .collect();
+        let calibration = CalibrationCorrection::from_failure_cache(&cache);
+
+        let candidate = synapse_candidate(0.4);
+        let calibrated = make_synapse_variant_with_correction(
+            &candidate,
+            &SYNAPSE_GENTLE_NUDGE_CONFIG,
+            Some(&calibration),
+        );
+
+        let expected = 0.4_f32 * 0.001;
+        assert!(
+            (calibrated.expected_creature_error_reduction - expected).abs() < 1e-4,
+            "expected calibrated synapse reduction near floor ({expected}), got {}",
+            calibrated.expected_creature_error_reduction
+        );
+    }
+
+    #[test]
+    fn synapse_variant_static_multiplier_caps_long_success_history() {
+        let cache: Vec<FailureCacheEntry> = (0..10)
+            .map(|_| {
+                fc_entry(
+                    CHANGE_TYPE_ADD_SYNAPSES,
+                    0.001,
+                    0.01,
+                    VARIANT_KEY_GENTLE_NUDGE,
+                )
+            })
+            .collect();
+        let calibration = CalibrationCorrection::from_failure_cache(&cache);
+
+        let candidate = synapse_candidate(0.4);
+        let variant = make_synapse_variant_with_correction(
+            &candidate,
+            &SYNAPSE_GENTLE_NUDGE_CONFIG,
+            Some(&calibration),
+        );
+
+        let expected = 0.4 * SYNAPSE_GENTLE_NUDGE_CONFIG.expected_multiplier;
+        assert!(
+            (variant.expected_creature_error_reduction - expected).abs() < 1e-6,
+            "static synapse ceiling violated: expected {expected}, got {}",
+            variant.expected_creature_error_reduction
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Backward-compat: variant_key is populated even without calibration data.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn neuron_variant_populates_key_without_calibration() {
+        let candidate = neuron_candidate(0.2);
+        let variant = make_neuron_variant(&candidate, &CONSERVATIVE_CONFIG);
+        assert_eq!(
+            variant.variant_key.as_deref(),
+            Some(VARIANT_KEY_CONSERVATIVE)
+        );
+    }
+
+    #[test]
+    fn synapse_variant_populates_key_without_calibration() {
+        let candidate = synapse_candidate(0.4);
+        let variant = make_synapse_variant(&candidate, &SYNAPSE_MICRO_NUDGE_CONFIG);
+        assert_eq!(
+            variant.variant_key.as_deref(),
+            Some(VARIANT_KEY_MICRO_NUDGE)
+        );
+    }
 }

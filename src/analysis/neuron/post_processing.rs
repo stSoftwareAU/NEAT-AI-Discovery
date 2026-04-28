@@ -99,10 +99,14 @@ pub(crate) fn build_neuron_results(
     });
 
     // Production experiment: pair "extreme" candidates with a conservative variant.
-    helpful_results = crate::analysis::utils::pair_extreme_candidates_with_conservative_variants(
-        helpful_results,
-        None,
-    );
+    // Issue #1163: pass the per-variant calibration so each variant's
+    // expected-improvement multiplier is `min(static, calibrated)`.
+    helpful_results =
+        crate::analysis::utils::pair_extreme_candidates_with_conservative_variants_calibrated(
+            helpful_results,
+            None,
+            Some(&calibration_correction),
+        );
 
     // Production guard rail (Dec 2025): only return candidates within sensible parameter ranges.
     helpful_results = crate::analysis::utils::filter_candidates_to_sensible_ranges(helpful_results);
@@ -417,6 +421,7 @@ mod tests {
             prediction_confidence: 0.5,
             expected_score_gain_confidence_interval: [gain, gain],
             target_saturation_factor: None,
+            variant_key: None,
         }
     }
 

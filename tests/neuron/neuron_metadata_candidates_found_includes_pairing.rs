@@ -41,6 +41,7 @@ fn candidates_found_includes_paired_variants() {
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     };
 
     // Simulate CORRECT neuron analysis behaviour:
@@ -129,6 +130,7 @@ fn non_extreme_candidates_maintain_count_invariant() {
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     };
 
     // Apply pairing with no limit
@@ -183,6 +185,7 @@ fn truncation_respects_invariant_with_multiple_extreme_candidates() {
             prediction_confidence: 0.0,
             expected_score_gain_confidence_interval: [0.0, 0.0],
             target_saturation_factor: None,
+            variant_key: None,
         })
         .collect();
 

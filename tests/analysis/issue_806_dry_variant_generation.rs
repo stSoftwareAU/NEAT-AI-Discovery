@@ -40,6 +40,7 @@ fn make_test_neuron_candidate(incoming: f32, outgoing: f32, bias: f32) -> Candid
         prediction_confidence: 0.0,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         target_saturation_factor: None,
+        variant_key: None,
     }
 }
 
@@ -62,6 +63,7 @@ fn make_test_synapse_candidate(weight: f32, expected_gain: f32) -> CandidateSyna
         prediction_confidence: 0.8,
         expected_score_gain_confidence_interval: [0.0, 0.0],
         comment: None,
+        variant_key: None,
     }
 }
 
@@ -358,6 +360,7 @@ fn custom_neuron_config_produces_expected_variant() {
         expected_multiplier: 0.6,
         min_outgoing_fallback: 0.008,
         comment: "Custom variant",
+        variant_key: "custom",
     };
 
     let candidate = make_test_neuron_candidate(100.0, 0.1, 20.0);
@@ -390,6 +393,7 @@ fn custom_synapse_config_produces_expected_variant() {
         weight_scale: 0.33,
         expected_multiplier: 0.4,
         comment: "Custom synapse variant",
+        variant_key: "custom-synapse",
     };
 
     let candidate = make_test_synapse_candidate(0.09, 0.2);

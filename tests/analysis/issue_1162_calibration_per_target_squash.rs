@@ -24,6 +24,7 @@ fn entry_with_squash(
         expected_error_reduction: predicted,
         actual_error_reduction: actual,
         target_squash: squash.map(str::to_string),
+        variant_key: None,
     }
 }
 
