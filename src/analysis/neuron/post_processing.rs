@@ -67,11 +67,23 @@ pub(crate) fn build_neuron_results(
         params.input.failure_cache.as_deref().unwrap_or(&[]),
     );
 
+    // Issue #1162: build a uuid -> target squash map so per-candidate
+    // calibration can prefer the (change_type, target_squash) specific
+    // correction when enough failure-cache evidence is available.
+    let target_squash_map: HashMap<&str, &str> = params
+        .input
+        .creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.as_str(), n.squash.as_str()))
+        .collect();
+
     // Issue #128: Apply impact-based discounting and set creature-level metrics.
     apply_impact_discounting(
         &mut helpful_results,
         params.order_map,
         params.neuron_type_map,
+        &target_squash_map,
         params.input,
         params.cache,
         &calibration_correction,
@@ -201,6 +213,7 @@ fn apply_impact_discounting(
     helpful_results: &mut [CandidateNeuronJson],
     order_map_arc: &Arc<HashMap<super::preparation::SharedUuid, usize>>,
     neuron_type_map: &HashMap<super::preparation::SharedUuid, String>,
+    target_squash_map: &HashMap<&str, &str>,
     input: &AnalyzeNeuronsInput,
     cache: &Arc<RecordCache>,
     calibration_correction: &CalibrationCorrection,
@@ -262,8 +275,16 @@ fn apply_impact_discounting(
         // Issue #1131: Multiplied by the per-creature calibration correction derived
         // from the failure cache so creatures with poor recent prediction accuracy
         // receive additional discounting.
+        //
+        // Issue #1162: prefer the per-(change_type, target_squash) specific
+        // correction when enough failure-cache evidence has accumulated for
+        // this candidate's target squash, otherwise fall back to the
+        // per-change_type correction.
+        let target_squash = target_squash_map
+            .get(candidate.target_neuron_uuid.as_str())
+            .copied();
         let neuron_calibration = crate::analysis::constants::NEURON_PREDICTION_CALIBRATION
-            * calibration_correction.get_correction(CHANGE_TYPE_ADD_NEURONS);
+            * calibration_correction.correction_for(CHANGE_TYPE_ADD_NEURONS, target_squash);
         candidate.expected_creature_score_gain = apply_logistic_prediction_calibration(
             candidate.expected_creature_score_gain,
             candidate.improved_count,

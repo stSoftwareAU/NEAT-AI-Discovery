@@ -23,6 +23,7 @@ mod issue_1101_no_target_records_diagnostic;
 mod issue_1109_neuron_min_improved_ratio_raise;
 mod issue_1131_calibration_correction;
 mod issue_1132_conservative_mode;
+mod issue_1162_calibration_per_target_squash;
 mod issue_199_dynamic_constant_source_threshold;
 mod issue_201_batched_activation;
 mod issue_204_activation_frequency_ranking;

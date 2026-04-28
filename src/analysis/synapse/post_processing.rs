@@ -123,10 +123,12 @@ fn compute_neuron_error_sq_map<'a>(
 /// and `expected_creature_score_gain` based on the target neuron's distance
 /// from outputs. Also applies creature-level error fraction scaling (Issue #730)
 /// and source-type and target-type boosts (Issues #467, #468).
+#[allow(clippy::too_many_arguments)]
 fn apply_impact_to_helpful(
     candidate: &mut CandidateSynapseJson,
     impact_scores: &HashMap<String, f32>,
     neuron_type_map: &HashMap<&str, &str>,
+    target_squash_map: &HashMap<&str, &str>,
     order_map: &HashMap<String, usize>,
     target_error_sq: f32,
     total_error_sq: f32,
@@ -202,8 +204,15 @@ fn apply_impact_to_helpful(
     // Issue #1131: Multiplied by the per-creature calibration correction derived
     // from the failure cache, so creatures drifting from the global baseline
     // receive additional per-creature discounting.
+    //
+    // Issue #1162: prefer the per-(change_type, target_squash) specific
+    // correction when enough failure-cache evidence is available; otherwise
+    // fall back to the per-change_type correction.
+    let target_squash = target_squash_map
+        .get(candidate.to_neuron_uuid.as_str())
+        .copied();
     let synapse_calibration = crate::analysis::constants::SYNAPSE_PREDICTION_CALIBRATION
-        * calibration_correction.get_correction(CHANGE_TYPE_ADD_SYNAPSES);
+        * calibration_correction.correction_for(CHANGE_TYPE_ADD_SYNAPSES, target_squash);
     candidate.expected_creature_score_gain = apply_logistic_prediction_calibration(
         candidate.expected_creature_score_gain,
         candidate.improved_count,
@@ -227,6 +236,7 @@ fn apply_impact_to_harmful(
     candidate: &mut CandidateSynapseJson,
     impact_scores: &HashMap<String, f32>,
     neuron_type_map: &HashMap<&str, &str>,
+    target_squash_map: &HashMap<&str, &str>,
     order_map: &HashMap<String, usize>,
     calibration_correction: &CalibrationCorrection,
 ) {
@@ -262,8 +272,12 @@ fn apply_impact_to_harmful(
 
     // Issue #1056: Apply logistic prediction calibration to harmful candidates.
     // Issue #1131: Scaled by the per-creature failure-cache correction.
+    // Issue #1162: prefer the per-(change_type, target_squash) specific value.
+    let target_squash = target_squash_map
+        .get(candidate.to_neuron_uuid.as_str())
+        .copied();
     let synapse_calibration = crate::analysis::constants::SYNAPSE_PREDICTION_CALIBRATION
-        * calibration_correction.get_correction(CHANGE_TYPE_ADD_SYNAPSES);
+        * calibration_correction.correction_for(CHANGE_TYPE_ADD_SYNAPSES, target_squash);
     candidate.expected_creature_score_gain = apply_logistic_prediction_calibration(
         candidate.expected_creature_score_gain,
         candidate.improved_count,
@@ -286,6 +300,7 @@ fn apply_impact_to_coordinated(
     candidate: &mut crate::CoordinatedStructuralCandidateJson,
     impact_scores: &HashMap<String, f32>,
     neuron_type_map: &HashMap<&str, &str>,
+    target_squash_map: &HashMap<&str, &str>,
     calibration_correction: &CalibrationCorrection,
 ) {
     let target_uuid = candidate
@@ -334,8 +349,11 @@ fn apply_impact_to_coordinated(
     // Issue #1056: Apply coordinated prediction calibration.
     // Coordinated candidates lack per-sample improved counts, so use flat calibration.
     // Issue #1131: Scaled by the per-creature failure-cache correction.
+    // Issue #1162: prefer the per-(change_type, target_squash) specific value
+    // when the target neuron's squash is known.
+    let target_squash = target_squash_map.get(target_uuid).copied();
     let coordinated_calibration = crate::analysis::constants::COORDINATED_PREDICTION_CALIBRATION
-        * calibration_correction.get_correction(CHANGE_TYPE_COORDINATED_STRUCTURAL);
+        * calibration_correction.correction_for(CHANGE_TYPE_COORDINATED_STRUCTURAL, target_squash);
     candidate.expected_creature_score_gain = apply_prediction_calibration(
         candidate.expected_creature_score_gain,
         coordinated_calibration,
@@ -364,6 +382,16 @@ pub(crate) fn apply_post_processing(
         .map(|n| (n.uuid.as_str(), n.neuron_type.as_str()))
         .collect();
 
+    // Issue #1162: uuid -> target squash map. Used so per-candidate
+    // calibration can prefer the (change_type, target_squash) specific
+    // correction when the failure-cache supplies enough evidence.
+    let target_squash_map: HashMap<&str, &str> = input
+        .creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.as_str(), n.squash.as_str()))
+        .collect();
+
     // Issue #730: Compute per-neuron and total error for creature-level calibration.
     let error_sq_map = compute_neuron_error_sq_map(input, cache);
     let total_error_sq: f32 = error_sq_map.values().sum();
@@ -385,6 +413,7 @@ pub(crate) fn apply_post_processing(
             candidate,
             &impact_scores,
             &neuron_type_map,
+            &target_squash_map,
             order_map,
             target_error_sq,
             total_error_sq,
@@ -398,6 +427,7 @@ pub(crate) fn apply_post_processing(
             candidate,
             &impact_scores,
             &neuron_type_map,
+            &target_squash_map,
             order_map,
             &calibration_correction,
         );
@@ -409,6 +439,7 @@ pub(crate) fn apply_post_processing(
             candidate,
             &impact_scores,
             &neuron_type_map,
+            &target_squash_map,
             &calibration_correction,
         );
     }

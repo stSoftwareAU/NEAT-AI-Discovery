@@ -116,6 +116,7 @@ fn twenty_over_estimations_clamp_to_minimum_correction() {
             change_type: CHANGE_TYPE_ADD_NEURONS.to_string(),
             expected_error_reduction: 0.001,
             actual_error_reduction: 0.000_001,
+            target_squash: None,
         })
         .collect();
     let correction = CalibrationCorrection::from_failure_cache(&cache);
@@ -152,6 +153,7 @@ fn analyze_all_exposes_calibration_corrections_in_metadata() {
                 change_type: change_type.to_string(),
                 expected_error_reduction: 0.001,
                 actual_error_reduction: 0.000_001,
+                target_squash: None,
             });
         }
     }
@@ -239,6 +241,7 @@ fn calibration_corrections_are_deterministic() {
             expected_error_reduction: 0.01,
             // Vary slightly so the EWMA is a non-trivial value.
             actual_error_reduction: 0.002 + (i as f32) * 0.000_05,
+            target_squash: None,
         })
         .collect();
 
