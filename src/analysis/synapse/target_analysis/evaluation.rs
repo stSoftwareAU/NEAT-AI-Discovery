@@ -77,6 +77,15 @@ pub(crate) fn collect_and_process_helpful_results(
     {
         let _timing = TimingScope::result_processing(&ctx.timing_collector);
         for (work, stats) in helpful_work_batch.iter().zip(helpful_stats_batch.iter()) {
+            // Issue #1164: short-circuit subsequent same-target candidates if
+            // an earlier candidate for this target failed within this batch.
+            if ctx
+                .within_batch_failures
+                .should_skip(work.target_uuid.as_str())
+            {
+                ctx.within_batch_failures.record_skip();
+                continue;
+            }
             let positive_is_better = stats.positive_count >= stats.negative_count;
             let gpu_improved_count = if positive_is_better {
                 stats.positive_count
@@ -91,6 +100,10 @@ pub(crate) fn collect_and_process_helpful_results(
                     stats.positive_count,
                     stats.negative_count,
                 ));
+                // Issue #1164: a candidate that did not improve any sample is
+                // a within-batch failure for this target.
+                ctx.within_batch_failures
+                    .record_failure(work.target_uuid.as_str());
                 continue;
             }
 
@@ -330,6 +343,11 @@ pub(crate) fn collect_and_process_helpful_results(
                 .record_evaluated(&work.source_uuid, &work.target_uuid, mcmc_type);
 
             if neuron_error_improvement <= 0.0 {
+                // Issue #1164: post-evaluation concluded no improvement —
+                // record the within-batch failure so subsequent same-target
+                // candidates can be short-circuited.
+                ctx.within_batch_failures
+                    .record_failure(work.target_uuid.as_str());
                 continue;
             }
 
@@ -604,6 +622,13 @@ pub(crate) fn process_harmful_batch_from_prepared(
         .map(|s| s.to_json());
 
     for (work, stats) in harmful_work.iter().zip(batch_stats.iter()) {
+        // Issue #1164: harmful (synapse-removal) candidates intentionally do
+        // not consult or update the within-batch failure tracker. The tracker
+        // gates additive (helpful synapse / neuron) candidates that target
+        // the same neuron; a failed addition for T is not evidence that a
+        // synapse removal targeting T will also fail — they explore different
+        // structural moves. Keeping the harmful path independent preserves
+        // existing remove-harmful-synapse coverage.
         let total_count = work.samples.len() as u32;
         if total_count == 0 {
             continue;

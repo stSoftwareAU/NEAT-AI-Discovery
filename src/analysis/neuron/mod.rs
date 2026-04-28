@@ -178,6 +178,12 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
     let total_focus_count = focus_order.len();
     let completed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
+    // Issue #1164: within-batch target-failure short-circuit. Lives for the
+    // duration of this orchestration call only. Shared across rayon workers
+    // so different parallel target evaluations contribute to a single view.
+    let within_batch_failures =
+        Arc::new(crate::analysis::within_batch_failures::WithinBatchFailureTracker::new());
+
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
     let order_map_arc = Arc::new(prep.order_map);
@@ -356,6 +362,7 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
                     helpful_map: &helpful_map,
                     threshold,
                     target_saturation,
+                    within_batch_failures: &within_batch_failures,
                 };
                 evaluation::evaluate_neuron_candidates(
                     &work_results,
@@ -381,6 +388,18 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
             a.extend(b);
             Ok(a)
         })?;
+
+    // Issue #1164: surface the within-batch short-circuit savings.
+    let within_batch_skips = within_batch_failures.skip_count();
+    if within_batch_skips > 0 {
+        tracing::info!(
+            phase = "neuron",
+            within_batch_skipped = within_batch_skips,
+            failed_targets = within_batch_failures.failed_target_count(),
+            failure_limit = within_batch_failures.failure_limit(),
+            "Short-circuited same-target candidates after within-batch failure (Issue #1164)"
+        );
+    }
 
     // Post-processing: impact discounting, sorting, filtering, result assembly
     let result_params = post_processing::NeuronResultParams {

@@ -55,6 +55,7 @@ pub mod synapse;
 pub mod system;
 pub mod target_failure_tracker;
 pub mod utils;
+pub mod within_batch_failures;
 
 // Thematic subdirectories (Issue #528)
 pub mod detection;

@@ -96,6 +96,10 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     // Issue #1021: MCMC diagnostics tracker for acceptance rate and diversity metrics
     let mcmc_tracker =
         Arc::new(crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsTracker::new());
+    // Issue #1164: within-batch target-failure short-circuit. Lives for the
+    // duration of this orchestration call only.
+    let within_batch_failures =
+        Arc::new(crate::analysis::within_batch_failures::WithinBatchFailureTracker::new());
     let ctx = Arc::new(target_analysis::TargetAnalysisContext {
         ordered_neurons: Arc::new(lookups.ordered_neurons),
         order_map: Arc::new(lookups.order_map),
@@ -116,6 +120,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         acceptance_tracker,
         temperature: input.temperature,
         mcmc_tracker: mcmc_tracker.clone(),
+        within_batch_failures: within_batch_failures.clone(),
     });
 
     // Phase 6: Process each focus neuron in parallel — thread-local collection (Issue #744)
@@ -152,6 +157,18 @@ pub(crate) fn analyze_synapses_with_cache_impl(
             Ok(Some(target_results))
         })
         .collect::<Result<Vec<_>>>()?;
+
+    // Issue #1164: surface the within-batch short-circuit savings.
+    let within_batch_skips = within_batch_failures.skip_count();
+    if within_batch_skips > 0 {
+        tracing::info!(
+            phase = "synapse",
+            within_batch_skipped = within_batch_skips,
+            failed_targets = within_batch_failures.failed_target_count(),
+            failure_limit = within_batch_failures.failure_limit(),
+            "Short-circuited same-target candidates after within-batch failure (Issue #1164)"
+        );
+    }
 
     // Phase 7: Single-threaded merge (fast, no contention)
     let collectors = MergedResults::from_per_target(

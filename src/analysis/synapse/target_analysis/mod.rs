@@ -68,6 +68,11 @@ pub(crate) struct TargetAnalysisContext<'a> {
     pub temperature: f32,
     /// Issue #1021: MCMC diagnostics tracker for acceptance rate and diversity metrics.
     pub mcmc_tracker: Arc<crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsTracker>,
+    /// Issue #1164: Within-batch target-failure short-circuit tracker. Shared
+    /// across rayon workers so a target that fails post-evaluation can be
+    /// skipped for the remainder of the batch.
+    pub within_batch_failures:
+        Arc<crate::analysis::within_batch_failures::WithinBatchFailureTracker>,
 }
 
 /// Results from analysing a single target neuron.

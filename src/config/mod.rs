@@ -53,6 +53,7 @@
 //! | `NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD` | f32 | module default | Noise-to-signal ratio threshold |
 //! | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES` | u32 | `3` | Consecutive target-neuron failures before cooldown (Issue #1130) |
 //! | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` | u64 | `10` | Cooldown duration in epochs for skipped targets (Issue #1130) |
+//! | `NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT` | u32 | `1` | Within-batch failure limit before same-target candidates are short-circuited (Issue #1164) |
 //!
 //! ## Internal/Debug Variables
 //!

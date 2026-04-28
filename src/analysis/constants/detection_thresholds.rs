@@ -172,3 +172,24 @@ pub const TARGET_COOLDOWN_CONSECUTIVE_FAILURES: u32 = 3;
 /// landscape has meaningfully changed. Values above 100 risk stranding a
 /// target for too long.
 pub const TARGET_COOLDOWN_EPOCHS: u64 = 10;
+
+// =============================================================================
+// Within-Batch Target Failure Short-Circuit (Issue #1164)
+// =============================================================================
+
+/// Number of within-batch failures on a target before subsequent same-target
+/// candidates in the same batch are short-circuited.
+///
+/// Issue #1164: complements the cross-batch cooldown (Issue #1130) by closing
+/// the within-batch gap. In GRQ-sampler commit `8c177b7`, three add-neuron
+/// candidates all targeting `neuron-1063112866` were evaluated in the same
+/// batch — exactly the workload the target-failure tracker (Issue #1130) was
+/// created to avoid, but the per-target cooldown only persists across batches
+/// via the failure cache.
+///
+/// ## Valid Range
+/// Must be >= 1. The default of `1` causes the very next same-target candidate
+/// to be skipped after the first failure, maximising the budget saved.
+/// Larger values let more candidates be tried before the short-circuit
+/// engages. Override via `NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT`.
+pub const WITHIN_BATCH_TARGET_FAILURE_LIMIT: u32 = 1;
