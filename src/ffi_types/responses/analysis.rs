@@ -204,6 +204,29 @@ pub struct McmcDiagnosticsJson {
     /// Only present when verbose mode is enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diversity: Option<DiversityMetricJson>,
+    /// Total prediction-vs-actual calibration mismatches detected in the
+    /// failure cache (Issue #1165). Surfaced so operators can see the rate at
+    /// a glance.
+    pub calibration_miss_count: u32,
+    /// Per-entry calibration mismatch records (Issue #1165). Only present in
+    /// verbose mode and capped at the internal `CALIBRATION_MISS_VEC_CAP`
+    /// (currently 1000) to bound memory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calibration_misses: Option<Vec<CalibrationMissEntryJson>>,
+}
+
+/// JSON form of a single calibration mismatch (Issue #1165).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalibrationMissEntryJson {
+    pub change_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_squash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant_key: Option<String>,
+    pub expected: f32,
+    pub actual: f32,
+    pub ratio: f32,
 }
 
 /// Acceptance rate for a single candidate type (Issue #1021).
@@ -410,6 +433,20 @@ pub(crate) fn mcmc_to_json(
             evaluated_unique_targets: d.evaluated_unique_targets,
             accepted_unique_sources: d.accepted_unique_sources,
             accepted_unique_targets: d.accepted_unique_targets,
+        }),
+        calibration_miss_count: summary.calibration_miss_count,
+        calibration_misses: summary.calibration_misses.as_ref().map(|misses| {
+            misses
+                .iter()
+                .map(|m| CalibrationMissEntryJson {
+                    change_type: m.change_type.clone(),
+                    target_squash: m.target_squash.clone(),
+                    variant_key: m.variant_key.clone(),
+                    expected: m.expected,
+                    actual: m.actual,
+                    ratio: m.ratio,
+                })
+                .collect()
         }),
     }
 }

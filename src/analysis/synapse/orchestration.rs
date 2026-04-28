@@ -178,6 +178,15 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     );
 
     // Phase 8: Collect results and build final output
+    // Issue #1165: scan the failure cache for prediction-vs-actual calibration
+    // mismatches and emit structured diagnostic logs + per-entry records on
+    // the MCMC tracker before the summary is built.
+    if let Some(cache) = input.failure_cache.as_deref() {
+        mcmc_tracker.record_calibration_misses_from_cache(
+            cache,
+            crate::config::calibration_miss_threshold(),
+        );
+    }
     let mcmc_summary = mcmc_tracker.build_summary();
     finalise_synapse_results(FinaliseParams {
         collectors,

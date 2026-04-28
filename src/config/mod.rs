@@ -43,6 +43,7 @@
 //! | `NEAT_AI_DISCOVERY_TIMING` | bool | `false` | Print phase timing to stderr |
 //! | `NEAT_AI_DISCOVERY_PROFILE` | `json`/empty | disabled | Output structured profile as JSON |
 //! | `NEAT_AI_DISCOVERY_GPU_METRICS` | bool | `false` | Print GPU metrics to stderr |
+//! | `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | f32 | `10.0` | Ratio above which prediction-vs-actual mismatches are logged (Issue #1165) |
 //!
 //! ## Detection Tuning Variables
 //!

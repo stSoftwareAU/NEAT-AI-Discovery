@@ -12,9 +12,46 @@
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for ratio computation
 
+use crate::analysis::scoring::calibration_correction::FailureCacheEntry;
 use crate::analysis::utils::verbose_enabled;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Maximum number of `CalibrationMissEntry` records retained in verbose mode
+/// (Issue #1165). The counter is unbounded; only the per-entry vector is
+/// capped to bound memory.
+pub const CALIBRATION_MISS_VEC_CAP: usize = 1000;
+
+/// Default threshold for the `actual / expected` ratio above which (or whose
+/// reciprocal exceeds) a calibration mismatch is logged (Issue #1165).
+///
+/// A miss is reported when `|ratio| > threshold` or `|ratio| < 1 / threshold`.
+/// Overridable via `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD`.
+pub const DEFAULT_CALIBRATION_MISS_THRESHOLD: f32 = 10.0;
+
+/// A single prediction-vs-actual calibration mismatch (Issue #1165).
+///
+/// Captured when the recorded `actual_error_reduction` differs from the
+/// `expected_error_reduction` by more than the configured threshold (default
+/// 10×). The structured tuple lets future tuning of calibration constants
+/// in `analysis::constants::candidate_scoring` work from data instead of a
+/// handful of failure JSON files.
+#[derive(Debug, Clone)]
+pub struct CalibrationMissEntry {
+    /// Candidate classification — same key used for `CalibrationCorrection`.
+    pub change_type: String,
+    /// Target neuron's activation function, when supplied by the upstream
+    /// emitter.
+    pub target_squash: Option<String>,
+    /// Variant key identifying the variant generator (Issue #1163).
+    pub variant_key: Option<String>,
+    /// What was predicted at proposal time.
+    pub expected: f32,
+    /// What actually happened after applying the candidate.
+    pub actual: f32,
+    /// `actual / expected` (finite, non-zero divisor).
+    pub ratio: f32,
+}
 
 // =============================================================================
 // Per-candidate-type acceptance counters (lock-free atomics)
@@ -100,6 +137,14 @@ pub(crate) struct McmcDiagnosticsTracker {
     accepted_sources: std::sync::Mutex<HashSet<String>>,
     /// Unique target neuron UUIDs among accepted candidates.
     accepted_targets: std::sync::Mutex<HashSet<String>>,
+
+    /// Total count of calibration mismatches detected this run (Issue #1165).
+    /// Always tracked, regardless of verbose mode, so the rate is visible at
+    /// a glance via [`McmcDiagnosticsSummary::calibration_miss_count`].
+    calibration_miss_count: AtomicU32,
+    /// Per-entry calibration mismatch records (Issue #1165). Only populated in
+    /// verbose mode and capped at [`CALIBRATION_MISS_VEC_CAP`] to bound memory.
+    calibration_misses: std::sync::Mutex<Vec<CalibrationMissEntry>>,
 }
 
 impl McmcDiagnosticsTracker {
@@ -116,6 +161,8 @@ impl McmcDiagnosticsTracker {
             evaluated_targets: std::sync::Mutex::new(HashSet::new()),
             accepted_sources: std::sync::Mutex::new(HashSet::new()),
             accepted_targets: std::sync::Mutex::new(HashSet::new()),
+            calibration_miss_count: AtomicU32::new(0),
+            calibration_misses: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -132,6 +179,8 @@ impl McmcDiagnosticsTracker {
             evaluated_targets: std::sync::Mutex::new(HashSet::new()),
             accepted_sources: std::sync::Mutex::new(HashSet::new()),
             accepted_targets: std::sync::Mutex::new(HashSet::new()),
+            calibration_miss_count: AtomicU32::new(0),
+            calibration_misses: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -177,6 +226,76 @@ impl McmcDiagnosticsTracker {
         }
     }
 
+    /// Inspect a failure cache for prediction-vs-actual calibration mismatches
+    /// and record any that are out of tolerance (Issue #1165).
+    ///
+    /// A miss is reported when the per-entry ratio
+    /// `actual / expected` satisfies `|ratio| > threshold` or
+    /// `|ratio| < 1 / threshold`. For each miss, this method:
+    ///
+    /// 1. Emits a `tracing::warn!` with the structured tuple
+    ///    `(change_type, target_squash, variant_key, expected, actual, ratio)`.
+    /// 2. Increments the calibration-miss counter.
+    /// 3. In verbose mode, appends a [`CalibrationMissEntry`] to the bounded
+    ///    in-memory vector (capped at [`CALIBRATION_MISS_VEC_CAP`]).
+    ///
+    /// Entries with `expected_error_reduction == 0` or non-finite ratios are
+    /// skipped (no defined ratio). Threshold values `<= 1.0` are clamped to
+    /// `1.0` so the upper and lower bounds remain meaningful.
+    pub(crate) fn record_calibration_misses_from_cache(
+        &self,
+        cache: &[FailureCacheEntry],
+        threshold: f32,
+    ) {
+        let threshold = if threshold.is_finite() && threshold > 1.0 {
+            threshold
+        } else {
+            1.0
+        };
+        let lower = 1.0 / threshold;
+        for entry in cache {
+            if entry.expected_error_reduction == 0.0 {
+                continue;
+            }
+            let ratio = entry.actual_error_reduction / entry.expected_error_reduction;
+            if !ratio.is_finite() {
+                continue;
+            }
+            let abs_ratio = ratio.abs();
+            if abs_ratio <= threshold && abs_ratio >= lower {
+                continue;
+            }
+
+            tracing::warn!(
+                target: "neat_ai_discovery::observability",
+                change_type = %entry.change_type,
+                target_squash = entry.target_squash.as_deref().unwrap_or("<none>"),
+                variant_key = entry.variant_key.as_deref().unwrap_or("<none>"),
+                expected = entry.expected_error_reduction,
+                actual = entry.actual_error_reduction,
+                ratio,
+                threshold,
+                "prediction-vs-actual calibration mismatch (Issue #1165)"
+            );
+
+            self.calibration_miss_count.fetch_add(1, Ordering::Relaxed);
+
+            if self.collect_details
+                && let Ok(mut vec) = self.calibration_misses.lock()
+                && vec.len() < CALIBRATION_MISS_VEC_CAP
+            {
+                vec.push(CalibrationMissEntry {
+                    change_type: entry.change_type.clone(),
+                    target_squash: entry.target_squash.clone(),
+                    variant_key: entry.variant_key.clone(),
+                    expected: entry.expected_error_reduction,
+                    actual: entry.actual_error_reduction,
+                    ratio,
+                });
+            }
+        }
+    }
+
     fn counters_for(&self, candidate_type: CandidateType) -> &AcceptanceCounters {
         match candidate_type {
             CandidateType::Synapse => &self.synapse_counters,
@@ -206,6 +325,21 @@ impl McmcDiagnosticsTracker {
             None
         };
 
+        let calibration_miss_count = self.calibration_miss_count.load(Ordering::Relaxed);
+        let calibration_misses = if self.collect_details {
+            let vec = self
+                .calibration_misses
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if vec.is_empty() {
+                None
+            } else {
+                Some(vec.clone())
+            }
+        } else {
+            None
+        };
+
         McmcDiagnosticsSummary {
             synapse_acceptance: synapse,
             neuron_acceptance: neuron,
@@ -214,6 +348,8 @@ impl McmcDiagnosticsTracker {
             total_accepted,
             proposal_quality,
             diversity,
+            calibration_miss_count,
+            calibration_misses,
         }
     }
 
@@ -310,6 +446,13 @@ pub struct McmcDiagnosticsSummary {
     pub proposal_quality: Option<ProposalQuality>,
     /// Source/target diversity among evaluated vs accepted candidates (verbose only).
     pub diversity: Option<DiversityMetric>,
+    /// Total number of prediction-vs-actual calibration mismatches detected
+    /// during this run (Issue #1165). Always populated; surfaced in JSON so
+    /// operators can see the rate at a glance.
+    pub calibration_miss_count: u32,
+    /// Per-entry calibration mismatches (Issue #1165). Only populated in
+    /// verbose mode (capped at [`CALIBRATION_MISS_VEC_CAP`]).
+    pub calibration_misses: Option<Vec<CalibrationMissEntry>>,
 }
 
 impl McmcDiagnosticsSummary {
@@ -478,6 +621,148 @@ mod tests {
         assert_eq!(summary.total_accepted, 0);
         assert_eq!(summary.overall_acceptance_rate(), 0.0);
         assert!(summary.proposal_quality.is_none());
+    }
+
+    // =========================================================================
+    // Issue #1165 — calibration mismatch logging
+    // =========================================================================
+
+    fn miss_entry(
+        change_type: &str,
+        expected: f32,
+        actual: f32,
+        target_squash: Option<&str>,
+        variant_key: Option<&str>,
+    ) -> FailureCacheEntry {
+        FailureCacheEntry {
+            change_type: change_type.to_string(),
+            expected_error_reduction: expected,
+            actual_error_reduction: actual,
+            target_squash: target_squash.map(str::to_string),
+            variant_key: variant_key.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn calibration_miss_in_tolerance_records_nothing() {
+        let tracker = McmcDiagnosticsTracker::new_verbose();
+        // Ratio = 0.5, well within +/-10×.
+        let cache = vec![miss_entry("add-neurons", 1.0, 0.5, Some("SELU"), None)];
+        tracker.record_calibration_misses_from_cache(&cache, 10.0);
+        let summary = tracker.build_summary();
+        assert_eq!(summary.calibration_miss_count, 0);
+        assert!(summary.calibration_misses.is_none());
+    }
+
+    #[test]
+    fn calibration_miss_above_threshold_is_recorded() {
+        let tracker = McmcDiagnosticsTracker::new_verbose();
+        // Ratio = 100, way above the 10× threshold.
+        let cache = vec![miss_entry("add-synapses", 0.001, 0.1, None, None)];
+        tracker.record_calibration_misses_from_cache(&cache, 10.0);
+        let summary = tracker.build_summary();
+        assert_eq!(summary.calibration_miss_count, 1);
+        let misses = summary
+            .calibration_misses
+            .expect("verbose mode should populate the vec");
+        assert_eq!(misses.len(), 1);
+        assert_eq!(misses[0].change_type, "add-synapses");
+        assert!((misses[0].ratio - 100.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn calibration_miss_below_reciprocal_threshold_is_recorded() {
+        let tracker = McmcDiagnosticsTracker::new_verbose();
+        // Ratio = 1/3000, far below 1/10 = 0.1 — the canonical "Gentle Nudge"
+        // case from Issue #1160.
+        let cache = vec![miss_entry(
+            "add-neurons",
+            0.003,
+            0.000_001,
+            Some("SELU"),
+            Some("gentle-nudge"),
+        )];
+        tracker.record_calibration_misses_from_cache(&cache, 10.0);
+        let summary = tracker.build_summary();
+        assert_eq!(summary.calibration_miss_count, 1);
+        let misses = summary
+            .calibration_misses
+            .expect("verbose mode should populate the vec");
+        assert_eq!(misses[0].target_squash.as_deref(), Some("SELU"));
+        assert_eq!(misses[0].variant_key.as_deref(), Some("gentle-nudge"));
+    }
+
+    #[test]
+    fn calibration_miss_skips_zero_or_non_finite_entries() {
+        let tracker = McmcDiagnosticsTracker::new_verbose();
+        let cache = vec![
+            // expected = 0 → undefined ratio, skip.
+            miss_entry("add-neurons", 0.0, 0.5, None, None),
+            // expected = MIN_POSITIVE, actual = MAX → non-finite, skip.
+            miss_entry("add-neurons", f32::MIN_POSITIVE, f32::MAX, None, None),
+        ];
+        tracker.record_calibration_misses_from_cache(&cache, 10.0);
+        let summary = tracker.build_summary();
+        assert_eq!(summary.calibration_miss_count, 0);
+    }
+
+    #[test]
+    fn calibration_miss_non_verbose_mode_skips_vec_but_counts() {
+        // Default tracker — collect_details follows verbose_enabled() which is
+        // false in the test environment. Regardless, the count must be tracked.
+        let tracker = McmcDiagnosticsTracker {
+            synapse_counters: AcceptanceCounters::new(),
+            neuron_counters: AcceptanceCounters::new(),
+            coordinated_counters: AcceptanceCounters::new(),
+            collect_details: false,
+            improvement_values: std::sync::Mutex::new(Vec::new()),
+            evaluated_sources: std::sync::Mutex::new(HashSet::new()),
+            evaluated_targets: std::sync::Mutex::new(HashSet::new()),
+            accepted_sources: std::sync::Mutex::new(HashSet::new()),
+            accepted_targets: std::sync::Mutex::new(HashSet::new()),
+            calibration_miss_count: AtomicU32::new(0),
+            calibration_misses: std::sync::Mutex::new(Vec::new()),
+        };
+        let cache = vec![
+            miss_entry("add-neurons", 0.001, 0.1, None, None), // ratio 100
+            miss_entry("add-neurons", 1.0, 0.000_01, None, None), // ratio 1e-5
+        ];
+        tracker.record_calibration_misses_from_cache(&cache, 10.0);
+        let summary = tracker.build_summary();
+        assert_eq!(summary.calibration_miss_count, 2);
+        assert!(
+            summary.calibration_misses.is_none(),
+            "non-verbose mode must not populate the per-entry vec"
+        );
+    }
+
+    #[test]
+    fn calibration_miss_vec_capped_at_max_size() {
+        let tracker = McmcDiagnosticsTracker::new_verbose();
+        // Generate CAP + 25 misses; vector must cap, count must reflect all.
+        let total = CALIBRATION_MISS_VEC_CAP + 25;
+        let cache: Vec<FailureCacheEntry> = (0..total)
+            .map(|_| miss_entry("add-neurons", 1.0, 100.0, None, None))
+            .collect();
+        tracker.record_calibration_misses_from_cache(&cache, 10.0);
+        let summary = tracker.build_summary();
+        assert_eq!(summary.calibration_miss_count as usize, total);
+        let misses = summary
+            .calibration_misses
+            .expect("verbose mode should populate the vec");
+        assert_eq!(misses.len(), CALIBRATION_MISS_VEC_CAP);
+    }
+
+    #[test]
+    fn calibration_miss_threshold_clamps_invalid_inputs() {
+        let tracker = McmcDiagnosticsTracker::new_verbose();
+        let cache = vec![miss_entry("add-neurons", 1.0, 0.5, None, None)];
+        // Threshold <= 1.0 collapses to threshold = 1.0 so the symmetric
+        // window degenerates to exactly 1.0, marking any non-unit ratio as a
+        // miss. This guards against silently disabling the check on bad input.
+        tracker.record_calibration_misses_from_cache(&cache, -5.0);
+        let summary = tracker.build_summary();
+        assert_eq!(summary.calibration_miss_count, 1);
     }
 
     #[test]
