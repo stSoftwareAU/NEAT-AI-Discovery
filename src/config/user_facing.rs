@@ -337,6 +337,44 @@ pub fn batch_successful_enabled() -> bool {
     parse_bool_env("NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL")
 }
 
+/// Get the focus ranking memory budget in megabytes (Issue #1172).
+///
+/// Set `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` to cap the eager
+/// pre-load size used by [`crate::focus::rank_focus_neurons`] and
+/// [`crate::focus::rank_focus_neurons_with_history`]. When set, the projected
+/// in-memory size of the parquet file is compared against this budget and
+/// lazy mode is selected when the projection exceeds it (with a structured
+/// `info` log instead of a `WARN`). When unset, the existing
+/// `check_memory_for_parquet` heuristic is used (auto-detect plus `WARN` on
+/// fallback) to preserve behaviour on big hosts.
+///
+/// Returns `None` when the variable is unset, empty, non-numeric, or zero.
+pub fn focus_ranking_memory_budget_mb() -> Option<u64> {
+    let raw = std::env::var("NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB").ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<u64>() {
+        Ok(0) => {
+            tracing::debug!(
+                raw_value = trimmed,
+                "Ignoring NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB=0 (must be > 0)"
+            );
+            None
+        }
+        Ok(v) => Some(v),
+        Err(_) => {
+            tracing::debug!(
+                raw_value = trimmed,
+                "Ignoring invalid NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB \
+                 (expected a positive integer in megabytes)"
+            );
+            None
+        }
+    }
+}
+
 /// Default streaming session TTL in seconds (1 hour).
 pub const DEFAULT_SESSION_TTL_SECS: u64 = 3600;
 

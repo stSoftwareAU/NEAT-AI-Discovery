@@ -245,6 +245,10 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 total_neurons: None,
                 duration_ms: None,
                 rejection_breakdown: None,
+                loading_mode: None,
+                lazy_reason: None,
+                budget_mb: None,
+                projected_mb: None,
                 error: Some(typed.to_string()),
                 error_kind: Some(kind),
                 retryable: Some(kind.is_retryable()),
@@ -322,6 +326,13 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 } else {
                     Some(stats.rejection_breakdown)
                 },
+                // Issue #1172: Surface the chosen record loading mode and
+                // memory budget projection so callers can tune low-memory
+                // hosts without scraping log lines.
+                loading_mode: Some(stats.loading_mode.as_str().to_string()),
+                lazy_reason: Some(stats.lazy_reason.as_str().to_string()),
+                budget_mb: stats.budget_mb,
+                projected_mb: Some(stats.projected_mb),
                 error: None,
                 error_kind,
                 retryable,
@@ -341,6 +352,10 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 total_neurons: None,
                 duration_ms: None,
                 rejection_breakdown: None,
+                loading_mode: None,
+                lazy_reason: None,
+                budget_mb: None,
+                projected_mb: None,
                 error: Some(err_msg),
                 error_kind,
                 retryable,

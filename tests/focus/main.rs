@@ -8,6 +8,7 @@ mod focus_allocation;
 mod focus_gradient;
 mod focus_layers;
 mod focus_ranking;
+mod issue_1172_focus_ranking_memory_budget;
 mod issue_156_hidden_focus_neurons_filtered;
 mod issue_182_focus_unused_observations;
 mod issue_222_hierarchical_focus;

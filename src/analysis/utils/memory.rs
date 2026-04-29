@@ -327,6 +327,28 @@ pub fn validate_parquet_memory_requirements(
     Ok(())
 }
 
+/// Multiplier applied to the parquet file size to estimate the in-memory
+/// representation (parquet decompresses to ~3× in memory).
+pub const PARQUET_MEMORY_MULTIPLIER: u64 = 3;
+
+/// Estimate the in-memory bytes required to fully pre-load a parquet file
+/// (Issue #1172).
+///
+/// Returns `file_size × PARQUET_MEMORY_MULTIPLIER`. Returns `0` when the
+/// file's metadata cannot be read so the caller can treat the projection as
+/// unknown rather than aborting.
+pub fn estimate_parquet_in_memory_bytes(parquet_file: &str) -> u64 {
+    let file_size = std::fs::metadata(parquet_file).map_or(0, |m| m.len());
+    file_size.saturating_mul(PARQUET_MEMORY_MULTIPLIER)
+}
+
+/// Convert bytes to whole megabytes, rounding up so non-zero sizes always
+/// produce at least 1 MB.
+pub const fn bytes_to_mb_ceil(bytes: u64) -> u64 {
+    const MB: u64 = 1024 * 1024;
+    bytes.div_ceil(MB)
+}
+
 /// Check if there's enough memory to load a parquet file.
 ///
 /// Parquet files are compressed; in-memory representation is typically 2-4x larger.
