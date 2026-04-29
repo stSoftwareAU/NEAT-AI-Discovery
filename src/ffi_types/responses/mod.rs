@@ -102,6 +102,23 @@ pub struct RankFocusNeuronsOutput {
     /// [r]: crate::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rejection_breakdown: Option<std::collections::HashMap<String, u32>>,
+    /// Record loading mode chosen by the focus ranker (Issue #1172).
+    /// One of `"preload"` or `"lazy"`. Omitted when no ranking pass ran
+    /// (e.g. validation errors).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loading_mode: Option<String>,
+    /// Reason lazy mode was selected, if any (Issue #1172). One of `"none"`,
+    /// `"budget"`, or `"memory_pressure"`. Omitted when no ranking pass ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lazy_reason: Option<String>,
+    /// Configured `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` value
+    /// when set (Issue #1172). Omitted when no explicit budget was configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_mb: Option<u64>,
+    /// Projected in-memory size of the parquet pre-load in megabytes
+    /// (Issue #1172). Omitted on error paths.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projected_mb: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Structured error classification for retry decisions (Issue #651).

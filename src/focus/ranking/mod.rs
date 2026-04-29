@@ -20,6 +20,9 @@ pub use record_providers::RecordProvider;
 pub use removal_candidates::{RemovalCandidate, SynapseCounts, calculate_removal_savings};
 pub use score_calculation::{RankedNeuron, SelectionStats};
 
+// Issue #1172 — `decide_records_loading` budget plumbing.
+// Items defined in this module that are part of the public API.
+
 // Re-export internal types needed by focus/tests.rs (unit tests for record providers)
 pub(super) use record_providers::LazyRecordProvider;
 
@@ -34,7 +37,10 @@ use super::gradient::{
     build_squash_map, compute_gradient_flow_factor, compute_gradient_flow_for_neuron,
 };
 use super::impact::compute_impacts_with_activations;
-use crate::analysis::utils::{check_memory_for_parquet, verbose_enabled};
+use crate::analysis::utils::{
+    bytes_to_mb_ceil, check_memory_for_parquet, estimate_parquet_in_memory_bytes, verbose_enabled,
+};
+use crate::config::focus_ranking_memory_budget_mb;
 use crate::discovery_history::DiscoveryHistory;
 use crate::parquet_format::read_all_records_grouped_by_neuron;
 use crate::{CoordinatedStructuralCandidateJson, CreatureJson, NeuronJson};
@@ -43,6 +49,55 @@ use rayon::prelude::*;
 
 use std::sync::Arc;
 use std::time::Instant;
+
+/// Loading mode chosen by [`rank_focus_neurons`] for accessing recorded
+/// discovery data (Issue #1172).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FocusLoadingMode {
+    /// All records pre-loaded into memory up-front. Fast but memory-heavy.
+    #[default]
+    Preload,
+    /// Records loaded on demand from parquet with a bounded LRU cache.
+    /// Slower but memory-efficient.
+    Lazy,
+}
+
+impl FocusLoadingMode {
+    /// Stable lower-case identifier for structured logging and FFI surfaces.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Preload => "preload",
+            Self::Lazy => "lazy",
+        }
+    }
+}
+
+/// Reason the focus ranker chose lazy mode (Issue #1172).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FocusLazyReason {
+    /// Lazy mode was not selected (the run used preload).
+    #[default]
+    None,
+    /// `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` was set and the
+    /// projected pre-load size exceeded it.
+    Budget,
+    /// No explicit budget was set and the system memory check
+    /// ([`check_memory_for_parquet`]) reported insufficient memory.
+    MemoryPressure,
+}
+
+impl FocusLazyReason {
+    /// Stable lower-case identifier for structured logging and FFI surfaces.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Budget => "budget",
+            Self::MemoryPressure => "memory_pressure",
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct RankFocusStats {
@@ -67,6 +122,19 @@ pub struct RankFocusStats {
     /// for removal candidates dropped by the noise-floor gate. Surfaced
     /// verbatim into `RankFocusNeuronsOutput.rejection_breakdown`.
     pub rejection_breakdown: std::collections::HashMap<String, u32>,
+    /// Record loading mode chosen for the run (Issue #1172).
+    pub loading_mode: FocusLoadingMode,
+    /// Reason lazy mode was selected, if any (Issue #1172). Set to
+    /// [`FocusLazyReason::None`] when [`Self::loading_mode`] is
+    /// [`FocusLoadingMode::Preload`].
+    pub lazy_reason: FocusLazyReason,
+    /// Configured memory budget in megabytes when
+    /// `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` was set
+    /// (Issue #1172). `None` when no explicit budget was provided.
+    pub budget_mb: Option<u64>,
+    /// Projected in-memory size of the parquet pre-load in megabytes
+    /// (Issue #1172). `0` when the file size could not be determined.
+    pub projected_mb: u64,
 }
 
 pub(super) fn is_selectable_type(neuron_type: &str) -> bool {
@@ -77,13 +145,113 @@ const DEFAULT_COST_OF_GROWTH: f32 = 1e-7;
 const IMPACT_EPSILON: f32 = 0.0001;
 const IMPACT_GAMMA: f32 = 0.8;
 
-/// Load records provider (eager or lazy depending on available memory).
-fn load_records_provider(parquet_file: &str) -> Result<(Arc<dyn RecordProvider>, bool)> {
+/// Outcome of choosing eager vs lazy loading for a focus-ranking run
+/// (Issue #1172).
+struct LoadingDecision {
+    provider: Arc<dyn RecordProvider>,
+    mode: FocusLoadingMode,
+    reason: FocusLazyReason,
+    budget_mb: Option<u64>,
+    projected_mb: u64,
+}
+
+/// Pure decision helper for the configurable memory budget (Issue #1172).
+///
+/// Compares the projected in-memory size against the configured budget in
+/// **bytes** so 1 MB granularity rounding does not distort comparisons for
+/// small parquet files. Returns the chosen mode and a stable lazy reason.
+///
+/// Exposed publicly so unit tests can exercise the budget logic directly
+/// without needing to materialise a parquet file large enough to exceed
+/// 1 MB after the 3× decompression multiplier.
+#[must_use]
+pub fn decide_loading_mode_for_budget(
+    projected_bytes: u64,
+    budget_mb: u64,
+) -> (FocusLoadingMode, FocusLazyReason) {
+    const BYTES_PER_MB: u64 = 1024 * 1024;
+    let budget_bytes = budget_mb.saturating_mul(BYTES_PER_MB);
+    if projected_bytes > budget_bytes {
+        (FocusLoadingMode::Lazy, FocusLazyReason::Budget)
+    } else {
+        (FocusLoadingMode::Preload, FocusLazyReason::None)
+    }
+}
+
+/// Load records provider, taking the optional configurable memory budget into
+/// account.
+///
+/// Behaviour (Issue #1172):
+/// - When `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` is set, the
+///   projected in-memory size (file size × 3) is compared against the budget.
+///   Lazy mode is selected with a structured `info` log when the projection
+///   exceeds the budget.
+/// - When the budget is unset, the existing `check_memory_for_parquet`
+///   heuristic is used (auto-detect plus `WARN` on fallback) so behaviour on
+///   big hosts is unchanged.
+fn load_records_provider(parquet_file: &str) -> Result<LoadingDecision> {
+    let budget_mb = focus_ranking_memory_budget_mb();
+    let projected_bytes = estimate_parquet_in_memory_bytes(parquet_file);
+    let projected_mb = bytes_to_mb_ceil(projected_bytes);
+
+    if let Some(budget) = budget_mb {
+        return decide_with_budget(parquet_file, budget, projected_bytes, projected_mb);
+    }
+
+    decide_with_auto_detect(parquet_file, projected_mb)
+}
+
+fn decide_with_budget(
+    parquet_file: &str,
+    budget_mb: u64,
+    projected_bytes: u64,
+    projected_mb: u64,
+) -> Result<LoadingDecision> {
+    let (mode, reason) = decide_loading_mode_for_budget(projected_bytes, budget_mb);
+    match mode {
+        FocusLoadingMode::Lazy => {
+            tracing::info!(
+                target: "neat_ai_discovery::focus::ranking",
+                mode = FocusLoadingMode::Lazy.as_str(),
+                reason = reason.as_str(),
+                budget_mb,
+                projected_mb,
+                "focus::ranking selected lazy mode: projected pre-load exceeds configured budget",
+            );
+            Ok(LoadingDecision {
+                provider: Arc::new(LazyRecordProvider::new(parquet_file)),
+                mode,
+                reason,
+                budget_mb: Some(budget_mb),
+                projected_mb,
+            })
+        }
+        FocusLoadingMode::Preload => {
+            let records = read_all_records_grouped_by_neuron(parquet_file)
+                .context("Failed to read discovery records from parquet file")?;
+            Ok(LoadingDecision {
+                provider: Arc::new(EagerRecordProvider::new(records)),
+                mode,
+                reason,
+                budget_mb: Some(budget_mb),
+                projected_mb,
+            })
+        }
+    }
+}
+
+fn decide_with_auto_detect(parquet_file: &str, projected_mb: u64) -> Result<LoadingDecision> {
     match check_memory_for_parquet(parquet_file) {
         Ok(()) => {
             let records = read_all_records_grouped_by_neuron(parquet_file)
                 .context("Failed to read discovery records from parquet file")?;
-            Ok((Arc::new(EagerRecordProvider::new(records)), false))
+            Ok(LoadingDecision {
+                provider: Arc::new(EagerRecordProvider::new(records)),
+                mode: FocusLoadingMode::Preload,
+                reason: FocusLazyReason::None,
+                budget_mb: None,
+                projected_mb,
+            })
         }
         Err(memory_error) => {
             tracing::warn!(
@@ -93,8 +261,46 @@ fn load_records_provider(parquet_file: &str) -> Result<(Arc<dyn RecordProvider>,
             if verbose_enabled() {
                 tracing::debug!(error = %memory_error, "Memory check failed");
             }
-            Ok((Arc::new(LazyRecordProvider::new(parquet_file)), true))
+            Ok(LoadingDecision {
+                provider: Arc::new(LazyRecordProvider::new(parquet_file)),
+                mode: FocusLoadingMode::Lazy,
+                reason: FocusLazyReason::MemoryPressure,
+                budget_mb: None,
+                projected_mb,
+            })
         }
+    }
+}
+
+/// Emit the structured end-of-pass summary (Issue #1172). Always logged at
+/// `info` level so callers can scrape mode/projection metrics without enabling
+/// verbose mode.
+fn log_focus_ranking_summary(
+    decision_mode: FocusLoadingMode,
+    decision_reason: FocusLazyReason,
+    budget_mb: Option<u64>,
+    projected_mb: u64,
+    entries: usize,
+    elapsed_ms: u128,
+) {
+    match decision_mode {
+        FocusLoadingMode::Preload => tracing::info!(
+            target: "neat_ai_discovery::focus::ranking",
+            mode = decision_mode.as_str(),
+            entries,
+            elapsed_ms = elapsed_ms.min(u64::MAX as u128) as u64,
+            "focus::ranking pass complete",
+        ),
+        FocusLoadingMode::Lazy => tracing::info!(
+            target: "neat_ai_discovery::focus::ranking",
+            mode = decision_mode.as_str(),
+            reason = decision_reason.as_str(),
+            budget_mb = budget_mb.unwrap_or(0),
+            projected_mb,
+            entries,
+            elapsed_ms = elapsed_ms.min(u64::MAX as u128) as u64,
+            "focus::ranking pass complete",
+        ),
     }
 }
 
@@ -199,10 +405,21 @@ pub fn rank_focus_neurons(
             total_neurons: 0,
             duration_ms: start.elapsed().as_millis(),
             rejection_breakdown: std::collections::HashMap::new(),
+            loading_mode: FocusLoadingMode::Preload,
+            lazy_reason: FocusLazyReason::None,
+            budget_mb: focus_ranking_memory_budget_mb(),
+            projected_mb: 0,
         });
     }
 
-    let (records_provider, is_lazy_mode) = load_records_provider(parquet_file)?;
+    let LoadingDecision {
+        provider: records_provider,
+        mode: loading_mode,
+        reason: lazy_reason,
+        budget_mb,
+        projected_mb,
+    } = load_records_provider(parquet_file)?;
+    let is_lazy_mode = loading_mode == FocusLoadingMode::Lazy;
 
     if is_lazy_mode && verbose_enabled() {
         tracing::debug!(
@@ -322,6 +539,15 @@ pub fn rank_focus_neurons(
     );
 
     let rejection_breakdown = build_rejection_breakdown(&removal_outcome);
+    let duration_ms = start.elapsed().as_millis();
+    log_focus_ranking_summary(
+        loading_mode,
+        lazy_reason,
+        budget_mb,
+        projected_mb,
+        neurons.len(),
+        duration_ms,
+    );
 
     Ok(RankFocusStats {
         neurons,
@@ -330,8 +556,12 @@ pub fn rank_focus_neurons(
         max_output_error,
         processed_neurons: total_neurons,
         total_neurons,
-        duration_ms: start.elapsed().as_millis(),
+        duration_ms,
         rejection_breakdown,
+        loading_mode,
+        lazy_reason,
+        budget_mb,
+        projected_mb,
     })
 }
 
@@ -431,10 +661,21 @@ pub fn rank_focus_neurons_with_history(
             total_neurons: 0,
             duration_ms: start.elapsed().as_millis(),
             rejection_breakdown: std::collections::HashMap::new(),
+            loading_mode: FocusLoadingMode::Preload,
+            lazy_reason: FocusLazyReason::None,
+            budget_mb: focus_ranking_memory_budget_mb(),
+            projected_mb: 0,
         });
     }
 
-    let (records_provider, is_lazy_mode) = load_records_provider(parquet_file)?;
+    let LoadingDecision {
+        provider: records_provider,
+        mode: loading_mode,
+        reason: lazy_reason,
+        budget_mb,
+        projected_mb,
+    } = load_records_provider(parquet_file)?;
+    let is_lazy_mode = loading_mode == FocusLoadingMode::Lazy;
 
     if is_lazy_mode && verbose_enabled() {
         tracing::debug!(
@@ -538,6 +779,15 @@ pub fn rank_focus_neurons_with_history(
 
     let rejection_breakdown = build_rejection_breakdown(&removal_outcome);
     let removal_candidates = removal_outcome.candidates;
+    let duration_ms = start.elapsed().as_millis();
+    log_focus_ranking_summary(
+        loading_mode,
+        lazy_reason,
+        budget_mb,
+        projected_mb,
+        neurons.len(),
+        duration_ms,
+    );
 
     Ok(RankFocusStats {
         neurons,
@@ -546,8 +796,12 @@ pub fn rank_focus_neurons_with_history(
         max_output_error,
         processed_neurons: total_neurons,
         total_neurons,
-        duration_ms: start.elapsed().as_millis(),
+        duration_ms,
         rejection_breakdown,
+        loading_mode,
+        lazy_reason,
+        budget_mb,
+        projected_mb,
     })
 }
 
