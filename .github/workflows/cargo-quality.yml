@@ -1,0 +1,48 @@
+# Cargo Quality workflow (Issue #1180).
+#
+# Standalone formatting + lint + coverage gate raised by the VibeCoding
+# workflow sync. The repository's main CI workflow (`ci.yml`) also runs
+# `cargo fmt --check` and `cargo clippy`, but this dedicated workflow
+# provides a fast, focused signal on every pull request and uploads
+# coverage to Codecov (Issue #1636).
+
+name: Cargo Quality
+
+on:
+  pull_request:
+    branches: ["*"]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Format, Clippy and Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run linter
+        run: cargo clippy -- -D warnings
+
+      # Coverage instrumentation and upload (Issue #1636).
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate coverage (lcov)
+        run: cargo llvm-cov --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
