@@ -56,7 +56,7 @@ screenshot applies.
       workflow YAML parses.
 - [x] `./quality.sh` passes (Rust source untouched aside from one
       doc-only edit in `docs/DISCOVERY_TYPES.md`).
-- [x] Workflow re-uses the same template across repos: the
+- [x] Workflow reuses the same template across repos: the
       `Detect Deno worker module` step gates the optional
       `check-mermaid` job, so this repo (no `worker/deno/mod.ts`)
       skips it cleanly.
