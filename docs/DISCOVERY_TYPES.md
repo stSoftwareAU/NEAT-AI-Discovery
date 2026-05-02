@@ -1840,8 +1840,9 @@ input-B --+
    an interaction effect.
 4. **Estimate improvement**: Use least-squares regression on the target error to
    estimate combined improvement from the input pair.
-5. **Emit candidate**: `coordinatedStructural` with `addNeuron` (non-linear hidden)
-   + two `addSynapse` (inputs → hidden) + one `addSynapse` (hidden → target).
+5. **Emit candidate**: `coordinatedStructural` with `addNeuron` (non-linear
+   hidden), two `addSynapse` (inputs → hidden), and one `addSynapse`
+   (hidden → target).
 
 **Activation preference**: Non-linear activations (TANH, GELU) are preferred because
 IDENTITY would reduce the fan-in to a linear combination, missing interaction effects.

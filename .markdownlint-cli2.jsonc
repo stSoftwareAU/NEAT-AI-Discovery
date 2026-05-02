@@ -1,0 +1,48 @@
+// markdownlint-cli2 configuration (Issue #1177).
+//
+// Enforces a baseline of Markdown hygiene across this repo while
+// tolerating long-standing prose conventions in our docs:
+//
+// - MD013 (line-length) — prose lines may exceed 80 cols.
+// - MD022/MD031/MD032 — historical docs are inconsistent about blank
+//   lines around headings, fences, and lists; not worth a churn PR.
+// - MD024 (no-duplicate-heading) — only fail on sibling duplicates so
+//   common section names ("Summary", "Test Plan") repeat across files.
+// - MD028 (no-blanks-blockquote) — used intentionally in some guides.
+// - MD033 (no-inline-html) — `<details>` blocks are used in README.
+// - MD036/MD040/MD041 — emphasis-as-heading, fenced-code language,
+//   and first-line-h1 are stylistic.
+// - MD046 (code-block-style) — mixed indented + fenced is fine.
+// - MD051 (link-fragments) — TOC anchor mismatches are a separate clean-up.
+// - MD056/MD060 — table column count/style: tables in this repo are
+//   intentionally compact.
+//
+// Auto-generated PR summaries and archived history are excluded from
+// linting via the `ignores` list.
+{
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD022": false,
+    "MD024": { "siblings_only": true },
+    "MD028": false,
+    "MD031": false,
+    "MD032": false,
+    "MD033": false,
+    "MD036": false,
+    "MD040": false,
+    "MD041": false,
+    "MD046": false,
+    "MD051": false,
+    "MD056": false,
+    "MD060": false
+  },
+  "globs": ["**/*.md"],
+  "ignores": [
+    "target/**",
+    "node_modules/**",
+    "**/CHANGELOG.md",
+    "docs/pr-summary-*.md",
+    "docs/archive/**"
+  ]
+}
