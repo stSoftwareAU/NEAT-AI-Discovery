@@ -6,6 +6,7 @@
 mod candidates;
 mod cleanup;
 mod error_classification;
+mod forward_only_validation;
 mod requests;
 mod responses;
 mod session;
@@ -14,6 +15,7 @@ mod session;
 pub use candidates::*;
 pub use cleanup::*;
 pub use error_classification::*;
+pub use forward_only_validation::validate_forward_only_synapses;
 pub use requests::*;
 pub use responses::*;
 pub use session::*;

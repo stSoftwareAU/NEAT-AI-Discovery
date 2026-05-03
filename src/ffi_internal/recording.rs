@@ -33,6 +33,22 @@ pub fn record_discovery_internal(input_json: &str) -> Result<String> {
         }
     };
 
+    // Issue #1184: Reject corrupt creatures carrying recurrent or
+    // unresolved synapses before they reach the recording pipeline.
+    if let Err(typed) = validate_forward_only_synapses(&input.creature) {
+        let kind = typed.error_kind();
+        let output = RecordDiscoveryOutput {
+            success: false,
+            schema_version: SCHEMA_VERSION.to_string(),
+            temp_dir: None,
+            file: None,
+            error: Some(typed.to_string()),
+            error_kind: Some(kind),
+            retryable: Some(kind.is_retryable()),
+        };
+        return Ok(serde_json::to_string(&output)?);
+    }
+
     // Process discovery data - if this fails, return JSON error
     let result = match record::record_discovery_data(&input) {
         Ok(result) => result,
