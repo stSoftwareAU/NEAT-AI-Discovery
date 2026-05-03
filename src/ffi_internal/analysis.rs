@@ -45,6 +45,42 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
         }
     };
 
+    // Issue #1184: Reject corrupt creatures carrying recurrent or
+    // unresolved synapses before they reach the analysis pipeline. The
+    // downstream `target_analysis` filter silently drops back-edges, so
+    // failing fast here surfaces upstream corruption (e.g. NEAT-AI
+    // `loadFrom` strip warnings) instead of letting it taint discovery.
+    if let Err(typed) = validate_forward_only_synapses(&input.creature) {
+        let kind = typed.error_kind();
+        let output = AnalyzeParallelOutput {
+            success: false,
+            schema_version: SCHEMA_VERSION.to_string(),
+            helpful_synapses: None,
+            harmful_synapses: None,
+            synapse_diagnostics: None,
+            synapse_gpu_used: None,
+            synapse_metadata: None,
+            helpful_neurons: None,
+            synapse_weight_updates: None,
+            coordinated_structural_candidates: None,
+            candidate_clusters: None,
+            neuron_diagnostics: None,
+            neuron_gpu_used: None,
+            neuron_metadata: None,
+            neuron_fingerprints: None,
+            fingerprint_cache_hits: None,
+            fingerprint_cache_misses: None,
+            module_outcome_tracker: None,
+            memory_budget_exceeded: None,
+            cancelled: None,
+            memory_pressure_cancelled: None,
+            error: Some(typed.to_string()),
+            error_kind: Some(kind),
+            retryable: Some(kind.is_retryable()),
+        };
+        return Ok(serde_json::to_string(&output)?);
+    }
+
     let combined_input = build_analyze_all_input_from_parallel(input);
 
     // Issue #1048 / #1077: Track that an analysis is active so the host
@@ -256,6 +292,32 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
             return Ok(serde_json::to_string(&output)?);
         }
     };
+
+    // Issue #1184: Reject corrupt creatures carrying recurrent or
+    // unresolved synapses before ranking touches the topology.
+    if let Err(typed) = validate_forward_only_synapses(&input.creature) {
+        let kind = typed.error_kind();
+        let output = RankFocusNeuronsOutput {
+            success: false,
+            schema_version: SCHEMA_VERSION.to_string(),
+            neurons: None,
+            removal_candidates: None,
+            constant_neuron_removals: None,
+            max_output_error: None,
+            processed_neurons: None,
+            total_neurons: None,
+            duration_ms: None,
+            rejection_breakdown: None,
+            loading_mode: None,
+            lazy_reason: None,
+            budget_mb: None,
+            projected_mb: None,
+            error: Some(typed.to_string()),
+            error_kind: Some(kind),
+            retryable: Some(kind.is_retryable()),
+        };
+        return Ok(serde_json::to_string(&output)?);
+    }
 
     // Issue #1048 / #1077: Track that an analysis is active so the host
     // knows not to delete the parquet temp directory until we finish.
