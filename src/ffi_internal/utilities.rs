@@ -90,6 +90,24 @@ pub fn export_visualisation_snapshot_internal(input_json: &str) -> Result<String
         }
     };
 
+    // Issue #1188: Reject corrupt creatures carrying recurrent or
+    // self-looping synapses before the snapshot exporter walks the
+    // topology. The exporter computes impacts and reconstruction checks
+    // that assume a forward-only ordering — a back-edge would silently
+    // skew the snapshot output.
+    if let Err(typed) = validate_forward_only_synapses(&input.creature) {
+        let kind = typed.error_kind();
+        let output = ExportVisualisationSnapshotOutput {
+            success: false,
+            out_file: None,
+            stats: None,
+            error: Some(typed.to_string()),
+            error_kind: Some(kind),
+            retryable: Some(kind.is_retryable()),
+        };
+        return Ok(serde_json::to_string(&output)?);
+    }
+
     let options = export::ExportOptions {
         include_per_synapse_series: input.include_per_synapse_series,
         include_reconstruction_checks: input.include_reconstruction_checks,
