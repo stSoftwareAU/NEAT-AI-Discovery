@@ -13,8 +13,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
 thiserror = "2"  # Typed domain error enums (Issue #677)
-parquet = "58.1"  # Apache Parquet format (viewable with standard tools)
-arrow = { version = "58.1", default-features = false }  # Arrow arrays for Parquet
+parquet = "58.2"  # Apache Parquet format (viewable with standard tools)
+arrow = { version = "58.2", default-features = false }  # Arrow arrays for Parquet
 wgpu = "29"
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
