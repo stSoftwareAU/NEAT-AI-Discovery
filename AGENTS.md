@@ -645,6 +645,7 @@ Key environment variables that control library behaviour:
 | `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` | Overall wall-clock cap for discovery time in minutes (default 20, range 1–120) |
 | `NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET` | Max add-neuron candidates per target within a single batch (default 3, range 1–32) (Issue #1140) |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | Cap focus-ranking eager pre-load size in MB. When set and projected size (file × 3) exceeds the budget, lazy mode is used with a structured `info` log (Issue #1172). |
+| `NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR` | Cold-start calibration prior multiplier for non-invertible / periodic target activations (SINE, COSINE, GAUSSIAN, SQUARE, ABSOLUTE). Applied while the per-(`change_type`, `target_squash`) bucket has fewer than three failure samples. Default 0.25, clamped to `[0.001, 1.0]` (Issue #1192). |
 
 See [README.md — Troubleshooting](README.md#troubleshooting) and
 [README.md — GPU Performance Tuning](README.md#gpu-performance-tuning) for
