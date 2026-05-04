@@ -32,6 +32,27 @@
 //! available, otherwise it falls back to the per-`change_type` correction,
 //! and finally to [`NEUTRAL_CORRECTION`] (= 1.0) when neither is known.
 //!
+//! ## Cold-start prior for non-invertible target squashes (Issue #1192)
+//!
+//! Non-invertible / periodic activations — SINE, COSINE, GAUSSIAN, SQUARE,
+//! ABSOLUTE — are intrinsically riskier as add-neuron / add-synapse targets:
+//! a small change in the incoming weighted sum can flip the output sign
+//! entirely. Without the cold-start prior, candidates aimed at one of these
+//! targets would receive [`NEUTRAL_CORRECTION`] (= 1.0) until at least
+//! [`MIN_SPECIFIC_TARGET_SQUASH_SAMPLES`] failures have been observed for the
+//! exact `(change_type, squash)` bucket — meaning the *first* three failures
+//! against, say, a SINE target cannot be demoted in advance.
+//!
+//! [`CalibrationCorrection::correction_for`] therefore returns the
+//! conservative prior from
+//! [`risky_squash_prior`]
+//! when the target squash is in
+//! [`RISKY_TARGET_SQUASHES`](crate::analysis::constants::RISKY_TARGET_SQUASHES)
+//! and the learnt EWMA is not yet available for that bucket. Once the
+//! per-key sample count reaches the warmup threshold, the learnt EWMA takes
+//! over as it does for every other squash. Non-risky squashes (`ReLU` family,
+//! Sigmoid, Tanh, …) keep the existing 1.0 cold-start default.
+//!
 //! # Formula
 //!
 //! Given failure cache entries with `expected_error_reduction` and
@@ -54,6 +75,8 @@
 
 use serde::Deserialize;
 use std::collections::HashMap;
+
+use crate::analysis::constants::{is_risky_target_squash, risky_squash_prior};
 
 // =============================================================================
 // Constants
@@ -378,31 +401,52 @@ impl CalibrationCorrection {
             .unwrap_or(NEUTRAL_CORRECTION)
     }
 
-    /// Look up the most specific available correction factor (Issue #1162).
+    /// Look up the most specific available correction factor (Issue #1162, #1192).
     ///
     /// Resolution order:
     ///
     /// 1. If `target_squash` is supplied **and** at least
     ///    [`MIN_SPECIFIC_TARGET_SQUASH_SAMPLES`] usable failure-cache entries
     ///    exist for `(change_type, target_squash)`, return that specific
-    ///    correction.
-    /// 2. Otherwise, return the per-`change_type` correction (existing
+    ///    learnt correction (the EWMA from Issue #1162).
+    /// 2. Otherwise, if `target_squash` is supplied and is in the
+    ///    `RISKY_TARGET_SQUASHES` set (non-invertible / periodic activations
+    ///    such as SINE, COSINE, GAUSSIAN, SQUARE, ABSOLUTE), return the
+    ///    conservative cold-start prior from
+    ///    [`risky_squash_prior`]
+    ///    (Issue #1192). This applies whenever the per-key sample count is
+    ///    below the warmup threshold — including when no specific data has
+    ///    been recorded at all — so an add-neuron / add-synapse candidate
+    ///    aimed at a periodic target receives a conservative discount before
+    ///    the learnt EWMA exists.
+    /// 3. Otherwise, return the per-`change_type` correction (existing
     ///    behaviour).
-    /// 3. Otherwise, return [`NEUTRAL_CORRECTION`] (= 1.0) so the compiled
+    /// 4. Otherwise, return [`NEUTRAL_CORRECTION`] (= 1.0) so the compiled
     ///    calibration constant is used unchanged.
     ///
     /// Callers should pass `None` for `target_squash` when the candidate's
-    /// target squash is unknown.
+    /// target squash is unknown — in that case the cold-start risky-target
+    /// prior cannot be applied and resolution skips straight to step 3.
     #[must_use]
     pub fn correction_for(&self, change_type: &str, target_squash: Option<&str>) -> f32 {
-        if let Some(squash) = target_squash
-            && let Some(value) = self
+        if let Some(squash) = target_squash {
+            // 1. Learnt EWMA wins once we have enough samples for this
+            //    (change_type, target_squash) bucket.
+            if let Some(value) = self
                 .specific_corrections
                 .get(&(change_type.to_string(), squash.to_string()))
                 .copied()
-        {
-            return value;
+            {
+                return value;
+            }
+            // 2. Cold-start prior for non-invertible / periodic targets
+            //    (Issue #1192). Applied only when the learnt EWMA is not
+            //    yet available for the bucket.
+            if is_risky_target_squash(squash) {
+                return risky_squash_prior();
+            }
         }
+        // 3. Per-change_type fallback (or neutral via `get_correction`).
         self.get_correction(change_type)
     }
 
@@ -990,5 +1034,206 @@ mod tests {
                 .abs()
                 < 1e-12
         );
+    }
+
+    // =========================================================================
+    // Issue #1192 — cold-start prior for non-invertible target squashes
+    // =========================================================================
+
+    use crate::analysis::constants::{
+        MAX_RISKY_SQUASH_PRIOR, MIN_RISKY_SQUASH_PRIOR, RISKY_SQUASH_PRIOR_DEFAULT,
+        RISKY_TARGET_SQUASHES,
+    };
+    use serial_test::serial;
+
+    /// Risky-target squashes match the non-invertible activations documented
+    /// in `src/activations.rs` (the issue scopes the new prior to SINE,
+    /// COSINE, GAUSSIAN, SQUARE, ABSOLUTE).
+    #[test]
+    fn risky_target_squashes_cover_documented_non_invertibles() {
+        let expected = ["SINE", "COSINE", "GAUSSIAN", "SQUARE", "ABSOLUTE"];
+        for name in expected {
+            assert!(
+                RISKY_TARGET_SQUASHES.contains(&name),
+                "{name} should be in RISKY_TARGET_SQUASHES"
+            );
+        }
+        // Sanity check: monotone activations must NOT be in the risky set.
+        for name in ["RELU", "SIGMOID", "TANH", "GELU", "ELU", "IDENTITY"] {
+            assert!(
+                !RISKY_TARGET_SQUASHES.contains(&name),
+                "{name} must not be flagged as risky"
+            );
+        }
+    }
+
+    /// SINE target with zero failure samples receives the conservative cold-
+    /// start prior, not the global default of 1.0.
+    #[test]
+    #[serial]
+    fn sine_target_with_zero_samples_receives_conservative_prior() {
+        // SAFETY: env vars guarded by serial_test. Single-threaded under #[serial].
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
+        }
+        let correction = CalibrationCorrection::neutral();
+        let value = correction.correction_for(CHANGE_TYPE_ADD_NEURONS, Some("SINE"));
+        assert!(
+            (value - RISKY_SQUASH_PRIOR_DEFAULT).abs() < 1e-6,
+            "expected risky prior {RISKY_SQUASH_PRIOR_DEFAULT}, got {value}"
+        );
+        assert!(
+            (value - NEUTRAL_CORRECTION).abs() > 1e-3,
+            "risky prior must be visibly below neutral 1.0"
+        );
+    }
+
+    /// SINE target with three or more failure samples uses the learnt EWMA,
+    /// not the cold-start prior — the prior only governs cold-start.
+    #[test]
+    #[serial]
+    fn sine_target_with_enough_samples_uses_learnt_ewma() {
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
+        }
+        // Three SINE failures with ratio 0.5 — well above both the prior (0.25)
+        // and the floor (0.001). The EWMA must win over the prior so the
+        // observed-better-than-prior outcome is reflected.
+        let cache: Vec<FailureCacheEntry> = (0..MIN_SPECIFIC_TARGET_SQUASH_SAMPLES)
+            .map(|_| entry_with_squash(CHANGE_TYPE_ADD_NEURONS, 1.0, 0.5, "SINE"))
+            .collect();
+        let correction = CalibrationCorrection::from_failure_cache(&cache);
+        let value = correction.correction_for(CHANGE_TYPE_ADD_NEURONS, Some("SINE"));
+        assert!(
+            (value - 0.5).abs() < 1e-4,
+            "expected learnt EWMA ≈ 0.5, got {value}"
+        );
+        assert!(
+            (value - RISKY_SQUASH_PRIOR_DEFAULT).abs() > 0.1,
+            "learnt EWMA must dominate the cold-start prior once warmed up"
+        );
+    }
+
+    /// SINE target with fewer than three samples still receives the prior —
+    /// the warmup threshold gates EWMA, not the prior.
+    #[test]
+    #[serial]
+    fn sine_target_below_threshold_still_uses_prior() {
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
+        }
+        const _: () = assert!(MIN_SPECIFIC_TARGET_SQUASH_SAMPLES >= 2);
+        let cache: Vec<FailureCacheEntry> = (0..(MIN_SPECIFIC_TARGET_SQUASH_SAMPLES - 1))
+            .map(|_| entry_with_squash(CHANGE_TYPE_ADD_NEURONS, 1.0, 0.001, "SINE"))
+            .collect();
+        let correction = CalibrationCorrection::from_failure_cache(&cache);
+        let value = correction.correction_for(CHANGE_TYPE_ADD_NEURONS, Some("SINE"));
+        assert!(
+            (value - RISKY_SQUASH_PRIOR_DEFAULT).abs() < 1e-6,
+            "below-threshold SINE entries must fall through to the prior, got {value}"
+        );
+    }
+
+    /// `ReLU` (monotone, non-risky) target with zero samples still receives
+    /// the global default of 1.0 — the cold-start prior is only for the
+    /// risky squash set.
+    #[test]
+    #[serial]
+    fn relu_target_with_zero_samples_uses_global_default() {
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
+        }
+        let correction = CalibrationCorrection::neutral();
+        let value = correction.correction_for(CHANGE_TYPE_ADD_NEURONS, Some("RELU"));
+        assert!(
+            (value - NEUTRAL_CORRECTION).abs() < 1e-9,
+            "expected NEUTRAL_CORRECTION (=1.0), got {value}"
+        );
+    }
+
+    /// All five risky squashes receive the conservative prior at cold start.
+    #[test]
+    #[serial]
+    fn every_risky_squash_receives_prior_at_cold_start() {
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
+        }
+        let correction = CalibrationCorrection::neutral();
+        for &squash in RISKY_TARGET_SQUASHES {
+            let value = correction.correction_for(CHANGE_TYPE_ADD_NEURONS, Some(squash));
+            assert!(
+                (value - RISKY_SQUASH_PRIOR_DEFAULT).abs() < 1e-6,
+                "{squash} should receive the cold-start prior, got {value}"
+            );
+        }
+    }
+
+    /// The per-`change_type` fallback (no `target_squash` supplied) is unaffected
+    /// by the cold-start prior — the prior only fires when a risky target
+    /// squash is provided.
+    #[test]
+    #[serial]
+    fn missing_target_squash_skips_risky_prior() {
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
+        }
+        let correction = CalibrationCorrection::neutral();
+        let value = correction.correction_for(CHANGE_TYPE_ADD_NEURONS, None);
+        assert!(
+            (value - NEUTRAL_CORRECTION).abs() < 1e-9,
+            "missing target_squash must keep the per-change_type fallback"
+        );
+    }
+
+    /// `NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR` overrides the default and is
+    /// clamped to `[MIN_RISKY_SQUASH_PRIOR, MAX_RISKY_SQUASH_PRIOR]`.
+    #[test]
+    #[serial]
+    fn env_var_overrides_and_clamps_risky_prior() {
+        let correction = CalibrationCorrection::neutral();
+
+        // Sensible mid-range override.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR", "0.10");
+        }
+        let mid = correction.correction_for(CHANGE_TYPE_ADD_NEURONS, Some("SINE"));
+        assert!(
+            (mid - 0.10).abs() < 1e-6,
+            "expected env override 0.10, got {mid}"
+        );
+
+        // Below the lower clamp -> clamped to MIN_RISKY_SQUASH_PRIOR (0.001).
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR", "0.0");
+        }
+        let low = correction.correction_for(CHANGE_TYPE_ADD_NEURONS, Some("SINE"));
+        assert!(
+            (low - MIN_RISKY_SQUASH_PRIOR).abs() < 1e-6,
+            "expected lower clamp {MIN_RISKY_SQUASH_PRIOR}, got {low}"
+        );
+
+        // Above the upper clamp -> clamped to MAX_RISKY_SQUASH_PRIOR (1.0).
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR", "5.0");
+        }
+        let high = correction.correction_for(CHANGE_TYPE_ADD_NEURONS, Some("SINE"));
+        assert!(
+            (high - MAX_RISKY_SQUASH_PRIOR).abs() < 1e-6,
+            "expected upper clamp {MAX_RISKY_SQUASH_PRIOR}, got {high}"
+        );
+
+        // Unparsable -> default.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR", "not-a-number");
+        }
+        let bad = correction.correction_for(CHANGE_TYPE_ADD_NEURONS, Some("SINE"));
+        assert!(
+            (bad - RISKY_SQUASH_PRIOR_DEFAULT).abs() < 1e-6,
+            "unparsable env var must fall back to the default"
+        );
+
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
+        }
     }
 }

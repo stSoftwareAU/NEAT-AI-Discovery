@@ -345,6 +345,76 @@ pub const ACTIVATION_BOOST_MIN: f64 = 0.5;
 pub const ACTIVATION_BOOST_MAX: f64 = 2.0;
 
 // =============================================================================
+// Risky Target-Squash Cold-Start Prior (Issue #1192)
+// =============================================================================
+
+/// Non-invertible / periodic target activations that warrant a conservative
+/// cold-start calibration prior (Issue #1192).
+///
+/// `src/activations.rs` documents these as non-invertible: a small change in
+/// the incoming weighted sum can flip the output direction entirely. That
+/// makes any add-neuron / add-synapse candidate aimed at a target with one of
+/// these squashes substantially riskier than a candidate aimed at a monotone
+/// target (`ReLU` family, Sigmoid, Tanh).
+///
+/// The per-(`change_type`, `target_squash`) calibration introduced in
+/// Issue #1162 only kicks in once at least three failure-cache entries exist
+/// for a key. Before that threshold is reached, the lookup falls back to the
+/// per-`change_type` value (or the global neutral 1.0 default), which is too
+/// optimistic for these activations. `RISKY_TARGET_SQUASHES` lets the cold-
+/// start path use a conservative prior instead — see [`risky_squash_prior`].
+pub const RISKY_TARGET_SQUASHES: &[&str] = &["SINE", "COSINE", "GAUSSIAN", "SQUARE", "ABSOLUTE"];
+
+/// Default conservative cold-start calibration prior for risky target squashes
+/// (Issue #1192).
+///
+/// Applied only while the per-(`change_type`, `target_squash`) bucket has
+/// fewer than three usable failure samples. Once the bucket reaches the
+/// warmup threshold, the learnt EWMA value takes over.
+///
+/// ## Valid Range
+/// Must be in `[MIN_RISKY_SQUASH_PRIOR, MAX_RISKY_SQUASH_PRIOR]`.
+pub const RISKY_SQUASH_PRIOR_DEFAULT: f32 = 0.25;
+
+/// Lower clamp for the risky-squash cold-start prior (Issue #1192).
+///
+/// Matches the existing `MIN_CALIBRATION_CORRECTION` floor used for learnt
+/// corrections so the cold-start prior cannot collapse predictions to zero.
+pub const MIN_RISKY_SQUASH_PRIOR: f32 = 0.001;
+
+/// Upper clamp for the risky-squash cold-start prior (Issue #1192).
+///
+/// Matches `NEUTRAL_CORRECTION` — the prior must never inflate the base
+/// calibration constant beyond the compiled value.
+pub const MAX_RISKY_SQUASH_PRIOR: f32 = 1.0;
+
+/// Returns true when the supplied target squash name is in
+/// [`RISKY_TARGET_SQUASHES`] (Issue #1192).
+///
+/// Comparison is case-sensitive; callers should pass the canonical
+/// upper-case squash name as it appears in the failure-cache JSON.
+#[must_use]
+pub fn is_risky_target_squash(squash: &str) -> bool {
+    RISKY_TARGET_SQUASHES.contains(&squash)
+}
+
+/// Returns the effective risky-squash cold-start prior (Issue #1192).
+///
+/// Reads `NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR` at call time so tests and
+/// operators can override the default without recompiling. Values outside
+/// `[MIN_RISKY_SQUASH_PRIOR, MAX_RISKY_SQUASH_PRIOR]` are clamped. Unparsable,
+/// non-finite, or missing values fall back to [`RISKY_SQUASH_PRIOR_DEFAULT`].
+#[must_use]
+pub fn risky_squash_prior() -> f32 {
+    std::env::var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+        .unwrap_or(RISKY_SQUASH_PRIOR_DEFAULT)
+        .clamp(MIN_RISKY_SQUASH_PRIOR, MAX_RISKY_SQUASH_PRIOR)
+}
+
+// =============================================================================
 // Saturation-Aware Prediction Discount (Issue #1112)
 // =============================================================================
 
