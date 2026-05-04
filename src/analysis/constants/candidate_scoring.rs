@@ -65,6 +65,54 @@ pub fn max_add_neuron_candidates_per_target() -> usize {
 }
 
 // =============================================================================
+// Cross-Target Diversity Spread (Issue #1193)
+// =============================================================================
+
+/// Default minimum number of distinct target neurons that an emitted batch
+/// must include when the candidate pool supports it (Issue #1193).
+///
+/// The per-target cap (Issue #1140) only fires once three slots for one target
+/// have already been consumed. When the top of the gain-sorted list is
+/// dominated by candidates against a single problematic target, the cap saves
+/// nothing — every slot is spent on that target before any other is
+/// considered. Reordering the top of the list to cover at least
+/// `MIN_DISTINCT_TARGETS_PER_BATCH` distinct targets first keeps a single
+/// risky neuron from monopolising the budget while still letting the cap
+/// admit up to three candidates per target where alternatives are scarce.
+///
+/// Overridable via the `NEAT_AI_DISCOVERY_MIN_DISTINCT_TARGETS_PER_BATCH`
+/// environment variable.
+///
+/// ## Valid Range
+/// Must be >= 1. Values above ~16 may starve high-gain targets.
+pub const MIN_DISTINCT_TARGETS_PER_BATCH: usize = 3;
+
+/// Minimum permitted distinct-target spread after env-var override clamping.
+pub const MIN_DISTINCT_TARGETS_PER_BATCH_FLOOR: usize = 1;
+
+/// Maximum permitted distinct-target spread after env-var override clamping.
+pub const MIN_DISTINCT_TARGETS_PER_BATCH_CEILING: usize = 32;
+
+/// Return the effective minimum distinct-target spread (Issue #1193).
+///
+/// Reads `NEAT_AI_DISCOVERY_MIN_DISTINCT_TARGETS_PER_BATCH` at call time so
+/// tests and operators can override the default. Values outside the permitted
+/// range are clamped to `[MIN_DISTINCT_TARGETS_PER_BATCH_FLOOR,
+/// MIN_DISTINCT_TARGETS_PER_BATCH_CEILING]`. Unparsable or missing values
+/// fall back to `MIN_DISTINCT_TARGETS_PER_BATCH`.
+#[must_use]
+pub fn min_distinct_targets_per_batch() -> usize {
+    std::env::var("NEAT_AI_DISCOVERY_MIN_DISTINCT_TARGETS_PER_BATCH")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(MIN_DISTINCT_TARGETS_PER_BATCH)
+        .clamp(
+            MIN_DISTINCT_TARGETS_PER_BATCH_FLOOR,
+            MIN_DISTINCT_TARGETS_PER_BATCH_CEILING,
+        )
+}
+
+// =============================================================================
 // Source-Type Scoring (Issue #465)
 // =============================================================================
 

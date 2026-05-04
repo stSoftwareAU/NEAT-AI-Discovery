@@ -351,11 +351,13 @@ pub(crate) fn apply_same_target_squash_diversity(
 /// batch (Issue #1140).
 ///
 /// Sorts `candidates` by `expected_creature_score_gain` descending (NaN-safe
-/// via `total_cmp`), then retains only the top-K candidates per
-/// `target_neuron_uuid`, where K is
-/// [`max_add_neuron_candidates_per_target`]. The retained candidates remain
-/// in gain-descending order. Returns the number of candidates dropped by the
-/// cap so callers can record it in the rejection breakdown.
+/// via `total_cmp`), applies the cross-target diversity spread (Issue #1193),
+/// then retains only the top-K candidates per `target_neuron_uuid`, where K
+/// is [`max_add_neuron_candidates_per_target`]. The retained candidates start
+/// with up to [`min_distinct_targets_per_batch`] distinct targets (in
+/// gain-descending order) followed by the remaining candidates in gain-
+/// descending order. Returns the number of candidates dropped by the cap so
+/// callers can record it in the rejection breakdown.
 pub(crate) fn apply_per_target_cap(candidates: &mut Vec<CandidateNeuronJson>) -> usize {
     let cap = crate::analysis::constants::max_add_neuron_candidates_per_target();
     if candidates.is_empty() || cap == 0 {
@@ -369,6 +371,12 @@ pub(crate) fn apply_per_target_cap(candidates: &mut Vec<CandidateNeuronJson>) ->
         b.expected_creature_score_gain
             .total_cmp(&a.expected_creature_score_gain)
     });
+
+    // Issue #1193: reorder so the top of the list covers at least
+    // `MIN_DISTINCT_TARGETS_PER_BATCH` distinct targets when the pool supports
+    // it. This stops a single problematic target from filling all three cap
+    // slots before any other target is considered.
+    apply_distinct_target_spread(candidates);
 
     let original_len = candidates.len();
     let mut per_target: HashMap<String, usize> = HashMap::new();
@@ -386,15 +394,74 @@ pub(crate) fn apply_per_target_cap(candidates: &mut Vec<CandidateNeuronJson>) ->
     original_len - candidates.len()
 }
 
+/// Cross-target diversity spread (Issue #1193).
+///
+/// Assumes `candidates` is already sorted by `expected_creature_score_gain`
+/// descending. When the pool contains at least
+/// [`min_distinct_targets_per_batch`] distinct target neurons, reorders so
+/// the top of the list contains the highest-gain candidate from each of the
+/// first `min_distinct_targets_per_batch` distinct targets, followed by the
+/// remaining candidates in their original gain-descending order. When the
+/// pool has fewer distinct targets than the spread requires, falls through
+/// without reordering.
+///
+/// The reorder is a stable partition: candidates kept "in front" appear in
+/// the gain-rank order at which their target was first encountered, and
+/// candidates pushed to the rear remain in gain-rank order relative to each
+/// other.
+pub(crate) fn apply_distinct_target_spread(candidates: &mut Vec<CandidateNeuronJson>) {
+    let min_distinct = crate::analysis::constants::min_distinct_targets_per_batch();
+    if candidates.len() <= 1 || min_distinct <= 1 {
+        return;
+    }
+
+    // Count distinct targets in the pool. If the pool cannot support the
+    // requested spread, fall through and let the existing gain-rank ordering
+    // stand — Issue #1193 acceptance criteria 2.
+    let distinct_count: usize = {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for c in candidates.iter() {
+            seen.insert(c.target_neuron_uuid.as_str());
+        }
+        seen.len()
+    };
+    if distinct_count < min_distinct {
+        return;
+    }
+
+    // Walk the gain-sorted list once. The first occurrence of each new target
+    // (until `min_distinct` distinct targets have been collected) goes to the
+    // spread bucket; everything else falls to the rest bucket in gain order.
+    let mut seen_targets: HashSet<String> = HashSet::new();
+    let mut spread: Vec<CandidateNeuronJson> = Vec::with_capacity(min_distinct);
+    let mut rest: Vec<CandidateNeuronJson> = Vec::with_capacity(candidates.len());
+    for candidate in candidates.drain(..) {
+        if spread.len() < min_distinct
+            && !seen_targets.contains(candidate.target_neuron_uuid.as_str())
+        {
+            seen_targets.insert(candidate.target_neuron_uuid.clone());
+            spread.push(candidate);
+        } else {
+            rest.push(candidate);
+        }
+    }
+
+    candidates.extend(spread);
+    candidates.extend(rest);
+}
+
 // =============================================================================
 // Tests (Issue #1140)
 // =============================================================================
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_per_target_cap, apply_same_target_squash_diversity};
+    use super::{
+        apply_distinct_target_spread, apply_per_target_cap, apply_same_target_squash_diversity,
+    };
     use crate::CandidateNeuronJson;
     use serial_test::serial;
+    use std::collections::HashSet;
 
     fn test_candidate_with_squash(
         target_uuid: &str,
@@ -607,6 +674,201 @@ mod tests {
             "rejection breakdown should report two squash-duplicate drops"
         );
         assert_eq!(breakdown.total(), 2);
+    }
+
+    // =========================================================================
+    // Issue #1193 — cross-target diversity spread
+    // =========================================================================
+
+    #[test]
+    fn distinct_target_spread_reorders_when_pool_supports_min() {
+        // Top six candidates all hit target-A; three other targets have one
+        // candidate each lower down the list. With MIN_DISTINCT=3, the front
+        // of the reordered list must contain three distinct targets.
+        let mut candidates = vec![
+            test_candidate("target-A", 0.99),
+            test_candidate("target-A", 0.95),
+            test_candidate("target-A", 0.92),
+            test_candidate("target-A", 0.90),
+            test_candidate("target-A", 0.87),
+            test_candidate("target-A", 0.85),
+            test_candidate("target-B", 0.50),
+            test_candidate("target-C", 0.40),
+            test_candidate("target-D", 0.30),
+        ];
+
+        // Pre-sort to mirror the precondition documented on the function.
+        candidates.sort_by(|a, b| {
+            b.expected_creature_score_gain
+                .total_cmp(&a.expected_creature_score_gain)
+        });
+
+        apply_distinct_target_spread(&mut candidates);
+
+        // Front three positions cover three distinct targets: A, B, C
+        // (highest-gain occurrence of each in gain order).
+        let front_targets: Vec<&str> = candidates[0..3]
+            .iter()
+            .map(|c| c.target_neuron_uuid.as_str())
+            .collect();
+        assert_eq!(front_targets, vec!["target-A", "target-B", "target-C"]);
+
+        // Front candidates are the highest-gain entry per distinct target.
+        assert!((candidates[0].expected_creature_score_gain - 0.99).abs() < f32::EPSILON);
+        assert!((candidates[1].expected_creature_score_gain - 0.50).abs() < f32::EPSILON);
+        assert!((candidates[2].expected_creature_score_gain - 0.40).abs() < f32::EPSILON);
+
+        // Tail preserves gain order for the remaining candidates.
+        let tail_gains: Vec<f32> = candidates[3..]
+            .iter()
+            .map(|c| c.expected_creature_score_gain)
+            .collect();
+        let mut sorted_tail = tail_gains.clone();
+        sorted_tail.sort_by(|a, b| b.total_cmp(a));
+        assert_eq!(
+            tail_gains, sorted_tail,
+            "tail must remain in gain-descending order"
+        );
+        // No candidates are dropped.
+        assert_eq!(candidates.len(), 9);
+    }
+
+    #[test]
+    fn distinct_target_spread_falls_through_when_pool_too_narrow() {
+        // Only two distinct targets — below MIN_DISTINCT (3) — so the spread
+        // must leave the gain-sorted ordering untouched.
+        let mut candidates = vec![
+            test_candidate("target-A", 0.9),
+            test_candidate("target-A", 0.8),
+            test_candidate("target-A", 0.7),
+            test_candidate("target-B", 0.6),
+        ];
+        candidates.sort_by(|a, b| {
+            b.expected_creature_score_gain
+                .total_cmp(&a.expected_creature_score_gain)
+        });
+        let before: Vec<(String, f32)> = candidates
+            .iter()
+            .map(|c| (c.target_neuron_uuid.clone(), c.expected_creature_score_gain))
+            .collect();
+
+        apply_distinct_target_spread(&mut candidates);
+
+        let after: Vec<(String, f32)> = candidates
+            .iter()
+            .map(|c| (c.target_neuron_uuid.clone(), c.expected_creature_score_gain))
+            .collect();
+        assert_eq!(
+            before, after,
+            "fall-through path must not reorder when distinct < MIN"
+        );
+    }
+
+    #[test]
+    fn per_target_cap_emits_distinct_targets_when_top_dominated_by_one_target() {
+        // Acceptance: top six candidates all hit target-A; three other targets
+        // exist. After cap, the emitted batch must contain at least
+        // `MIN_DISTINCT_TARGETS_PER_BATCH` distinct targets.
+        let mut candidates = vec![
+            test_candidate("target-A", 0.99),
+            test_candidate("target-A", 0.95),
+            test_candidate("target-A", 0.92),
+            test_candidate("target-A", 0.90),
+            test_candidate("target-A", 0.87),
+            test_candidate("target-A", 0.85),
+            test_candidate("target-B", 0.50),
+            test_candidate("target-C", 0.40),
+            test_candidate("target-D", 0.30),
+        ];
+
+        let _dropped = apply_per_target_cap(&mut candidates);
+
+        let distinct: HashSet<&str> = candidates
+            .iter()
+            .map(|c| c.target_neuron_uuid.as_str())
+            .collect();
+        let min_distinct = crate::analysis::constants::min_distinct_targets_per_batch();
+        assert!(
+            distinct.len() >= min_distinct,
+            "emitted batch must include at least {} distinct targets, got {}",
+            min_distinct,
+            distinct.len()
+        );
+
+        // The front three positions of the cap output must each hit a distinct
+        // target — that is the visible signature of the spread.
+        let front_targets: HashSet<&str> = candidates[0..3]
+            .iter()
+            .map(|c| c.target_neuron_uuid.as_str())
+            .collect();
+        assert_eq!(
+            front_targets.len(),
+            3,
+            "first three slots of the emitted batch should each hit a distinct target"
+        );
+    }
+
+    #[test]
+    fn per_target_cap_preserves_full_quota_when_no_alternatives() {
+        // Only one distinct target exists. The per-target cap of three must
+        // still admit that target's full quota — the spread must not reduce
+        // the cap below `max_add_neuron_candidates_per_target`.
+        let mut candidates = vec![
+            test_candidate("target-A", 0.9),
+            test_candidate("target-A", 0.8),
+            test_candidate("target-A", 0.7),
+            test_candidate("target-A", 0.6),
+            test_candidate("target-A", 0.5),
+        ];
+
+        let dropped = apply_per_target_cap(&mut candidates);
+
+        assert_eq!(candidates.len(), 3, "cap should retain the full quota of 3");
+        assert_eq!(dropped, 2);
+        let retained_gains: Vec<f32> = candidates
+            .iter()
+            .map(|c| c.expected_creature_score_gain)
+            .collect();
+        assert_eq!(retained_gains, vec![0.9, 0.8, 0.7]);
+    }
+
+    #[test]
+    #[serial]
+    fn distinct_target_spread_env_override_controls_min() {
+        // SAFETY: env access is serialised via `#[serial]`.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_MIN_DISTINCT_TARGETS_PER_BATCH", "1");
+        }
+
+        let mut candidates = vec![
+            test_candidate("target-A", 0.9),
+            test_candidate("target-A", 0.8),
+            test_candidate("target-B", 0.5),
+        ];
+        candidates.sort_by(|a, b| {
+            b.expected_creature_score_gain
+                .total_cmp(&a.expected_creature_score_gain)
+        });
+        let before: Vec<(String, f32)> = candidates
+            .iter()
+            .map(|c| (c.target_neuron_uuid.clone(), c.expected_creature_score_gain))
+            .collect();
+
+        apply_distinct_target_spread(&mut candidates);
+
+        let after: Vec<(String, f32)> = candidates
+            .iter()
+            .map(|c| (c.target_neuron_uuid.clone(), c.expected_creature_score_gain))
+            .collect();
+
+        // SAFETY: env access is serialised via `#[serial]`.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_MIN_DISTINCT_TARGETS_PER_BATCH");
+        }
+
+        // With min_distinct = 1 the spread becomes a no-op (early return) and
+        // the gain-sorted order is preserved verbatim.
+        assert_eq!(before, after);
     }
 
     #[test]

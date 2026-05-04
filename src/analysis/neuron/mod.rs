@@ -13,7 +13,7 @@
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod evaluation;
-mod post_processing;
+pub(crate) mod post_processing;
 pub(crate) mod preparation;
 
 use crate::{AnalyzeNeuronsInput, CandidateNeuronJson};
