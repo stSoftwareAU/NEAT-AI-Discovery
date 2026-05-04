@@ -155,6 +155,23 @@ pub unsafe extern "C" fn start_discovery_session(
             }
         };
 
+        // Issue #1188: Reject corrupt creatures carrying recurrent or
+        // self-looping synapses before they enter a streaming recording
+        // session. The session retains the creature for the lifetime of
+        // append/finish calls, so a violation here would taint every
+        // record written through that session.
+        if let Err(typed) = validate_forward_only_synapses(&input.creature) {
+            let kind = typed.error_kind();
+            let output = StartSessionOutput {
+                success: false,
+                session_id: None,
+                error: Some(typed.to_string()),
+                error_kind: Some(kind),
+                retryable: Some(kind.is_retryable()),
+            };
+            return to_ffi_json(&output);
+        }
+
         let output = match streaming::start_session(input.creature, input.temp_dir) {
             Ok(session_id) => {
                 let (error_kind, retryable) = no_error_fields();

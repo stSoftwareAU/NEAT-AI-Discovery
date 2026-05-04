@@ -38,9 +38,9 @@ const MAX_REPORTED_VIOLATIONS: usize = 5;
 /// and must not enter the discovery pipeline.
 ///
 /// Returns `Ok(())` when every synapse is forward-only. Returns
-/// `DiscoveryError::InvalidInput` with a descriptive message listing up to
-/// [`MAX_REPORTED_VIOLATIONS`] offending synapses when violations are
-/// found.
+/// `DiscoveryError::InvalidInput` with a descriptive message listing up
+/// to a bounded number of offending synapses (see the module-private
+/// `MAX_REPORTED_VIOLATIONS` constant) when violations are found.
 ///
 /// Synapses referencing neuron UUIDs that are not present in the creature
 /// are **not** flagged here — the existing pipeline tolerates such

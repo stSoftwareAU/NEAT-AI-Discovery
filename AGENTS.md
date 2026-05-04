@@ -566,6 +566,41 @@ Discovery assumes **forward-only** networks (no recurrent feedback):
 - No cross-sample state — each recorded activation/error is for a single
   training sample.
 
+#### Validated FFI Surface (Issue #1184, #1188)
+
+`validate_forward_only_synapses` (in `src/ffi_types/forward_only_validation.rs`)
+is the defence-in-depth gate. It runs immediately after JSON
+deserialisation and before any business logic on every FFI entry point
+that accepts a `CreatureJson`. A violation returns a structured
+`DiscoveryError::InvalidInput` with `error_kind: "data_validation"`.
+
+| FFI entry point | Accepts `CreatureJson` | Validates | Notes |
+|-----------------|------------------------|-----------|-------|
+| `record_discovery` | yes | yes | via `record_discovery_internal` |
+| `start_discovery_session` | yes | yes | validated in the FFI handler before `streaming::start_session` (Issue #1188) |
+| `append_discovery_records` | no | n/a | references session by ID; creature is captured at session start |
+| `finish_discovery_session` | no | n/a | session ID only |
+| `cancel_discovery_session` | no | n/a | session ID only |
+| `analyze_parallel` | yes | yes | via `analyze_parallel_internal` |
+| `rank_focus_neurons` | yes | yes | via `rank_focus_neurons_internal` |
+| `export_visualisation_snapshot` | yes | yes | via `export_visualisation_snapshot_internal` (Issue #1188) |
+| `merge_discovery_parquet` | no | n/a | parquet I/O only |
+| `read_discovery_records_ffi` | no | n/a | parquet I/O only |
+| `get_calibration_summary` | no | n/a | discovery-history JSON only |
+| `cleanup_discovery_dir` | no | n/a | filesystem cleanup |
+| `clean_orphaned_discovery_dirs` | no | n/a | filesystem cleanup |
+| `discovery_memory_usage_bytes` | no | n/a | atomic counter read |
+| `cleanup_discovery_lib` | no | n/a | shutdown hook |
+| `get_library_version` | no | n/a | constant string |
+| `check_gpu_available` | no | n/a | hardware probe |
+| `cancel_analysis` / `cancel_analysis_memory_pressure` / `reset_cancellation` / `is_analysis_active` | no | n/a | cancellation flags |
+| `free_discovery_result` | no | n/a | memory free |
+
+There are intentionally **no validation-bypassing paths** for creature
+input. Any new FFI entry point that accepts a `CreatureJson` must call
+`validate_forward_only_synapses` before any business logic and update
+this table.
+
 ### Atomic Record Writes
 
 For each discovery record, all data (observations, activations, errors) **must**
