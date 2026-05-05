@@ -10,6 +10,7 @@ use neat_ai_discovery::analysis::analyze_synapses;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use serial_test::serial;
 use tempfile::tempdir;
 
 fn bent_identity(x: f32) -> f32 {
@@ -101,8 +102,18 @@ fn issue_134_bent_identity_target_simulation_rejects_linear_false_positive() {
 /// This ensures the dataset is not degenerate and that we genuinely rely on target simulation for
 /// `BENT_IDENTITY` to avoid false positives.
 #[test]
+#[serial]
 fn issue_134_identity_target_accepts_linear_candidate_sanity_check() {
     skip_without_gpu!();
+
+    // Issue #1191: this 5-record fixture produces synapse candidates whose
+    // post-discount gains fall below the new 1e-5 production noise floor.
+    // Disable the floor so the IDENTITY-target sanity check is observable
+    // independently.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN", "0");
+    }
 
     let temp_dir = tempdir().expect("Failed to create temp directory");
     let parquet_path = temp_dir.path().join("records.parquet");
@@ -154,6 +165,12 @@ fn issue_134_identity_target_accepts_linear_candidate_sanity_check() {
     };
 
     let result = analyze_synapses(&input).expect("Synapse analysis should succeed");
+
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN");
+    }
+
     assert!(
         !result.helpful_synapses.is_empty(),
         "Expected at least one helpful synapse for IDENTITY target in the sanity-check scenario"

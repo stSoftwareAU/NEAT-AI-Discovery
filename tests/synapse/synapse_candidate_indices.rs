@@ -6,15 +6,21 @@
 //! This test ensures those fields are populated consistently with `CandidateNeuronJson`.
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use crate::common::GainFloorDisableGuard;
 use crate::skip_without_gpu;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 use tempfile::NamedTempFile;
 
 #[test]
+#[serial]
 fn synapse_candidates_populate_from_and_to_indices() {
     skip_without_gpu!();
+    // Issue #1191: synthetic 12-pattern fixture; disable the production
+    // noise floor so the index-population contract is observable.
+    let _gain_guard = GainFloorDisableGuard::new();
 
     // Simple creature:
     // - inputs: input-0, input-1

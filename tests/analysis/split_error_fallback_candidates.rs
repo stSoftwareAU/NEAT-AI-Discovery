@@ -16,6 +16,7 @@ use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 use tempfile::NamedTempFile;
 
 /// Skip test if no GPU available
@@ -79,8 +80,19 @@ fn create_test_creature(
 ///
 /// This test will FAIL before the fix and PASS after.
 #[test]
+#[serial]
 fn regression_split_error_must_return_fallback_candidates() {
     skip_without_gpu!();
+
+    // Issue #1191: this regression scenario deliberately constructs weak
+    // 0.1–2% improvements that, after pessimism / calibration discounting,
+    // fall below the new 1e-5 production noise floor. Disable the floor for
+    // the test so the original split-error fallback contract under test can
+    // be observed independently.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN", "0");
+    }
 
     let creature = create_test_creature(
         vec![
@@ -159,6 +171,11 @@ fn regression_split_error_must_return_fallback_candidates() {
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
+
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN");
+    }
 
     // Log all candidates for debugging
     eprintln!("=== REGRESSION TEST: Split-error fallback candidates ===");

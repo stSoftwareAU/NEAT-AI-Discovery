@@ -132,6 +132,12 @@ fn issue_199_high_variance_sources_scale_threshold() {
     // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
+        // Issue #1191: synthetic high-variance test data here produces synapse
+        // candidates whose post-discount gains fall below the new 1e-5
+        // production noise floor. Disable the floor for this regression
+        // scenario so the dynamic-threshold contract under test can be
+        // observed independently.
+        std::env::set_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN", "0");
     }
 
     // Creature with two input neurons:
@@ -208,6 +214,11 @@ fn issue_199_high_variance_sources_scale_threshold() {
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input)
         .expect("Synapse analysis should succeed");
+
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN");
+    }
 
     // With high-variance profile (avg std dev >> 0.05), the threshold scales up.
     // The formula: dynamic_threshold = 1e-7 × max(1.0, source_std_dev_avg / 0.05)

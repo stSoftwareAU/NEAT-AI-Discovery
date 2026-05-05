@@ -724,6 +724,71 @@ pub const ADAPTIVE_PROPOSAL_MAX_SIGMA: f32 = 3.0;
 pub const ADAPTIVE_PROPOSAL_SIGN_FLIP_PROBABILITY: f32 = 0.15;
 
 // =============================================================================
+// Absolute Expected-Gain Floor for Add-Neuron / Add-Synapse Candidates (Issue #1191)
+// =============================================================================
+
+/// Absolute minimum `expected_creature_score_gain` for add-neuron and
+/// add-synapse candidates emitted from post-processing (Issue #1191).
+///
+/// The previous filter only required `> 0.0`, which kept candidates with
+/// gains as small as ~6e-7 (see Issue #1189 failure cache). At those
+/// magnitudes the predicted improvement is dominated by floating-point
+/// round-off in the downstream evaluator, so testing them is wasted budget
+/// regardless of the prediction model's accuracy.
+///
+/// This floor is applied in:
+/// - `build_neuron_results()` before the per-target / per-squash diversity
+///   filters, so noise-level candidates do not consume the cap budget.
+/// - `apply_post_processing()` for synapse helpful/harmful candidates, in
+///   place of the prior `> 0.0` retain.
+///
+/// Coordinated-structural candidates have their own floor
+/// ([`COORDINATED_MIN_EXPECTED_GAIN`]) and post-discount noise floor
+/// ([`COORDINATED_POST_DISCOUNT_NOISE_FLOOR`]) applied downstream — those
+/// remain authoritative for that path.
+///
+/// Overridable via the `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN` environment
+/// variable.
+///
+/// ## Valid Range
+/// Must be > 0.0. Values above 1e-3 may filter genuinely useful candidates.
+/// Values below 1e-8 defeat the purpose of the floor.
+pub const MIN_EXPECTED_CREATURE_SCORE_GAIN: f32 = 1e-5;
+
+/// Lower clamp for the configurable `MIN_EXPECTED_CREATURE_SCORE_GAIN`
+/// override (Issue #1191).
+///
+/// `0.0` is accepted as a valid "disable the floor" value for tests that
+/// exercise the pre-Issue-#1191 contract at tiny magnitudes.
+pub const MIN_EXPECTED_CREATURE_SCORE_GAIN_FLOOR: f32 = 0.0;
+
+/// Upper clamp for the configurable `MIN_EXPECTED_CREATURE_SCORE_GAIN`
+/// override (Issue #1191).
+pub const MIN_EXPECTED_CREATURE_SCORE_GAIN_CEILING: f32 = 1e-2;
+
+/// Returns the effective minimum-expected-gain floor for add-neuron and
+/// add-synapse candidates (Issue #1191).
+///
+/// Reads `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN` at call time so tests and
+/// operators can override the default without recompiling. Values outside
+/// `[MIN_EXPECTED_CREATURE_SCORE_GAIN_FLOOR,
+/// MIN_EXPECTED_CREATURE_SCORE_GAIN_CEILING]` are clamped. Unparsable,
+/// non-finite, or negative values fall back to
+/// [`MIN_EXPECTED_CREATURE_SCORE_GAIN`].
+#[must_use]
+pub fn min_expected_creature_score_gain() -> f32 {
+    std::env::var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .unwrap_or(MIN_EXPECTED_CREATURE_SCORE_GAIN)
+        .clamp(
+            MIN_EXPECTED_CREATURE_SCORE_GAIN_FLOOR,
+            MIN_EXPECTED_CREATURE_SCORE_GAIN_CEILING,
+        )
+}
+
+// =============================================================================
 // Coordinated Candidate Minimum Expected Gain (Issue #1110)
 // =============================================================================
 

@@ -8,10 +8,12 @@
 //! These integration tests verify the behaviour through the public API.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use crate::common::GainFloorDisableGuard;
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use serial_test::serial;
 use tempfile::tempdir;
 
 /// Skip test if no GPU available
@@ -91,8 +93,12 @@ fn analysis_handles_non_finite_values_gracefully() {
 /// Test that analysis correctly pairs samples by `obs_index`.
 /// Records with mismatched `obs_index` should not be paired.
 #[test]
+#[serial]
 fn analysis_pairs_samples_by_obs_index() {
     skip_without_gpu!();
+    // Issue #1191: synthetic 5-pair fixture; disable the production noise
+    // floor so the obs-index matching contract is observable.
+    let _gain_guard = GainFloorDisableGuard::new();
 
     let temp_dir = tempdir().expect("Failed to create temp directory");
     let parquet_path = temp_dir.path().join("records.parquet");

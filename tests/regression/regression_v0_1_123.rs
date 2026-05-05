@@ -16,11 +16,13 @@
 //! If any of these tests fail after a code change, the fix has regressed.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use crate::common::GainFloorDisableGuard;
 use neat_ai_discovery::analysis::analyze_neurons;
 use neat_ai_discovery::analysis::shared::NeuronNoCandidateReason;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 use tempfile::TempDir;
 
 /// Skip test if no GPU available (same as other tests)
@@ -584,8 +586,14 @@ fn regression_discounted_hidden_neurons_must_meet_minimum_threshold() {
 /// 1. `helpful_neurons` (has candidates)
 /// 2. `no_candidate_reasons` (was analysed but has no viable candidates)
 #[test]
+#[serial]
 fn regression_impact_discounted_neurons_must_appear_in_response() {
     skip_without_gpu!();
+    // Issue #1191: synthetic fixture produces post-discount gains below the
+    // 1e-5 production noise floor. This regression case is about diagnostic
+    // visibility for impact-discounted candidates — disable the floor so the
+    // contract under test remains observable independently.
+    let _gain_guard = GainFloorDisableGuard::new();
 
     let temp_dir = TempDir::new().expect("Failed to create temporary directory");
     let parquet_path = temp_dir.path().join("records.parquet");

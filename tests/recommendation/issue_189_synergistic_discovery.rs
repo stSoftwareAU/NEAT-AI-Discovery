@@ -10,10 +10,12 @@
 //! 4. Measure that discovery still finds non-synergistic patterns correctly
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use crate::common::GainFloorDisableGuard;
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, analyze_parallel_internal};
+use serial_test::serial;
 use tempfile::tempdir;
 
 /// Test: XOR-like pattern detection where neither input alone predicts the output.
@@ -238,10 +240,14 @@ fn synergistic_discovery_detects_xor_pattern() {
 /// 3. Source B explains the residual
 /// 4. Combined (A + B) is better than A alone
 #[test]
+#[serial]
 fn residual_analysis_finds_complementary_sources() {
     if !GpuAnalyzer::gpu_is_available() {
         return;
     }
+    // Issue #1191: synthetic fixture; disable the production noise floor
+    // for the duration of this test.
+    let _gain_guard = GainFloorDisableGuard::new();
 
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let parquet_file = temp_dir
@@ -599,10 +605,13 @@ fn synergistic_candidate_has_expected_structure() {
 /// When inputs have completely independent effects (no synergy),
 /// they should NOT be grouped into synergistic candidates.
 #[test]
+#[serial]
 fn no_false_positives_for_independent_inputs() {
     if !GpuAnalyzer::gpu_is_available() {
         return;
     }
+    // Issue #1191: synthetic fixture; disable the production noise floor.
+    let _gain_guard = GainFloorDisableGuard::new();
 
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let parquet_file = temp_dir

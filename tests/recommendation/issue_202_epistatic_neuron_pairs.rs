@@ -10,10 +10,12 @@
 //! 3. Test that combined candidate improves score when individuals don't
 //! 4. Verify no regression in non-epistatic discovery
 
+use crate::common::GainFloorDisableGuard;
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson, analyze_parallel_internal};
+use serial_test::serial;
 use tempfile::tempdir;
 
 /// Test: Epistatic pair detection with complementary error patterns.
@@ -310,10 +312,13 @@ fn epistatic_pair_detected_via_correlation_analysis() {
 /// When neurons have independent effects (not epistatic), they should NOT
 /// be grouped into coordinated candidates unnecessarily.
 #[test]
+#[serial]
 fn no_false_positive_epistatic_detection_for_independent_neurons() {
     if !GpuAnalyzer::gpu_is_available() {
         return;
     }
+    // Issue #1191: synthetic fixture; disable the production noise floor.
+    let _gain_guard = GainFloorDisableGuard::new();
 
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let parquet_file = temp_dir
