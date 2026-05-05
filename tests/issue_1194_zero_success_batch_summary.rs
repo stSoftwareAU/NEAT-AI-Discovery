@@ -33,6 +33,8 @@ fn fc_entry(
         target_squash: squash.map(str::to_string),
         variant_key: variant.map(str::to_string),
         target_uuid: target_uuid.map(str::to_string),
+        improved_count: None,
+        total_count: None,
     }
 }
 

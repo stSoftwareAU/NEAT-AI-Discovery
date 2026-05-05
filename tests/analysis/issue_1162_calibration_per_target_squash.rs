@@ -26,6 +26,8 @@ fn entry_with_squash(
         target_squash: squash.map(str::to_string),
         variant_key: None,
         target_uuid: None,
+        improved_count: None,
+        total_count: None,
     }
 }
 
