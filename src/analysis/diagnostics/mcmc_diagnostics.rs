@@ -640,6 +640,7 @@ mod tests {
             actual_error_reduction: actual,
             target_squash: target_squash.map(str::to_string),
             variant_key: variant_key.map(str::to_string),
+            target_uuid: None,
         }
     }
 

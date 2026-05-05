@@ -985,6 +985,7 @@ mod calibrated_variant_tests {
             actual_error_reduction: actual,
             target_squash: None,
             variant_key: Some(variant.to_string()),
+            target_uuid: None,
         }
     }
 

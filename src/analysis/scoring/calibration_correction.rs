@@ -186,6 +186,13 @@ pub struct FailureCacheEntry {
     /// `None` for legacy entries and for original (non-variant) candidates.
     #[serde(default)]
     pub variant_key: Option<String>,
+
+    /// Stable UUID of the target neuron the candidate was applied to
+    /// (Issue #1194). Populated from `targetNeuronInfo.uuid` in the
+    /// failure-cache JSON, or from a top-level `targetUuid` field when
+    /// supplied. `None` for legacy entries that omit target metadata.
+    #[serde(default)]
+    pub target_uuid: Option<String>,
 }
 
 /// Wire-format helper for [`FailureCacheEntry`] (Issue #1162).
@@ -207,6 +214,10 @@ struct FailureCacheEntryRaw {
     variant_key: Option<String>,
     #[serde(default)]
     variant_info: Option<VariantInfoRaw>,
+    /// Issue #1194: optional top-level `targetUuid` shorthand for the target
+    /// neuron's UUID.
+    #[serde(default)]
+    target_uuid: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -214,6 +225,10 @@ struct FailureCacheEntryRaw {
 struct TargetNeuronInfoRaw {
     #[serde(default)]
     squash: Option<String>,
+    /// Stable UUID of the target neuron (Issue #1194). Optional for backward
+    /// compatibility with legacy failure-cache payloads.
+    #[serde(default)]
+    uuid: Option<String>,
 }
 
 /// Wire-format helper for nested `variantInfo.key` payloads (Issue #1163).
@@ -230,11 +245,20 @@ struct VariantInfoRaw {
 
 impl From<FailureCacheEntryRaw> for FailureCacheEntry {
     fn from(raw: FailureCacheEntryRaw) -> Self {
+        // Capture nested target neuron info before splitting fields off below.
+        let target_neuron_info = raw.target_neuron_info;
         // Prefer an explicit top-level `targetSquash`, fall back to the
         // nested `targetNeuronInfo.squash` shape that NEAT-AI emits.
-        let target_squash = raw
-            .target_squash
-            .or_else(|| raw.target_neuron_info.and_then(|info| info.squash));
+        let target_squash = raw.target_squash.or_else(|| {
+            target_neuron_info
+                .as_ref()
+                .and_then(|info| info.squash.clone())
+        });
+        // Issue #1194: prefer top-level `targetUuid`, fall back to
+        // `targetNeuronInfo.uuid`.
+        let target_uuid = raw
+            .target_uuid
+            .or_else(|| target_neuron_info.and_then(|info| info.uuid));
         // Issue #1163: prefer top-level `variantKey`, fall back to
         // `variantInfo.key`. Both are optional for backward compatibility.
         let variant_key = raw
@@ -246,6 +270,7 @@ impl From<FailureCacheEntryRaw> for FailureCacheEntry {
             actual_error_reduction: raw.actual_error_reduction,
             target_squash,
             variant_key,
+            target_uuid,
         }
     }
 }
@@ -537,6 +562,7 @@ mod tests {
             actual_error_reduction: actual,
             target_squash: None,
             variant_key: None,
+            target_uuid: None,
         }
     }
 
@@ -552,6 +578,7 @@ mod tests {
             actual_error_reduction: actual,
             target_squash: Some(squash.to_string()),
             variant_key: None,
+            target_uuid: None,
         }
     }
 
@@ -567,6 +594,7 @@ mod tests {
             actual_error_reduction: actual,
             target_squash: None,
             variant_key: Some(variant.to_string()),
+            target_uuid: None,
         }
     }
 
