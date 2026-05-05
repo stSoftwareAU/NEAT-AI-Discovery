@@ -8,4 +8,5 @@ pub mod calibration_correction;
 pub mod confidence;
 pub mod cross_validation;
 pub mod error_distribution;
+pub mod sample_creature_disconnect;
 pub mod weights;

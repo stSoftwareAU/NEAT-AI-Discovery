@@ -77,6 +77,9 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::analysis::constants::{is_risky_target_squash, risky_squash_prior};
+use crate::analysis::scoring::sample_creature_disconnect::{
+    SAMPLE_DISCONNECT_PENALTY, detect_disconnect_entry,
+};
 
 // =============================================================================
 // Constants
@@ -193,6 +196,20 @@ pub struct FailureCacheEntry {
     /// supplied. `None` for legacy entries that omit target metadata.
     #[serde(default)]
     pub target_uuid: Option<String>,
+
+    /// Number of recorded samples that improved under this candidate
+    /// (Issue #1195). Populated from `improvedCount` in the failure-cache
+    /// JSON when present. `None` for legacy entries that omit per-sample
+    /// statistics.
+    #[serde(default)]
+    pub improved_count: Option<u32>,
+
+    /// Total number of recorded samples evaluated for this candidate
+    /// (Issue #1195). Populated from `totalCount` in the failure-cache
+    /// JSON when present. `None` for legacy entries that omit per-sample
+    /// statistics.
+    #[serde(default)]
+    pub total_count: Option<u32>,
 }
 
 /// Wire-format helper for [`FailureCacheEntry`] (Issue #1162).
@@ -218,6 +235,12 @@ struct FailureCacheEntryRaw {
     /// neuron's UUID.
     #[serde(default)]
     target_uuid: Option<String>,
+    /// Issue #1195: per-sample success counters populated by the upstream
+    /// emitter. Both fields are optional for backward compatibility.
+    #[serde(default)]
+    improved_count: Option<u32>,
+    #[serde(default)]
+    total_count: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -271,6 +294,8 @@ impl From<FailureCacheEntryRaw> for FailureCacheEntry {
             target_squash,
             variant_key,
             target_uuid,
+            improved_count: raw.improved_count,
+            total_count: raw.total_count,
         }
     }
 }
@@ -305,6 +330,16 @@ pub struct CalibrationCorrection {
     /// (Issue #1163). Only populated for groups with at least
     /// [`MIN_SPECIFIC_VARIANT_KEY_SAMPLES`] usable entries.
     variant_corrections: HashMap<(String, String), f32>,
+    /// Sample-vs-creature disconnect penalties keyed by
+    /// `(change_type, target_squash, variant_key)` (Issue #1195).
+    ///
+    /// Each detected disconnect multiplies the penalty for the matching
+    /// triple by [`SAMPLE_DISCONNECT_PENALTY`] (`0.5`); the cumulative
+    /// product is clamped to
+    /// `[MIN_CALIBRATION_CORRECTION, NEUTRAL_CORRECTION]`. Triples with
+    /// no detected disconnects are absent from the map and resolve to
+    /// [`NEUTRAL_CORRECTION`] on lookup.
+    disconnect_penalties: HashMap<(String, String, String), f32>,
 }
 
 impl CalibrationCorrection {
@@ -403,10 +438,43 @@ impl CalibrationCorrection {
             variant_corrections.insert((change_type.to_string(), variant.to_string()), clamped);
         }
 
+        // Issue #1195: scan the cache for sample-vs-creature disconnects and
+        // record a multiplicative penalty for the matching
+        // (change_type, target_squash, variant_key) triple. Each disconnect
+        // halves the surviving penalty; the cumulative product is clamped to
+        // the standard correction floor so a stream of failures cannot
+        // collapse predictions to zero.
+        let mut disconnect_penalties: HashMap<(String, String, String), f32> = HashMap::new();
+        for entry in cache {
+            if !detect_disconnect_entry(entry) {
+                continue;
+            }
+            // Disconnects without a full triple key cannot be filed; the
+            // detector still fired (the event will be emitted by callers)
+            // but no entry-level penalty is recorded.
+            let (Some(squash), Some(variant)) =
+                (entry.target_squash.as_deref(), entry.variant_key.as_deref())
+            else {
+                continue;
+            };
+            let key = (
+                entry.change_type.clone(),
+                squash.to_string(),
+                variant.to_string(),
+            );
+            let current = *disconnect_penalties
+                .get(&key)
+                .unwrap_or(&NEUTRAL_CORRECTION);
+            let next = (current * SAMPLE_DISCONNECT_PENALTY)
+                .clamp(MIN_CALIBRATION_CORRECTION, NEUTRAL_CORRECTION);
+            disconnect_penalties.insert(key, next);
+        }
+
         Self {
             corrections,
             specific_corrections,
             variant_corrections,
+            disconnect_penalties,
         }
     }
 
@@ -520,6 +588,60 @@ impl CalibrationCorrection {
             .unwrap_or(NEUTRAL_CORRECTION)
     }
 
+    /// Look up the sample-vs-creature disconnect penalty for the given
+    /// `(change_type, target_squash, variant_key)` triple (Issue #1195).
+    ///
+    /// Returns [`NEUTRAL_CORRECTION`] (= 1.0) when no disconnect has been
+    /// recorded for the triple — i.e. the calibration is unaffected by
+    /// the new penalty layer.
+    #[must_use]
+    pub fn disconnect_penalty_for(
+        &self,
+        change_type: &str,
+        target_squash: &str,
+        variant_key: &str,
+    ) -> f32 {
+        self.disconnect_penalties
+            .get(&(
+                change_type.to_string(),
+                target_squash.to_string(),
+                variant_key.to_string(),
+            ))
+            .copied()
+            .unwrap_or(NEUTRAL_CORRECTION)
+    }
+
+    /// Returns a reference to the per-(`change_type`, `target_squash`,
+    /// `variant_key`) disconnect-penalty map (Issue #1195). Exposed for
+    /// diagnostic tests; the FFI metadata only includes the per-`change_type`
+    /// map for backward compatibility.
+    #[must_use]
+    pub fn disconnect_penalties_as_map(&self) -> &HashMap<(String, String, String), f32> {
+        &self.disconnect_penalties
+    }
+
+    /// Look up the calibration correction for a fully-specified
+    /// `(change_type, target_squash, variant_key)` triple, with the
+    /// sample-vs-creature disconnect penalty applied (Issue #1195).
+    ///
+    /// The returned value is `correction_for(change_type, target_squash) *
+    /// disconnect_penalty_for(change_type, target_squash, variant_key)`,
+    /// clamped to `[MIN_CALIBRATION_CORRECTION, NEUTRAL_CORRECTION]`. When
+    /// no disconnect has been recorded for the triple this is identical
+    /// to [`Self::correction_for`] — preserving existing behaviour for
+    /// candidates the new layer has not yet observed.
+    #[must_use]
+    pub fn correction_for_triple(
+        &self,
+        change_type: &str,
+        target_squash: &str,
+        variant_key: &str,
+    ) -> f32 {
+        let base = self.correction_for(change_type, Some(target_squash));
+        let penalty = self.disconnect_penalty_for(change_type, target_squash, variant_key);
+        (base * penalty).clamp(MIN_CALIBRATION_CORRECTION, NEUTRAL_CORRECTION)
+    }
+
     /// True when no change-type has a correction recorded.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -563,6 +685,8 @@ mod tests {
             target_squash: None,
             variant_key: None,
             target_uuid: None,
+            improved_count: None,
+            total_count: None,
         }
     }
 
@@ -579,6 +703,8 @@ mod tests {
             target_squash: Some(squash.to_string()),
             variant_key: None,
             target_uuid: None,
+            improved_count: None,
+            total_count: None,
         }
     }
 
@@ -595,6 +721,8 @@ mod tests {
             target_squash: None,
             variant_key: Some(variant.to_string()),
             target_uuid: None,
+            improved_count: None,
+            total_count: None,
         }
     }
 
@@ -928,6 +1056,35 @@ mod tests {
         }"#;
         let parsed: FailureCacheEntry = serde_json::from_str(json).expect("parse");
         assert_eq!(parsed.variant_key.as_deref(), Some("micro-nudge"));
+    }
+
+    #[test]
+    fn improved_and_total_counts_parsed_from_top_level_fields() {
+        // Issue #1195: failure-cache JSON may carry `improvedCount` and
+        // `totalCount` describing per-sample success counters. They must
+        // round-trip into the optional fields on the in-memory struct.
+        let json = r#"{
+            "changeType": "add-neurons",
+            "expectedErrorReduction": 0.001,
+            "actualErrorReduction": -0.5,
+            "improvedCount": 1032,
+            "totalCount": 1036
+        }"#;
+        let parsed: FailureCacheEntry = serde_json::from_str(json).expect("parse");
+        assert_eq!(parsed.improved_count, Some(1032));
+        assert_eq!(parsed.total_count, Some(1036));
+    }
+
+    #[test]
+    fn improved_and_total_counts_optional_for_legacy_entries() {
+        let json = r#"{
+            "changeType": "add-neurons",
+            "expectedErrorReduction": 0.001,
+            "actualErrorReduction": -0.5
+        }"#;
+        let parsed: FailureCacheEntry = serde_json::from_str(json).expect("parse");
+        assert!(parsed.improved_count.is_none());
+        assert!(parsed.total_count.is_none());
     }
 
     #[test]

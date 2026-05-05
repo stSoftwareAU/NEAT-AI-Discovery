@@ -119,6 +119,8 @@ fn twenty_over_estimations_clamp_to_minimum_correction() {
             target_squash: None,
             variant_key: None,
             target_uuid: None,
+            improved_count: None,
+            total_count: None,
         })
         .collect();
     let correction = CalibrationCorrection::from_failure_cache(&cache);
@@ -158,6 +160,8 @@ fn analyze_all_exposes_calibration_corrections_in_metadata() {
                 target_squash: None,
                 variant_key: None,
                 target_uuid: None,
+                improved_count: None,
+                total_count: None,
             });
         }
     }
@@ -248,6 +252,8 @@ fn calibration_corrections_are_deterministic() {
             target_squash: None,
             variant_key: None,
             target_uuid: None,
+            improved_count: None,
+            total_count: None,
         })
         .collect();
 

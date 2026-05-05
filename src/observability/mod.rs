@@ -28,6 +28,7 @@ pub mod gain_floor_metrics;
 pub mod gpu_metrics;
 pub mod phase_timer;
 pub mod profile;
+pub mod sample_creature_disconnect;
 pub mod zero_success_batch;
 
 // Re-export all public types for backward compatibility.
@@ -35,6 +36,9 @@ pub use gain_floor_metrics::*;
 pub use gpu_metrics::*;
 pub use phase_timer::*;
 pub use profile::*;
+pub use sample_creature_disconnect::{
+    SampleCreatureDisconnect, maybe_emit_sample_creature_disconnect,
+};
 pub use zero_success_batch::{
     ZeroSuccessBatchSummary, emit_zero_success_batch_summary,
     maybe_emit_zero_success_batch_summary, now_batch_id,
