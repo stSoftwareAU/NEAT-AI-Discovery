@@ -850,6 +850,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     profile.set_candidates_found(total_candidates);
     profile.set_candidates_returned(total_candidates);
 
+    // Issue #1194: Emit a structured zero-success batch summary so failure
+    // clusters in the input failure cache are visible without manual
+    // inspection. The aggregation only runs when accepted == 0, keeping the
+    // hot path unchanged for successful batches.
+    if let Some(cache) = input.failure_cache.as_deref() {
+        let _ =
+            crate::observability::maybe_emit_zero_success_batch_summary(total_candidates, cache);
+    }
+
     // Set focus neurons completed from metadata
     let synapse_completed = synapse_result
         .as_ref()

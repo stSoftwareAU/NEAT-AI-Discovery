@@ -25,6 +25,7 @@ fn entry_with_squash(
         actual_error_reduction: actual,
         target_squash: squash.map(str::to_string),
         variant_key: None,
+        target_uuid: None,
     }
 }
 
