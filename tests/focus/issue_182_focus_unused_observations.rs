@@ -190,11 +190,17 @@ fn issue_182_env_var_parsing_disabled() {
 }
 
 #[test]
+#[serial]
 fn issue_182_focus_unused_observations_prioritises_inputs_without_synapses() {
     skip_without_gpu!();
 
     // Enable focus on unused observations
     let _guard = EnvVarGuard::set("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS", "1");
+    // Issue #1191: synthetic test fixture produces synapse candidates whose
+    // post-discount gains fall below the new 1e-5 production noise floor.
+    // Disable the floor so the focus-unused-observations contract under test
+    // is observable independently.
+    let _gain_guard = EnvVarGuard::set("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN", "0");
 
     let creature = create_test_creature();
 
@@ -262,12 +268,16 @@ fn issue_182_focus_unused_observations_prioritises_inputs_without_synapses() {
 }
 
 #[test]
+#[serial]
 fn issue_182_without_env_var_no_prioritisation() {
     skip_without_gpu!();
 
     // Ensure env var is NOT set
     // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS") };
+    // Issue #1191: synthetic test fixture produces synapse candidates whose
+    // post-discount gains fall below the new 1e-5 production noise floor.
+    let _gain_guard = EnvVarGuard::set("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN", "0");
 
     let creature = create_test_creature();
 

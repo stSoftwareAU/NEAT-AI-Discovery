@@ -89,8 +89,14 @@ pub(crate) fn build_neuron_results(
         &calibration_correction,
     );
 
-    // Issue #557: Filter out candidates with non-positive expected_creature_score_gain.
-    helpful_results.retain(|c| c.expected_creature_score_gain > 0.0);
+    // Issue #557, #1191: Drop candidates whose expected gain is below the
+    // absolute noise floor. Predictions in the 1e-7 range are dominated by
+    // floating-point round-off in the downstream evaluator (see Issue #1189
+    // failure cache evidence). The floor runs before the per-target / per-
+    // squash diversity filters so noise-level candidates do not consume the
+    // cap budget. The helper records its drops on the global counter
+    // (`candidates_below_gain_floor_total`).
+    let _floor_dropped = apply_min_expected_gain_floor_for_neurons(&mut helpful_results);
 
     // Sort by expected creature score gain (highest first) - Issue #128
     helpful_results.sort_by(|a, b| {
@@ -306,6 +312,30 @@ fn apply_impact_discounting(
             );
         }
     }
+}
+
+/// Drop add-neuron candidates whose `expected_creature_score_gain` is below
+/// the absolute noise floor (Issue #1191).
+///
+/// Reads the configured floor via [`min_expected_creature_score_gain`]
+/// (overridable through `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN`). Each drop is
+/// recorded against the global
+/// [`candidates_below_gain_floor_total`](crate::observability::GainFloorMetrics)
+/// counter so operators can see how many candidates the floor removes per
+/// batch. Returns the number of candidates dropped so callers can record it
+/// in the rejection breakdown.
+///
+/// Applied before the per-target / per-squash diversity filters so
+/// noise-level proposals do not consume the cap budget.
+pub fn apply_min_expected_gain_floor_for_neurons(
+    candidates: &mut Vec<CandidateNeuronJson>,
+) -> usize {
+    let floor = crate::analysis::constants::min_expected_creature_score_gain();
+    let before = candidates.len();
+    candidates.retain(|c| c.expected_creature_score_gain >= floor);
+    let dropped = before - candidates.len();
+    crate::observability::global_gain_floor_metrics().record_dropped(dropped);
+    dropped
 }
 
 /// Enforce squash diversity within each target neuron (Issue #1141).

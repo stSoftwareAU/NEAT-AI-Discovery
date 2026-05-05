@@ -15,6 +15,7 @@
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use serial_test::serial;
 use tempfile::tempdir;
 
 /// Skip test if no GPU available
@@ -30,8 +31,19 @@ macro_rules! skip_without_gpu {
 /// Test that synapse analysis completes successfully with the `TargetMap` optimisation.
 /// This is an integration test that exercises the full analysis pipeline.
 #[test]
+#[serial]
 fn synapse_analysis_with_target_map_optimization_succeeds() {
     skip_without_gpu!();
+
+    // Issue #1191: this synthetic 20-record fixture produces synapse
+    // candidates whose post-discount gains fall below the 1e-5 production
+    // noise floor. Disable the floor for the test so the `TargetMap`
+    // optimisation contract under test (analysis completes and yields
+    // candidates or diagnostic reasons) is observable.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN", "0");
+    }
 
     let temp_dir = tempdir().expect("Failed to create temp directory");
     let parquet_path = temp_dir.path().join("records.parquet");
@@ -88,6 +100,11 @@ fn synapse_analysis_with_target_map_optimization_succeeds() {
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
+
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN");
+    }
 
     // The optimisation should produce candidates when there's correlation
     assert!(

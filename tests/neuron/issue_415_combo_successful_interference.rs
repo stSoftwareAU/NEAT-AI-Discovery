@@ -25,6 +25,7 @@ use neat_ai_discovery::analysis::samples::HelpfulSample;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, analyze_parallel_internal};
+use serial_test::serial;
 use tempfile::tempdir;
 
 /// Test: Detect interference when two candidates target the same neuron with conflicting weights.
@@ -236,10 +237,20 @@ fn no_interference_for_complementary_candidates() {
 /// 2. But they interfere when combined
 /// 3. The system should NOT propose them as a coordinated candidate
 #[test]
+#[serial]
 fn combo_successful_filters_interfering_pairs() {
     // Discovery is GPU-only
     if !GpuAnalyzer::gpu_is_available() {
         return;
+    }
+
+    // Issue #1191: synthetic 128-sample fixture produces synapse candidates
+    // whose post-discount gains fall below the new 1e-5 production noise
+    // floor. Disable the floor so the redundant-input combo-filter contract
+    // under test is observable independently.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN", "0");
     }
 
     let temp_dir = tempdir().expect("Failed to create temp dir");
@@ -313,6 +324,11 @@ fn combo_successful_filters_interfering_pairs() {
         analyze_parallel_internal(&input_json).expect("parallel analysis should return JSON");
     let output: serde_json::Value =
         serde_json::from_str(&output_json).expect("output should be valid JSON");
+
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN");
+    }
 
     assert_eq!(output["success"], true);
 

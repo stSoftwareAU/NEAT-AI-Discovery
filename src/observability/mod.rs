@@ -24,11 +24,13 @@
 //! | `NEAT_AI_DISCOVERY_GPU_METRICS` | `1` | Print GPU metrics to stderr |
 //! | `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | f32 (>1) | Threshold (default 10) above which prediction-vs-actual mismatches are logged via `tracing::warn!` (Issue #1165) |
 
+pub mod gain_floor_metrics;
 pub mod gpu_metrics;
 pub mod phase_timer;
 pub mod profile;
 
 // Re-export all public types for backward compatibility.
+pub use gain_floor_metrics::*;
 pub use gpu_metrics::*;
 pub use phase_timer::*;
 pub use profile::*;

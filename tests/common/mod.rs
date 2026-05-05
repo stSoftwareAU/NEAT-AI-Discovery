@@ -41,6 +41,60 @@ macro_rules! skip_without_gpu {
 }
 
 // ---------------------------------------------------------------------------
+// Issue #1191 — minimum-expected-gain floor RAII guard.
+//
+// Many integration tests build small synthetic fixtures whose post-discount
+// candidate gains fall below the new 1e-5 production noise floor. Holding a
+// `GainFloorDisableGuard` for the duration of such a test sets
+// `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN=0` on construction and restores the
+// previous value on drop, so the contract under test is observable
+// independently of the noise filter.
+// ---------------------------------------------------------------------------
+
+/// RAII guard that disables the Issue #1191 minimum-expected-gain floor for
+/// the duration of a test, restoring the prior env-var value on drop.
+///
+/// Tests that construct synthetic fixtures whose post-discount gains fall
+/// below `MIN_EXPECTED_CREATURE_SCORE_GAIN` should hold one of these for the
+/// scope of the assertion. Use with `#[serial]` (or another env-serialisation
+/// strategy) to avoid concurrent env access.
+#[allow(dead_code)]
+pub struct GainFloorDisableGuard {
+    previous: Option<String>,
+}
+
+impl GainFloorDisableGuard {
+    /// Create a guard, setting `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN=0`.
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        let previous = std::env::var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN").ok();
+        // SAFETY: callers serialise env access (e.g. via `#[serial]`).
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN", "0");
+        }
+        Self { previous }
+    }
+}
+
+impl Default for GainFloorDisableGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for GainFloorDisableGuard {
+    fn drop(&mut self) {
+        // SAFETY: callers serialise env access (e.g. via `#[serial]`).
+        unsafe {
+            match &self.previous {
+                Some(v) => std::env::set_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN", v),
+                None => std::env::remove_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN"),
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Neuron builders
 // ---------------------------------------------------------------------------
 

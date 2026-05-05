@@ -10,6 +10,7 @@ use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons, analyze_synapses
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeNeuronsInput, AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use serial_test::serial;
 use tempfile::tempdir;
 
 /// Skip test if no GPU available
@@ -101,8 +102,18 @@ fn neuron_analysis_with_deadline_completes() {
 
 /// Issue #953: Synapse analysis with a deadline completes without hanging.
 #[test]
+#[serial]
 fn synapse_analysis_with_deadline_completes() {
     skip_without_gpu!();
+
+    // Issue #1191: synthetic 30-record fixture produces synapse candidates
+    // whose post-discount gains fall below the new 1e-5 production noise
+    // floor. Disable the floor so the deadline-completion contract under
+    // test is observable independently.
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN", "0");
+    }
 
     let temp_dir = tempdir().expect("Failed to create temp directory");
     let parquet_path = temp_dir.path().join("records.parquet");
@@ -123,6 +134,12 @@ fn synapse_analysis_with_deadline_completes() {
     };
 
     let result = analyze_synapses(&input).expect("Synapse analysis with deadline should succeed");
+
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN");
+    }
+
     assert!(
         !result.helpful_synapses.is_empty() || !result.no_candidate_reasons.is_empty(),
         "Should produce candidates or diagnostics"

@@ -1,4 +1,5 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use crate::common::GainFloorDisableGuard;
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -39,6 +40,11 @@ fn coordinated_structural_can_replace_synapse_with_hidden_relu_neuron() {
         }
     }
     let _guard = EnvGuard;
+
+    // Issue #1191: synthetic 64-record fixture; disable the production noise
+    // floor so the coordinated-structural-replace contract under test is
+    // observable independently.
+    let _gain_guard = GainFloorDisableGuard::new();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let parquet_file = temp_dir

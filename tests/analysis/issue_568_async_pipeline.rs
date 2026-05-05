@@ -6,11 +6,13 @@
 //! 3. The `submit_helpful_batch` + `collect()` pattern works correctly
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use crate::common::GainFloorDisableGuard;
 use neat_ai_discovery::analysis::analyze_all;
 use neat_ai_discovery::analysis::gpu::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeAllInput, CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 
 /// Create a small creature for testing correctness.
 fn create_test_creature() -> CreatureJson {
@@ -194,8 +196,14 @@ fn async_pipeline_produces_valid_analysis_results() {
 /// The async overlap should not affect result ordering or content — running
 /// with the same seed should produce identical results.
 #[test]
+#[serial]
 fn async_pipeline_is_deterministic_with_fixed_seed() {
     skip_without_gpu!();
+    // Issue #1191: synthetic 50-record fixture produces gains right at the
+    // 1e-5 noise floor boundary; parallel-reduction FP non-determinism can
+    // flip whether each candidate clears the floor between runs. Disable
+    // the floor so the determinism contract under test is observable.
+    let _gain_guard = GainFloorDisableGuard::new();
 
     let creature = create_test_creature();
     let records = create_test_records(&creature, 50);
