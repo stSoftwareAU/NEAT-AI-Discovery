@@ -81,6 +81,7 @@ mod bias_calculation_tests;
 mod cache_tests;
 mod clone_reduction_tests;
 mod diagnostics_tests;
+mod distinct_target_spread_tests;
 mod gpu_batch_tests;
 mod improvement_model_tests;
 mod optimal_weight_tests;
