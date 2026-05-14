@@ -507,3 +507,22 @@ pub fn drought_log_threshold() -> u32 {
         .filter(|v| *v >= 1)
         .unwrap_or(DEFAULT_DROUGHT_LOG_THRESHOLD)
 }
+
+/// Operator escape hatch — force a one-shot reset of the candidate cache
+/// failed entries and target cooldown tracker after this many consecutive
+/// empty discovery passes (Issue #1205).
+///
+/// Set `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` to a positive integer
+/// to enable. Returns `None` when unset, zero, or invalid — meaning the
+/// escape hatch is off.
+///
+/// The reset clears all failed `CandidateOutcomeCache` outcomes (preserving
+/// successes and source-type stats) and all `TargetFailureTracker` entries
+/// currently in cooldown. The reset fires at most once per consecutive
+/// failure streak; a successful pass re-arms the lever.
+pub fn drought_reset_after_epochs() -> Option<u32> {
+    std::env::var("NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|v| *v >= 1)
+}

@@ -977,6 +977,37 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 neu.metadata.drought_diagnostic = Some(diagnostic);
             }
         }
+
+        // Issue #1205: Operator escape hatch — after the drought diagnostic
+        // has surfaced, optionally force a one-shot reset of failed-candidate
+        // cache entries and active target cooldowns. Driven by
+        // `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS`; disabled when unset.
+        if let Some(drought_reset_after) = crate::config::drought_reset_after_epochs() {
+            // Re-lock the global tracker so we can mutate it. The earlier
+            // snapshot for the diagnostic was a clone; the reset must land on
+            // the actual global state.
+            if let Ok(mut guard) = super::target_failure_tracker::global_tracker().lock() {
+                let epoch_for_reset = guard.current_epoch();
+                let _ = super::drought_reset::maybe_perform_drought_reset(
+                    None,
+                    Some(&mut *guard),
+                    consecutive_failures,
+                    drought_reset_after,
+                    epoch_for_reset,
+                );
+            }
+        }
+    } else if let Some(drought_reset_after) = crate::config::drought_reset_after_epochs() {
+        // Issue #1205: when consecutive_failures is below the diagnostic
+        // threshold (or zero) the lever cannot fire, but we still need to
+        // re-arm the tombstone after a successful pass so the next future
+        // drought is not skipped.
+        let _ = drought_reset_after; // configured value retained for diagnostics; no-op here
+        if consecutive_failures == 0
+            && let Ok(mut guard) = super::target_failure_tracker::global_tracker().lock()
+        {
+            super::drought_reset::rearm_drought_reset(None, Some(&mut *guard));
+        }
     }
 
     Ok(AnalyzeAllResult {
