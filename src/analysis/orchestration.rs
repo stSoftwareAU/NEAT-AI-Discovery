@@ -915,6 +915,70 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         neu.metadata.rolling_success_rate = rolling_success_rate;
     }
 
+    // Issue #1202: Drought diagnostic. When the trailing-failure streak in the
+    // caller-supplied outcome log crosses the configured threshold, emit a
+    // single structured warn log and attach the payload to both metadata
+    // surfaces. The orchestrator owns the only call site, so the warn fires
+    // at most once per `analyze_all` invocation.
+    let consecutive_failures = outcome_log.consecutive_trailing_failures();
+    let drought_threshold = crate::config::drought_log_threshold();
+    if consecutive_failures >= drought_threshold {
+        // Snapshot the global target-cooldown tracker. Lock failures fall back
+        // to "no tracker" so the diagnostic still fires.
+        let tracker_snapshot = super::target_failure_tracker::global_tracker()
+            .lock()
+            .ok()
+            .map(|guard| guard.clone());
+        let current_epoch = tracker_snapshot.as_ref().map_or(
+            0,
+            super::target_failure_tracker::TargetFailureTracker::current_epoch,
+        );
+
+        // Pick whichever metadata surface has the richer rejection breakdown
+        // for the dominant-reason field. Synapse takes precedence when both
+        // are present.
+        let empty_breakdown = super::diagnostics::RejectionBreakdown::new();
+        let rejection_breakdown = synapse_result
+            .as_ref()
+            .map(|s| &s.metadata.rejection_breakdown)
+            .or_else(|| {
+                neuron_result
+                    .as_ref()
+                    .map(|n| &n.metadata.rejection_breakdown)
+            })
+            .unwrap_or(&empty_breakdown);
+        let candidates_returned = synapse_result
+            .as_ref()
+            .map_or(0, |s| {
+                u32::try_from(s.metadata.candidates_returned).unwrap_or(u32::MAX)
+            })
+            .saturating_add(neuron_result.as_ref().map_or(0, |n| {
+                u32::try_from(n.metadata.candidates_returned).unwrap_or(u32::MAX)
+            }));
+
+        let inputs = super::drought_diagnostic::DroughtInputs {
+            consecutive_failures,
+            rolling_success_rate,
+            discovery_mode,
+            candidate_cache: None,
+            target_tracker: tracker_snapshot.as_ref(),
+            current_epoch,
+            target_cooldown_skipped: 0,
+            rejection_breakdown,
+            candidates_returned,
+        };
+        if let Some(diagnostic) =
+            super::drought_diagnostic::emit_drought_diagnostic(&inputs, drought_threshold)
+        {
+            if let Some(syn) = synapse_result.as_mut() {
+                syn.metadata.drought_diagnostic = Some(diagnostic.clone());
+            }
+            if let Some(neu) = neuron_result.as_mut() {
+                neu.metadata.drought_diagnostic = Some(diagnostic);
+            }
+        }
+    }
+
     Ok(AnalyzeAllResult {
         synapse: synapse_result,
         neuron: neuron_result,

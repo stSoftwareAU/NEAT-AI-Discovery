@@ -175,6 +175,14 @@ pub struct SynapseAnalysisMetadataJson {
     /// [`analysis::discovery_mode::ROLLING_WINDOW`] discovery passes
     /// (Issue #1132).
     pub rolling_success_rate: f32,
+    /// Drought diagnostic payload (Issue #1202).
+    ///
+    /// Populated only when the trailing-failure streak crosses the configured
+    /// `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` (default 5). Carries the same
+    /// suppression-layer signals as the structured warn log so the controller
+    /// can react without scraping logs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drought_diagnostic: Option<analysis::drought_diagnostic::DroughtDiagnostic>,
 }
 
 /// MCMC diagnostics summary for the analysis output JSON (Issue #1021).
@@ -296,6 +304,10 @@ pub struct NeuronAnalysisMetadataJson {
     /// Rolling success rate over the most recent discovery passes
     /// (Issue #1132).
     pub rolling_success_rate: f32,
+    /// Drought diagnostic payload (Issue #1202). See
+    /// `SynapseAnalysisMetadataJson::drought_diagnostic` for full docs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drought_diagnostic: Option<analysis::drought_diagnostic::DroughtDiagnostic>,
 }
 
 // ============================================================================

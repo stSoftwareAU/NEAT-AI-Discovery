@@ -128,6 +128,16 @@ pub struct SynapseAnalysisMetadata {
     /// to `1.0` when no log is supplied (neutral — no reason to trigger
     /// conservative mode).
     pub rolling_success_rate: f32,
+
+    /// Drought diagnostic payload (Issue #1202).
+    ///
+    /// Populated when the trailing-failure streak in the caller-supplied
+    /// `discovery_outcome_log` reaches the configured drought threshold
+    /// (default 5, env var `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD`).
+    /// Surfaces candidate-cache suppression, target-cooldown counts, and the
+    /// dominant rejection reason in a single payload so operators can
+    /// root-cause "no successful candidates" without re-running analysis.
+    pub drought_diagnostic: Option<crate::analysis::drought_diagnostic::DroughtDiagnostic>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.
@@ -189,6 +199,11 @@ pub struct NeuronAnalysisMetadata {
     ///
     /// See `SynapseAnalysisMetadata::rolling_success_rate` for full docs.
     pub rolling_success_rate: f32,
+
+    /// Drought diagnostic payload (Issue #1202).
+    ///
+    /// See `SynapseAnalysisMetadata::drought_diagnostic` for full docs.
+    pub drought_diagnostic: Option<crate::analysis::drought_diagnostic::DroughtDiagnostic>,
 }
 
 /// Result of synapse analysis
