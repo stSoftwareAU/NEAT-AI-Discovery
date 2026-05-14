@@ -17,6 +17,11 @@
 
 #![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::candidate_cache::CandidateOutcomeCache;
+// Issue #1203 changed `is_suppressed` to require a `DiscoveryMode` and a
+// `drought_failures` count so the staleness window can adapt to droughts.
+// Passing `(DiscoveryMode::Normal, 0)` preserves the original behaviour these
+// tests were written against.
+use neat_ai_discovery::analysis::discovery_mode::DiscoveryMode;
 
 // =============================================================================
 // Basic Recording and Lookup
@@ -78,7 +83,14 @@ fn recently_failed_candidate_is_suppressed() {
     cache.record("source-1", "target-1", "addSynapse", false, 100);
 
     // At epoch 105, within default staleness window, candidate should be suppressed
-    assert!(cache.is_suppressed("source-1", "target-1", "addSynapse", 105));
+    assert!(cache.is_suppressed(
+        "source-1",
+        "target-1",
+        "addSynapse",
+        105,
+        DiscoveryMode::Normal,
+        0,
+    ));
 }
 
 #[test]
@@ -87,7 +99,14 @@ fn successful_candidate_is_not_suppressed() {
     cache.record("source-1", "target-1", "addSynapse", true, 100);
 
     // Successful candidates should never be suppressed
-    assert!(!cache.is_suppressed("source-1", "target-1", "addSynapse", 101));
+    assert!(!cache.is_suppressed(
+        "source-1",
+        "target-1",
+        "addSynapse",
+        101,
+        DiscoveryMode::Normal,
+        0,
+    ));
 }
 
 #[test]
@@ -101,17 +120,33 @@ fn failed_candidate_becomes_eligible_after_staleness_window() {
         "source-1",
         "target-1",
         "addSynapse",
-        100 + staleness_window - 1
+        100 + staleness_window - 1,
+        DiscoveryMode::Normal,
+        0,
     ));
 
     // At window boundary: no longer suppressed
-    assert!(!cache.is_suppressed("source-1", "target-1", "addSynapse", 100 + staleness_window));
+    assert!(!cache.is_suppressed(
+        "source-1",
+        "target-1",
+        "addSynapse",
+        100 + staleness_window,
+        DiscoveryMode::Normal,
+        0,
+    ));
 }
 
 #[test]
 fn unknown_candidate_is_not_suppressed() {
     let cache = CandidateOutcomeCache::new();
-    assert!(!cache.is_suppressed("source-1", "target-1", "addSynapse", 100));
+    assert!(!cache.is_suppressed(
+        "source-1",
+        "target-1",
+        "addSynapse",
+        100,
+        DiscoveryMode::Normal,
+        0,
+    ));
 }
 
 // =============================================================================
@@ -124,8 +159,22 @@ fn different_operations_tracked_independently() {
     cache.record("source-1", "target-1", "addSynapse", false, 100);
     cache.record("source-1", "target-1", "addNeuron", true, 100);
 
-    assert!(cache.is_suppressed("source-1", "target-1", "addSynapse", 105));
-    assert!(!cache.is_suppressed("source-1", "target-1", "addNeuron", 105));
+    assert!(cache.is_suppressed(
+        "source-1",
+        "target-1",
+        "addSynapse",
+        105,
+        DiscoveryMode::Normal,
+        0,
+    ));
+    assert!(!cache.is_suppressed(
+        "source-1",
+        "target-1",
+        "addNeuron",
+        105,
+        DiscoveryMode::Normal,
+        0,
+    ));
 }
 
 // =============================================================================
@@ -271,6 +320,20 @@ fn custom_staleness_window() {
 
     cache.record("source-1", "target-1", "addSynapse", false, 100);
 
-    assert!(cache.is_suppressed("source-1", "target-1", "addSynapse", 140));
-    assert!(!cache.is_suppressed("source-1", "target-1", "addSynapse", 150));
+    assert!(cache.is_suppressed(
+        "source-1",
+        "target-1",
+        "addSynapse",
+        140,
+        DiscoveryMode::Normal,
+        0,
+    ));
+    assert!(!cache.is_suppressed(
+        "source-1",
+        "target-1",
+        "addSynapse",
+        150,
+        DiscoveryMode::Normal,
+        0,
+    ));
 }
