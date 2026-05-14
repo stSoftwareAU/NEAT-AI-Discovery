@@ -147,6 +147,7 @@ fn benchmark_sample_locality(c: &mut Criterion) {
                     random_seed: Some(42),
                     temperature: 1.0,
                     failure_cache: None,
+                    discovery_outcome_log: None,
                 };
                 let result = analyze_synapses(&input).expect("Analysis should succeed");
                 black_box(result);
@@ -177,6 +178,7 @@ fn benchmark_sample_locality(c: &mut Criterion) {
                     random_seed: Some(42),
                     temperature: 1.0,
                     failure_cache: None,
+                    discovery_outcome_log: None,
                 };
                 let result = analyze_synapses(&input).expect("Analysis should succeed");
                 black_box(result);

@@ -133,6 +133,14 @@ pub struct AnalyzeSynapsesInput {
     /// Per-creature failure cache (Issue #1131). See `AnalyzeParallelInput`.
     #[serde(default)]
     pub failure_cache: Option<Vec<analysis::scoring::calibration_correction::FailureCacheEntry>>,
+    /// Per-creature rolling discovery outcome log (Issue #1132, #1204).
+    ///
+    /// Threaded down from `AnalyzeAllInput` so the target-cooldown adaptive
+    /// relaxation (Issue #1204) can shrink the cooldown window during a
+    /// drought instead of locking the pipeline out of its own search space.
+    /// When absent or empty, cooldown uses the static configured thresholds.
+    #[serde(default)]
+    pub discovery_outcome_log: Option<analysis::discovery_mode::DiscoveryOutcomeLog>,
 }
 
 /// Internal input structure for neuron analysis (used by `analyze_all`)
@@ -162,6 +170,14 @@ pub struct AnalyzeNeuronsInput {
     /// Per-creature failure cache (Issue #1131). See `AnalyzeParallelInput`.
     #[serde(default)]
     pub failure_cache: Option<Vec<analysis::scoring::calibration_correction::FailureCacheEntry>>,
+    /// Per-creature rolling discovery outcome log (Issue #1132, #1204).
+    ///
+    /// Threaded down from `AnalyzeAllInput` so the target-cooldown adaptive
+    /// relaxation (Issue #1204) can shrink the cooldown window during a
+    /// drought instead of locking the pipeline out of its own search space.
+    /// When absent or empty, cooldown uses the static configured thresholds.
+    #[serde(default)]
+    pub discovery_outcome_log: Option<analysis::discovery_mode::DiscoveryOutcomeLog>,
 }
 
 /// Internal input structure for combined analysis (used by `analyze_parallel`)

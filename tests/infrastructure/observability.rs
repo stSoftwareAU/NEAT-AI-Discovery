@@ -376,6 +376,7 @@ fn integration_timing_output() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result =
@@ -445,6 +446,7 @@ fn integration_gpu_metrics() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result =

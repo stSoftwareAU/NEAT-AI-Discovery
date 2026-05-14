@@ -495,6 +495,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             random_seed: input.random_seed,
             temperature: input.temperature,
             failure_cache: input.failure_cache.clone(),
+            discovery_outcome_log: input.discovery_outcome_log.clone(),
         })
     } else {
         None
@@ -510,6 +511,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             random_seed: input.random_seed,
             temperature: input.temperature,
             failure_cache: input.failure_cache.clone(),
+            discovery_outcome_log: input.discovery_outcome_log.clone(),
         })
     } else {
         None

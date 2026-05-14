@@ -73,6 +73,7 @@ fn target_with_only_constant_upstream_returns_empty_results() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input);

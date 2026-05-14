@@ -128,6 +128,7 @@ fn output_targets_have_full_impact_hidden_targets_are_discounted() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::synapse::analyze_synapses(&input).unwrap();
@@ -257,6 +258,7 @@ fn candidates_sorted_by_expected_score_gain_descending() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::synapse::analyze_synapses(&input).unwrap();
@@ -370,6 +372,7 @@ fn max_candidates_limits_total_output() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::synapse::analyze_synapses(&input).unwrap();
@@ -462,6 +465,7 @@ fn pipeline_applies_pessimism_discount_to_candidates() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::synapse::analyze_synapses(&input).unwrap();
@@ -566,6 +570,7 @@ fn metadata_contains_candidate_counts_and_timing() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::synapse::analyze_synapses(&input).unwrap();

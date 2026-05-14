@@ -830,6 +830,7 @@ Pages speculative:                        12345.
             random_seed: Some(123),
             temperature: 1.0,
             failure_cache: None,
+        discovery_outcome_log: None,
         };
 
         let result = analyze_neurons_with_cache(&input, cache)?;
@@ -924,6 +925,7 @@ Pages speculative:                        12345.
             random_seed: Some(123),
             temperature: 1.0,
             failure_cache: None,
+        discovery_outcome_log: None,
         };
 
         let result = analyze_neurons_with_cache(&input, cache)?;

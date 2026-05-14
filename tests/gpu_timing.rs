@@ -125,6 +125,7 @@ fn timing_enabled_via_env_var() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -187,6 +188,7 @@ fn per_shader_timing_collected() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -328,6 +330,7 @@ fn neuron_analysis_timing_collected() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

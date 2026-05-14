@@ -60,7 +60,10 @@ pub(crate) fn analyze_synapses_with_cache_impl(
 
     // Issue #1130: drop targets currently in cooldown after focus filtering,
     // before we incur any per-target analysis cost.
-    let _cooldown_skipped = apply_target_cooldown(&mut focus_order);
+    // Issue #1204: thread the discovery outcome log so cooldown relaxes during
+    // a drought when mode/drought signals are available.
+    let _cooldown_skipped =
+        apply_target_cooldown(&mut focus_order, input.discovery_outcome_log.as_ref());
 
     log_analysis_start(
         "synapse",
@@ -205,8 +208,13 @@ pub(crate) fn analyze_synapses_with_cache_impl(
 /// (Issue #1130). Returns the number of targets removed so callers can include
 /// it in diagnostics alongside the `cooldown_skipped` reason-name convention
 /// from Issue #1129.
-fn apply_target_cooldown(focus_order: &mut Vec<String>) -> u32 {
-    use crate::analysis::target_failure_tracker::{filter_cooldown_targets, global_tracker};
+fn apply_target_cooldown(
+    focus_order: &mut Vec<String>,
+    discovery_outcome_log: Option<&crate::analysis::discovery_mode::DiscoveryOutcomeLog>,
+) -> u32 {
+    use crate::analysis::target_failure_tracker::{
+        filter_cooldown_targets, filter_cooldown_targets_adaptive, global_tracker,
+    };
 
     let tracker_lock = match global_tracker().lock() {
         Ok(guard) => guard,
@@ -216,5 +224,22 @@ fn apply_target_cooldown(focus_order: &mut Vec<String>) -> u32 {
         return 0;
     }
     let current_epoch = tracker_lock.current_epoch();
-    filter_cooldown_targets(focus_order, &tracker_lock, current_epoch)
+    match discovery_outcome_log {
+        Some(log) if !log.is_empty() => {
+            let mode = crate::analysis::discovery_mode::decide_mode(
+                log,
+                crate::config::low_success_rate_threshold(),
+                crate::config::conservative_mode_max_epochs(),
+            );
+            let drought_failures = log.consecutive_trailing_failures();
+            filter_cooldown_targets_adaptive(
+                focus_order,
+                &tracker_lock,
+                current_epoch,
+                mode,
+                drought_failures,
+            )
+        }
+        _ => filter_cooldown_targets(focus_order, &tracker_lock, current_epoch),
+    }
 }

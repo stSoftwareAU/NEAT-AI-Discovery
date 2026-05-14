@@ -59,6 +59,8 @@
 //! | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES` | u32 | `3` | Consecutive target-neuron failures before cooldown (Issue #1130) |
 //! | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` | u64 | `10` | Cooldown duration in epochs for skipped targets (Issue #1130) |
 //! | `NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT` | u32 | `1` | Within-batch failure limit before same-target candidates are short-circuited (Issue #1164) |
+//! | `NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR` | u64 | `2` | Divisor applied to the target cooldown window during conservative mode (Issue #1204) |
+//! | `NEAT_AI_DISCOVERY_COOLDOWN_EXTENDED_DROUGHT_DIVISOR` | u64 | `4` | Divisor applied to the target cooldown window during extended drought (Issue #1204) |
 //!
 //! ## Internal/Debug Variables
 //!

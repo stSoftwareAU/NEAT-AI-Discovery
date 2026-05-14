@@ -181,6 +181,7 @@ fn test_synapse_candidate_hidden_neuron_is_impact_discounted() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input);
@@ -297,6 +298,7 @@ fn test_synapse_candidate_output_neuron_no_discount() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input);
@@ -388,6 +390,7 @@ fn test_harmful_synapse_candidate_is_impact_discounted() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input);

@@ -128,6 +128,7 @@ fn benchmark_cache_locality(c: &mut Criterion) {
                         random_seed: Some(42),
                         temperature: 1.0,
                         failure_cache: None,
+                        discovery_outcome_log: None,
                     };
 
                     let result = analyze_synapses_with_cache_and_gpu_queue(

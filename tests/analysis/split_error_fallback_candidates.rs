@@ -168,6 +168,7 @@ fn regression_split_error_must_return_fallback_candidates() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -350,6 +351,7 @@ fn test_fallback_candidates_below_threshold_are_returned() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
