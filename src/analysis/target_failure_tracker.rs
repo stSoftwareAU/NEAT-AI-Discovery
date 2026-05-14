@@ -181,6 +181,29 @@ impl TargetFailureTracker {
         };
         current_epoch < failure_epoch.saturating_add(self.cooldown_epochs)
     }
+
+    /// Returns the number of targets currently in cooldown at `current_epoch`
+    /// (Issue #1202).
+    ///
+    /// Used by the drought diagnostic to show how many target neurons are
+    /// being skipped by the per-target failure tracker. Targets whose cooldown
+    /// window has elapsed, or whose consecutive-failure count is below the
+    /// configured threshold, are not counted.
+    #[must_use]
+    pub fn active_cooldown_count(&self, current_epoch: u64) -> usize {
+        self.states
+            .iter()
+            .filter(|(_, state)| {
+                if state.consecutive_failures < self.cooldown_consecutive_failures {
+                    return false;
+                }
+                let Some(failure_epoch) = state.last_failure_epoch else {
+                    return false;
+                };
+                current_epoch < failure_epoch.saturating_add(self.cooldown_epochs)
+            })
+            .count()
+    }
 }
 
 /// Remove focus targets currently in cooldown.

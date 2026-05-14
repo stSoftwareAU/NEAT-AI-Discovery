@@ -154,6 +154,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     calibration_corrections: s.metadata.calibration_corrections.clone(),
                     discovery_mode: s.metadata.discovery_mode,
                     rolling_success_rate: s.metadata.rolling_success_rate,
+                    drought_diagnostic: s.metadata.drought_diagnostic.clone(),
                 }),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 synapse_weight_updates,
@@ -176,6 +177,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     calibration_corrections: n.metadata.calibration_corrections.clone(),
                     discovery_mode: n.metadata.discovery_mode,
                     rolling_success_rate: n.metadata.rolling_success_rate,
+                    drought_diagnostic: n.metadata.drought_diagnostic.clone(),
                 }),
                 neuron_fingerprints: result.neuron_fingerprints,
                 fingerprint_cache_hits: if result.fingerprint_cache_hits > 0 {

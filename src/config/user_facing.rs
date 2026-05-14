@@ -488,3 +488,22 @@ pub fn conservative_gain_multiplier() -> f32 {
         .unwrap_or(crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_GAIN_MULTIPLIER);
     raw.max(1.0)
 }
+
+/// Default consecutive-trailing-failure threshold above which the drought
+/// diagnostic warn log fires (Issue #1202).
+pub const DEFAULT_DROUGHT_LOG_THRESHOLD: u32 = 5;
+
+/// Consecutive trailing failure count at which the drought diagnostic
+/// `tracing::warn!` event is emitted and `droughtDiagnostic` populated on the
+/// FFI metadata (Issue #1202).
+///
+/// Set `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` to a positive integer to
+/// override. Values that fail to parse, are zero, or are otherwise invalid
+/// fall back to [`DEFAULT_DROUGHT_LOG_THRESHOLD`] (5).
+pub fn drought_log_threshold() -> u32 {
+    std::env::var("NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|v| *v >= 1)
+        .unwrap_or(DEFAULT_DROUGHT_LOG_THRESHOLD)
+}

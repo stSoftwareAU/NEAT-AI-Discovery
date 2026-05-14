@@ -388,4 +388,29 @@ impl CandidateOutcomeCache {
         self.outcomes
             .retain(|_, outcome| outcome.epoch >= min_epoch);
     }
+
+    /// Returns the number of failed candidate entries still within the
+    /// configured staleness window at `current_epoch` (Issue #1202).
+    ///
+    /// Used by the drought diagnostic to surface how many cached failures are
+    /// actively suppressing new candidate generation. Successful entries and
+    /// entries whose failure timestamp has aged past the staleness window are
+    /// not counted.
+    ///
+    /// The check uses the **base** [`Self::staleness_window`] rather than the
+    /// adaptive [`Self::effective_staleness_window`]. The diagnostic reports
+    /// the conservative upper bound (the count visible under default,
+    /// non-shrunk behaviour) so operators can reason about the worst-case
+    /// suppression footprint without entangling the count with mode/drought
+    /// state already reported alongside it.
+    #[must_use]
+    pub fn suppressed_count(&self, current_epoch: u64) -> usize {
+        let window = self.staleness_window;
+        self.outcomes
+            .values()
+            .filter(|outcome| {
+                !outcome.succeeded && current_epoch < outcome.epoch.saturating_add(window)
+            })
+            .count()
+    }
 }

@@ -258,6 +258,60 @@ Error:
 }
 ```
 
+### Drought Diagnostic Metadata (Issue #1202)
+
+When the rolling discovery outcome log shows a sustained run of empty passes
+the analysis response carries a `droughtDiagnostic` payload on both
+`synapseMetadata` and `neuronMetadata`. The diagnostic consolidates every
+suppression layer (candidate cache, per-target cooldown, rejection breakdown)
+into a single structured object so operators can root-cause "no successful
+candidates for a while" without re-running analysis under elevated logging.
+
+**Trigger:** the payload is populated when
+`consecutive_trailing_failures >= NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD`
+(default `5`). When the threshold is not crossed the field is omitted from the
+JSON entirely.
+
+A single `tracing::warn!` event with the same fields is emitted at most once
+per `analyze_all` invocation when the diagnostic fires.
+
+```json
+{
+  "synapseMetadata": {
+    "droughtDiagnostic": {
+      "consecutiveFailures": 6,
+      "rollingSuccessRate": 0.0,
+      "discoveryMode": "conservative",
+      "candidateCacheSize": 128,
+      "candidateCacheSuppressedCount": 42,
+      "targetCooldownActiveCount": 3,
+      "targetCooldownSkipped": 5,
+      "dominantRejectionReason": "no_eligible_sources",
+      "dominantRejectionCount": 17,
+      "totalCandidatesConsidered": 124,
+      "totalCandidatesRejected": 124
+    }
+  },
+  "neuronMetadata": {
+    "droughtDiagnostic": { "...": "same shape and values" }
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `consecutiveFailures` | Trailing-failure streak from the caller-supplied `discoveryOutcomeLog`. |
+| `rollingSuccessRate` | Rolling success rate over the most recent window (0.0–1.0). |
+| `discoveryMode` | `"normal"` or `"conservative"` (Issue #1132). |
+| `candidateCacheSize` | Total entries in the candidate outcome cache. `0` when no cache is supplied. |
+| `candidateCacheSuppressedCount` | Failed cache entries still inside the staleness window — actively suppressing new candidates. |
+| `targetCooldownActiveCount` | Targets currently in cooldown via the per-target failure tracker (Issue #1130). |
+| `targetCooldownSkipped` | Targets dropped by the cooldown filter on the most recent run (best-effort, `0` when not tracked). |
+| `dominantRejectionReason` | Stable name of the rejection reason with the highest count (or `null` when nothing was rejected). |
+| `dominantRejectionCount` | Count for `dominantRejectionReason`. |
+| `totalCandidatesConsidered` | `totalCandidatesRejected + candidatesReturned`. |
+| `totalCandidatesRejected` | Sum across the rejection breakdown. |
+
 ### Neuron Identity Contract (Issue #952)
 
 All neuron and synapse identity fields in FFI JSON payloads must use **stable UUID

@@ -528,6 +528,8 @@ fn build_empty_result(
             // Issue #1132: populated by orchestration once the outcome log is decided.
             discovery_mode: crate::analysis::discovery_mode::DiscoveryMode::Normal,
             rolling_success_rate: 1.0,
+            // Issue #1202: populated by orchestration when in drought.
+            drought_diagnostic: None,
         },
     }
 }

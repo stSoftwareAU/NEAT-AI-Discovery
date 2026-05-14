@@ -34,6 +34,7 @@
 //! | `NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD` | f32 | `0.2` | Rolling success-rate threshold below which conservative mode engages (Issue #1132) |
 //! | `NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS` | u32 | `20` | Max consecutive failed passes before abandoning conservative mode (Issue #1132) |
 //! | `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` | f32 | `10.0` | Multiplier applied to `COORDINATED_MIN_EXPECTED_GAIN` in conservative mode (Issue #1132) |
+//! | `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` | u32 | `5` | Consecutive trailing empty discovery passes at which the drought diagnostic warn log fires and `droughtDiagnostic` populates on FFI metadata (Issue #1202) |
 //! | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | u64 | unset | Cap eager pre-load size in `focus::rank_focus_neurons` (Issue #1172). When set, projected size = file size × 3; lazy mode is selected with a structured `info` log when the projection exceeds the budget. When unset, behaviour matches the prior auto-detect heuristic. |
 //! | `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN` | f32 | `1e-5` | Absolute minimum `expected_creature_score_gain` for emitted add-neuron / add-synapse candidates (Issue #1191). Clamped to `[0.0, 1e-2]`. |
 //!
@@ -219,5 +220,50 @@ mod tests {
     fn wall_clock_minutes_returns_valid_value() {
         let result = max_wall_clock_minutes();
         assert!((MIN_WALL_CLOCK_MINUTES..=MAX_WALL_CLOCK_MINUTES).contains(&result));
+    }
+
+    // -------------------------------------------------------------------
+    // Issue #1202 — drought diagnostic threshold parsing
+    // -------------------------------------------------------------------
+
+    /// Mirror of the parser inside [`drought_log_threshold`] — kept inline so
+    /// tests can exercise edge cases without mutating the global env (which is
+    /// unsafe under parallel test execution).
+    fn parse_drought_threshold(raw: Option<&str>) -> u32 {
+        raw.and_then(|v| v.trim().parse::<u32>().ok())
+            .filter(|v| *v >= 1)
+            .unwrap_or(DEFAULT_DROUGHT_LOG_THRESHOLD)
+    }
+
+    #[test]
+    fn drought_log_threshold_default_is_five() {
+        assert_eq!(DEFAULT_DROUGHT_LOG_THRESHOLD, 5);
+        // Nothing supplied → default.
+        assert_eq!(parse_drought_threshold(None), 5);
+    }
+
+    #[test]
+    fn drought_log_threshold_accepts_positive_integers() {
+        assert_eq!(parse_drought_threshold(Some("1")), 1);
+        assert_eq!(parse_drought_threshold(Some("10")), 10);
+        assert_eq!(parse_drought_threshold(Some(" 7 ")), 7);
+    }
+
+    #[test]
+    fn drought_log_threshold_rejects_zero_and_invalid() {
+        // Zero is invalid (would fire on every empty pass — surely a typo).
+        assert_eq!(parse_drought_threshold(Some("0")), 5);
+        assert_eq!(parse_drought_threshold(Some("")), 5);
+        assert_eq!(parse_drought_threshold(Some("abc")), 5);
+        assert_eq!(parse_drought_threshold(Some("-3")), 5);
+        assert_eq!(parse_drought_threshold(Some("3.5")), 5);
+    }
+
+    #[test]
+    fn drought_log_threshold_function_returns_positive() {
+        // The accessor itself must always return a sensible value, regardless
+        // of whether the env var happens to be set in the test environment.
+        let result = drought_log_threshold();
+        assert!(result >= 1);
     }
 }
