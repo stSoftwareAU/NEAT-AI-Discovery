@@ -41,6 +41,14 @@
 //!   [`DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS`] = 20)
 //! - `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` (f32, default
 //!   [`DEFAULT_CONSERVATIVE_GAIN_MULTIPLIER`] = 10.0)
+//!
+//! ## Operator playbook
+//!
+//! See [`docs/DROUGHT_PLAYBOOK.md`](https://github.com/stSoftwareAU/NEAT-AI-Discovery/blob/main/docs/DROUGHT_PLAYBOOK.md)
+//! for the end-to-end diagnostic walkthrough — symptoms, the suppression-layer
+//! interaction with the candidate cache and target cooldown, the
+//! Normal/Conservative/Extended Drought regimes, and a worked 30-epoch
+//! example.
 
 #![allow(clippy::cast_precision_loss)] // success-rate maths over small counts
 #![allow(clippy::cast_possible_truncation)] // clamped before `as` casts

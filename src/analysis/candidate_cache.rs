@@ -18,6 +18,14 @@
 //! - Only the **most recent** outcome is stored per candidate key (not a history).
 //! - The staleness window is configurable and defaults to [`DEFAULT_STALENESS_WINDOW`].
 //! - Source-type stats use Bayesian scoring (same approach as `DiscoveryHistory`).
+//!
+//! # Operator playbook
+//!
+//! See [`docs/DROUGHT_PLAYBOOK.md`](https://github.com/stSoftwareAU/NEAT-AI-Discovery/blob/main/docs/DROUGHT_PLAYBOOK.md)
+//! for the end-to-end drought diagnostic walkthrough — how this cache, the
+//! target cooldown tracker, conservative-mode bias, and post-processing
+//! rejection filters interact, and which env var to reach for when
+//! `candidateCacheSuppressedCount` dominates the diagnostic.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

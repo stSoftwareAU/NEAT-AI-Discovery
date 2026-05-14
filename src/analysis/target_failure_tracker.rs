@@ -30,6 +30,15 @@
 //! `record_discovery_result` hook (and analogues inside Rust) should forward
 //! per-target pass/fail signals to the global tracker so preparation layers
 //! consult a consistent view.
+//!
+//! # Operator playbook
+//!
+//! See [`docs/DROUGHT_PLAYBOOK.md`](https://github.com/stSoftwareAU/NEAT-AI-Discovery/blob/main/docs/DROUGHT_PLAYBOOK.md)
+//! for the end-to-end drought diagnostic walkthrough — how this tracker, the
+//! candidate outcome cache, conservative-mode bias, and post-processing
+//! rejection filters interact, plus the operator escape hatch
+//! (`NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS`) that drops all active
+//! cooldown entries in one shot.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
