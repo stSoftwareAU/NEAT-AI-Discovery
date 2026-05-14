@@ -79,6 +79,7 @@ fn zero_target_records_reports_no_target_records_reason() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("analysis should succeed");

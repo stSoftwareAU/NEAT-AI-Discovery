@@ -460,6 +460,7 @@ fn test_synapse_analysis_includes_error_distribution() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -572,6 +573,7 @@ fn test_candidate_includes_outlier_info_when_enabled() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -674,6 +676,7 @@ fn test_bimodal_error_pattern_detection() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");

@@ -510,6 +510,7 @@ fn test_analyze_neurons_returns_non_zero_bias() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -607,6 +608,7 @@ fn test_bias_values_are_activation_specific() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -878,6 +880,7 @@ fn test_add_neuron_finds_candidates_with_correlated_errors() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -988,6 +991,7 @@ fn test_add_neuron_with_hard_tanh_target_uses_bias_aware_weight() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -1088,6 +1092,7 @@ fn test_bias_improves_neuron_performance() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -1219,6 +1224,7 @@ fn test_hidden_neurons_are_analysed_not_filtered() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)
@@ -1383,6 +1389,7 @@ fn test_hidden_neuron_candidates_have_impact_discounted_predictions() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)

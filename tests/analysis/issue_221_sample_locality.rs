@@ -385,6 +385,7 @@ fn sample_locality_batching_produces_results() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     // Note: The benchmark has been moved to benches/sample_locality.rs
@@ -461,6 +462,7 @@ fn sample_locality_preserves_correctness() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -515,6 +517,7 @@ fn source_batching_90_percent_overlap_produces_results() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     // Note: The benchmark has been moved to benches/sample_locality.rs

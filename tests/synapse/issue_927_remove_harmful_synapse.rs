@@ -230,6 +230,7 @@ fn test_remove_harmful_synapse_discovery() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
@@ -358,6 +359,7 @@ fn test_harmful_synapse_identifies_correct_neurons() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");

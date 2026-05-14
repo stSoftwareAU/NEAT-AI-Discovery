@@ -174,6 +174,88 @@ pub const TARGET_COOLDOWN_CONSECUTIVE_FAILURES: u32 = 3;
 pub const TARGET_COOLDOWN_EPOCHS: u64 = 10;
 
 // =============================================================================
+// Adaptive Target-Cooldown Relaxation (Issue #1204)
+// =============================================================================
+
+/// Divisor applied to the target cooldown epoch window while the discovery
+/// pipeline is in [`crate::analysis::discovery_mode::DiscoveryMode::Conservative`]
+/// mode (Issue #1204).
+///
+/// Halving the cooldown window during a drought lets previously-failing
+/// targets re-enter the focus list twice as fast, instead of staying parked
+/// for the full default while the pipeline struggles to find any
+/// improvement. Mirrors the candidate-cache staleness relaxation
+/// (Issue #1203).
+///
+/// Overridable via `NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR`.
+///
+/// ## Valid Range
+/// Must be >= 1. Values above 8 reduce the effective cooldown below the
+/// floor of 2 for any realistic base window.
+pub const COOLDOWN_CONSERVATIVE_DIVISOR: u64 = 2;
+
+/// Divisor applied to the target cooldown epoch window during an extended
+/// drought — i.e. once `drought_failures` has met or exceeded
+/// `conservative_mode_max_epochs` (Issue #1204).
+///
+/// Quartering the cooldown window is a last-ditch escape hatch before the
+/// operator-controlled reset path. The effective cooldown never drops
+/// below the [`COOLDOWN_EPOCHS_FLOOR`].
+///
+/// Overridable via `NEAT_AI_DISCOVERY_COOLDOWN_EXTENDED_DROUGHT_DIVISOR`.
+///
+/// ## Valid Range
+/// Must be >= 1. Values above 32 collapse the window to the floor for any
+/// realistic base window.
+pub const COOLDOWN_EXTENDED_DROUGHT_DIVISOR: u64 = 4;
+
+/// Floor applied to the effective target cooldown window after a divisor is
+/// applied (Issue #1204).
+///
+/// Prevents the cooldown from collapsing so far that a target re-enters the
+/// focus list before any structural change can have landed.
+pub const COOLDOWN_EPOCHS_FLOOR: u64 = 2;
+
+/// Lower clamp for env-var overrides of the adaptive cooldown divisors.
+pub const COOLDOWN_DIVISOR_FLOOR: u64 = 1;
+
+/// Upper clamp for env-var overrides of the adaptive cooldown divisors.
+/// Values above this would collapse the window to the floor for any
+/// sensible base window.
+pub const COOLDOWN_DIVISOR_CEILING: u64 = 64;
+
+/// Returns the effective conservative-mode cooldown divisor (Issue #1204).
+///
+/// Reads `NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR` at call time so
+/// tests and operators can override the default without recompiling. Values
+/// outside `[COOLDOWN_DIVISOR_FLOOR, COOLDOWN_DIVISOR_CEILING]` are clamped.
+/// Unparsable or missing values fall back to [`COOLDOWN_CONSERVATIVE_DIVISOR`].
+#[must_use]
+pub fn cooldown_conservative_divisor() -> u64 {
+    std::env::var("NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(COOLDOWN_CONSERVATIVE_DIVISOR)
+        .clamp(COOLDOWN_DIVISOR_FLOOR, COOLDOWN_DIVISOR_CEILING)
+}
+
+/// Returns the effective extended-drought cooldown divisor (Issue #1204).
+///
+/// Reads `NEAT_AI_DISCOVERY_COOLDOWN_EXTENDED_DROUGHT_DIVISOR` at call time
+/// so tests and operators can override the default without recompiling.
+/// Values outside `[COOLDOWN_DIVISOR_FLOOR, COOLDOWN_DIVISOR_CEILING]` are
+/// clamped. Unparsable or missing values fall back to
+/// [`COOLDOWN_EXTENDED_DROUGHT_DIVISOR`].
+#[must_use]
+pub fn cooldown_extended_drought_divisor() -> u64 {
+    std::env::var("NEAT_AI_DISCOVERY_COOLDOWN_EXTENDED_DROUGHT_DIVISOR")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(COOLDOWN_EXTENDED_DROUGHT_DIVISOR)
+        .clamp(COOLDOWN_DIVISOR_FLOOR, COOLDOWN_DIVISOR_CEILING)
+}
+
+// =============================================================================
 // Within-Batch Target Failure Short-Circuit (Issue #1164)
 // =============================================================================
 

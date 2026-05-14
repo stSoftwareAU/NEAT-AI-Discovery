@@ -105,6 +105,7 @@ fn hidden_neuron_reported_as_filtered_in_neuron_diagnostics() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("analysis should succeed");
@@ -160,6 +161,7 @@ fn input_neuron_reported_as_filtered_in_neuron_diagnostics() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("analysis should succeed");
@@ -232,6 +234,7 @@ fn synapse_diagnostics_include_rejection_reasons_for_unpromising_targets() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("synapse analysis should succeed");
@@ -417,6 +420,7 @@ fn multiple_focus_targets_each_get_separate_diagnostic_entry() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("analysis should succeed");
@@ -480,6 +484,7 @@ fn fully_connected_neuron_reports_no_eligible_sources() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("analysis should succeed");

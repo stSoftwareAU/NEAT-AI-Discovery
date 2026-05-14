@@ -218,6 +218,7 @@ fn issue_182_focus_unused_observations_prioritises_inputs_without_synapses() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("analysis should succeed");
@@ -295,6 +296,7 @@ fn issue_182_without_env_var_no_prioritisation() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_synapses(&input).expect("analysis should succeed");

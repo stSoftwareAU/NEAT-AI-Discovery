@@ -99,6 +99,7 @@ fn test_neuron_analysis_populates_error_distribution() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Neuron analysis should succeed");
@@ -199,6 +200,7 @@ fn test_neuron_analysis_no_errors_returns_none() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Neuron analysis should succeed");
@@ -305,6 +307,7 @@ fn test_neuron_analysis_error_distribution_multiple_targets() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Neuron analysis should succeed");

@@ -78,6 +78,7 @@ fn analysis_handles_non_finite_values_gracefully() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     // Should complete without error
@@ -146,6 +147,7 @@ fn analysis_pairs_samples_by_obs_index() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     // Should complete successfully with 5 matching sample pairs
@@ -212,6 +214,7 @@ fn analysis_skips_neurons_without_errors() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     // Should complete and find candidates using input-0 as source

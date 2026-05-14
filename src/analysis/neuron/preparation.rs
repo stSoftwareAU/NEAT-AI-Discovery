@@ -155,7 +155,11 @@ pub(crate) fn prepare_neuron_analysis<'a>(
     );
 
     // Issue #1130: drop targets currently in cooldown after focus filtering.
-    let cooldown_skipped = apply_target_cooldown(&mut focus_order);
+    // Issue #1204: thread the discovery outcome log so cooldown relaxes during
+    // a drought when mode/drought signals are available; static thresholds are
+    // used when the log is absent.
+    let cooldown_skipped =
+        apply_target_cooldown(&mut focus_order, input.discovery_outcome_log.as_ref());
 
     // If no output neurons remain after filtering, return early with empty results
     let early_return = if focus_order.is_empty() {
@@ -199,8 +203,17 @@ pub(crate) fn prepare_neuron_analysis<'a>(
 /// (Issue #1130). Returns the number of targets removed so callers can include
 /// it in diagnostics alongside the `cooldown_skipped` reason-name convention
 /// from Issue #1129.
-fn apply_target_cooldown(focus_order: &mut Vec<String>) -> u32 {
-    use crate::analysis::target_failure_tracker::{filter_cooldown_targets, global_tracker};
+///
+/// Issue #1204: when `discovery_outcome_log` is supplied, the adaptive form is
+/// used so the cooldown window shrinks during a drought. When it is `None` or
+/// empty, the static-threshold form is used.
+fn apply_target_cooldown(
+    focus_order: &mut Vec<String>,
+    discovery_outcome_log: Option<&crate::analysis::discovery_mode::DiscoveryOutcomeLog>,
+) -> u32 {
+    use crate::analysis::target_failure_tracker::{
+        filter_cooldown_targets, filter_cooldown_targets_adaptive, global_tracker,
+    };
 
     let tracker_lock = match global_tracker().lock() {
         Ok(guard) => guard,
@@ -211,7 +224,24 @@ fn apply_target_cooldown(focus_order: &mut Vec<String>) -> u32 {
         return 0;
     }
     let current_epoch = tracker_lock.current_epoch();
-    filter_cooldown_targets(focus_order, &tracker_lock, current_epoch)
+    match discovery_outcome_log {
+        Some(log) if !log.is_empty() => {
+            let mode = crate::analysis::discovery_mode::decide_mode(
+                log,
+                crate::config::low_success_rate_threshold(),
+                crate::config::conservative_mode_max_epochs(),
+            );
+            let drought_failures = log.consecutive_trailing_failures();
+            filter_cooldown_targets_adaptive(
+                focus_order,
+                &tracker_lock,
+                current_epoch,
+                mode,
+                drought_failures,
+            )
+        }
+        _ => filter_cooldown_targets(focus_order, &tracker_lock, current_epoch),
+    }
 }
 
 /// Load source neuron records for a given target, filtering by eligibility

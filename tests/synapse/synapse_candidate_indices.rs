@@ -113,6 +113,7 @@ fn synapse_candidates_populate_from_and_to_indices() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_synapses(&input)

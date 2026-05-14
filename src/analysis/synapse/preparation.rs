@@ -239,6 +239,7 @@ mod tests {
             temperature: 1.0,
             analysis_deadline_ms: None,
             failure_cache: None,
+            discovery_outcome_log: None,
         }
     }
 
@@ -314,6 +315,7 @@ mod tests {
             temperature: 1.0,
             analysis_deadline_ms: None,
             failure_cache: None,
+            discovery_outcome_log: None,
         };
         let lookups = build_creature_lookups(&input);
 

@@ -139,6 +139,7 @@ fn regression_hidden_neurons_must_be_analyzed_not_filtered() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Neuron analysis should succeed");
@@ -272,6 +273,7 @@ fn regression_low_improvement_fallback_candidates_must_be_filtered() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Neuron analysis should succeed");
@@ -540,6 +542,7 @@ fn regression_discounted_hidden_neurons_must_meet_minimum_threshold() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Neuron analysis should succeed");
@@ -728,6 +731,7 @@ fn regression_impact_discounted_neurons_must_appear_in_response() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Neuron analysis should succeed");

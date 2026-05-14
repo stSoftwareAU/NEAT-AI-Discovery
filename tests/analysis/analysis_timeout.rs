@@ -111,6 +111,7 @@ fn synapse_analysis_respects_deadline() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let start = Instant::now();
@@ -201,6 +202,7 @@ fn neuron_analysis_respects_deadline() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let start = Instant::now();
@@ -286,6 +288,7 @@ fn focus_neurons_are_randomised_across_runs() {
             random_seed: None,
             temperature: 1.0,
             failure_cache: None,
+            discovery_outcome_log: None,
         };
 
         let result = analyze_neurons(&input).expect("Analysis should complete successfully");

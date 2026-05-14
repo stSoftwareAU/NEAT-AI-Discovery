@@ -244,6 +244,7 @@ fn test_add_neuron_between_hidden_neurons() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -355,6 +356,7 @@ fn test_hidden_neuron_candidate_properties() {
         random_seed: Some(42),
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

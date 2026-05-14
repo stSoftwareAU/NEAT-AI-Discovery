@@ -87,6 +87,7 @@ fn synapse_analysis_works_with_gpu_work_queue() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     // Run analysis - this uses the GPU work queue internally
@@ -155,6 +156,7 @@ fn neuron_analysis_works_with_gpu_work_queue() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     // Run analysis - this uses the GPU work queue internally
@@ -266,6 +268,7 @@ fn multiple_focus_neurons_work_with_shared_queue() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     // Run analysis with multiple focus neurons
@@ -351,6 +354,7 @@ fn harmful_synapse_detection_works_with_queue() {
         random_seed: None,
         temperature: 1.0,
         failure_cache: None,
+        discovery_outcome_log: None,
     };
 
     // Run analysis
