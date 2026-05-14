@@ -21,14 +21,27 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::constants::MIN_BOOST_SAMPLES;
+use super::constants::{
+    MIN_BOOST_SAMPLES, STALENESS_WINDOW_FLOOR, staleness_conservative_divisor,
+    staleness_extended_drought_divisor,
+};
+use super::discovery_mode::DiscoveryMode;
+use crate::config::conservative_mode_max_epochs;
 
 /// Default staleness window in epochs.
 ///
 /// Failed candidates become re-eligible after this many epochs have passed,
 /// allowing them to be re-evaluated if the creature has changed structurally.
 pub const DEFAULT_STALENESS_WINDOW: u64 = 100;
+
+/// Sentinel value indicating no effective window has been observed yet.
+///
+/// Used by `last_effective_window` to suppress the "transition" log on the
+/// very first call (there is no prior state to compare against, so it is
+/// not a transition).
+const NO_PRIOR_EFFECTIVE_WINDOW: u64 = u64::MAX;
 
 /// Outcome of a single candidate's ablation test.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -78,7 +91,37 @@ impl SourceTypeStats {
 ///
 /// The cache is serialisable to JSON for storage alongside the creature,
 /// enabling cross-run candidate memory.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+///
+/// # Adaptive staleness window (Issue #1203)
+///
+/// The cache exposes both the configured `staleness_window()` and an
+/// adaptive [`Self::effective_staleness_window`] that shrinks the window when
+/// the discovery pipeline is struggling:
+///
+/// | Mode + drought                                    | Effective window         |
+/// |---------------------------------------------------|--------------------------|
+/// | `Normal` (or drought below the conservative cap)  | `staleness_window`       |
+/// | `Conservative`, drought `< conservative_mode_max` | `staleness_window / 2`   |
+/// | drought `>= conservative_mode_max` (extended)     | `max(staleness_window / 4, 5)` |
+///
+/// ## Worked example
+///
+/// With the default `staleness_window = 100` and
+/// `conservative_mode_max_epochs = 20`:
+///
+/// - A candidate that fails at epoch 0 is suppressed at epoch 60 in `Normal`
+///   mode (60 < 100). In `Conservative` mode the effective window is
+///   `100 / 2 = 50`, so the same candidate is **re-eligible** at epoch 60
+///   (60 >= 50). The suppression boundary moves from epoch 100 down to
+///   epoch 50.
+/// - If `drought_failures` then crosses 20 (conservative mode reverts to
+///   Normal), the effective window drops to `100 / 4 = 25`, so any
+///   candidate that failed at epoch 0 is re-eligible from epoch 25 onward.
+///
+/// `is_suppressed` always resolves the effective window via
+/// [`Self::effective_staleness_window`]; callers must not bypass the adaptive
+/// logic with the raw `staleness_window` field.
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CandidateOutcomeCache {
     /// Per-candidate outcomes keyed by "(`source_uuid`, `target_uuid`, `operation_type`)".
@@ -87,6 +130,43 @@ pub struct CandidateOutcomeCache {
     source_type_stats: HashMap<String, SourceTypeStats>,
     /// Staleness window in epochs — failed candidates become re-eligible after this.
     staleness_window: u64,
+    /// Last effective staleness window observed, used to emit a single
+    /// `tracing::info!` log per transition (Issue #1203). Not serialised — a
+    /// freshly deserialised cache always logs its first transition.
+    #[serde(skip, default = "default_last_effective_window")]
+    last_effective_window: AtomicU64,
+}
+
+fn default_last_effective_window() -> AtomicU64 {
+    AtomicU64::new(NO_PRIOR_EFFECTIVE_WINDOW)
+}
+
+impl Clone for CandidateOutcomeCache {
+    fn clone(&self) -> Self {
+        Self {
+            outcomes: self.outcomes.clone(),
+            source_type_stats: self.source_type_stats.clone(),
+            staleness_window: self.staleness_window,
+            // Reset the transition tracker so a cloned cache re-logs its
+            // first transition. Cloning is rare (config snapshots, tests) and
+            // the next call resolves the same effective window deterministically.
+            last_effective_window: AtomicU64::new(
+                self.last_effective_window.load(Ordering::Relaxed),
+            ),
+        }
+    }
+}
+
+impl PartialEq for CandidateOutcomeCache {
+    fn eq(&self, other: &Self) -> bool {
+        // `last_effective_window` is observational state (a log de-duplicator)
+        // and intentionally excluded from equality — two caches with the same
+        // outcomes, stats, and window are semantically equal regardless of
+        // their log history.
+        self.outcomes == other.outcomes
+            && self.source_type_stats == other.source_type_stats
+            && self.staleness_window == other.staleness_window
+    }
 }
 
 impl Default for CandidateOutcomeCache {
@@ -102,6 +182,7 @@ impl CandidateOutcomeCache {
             outcomes: HashMap::new(),
             source_type_stats: HashMap::new(),
             staleness_window: DEFAULT_STALENESS_WINDOW,
+            last_effective_window: AtomicU64::new(NO_PRIOR_EFFECTIVE_WINDOW),
         }
     }
 
@@ -111,6 +192,7 @@ impl CandidateOutcomeCache {
             outcomes: HashMap::new(),
             source_type_stats: HashMap::new(),
             staleness_window,
+            last_effective_window: AtomicU64::new(NO_PRIOR_EFFECTIVE_WINDOW),
         }
     }
 
@@ -183,11 +265,61 @@ impl CandidateOutcomeCache {
         self.outcomes.get(&key)
     }
 
+    /// Returns the adaptive effective staleness window for the given mode and
+    /// drought failure count (Issue #1203).
+    ///
+    /// The window shrinks while the pipeline is in conservative mode or
+    /// experiencing an extended drought, so previously-failed candidates
+    /// become re-eligible sooner. See the [`CandidateOutcomeCache`] doc
+    /// comment for the full table and a worked example.
+    ///
+    /// Emits a one-shot `tracing::info!` log whenever the effective window
+    /// changes from the value seen on the previous call (mode transition or
+    /// crossing the extended-drought boundary). Repeated calls with the same
+    /// (mode, drought) inputs do not log.
+    #[must_use]
+    pub fn effective_staleness_window(&self, mode: DiscoveryMode, drought_failures: u32) -> u64 {
+        let conservative_max = conservative_mode_max_epochs();
+        let effective = if drought_failures >= conservative_max {
+            // Extended drought: quartered window with a hard floor of 5.
+            let divisor = staleness_extended_drought_divisor().max(1);
+            (self.staleness_window / divisor).max(STALENESS_WINDOW_FLOOR)
+        } else if matches!(mode, DiscoveryMode::Conservative) {
+            // Conservative mode without extended drought: halved window,
+            // still respecting the floor for very small base windows.
+            let divisor = staleness_conservative_divisor().max(1);
+            (self.staleness_window / divisor).max(STALENESS_WINDOW_FLOOR)
+        } else {
+            // Normal mode, no drought: full configured window.
+            self.staleness_window
+        };
+
+        // Emit a single tracing::info! per transition. The first call after
+        // construction or deserialisation is not treated as a transition.
+        let prior = self
+            .last_effective_window
+            .swap(effective, Ordering::Relaxed);
+        if prior != NO_PRIOR_EFFECTIVE_WINDOW && prior != effective {
+            tracing::info!(
+                old_window = prior,
+                new_window = effective,
+                mode = mode.as_str(),
+                drought_failures,
+                conservative_max,
+                "Candidate-cache effective staleness window changed"
+            );
+        }
+
+        effective
+    }
+
     /// Returns true if the candidate should be suppressed at the given epoch.
     ///
     /// A candidate is suppressed if:
     /// 1. It has a recorded **failed** outcome, AND
-    /// 2. The failure occurred within the staleness window (epoch - `failure_epoch` < `staleness_window`)
+    /// 2. The failure occurred within the **effective** staleness window
+    ///    (Issue #1203) resolved from `mode` and `drought_failures` via
+    ///    [`Self::effective_staleness_window`].
     ///
     /// Successful candidates and unknown candidates are never suppressed.
     pub fn is_suppressed(
@@ -196,6 +328,8 @@ impl CandidateOutcomeCache {
         target_uuid: &str,
         operation: &str,
         current_epoch: u64,
+        mode: DiscoveryMode,
+        drought_failures: u32,
     ) -> bool {
         let Some(outcome) = self.get_outcome(source_uuid, target_uuid, operation) else {
             return false;
@@ -205,8 +339,9 @@ impl CandidateOutcomeCache {
             return false;
         }
 
-        // Failed candidate: check if within staleness window
-        current_epoch < outcome.epoch + self.staleness_window
+        // Failed candidate: check if within the effective (adaptive) window.
+        let window = self.effective_staleness_window(mode, drought_failures);
+        current_epoch < outcome.epoch + window
     }
 
     /// Returns the success statistics for a given source type.
