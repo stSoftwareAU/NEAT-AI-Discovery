@@ -42,6 +42,7 @@ pub mod diagnostics;
 pub mod discovery_dispatch;
 pub mod discovery_mode;
 pub mod drought_diagnostic;
+pub mod drought_reset;
 pub mod early_termination;
 pub mod ensemble_scoring;
 pub mod gpu;

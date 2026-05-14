@@ -61,6 +61,10 @@ pub struct TargetFailureTracker {
     /// that don't track their own epoch can call [`advance_epoch`] once per
     /// discovery run.
     current_epoch: u64,
+    /// Epoch at which the drought-driven one-shot reset last fired (Issue
+    /// #1205). `None` until the first reset; cleared by [`record_success`]
+    /// so the next future drought can re-arm the lever.
+    tombstone_reset_epoch: Option<u64>,
 }
 
 impl TargetFailureTracker {
@@ -73,6 +77,7 @@ impl TargetFailureTracker {
                 .unwrap_or(TARGET_COOLDOWN_CONSECUTIVE_FAILURES),
             cooldown_epochs: target_cooldown_epochs_env().unwrap_or(TARGET_COOLDOWN_EPOCHS),
             current_epoch: 0,
+            tombstone_reset_epoch: None,
         }
     }
 
@@ -83,6 +88,7 @@ impl TargetFailureTracker {
             cooldown_consecutive_failures,
             cooldown_epochs,
             current_epoch: 0,
+            tombstone_reset_epoch: None,
         }
     }
 
@@ -155,10 +161,14 @@ impl TargetFailureTracker {
     ///
     /// Resets the consecutive-failure counter to zero (clearing any active
     /// cooldown) and records the epoch.
+    ///
+    /// A success also clears the drought-reset tombstone (Issue #1205) so
+    /// the next future drought can re-arm the one-shot reset.
     pub fn record_success(&mut self, target_uuid: &str, epoch: u64) {
         let entry = self.states.entry(target_uuid.to_string()).or_default();
         entry.consecutive_failures = 0;
         entry.last_improvement_epoch = Some(epoch);
+        self.tombstone_reset_epoch = None;
     }
 
     /// Returns `true` when `target_uuid` is currently in cooldown at `current_epoch`.
@@ -203,6 +213,51 @@ impl TargetFailureTracker {
                 current_epoch < failure_epoch.saturating_add(self.cooldown_epochs)
             })
             .count()
+    }
+
+    /// Returns the epoch at which the drought-driven reset was last fired,
+    /// if any (Issue #1205).
+    #[must_use]
+    pub fn drought_reset_tombstone(&self) -> Option<u64> {
+        self.tombstone_reset_epoch
+    }
+
+    /// Clear the drought-reset tombstone explicitly (Issue #1205).
+    ///
+    /// Normal usage relies on [`Self::record_success`] to clear the tombstone
+    /// when a target records an improvement. The orchestrator may also call
+    /// this directly after a successful pass at the outcome-log level.
+    pub fn clear_drought_reset_tombstone(&mut self) {
+        self.tombstone_reset_epoch = None;
+    }
+
+    /// Drop every target that is currently in cooldown at `current_epoch`
+    /// (Issue #1205).
+    ///
+    /// Operator-controlled escape hatch invoked after a configurable drought.
+    /// States whose `consecutive_failures` are below the cooldown threshold
+    /// are preserved (they are tracking but not actively suppressing). The
+    /// drought-reset tombstone is set to `current_epoch` so the same streak
+    /// cannot trigger a second reset; a subsequent [`Self::record_success`]
+    /// re-arms the lever.
+    ///
+    /// Returns the number of cooldown entries removed.
+    pub fn clear_cooldown_entries(&mut self, current_epoch: u64) -> usize {
+        let cooldown_threshold = self.cooldown_consecutive_failures;
+        let cooldown_epochs = self.cooldown_epochs;
+        let before = self.states.len();
+        self.states.retain(|_, state| {
+            if state.consecutive_failures < cooldown_threshold {
+                return true;
+            }
+            let Some(failure_epoch) = state.last_failure_epoch else {
+                return true;
+            };
+            current_epoch >= failure_epoch.saturating_add(cooldown_epochs)
+        });
+        let removed = before.saturating_sub(self.states.len());
+        self.tombstone_reset_epoch = Some(current_epoch);
+        removed
     }
 }
 
@@ -342,6 +397,78 @@ mod tests {
         let mut focus = vec!["A".to_string()];
         assert_eq!(filter_cooldown_targets(&mut focus, &tracker, 10), 0);
         assert_eq!(focus, vec!["A".to_string()]);
+    }
+
+    // -------------------------------------------------------------------
+    // Issue #1205 — clear_cooldown_entries + tombstone semantics
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn clear_cooldown_entries_empty_tracker_returns_zero() {
+        let mut tracker = TargetFailureTracker::with_thresholds(3, 10);
+        assert_eq!(tracker.clear_cooldown_entries(0), 0);
+        // Tombstone is set even when nothing was removed — the lever fired.
+        assert_eq!(tracker.drought_reset_tombstone(), Some(0));
+    }
+
+    #[test]
+    fn clear_cooldown_entries_removes_only_in_cooldown_targets() {
+        // cooldown_epochs = 2 so timing differences between targets are
+        // visible without overlapping windows.
+        let mut tracker = TargetFailureTracker::with_thresholds(3, 2);
+        // Target A: 3 failures within window -> currently in cooldown at 12.
+        // Last failure at 11, cooldown until 13.
+        tracker.record_failure("A", 9);
+        tracker.record_failure("A", 10);
+        tracker.record_failure("A", 11);
+        // Target B: only 2 failures -> below threshold, retained.
+        tracker.record_failure("B", 10);
+        tracker.record_failure("B", 11);
+        // Target C: 3 failures but the cooldown window has elapsed -> retained.
+        // Last failure at 2, cooldown until 4, current_epoch is 12.
+        tracker.record_failure("C", 0);
+        tracker.record_failure("C", 1);
+        tracker.record_failure("C", 2);
+
+        let removed = tracker.clear_cooldown_entries(12);
+        assert_eq!(removed, 1);
+        assert!(tracker.state("A").is_none());
+        assert!(tracker.state("B").is_some());
+        assert!(tracker.state("C").is_some());
+        assert_eq!(tracker.drought_reset_tombstone(), Some(12));
+    }
+
+    #[test]
+    fn clear_cooldown_entries_all_in_cooldown() {
+        let mut tracker = TargetFailureTracker::with_thresholds(2, 100);
+        for tgt in ["X", "Y", "Z"] {
+            tracker.record_failure(tgt, 0);
+            tracker.record_failure(tgt, 1);
+        }
+        let removed = tracker.clear_cooldown_entries(5);
+        assert_eq!(removed, 3);
+        assert!(tracker.is_empty());
+    }
+
+    #[test]
+    fn record_success_clears_tombstone() {
+        let mut tracker = TargetFailureTracker::with_thresholds(2, 100);
+        tracker.record_failure("T", 0);
+        tracker.record_failure("T", 1);
+        let _ = tracker.clear_cooldown_entries(2);
+        assert_eq!(tracker.drought_reset_tombstone(), Some(2));
+
+        tracker.record_success("Other", 3);
+        assert!(tracker.drought_reset_tombstone().is_none());
+    }
+
+    #[test]
+    fn clear_drought_reset_tombstone_resets() {
+        let mut tracker = TargetFailureTracker::with_thresholds(2, 100);
+        let _ = tracker.clear_cooldown_entries(7);
+        assert_eq!(tracker.drought_reset_tombstone(), Some(7));
+        tracker.clear_drought_reset_tombstone();
+        assert!(tracker.drought_reset_tombstone().is_none());
     }
 
     /// Integration-style: a sequence of 3 consecutive failures on target T

@@ -135,6 +135,12 @@ pub struct CandidateOutcomeCache {
     /// freshly deserialised cache always logs its first transition.
     #[serde(skip, default = "default_last_effective_window")]
     last_effective_window: AtomicU64,
+    /// Epoch at which the drought-driven one-shot reset last fired (Issue
+    /// #1205). `None` until the first reset; cleared by `record`/
+    /// `record_with_source_type` when a successful outcome arrives so the
+    /// next future drought can re-arm the lever.
+    #[serde(default)]
+    tombstone_reset_epoch: Option<u64>,
 }
 
 fn default_last_effective_window() -> AtomicU64 {
@@ -153,6 +159,7 @@ impl Clone for CandidateOutcomeCache {
             last_effective_window: AtomicU64::new(
                 self.last_effective_window.load(Ordering::Relaxed),
             ),
+            tombstone_reset_epoch: self.tombstone_reset_epoch,
         }
     }
 }
@@ -166,6 +173,7 @@ impl PartialEq for CandidateOutcomeCache {
         self.outcomes == other.outcomes
             && self.source_type_stats == other.source_type_stats
             && self.staleness_window == other.staleness_window
+            && self.tombstone_reset_epoch == other.tombstone_reset_epoch
     }
 }
 
@@ -183,6 +191,7 @@ impl CandidateOutcomeCache {
             source_type_stats: HashMap::new(),
             staleness_window: DEFAULT_STALENESS_WINDOW,
             last_effective_window: AtomicU64::new(NO_PRIOR_EFFECTIVE_WINDOW),
+            tombstone_reset_epoch: None,
         }
     }
 
@@ -193,6 +202,7 @@ impl CandidateOutcomeCache {
             source_type_stats: HashMap::new(),
             staleness_window,
             last_effective_window: AtomicU64::new(NO_PRIOR_EFFECTIVE_WINDOW),
+            tombstone_reset_epoch: None,
         }
     }
 
@@ -219,6 +229,9 @@ impl CandidateOutcomeCache {
     /// Records the outcome of a candidate's ablation test.
     ///
     /// If the candidate has a previous outcome, it is replaced by the new one.
+    ///
+    /// A successful outcome clears the drought-reset tombstone (Issue #1205)
+    /// so the next future drought can re-arm the one-shot reset.
     pub fn record(
         &mut self,
         source_uuid: &str,
@@ -230,6 +243,9 @@ impl CandidateOutcomeCache {
         let key = Self::make_key(source_uuid, target_uuid, operation);
         self.outcomes
             .insert(key, CandidateOutcome { succeeded, epoch });
+        if succeeded {
+            self.tombstone_reset_epoch = None;
+        }
     }
 
     /// Records a candidate outcome and also updates source-type statistics.
@@ -412,5 +428,42 @@ impl CandidateOutcomeCache {
                 !outcome.succeeded && current_epoch < outcome.epoch.saturating_add(window)
             })
             .count()
+    }
+
+    /// Returns the epoch at which the drought-driven reset was last fired,
+    /// if any (Issue #1205). `None` means the lever is currently re-armed
+    /// (either never fired, or a successful pass cleared the tombstone).
+    #[must_use]
+    pub fn drought_reset_tombstone(&self) -> Option<u64> {
+        self.tombstone_reset_epoch
+    }
+
+    /// Clear the drought-reset tombstone explicitly (Issue #1205).
+    ///
+    /// Normal usage relies on [`Self::record`] / [`Self::record_with_source_type`]
+    /// to clear the tombstone when a successful outcome arrives. Callers that
+    /// observe a successful pass without recording a per-candidate outcome
+    /// (e.g. the orchestrator's outcome-log path) can use this method to
+    /// re-arm the lever directly.
+    pub fn clear_drought_reset_tombstone(&mut self) {
+        self.tombstone_reset_epoch = None;
+    }
+
+    /// Remove all failed outcome entries from the cache (Issue #1205).
+    ///
+    /// Operator-controlled escape hatch invoked after a configurable drought.
+    /// Successful entries and per-source-type statistics are preserved — the
+    /// "institutional memory" that informs scoring stays intact. The
+    /// drought-reset tombstone is set to `current_epoch` so the same streak
+    /// cannot trigger a second reset; the next successful pass (via
+    /// [`Self::record`]) re-arms the lever.
+    ///
+    /// Returns the number of failed entries removed.
+    pub fn clear_failed_entries(&mut self, current_epoch: u64) -> usize {
+        let before = self.outcomes.len();
+        self.outcomes.retain(|_, outcome| outcome.succeeded);
+        let removed = before.saturating_sub(self.outcomes.len());
+        self.tombstone_reset_epoch = Some(current_epoch);
+        removed
     }
 }

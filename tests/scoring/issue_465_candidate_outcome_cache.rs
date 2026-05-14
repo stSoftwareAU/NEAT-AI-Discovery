@@ -337,3 +337,83 @@ fn custom_staleness_window() {
         0,
     ));
 }
+
+// =============================================================================
+// Issue #1205 — clear_failed_entries + drought-reset tombstone
+// =============================================================================
+
+#[test]
+fn clear_failed_entries_on_empty_cache_returns_zero() {
+    let mut cache = CandidateOutcomeCache::new();
+    assert_eq!(cache.clear_failed_entries(5), 0);
+    // Tombstone still set so a second call within the same streak is a no-op.
+    assert_eq!(cache.drought_reset_tombstone(), Some(5));
+}
+
+#[test]
+fn clear_failed_entries_removes_only_failures_preserving_successes() {
+    let mut cache = CandidateOutcomeCache::new();
+    cache.record("s1", "t1", "addSynapse", false, 1);
+    cache.record("s2", "t2", "addSynapse", false, 2);
+    cache.record("s3", "t3", "addSynapse", true, 3);
+    cache.record_with_source_type("s4", "t4", "addSynapse", false, 4, "hidden");
+
+    let removed = cache.clear_failed_entries(10);
+    assert_eq!(removed, 3);
+    assert_eq!(cache.len(), 1);
+
+    // Successful candidate retained.
+    assert!(
+        cache
+            .get_outcome("s3", "t3", "addSynapse")
+            .is_some_and(|o| o.succeeded)
+    );
+
+    // Source-type stats preserved (institutional memory).
+    let stats = cache.source_type_stats("hidden");
+    assert_eq!(stats.attempts, 1);
+    assert_eq!(stats.successes, 0);
+}
+
+#[test]
+fn clear_failed_entries_all_failed() {
+    let mut cache = CandidateOutcomeCache::new();
+    for i in 0..5 {
+        cache.record(&format!("s{i}"), &format!("t{i}"), "addSynapse", false, i);
+    }
+    let removed = cache.clear_failed_entries(100);
+    assert_eq!(removed, 5);
+    assert!(cache.is_empty());
+}
+
+#[test]
+fn clear_failed_entries_all_success() {
+    let mut cache = CandidateOutcomeCache::new();
+    for i in 0..3 {
+        cache.record(&format!("s{i}"), &format!("t{i}"), "addSynapse", true, i);
+    }
+    let removed = cache.clear_failed_entries(100);
+    assert_eq!(removed, 0);
+    assert_eq!(cache.len(), 3);
+    assert_eq!(cache.drought_reset_tombstone(), Some(100));
+}
+
+#[test]
+fn record_success_clears_drought_reset_tombstone() {
+    let mut cache = CandidateOutcomeCache::new();
+    cache.record("s1", "t1", "addSynapse", false, 0);
+    cache.clear_failed_entries(3);
+    assert_eq!(cache.drought_reset_tombstone(), Some(3));
+
+    // Successful outcome re-arms the lever.
+    cache.record("s-good", "t-good", "addSynapse", true, 4);
+    assert!(cache.drought_reset_tombstone().is_none());
+}
+
+#[test]
+fn record_failure_does_not_clear_tombstone() {
+    let mut cache = CandidateOutcomeCache::new();
+    cache.clear_failed_entries(5);
+    cache.record("s1", "t1", "addSynapse", false, 6);
+    assert_eq!(cache.drought_reset_tombstone(), Some(5));
+}
