@@ -43,7 +43,11 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use crate::analysis::constants::{TARGET_COOLDOWN_CONSECUTIVE_FAILURES, TARGET_COOLDOWN_EPOCHS};
+use crate::analysis::constants::{
+    COOLDOWN_EPOCHS_FLOOR, TARGET_COOLDOWN_CONSECUTIVE_FAILURES, TARGET_COOLDOWN_EPOCHS,
+    cooldown_conservative_divisor, cooldown_extended_drought_divisor,
+};
+use crate::analysis::discovery_mode::{DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS, DiscoveryMode};
 use crate::config::{target_cooldown_consecutive_failures_env, target_cooldown_epochs_env};
 
 /// Per-target failure state.
@@ -201,6 +205,80 @@ impl TargetFailureTracker {
         current_epoch < failure_epoch.saturating_add(self.cooldown_epochs)
     }
 
+    /// Returns the effective cooldown window in epochs for the given discovery
+    /// mode and drought state (Issue #1204).
+    ///
+    /// The base [`Self::cooldown_epochs`] is divided by the conservative
+    /// divisor when the pipeline is in [`DiscoveryMode::Conservative`], and by
+    /// the extended-drought divisor once `drought_failures` has met or
+    /// exceeded [`DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS`]. Extended drought
+    /// applies regardless of `mode`. The effective window is never smaller
+    /// than [`COOLDOWN_EPOCHS_FLOOR`].
+    #[must_use]
+    pub fn effective_cooldown_epochs(&self, mode: DiscoveryMode, drought_failures: u32) -> u64 {
+        let divisor = if drought_failures >= DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS {
+            cooldown_extended_drought_divisor()
+        } else if mode == DiscoveryMode::Conservative {
+            cooldown_conservative_divisor()
+        } else {
+            1
+        }
+        .max(1);
+        (self.cooldown_epochs / divisor).max(COOLDOWN_EPOCHS_FLOOR)
+    }
+
+    /// Returns the effective consecutive-failure trigger for the given
+    /// discovery mode and drought state (Issue #1204).
+    ///
+    /// The configured trigger is raised by `+1` in
+    /// [`DiscoveryMode::Conservative`] mode and by `+2` once `drought_failures`
+    /// has met or exceeded [`DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS`] (extended
+    /// drought). Saturating add — never overflows.
+    #[must_use]
+    pub fn effective_consecutive_failures(
+        &self,
+        mode: DiscoveryMode,
+        drought_failures: u32,
+    ) -> u32 {
+        let bump: u32 = if drought_failures >= DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS {
+            2
+        } else if mode == DiscoveryMode::Conservative {
+            1
+        } else {
+            0
+        };
+        self.cooldown_consecutive_failures.saturating_add(bump)
+    }
+
+    /// Adaptive cooldown check using the relaxed thresholds for the given
+    /// mode and drought state (Issue #1204).
+    ///
+    /// Identical contract to [`Self::is_in_cooldown`] but the consecutive
+    /// failure trigger and the cooldown window are sourced from
+    /// [`Self::effective_consecutive_failures`] and
+    /// [`Self::effective_cooldown_epochs`] respectively.
+    #[must_use]
+    pub fn is_in_cooldown_adaptive(
+        &self,
+        target_uuid: &str,
+        current_epoch: u64,
+        mode: DiscoveryMode,
+        drought_failures: u32,
+    ) -> bool {
+        let Some(state) = self.states.get(target_uuid) else {
+            return false;
+        };
+        let effective_trigger = self.effective_consecutive_failures(mode, drought_failures);
+        if state.consecutive_failures < effective_trigger {
+            return false;
+        }
+        let Some(failure_epoch) = state.last_failure_epoch else {
+            return false;
+        };
+        let effective_cooldown = self.effective_cooldown_epochs(mode, drought_failures);
+        current_epoch < failure_epoch.saturating_add(effective_cooldown)
+    }
+
     /// Returns the number of targets currently in cooldown at `current_epoch`
     /// (Issue #1202).
     ///
@@ -290,6 +368,41 @@ pub fn filter_cooldown_targets(
             cooldown_epochs = tracker.cooldown_epochs(),
             cooldown_consecutive_failures = tracker.cooldown_consecutive_failures(),
             "Dropped focus targets currently in cooldown"
+        );
+    }
+    skipped
+}
+
+/// Remove focus targets currently in cooldown using adaptive thresholds
+/// (Issue #1204).
+///
+/// Same contract as [`filter_cooldown_targets`] but consults
+/// [`TargetFailureTracker::is_in_cooldown_adaptive`], so the effective trigger
+/// and cooldown window shrink in [`DiscoveryMode::Conservative`] or during an
+/// extended drought.
+pub fn filter_cooldown_targets_adaptive(
+    focus_order: &mut Vec<String>,
+    tracker: &TargetFailureTracker,
+    current_epoch: u64,
+    mode: DiscoveryMode,
+    drought_failures: u32,
+) -> u32 {
+    let before = focus_order.len();
+    focus_order.retain(|target| {
+        !tracker.is_in_cooldown_adaptive(target, current_epoch, mode, drought_failures)
+    });
+    let after = focus_order.len();
+    let skipped = u32::try_from(before.saturating_sub(after)).unwrap_or(u32::MAX);
+    if skipped > 0 {
+        tracing::info!(
+            cooldown_skipped = skipped,
+            remaining_targets = after,
+            cooldown_epochs = tracker.effective_cooldown_epochs(mode, drought_failures),
+            cooldown_consecutive_failures =
+                tracker.effective_consecutive_failures(mode, drought_failures),
+            mode = mode.as_str(),
+            drought_failures,
+            "Dropped focus targets currently in cooldown (adaptive)"
         );
     }
     skipped
