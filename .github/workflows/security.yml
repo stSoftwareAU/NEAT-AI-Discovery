@@ -25,7 +25,12 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install cargo-audit
-      run: cargo install cargo-audit
+      # Pinned to a reviewed release and --locked so the plugin's own
+      # Cargo.lock is honoured. Without both flags a poisoned new
+      # release of cargo-audit (or any transitive dep) would execute via
+      # build.rs with this workflow's issues: write / checks: write
+      # GITHUB_TOKEN. See Issue #1223.
+      run: cargo install --locked --version 0.21.2 cargo-audit
 
     - name: Run security audit
       run: cargo audit
