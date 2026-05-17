@@ -409,6 +409,17 @@ mod noise_floor_tests {
     use super::*;
     use crate::focus::gradient::GradientFlowStats;
     use crate::{CreatureJson, NeuronJson, SynapseJson};
+    use std::sync::{Mutex, OnceLock};
+
+    /// Module-level lock protecting tests that read or write
+    /// `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR`. Acquire this before
+    /// any call to `identify_removal_candidates` in tests that depend on the
+    /// env-var being at its default, or before mutating it.
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
 
     /// Craft a [`RankedNeuron`] with the exact impact/activation values needed
     /// to produce a targeted `activation_weighted_impact` without touching
@@ -497,6 +508,8 @@ mod noise_floor_tests {
     ///   net      = 1.8e-7 − 1.14e-7           ≈ 6.6e-8
     #[test]
     fn issue_1142_evidence_candidate_is_dropped() {
+        let _guard = env_lock();
+
         let growth = 1e-7_f32;
         let creature = creature_with_synapse_counts("h1", 1, 1);
         let synapse_counts = SynapseCounts::new(&creature);
@@ -526,6 +539,8 @@ mod noise_floor_tests {
     /// so pick `growth = 2e-5 / 1.8 ≈ 1.111e-5`.
     #[test]
     fn well_above_noise_floor_candidate_is_kept() {
+        let _guard = env_lock();
+
         let growth = 2e-5_f32 / 1.8;
         let creature = creature_with_synapse_counts("h1", 1, 1);
         let synapse_counts = SynapseCounts::new(&creature);
@@ -552,9 +567,7 @@ mod noise_floor_tests {
     /// calls so concurrent tests are not affected.
     #[test]
     fn env_var_override_changes_effective_floor() {
-        use std::sync::{Mutex, OnceLock};
-        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let _guard = env_lock();
 
         let growth = 1e-7_f32 / 1.5;
         let creature = creature_with_synapse_counts("h1", 1, 1);
