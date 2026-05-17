@@ -56,7 +56,11 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       
     - name: Install cargo-outdated
-      run: cargo install cargo-outdated
+      # Pinned to a reviewed release and --locked so the plugin's own
+      # Cargo.lock is honoured. Without both flags a poisoned new
+      # release of cargo-outdated (or any transitive dep) would execute
+      # via build.rs with this job's ACTIONS_PUSH token. See Issue #1223.
+      run: cargo install --locked --version 0.16.0 cargo-outdated
         
     - name: Check for source changes and increment version
       run: |

@@ -27,7 +27,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-edit
-        run: cargo install cargo-edit
+        # Pinned to a reviewed release and --locked so the plugin's own
+        # Cargo.lock is honoured. Without both flags a poisoned new
+        # release of cargo-edit (or any transitive dep) would execute
+        # via build.rs with this job's contents: write /
+        # pull-requests: write token before the auto-PR is opened. See
+        # Issue #1223.
+        run: cargo install --locked --version 0.13.6 cargo-edit
 
       - name: Upgrade dependencies
         run: |
