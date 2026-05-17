@@ -19,7 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      # Pinned to actions/checkout v6.0.2 (Node.js 24) to avoid the
+      # Node.js 20 deprecation warning that will become a hard error on
+      # GitHub-hosted runners from September 2026 onwards.
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -30,7 +33,11 @@ jobs:
       # release of cargo-audit (or any transitive dep) would execute via
       # build.rs with this workflow's issues: write / checks: write
       # GITHUB_TOKEN. See Issue #1223.
-      run: cargo install --locked --version 0.21.2 cargo-audit
+      # Updated to 0.22.1: this version adds CVSS 4.0 support, which is
+      # required to parse new advisory-db entries (e.g. RUSTSEC-2026-0076).
+      # cargo-audit 0.21.x fails with "unsupported CVSS version: 4.0" and
+      # exits 1, breaking the security scan.
+      run: cargo install --locked --version 0.22.1 cargo-audit
 
     - name: Run security audit
       run: cargo audit
