@@ -32,6 +32,17 @@ use std::path::Path;
 /// to indicate it is still in use.
 pub const LOCK_FILE_NAME: &str = "discovery.lock";
 
+/// Marker substring that must appear in the final path component of any
+/// `base_dir` accepted by [`clean_orphaned_discovery_dirs`] (Issue #1218).
+///
+/// This is a defence-in-depth allowlist: the orphan scanner recursively
+/// removes every subdirectory of `base_dir` that lacks a
+/// [`LOCK_FILE_NAME`] file, so a caller bug or misconfiguration that
+/// passed e.g. `/tmp`, `$HOME`, or `/var/folders/...` would mass-delete
+/// unrelated subdirectories. Requiring the marker localises that blast
+/// radius to genuine discovery roots.
+pub const DISCOVERY_DIR_MARKER: &str = ".discovery";
+
 /// Result of cleaning up a single discovery directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CleanupOutcome {
@@ -111,6 +122,26 @@ pub struct OrphanCleanupResult {
 pub fn clean_orphaned_discovery_dirs(base_dir: &str) -> io::Result<OrphanCleanupResult> {
     let base_path = Path::new(base_dir);
 
+    // Defence in depth (Issue #1218): refuse to operate on anything whose
+    // final path component does not contain `DISCOVERY_DIR_MARKER`. Without
+    // this gate, a future caller bug that derived `base_dir` from a
+    // mis-configured environment variable or an untrusted field (e.g.
+    // defaulting to `os.tmpdir()` or `$HOME`) would mass-delete unrelated
+    // subdirectories. This check is enforced before the existence/is_dir
+    // probes so callers cannot bypass it by passing a non-existent path.
+    let looks_like_discovery_root = base_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.contains(DISCOVERY_DIR_MARKER));
+    if !looks_like_discovery_root {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "base_dir must be a discovery root (final path component must contain {DISCOVERY_DIR_MARKER}): {base_dir}"
+            ),
+        ));
+    }
+
     if !base_path.exists() {
         return Ok(OrphanCleanupResult::default());
     }
@@ -144,6 +175,30 @@ pub fn clean_orphaned_discovery_dirs(base_dir: &str) -> io::Result<OrphanCleanup
         };
 
         let path = entry.path();
+
+        // Defence in depth (Issue #1218): skip symlinks. `path.is_dir()`
+        // follows symlinks, and `fs::remove_dir_all` on a symlinked
+        // directory has had platform-dependent / version-dependent
+        // behaviour in the past where it could delete the link target's
+        // contents. Discovery sessions never create symlinked roots, so
+        // a symlink here is always anomalous.
+        match entry.file_type() {
+            Ok(ft) if ft.is_symlink() => {
+                tracing::warn!(
+                    path = %path.display(),
+                    "Refusing to follow symlink during orphan scan"
+                );
+                continue;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                result
+                    .errors
+                    .push(format!("Failed to read file type for {path:?}: {err}"));
+                continue;
+            }
+        }
+
         if !path.is_dir() {
             continue;
         }
@@ -234,22 +289,32 @@ mod tests {
         assert!(!is_directory_orphaned(&dir));
     }
 
+    /// Create a discovery-root child of `parent` whose name contains the
+    /// [`DISCOVERY_DIR_MARKER`] so it passes the entry-point allowlist
+    /// (Issue #1218). All orphan-scan tests run inside such a root.
+    fn make_discovery_root(parent: &Path) -> std::path::PathBuf {
+        let root = parent.join(".discovery");
+        fs::create_dir(&root).unwrap();
+        root
+    }
+
     #[test]
     fn test_orphan_scan_removes_only_orphaned_dirs() {
-        let base = TempDir::new().unwrap();
+        let temp = TempDir::new().unwrap();
+        let base = make_discovery_root(temp.path());
 
         // Create an orphaned directory (no lock file)
-        let orphan = base.path().join("orphan-001");
+        let orphan = base.join("orphan-001");
         fs::create_dir(&orphan).unwrap();
         File::create(orphan.join("discovery_data.parquet")).unwrap();
 
         // Create an active directory (has lock file)
-        let active = base.path().join("active-002");
+        let active = base.join("active-002");
         fs::create_dir(&active).unwrap();
         File::create(active.join(LOCK_FILE_NAME)).unwrap();
         File::create(active.join("discovery_data.parquet")).unwrap();
 
-        let result = clean_orphaned_discovery_dirs(base.path().to_str().unwrap()).unwrap();
+        let result = clean_orphaned_discovery_dirs(base.to_str().unwrap()).unwrap();
         assert_eq!(result.removed, 1);
         assert!(result.errors.is_empty());
 
@@ -261,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_orphan_scan_nonexistent_base_dir() {
-        let result = clean_orphaned_discovery_dirs("/nonexistent/path/unlikely").unwrap();
+        let result = clean_orphaned_discovery_dirs("/nonexistent/path/.discovery").unwrap();
         assert_eq!(result.removed, 0);
         assert_eq!(result.already_gone, 0);
         assert!(result.errors.is_empty());
@@ -269,8 +334,9 @@ mod tests {
 
     #[test]
     fn test_orphan_scan_empty_base_dir() {
-        let base = TempDir::new().unwrap();
-        let result = clean_orphaned_discovery_dirs(base.path().to_str().unwrap()).unwrap();
+        let temp = TempDir::new().unwrap();
+        let base = make_discovery_root(temp.path());
+        let result = clean_orphaned_discovery_dirs(base.to_str().unwrap()).unwrap();
         assert_eq!(result.removed, 0);
         assert_eq!(result.already_gone, 0);
         assert!(result.errors.is_empty());
@@ -278,15 +344,102 @@ mod tests {
 
     #[test]
     fn test_orphan_scan_skips_files() {
-        let base = TempDir::new().unwrap();
+        let temp = TempDir::new().unwrap();
+        let base = make_discovery_root(temp.path());
 
         // Create a regular file (not a directory) in the base dir
-        File::create(base.path().join("not-a-dir.txt")).unwrap();
+        File::create(base.join("not-a-dir.txt")).unwrap();
 
-        let result = clean_orphaned_discovery_dirs(base.path().to_str().unwrap()).unwrap();
+        let result = clean_orphaned_discovery_dirs(base.to_str().unwrap()).unwrap();
         assert_eq!(result.removed, 0);
         // The file should still exist
-        assert!(base.path().join("not-a-dir.txt").exists());
+        assert!(base.join("not-a-dir.txt").exists());
+    }
+
+    #[test]
+    fn test_orphan_scan_rejects_non_discovery_root() {
+        // Defence-in-depth check (Issue #1218): a base_dir whose final
+        // path component does not contain ".discovery" must be rejected
+        // with InvalidInput, even if it is a real, existing directory
+        // populated with subdirectories that look orphaned.
+        let temp = TempDir::new().unwrap();
+        let bogus = temp.path().join("not-a-discovery-root");
+        fs::create_dir(&bogus).unwrap();
+        let victim = bogus.join("some-other-tool-data");
+        fs::create_dir(&victim).unwrap();
+        File::create(victim.join("important.dat")).unwrap();
+
+        let err = clean_orphaned_discovery_dirs(bogus.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(
+            err.to_string().contains(".discovery"),
+            "error message must explain the allowlist: {err}"
+        );
+        // The victim directory must be untouched.
+        assert!(victim.exists());
+        assert!(victim.join("important.dat").exists());
+    }
+
+    #[test]
+    fn test_orphan_scan_rejects_root_and_tmp() {
+        // Spot-check the canonical bad inputs called out in Issue #1218:
+        // a future caller bug that derives base_dir from os.tmpdir() or
+        // $HOME must not be able to mass-delete unrelated subdirectories.
+        for bad in ["/", "/tmp", "/var/folders/xx"] {
+            let err = clean_orphaned_discovery_dirs(bad).unwrap_err();
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::InvalidInput,
+                "expected InvalidInput for base_dir={bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_orphan_scan_accepts_suffixed_discovery_root() {
+        // The marker is a `contains` check, so e.g. `my-project.discovery`
+        // and `.discovery-cache` should both be accepted.
+        let temp = TempDir::new().unwrap();
+        for name in ["my-project.discovery", ".discovery-cache"] {
+            let base = temp.path().join(name);
+            fs::create_dir(&base).unwrap();
+            let result = clean_orphaned_discovery_dirs(base.to_str().unwrap()).unwrap();
+            assert_eq!(result.removed, 0);
+            assert!(result.errors.is_empty());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_orphan_scan_skips_symlinked_subdirs() {
+        // Defence-in-depth (Issue #1218): a symlink inside the discovery
+        // root must not be followed by the orphan scanner. Otherwise
+        // `fs::remove_dir_all` on the symlinked path could (on some
+        // platforms / older Rust versions) delete the link target's
+        // contents.
+        use std::os::unix::fs as unix_fs;
+
+        let temp = TempDir::new().unwrap();
+        let base = make_discovery_root(temp.path());
+
+        // Real target that lives outside the discovery root and must
+        // remain untouched.
+        let outside = temp.path().join("outside-target");
+        fs::create_dir(&outside).unwrap();
+        let canary = outside.join("canary.dat");
+        File::create(&canary).unwrap();
+
+        // Symlink inside the discovery root pointing at the outside target.
+        let link = base.join("symlinked-session");
+        unix_fs::symlink(&outside, &link).unwrap();
+
+        let result = clean_orphaned_discovery_dirs(base.to_str().unwrap()).unwrap();
+        // The symlink itself was skipped — not counted as removed.
+        assert_eq!(result.removed, 0);
+        assert!(result.errors.is_empty());
+        // Critically: the outside target and its contents survive.
+        assert!(outside.exists(), "symlink target must not be deleted");
+        assert!(canary.exists(), "files under symlink target must survive");
     }
 
     #[test]
@@ -314,16 +467,17 @@ mod tests {
         // Simulates the exact race from the issue:
         // 1. Discovery A finishes, cleanup_discovery_dir removes the dir atomically
         // 2. Discovery B starts, orphan scanner runs — dir is already gone
-        let base = TempDir::new().unwrap();
+        let temp = TempDir::new().unwrap();
+        let base = make_discovery_root(temp.path());
 
         // Discovery A's directory (being cleaned up)
-        let dir_a = base.path().join("discovery-a");
+        let dir_a = base.join("discovery-a");
         fs::create_dir(&dir_a).unwrap();
         File::create(dir_a.join(LOCK_FILE_NAME)).unwrap();
         File::create(dir_a.join("discovery_data.parquet")).unwrap();
 
         // Discovery B's active directory
-        let dir_b = base.path().join("discovery-b");
+        let dir_b = base.join("discovery-b");
         fs::create_dir(&dir_b).unwrap();
         File::create(dir_b.join(LOCK_FILE_NAME)).unwrap();
 
@@ -332,7 +486,7 @@ mod tests {
         assert_eq!(cleanup_result, CleanupOutcome::Removed);
 
         // Step 2: Discovery B's orphan scanner runs — dir_a is gone, dir_b is active
-        let orphan_result = clean_orphaned_discovery_dirs(base.path().to_str().unwrap()).unwrap();
+        let orphan_result = clean_orphaned_discovery_dirs(base.to_str().unwrap()).unwrap();
 
         // dir_a doesn't show up because it's already gone (not in readdir)
         // dir_b is not orphaned (has lock file)
@@ -372,21 +526,22 @@ mod tests {
 
     #[test]
     fn test_multiple_orphaned_dirs_cleaned() {
-        let base = TempDir::new().unwrap();
+        let temp = TempDir::new().unwrap();
+        let base = make_discovery_root(temp.path());
 
         // Create three orphaned directories
         for i in 0..3 {
-            let dir = base.path().join(format!("orphan-{i}"));
+            let dir = base.join(format!("orphan-{i}"));
             fs::create_dir(&dir).unwrap();
             File::create(dir.join("data.parquet")).unwrap();
         }
 
         // Create one active directory
-        let active = base.path().join("active-dir");
+        let active = base.join("active-dir");
         fs::create_dir(&active).unwrap();
         File::create(active.join(LOCK_FILE_NAME)).unwrap();
 
-        let result = clean_orphaned_discovery_dirs(base.path().to_str().unwrap()).unwrap();
+        let result = clean_orphaned_discovery_dirs(base.to_str().unwrap()).unwrap();
         assert_eq!(result.removed, 3);
         assert!(result.errors.is_empty());
         assert!(active.exists(), "Active directory should remain");
