@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.51"
+version = "0.74.52"
 edition = "2024"
 license = "Apache-2.0"
 
