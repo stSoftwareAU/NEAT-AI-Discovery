@@ -1,12 +1,12 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.53"
+version = "0.74.54"
 edition = "2024"
 license = "Apache-2.0"
 
 [lib]
 name = "neat_ai_discovery"
-crate-type = ["cdylib", "rlib"]  # cdylib for .so/.dylib, rlib for Rust integration
+crate-type = ["cdylib", "rlib"]  # cdylib for .so/.dylib, rlib for Rust integration.
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -24,7 +24,7 @@ uuid = { version = "1.23", features = ["v4"] }  # Session ID generation for stre
 
 crossbeam-channel = "0.5"  # Efficient multi-producer work queues for GPU thread
 lz4_flex = "0.13"  # Pure Rust LZ4 compression for memory-constrained cache (Issue #420)
-dashmap = "6.1"  # Lock-free concurrent HashMap for diagnostic aggregation (Issue #216)
+dashmap = "6.2"  # Lock-free concurrent HashMap for diagnostic aggregation (Issue #216)
 parking_lot = { version = "0.12", features = ["deadlock_detection"] }  # Deadlock detection
 signal-hook = "0.4"  # Signal handling (SIGUSR1 for thread dumps)
 tracing = "0.1"  # Structured logging framework (Issue #575)
