@@ -6,7 +6,7 @@ license = "Apache-2.0"
 
 [lib]
 name = "neat_ai_discovery"
-crate-type = ["cdylib", "rlib"]  # cdylib for .so/.dylib, rlib for Rust integration
+crate-type = ["cdylib", "rlib"]  # cdylib for .so/.dylib, rlib for Rust integration.
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
