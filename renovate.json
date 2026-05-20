@@ -1,0 +1,49 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "description": [
+    "Issue #1234 (supply-chain:quarantine-misconfigured).",
+    "External crates.io dependencies are held for at least 24h after publish to dodge fast-flagged supply-chain attacks (the Vibe Coder worker policy in stSoftwareAU/VibeCoding#1614).",
+    "Internal stSoftwareAU/* git deps bypass the wait — they are first-party releases. This repository currently has no internal git deps in Cargo.toml; the rule is kept so future internal deps inherit the bypass automatically.",
+    "Renovate is the defence-in-depth layer; bump-deps.sh also enforces the same window when it runs locally or in the upgrade-dependencies.yml workflow."
+  ],
+  "packageRules": [
+    {
+      "description": "External crates.io dependencies: hold for 24h after publish.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchSourceUrlPrefixes": [
+        "https://crates.io/"
+      ],
+      "minimumReleaseAge": "24h"
+    },
+    {
+      "description": "Default cargo packages without an explicit source URL still get the quarantine window — minimumReleaseAge applies unless overridden by the rule below.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "minimumReleaseAge": "24h"
+    },
+    {
+      "description": "Internal stSoftwareAU/* deps bypass the quarantine — first-party releases.",
+      "matchSourceUrlPrefixes": [
+        "https://github.com/stSoftwareAU/"
+      ],
+      "minimumReleaseAge": "0"
+    },
+    {
+      "description": "GitHub Actions: hold for 24h after publish, in addition to commit-SHA pinning (Issue #1216).",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "minimumReleaseAge": "24h"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "minimumReleaseAge": "0"
+  }
+}

@@ -271,6 +271,138 @@ fi
 assert_output_contains "rejection mentions hours" "(numeric|integer|VIBE_BUMP_QUARANTINE_HOURS)" "$OUTPUT"
 echo ""
 
+# ── Test 14: extract_dep_versions parses inline + table form ──────────
+
+echo "Test 14: extract_dep_versions emits name<TAB>version lines"
+TMP_TOML=$(mktemp)
+cat > "$TMP_TOML" <<'TOML'
+[package]
+name = "demo"
+
+[dependencies]
+serde = "1.0"
+parquet = "58.3"  # trailing comment
+arrow = { version = "58.3", default-features = false }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3.27"
+TOML
+set +e
+OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::extract_dep_versions '$TMP_TOML'" 2>&1)
+EXIT_CODE=$?
+set -e
+rm -f "$TMP_TOML"
+assert_exit_code "extract_dep_versions exits 0" 0 "$EXIT_CODE"
+assert_output_contains "serde 1.0 detected" "^serde	1\\.0$" "$OUTPUT"
+assert_output_contains "parquet 58.3 detected (comment stripped)" "^parquet	58\\.3$" "$OUTPUT"
+assert_output_contains "arrow inline table version" "^arrow	58\\.3$" "$OUTPUT"
+assert_output_contains "tracing-subscriber inline table" "^tracing-subscriber	0\\.3$" "$OUTPUT"
+assert_output_contains "tempfile dev-dep detected" "^tempfile	3\\.27$" "$OUTPUT"
+echo ""
+
+# ── Test 15: compute_changed_deps emits name<TAB>old<TAB>new ──────────
+
+echo "Test 15: compute_changed_deps reports only changed deps"
+BEFORE_FILE=$(mktemp)
+AFTER_FILE=$(mktemp)
+printf 'serde\t1.0.190\nparquet\t58.3.0\narrow\t58.3.0\n' > "$BEFORE_FILE"
+printf 'serde\t1.0.225\nparquet\t58.3.0\narrow\t58.4.0\n' > "$AFTER_FILE"
+set +e
+OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::compute_changed_deps '$BEFORE_FILE' '$AFTER_FILE'" 2>&1)
+EXIT_CODE=$?
+set -e
+rm -f "$BEFORE_FILE" "$AFTER_FILE"
+assert_exit_code "compute_changed_deps exits 0" 0 "$EXIT_CODE"
+assert_output_contains "serde change reported" "^serde	1\\.0\\.190	1\\.0\\.225$" "$OUTPUT"
+assert_output_contains "arrow change reported" "^arrow	58\\.3\\.0	58\\.4\\.0$" "$OUTPUT"
+# Parquet did NOT change — must not appear.
+if echo "$OUTPUT" | grep -qE '^parquet'; then
+    echo "  FAIL: unchanged dep reported as changed"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: unchanged dep reported\n"
+else
+    echo "  PASS: unchanged dep is not reported"
+    PASS=$((PASS + 1))
+fi
+echo ""
+
+# ── Test 16: revert_dep_line restores a single version ────────────────
+
+echo "Test 16: revert_dep_line restores the old version string"
+TMP_TOML=$(mktemp)
+cat > "$TMP_TOML" <<'TOML'
+[dependencies]
+serde = "1.0.225"
+arrow = { version = "58.4.0", default-features = false }
+parquet = "58.3.0"
+TOML
+set +e
+BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::revert_dep_line '$TMP_TOML' serde '1.0.190'" >/dev/null 2>&1
+EXIT_A=$?
+BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::revert_dep_line '$TMP_TOML' arrow '58.3.0'" >/dev/null 2>&1
+EXIT_B=$?
+set -e
+OUTPUT=$(cat "$TMP_TOML")
+rm -f "$TMP_TOML"
+assert_exit_code "revert serde exits 0" 0 "$EXIT_A"
+assert_exit_code "revert arrow exits 0" 0 "$EXIT_B"
+assert_output_contains "serde reverted to 1.0.190" 'serde[[:space:]]*=[[:space:]]*"1\.0\.190"' "$OUTPUT"
+assert_output_contains "arrow reverted to 58.3.0" 'version[[:space:]]*=[[:space:]]*"58\.3\.0"' "$OUTPUT"
+assert_output_contains "parquet untouched at 58.3.0" 'parquet[[:space:]]*=[[:space:]]*"58\.3\.0"' "$OUTPUT"
+echo ""
+
+# ── Test 17: fetch_publish_epoch uses test fixture seam ───────────────
+
+echo "Test 17: fetch_publish_epoch reads BUMP_DEPS_TEST_FIXTURE when set"
+FIX_DIR=$(mktemp -d)
+# crates.io response shape: nested 'version' object with created_at.
+cat > "$FIX_DIR/serde-1.0.225.json" <<'JSON'
+{"version":{"num":"1.0.225","created_at":"2025-05-19T12:00:00.000000+00:00"}}
+JSON
+set +e
+OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$FIX_DIR" \
+    bash -c "source '$BUMP_DEPS' && bump_deps::fetch_publish_epoch serde 1.0.225" 2>&1)
+EXIT_CODE=$?
+set -e
+rm -rf "$FIX_DIR"
+assert_exit_code "fetch_publish_epoch exits 0 with fixture" 0 "$EXIT_CODE"
+# 2025-05-19T12:00:00 UTC = 1747656000 epoch seconds.
+assert_output_contains "fetch_publish_epoch returns 2025-05-19T12:00 epoch" "^1747656000$" "$OUTPUT"
+echo ""
+
+# ── Test 18: fetch_publish_epoch missing fixture fails non-zero ───────
+
+echo "Test 18: fetch_publish_epoch returns non-zero when fixture missing"
+EMPTY_DIR=$(mktemp -d)
+set +e
+BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$EMPTY_DIR" \
+    bash -c "source '$BUMP_DEPS' && bump_deps::fetch_publish_epoch nope 9.9.9" >/dev/null 2>&1
+EXIT_CODE=$?
+set -e
+rmdir "$EMPTY_DIR"
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    echo "  PASS: missing fixture yields non-zero exit ($EXIT_CODE)"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: missing fixture incorrectly returned 0"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: missing fixture\n"
+fi
+echo ""
+
+# ── Test 19: current_epoch honours BUMP_DEPS_NOW_EPOCH stub ───────────
+
+echo "Test 19: current_epoch is stubbable via BUMP_DEPS_NOW_EPOCH"
+set +e
+OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_NOW_EPOCH=1700000000 \
+    bash -c "source '$BUMP_DEPS' && bump_deps::current_epoch" 2>&1)
+EXIT_CODE=$?
+set -e
+assert_exit_code "current_epoch exits 0" 0 "$EXIT_CODE"
+assert_output_contains "current_epoch returns stub value" "^1700000000$" "$OUTPUT"
+echo ""
+
 # ── Summary ──────────────────────────────────────────────────────────
 
 echo ""
