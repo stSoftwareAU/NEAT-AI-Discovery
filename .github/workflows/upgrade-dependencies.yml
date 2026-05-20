@@ -37,10 +37,16 @@ jobs:
         # Issue #1223.
         run: cargo install --locked --version 0.13.6 cargo-edit
 
-      - name: Upgrade dependencies
+      - name: Upgrade dependencies (quarantine-gated)
+        # Invoke bump-deps.sh so the VIBE_BUMP_QUARANTINE_HOURS gate is
+        # actually applied (Issue #1234). A raw `cargo upgrade` here would
+        # land any version published seconds before the cron fires —
+        # exactly the supply-chain window the policy claims to close.
+        env:
+          VIBE_BUMP_QUARANTINE_HOURS: "24"
         run: |
           cargo upgrade --dry-run 2>&1 | tee upgrade-dry-run.txt || true
-          cargo upgrade 2>&1 | tee upgrade.log || true
+          ./bump-deps.sh 2>&1 | tee upgrade.log
 
       - name: Check for changes
         id: changes

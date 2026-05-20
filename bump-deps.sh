@@ -70,6 +70,176 @@ bump_deps::validate_hours() {
     return 1
 }
 
+# bump_deps::extract_dep_versions MANIFEST
+# Print `name<TAB>version` for every top-level inline dependency declared
+# in MANIFEST under [dependencies] or [dev-dependencies]. Handles both
+#     foo = "1.2.3"
+#     foo = { version = "1.2.3", … }
+# Used to diff before/after states across a `cargo upgrade` run so we can
+# revert any bump that lands inside the quarantine window (Issue #1234).
+bump_deps::extract_dep_versions() {
+    local manifest="$1"
+    if [[ ! -f "$manifest" ]]; then
+        return 0
+    fi
+    awk '
+        /^\[/ {
+            in_deps = ($0 == "[dependencies]" || $0 == "[dev-dependencies]") ? 1 : 0
+            next
+        }
+        in_deps && /^[a-zA-Z0-9_-]+[[:space:]]*=/ {
+            # Strip trailing comment.
+            line = $0
+            sub(/[[:space:]]*#.*/, "", line)
+            # Capture name (before =).
+            name = line
+            sub(/[[:space:]]*=.*/, "", name)
+            # Capture the first quoted string after "version" if present,
+            # otherwise the first quoted string after =.
+            rest = line
+            sub(/^[^=]*=[[:space:]]*/, "", rest)
+            version = ""
+            if (match(rest, /version[[:space:]]*=[[:space:]]*"[^"]+"/)) {
+                seg = substr(rest, RSTART, RLENGTH)
+                match(seg, /"[^"]+"/)
+                version = substr(seg, RSTART + 1, RLENGTH - 2)
+            } else if (match(rest, /"[^"]+"/)) {
+                version = substr(rest, RSTART + 1, RLENGTH - 2)
+            }
+            if (version != "") {
+                printf "%s\t%s\n", name, version
+            }
+        }
+    ' "$manifest"
+}
+
+# bump_deps::compute_changed_deps BEFORE AFTER
+# Given two `name<TAB>version` listings (BEFORE and AFTER, both file
+# paths), print `name<TAB>old<TAB>new` for every dep whose version
+# differs between the two files. Skips entries that disappear or appear
+# (those are not version bumps).
+bump_deps::compute_changed_deps() {
+    local before="$1"
+    local after="$2"
+    awk -F '\t' '
+        NR == FNR { old[$1] = $2; next }
+        ($1 in old) && (old[$1] != $2) { printf "%s\t%s\t%s\n", $1, old[$1], $2 }
+    ' "$before" "$after"
+}
+
+# bump_deps::fetch_publish_epoch NAME VERSION
+# Query crates.io for the publish time of NAME@VERSION. Print the epoch
+# seconds on stdout on success; print nothing and return non-zero on
+# failure. The result is cached per-invocation in $BUMP_DEPS_CACHE_DIR
+# (if exported) to keep retries cheap.
+bump_deps::fetch_publish_epoch() {
+    local name="$1"
+    local version="$2"
+    local url="https://crates.io/api/v1/crates/${name}/${version}"
+    # Test seam: when BUMP_DEPS_TEST_FIXTURE is set, read the canned
+    # response from $BUMP_DEPS_TEST_FIXTURE/<name>-<version>.json
+    # instead of hitting the network. Keeps unit tests hermetic.
+    local body
+    if [[ -n "${BUMP_DEPS_TEST_FIXTURE:-}" ]]; then
+        local fixture="$BUMP_DEPS_TEST_FIXTURE/${name}-${version}.json"
+        if [[ ! -f "$fixture" ]]; then
+            return 1
+        fi
+        body="$(cat "$fixture")"
+    else
+        if ! command -v curl >/dev/null 2>&1; then
+            return 1
+        fi
+        # User-Agent is mandatory for crates.io; identify the tool.
+        body="$(curl --silent --fail \
+            --max-time 15 \
+            -H 'User-Agent: bump-deps.sh (stSoftwareAU/NEAT-AI-Discovery; Issue #1234)' \
+            "$url" 2>/dev/null || true)"
+    fi
+    if [[ -z "$body" ]]; then
+        return 1
+    fi
+    # Extract `"created_at":"2025-01-15T03:45:12.345678+00:00"` without
+    # depending on jq.
+    local iso
+    # Use POSIX BRE only — `\+` is not portable across GNU and BSD sed.
+    iso="$(printf '%s' "$body" \
+        | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*{[^}]*"created_at"[[:space:]]*:[[:space:]]*"\([^"][^"]*\)".*/\1/p' \
+        | head -n 1)"
+    if [[ -z "$iso" ]]; then
+        # Fall back to the first created_at anywhere in the body.
+        iso="$(printf '%s' "$body" \
+            | sed -n 's/.*"created_at"[[:space:]]*:[[:space:]]*"\([^"][^"]*\)".*/\1/p' \
+            | head -n 1)"
+    fi
+    if [[ -z "$iso" ]]; then
+        return 1
+    fi
+    # Drop sub-second + zone-offset suffix for portability; keep "YYYY-MM-DDTHH:MM:SS".
+    local trimmed
+    trimmed="$(printf '%s' "$iso" | sed -E 's/(\.[0-9]+)?([+-][0-9:]+|Z)?$//')"
+    local epoch=""
+    # GNU date: -d ISO works directly. BSD/macOS date: needs explicit format.
+    if epoch="$(date -u -d "$trimmed" +%s 2>/dev/null)"; then
+        :
+    elif epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%S" "$trimmed" +%s 2>/dev/null)"; then
+        :
+    else
+        return 1
+    fi
+    printf '%s' "$epoch"
+}
+
+# bump_deps::revert_dep_line MANIFEST NAME OLD_VERSION
+# Restore the version string of NAME in MANIFEST to OLD_VERSION. Touches
+# only the top-level inline declaration; nested [dependencies.<name>]
+# tables are left alone (the manifest in this repo uses inline form).
+bump_deps::revert_dep_line() {
+    local manifest="$1"
+    local name="$2"
+    local old="$3"
+    local tmp
+    tmp="$(mktemp)"
+    # Match either `name = "X.Y.Z"` or `name = { … version = "X.Y.Z" … }`
+    # and rewrite only the first quoted version string on that line.
+    awk -v target="$name" -v new_v="$old" '
+        BEGIN { done = 0 }
+        {
+            if (!done) {
+                # Anchor at column 0; allow optional whitespace before =.
+                pattern = "^" target "[[:space:]]*="
+                if ($0 ~ pattern) {
+                    # Prefer rewriting `version = "…"` if present.
+                    if (match($0, /version[[:space:]]*=[[:space:]]*"[^"]+"/)) {
+                        seg = substr($0, RSTART, RLENGTH)
+                        new_seg = seg
+                        sub(/"[^"]+"/, "\"" new_v "\"", new_seg)
+                        $0 = substr($0, 1, RSTART - 1) new_seg substr($0, RSTART + RLENGTH)
+                    } else if (match($0, /"[^"]+"/)) {
+                        seg = substr($0, RSTART, RLENGTH)
+                        new_seg = "\"" new_v "\""
+                        $0 = substr($0, 1, RSTART - 1) new_seg substr($0, RSTART + RLENGTH)
+                    }
+                    done = 1
+                }
+            }
+            print
+        }
+    ' "$manifest" > "$tmp"
+    mv "$tmp" "$manifest"
+}
+
+# bump_deps::current_epoch
+# Print current epoch seconds. Exists so tests can stub via the
+# BUMP_DEPS_NOW_EPOCH override.
+bump_deps::current_epoch() {
+    if [[ -n "${BUMP_DEPS_NOW_EPOCH:-}" ]]; then
+        printf '%s' "$BUMP_DEPS_NOW_EPOCH"
+    else
+        date -u +%s
+    fi
+}
+
 # When sourced by the test suite we stop before parsing arguments / running.
 if [[ "${BUMP_DEPS_SOURCE_ONLY:-0}" == "1" ]]; then
     # shellcheck disable=SC2317  # `exit 0` is the fallback when not sourced.
@@ -216,7 +386,9 @@ echo ""
 
 # Phase 2: external Cargo deps.
 EXTERNAL_BUMPED=0
+EXTERNAL_REVERTED=0
 EXTERNAL_PLAN=""
+QUARANTINED_DEPS=""
 if [[ -f "$CARGO_MANIFEST" ]]; then
     if ! command -v cargo >/dev/null 2>&1; then
         echo "ERROR: cargo not found on PATH" >&2
@@ -236,10 +408,52 @@ if [[ -f "$CARGO_MANIFEST" ]]; then
                 EXTERNAL_PLAN="$(echo "$UPGRADE_OUT" | grep -E '\->' || true)"
             fi
             if [[ "$DRY_RUN" -eq 0 ]]; then
+                # Snapshot the manifest so we can identify which deps the
+                # upgrade actually changed (Issue #1234).
+                BEFORE_VERSIONS="$(mktemp)"
+                AFTER_VERSIONS="$(mktemp)"
+                bump_deps::extract_dep_versions "$CARGO_MANIFEST" > "$BEFORE_VERSIONS"
+
                 # Apply compatible upgrades only (incompatible upgrades are
                 # higher-risk and require a human review; the worker can do
                 # those via the upgrade-dependencies.yml workflow).
                 if cargo upgrade --compatible 2>&1 | tee /tmp/bump-deps-upgrade.log; then
+                    bump_deps::extract_dep_versions "$CARGO_MANIFEST" > "$AFTER_VERSIONS"
+
+                    # Quarantine gate (Issue #1234): for each newly-bumped
+                    # version, query crates.io for its publish time and
+                    # revert any bump that is younger than the configured
+                    # window. The header policy promised this — the helper
+                    # `bump_deps::is_quarantine_expired` was wired up but
+                    # never reached the bump path until now.
+                    CHANGED="$(bump_deps::compute_changed_deps "$BEFORE_VERSIONS" "$AFTER_VERSIONS" || true)"
+                    if [[ -n "$CHANGED" ]]; then
+                        NOW_EPOCH="$(bump_deps::current_epoch)"
+                        NOW_HOURS=$(( NOW_EPOCH / 3600 ))
+                        echo "🛡️  Quarantine gate (window=${QUARANTINE_HOURS}h): checking publish times…"
+                        while IFS=$'\t' read -r DEP_NAME DEP_OLD DEP_NEW; do
+                            [[ -z "$DEP_NAME" ]] && continue
+                            PUB_EPOCH="$(bump_deps::fetch_publish_epoch "$DEP_NAME" "$DEP_NEW" || true)"
+                            if [[ -z "$PUB_EPOCH" ]]; then
+                                echo "   ⚠️  $DEP_NAME@$DEP_NEW — publish time unknown; reverting to $DEP_OLD"
+                                bump_deps::revert_dep_line "$CARGO_MANIFEST" "$DEP_NAME" "$DEP_OLD"
+                                EXTERNAL_REVERTED=$(( EXTERNAL_REVERTED + 1 ))
+                                QUARANTINED_DEPS="${QUARANTINED_DEPS} ${DEP_NAME}@${DEP_NEW}(unknown)"
+                                continue
+                            fi
+                            PUB_HOURS=$(( PUB_EPOCH / 3600 ))
+                            if bump_deps::is_quarantine_expired "$NOW_HOURS" "$PUB_HOURS" "$QUARANTINE_HOURS"; then
+                                echo "   ✅ $DEP_NAME $DEP_OLD → $DEP_NEW (publish age ≥ ${QUARANTINE_HOURS}h, kept)"
+                            else
+                                AGE_HOURS=$(( NOW_HOURS - PUB_HOURS ))
+                                echo "   🚧 $DEP_NAME $DEP_OLD → $DEP_NEW (publish age ${AGE_HOURS}h < ${QUARANTINE_HOURS}h, reverting)"
+                                bump_deps::revert_dep_line "$CARGO_MANIFEST" "$DEP_NAME" "$DEP_OLD"
+                                EXTERNAL_REVERTED=$(( EXTERNAL_REVERTED + 1 ))
+                                QUARANTINED_DEPS="${QUARANTINED_DEPS} ${DEP_NAME}@${DEP_NEW}(${AGE_HOURS}h)"
+                            fi
+                        done <<< "$CHANGED"
+                    fi
+                    rm -f "$BEFORE_VERSIONS" "$AFTER_VERSIONS"
                     if ! git diff --quiet -- "$CARGO_MANIFEST"; then
                         EXTERNAL_BUMPED=1
                     fi
@@ -303,7 +517,7 @@ if [[ "$EXTERNAL_BUMPED" -eq 1 || "$INTERNAL_COUNT" -gt 0 ]]; then
     if [[ "$DRY_RUN" -eq 1 ]]; then
         echo "✅ bump-deps: would bump (internal=$INTERNAL_COUNT external=$EXTERNAL_BUMPED, dry-run)"
     else
-        echo "✅ bump-deps: bumped (internal=$INTERNAL_COUNT external=$EXTERNAL_BUMPED, audit_run=$AUDIT_RUN)"
+        echo "✅ bump-deps: bumped (internal=$INTERNAL_COUNT external=$EXTERNAL_BUMPED, quarantined=$EXTERNAL_REVERTED, audit_run=$AUDIT_RUN)"
     fi
 else
     if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -313,7 +527,10 @@ else
             echo "✅ bump-deps: no bumps (dry-run)"
         fi
     else
-        echo "✅ bump-deps: no bumps"
+        echo "✅ bump-deps: no bumps (quarantined=$EXTERNAL_REVERTED)"
     fi
+fi
+if [[ -n "$QUARANTINED_DEPS" ]]; then
+    echo "   quarantined:$QUARANTINED_DEPS"
 fi
 exit 0
