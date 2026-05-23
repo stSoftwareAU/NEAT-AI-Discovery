@@ -78,6 +78,9 @@ pub struct AnalysisTimingJson {
     pub cpu: CpuTimingBreakdownJson,
 }
 
+/// FFI response payload returned by the `check_gpu_available` FFI entry
+/// point — whether a usable GPU was detected, plus a human-readable reason
+/// and structured error fields when the probe failed.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckGpuOutput {

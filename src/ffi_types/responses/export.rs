@@ -44,6 +44,8 @@ pub struct ExportVisualisationStats {
 // Merge Parquet output
 // ============================================================================
 
+/// FFI response payload returned by the `merge_parquet` FFI entry point —
+/// success flag, merged output file path, and structured error fields.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeParquetOutput {

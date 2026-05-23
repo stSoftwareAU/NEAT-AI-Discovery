@@ -91,6 +91,8 @@ pub struct CreatureJson {
     pub output: usize,
 }
 
+/// JSON representation of a single neuron on the FFI boundary — identity,
+/// type, activation function (squash), and bias.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NeuronJson {
     /// Stable neuron identity string. Must be a UUID or descriptive identifier
@@ -132,6 +134,9 @@ where
     Ok(trimmed.to_ascii_uppercase())
 }
 
+/// JSON representation of a single synapse on the FFI boundary — source
+/// and target neuron identities, weight, and optional IF-neuron branch
+/// classification.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct SynapseJson {
     /// Source neuron identity string. Must be a UUID or descriptive identifier.
@@ -181,6 +186,10 @@ pub struct TrainingRecord {
     pub neuron_data: Option<Vec<NeuronData>>,
 }
 
+/// JSON-serialised summary statistics for a single neuron — error / activation
+/// means and variances plus spike and activation-range counters. Attached to
+/// candidate payloads so the host can reason about target-neuron behaviour
+/// without re-reading parquet.
 #[derive(Debug, Serialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub struct NeuronStatsJson {
