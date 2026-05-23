@@ -53,7 +53,7 @@ flowchart TD
     E --> F["a. Compute:<br/>activated = squash(w_in × S + bias)"]:::process
     F --> G["b. Optimal w_out via least squares:<br/>w_out = Σ(error × activated) / Σ(activated²)"]:::process
     G --> H["c. Optimal bias via<br/>grid search (GPU-accelerated)"]:::process
-    H --> I["d. Expected improvement =<br/>reduction in MSE"]:::process
+    H --> I["d. Expected improvement =<br/>SSE reduction<br/>(exact for MSE; ranking signal<br/>for other costs)"]:::process
     I --> D
     D --> J["Select activation function<br/>with best improvement"]:::process
     J --> K["Apply source variance discount<br/>+ impact discount"]:::process
@@ -64,6 +64,9 @@ flowchart TD
 
 > [!TIP]
 > 🎯 The algorithm tries every combination of source neuron and activation function to find the hidden neuron that would **most reduce** the target's error.
+
+> [!NOTE]
+> 📐 The "expected improvement" we score is **sum-of-squared-error (SSE) reduction**. This equals the network's loss reduction only when NEAT-AI's cost function is `MSE`; under other costs (`MAE`, `MAPE`, `MSLE`, `HINGE`, `CROSS_ENTROPY`, `CATEGORICAL_ERROR`) it is a useful ranking signal but is not equal to the actual loss reduction. See [`docs/COST_FUNCTION_NOTES.md`](../COST_FUNCTION_NOTES.md) §4 and §6.
 
 ### 🖥️ GPU-Accelerated Evaluation
 
