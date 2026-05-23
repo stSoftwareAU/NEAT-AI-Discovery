@@ -24,6 +24,23 @@
 //! - `addNeuron`: Split the non-monotonic neuron so each sub-neuron handles one
 //!   direction of the activation-error mapping
 //! - `changeSquash`: Change the activation function to better fit the data
+//!
+//! ## Quantised `{0, 1}` Error Regime (Issue #1247)
+//!
+//! Spearman's rank correlation requires the error series to carry
+//! ordinal information. Under `CATEGORICAL_ERROR`, output errors are
+//! quantised misclassification flags (`0` or `1`) and the rank vector
+//! collapses to two tied groups, producing a near-zero rho regardless
+//! of any real activation-error relationship. Detecting "non-monotonic"
+//! on that signal would flag every `CATEGORICAL_ERROR`-driven hidden
+//! neuron.
+//!
+//! When [`is_quantised_zero_one`] reports the regime, this detector
+//! skips the affected neuron and emits no candidate. The decision is
+//! made per-neuron — a creature trained under a continuous cost still
+//! exercises the full detector — and is documented as the "skip
+//! cleanly with a diagnostic" branch from Issue #1247's acceptance
+//! criteria.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
@@ -33,6 +50,7 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 
 use super::stats::spearman_rank_correlation;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DETECTION;
+use crate::analysis::quantised_error::is_quantised_zero_one;
 
 /// Minimum |rho| below which a neuron is considered non-monotonic.
 /// Spearman's rho ranges from -1.0 (perfectly decreasing) to +1.0 (perfectly increasing).
@@ -103,6 +121,14 @@ pub fn detect_non_monotonic_neurons(
 
         // Use absolute error values for monotonicity analysis
         let abs_errors: Vec<f32> = errors.iter().map(|e| e.abs()).collect();
+
+        // Skip neurons whose errors are quantised `{0, 1}` flags
+        // (CATEGORICAL_ERROR regime, Issue #1247). Rank-correlation on
+        // two tied groups is meaningless and would mass-flag every
+        // hidden neuron as non-monotonic.
+        if is_quantised_zero_one(&abs_errors) {
+            continue;
+        }
 
         let rho = spearman_rank_correlation(activations, &abs_errors);
 

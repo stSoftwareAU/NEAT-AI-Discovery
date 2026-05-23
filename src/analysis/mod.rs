@@ -50,6 +50,7 @@ pub mod gpu;
 pub mod module_weights;
 pub mod neuron;
 pub mod neuron_fingerprint;
+pub mod quantised_error;
 pub mod samples;
 pub mod scale_outcomes;
 pub mod shared;

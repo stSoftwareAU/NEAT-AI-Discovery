@@ -9,6 +9,31 @@
 //! The analysis computes distribution statistics including percentiles, skewness,
 //! and kurtosis to help identify non-uniform error patterns that may benefit from
 //! targeted discovery approaches.
+//!
+//! ## Quantised `{0, 1}` error regime (Issue #1247)
+//!
+//! Under `CATEGORICAL_ERROR` the underlying `avg_error` collapses to a
+//! Bernoulli sample over `{0, 1}`. The moment-based statistics still
+//! evaluate cleanly:
+//!
+//! - `variance = p(1 − p)` (finite, bounded by `0.25`)
+//! - `skewness = (1 − 2p) / sqrt(p(1 − p))` (finite when `p ∉ {0, 1}`)
+//! - `kurtosis = (1 − 6p(1 − p)) / (p(1 − p)) + 3` (finite when
+//!   `p ∉ {0, 1}`)
+//!
+//! The existing `std_dev > 1e-10` guard already handles the all-zero
+//! and all-one degenerate cases by emitting `skewness = 0` and
+//! `kurtosis = 3` (the Gaussian default) instead of dividing by zero.
+//! Percentile interpolation also remains exact because every value is
+//! one of `{0, 1}`.
+//!
+//! The Sarle bimodality coefficient computed by [`ErrorDistribution::is_likely_bimodal`]
+//! correctly identifies the `{0, 1}` regime as bimodal — that is the
+//! truth of the underlying distribution. Mode-detection histograms
+//! likewise return the two true modes. Detection is therefore
+//! **degraded but well-formed** under this regime; downstream
+//! interpretation of skewness / kurtosis values should be aware that
+//! the input is Bernoulli, not Gaussian.
 
 #![allow(
     clippy::cast_possible_truncation,

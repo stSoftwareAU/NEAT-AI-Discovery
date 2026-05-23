@@ -29,6 +29,19 @@
 //!
 //! When bimodality is detected, we recommend adding a new neuron to split the
 //! bimodal neuron. Each candidate includes bias offsets targeting each mode.
+//!
+//! ## `CATEGORICAL_ERROR` / quantised error regime (Issue #1247)
+//!
+//! This detector inspects the recorded **pre-activation value**
+//! (`DiscoverRecord.value`), not the error field, so it is *not*
+//! sensitive to the `CATEGORICAL_ERROR` `{0, 1}` regime described in
+//! `docs/COST_FUNCTION_NOTES.md`. The cluster coherence and gap-ratio
+//! guards (`MIN_GAP_RATIO`, `MAX_CLUSTER_VARIANCE_RATIO`) keep the
+//! detector well-formed even when the pre-activation distribution
+//! happens to collapse to two points: each cluster has zero internal
+//! variance, which still satisfies the coherence test, and the
+//! candidate's `bimodality_score` and `estimated_improvement` remain
+//! finite.
 
 #![allow(
     clippy::cast_possible_truncation,

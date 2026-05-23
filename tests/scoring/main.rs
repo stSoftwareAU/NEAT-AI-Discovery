@@ -7,6 +7,7 @@ mod cross_validation_test;
 mod issue_1056_logistic_prediction_calibration;
 mod issue_1112_saturation_prediction_discount;
 mod issue_1203_adaptive_staleness_window;
+mod issue_1247_categorical_error_hardening;
 mod issue_192_error_distribution_analysis;
 mod issue_465_candidate_outcome_cache;
 mod issue_465_source_type_scoring;
