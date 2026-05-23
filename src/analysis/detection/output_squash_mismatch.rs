@@ -25,6 +25,7 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::activations::apply_scalar_squash;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
+use crate::analysis::cost_function_hint::CostFunctionHint;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
@@ -280,9 +281,34 @@ fn evaluate_alternative_squashes(
 ///
 /// # Returns
 /// Vector of detected mismatch candidates, sorted by estimated improvement (best first).
+///
+/// This entry point preserves the pre-Issue-#1250 behaviour and assumes the
+/// recorded error is a linear residual. Callers that know the network's
+/// cost function should prefer [`detect_output_squash_mismatches_with_cost_hint`].
 pub fn detect_output_squash_mismatches(
     output_neurons: &[(String, String, f32)],
     neuron_records: &[(String, Vec<DiscoverRecord>)],
+) -> Vec<OutputSquashMismatchCandidate> {
+    detect_output_squash_mismatches_with_cost_hint(
+        output_neurons,
+        neuron_records,
+        CostFunctionHint::Unknown,
+    )
+}
+
+/// Cost-aware variant of [`detect_output_squash_mismatches`] (Issue #1250).
+///
+/// Strategy 4 (pre-activation squash comparison) reconstructs an "implied
+/// target" as `activation − error`. That identity only holds for
+/// linear-residual costs (`MSE`/`MAE`/`CE`). When `cost_hint` reports a
+/// non-linear residual (`MAPE`, `MSLE`, `HINGE`, `CATEGORICAL_ERROR`),
+/// Strategy 4 is skipped; the remaining strategies (clipping, range
+/// mismatch, unbounded mismatch) use only `|error|` aggregates and remain
+/// valid.
+pub fn detect_output_squash_mismatches_with_cost_hint(
+    output_neurons: &[(String, String, f32)],
+    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    cost_hint: CostFunctionHint,
 ) -> Vec<OutputSquashMismatchCandidate> {
     let mut candidates = Vec::with_capacity(output_neurons.len());
 
@@ -470,6 +496,14 @@ pub fn detect_output_squash_mismatches(
         // Strategy 4: Pre-activation squash comparison
         // When pre-activation values are available, simulate alternative squash
         // functions and pick the one that best reduces error.
+        //
+        // Issue #1250: this strategy reconstructs an implied target as
+        // `activation − error`, which only holds for linear-residual costs.
+        // Skip it when the caller has positively declared a non-linear cost
+        // (MAPE / MSLE / HINGE / CATEGORICAL_ERROR).
+        if !cost_hint.allows_linear_target_reconstruction() {
+            continue;
+        }
         if let Some((best_squash, _best_error, reduction_fraction)) =
             evaluate_alternative_squashes(squash, records, mean_error)
         {

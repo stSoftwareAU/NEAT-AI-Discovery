@@ -226,12 +226,23 @@ of percentages is a percentage). The `act + err` reconstruction in
 becomes `act + (target − output)/|target|` which is *not* the target —
 ⚠️ degraded.
 
+**Fixed in Issue #1250.** Both sites now accept a `CostFunctionHint`
+(see `src/analysis/cost_function_hint.rs`). When the caller declares
+`MAPE`, Strategy 4 of `detect_output_squash_mismatches` is skipped and
+`detect_high_error_squash_candidates` returns an empty list. The
+unhinted entry points keep their pre-fix behaviour for backwards
+compatibility.
+
 ### 4.4 `MSLE`
 
 The signed residual is `log(1+target) − log(1+output)`, which only makes sense
 on non-negative targets. Behaviour mirrors MAPE: ✅ for RESIDUAL/MAGNITUDE,
 ⚠️ for SSE-style improvements, ⚠️ for "implied target = activation + error"
 reconstructions.
+
+**Fixed in Issue #1250.** Same gating as MAPE — the implied-target
+sites accept a `CostFunctionHint::NonLinearResidual` and skip the
+affected code paths.
 
 ### 4.5 `HINGE`
 
@@ -243,7 +254,8 @@ reconstructions.
   ranking because both numerator and denominator share the sparsity bias.
 - `act + err = implied target` (`output_squash_mismatch.rs:221`,
   `high_error_squash_exploration.rs:141`) is ❌ — the relationship is not
-  linear under hinge.
+  linear under hinge. **Fixed in Issue #1250** by gating the affected
+  code paths off when the caller passes `CostFunctionHint::from_name("HINGE")`.
 
 ### 4.6 `CROSS_ENTROPY`
 
@@ -278,7 +290,8 @@ Concretely:
   `multi_hop.rs:121`, `output_bias_drift.rs:105`) are biased — the
   regression slope no longer matches the gradient.
 - ❌ **`activation + error = implied target`** patterns are wrong (target is
-  not bounded by the activation range).
+  not bounded by the activation range). **Fixed in Issue #1250** —
+  `CostFunctionHint::from_name("CATEGORICAL_ERROR")` gates both sites off.
 - ⚠️ **MAGNITUDE consumers** still rank "high error neurons" correctly
   (because `|e| = e ∈ {0, 1}`), but their numeric scale (`mean_abs_error ∈
   [0, 1]`) collapses against thresholds tuned for continuous residuals.
@@ -328,7 +341,11 @@ remains a documentation deliverable:
    `synapse/post_processing.rs:131-138`.
 2. **#1250 — `activation + error = implied target` is invalid for
    non-linear-residual costs** — affects `output_squash_mismatch.rs:221`
-   and `high_error_squash_exploration.rs:141`.
+   and `high_error_squash_exploration.rs:141`. **Resolved**: both sites
+   now expose a `_with_cost_hint` overload that accepts a
+   `CostFunctionHint`. Non-linear-residual costs gate the affected code
+   paths off. Backwards-compatible unhinted entry points remain for
+   callers that have not been migrated.
 3. **#1251 — `docs/discoveries/add-neuron.md:56` claims "Expected
    improvement = reduction in MSE"** — should be reworded to
    "Expected improvement = SSE reduction (exact for MSE, a ranking signal

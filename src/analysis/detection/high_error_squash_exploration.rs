@@ -22,6 +22,7 @@
 use super::helpers::build_record_map;
 use crate::activations::apply_scalar_squash;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
+use crate::analysis::cost_function_hint::CostFunctionHint;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
@@ -94,6 +95,33 @@ pub fn detect_high_error_squash_candidates(
     neurons: &[(String, String, f32)],
     neuron_records: &[(String, Vec<DiscoverRecord>)],
 ) -> Vec<HighErrorSquashCandidate> {
+    detect_high_error_squash_candidates_with_cost_hint(
+        neurons,
+        neuron_records,
+        CostFunctionHint::Unknown,
+    )
+}
+
+/// Cost-aware variant of [`detect_high_error_squash_candidates`] (Issue #1250).
+///
+/// Every candidate this detector emits is justified against an "implied
+/// target" reconstructed as `activation + error`. That identity only
+/// holds for linear-residual costs (`MSE`/`MAE`/`CE`). When `cost_hint`
+/// reports a non-linear residual (`MAPE`, `MSLE`, `HINGE`,
+/// `CATEGORICAL_ERROR`), the detector is gated off entirely and returns
+/// an empty list — there is no salvageable code path inside the detector
+/// because the implied target underpins both the current-MAE baseline
+/// and the candidate-MAE comparison.
+pub fn detect_high_error_squash_candidates_with_cost_hint(
+    neurons: &[(String, String, f32)],
+    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    cost_hint: CostFunctionHint,
+) -> Vec<HighErrorSquashCandidate> {
+    // Issue #1250: skip the whole detector when the cost is known non-linear.
+    if cost_hint.is_non_linear_residual() {
+        return Vec::new();
+    }
+
     let records_map = build_record_map(neuron_records);
 
     let mut candidates = Vec::new();
