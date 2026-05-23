@@ -13,12 +13,12 @@ jobs:
   markdownlint:
     runs-on: ubuntu-latest
     steps:
-      # actions/checkout@v4
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      # actions/setup-node@v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      # actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      # actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
-          node-version: "lts/*"
+          node-version: "22"
       - name: Install markdownlint-cli2
         run: npm install -g markdownlint-cli2
       - name: Run markdownlint-cli2
