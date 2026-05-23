@@ -34,6 +34,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 use crate::analysis::detection::stats::pearson_correlation;
+use crate::analysis::quantised_error::is_quantised_zero_one;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -351,23 +352,28 @@ fn evaluate_fan_in_pair(
 /// minimise Σ(error - w × activation)² → w = Σ(act × err) / Σ(act²),
 /// improvement = Σ(err²) - Σ(err - w × act)².
 ///
-/// ## Quantised `{0, 1}` error regime (Issue #1247)
+/// ## Quantised `{0, 1}` error regime (Issue #1249)
 ///
-/// When errors are CATEGORICAL_ERROR-style misclassification flags the
+/// When errors are `CATEGORICAL_ERROR`-style misclassification flags the
 /// SSE collapses to `Σ e = error_count` (because `e² = e`). The
 /// least-squares slope `w` becomes a regression of the misclassification
-/// flag onto the activation, and `improvement` is bounded by the number
-/// of misclassified samples rather than a meaningful loss reduction.
-/// The return value remains **finite and non-negative** — `sum_act_sq`
-/// is already guarded against zero variance — so it stays usable as a
-/// *ranking* signal for fan-in pair selection, but downstream callers
-/// must not interpret the magnitude as "expected loss reduction" under
-/// this regime. The `is_quantised_zero_one` helper in
-/// `crate::analysis::quantised_error` lets callers detect the regime
-/// when they need to.
+/// flag onto the activation, and the SSE-improvement number is bounded
+/// by the misclassification count rather than NEAT-AI's loss reduction.
+/// Emitting such a value would mislead the downstream candidate ranker,
+/// so this helper returns `0.0` for the quantised regime — the
+/// `best_individual <= 0.0` guard in [`evaluate_fan_in_pair`] then drops
+/// every fan-in pair targeting the affected neuron. See
+/// `docs/COST_FUNCTION_NOTES.md` §4.7 for the per-cost catalogue.
 fn compute_least_squares_improvement(activations: &[f32], errors: &[f32]) -> f32 {
     let n = activations.len().min(errors.len());
     if n < 2 {
+        return 0.0;
+    }
+
+    // Issue #1249: quantised `{0, 1}` errors break the "improvement = SSE
+    // reduction" identity. Gate the fan-in path off rather than emit a
+    // misleading magnitude.
+    if is_quantised_zero_one(&errors[..n]) {
         return 0.0;
     }
 
@@ -407,6 +413,16 @@ fn compute_two_input_regression(
     let n = acts_a.len().min(acts_b.len()).min(errors.len());
     if n < 3 {
         return None; // Need at least 3 samples for 2-variable regression.
+    }
+
+    // Issue #1249: the SSE-improvement identity collapses for quantised
+    // `{0, 1}` errors. Gate the pair regression off in the same way as
+    // the single-input helper above; the per-input
+    // `compute_least_squares_improvement` already rejects each input,
+    // but this is defence-in-depth for callers that bypass the
+    // per-input check.
+    if is_quantised_zero_one(&errors[..n]) {
+        return None;
     }
 
     // Normal equations: [a'a, a'b; b'a, b'b] [wa; wb] = [a'e; b'e]

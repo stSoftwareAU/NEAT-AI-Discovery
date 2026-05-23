@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::CreatureJson;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
+use crate::analysis::quantised_error::is_quantised_zero_one;
 use crate::types::DiscoverRecord;
 
 use super::IndividualCandidate;
@@ -167,6 +168,16 @@ fn evaluate_individual(
         .iter()
         .map(|idx| target_errors[idx])
         .collect();
+
+    // Issue #1249: the SSE-improvement ratio
+    // `1 − residual_sse / original_sse` collapses for `CATEGORICAL_ERROR`-
+    // style quantised `{0, 1}` errors (`Σe² = Σe = error_count`), so the
+    // emitted "improvement" no longer corresponds to NEAT-AI's loss
+    // reduction. Gate the path off and let the caller fall back to a
+    // cost-agnostic detector for the affected target.
+    if is_quantised_zero_one(&errors) {
+        return None;
+    }
 
     // Least-squares weight: w = Σ(act × err) / Σ(act²).
     let sum_act_sq: f64 = activations
