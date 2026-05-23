@@ -95,8 +95,8 @@ Classifications:
 |-----------|-----------|-------|-----|-----|------|------|-------|----|---------|
 | `compound_degradation.rs:171` | `errors.sum / n` | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
 | `compound_degradation.rs:248` | `r.errors.first()` per obs | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `compound_degradation.rs:277` | `Σ e²` (baseline SSE) | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
-| `compound_degradation.rs:282` | `(err − Δw·act)²` corrected SSE | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
+| `compound_degradation.rs:277` | `Σ e²` (baseline SSE) | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
+| `compound_degradation.rs:282` | `(err − Δw·act)²` corrected SSE | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
 | `correlated_error.rs:110` | `!errors.is_empty()` | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `correlated_error.rs:128` | `errors.first()` for correlation | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
 | `error_plateau.rs:124` | `errors.first()` raw | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
@@ -138,8 +138,8 @@ Classifications:
 |-----------|-----------|-------|-----|-----|------|------|-------|----|---------|
 | `fan_in.rs:139` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `fan_in.rs:156-157` | obs→error map | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `fan_in.rs:372` | `original_sse = Σ e²` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
-| `fan_in.rs:373-382` | residual SSE post-fit | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
+| `fan_in.rs:372` | `original_sse = Σ e²` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
+| `fan_in.rs:373-382` | residual SSE post-fit | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
 | `sample_weighted.rs:111-114` | mean error per record | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
 | `sample_weighted.rs:155-159` | mean error, then `.abs()` | RESIDUAL→MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
 | `sample_weighted.rs:258-262` | same pattern | RESIDUAL→MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
@@ -150,8 +150,8 @@ Classifications:
 | `output_bias_drift.rs:105` | `errors.first()` mean drift | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
 | `batch_successful/detection.rs:70` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `batch_successful/detection.rs:100-101` | obs→error map | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `batch_successful/detection.rs:189` | `original_sse = Σ e²` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
-| `batch_successful/detection.rs:194-203` | `improvement = 1 − residual_sse/original_sse` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
+| `batch_successful/detection.rs:189` | `original_sse = Σ e²` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
+| `batch_successful/detection.rs:194-203` | `improvement = 1 − residual_sse/original_sse` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
 
 ### 3.3 `src/analysis/scoring/`
 
@@ -282,7 +282,18 @@ Concretely:
 - ❌ **All SQUARED consumers** (`fan_in.rs:372`,
   `batch_successful/detection.rs:189`, `compound_degradation.rs:277`,
   `synapse/post_processing.rs:135`) produce numbers that do not correspond
-  to NEAT-AI's loss.
+  to NEAT-AI's loss. **Fixed in Issue #1249** for the three sites whose
+  output is interpreted as "expected loss reduction": the fan-in
+  least-squares improvement, the batch-successful
+  `1 − residual_sse/original_sse` ratio, and the compound-degradation
+  weight correction all now invoke
+  `crate::analysis::quantised_error::is_quantised_zero_one` on the
+  target's recorded errors and gate the SSE-improvement code path off
+  when the regime is detected. `synapse/post_processing.rs:135` is
+  retained — under `CATEGORICAL_ERROR` it collapses to "fraction of
+  network misclassifications attributable to this neuron", which is
+  still a sensible cost-agnostic impact-scaling factor and gating it
+  off would silence the entire discovery pipeline.
 - ❌ **All RESIDUAL consumers used in correlation/regression**
   (`gradient_discovery.rs:115`, `compound_degradation.rs`,
   `correlated_error.rs:128`, `monotonicity.rs:92`, `weight_polarity_flip.rs`,
@@ -339,6 +350,22 @@ remains a documentation deliverable:
    `batch_successful/detection.rs:189-203`,
    `compound_degradation.rs:277-288`,
    `synapse/post_processing.rs:131-138`.
+   **Resolved**: the three sites whose output is treated as "expected
+   loss reduction" by the downstream candidate ranker
+   (`fan_in::compute_least_squares_improvement` /
+   `compute_two_input_regression`,
+   `batch_successful::detection::evaluate_individual`,
+   `compound_degradation::detect_weight_corrections`) now call
+   `analysis::quantised_error::is_quantised_zero_one` on the target
+   error series and gate the SSE-improvement code path off. The fourth
+   site (`synapse::post_processing::compute_neuron_error_sq_map`)
+   degrades cleanly to "fraction of network misclassifications" under
+   the regime, which is still a usable cost-agnostic scaling factor —
+   gating it off would silence the discovery pipeline, so the SSE-sum
+   path is retained with a documented degraded-but-well-formed
+   semantics. Regression tests live in
+   `tests/recommendation/issue_1249_categorical_error_sse_gating.rs`
+   and `tests/detection/issue_1249_categorical_error_sse_gating.rs`.
    See also **#1247** — hardened the distribution-sensitive detectors
    (`scoring/error_distribution.rs`, `detection/bimodal_neuron.rs`,
    `recommendation/sample_weighted.rs`, `recommendation/fan_in.rs`,

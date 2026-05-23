@@ -4,6 +4,7 @@
 mod common;
 
 mod issue_1247_categorical_error_hardening;
+mod issue_1249_categorical_error_sse_gating;
 mod issue_1250_implied_target_cost_hint;
 mod issue_341_dead_neuron_detection;
 mod issue_342_saturated_neuron_detection;

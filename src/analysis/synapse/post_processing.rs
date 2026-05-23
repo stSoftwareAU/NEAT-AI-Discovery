@@ -121,6 +121,17 @@ pub fn scale_by_error_fraction(
 ///
 /// Issue #730: Used to determine what fraction of total creature error each target
 /// neuron contributes, enabling creature-level prediction calibration.
+///
+/// ## Quantised `{0, 1}` error regime (Issue #1249)
+///
+/// Under `CATEGORICAL_ERROR` the per-neuron `Σ e² = Σ e` equals the
+/// neuron's misclassification count. The downstream consumer
+/// ([`scale_by_error_fraction`]) uses the **ratio**
+/// `target_error_sq / total_error_sq`, which under the regime collapses
+/// to "fraction of network misclassifications attributable to this
+/// neuron" — still a sensible cost-agnostic impact-scaling factor. The
+/// SSE sum is therefore retained on purpose; gating it off would zero
+/// every neuron's impact and silence the discovery pipeline.
 fn compute_neuron_error_sq_map<'a>(
     input: &'a crate::AnalyzeSynapsesInput,
     cache: &RecordCache,

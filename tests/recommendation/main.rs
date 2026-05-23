@@ -5,6 +5,7 @@ mod common;
 
 mod issue_1059_disable_batch_successful;
 mod issue_1247_categorical_error_hardening;
+mod issue_1249_categorical_error_sse_gating;
 mod issue_189_synergistic_discovery;
 mod issue_202_epistatic_neuron_pairs;
 mod issue_230_multi_hop_candidate_analysis;

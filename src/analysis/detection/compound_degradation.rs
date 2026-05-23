@@ -23,6 +23,7 @@
 
 use super::helpers::build_record_map;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
+use crate::analysis::quantised_error::is_quantised_zero_one;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 use std::collections::{HashMap, HashSet};
@@ -247,6 +248,18 @@ fn detect_weight_corrections(
             .filter(|r| r.errors.first().copied().unwrap_or(0.0).is_finite())
             .map(|r| (r.obs_index, r.errors.first().copied().unwrap_or(0.0)))
             .collect();
+
+        // Issue #1249: under `CATEGORICAL_ERROR` the target error is a
+        // quantised `{0, 1}` misclassification flag, so the
+        // `baseline_error_sq − corrected_error_sq` SSE-improvement
+        // estimate below collapses to the misclassification count
+        // rather than a loss reduction. Skip the weight correction —
+        // the emitted `setWeight` magnitude would not correspond to
+        // any real improvement.
+        let target_error_values: Vec<f32> = target_error_map.values().copied().collect();
+        if is_quantised_zero_one(&target_error_values) {
+            continue;
+        }
 
         // Compute correlation between source activation and target error
         // Optimal weight delta via least squares: Δw = Σ(act × err) / Σ(act²)
