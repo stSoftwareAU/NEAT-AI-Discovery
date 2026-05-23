@@ -197,3 +197,101 @@ pub fn record(
         errors: vec![0.01],
     }
 }
+
+// ---------------------------------------------------------------------------
+// Cost-compatibility fixtures (Issue #1246)
+//
+// Helpers for building deterministic per-cost output-neuron error fixtures
+// and a small toy creature shared by the cost-compatibility integration
+// tests. Discovery is cost-agnostic by construction — these fixtures
+// reproduce each built-in cost's per-record residual shape so the
+// `record_discovery` → `analyze_parallel` pipeline can be exercised
+// end-to-end against every cost without depending on the NEAT-AI runtime.
+// ---------------------------------------------------------------------------
+
+/// The seven built-in NEAT-AI cost names that discovery must remain
+/// compatible with. Mirrors `BUILT_IN_COST_NAMES` in NEAT-AI's `Costs.ts`.
+#[allow(dead_code)]
+pub const BUILT_IN_COST_NAMES: [&str; 7] = [
+    "MSE",
+    "MAE",
+    "MAPE",
+    "MSLE",
+    "HINGE",
+    "CROSS_ENTROPY",
+    "CATEGORICAL_ERROR",
+];
+
+/// Produce a deterministic output-neuron error value shaped like a
+/// per-record residual under `cost`.
+///
+/// The shapes follow §1 of `docs/COST_FUNCTION_NOTES.md`:
+/// - `MSE`/`MAE`: continuous signed.
+/// - `MAPE`: continuous signed, smaller scale (percentage-like).
+/// - `MSLE`: continuous signed (log-space residual).
+/// - `HINGE`: non-negative, sparse (frequent zeros for margined samples).
+/// - `CROSS_ENTROPY`: continuous signed in `[-1, 1]` (soft-max gradient).
+/// - `CATEGORICAL_ERROR`: quantised misclassification flag in `{0, 1}`.
+///
+/// Deterministic in `(cost, obs_index, output_index)` so tests are
+/// reproducible without an RNG.
+#[allow(dead_code)]
+#[allow(clippy::cast_precision_loss)]
+pub fn cost_shaped_error(cost: &str, obs_index: u32, output_index: usize) -> f32 {
+    let phase = (obs_index as f32) * 0.37 + (output_index as f32) * 1.7;
+    match cost {
+        "MSE" | "MAE" => phase.sin() * 0.3,
+        "MAPE" => phase.sin() * 0.15,
+        "MSLE" => phase.sin() * 0.2,
+        "HINGE" => {
+            // Sparse: zero on roughly half of samples ("correctly margined"),
+            // positive magnitude on the rest. Sign convention follows
+            // NEAT-AI's chain rule which preserves the sign of the residual.
+            if phase.sin() > 0.0 {
+                (1.0 - phase.cos() * 0.6).clamp(0.0, 1.5)
+            } else {
+                0.0
+            }
+        }
+        "CROSS_ENTROPY" => (phase.sin() * 0.5).clamp(-0.95, 0.95),
+        "CATEGORICAL_ERROR" => {
+            if phase.sin() > 0.3 {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        _ => phase.sin() * 0.3,
+    }
+}
+
+/// Build a small 2-input, 3-hidden, 2-output toy creature used by the
+/// cost-compatibility tests. Returns the `CreatureJson` together with the
+/// list of hidden + output neuron UUIDs (in forward-only order).
+///
+/// Topology (forward-only):
+/// - `input-0`, `input-1` → `h0`, `h1`
+/// - `h0`, `h1` → `h2`
+/// - `h2` → `o0`, `o1`
+#[allow(dead_code)]
+pub fn toy_cost_creature() -> CreatureJson {
+    CreatureJson {
+        input: 2,
+        output: 2,
+        neurons: vec![
+            hidden("h0", "TANH"),
+            hidden("h1", "LOGISTIC"),
+            hidden("h2", "TANH"),
+            output("o0", "IDENTITY"),
+            output("o1", "IDENTITY"),
+        ],
+        synapses: vec![
+            synapse("input-0", "h0", 0.7),
+            synapse("input-1", "h1", -0.5),
+            synapse("h0", "h2", 0.6),
+            synapse("h1", "h2", 0.4),
+            synapse("h2", "o0", 0.8),
+            synapse("h2", "o1", -0.3),
+        ],
+    }
+}
