@@ -16,6 +16,30 @@
 //! Detection thresholds can be configured via `SampleWeightedConfig`:
 //! - `min_weighted_error`: Minimum weighted error to flag a neuron (default: 0.25)
 //! - `min_samples`: Minimum samples required for statistical reliability (default: 10)
+//!
+//! ## Quantised `{0, 1}` error regime (Issue #1247)
+//!
+//! Under `CATEGORICAL_ERROR`, the per-record absolute error collapses to
+//! `{0, 1}` — every "weight" is either zero (correctly-classified
+//! sample) or one (misclassified). The detector then reduces to:
+//!
+//! - `weighted_mean_error == misclassification_rate`
+//! - the stratified hard/easy split == correctly-classified vs
+//!   misclassified samples
+//! - `hard_to_easy_ratio` becomes unbounded when no sample is
+//!   correctly classified (already clamped to ≤ `10` downstream)
+//!
+//! The detector remains **finite and well-formed** — the existing
+//! `total <= EPSILON` and `easy_mean > EPSILON` guards prevent NaN /
+//! division-by-zero — and still produces a useful ranking signal
+//! (neurons with high misclassification rates outscore neurons with
+//! low ones). Magnitude is on a different scale to a continuous-error
+//! batch, so downstream `min_weighted_error` thresholds may need to
+//! be re-tuned for `CATEGORICAL_ERROR`. Detection is *degraded but
+//! well-formed* under this regime (Issue #1247).
+//!
+//! See `crate::analysis::quantised_error::is_quantised_zero_one` for
+//! the runtime predicate.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::types::DiscoverRecord;

@@ -350,6 +350,21 @@ fn evaluate_fan_in_pair(
 /// Compute least-squares improvement for a single-input predictor:
 /// minimise Σ(error - w × activation)² → w = Σ(act × err) / Σ(act²),
 /// improvement = Σ(err²) - Σ(err - w × act)².
+///
+/// ## Quantised `{0, 1}` error regime (Issue #1247)
+///
+/// When errors are CATEGORICAL_ERROR-style misclassification flags the
+/// SSE collapses to `Σ e = error_count` (because `e² = e`). The
+/// least-squares slope `w` becomes a regression of the misclassification
+/// flag onto the activation, and `improvement` is bounded by the number
+/// of misclassified samples rather than a meaningful loss reduction.
+/// The return value remains **finite and non-negative** — `sum_act_sq`
+/// is already guarded against zero variance — so it stays usable as a
+/// *ranking* signal for fan-in pair selection, but downstream callers
+/// must not interpret the magnitude as "expected loss reduction" under
+/// this regime. The `is_quantised_zero_one` helper in
+/// `crate::analysis::quantised_error` lets callers detect the regime
+/// when they need to.
 fn compute_least_squares_improvement(activations: &[f32], errors: &[f32]) -> f32 {
     let n = activations.len().min(errors.len());
     if n < 2 {

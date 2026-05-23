@@ -339,6 +339,15 @@ remains a documentation deliverable:
    `batch_successful/detection.rs:189-203`,
    `compound_degradation.rs:277-288`,
    `synapse/post_processing.rs:131-138`.
+   See also **#1247** — hardened the distribution-sensitive detectors
+   (`scoring/error_distribution.rs`, `detection/bimodal_neuron.rs`,
+   `recommendation/sample_weighted.rs`, `recommendation/fan_in.rs`,
+   `detection/monotonicity.rs`) for the quantised `{0, 1}` regime.
+   `monotonicity.rs` now skips affected neurons via the new
+   `analysis::quantised_error::is_quantised_zero_one` helper; the
+   remaining modules document degraded-but-well-formed behaviour and
+   carry regression tests under
+   `tests/{detection,recommendation,scoring}/issue_1247_*`.
 2. **#1250 — `activation + error = implied target` is invalid for
    non-linear-residual costs** — affects `output_squash_mismatch.rs:221`
    and `high_error_squash_exploration.rs:141`. **Resolved**: both sites
