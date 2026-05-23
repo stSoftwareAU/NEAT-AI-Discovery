@@ -106,8 +106,11 @@ consistency (majority fraction).
   [Wikipedia](https://en.wikipedia.org/wiki/Artificial_neuron#Types_of_transfer_functions):
   How the bias parameter shifts the activation function's operating point.
 - **Mean squared error** —
-  [Wikipedia](https://en.wikipedia.org/wiki/Mean_squared_error): The loss
-  metric that output bias drift directly inflates.
+  [Wikipedia](https://en.wikipedia.org/wiki/Mean_squared_error): A common
+  loss metric. Output bias drift inflates the network's loss under any cost
+  function; the inflation is exact for `MSE` and a ranking signal for the
+  other built-in costs (see
+  [`docs/COST_FUNCTION_NOTES.md`](../COST_FUNCTION_NOTES.md) §4).
 - **NEAT (NeuroEvolution of Augmenting Topologies)** —
   [Wikipedia](https://en.wikipedia.org/wiki/Neuroevolution_of_augmenting_topologies):
   The evolutionary algorithm framework this library extends.

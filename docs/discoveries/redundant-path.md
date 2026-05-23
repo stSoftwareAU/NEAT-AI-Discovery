@@ -44,7 +44,7 @@ flowchart TD
     D -->|Yes| E["🔀 Redundant pair found!"]
     E --> F["⚖️ Weaker synapse (by |weight|)<br/>= prune candidate"]
     F --> G["📐 New survivor weight<br/>= keep_weight + prune_weight"]
-    G --> H["📊 Estimate improvement:<br/>MSE original vs renormalised<br/>+ structural bonus"]
+    G --> H["📊 Estimate improvement:<br/>SSE original vs renormalised<br/>(exact for MSE; ranking signal<br/>for other costs)<br/>+ structural bonus"]
     style A fill:#e3f2fd,stroke:#1565c0,color:#000
     style B fill:#e3f2fd,stroke:#1565c0,color:#000
     style C fill:#e3f2fd,stroke:#1565c0,color:#000
@@ -118,8 +118,10 @@ graph LR
 > 1. `removeSynapse` I7 → H5
 > 2. `setWeight` I2 → H5 to 0.45 + 0.22 = **0.67**
 >
-> MSE comparison shows the single-path produces nearly identical
-> output with one fewer synapse. ✅
+> Sum-of-squared-error comparison shows the single-path produces nearly identical
+> output with one fewer synapse. ✅ (SSE reduction is exact for `MSE`; for
+> other costs it serves as a ranking signal — see
+> [`docs/COST_FUNCTION_NOTES.md`](../COST_FUNCTION_NOTES.md) §4.)
 
 ---
 

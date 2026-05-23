@@ -180,7 +180,7 @@ graph LR
 > **Analysis:**
 > - Matched 500 samples of I5 activation with O1 error
 > - Optimal weight: w = +0.07
-> - Expected improvement: 12% reduction in O1's MSE
+> - Expected improvement: 12% reduction in O1's sum-of-squared error (exact for `MSE`; a ranking signal for other costs)
 >
 > **Fix:** `addSynapse I5 → O1 (weight +0.07)`
 >
