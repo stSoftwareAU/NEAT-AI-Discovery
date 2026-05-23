@@ -236,7 +236,7 @@ reconstructions.
 ### 4.5 `HINGE`
 
 - Hinge residuals are zero on correctly-margined samples. Mean residual is
-  biased toward zero even when the network is imperfect, so any RESIDUAL
+  biased towards zero even when the network is imperfect, so any RESIDUAL
   consumer that averages errors (e.g., `sample_weighted.rs:114`,
   `target_data.rs:43`) ⚠️ under-reports neuron error.
 - SSE-based "improvement = 1 − residual_sse/original_sse" still works for
