@@ -28,12 +28,14 @@ fn calibration_miss_threshold_env_var_overrides_default() {
     assert!((calibration_miss_threshold() - 10.0).abs() < 1e-6);
 
     // Override with a valid value.
+    // SAFETY: This test is `#[serial]` so no other thread mutates env vars.
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD", "25.5");
     }
     assert!((calibration_miss_threshold() - 25.5).abs() < 1e-3);
 
     // Malformed -> default.
+    // SAFETY: This test is `#[serial]` so no other thread mutates env vars.
     unsafe {
         std::env::set_var(
             "NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD",
@@ -43,11 +45,13 @@ fn calibration_miss_threshold_env_var_overrides_default() {
     assert!((calibration_miss_threshold() - 10.0).abs() < 1e-6);
 
     // <=1.0 is rejected (would silence the check).
+    // SAFETY: This test is `#[serial]` so no other thread mutates env vars.
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD", "0.5");
     }
     assert!((calibration_miss_threshold() - 10.0).abs() < 1e-6);
 
+    // SAFETY: This test is `#[serial]` so no other thread mutates env vars.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD");
     }

@@ -382,6 +382,7 @@ fn integration_timing_output() {
     let result =
         neat_ai_discovery::analysis::analyze_synapses(&input).expect("Analysis should succeed");
 
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::remove_var("NEAT_AI_DISCOVERY_TIMING") };
 
     // Analysis should complete successfully
@@ -411,6 +412,7 @@ fn integration_json_profile() {
     let result_json = neat_ai_discovery::analyze_parallel_internal(&input_json.to_string())
         .expect("Analysis should succeed");
 
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::remove_var("NEAT_AI_DISCOVERY_PROFILE") };
 
     // Parse the JSON response
@@ -452,6 +454,7 @@ fn integration_gpu_metrics() {
     let result =
         neat_ai_discovery::analysis::analyze_synapses(&input).expect("Analysis should succeed");
 
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::remove_var("NEAT_AI_DISCOVERY_GPU_METRICS") };
 
     // Analysis should complete successfully

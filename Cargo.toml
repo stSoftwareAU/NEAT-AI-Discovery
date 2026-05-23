@@ -211,3 +211,7 @@ match_bool = "warn"
 # Nursery lints — stable enough to be useful
 redundant_clone = "warn"
 
+# Safety documentation — every `unsafe { ... }` block must carry a `// SAFETY:`
+# comment naming the invariants the caller upholds (Issue #1240).
+undocumented_unsafe_blocks = "warn"
+

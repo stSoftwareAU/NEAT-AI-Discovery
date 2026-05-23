@@ -1258,6 +1258,7 @@ mod tests {
     #[serial]
     fn sine_target_with_zero_samples_receives_conservative_prior() {
         // SAFETY: env vars guarded by serial_test. Single-threaded under #[serial].
+        // SAFETY: serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
         }
@@ -1278,6 +1279,7 @@ mod tests {
     #[test]
     #[serial]
     fn sine_target_with_enough_samples_uses_learnt_ewma() {
+        // SAFETY: serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
         }
@@ -1304,6 +1306,7 @@ mod tests {
     #[test]
     #[serial]
     fn sine_target_below_threshold_still_uses_prior() {
+        // SAFETY: serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
         }
@@ -1325,6 +1328,7 @@ mod tests {
     #[test]
     #[serial]
     fn relu_target_with_zero_samples_uses_global_default() {
+        // SAFETY: serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
         }
@@ -1340,6 +1344,7 @@ mod tests {
     #[test]
     #[serial]
     fn every_risky_squash_receives_prior_at_cold_start() {
+        // SAFETY: serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
         }
@@ -1359,6 +1364,7 @@ mod tests {
     #[test]
     #[serial]
     fn missing_target_squash_skips_risky_prior() {
+        // SAFETY: serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
         }
@@ -1378,6 +1384,7 @@ mod tests {
         let correction = CalibrationCorrection::neutral();
 
         // Sensible mid-range override.
+        // SAFETY: serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::set_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR", "0.10");
         }
@@ -1388,6 +1395,7 @@ mod tests {
         );
 
         // Below the lower clamp -> clamped to MIN_RISKY_SQUASH_PRIOR (0.001).
+        // SAFETY: serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::set_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR", "0.0");
         }
@@ -1398,6 +1406,7 @@ mod tests {
         );
 
         // Above the upper clamp -> clamped to MAX_RISKY_SQUASH_PRIOR (1.0).
+        // SAFETY: serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::set_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR", "5.0");
         }
@@ -1408,6 +1417,7 @@ mod tests {
         );
 
         // Unparsable -> default.
+        // SAFETY: serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::set_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR", "not-a-number");
         }
@@ -1417,6 +1427,7 @@ mod tests {
             "unparsable env var must fall back to the default"
         );
 
+        // SAFETY: serialised via #[serial] — no concurrent env access.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR");
         }

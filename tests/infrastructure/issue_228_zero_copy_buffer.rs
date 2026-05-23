@@ -110,12 +110,13 @@ fn zero_copy_config_default() {
 fn zero_copy_config_env_override() {
     skip_without_gpu!();
 
-    // SAFETY: Serialised via #[serial] — no concurrent env access.
     // Test enabling via env var
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
     }
     let config = ZeroCopyBufferConfig::from_env();
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
     }
@@ -126,10 +127,12 @@ fn zero_copy_config_env_override() {
     );
 
     // Test disabling via env var
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "0");
     }
     let config = ZeroCopyBufferConfig::from_env();
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
     }
@@ -193,8 +196,8 @@ fn zero_copy_produces_correct_results() {
         synapses: Vec::new(),
     };
 
-    // SAFETY: Serialised via #[serial] — no concurrent env access.
     // Run analysis with zero-copy enabled (if supported)
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
     }
@@ -211,11 +214,13 @@ fn zero_copy_produces_correct_results() {
     };
     let result_zero_copy =
         analyze_synapses(&input).expect("Analysis with zero-copy should succeed");
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
     }
 
     // Run analysis with zero-copy disabled
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "0");
     }
@@ -231,6 +236,7 @@ fn zero_copy_produces_correct_results() {
         discovery_outcome_log: None,
     };
     let result_copy = analyze_synapses(&input).expect("Analysis with copy should succeed");
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
     }
@@ -400,8 +406,8 @@ fn zero_copy_no_data_corruption() {
         synapses: Vec::new(),
     };
 
-    // SAFETY: Serialised via #[serial] — no concurrent env access.
     // Enable zero-copy
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_ZERO_COPY", "1");
     }
@@ -425,6 +431,7 @@ fn zero_copy_no_data_corruption() {
         all_results.push(result);
     }
 
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY");
     }

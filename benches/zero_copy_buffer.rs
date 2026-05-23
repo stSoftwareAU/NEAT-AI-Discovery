@@ -83,6 +83,7 @@ fn benchmark_zero_copy_vs_copying(c: &mut Criterion) {
             let result = analyze_synapses(&input).expect("Analysis should succeed");
             black_box(result);
         });
+        // SAFETY: Benchmarks run single-threaded, no concurrent env access.
         unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY") };
     });
 
@@ -106,6 +107,7 @@ fn benchmark_zero_copy_vs_copying(c: &mut Criterion) {
                 let result = analyze_synapses(&input).expect("Analysis should succeed");
                 black_box(result);
             });
+            // SAFETY: Benchmarks run single-threaded, no concurrent env access.
             unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_ZERO_COPY") };
         });
     }

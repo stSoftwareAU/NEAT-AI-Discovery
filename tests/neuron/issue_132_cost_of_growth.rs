@@ -35,9 +35,10 @@ impl NoiseFloorOffGuard {
 impl Drop for NoiseFloorOffGuard {
     fn drop(&mut self) {
         let key = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR";
-        // SAFETY: serialised via #[serial] — no concurrent env access.
         match &self.previous {
+            // SAFETY: serialised via #[serial] — no concurrent env access.
             Some(v) => unsafe { std::env::set_var(key, v) },
+            // SAFETY: serialised via #[serial] — no concurrent env access.
             None => unsafe { std::env::remove_var(key) },
         }
     }
