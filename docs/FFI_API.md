@@ -489,6 +489,48 @@ if (estimatedBytes > FLUSH_THRESHOLD) {
 - **No mixing**: Never mix data from different training records within a single discovery record write
 - **Matching by obs_index**: TypeScript matches records across neurons by `obs_index` (not by array position)
 
+### 🎚️ Cost-Agnostic Error Contract
+
+The `errors` array on each recorded neuron row is the **per-neuron residual**
+that NEAT-AI's cost function produced for that output neuron on that training
+record. Discovery is **cost-agnostic by construction** — it consumes the
+residuals and never inspects which cost function NEAT-AI is using. All seven
+built-in NEAT-AI costs are supported:
+
+- `MSE`, `MAE`, `MAPE`, `MSLE`, `HINGE`, `CROSS_ENTROPY`, `CATEGORICAL_ERROR`
+
+A new NEAT-AI cost is compatible with discovery as long as it preserves these
+invariants:
+
+1. **One error slot per output neuron.** `errors.len()` equals the number of
+   output neurons of the network for output records, and is otherwise empty.
+2. **Finite errors mean "this observation contributed to the loss."** A
+   non-finite (`NaN`/`±∞`) entry is treated as "skip this observation" by every
+   consumer.
+3. **Zero error means "perfect prediction at this sample."** Consumers that
+   sum or square errors assume `0` carries no information.
+4. **Magnitude is monotonically related to "how wrong" the network was.**
+   Bigger `|error|` ⇒ worse prediction.
+5. **`errors[i]` is well-defined for the i-th output neuron and only that
+   neuron.** Cross-output indexing is not supported.
+
+Per-cost caveats — these are well-understood and have callouts in the relevant
+modules:
+
+- `CATEGORICAL_ERROR` carries no sign information and quantises `errors[i]` to
+  `{0, 1}`; SSE-based "expected improvement" values are valid for ranking but
+  not for absolute loss reduction (Issue #1247 hardening; see `monotonicity.rs`
+  for the explicit `is_quantised_zero_one` gate).
+- `HINGE` is sparse at zero on correctly-margined samples — mean residual
+  consumers under-report neuron error.
+- `MAPE` and `MSLE` are non-linear residuals; the two `activation + error ≈
+  target` sites are gated off when callers pass a
+  `CostFunctionHint::NonLinearResidual` (Issue #1250).
+
+See [COST_FUNCTION_NOTES.md](COST_FUNCTION_NOTES.md) for the per-consumer
+audit, the per-cost validity matrix, and the checklist for adding a new cost
+to NEAT-AI.
+
 ### ➡️ Forward-only Activation Order (no feedback)
 
 Discovery assumes **forward-only** networks (no recurrent feedback). This is critical for both recording and for applying discovery candidates:

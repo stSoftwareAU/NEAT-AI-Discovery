@@ -126,6 +126,32 @@ the discovery optimisation is skipped.
 For GPU performance tuning, troubleshooting, and debugging, see
 [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md).
 
+## 🎚️ Supported Cost Functions
+
+NEAT-AI-Discovery is **cost-agnostic by construction** — the analysis pipeline
+consumes the per-neuron residuals captured in `DiscoverRecord.errors` and never
+references NEAT-AI's configured cost function by name. Every NEAT-AI built-in
+cost is supported:
+
+| Cost | Per-output residual semantics | Discovery support |
+|------|--------------------------------|-------------------|
+| `MSE` | linear residual (`target − output`) | ✅ reference contract |
+| `MAE` | linear residual via the `|·|` chain rule | ✅ supported |
+| `MAPE` | percentage residual `(target − output)/|target|` | ✅ supported (Issue #1250 gates non-linear-residual sites) |
+| `MSLE` | `log(1+target) − log(1+output)` on `target ≥ 0` | ✅ supported (Issue #1250 gates non-linear-residual sites) |
+| `HINGE` | `max(0, 1 − y·ŷ) · −y` — zero on margined samples | ⚠️ supported, residual sums under-report neuron error on sparse hinge errors |
+| `CROSS_ENTROPY` | soft-max gradient `output − target` (linear) | ✅ supported |
+| `CATEGORICAL_ERROR` | quantised misclassification flag `{0, 1}` | ⚠️ supported with degraded distribution stats (Issue #1247 hardening) |
+
+> [!NOTE]
+> 📐 Where discovery reports an "expected improvement" it is **sum-of-squared
+> residual (SSE) reduction** computed from the per-neuron `errors` slot. SSE
+> equals the network's loss reduction exactly only when NEAT-AI's cost is
+> `MSE`; under the other six costs it is a useful ranking signal but not the
+> configured loss reduction. See [docs/COST_FUNCTION_NOTES.md](docs/COST_FUNCTION_NOTES.md)
+> for the per-consumer audit, the cost-agnostic invariants, and the checklist
+> for adding a new cost to NEAT-AI.
+
 ## 🔬 Discovery → Evolution Pipeline
 
 The discovery process works as follows:
@@ -534,6 +560,7 @@ graph TD
 | [docs/ANALYSIS_DEEP_DIVE.md](docs/ANALYSIS_DEEP_DIVE.md) | Detailed analysis workflow and detection algorithms |
 | [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) | GPU performance tuning, troubleshooting, and debugging |
 | [docs/FFI_API.md](docs/FFI_API.md) | Full FFI API reference and JSON interface |
+| [docs/COST_FUNCTION_NOTES.md](docs/COST_FUNCTION_NOTES.md) | Cost-agnostic invariants, per-cost behaviour catalogue, and per-consumer audit |
 | [docs/STREAMING_GUIDE.md](docs/STREAMING_GUIDE.md) | Step-by-step streaming recording API guide with TypeScript examples |
 | [docs/CACHE_TUNING.md](docs/CACHE_TUNING.md) | Cache tier tuning, diagnostics, and example configurations |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark regression tracking and comparison workflow |
