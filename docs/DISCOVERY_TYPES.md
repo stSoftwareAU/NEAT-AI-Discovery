@@ -104,6 +104,38 @@ graph LR
     style TS fill:#eaf2f8,stroke:#3498db,color:#333
 ```
 
+### 🎚️ Cost-Function Compatibility
+
+Every discovery type listed below is **cost-agnostic by construction** — it
+consumes the per-neuron residuals from `DiscoverRecord.errors` rather than
+NEAT-AI's configured cost function. All seven NEAT-AI built-in cost functions
+are supported:
+
+`MSE`, `MAE`, `MAPE`, `MSLE`, `HINGE`, `CROSS_ENTROPY`, `CATEGORICAL_ERROR`.
+
+Where individual modules report an "expected improvement" the number is
+**sum-of-squared residual (SSE) reduction** computed against the recorded
+residuals. SSE reduction equals the network's actual loss reduction only when
+the cost is `MSE`; under the other six costs it is a useful ranking signal but
+not the configured loss reduction.
+
+Two per-cost caveats are worth flagging here:
+
+- `CATEGORICAL_ERROR` produces quantised `{0, 1}` residuals — distribution-
+  sensitive detectors (`bimodal_neuron`, `sample_weighted`, `fan_in`,
+  `monotonicity`, `error_distribution`) have been hardened for this regime
+  (Issue #1247). `monotonicity` explicitly skips affected neurons via
+  `analysis::quantised_error::is_quantised_zero_one`.
+- The two `activation + error ≈ target` reconstruction sites
+  (`output_squash_mismatch`, `high_error_squash_exploration`) accept a
+  `CostFunctionHint` and gate themselves off for non-linear-residual costs
+  (`MAPE`, `MSLE`, `HINGE`, `CATEGORICAL_ERROR`) when the caller passes one
+  (Issue #1250).
+
+For the full per-consumer audit, the per-cost validity matrix, and the
+checklist for adding a new cost to NEAT-AI, see
+[COST_FUNCTION_NOTES.md](COST_FUNCTION_NOTES.md).
+
 ---
 
 ## 📋 Discovery Type Summary
