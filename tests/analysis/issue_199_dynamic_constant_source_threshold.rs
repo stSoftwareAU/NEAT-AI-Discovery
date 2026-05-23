@@ -326,6 +326,7 @@ fn issue_199_env_var_override_takes_precedence() {
         .expect("Synapse analysis should succeed");
 
     // Clean up env var
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
     }
@@ -409,6 +410,7 @@ fn issue_199_env_var_zero_disables_folding() {
         .expect("Synapse analysis should succeed");
 
     // Clean up env var
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe {
         std::env::remove_var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD");
     }

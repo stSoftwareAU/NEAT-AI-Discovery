@@ -42,9 +42,10 @@ impl EnvVarGuard {
 
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
-        // SAFETY: Serialised via #[serial] — no concurrent env access.
         match &self.previous {
+            // SAFETY: Serialised via #[serial] — no concurrent env access.
             Some(v) => unsafe { std::env::set_var(self.key, v) },
+            // SAFETY: Serialised via #[serial] — no concurrent env access.
             None => unsafe { std::env::remove_var(self.key) },
         }
     }

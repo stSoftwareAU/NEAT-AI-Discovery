@@ -576,6 +576,7 @@ mod noise_floor_tests {
         let neuron = ranked_neuron("h1", 0.0, 1.14e-7);
 
         // Default floor (1e-5) → dropped.
+        // SAFETY: env access is serialised via `env_lock()` for the duration of this test.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
         }
@@ -585,11 +586,13 @@ mod noise_floor_tests {
         assert_eq!(dropped.noise_floor_rejections, 1);
 
         // Loosened floor (1e-10) → kept.
+        // SAFETY: env access is serialised via `env_lock()` for the duration of this test.
         unsafe {
             std::env::set_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR", "1e-10");
         }
         let kept =
             identify_removal_candidates(std::slice::from_ref(&neuron), &synapse_counts, growth);
+        // SAFETY: env access is serialised via `env_lock()` for the duration of this test.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
         }

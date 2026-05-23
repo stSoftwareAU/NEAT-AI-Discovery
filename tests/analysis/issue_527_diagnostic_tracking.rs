@@ -90,8 +90,8 @@ fn hidden_neuron_reported_as_filtered_in_neuron_diagnostics() {
     );
 
     // Enable output-only mode so hidden neurons get filtered
-    // SAFETY: Serialised via #[serial] — no concurrent env access
     let prev = std::env::var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY").ok();
+    // SAFETY: Serialised via #[serial] — no concurrent env access
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY", "1");
     }
@@ -111,9 +111,10 @@ fn hidden_neuron_reported_as_filtered_in_neuron_diagnostics() {
     let result = analyze_neurons(&input).expect("analysis should succeed");
 
     // Restore env var
-    // SAFETY: Serialised via #[serial] — no concurrent env access
     match &prev {
+        // SAFETY: Serialised via #[serial] — no concurrent env access
         Some(v) => unsafe { std::env::set_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY", v) },
+        // SAFETY: Serialised via #[serial] — no concurrent env access
         None => unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY") },
     }
 
@@ -333,8 +334,8 @@ fn json_diagnostic_reasons_use_snake_case() {
     );
 
     // Enable output-only mode so hidden neurons get filtered and generate diagnostics
-    // SAFETY: Serialised via #[serial] — no concurrent env access
     let prev = std::env::var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY").ok();
+    // SAFETY: Serialised via #[serial] — no concurrent env access
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY", "1");
     }
@@ -355,9 +356,10 @@ fn json_diagnostic_reasons_use_snake_case() {
         serde_json::from_str(&output_json).expect("output should be valid JSON");
 
     // Restore env var
-    // SAFETY: Serialised via #[serial] — no concurrent env access
     match &prev {
+        // SAFETY: Serialised via #[serial] — no concurrent env access
         Some(v) => unsafe { std::env::set_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY", v) },
+        // SAFETY: Serialised via #[serial] — no concurrent env access
         None => unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY") },
     }
 

@@ -579,6 +579,7 @@ fn test_candidate_includes_outlier_info_when_enabled() {
     let result = analyze_synapses(&input).expect("Analysis should succeed");
 
     // Clean up env var
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS") };
 
     // Check that we have candidates

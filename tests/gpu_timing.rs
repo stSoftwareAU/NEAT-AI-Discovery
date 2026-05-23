@@ -131,6 +131,7 @@ fn timing_enabled_via_env_var() {
     let result = analyze_synapses(&input).expect("Analysis should succeed");
 
     // Clean up
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING") };
 
     // When timing is enabled, metadata should contain timing data
@@ -193,6 +194,7 @@ fn per_shader_timing_collected() {
 
     let result = analyze_synapses(&input).expect("Analysis should succeed");
 
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING") };
 
     let timing = result.metadata.timing.expect("Timing should be present");
@@ -230,6 +232,7 @@ fn timing_in_json_output() {
     let result_json = neat_ai_discovery::analyze_parallel_internal(&input_json.to_string())
         .expect("Analysis should succeed");
 
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING") };
 
     // Parse the JSON response
@@ -335,6 +338,7 @@ fn neuron_analysis_timing_collected() {
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
 
+    // SAFETY: Serialised via #[serial] — no concurrent env access.
     unsafe { env::remove_var("NEAT_AI_DISCOVERY_GPU_TIMING") };
 
     // When timing is enabled, metadata should contain timing data
