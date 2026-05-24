@@ -46,15 +46,26 @@ jobs:
     - name: RustSec audit-check
       # Official RustSec GitHub Action — wraps cargo-audit and annotates
       # PRs / opens issues for newly disclosed advisories. Pinned to a
-      # 40-char commit SHA (Issue #1216).
-      uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+      # 40-char commit SHA (Issue #1216). Updated to the post-v2.0.0 main
+      # branch commit that bumped the action runtime to node24, avoiding the
+      # Node.js 20 deprecation warning that becomes a hard error from June 2026.
+      uses: rustsec/audit-check@858dc40f52ca2b8570b7a997c1c4e35c6fc9a432 # post-v2.0.0 main (node24)
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Dependency review
       if: ${{ inputs.include-dependency-review && github.event_name == 'pull_request' }}
-      # Pinned to a 40-char commit SHA (Issue #1216).
-      uses: actions/dependency-review-action@595b5aeba73380359d98a5e087f648dbb0edce1b # v4.7.3
+      # Pinned to a 40-char commit SHA (Issue #1216). Updated to v5.0.0
+      # (node24) to avoid the Node.js 20 deprecation hard error from June 2026.
+      uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
       with:
         comment-summary-in-pr: always
+        # thrift ≤ 0.22.0 is affected by GHSA-2f9f-gq7v-9h6m (moderate —
+        # Memory Allocation with Excessive Size Value). The RustSec advisory
+        # database has no patched release; every published version is flagged.
+        # thrift is a transitive dependency of parquet (Apache Arrow Parquet
+        # crate) that encodes the Parquet file-format schema — it cannot be
+        # removed without dropping parquet. Allow this advisory explicitly
+        # and revisit when an upstream patch ships.
+        allow-ghsas: GHSA-2f9f-gq7v-9h6m
 
