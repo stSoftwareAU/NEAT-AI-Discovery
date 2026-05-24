@@ -30,14 +30,115 @@ pub mod streaming;
 pub mod types;
 mod watchdog;
 
-// Re-export all FFI boundary types so that `crate::TypeName` and
-// `neat_ai_discovery::TypeName` continue to work without any change
-// to existing code.
-pub use ffi_types::*;
+// Re-export the FFI boundary types so that `crate::TypeName` and
+// `neat_ai_discovery::TypeName` continue to work for existing callers
+// and integration tests.
+//
+// The list is intentionally explicit (Issue #1256): glob re-exports
+// make the crate's public API surface implicit, so any new `pub` item
+// added under `ffi_types` would silently leak. New items intended for
+// the public surface must be added to this list; otherwise leave them
+// `pub(crate)` or accessible only via the `ffi_types::` path.
+pub use ffi_types::{
+    // Response types — analysis (`ffi_types::responses::analysis`).
+    AcceptanceRateJson,
+    // Response types — GPU / timing (`ffi_types::responses::gpu`).
+    AnalysisTimingJson,
+    // Request types (`ffi_types::requests`).
+    AnalyzeAllInput,
+    AnalyzeNeuronsInput,
+    AnalyzeParallelInput,
+    AnalyzeParallelOutput,
+    AnalyzeSynapsesInput,
+    // Session types (`ffi_types::session`).
+    AppendRecordsInput,
+    AppendRecordsOutput,
+    CalibrationMissEntryJson,
+    CalibrationSummaryInput,
+    // Response types — export / parquet (`ffi_types::responses::export`).
+    CalibrationSummaryOutput,
+    CancelSessionInput,
+    CancelSessionOutput,
+    // Candidate types (`ffi_types::candidates`).
+    CandidateNeuronJson,
+    CandidateSynapseJson,
+    CheckGpuOutput,
+    // Cleanup request/response types (`ffi_types::cleanup`).
+    CleanOrphanedDirsInput,
+    CleanOrphanedDirsOutput,
+    CleanupDiscoveryDirInput,
+    CleanupDiscoveryDirOutput,
+    CoordinatedStructuralCandidateJson,
+    CoordinatedStructuralOpJson,
+    CpuTimingBreakdownJson,
+    // Core FFI types declared in `ffi_types/mod.rs`.
+    CreatureJson,
+    DiscoverRecordJson,
+    // Error classification (`ffi_types::error_classification`).
+    DiscoveryError,
+    DiscoveryErrorKind,
+    DiversityMetricJson,
+    ExportVisualisationSnapshotInput,
+    ExportVisualisationSnapshotOutput,
+    ExportVisualisationStats,
+    FinishSessionInput,
+    FinishSessionOutput,
+    // Response types — top-level (`ffi_types::responses`).
+    GetVersionOutput,
+    GpuAdapterInfoJson,
+    GpuTimingBreakdownJson,
+    McmcDiagnosticsJson,
+    MergeParquetInput,
+    MergeParquetOutput,
+    NeuronAnalysisMetadataJson,
+    NeuronData,
+    NeuronDiagnosticDetailJson,
+    NeuronDiagnosticJson,
+    NeuronDiagnosticReasonJson,
+    NeuronJson,
+    NeuronStatsJson,
+    ProposalQualityJson,
+    RankFocusNeuronsInput,
+    RankFocusNeuronsOutput,
+    RankedNeuronJson,
+    ReadDiscoveryInput,
+    ReadDiscoveryOutput,
+    RecordDiscoveryInput,
+    RecordDiscoveryOutput,
+    RemovalCandidateJson,
+    SCHEMA_VERSION,
+    ShaderTimingJson,
+    StartSessionInput,
+    StartSessionOutput,
+    StreamingObservation,
+    SynapseAnalysisMetadataJson,
+    SynapseDiagnosticDetailJson,
+    SynapseDiagnosticJson,
+    SynapseDiagnosticReasonJson,
+    SynapseJson,
+    SynapseWeightUpdateCandidateJson,
+    TrainingRecord,
+    classify_anyhow_error,
+    classify_error,
+    classify_panic,
+    error_fields,
+    error_fields_from_anyhow,
+    no_error_fields,
+    panic_error_fields,
+    // Forward-only validation helper.
+    validate_forward_only_synapses,
+};
 
-// Re-export all internal business-logic functions so that existing
+// Re-export the internal business-logic functions so that existing
 // integration tests (`neat_ai_discovery::*_internal`) continue to work.
-pub use ffi_internal::*;
+// The list is intentionally explicit (Issue #1256) — see the rationale
+// on the `ffi_types` re-export above.
+pub use ffi_internal::{
+    analyze_parallel_internal, check_gpu_available_internal,
+    export_visualisation_snapshot_internal, get_calibration_summary_internal,
+    get_library_version_internal, merge_discovery_parquet_internal, rank_focus_neurons_internal,
+    read_discovery_records, record_discovery_internal,
+};
 
 use std::sync::OnceLock;
 
