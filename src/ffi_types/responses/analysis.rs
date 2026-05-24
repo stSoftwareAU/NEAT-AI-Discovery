@@ -14,6 +14,10 @@ use crate::{
     SynapseWeightUpdateCandidateJson,
 };
 
+/// FFI response payload returned by
+/// [`crate::ffi_internal::analyze_parallel_internal`] — the helpful/harmful
+/// synapse and neuron candidates plus observability metadata serialised to
+/// the TypeScript host.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeParallelOutput {
@@ -314,6 +318,9 @@ pub struct NeuronAnalysisMetadataJson {
 // Diagnostic types
 // ============================================================================
 
+/// Per-target diagnostic surfaced in
+/// [`AnalyzeParallelOutput::synapse_diagnostics`] when synapse analysis
+/// produced no candidate for a focus neuron, explaining why.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SynapseDiagnosticJson {
@@ -326,6 +333,8 @@ pub struct SynapseDiagnosticJson {
     pub detail: Option<SynapseDiagnosticDetailJson>,
 }
 
+/// Stable reason code carried by [`SynapseDiagnosticJson::reason`] explaining
+/// why synapse analysis produced no candidate for a given focus neuron.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SynapseDiagnosticReasonJson {
@@ -339,6 +348,8 @@ pub enum SynapseDiagnosticReasonJson {
     NoTargetRecords,
 }
 
+/// Optional detail attached to [`SynapseDiagnosticJson::detail`] — extra
+/// per-source observability for the closest-rejected synapse candidate.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SynapseDiagnosticDetailJson {
@@ -360,6 +371,9 @@ pub struct SynapseDiagnosticDetailJson {
     pub suggested_weight: Option<f32>,
 }
 
+/// Per-target diagnostic surfaced in
+/// [`AnalyzeParallelOutput::neuron_diagnostics`] when neuron analysis produced
+/// no candidate for a focus neuron, explaining why.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NeuronDiagnosticJson {
@@ -372,6 +386,8 @@ pub struct NeuronDiagnosticJson {
     pub detail: Option<NeuronDiagnosticDetailJson>,
 }
 
+/// Stable reason code carried by [`NeuronDiagnosticJson::reason`] explaining
+/// why neuron analysis produced no candidate for a given focus neuron.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NeuronDiagnosticReasonJson {
@@ -394,6 +410,8 @@ pub enum NeuronDiagnosticReasonJson {
     ConstantNeuronFiltered,
 }
 
+/// Optional detail attached to [`NeuronDiagnosticJson::detail`] — extra
+/// per-source observability for the closest-rejected neuron candidate.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NeuronDiagnosticDetailJson {

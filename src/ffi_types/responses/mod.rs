@@ -46,6 +46,8 @@ pub struct RecordDiscoveryOutput {
     pub retryable: Option<bool>,
 }
 
+/// FFI response payload returned by the `get_version` FFI entry point —
+/// the library crate version plus the FFI schema version.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetVersionOutput {
@@ -63,6 +65,9 @@ pub struct GetVersionOutput {
     pub retryable: Option<bool>,
 }
 
+/// FFI response payload returned by the `rank_focus_neurons` FFI entry
+/// point — ranked neurons, removal candidates, coordinated structural
+/// candidates, and observability fields for the chosen loading mode.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RankFocusNeuronsOutput {

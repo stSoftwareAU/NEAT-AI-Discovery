@@ -38,6 +38,13 @@ pub(crate) fn write_records_to_parquet_with_limit(
     writer.finish()
 }
 
+/// Streaming writer for discovery [`DiscoverRecord`]s into a Parquet file.
+///
+/// Buffers records into batches bounded by configured per-batch UUID byte and
+/// error-value limits so a single record batch never exceeds Arrow's offset
+/// constraints. Drive it by constructing one via [`Self::new`], pushing
+/// records with [`Self::write_records`], and finalising the file with
+/// [`Self::finish`].
 pub struct ParquetRecordWriter {
     writer: ArrowWriter<File>,
     schema: Arc<arrow::datatypes::Schema>,
@@ -48,6 +55,12 @@ pub struct ParquetRecordWriter {
 }
 
 impl ParquetRecordWriter {
+    /// Create a new writer targeting `file_path`.
+    ///
+    /// Validates the byte/value batch limits and `total_capacity` (must be
+    /// non-zero and within Arrow's `i32::MAX` offset budget) before creating
+    /// the underlying Parquet file. Returns an error if the file cannot be
+    /// created or the limits are invalid.
     pub fn new(
         file_path: &str,
         max_uuid_bytes_per_batch: usize,

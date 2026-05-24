@@ -22,6 +22,10 @@ pub struct RecordDiscoveryInput {
     pub timeout_seconds: Option<u64>,
 }
 
+/// FFI request payload for
+/// [`crate::ffi_internal::analyze_parallel_internal`] — the parquet file,
+/// creature, focus neurons, and tuning knobs that govern combined
+/// synapse + neuron analysis.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeParallelInput {
