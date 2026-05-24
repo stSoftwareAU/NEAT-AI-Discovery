@@ -186,6 +186,14 @@ codegen-units = 1
 
 # Lint configuration — single source of truth (Issue #675, #876)
 # All clippy lints are configured here. quality.sh and CI just pass -D warnings.
+#
+# Rustc lints (Issue #1255) — enforce a deny floor at the crate root so CI
+# fails fast when a contributor introduces a bare `unsafe` op inside an
+# `unsafe fn`. The codebase already follows this style throughout
+# `src/ffi/utilities.rs` etc.; this lint makes the convention enforceable.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
 [lints.clippy]
 uninlined_format_args = "deny"
 filter_next = "deny"
