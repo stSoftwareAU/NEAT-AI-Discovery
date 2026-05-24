@@ -11,7 +11,12 @@ jobs:
   semgrep:
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep
+      # Pinned to semgrep/semgrep 1.163.0 (Issue #1258). The multi-arch
+      # manifest digest below is immutable; Renovate's github-actions
+      # manager does not track jobs.<job>.container.image, so the 24h
+      # quarantine in renovate.json does not protect this surface — pin
+      # to a content digest and let bump-deps.sh rotate it.
+      image: semgrep/semgrep@sha256:7cad2bc2d1e44f87f0bf4be6d1fa23aa90fb72015bebc89fb91385d813987a03
     steps:
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
