@@ -75,6 +75,17 @@ pub const REJECTION_SAME_TARGET_SQUASH_DUPLICATE: &str = "same_target_squash_dup
 /// last operation's target neuron in the current batch (Issue #1271).
 pub const REJECTION_COORDINATED_TARGET_CAP_EXCEEDED: &str = "coordinated_target_cap_exceeded";
 
+/// 1-in/1-out hidden-neuron collapse candidate was dropped because the
+/// computed bypass synapse weight had `|weight| <
+/// MIN_BYPASS_WEIGHT_FOR_COLLAPSE` (Issue #1270).
+///
+/// At near-zero bypass weights the chain `a→h→b` was contributing essentially
+/// nothing through the hidden neuron, so the 4-op coordinated collapse is
+/// functionally equivalent to a 1-op `remove-neuron` but still carries the
+/// implementation-risk profile of a 4-op coordinated change.
+pub const REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR: &str =
+    "coordinated_collapse_bypass_weight_below_floor";
+
 /// Discovery module was skipped because the per-(creature, module) starvation
 /// tracker has the module in active cooldown after
 /// `MODULE_STARVATION_FAILURE_STREAK` consecutive failures (Issue #1273).
@@ -155,6 +166,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_PER_TARGET_CAP,
     REJECTION_SAME_TARGET_SQUASH_DUPLICATE,
     REJECTION_COORDINATED_TARGET_CAP_EXCEEDED,
+    REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR,
     REJECTION_MODULE_STARVED,
     REJECTION_NO_SAMPLES,
     REJECTION_ZERO_IMPROVEMENT,
@@ -314,6 +326,10 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_COORDINATED_TARGET_CAP_EXCEEDED => {
             "per-final-target coordinated-structural cap".to_string()
         }
+        REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR => format!(
+            "hidden-neuron collapse bypass-weight floor of {}",
+            crate::analysis::constants::min_bypass_weight_for_collapse()
+        ),
         REJECTION_MODULE_STARVED => "per-creature module starvation cooldown".to_string(),
         REJECTION_NO_SAMPLES => "no overlapping discovery samples".to_string(),
         REJECTION_ZERO_IMPROVEMENT => "zero consistent improvement in GPU stats".to_string(),

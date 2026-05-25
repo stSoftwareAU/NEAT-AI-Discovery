@@ -1018,6 +1018,68 @@ pub fn min_expected_creature_score_gain() -> f32 {
 }
 
 // =============================================================================
+// Bypass-Weight Floor for Hidden-Neuron Collapse (Issue #1270)
+// =============================================================================
+
+/// Minimum absolute bypass-synapse weight required to emit a 1-in/1-out hidden
+/// neuron collapse candidate (Issue #1270).
+///
+/// `detect_collapsible_hidden_neurons` proposes a 4-op coordinated structural
+/// change (`removeSynapse(a→h)`, `removeSynapse(h→b)`, `removeNeuron(h)`,
+/// `addSynapse(a→b, weight=w)`). When `|w|` is below this floor the chain
+/// `a→h→b` was contributing essentially nothing through `h`, so the candidate
+/// is functionally equivalent to a 1-op `remove-neuron` but still carries the
+/// much higher implementation-risk profile of a 4-op coordinated change.
+///
+/// GRQ-sampler commit `e85c5d2` (creature `bcbca347`) captured 41 consecutive
+/// such failures: a bypass weight of `0.0021` produced an actual error
+/// reduction of `-0.0033` (~6,500× worse than predicted), and a bypass weight
+/// of `-0.000028` produced `-0.00083` (~1,600× worse). The
+/// `COORDINATED_MIN_EXPECTED_GAIN` (#1110) and per-op
+/// `COORDINATED_POST_DISCOUNT_NOISE_FLOOR_*` (#1128, #1272) floors filter on
+/// predicted gain; this floor targets the orthogonal failure mode where the
+/// bypass weight itself signals the collapse is risky regardless of predicted
+/// gain.
+///
+/// Overridable via the `NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE`
+/// environment variable.
+///
+/// ## Valid Range
+/// Must be >= 0.0. Values above 0.1 may filter genuinely useful collapses.
+pub const MIN_BYPASS_WEIGHT_FOR_COLLAPSE: f32 = 0.01;
+
+/// Lower clamp for the `MIN_BYPASS_WEIGHT_FOR_COLLAPSE` env-var override
+/// (Issue #1270). `0.0` is accepted as a "disable the floor" value for tests
+/// that exercise the pre-#1270 contract at tiny magnitudes.
+pub const MIN_BYPASS_WEIGHT_FOR_COLLAPSE_FLOOR: f32 = 0.0;
+
+/// Upper clamp for the `MIN_BYPASS_WEIGHT_FOR_COLLAPSE` env-var override
+/// (Issue #1270).
+pub const MIN_BYPASS_WEIGHT_FOR_COLLAPSE_CEILING: f32 = 0.1;
+
+/// Returns the effective minimum absolute bypass weight required for the
+/// 1-in/1-out hidden neuron collapse candidate (Issue #1270).
+///
+/// Reads `NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE` at call time so
+/// tests and operators can override the default without recompiling. Values
+/// outside `[MIN_BYPASS_WEIGHT_FOR_COLLAPSE_FLOOR,
+/// MIN_BYPASS_WEIGHT_FOR_COLLAPSE_CEILING]` are clamped. Unparsable,
+/// non-finite, or negative values fall back to
+/// [`MIN_BYPASS_WEIGHT_FOR_COLLAPSE`].
+#[must_use]
+pub fn min_bypass_weight_for_collapse() -> f32 {
+    std::env::var("NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .unwrap_or(MIN_BYPASS_WEIGHT_FOR_COLLAPSE)
+        .clamp(
+            MIN_BYPASS_WEIGHT_FOR_COLLAPSE_FLOOR,
+            MIN_BYPASS_WEIGHT_FOR_COLLAPSE_CEILING,
+        )
+}
+
+// =============================================================================
 // Coordinated Candidate Minimum Expected Gain (Issue #1110)
 // =============================================================================
 
