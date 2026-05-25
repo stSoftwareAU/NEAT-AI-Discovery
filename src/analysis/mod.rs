@@ -52,6 +52,7 @@ pub mod module_weights;
 pub mod neuron;
 pub mod neuron_fingerprint;
 pub mod quantised_error;
+pub mod recent_failure_window;
 pub mod samples;
 pub mod scale_outcomes;
 pub mod shared;
