@@ -403,3 +403,221 @@ fn run_discovery_module_filters_negative_gain_candidates() {
         "all-negative module should produce zero candidates"
     );
 }
+
+// =============================================================================
+// Issue #1271: Per-final-target coordinated-structural cap tests
+// =============================================================================
+
+/// Build a coordinated-structural candidate whose final operation targets
+/// `target_uuid` (an `addSynapse` op into `target_uuid`), with the supplied
+/// expected gain.
+fn make_candidate_with_target(target_uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
+    CoordinatedStructuralCandidateJson {
+        operations: vec![CoordinatedStructuralOpJson::AddSynapse {
+            from_neuron_uuid: format!("source-{gain}"),
+            to_neuron_uuid: target_uuid.to_string(),
+            weight: 0.5,
+        }],
+        expected_creature_score_gain: gain,
+        comment: Some("test".to_string()),
+    }
+}
+
+/// Acceptance: synthetic batch of 10 candidates targeting the same final
+/// neuron is reduced to 3 by the per-final-target cap.
+#[test]
+fn coordinated_per_target_cap_reduces_ten_same_target_to_three() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    run_discovery_module(
+        &mut syn,
+        "ten same target",
+        "test_phase",
+        None,
+        false,
+        || {
+            let target = "shared-output-neuron";
+            let mut candidates = Vec::with_capacity(10);
+            for i in 0..10 {
+                // Each candidate has a distinct gain so we can assert the
+                // top-K is retained.
+                #[allow(clippy::cast_precision_loss)]
+                let gain = 0.1 + (i as f32) * 0.01;
+                candidates.push(make_candidate_with_target(target, gain));
+            }
+            Some(DiscoveryDetectionResult {
+                detected_count: 10,
+                candidates,
+            })
+        },
+    );
+
+    assert_eq!(
+        syn.coordinated_structural_candidates.len(),
+        3,
+        "10 candidates against the same final target should be capped at 3"
+    );
+
+    // The cap retains the highest-gain candidates.
+    let mut gains: Vec<f32> = syn
+        .coordinated_structural_candidates
+        .iter()
+        .map(|c| c.expected_creature_score_gain)
+        .collect();
+    gains.sort_by(|a, b| b.total_cmp(a));
+    assert!(
+        gains[0] >= gains[1] && gains[1] >= gains[2],
+        "retained candidates should be the top-3 by gain"
+    );
+    assert!(
+        (gains[0] - 0.19).abs() < 1e-5,
+        "highest retained gain should be 0.19, got {}",
+        gains[0]
+    );
+
+    // Rejection breakdown surfaces the dropped count under the new reason.
+    let counts = syn.metadata.rejection_breakdown.counts();
+    assert_eq!(
+        counts
+            .get(crate::analysis::diagnostics::rejection_reasons::REJECTION_COORDINATED_TARGET_CAP_EXCEEDED),
+        Some(&7),
+        "7 of the 10 same-target candidates should be recorded as cap drops"
+    );
+}
+
+/// Regression: the 41-consecutive-failure pattern from creature `bcbca347`
+/// (GRQ-sampler commit `e85c5d2`) would have been capped at 3 instead of
+/// monopolising the whole batch budget against a single output neuron.
+#[test]
+fn coordinated_per_target_cap_regression_bcbca347_41_same_target() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    run_discovery_module(
+        &mut syn,
+        "bcbca347 regression",
+        "test_phase",
+        None,
+        false,
+        || {
+            // All 41 failures had final addSynapse(... -> shared output target).
+            let target = "533d8616-037c-4278-b95c-3a2a1ce15ee6";
+            let mut candidates = Vec::with_capacity(41);
+            for i in 0..41 {
+                #[allow(clippy::cast_precision_loss)]
+                let gain = 0.05 + (i as f32) * 0.001;
+                candidates.push(make_candidate_with_target(target, gain));
+            }
+            Some(DiscoveryDetectionResult {
+                detected_count: 41,
+                candidates,
+            })
+        },
+    );
+
+    assert_eq!(
+        syn.coordinated_structural_candidates.len(),
+        3,
+        "the 41-failure bcbca347 pattern must be capped at 3 by Issue #1271"
+    );
+    let counts = syn.metadata.rejection_breakdown.counts();
+    assert_eq!(
+        counts
+            .get(crate::analysis::diagnostics::rejection_reasons::REJECTION_COORDINATED_TARGET_CAP_EXCEEDED),
+        Some(&38),
+        "38 of the 41 same-target candidates should be recorded as cap drops"
+    );
+}
+
+/// Multiple targets within the same batch are each capped independently.
+#[test]
+fn coordinated_per_target_cap_admits_full_quota_per_distinct_target() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    run_discovery_module(
+        &mut syn,
+        "two targets cap",
+        "test_phase",
+        None,
+        false,
+        || {
+            // Two targets, four candidates each — both should be capped to 3.
+            let mut candidates = Vec::new();
+            for i in 0..4 {
+                #[allow(clippy::cast_precision_loss)]
+                let gain = 0.10 + (i as f32) * 0.01;
+                candidates.push(make_candidate_with_target("target-A", gain));
+            }
+            for i in 0..4 {
+                #[allow(clippy::cast_precision_loss)]
+                let gain = 0.20 + (i as f32) * 0.01;
+                candidates.push(make_candidate_with_target("target-B", gain));
+            }
+            Some(DiscoveryDetectionResult {
+                detected_count: candidates.len(),
+                candidates,
+            })
+        },
+    );
+
+    assert_eq!(
+        syn.coordinated_structural_candidates.len(),
+        6,
+        "two targets with four candidates each should keep 3+3 = 6"
+    );
+    let counts = syn.metadata.rejection_breakdown.counts();
+    assert_eq!(
+        counts
+            .get(crate::analysis::diagnostics::rejection_reasons::REJECTION_COORDINATED_TARGET_CAP_EXCEEDED),
+        Some(&2),
+        "exactly 2 candidates (one per target) should be reported as cap drops"
+    );
+}
+
+/// Constant value sanity check.
+#[test]
+fn max_coordinated_per_target_output_default_is_three() {
+    use crate::analysis::constants::MAX_COORDINATED_PER_TARGET_OUTPUT;
+    assert_eq!(
+        MAX_COORDINATED_PER_TARGET_OUTPUT, 3,
+        "default cap should be 3 to match Issue #1271 specification"
+    );
+}
+
+/// Env-var override clamps the effective cap.
+#[test]
+#[serial_test::serial]
+fn coordinated_per_target_cap_env_override() {
+    // SAFETY: env access is serialised via `#[serial]`.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_MAX_COORDINATED_PER_TARGET", "1");
+    }
+    let effective = crate::analysis::constants::max_coordinated_per_target_output();
+    assert_eq!(effective, 1, "env override of 1 should clamp the cap to 1");
+
+    // SAFETY: env access is serialised via `#[serial]`.
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_MAX_COORDINATED_PER_TARGET");
+    }
+    assert_eq!(
+        crate::analysis::constants::max_coordinated_per_target_output(),
+        crate::analysis::constants::MAX_COORDINATED_PER_TARGET_OUTPUT,
+    );
+}
