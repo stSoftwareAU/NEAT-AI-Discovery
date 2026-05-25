@@ -19,7 +19,7 @@
 
 use neat_ai_discovery::analysis::candidate_aggregation::apply_coordinated_gain_floor;
 use neat_ai_discovery::analysis::constants::{
-    COORDINATED_POST_DISCOUNT_NOISE_FLOOR, MIN_BOOST_SAMPLES,
+    COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP, MIN_BOOST_SAMPLES,
 };
 use neat_ai_discovery::analysis::discovery_dispatch::{
     DiscoveryDetectionResult, DiscoveryModuleSpec, run_discovery_modules_parallel,
@@ -85,8 +85,11 @@ fn two_op_candidate(gain: f32, module: &str) -> CoordinatedStructuralCandidateJs
 #[test]
 fn apply_floor_removes_below_and_retains_at_or_above() {
     let mut cands = vec![
-        single_op_candidate(COORDINATED_POST_DISCOUNT_NOISE_FLOOR, "at-floor"),
-        single_op_candidate(COORDINATED_POST_DISCOUNT_NOISE_FLOOR - 1e-9, "below-floor"),
+        single_op_candidate(COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP, "at-floor"),
+        single_op_candidate(
+            COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP - 1e-9,
+            "below-floor",
+        ),
         single_op_candidate(1.17e-7, "noise-from-issue-1127"),
         single_op_candidate(1.0, "well-above"),
     ];
@@ -127,7 +130,7 @@ fn module_boost_discount_below_floor_is_filtered() {
     let mut candidates = vec![single_op_candidate(8e-7, "weak-module")];
     apply_module_boost_to_candidates(&mut candidates, &tracker);
     assert!(
-        candidates[0].expected_creature_score_gain < COORDINATED_POST_DISCOUNT_NOISE_FLOOR,
+        candidates[0].expected_creature_score_gain < COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP,
         "precondition: post-boost gain should be below noise floor, got {}",
         candidates[0].expected_creature_score_gain
     );

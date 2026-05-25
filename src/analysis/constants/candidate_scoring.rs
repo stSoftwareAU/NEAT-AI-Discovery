@@ -941,28 +941,153 @@ pub fn min_expected_creature_score_gain() -> f32 {
 /// Must be > 0.0. Values above 1e-3 may filter too aggressively.
 pub const COORDINATED_MIN_EXPECTED_GAIN: f32 = 1e-5;
 
-/// Post-discount noise floor applied at the FFI boundary (Issue #1128).
+// =============================================================================
+// Per-Op-Count Post-Discount Noise Floors (Issue #1128, #1272)
+// =============================================================================
+//
+// The post-discount noise floor was originally a single value (5e-7) applied
+// to every coordinated-structural candidate regardless of operation count. The
+// floor sits at the FFI boundary: candidates reach `analyze_all`'s final sweep
+// with gains that have passed the pre-merge `COORDINATED_MIN_EXPECTED_GAIN`
+// (1e-5) filter but may have been legitimately discounted by downstream steps
+// — module-boost (minimum 0.5×), ensemble disagreement penalty (0.7×), per-op
+// empirical discounting (`coordinated_empirical_discount`, #1058),
+// synapse-analysis calibration (`COORDINATED_PREDICTION_CALIBRATION`, 5e-5×)
+// and hidden-neuron impact discount (0.1×).
+//
+// Issue #1272 found that a single floor under-weights the implementation
+// risk of higher-op candidates. GRQ-sampler commit `e85c5d2` (creature
+// `bcbca347`) captured two 4-op coordinated-structural failures that **just
+// barely** cleared the 5e-7 floor yet harmed the network by 1000–6000× the
+// predicted magnitude:
+//
+// | Failure entry         | ops | predicted | actual    |
+// |-----------------------|-----|-----------|-----------|
+// | `cdff1014…`           | 4   | 5.06e-7   | -3.29e-3  |
+// | `113ec32a…`           | 4   | 5.21e-7   | -8.28e-4  |
+//
+// The `coordinated_empirical_discount()` lookup (#1058) already encodes that
+// 4-op candidates have near-zero production success — that same evidence
+// supports a stricter noise floor for the same op-count tiers. The per-tier
+// floors below pair with the empirical-discount tiers from #1058:
+//
+//   1-op : 5e-7  (existing value preserved)
+//   2-op : 1e-6
+//   3-op : 2e-6
+//   4+-op: 5e-6
+
+/// Post-discount noise floor for 1-operation coordinated candidates
+/// (Issue #1128, #1272).
 ///
-/// Candidates reach `analyze_all`'s final sweep with gains that have passed
-/// the pre-merge `COORDINATED_MIN_EXPECTED_GAIN` (1e-5) filter but may have
-/// been legitimately discounted by downstream steps — module-boost (minimum
-/// 0.5×), ensemble disagreement penalty (0.7×), per-op empirical discounting,
-/// synapse-analysis calibration (`COORDINATED_PREDICTION_CALIBRATION`, 5e-5×)
-/// and hidden-neuron impact discount (0.1×).
-///
-/// The failure evidence in Issue #1127 captured a coordinated-structural
-/// candidate with `expectedCreatureScoreGain` of 1.17e-7 that produced a
-/// post-apply `scoreDelta` of -0.0019 (harming the network). Issue #1128's
-/// acceptance evidence explicitly calls out gains in the **1e-7 to 1e-8
-/// range** as "indistinguishable from noise".
-///
-/// The post-discount floor is therefore set to 5e-7 — above the observed
-/// 1.17e-7 noise case with a ~4× safety margin, but below the floor of
+/// Preserved at the original 5e-7 value — above the 1.17e-7 noise case
+/// captured in Issue #1127 with a ~4× safety margin, but below the floor of
 /// legitimately discounted collapse/pruning candidates whose post-calibration
 /// gains sit just below 1e-6 (e.g. 9.95e-7 for the
 /// `coordinated_structural_can_collapse_hidden_neuron_to_single_synapse`
 /// regression fixture).
-pub const COORDINATED_POST_DISCOUNT_NOISE_FLOOR: f32 = 5e-7;
+pub const COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP: f32 = 5e-7;
+
+/// Post-discount noise floor for 2-operation coordinated candidates
+/// (Issue #1272).
+///
+/// 2-op candidates carry compounding implementation risk over 1-op variants
+/// — the 0.5× empirical discount (`COORDINATED_EMPIRICAL_DISCOUNT_2OPS`)
+/// already encodes a ~halved production-success rate. The 1e-6 floor is
+/// double the 1-op tier so the post-discount noise screen tightens in step
+/// with the empirical-discount table.
+pub const COORDINATED_POST_DISCOUNT_NOISE_FLOOR_2OPS: f32 = 1e-6;
+
+/// Post-discount noise floor for 3-operation coordinated candidates
+/// (Issue #1272).
+///
+/// 3-op candidates have substantially lower production-success rates than
+/// 2-op (`COORDINATED_EMPIRICAL_DISCOUNT_3OPS` = 0.2). The 2e-6 floor sits
+/// 4× above the 1-op tier — reflecting both the additional risk and the
+/// scarcity of legitimately discounted 3-op candidates that hover in the
+/// 1e-6 range.
+pub const COORDINATED_POST_DISCOUNT_NOISE_FLOOR_3OPS: f32 = 2e-6;
+
+/// Post-discount noise floor for 4+-operation coordinated candidates
+/// (Issue #1272).
+///
+/// Production evidence from GRQ-sampler commit `e85c5d2` (creature
+/// `bcbca347`) captured 4-op coordinated candidates with predicted gains of
+/// 5.06e-7 and 5.21e-7 — both **just barely** clearing the previous 5e-7
+/// floor — that produced actual error changes of -3.29e-3 and -8.28e-4
+/// respectively. The 5e-6 floor is 10× the 1-op tier and matches the
+/// `COORDINATED_MIN_EXPECTED_GAIN` magnitude (1e-5) more closely, rejecting
+/// the bcbca347 entries by an order of magnitude while still allowing
+/// genuinely promising 4+-op candidates through.
+pub const COORDINATED_POST_DISCOUNT_NOISE_FLOOR_4PLUS_OPS: f32 = 5e-6;
+
+/// Return the per-op-count post-discount noise floor (Issue #1272).
+///
+/// Mirrors the tiering convention of [`coordinated_empirical_discount`]: an
+/// `op_count` of `0` is treated as the single-op tier so callers do not need
+/// to special-case empty operation lists.
+///
+/// The returned floor is multiplied by the optional
+/// `NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER` env-var override —
+/// a test-only escape hatch that lets legitimate-collapse fixtures whose
+/// post-calibration gains sit just below the new per-tier floors continue
+/// to exercise the feature. Production callers leave the env var unset and
+/// receive the strict per-tier floors documented above.
+#[inline]
+#[must_use]
+pub fn coordinated_post_discount_noise_floor(op_count: usize) -> f32 {
+    let base = match op_count {
+        0 | 1 => COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP,
+        2 => COORDINATED_POST_DISCOUNT_NOISE_FLOOR_2OPS,
+        3 => COORDINATED_POST_DISCOUNT_NOISE_FLOOR_3OPS,
+        _ => COORDINATED_POST_DISCOUNT_NOISE_FLOOR_4PLUS_OPS,
+    };
+    base * coordinated_noise_floor_multiplier()
+}
+
+/// Lower clamp for the test-only noise-floor multiplier (Issue #1272).
+///
+/// Negative or non-finite values are rejected; the lowest sensible value is
+/// just above zero (effectively disabling the floor).
+pub const COORDINATED_NOISE_FLOOR_MULTIPLIER_FLOOR: f32 = 1e-3;
+
+/// Upper clamp for the test-only noise-floor multiplier (Issue #1272).
+///
+/// Capped at 100 so a misconfigured env var cannot inadvertently filter
+/// every coordinated-structural candidate.
+pub const COORDINATED_NOISE_FLOOR_MULTIPLIER_CEILING: f32 = 100.0;
+
+/// Returns the active multiplier applied to every per-op-count noise floor
+/// (Issue #1272).
+///
+/// Reads `NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER` at call time
+/// so integration tests can relax (or further tighten) the floor without
+/// recompiling. Defaults to `1.0`; unparsable, non-finite, or out-of-range
+/// values fall back to `1.0`.
+#[inline]
+#[must_use]
+pub fn coordinated_noise_floor_multiplier() -> f32 {
+    std::env::var("NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .map_or(1.0, |v| {
+            v.clamp(
+                COORDINATED_NOISE_FLOOR_MULTIPLIER_FLOOR,
+                COORDINATED_NOISE_FLOOR_MULTIPLIER_CEILING,
+            )
+        })
+}
+
+/// Legacy alias for [`COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP`]
+/// (Issue #1272).
+///
+/// Kept so external callers continue to build. New code should call
+/// [`coordinated_post_discount_noise_floor`] with the candidate's op-count
+/// instead of comparing against a single global floor.
+#[deprecated(
+    note = "Use coordinated_post_discount_noise_floor(op_count) for per-op-count tiering (Issue #1272)"
+)]
+pub const COORDINATED_POST_DISCOUNT_NOISE_FLOOR: f32 = COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP;
 
 // =============================================================================
 // NaN-safe Floating-Point Comparison Helpers (Issue #483)

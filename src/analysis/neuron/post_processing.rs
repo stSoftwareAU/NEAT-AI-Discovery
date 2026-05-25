@@ -534,6 +534,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn per_target_cap_truncates_target_over_limit() {
         // Seven candidates for one target; cap defaults to 3.
         let mut candidates = vec![
@@ -560,6 +561,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn per_target_cap_leaves_targets_under_limit_unchanged() {
         // Two candidates for target-A, one for target-B; both under the cap of 3.
         let mut candidates = vec![
@@ -589,6 +591,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn per_target_cap_breakdown_reports_drop() {
         // Build a mix: target-A exceeds the cap, target-B is under it.
         let mut candidates = vec![
@@ -714,6 +717,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[serial]
     fn distinct_target_spread_reorders_when_pool_supports_min() {
         // Top six candidates all hit target-A; three other targets have one
         // candidate each lower down the list. With MIN_DISTINCT=3, the front
@@ -767,6 +771,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn distinct_target_spread_falls_through_when_pool_too_narrow() {
         // Only two distinct targets — below MIN_DISTINCT (3) — so the spread
         // must leave the gain-sorted ordering untouched.
@@ -798,6 +803,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn per_target_cap_emits_distinct_targets_when_top_dominated_by_one_target() {
         // Acceptance: top six candidates all hit target-A; three other targets
         // exist. After cap, the emitted batch must contain at least
@@ -842,6 +848,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn per_target_cap_preserves_full_quota_when_no_alternatives() {
         // Only one distinct target exists. The per-target cap of three must
         // still admit that target's full quota — the spread must not reduce

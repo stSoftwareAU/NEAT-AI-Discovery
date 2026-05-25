@@ -1,8 +1,10 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use crate::common::CoordinatedNoiseFloorRelaxGuard;
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson, analyze_parallel_internal};
+use serial_test::serial;
 
 /// Regression/integration test for coordinated structural collapse (7-Jan-2026).
 ///
@@ -13,11 +15,18 @@ use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson, analyze_parallel_
 /// - removeNeuron(h)
 /// - addSynapse(a -> b)
 #[test]
+#[serial]
 fn coordinated_structural_can_collapse_hidden_neuron_to_single_synapse() {
     // Discovery is GPU-only. On machines without GPU, we skip.
     if !GpuAnalyzer::gpu_is_available() {
         return;
     }
+
+    // Issue #1272: the collapse candidate is a 4-op coordinated group whose
+    // post-calibration gain (~9.95e-7) sits just below the new 4+-op noise
+    // floor (5e-6). Relax the floor for this contract test so the collapse
+    // proposal is observable; production callers leave the env var unset.
+    let _noise_floor_guard = CoordinatedNoiseFloorRelaxGuard::new();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let parquet_file = temp_dir
