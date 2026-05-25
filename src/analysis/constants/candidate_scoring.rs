@@ -326,6 +326,101 @@ pub const MODULE_GATE_THRESHOLD: f64 = 0.005;
 pub const SOFT_FAILURE_WEIGHT: f64 = 0.5;
 
 // =============================================================================
+// Per-Creature, Per-Module Starvation Tracker (Issue #1273)
+// =============================================================================
+
+/// Consecutive per-(creature, module) failure count at which the module is
+/// temporarily disabled for that creature (Issue #1273).
+///
+/// GRQ-sampler commit `e85c5d2` (creature `bcbca347`) showed the failure cache
+/// contained 41 consecutive `coordinated-structural` failures and zero
+/// successes — that module monopolised ~91% of the candidate budget for the
+/// creature while producing nothing. The cross-population module gate
+/// (`MODULE_GATE_THRESHOLD`, Issue #1060) operates on aggregated success rates
+/// and cannot disable a single module for a single creature, and the
+/// creature-level Conservative mode (Issue #1132) biases module weights rather
+/// than fully skipping a module. This per-(creature, module) cooldown closes
+/// that gap.
+///
+/// Overridable via `NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK`.
+///
+/// ## Valid Range
+/// Must be >= 1. Values above 100 effectively disable starvation skipping.
+pub const MODULE_STARVATION_FAILURE_STREAK: u32 = 15;
+
+/// Minimum permitted failure-streak threshold after env-var override clamping
+/// (Issue #1273).
+pub const MODULE_STARVATION_FAILURE_STREAK_FLOOR: u32 = 1;
+
+/// Maximum permitted failure-streak threshold after env-var override clamping
+/// (Issue #1273).
+pub const MODULE_STARVATION_FAILURE_STREAK_CEILING: u32 = 1000;
+
+/// Number of epochs a starved module remains disabled for the affected
+/// creature before being re-armed (Issue #1273).
+///
+/// Once a module has hit
+/// [`MODULE_STARVATION_FAILURE_STREAK`] consecutive failures for a creature,
+/// its `detect_fn` is skipped for this many epochs. After the cooldown elapses
+/// (or a success is recorded for the same module from any source) the module
+/// is re-armed so the creature can probe it again.
+///
+/// Overridable via `NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS`.
+///
+/// ## Valid Range
+/// Must be >= 1. Values above `10_000` keep modules disabled longer than any
+/// realistic discovery session.
+pub const MODULE_STARVATION_COOLDOWN_EPOCHS: u64 = 10;
+
+/// Minimum permitted cooldown duration after env-var override clamping
+/// (Issue #1273).
+pub const MODULE_STARVATION_COOLDOWN_EPOCHS_FLOOR: u64 = 1;
+
+/// Maximum permitted cooldown duration after env-var override clamping
+/// (Issue #1273).
+pub const MODULE_STARVATION_COOLDOWN_EPOCHS_CEILING: u64 = 10_000;
+
+/// Returns the effective per-creature, per-module starvation failure-streak
+/// threshold (Issue #1273).
+///
+/// Reads `NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK` at call time so
+/// tests and operators can override the default without recompiling. Values
+/// outside `[MODULE_STARVATION_FAILURE_STREAK_FLOOR,
+/// MODULE_STARVATION_FAILURE_STREAK_CEILING]` are clamped. Unparsable or
+/// missing values fall back to [`MODULE_STARVATION_FAILURE_STREAK`].
+#[must_use]
+pub fn module_starvation_failure_streak() -> u32 {
+    std::env::var("NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(MODULE_STARVATION_FAILURE_STREAK)
+        .clamp(
+            MODULE_STARVATION_FAILURE_STREAK_FLOOR,
+            MODULE_STARVATION_FAILURE_STREAK_CEILING,
+        )
+}
+
+/// Returns the effective per-creature, per-module starvation cooldown
+/// duration in epochs (Issue #1273).
+///
+/// Reads `NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS` at call time
+/// so tests and operators can override the default without recompiling.
+/// Values outside `[MODULE_STARVATION_COOLDOWN_EPOCHS_FLOOR,
+/// MODULE_STARVATION_COOLDOWN_EPOCHS_CEILING]` are clamped. Unparsable or
+/// missing values fall back to [`MODULE_STARVATION_COOLDOWN_EPOCHS`].
+#[must_use]
+pub fn module_starvation_cooldown_epochs() -> u64 {
+    std::env::var("NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(MODULE_STARVATION_COOLDOWN_EPOCHS)
+        .clamp(
+            MODULE_STARVATION_COOLDOWN_EPOCHS_FLOOR,
+            MODULE_STARVATION_COOLDOWN_EPOCHS_CEILING,
+        )
+}
+
+// =============================================================================
 // Quality-Based Module Skipping (Issue #1074)
 // =============================================================================
 

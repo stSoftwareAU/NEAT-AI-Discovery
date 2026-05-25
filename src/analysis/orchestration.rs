@@ -968,6 +968,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             target_cooldown_skipped: 0,
             rejection_breakdown,
             candidates_returned,
+            starvation_tracker: None,
         };
         if let Some(diagnostic) =
             super::drought_diagnostic::emit_drought_diagnostic(&inputs, drought_threshold)

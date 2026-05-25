@@ -28,8 +28,9 @@ use super::constants::{
 };
 use super::diagnostics::rejection_reasons::{
     REJECTION_BELOW_EXPECTED_GAIN_FLOOR, REJECTION_BUDGET_TRUNCATED,
-    REJECTION_COORDINATED_TARGET_CAP_EXCEEDED,
+    REJECTION_COORDINATED_TARGET_CAP_EXCEEDED, REJECTION_MODULE_STARVED,
 };
+use super::module_starvation_tracker::ModuleStarvationTracker;
 use super::module_weights::{DiscoveryModuleStatsJson, ModuleOutcomeTracker};
 use super::shared;
 use super::utils;
@@ -206,6 +207,10 @@ pub struct DiscoveryModuleDetectionEntry {
     pub phase_name: &'static str,
     pub max_candidates: usize,
     pub result: Option<DiscoveryDetectionResult>,
+    /// `true` when this module was skipped because the per-(creature, module)
+    /// starvation tracker has it in active cooldown (Issue #1273). The merge
+    /// phase uses this flag to record a `module_starved` rejection.
+    pub starved: bool,
 }
 
 /// Collected detection results from all discovery modules (Issue #1004).
@@ -244,6 +249,26 @@ pub fn detect_discovery_modules_parallel(
     deadline: Option<SystemTime>,
     tracker: Option<&ModuleOutcomeTracker>,
 ) -> DiscoveryModuleDetectionResults {
+    detect_discovery_modules_parallel_with_starvation(modules, deadline, tracker, None, 0)
+}
+
+/// Run all discovery module detection phases in parallel, applying both the
+/// population-wide module gate (Issue #1060) and the per-(creature, module)
+/// starvation cooldown (Issue #1273).
+///
+/// Identical contract to [`detect_discovery_modules_parallel`] except modules
+/// whose per-creature streak has tripped
+/// [`ModuleStarvationTracker::is_starved`] for `current_epoch` are skipped and
+/// flagged with `starved = true` on the returned entry so the merge phase
+/// records a `module_starved` rejection.
+#[tracing::instrument(skip_all, fields(module_count = modules.len()))]
+pub fn detect_discovery_modules_parallel_with_starvation(
+    modules: Vec<DiscoveryModuleSpec>,
+    deadline: Option<SystemTime>,
+    tracker: Option<&ModuleOutcomeTracker>,
+    starvation_tracker: Option<&ModuleStarvationTracker>,
+    current_epoch: u64,
+) -> DiscoveryModuleDetectionResults {
     if modules.is_empty() {
         return DiscoveryModuleDetectionResults {
             entries: Vec::new(),
@@ -262,6 +287,27 @@ pub fn detect_discovery_modules_parallel(
     let entries: Vec<DiscoveryModuleDetectionEntry> = modules
         .into_par_iter()
         .map(|spec| {
+            // Issue #1273: Skip detection if the per-(creature, module) starvation
+            // tracker has the module in active cooldown.
+            if let Some(s) = starvation_tracker
+                && s.is_starved(&spec.module_name, current_epoch)
+            {
+                tracing::debug!(
+                    module = %spec.module_name,
+                    streak_threshold = s.failure_streak_threshold(),
+                    cooldown_epochs = s.cooldown_epochs(),
+                    "Skipping discovery module — per-creature starvation cooldown active \
+                     (Issue #1273)"
+                );
+                return DiscoveryModuleDetectionEntry {
+                    module_name: spec.module_name,
+                    phase_name: spec.phase_name,
+                    max_candidates: spec.max_candidates,
+                    result: None,
+                    starved: true,
+                };
+            }
+
             // Issue #1060: Skip detection if the module is gated (low success rate).
             if let Some(t) = tracker
                 && t.is_gated(&spec.module_name, MODULE_GATE_THRESHOLD)
@@ -276,6 +322,7 @@ pub fn detect_discovery_modules_parallel(
                     phase_name: spec.phase_name,
                     max_candidates: spec.max_candidates,
                     result: None,
+                    starved: false,
                 };
             }
 
@@ -291,6 +338,7 @@ pub fn detect_discovery_modules_parallel(
                     phase_name: spec.phase_name,
                     max_candidates: spec.max_candidates,
                     result: None,
+                    starved: false,
                 };
             }
 
@@ -320,6 +368,7 @@ pub fn detect_discovery_modules_parallel(
                 phase_name: spec.phase_name,
                 max_candidates: spec.max_candidates,
                 result,
+                starved: false,
             }
         })
         .collect();
@@ -348,6 +397,18 @@ pub fn detect_discovery_modules_parallel(
                 "Discovery detection: module(s) gated by low success rate (Issue #1060)"
             );
         }
+    }
+
+    // Issue #1273: Log starved modules for observability.
+    let starved_count = entries.iter().filter(|e| e.starved).count();
+    if starved_count > 0 {
+        tracing::info!(
+            starved_count,
+            total = entries.len(),
+            current_epoch,
+            "Discovery detection: module(s) skipped by per-creature starvation cooldown \
+             (Issue #1273)"
+        );
     }
 
     crate::watchdog::beat("analysis::analyze_all → parallel discovery detection finished");
@@ -389,6 +450,14 @@ pub fn merge_discovery_module_results(
 
     for entry in detection_results.entries {
         let candidates_produced = entry.result.as_ref().map_or(0, |r| r.candidates.len());
+
+        // Issue #1273: Record skip in the rejection breakdown when the module
+        // was gated out by the per-creature starvation cooldown.
+        if entry.starved {
+            syn.metadata
+                .rejection_breakdown
+                .record(REJECTION_MODULE_STARVED);
+        }
 
         // Record per-module stats in metadata from historical tracker (Issue #792).
         let historical = tracker.stats(&entry.module_name);

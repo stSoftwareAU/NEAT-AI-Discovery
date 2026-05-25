@@ -650,6 +650,8 @@ Key environment variables that control library behaviour:
 | `NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR` | Cold-start calibration prior multiplier for non-invertible / periodic target activations (SINE, COSINE, GAUSSIAN, SQUARE, ABSOLUTE). Applied while the per-(`change_type`, `target_squash`) bucket has fewer than three failure samples. Default 0.25, clamped to `[0.001, 1.0]` (Issue #1192). |
 | `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN` | Absolute minimum `expected_creature_score_gain` for emitted add-neuron / add-synapse candidates. Predictions below this floor are dominated by floating-point round-off in the downstream evaluator. Default `1e-5`, clamped to `[0.0, 1e-2]` (Issue #1191). |
 | `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` | Consecutive trailing empty discovery passes at which the drought diagnostic warn log fires and the `droughtDiagnostic` payload populates on `synapseMetadata` / `neuronMetadata`. Default `5`, must be `>= 1` (Issue #1202). |
+| `NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK` | Consecutive per-(creature, module) failure count at which a single discovery module is temporarily disabled for that creature. Default `15`, clamped to `[1, 1000]` (Issue #1273). |
+| `NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS` | Epochs that a starved module remains disabled before being re-armed. Default `10`, clamped to `[1, 10_000]` (Issue #1273). |
 
 See [README.md — Troubleshooting](README.md#troubleshooting) and
 [README.md — GPU Performance Tuning](README.md#gpu-performance-tuning) for
