@@ -49,10 +49,13 @@ pub(super) fn finalise_synapse_results(
         log_analysis_timeout("synapse", completed, params.total_focus_count);
     }
 
-    // Collapse 1-in/1-out hidden neurons into direct synapses (Issue #425)
-    let collapse_candidates =
+    // Collapse 1-in/1-out hidden neurons into direct synapses (Issue #425).
+    // Issue #1270: also surfaces the count of chains rejected by the bypass-
+    // weight floor so the metadata's rejection_breakdown reports the drop.
+    let collapse_outcome =
         structural_patterns::detect_collapsible_hidden_neurons(params.input, params.cache.as_ref());
-    coordinated_structural_results.extend(collapse_candidates);
+    coordinated_structural_results.extend(collapse_outcome.candidates);
+    let collapse_bypass_below_floor_drops = collapse_outcome.bypass_weight_below_floor_drops;
 
     // Post-processing: impact discounting, sorting, diversification, truncation
     let pp_metrics = post_processing::apply_post_processing(
@@ -89,6 +92,7 @@ pub(super) fn finalise_synapse_results(
         mcmc_summary: Some(params.mcmc_summary),
         calibration_corrections: pp_metrics.calibration_corrections,
         target_saturated_drops: params.diagnostics.target_saturated_drop_count(),
+        collapse_bypass_below_floor_drops,
     });
 
     Ok(AnalyzeSynapsesResult {

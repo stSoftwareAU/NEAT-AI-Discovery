@@ -8,13 +8,28 @@
 
 use super::scoring::compute_synapse_improvement_and_count;
 use crate::analysis::cache::RecordCache;
-use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT;
+use crate::analysis::constants::{MIN_NEURON_SAMPLE_COUNT, min_bypass_weight_for_collapse};
 use crate::analysis::diagnostics::TargetMap;
 use crate::analysis::samples::{EPSILON, HelpfulSample};
 use crate::analysis::scoring::weights::calculate_optimal_outgoing_weight;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, SynapseJson};
 use std::collections::{HashMap, HashSet};
+
+/// Output of [`detect_collapsible_hidden_neurons`] paired with the count of
+/// candidates rejected by the bypass-weight floor (Issue #1270).
+///
+/// Callers should record `bypass_weight_below_floor_drops` against
+/// [`crate::analysis::diagnostics::rejection_reasons::REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR`]
+/// on the synapse metadata's `rejection_breakdown` so the rejection surfaces
+/// in the drought diagnostic.
+#[derive(Debug, Default)]
+pub(crate) struct CollapseDetectionOutcome {
+    pub candidates: Vec<CoordinatedStructuralCandidateJson>,
+    /// Number of 1-in/1-out chains rejected because the computed bypass
+    /// weight had `|weight| < MIN_BYPASS_WEIGHT_FOR_COLLAPSE` (Issue #1270).
+    pub bypass_weight_below_floor_drops: u32,
+}
 
 // =============================================================================
 // Noisy vs Trusted Input Folding (Issue #165)
@@ -237,8 +252,10 @@ pub(crate) fn detect_noisy_vs_trusted(
 pub(crate) fn detect_collapsible_hidden_neurons(
     input: &crate::AnalyzeSynapsesInput,
     cache: &RecordCache,
-) -> Vec<CoordinatedStructuralCandidateJson> {
+) -> CollapseDetectionOutcome {
     let mut results = Vec::new();
+    let mut bypass_weight_below_floor_drops: u32 = 0;
+    let bypass_floor = min_bypass_weight_for_collapse();
 
     // Build incoming/outgoing synapse lists per neuron (using references to avoid cloning).
     let mut incoming: HashMap<&str, Vec<&SynapseJson>> = HashMap::new();
@@ -368,6 +385,19 @@ pub(crate) fn detect_collapsible_hidden_neurons(
             continue;
         };
 
+        // Issue #1270: skip 1-in/1-out collapse candidates whose computed
+        // bypass weight is below the meaningful-weight floor. At near-zero
+        // bypass weights the chain `a→h→b` was contributing essentially
+        // nothing through `h`, so the 4-op coordinated change is functionally
+        // equivalent to a 1-op `remove-neuron` but carries the much higher
+        // implementation-risk profile of a 4-op coordinated candidate. The
+        // dropped count is propagated to the caller via
+        // [`CollapseDetectionOutcome`] for the rejection breakdown.
+        if weight.abs() < bypass_floor {
+            bypass_weight_below_floor_drops = bypass_weight_below_floor_drops.saturating_add(1);
+            continue;
+        }
+
         let (improvement, _improved, _worsened, _total, _magnitude) =
             compute_synapse_improvement_and_count(&samples, weight, baseline_sq, None);
         if improvement <= 0.0 {
@@ -401,5 +431,266 @@ pub(crate) fn detect_collapsible_hidden_neurons(
         });
     }
 
-    results
+    CollapseDetectionOutcome {
+        candidates: results,
+        bypass_weight_below_floor_drops,
+    }
+}
+
+// =============================================================================
+// Tests (Issue #1270)
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the 1-in/1-out hidden neuron collapse detector.
+    //!
+    //! These exercise the bypass-weight floor introduced in Issue #1270
+    //! directly via a synthetic [`RecordCache`], avoiding the GPU / parquet
+    //! setup required by the integration tests in
+    //! `tests/synapse/issue_522_synapse_structural_patterns.rs`.
+    use super::*;
+    use crate::AnalyzeSynapsesInput;
+    use crate::ffi_types::{CreatureJson, NeuronJson, SynapseJson};
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+
+    /// Serialise tests that mutate the `NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE`
+    /// env variable so they do not race with other tests in the same process.
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    /// RAII guard that overrides `NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE`
+    /// during a test and restores the previous value on drop.
+    struct BypassFloorGuard {
+        previous: Option<String>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl BypassFloorGuard {
+        fn new(value: &str) -> Self {
+            let lock = env_lock()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let previous = std::env::var("NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE").ok();
+            // SAFETY: env mutation is serialised via the static lock above.
+            unsafe {
+                std::env::set_var("NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE", value);
+            }
+            Self {
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for BypassFloorGuard {
+        fn drop(&mut self) {
+            // SAFETY: env mutation is serialised via the held lock.
+            unsafe {
+                match &self.previous {
+                    Some(prev) => {
+                        std::env::set_var("NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE", prev);
+                    }
+                    None => {
+                        std::env::remove_var("NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Build a minimal `input-0 → hidden-0 → output-0` chain whose collapse
+    /// would emit a bypass synapse `input-0 → output-0` with computed
+    /// `weight ≈ target_bypass_weight`.
+    ///
+    /// Constructs `n_samples` observations with activations evenly spaced in
+    /// `[-1, 1]`. The chain is configured as a pure passthrough
+    /// (`h_act = a_act`, intermediate squash IDENTITY, bias 0). With the
+    /// existing `h → b` synapse weight fixed at 0.5, the target neuron's
+    /// average error is set to `(target_bypass_weight - 0.5) * a_act`, which
+    /// makes the function's least-squares fit produce
+    /// `weight ≈ target_bypass_weight`.
+    fn build_collapse_input(
+        target_bypass_weight: f32,
+        n_samples: u32,
+    ) -> (AnalyzeSynapsesInput, RecordCache) {
+        let creature = CreatureJson {
+            input: 1,
+            output: 1,
+            neurons: vec![
+                NeuronJson {
+                    uuid: "hidden-0".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "output-0".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![
+                SynapseJson {
+                    from_uuid: "input-0".to_string(),
+                    to_uuid: "hidden-0".to_string(),
+                    weight: 1.0,
+                    synapse_type: None,
+                },
+                SynapseJson {
+                    from_uuid: "hidden-0".to_string(),
+                    to_uuid: "output-0".to_string(),
+                    weight: 0.5,
+                    synapse_type: None,
+                },
+            ],
+        };
+
+        let input = AnalyzeSynapsesInput {
+            parquet_file: "<in-memory>".to_string(),
+            creature,
+            focus_neurons: vec!["output-0".to_string()],
+            max_candidates: None,
+            analysis_deadline_ms: None,
+            random_seed: Some(42),
+            temperature: 1.0,
+            failure_cache: None,
+            discovery_outcome_log: None,
+        };
+
+        // Build per-neuron record vectors and bind them into the synthetic
+        // record cache loader closure.
+        let mut input0 = Vec::with_capacity(n_samples as usize);
+        let mut hidden0 = Vec::with_capacity(n_samples as usize);
+        let mut output0 = Vec::with_capacity(n_samples as usize);
+        let b_syn_weight = 0.5_f32;
+        for i in 0..n_samples {
+            let a_act = -1.0
+                + (2.0 * f32::from(u16::try_from(i).unwrap_or(0)))
+                    / f32::from(u16::try_from(n_samples - 1).unwrap_or(1));
+            let h_act = a_act; // pure passthrough
+            let target_err = (target_bypass_weight - b_syn_weight) * a_act;
+            input0.push(DiscoverRecord::new(
+                i,
+                "input-0".to_string(),
+                Some(a_act),
+                a_act,
+                Vec::new(),
+            ));
+            hidden0.push(DiscoverRecord::new(
+                i,
+                "hidden-0".to_string(),
+                Some(h_act),
+                h_act,
+                Vec::new(),
+            ));
+            output0.push(DiscoverRecord::new(
+                i,
+                "output-0".to_string(),
+                Some(0.5 * h_act),
+                0.5 * h_act,
+                vec![target_err],
+            ));
+        }
+
+        let cache = RecordCache::with_loader(
+            "<in-memory>",
+            Arc::new(move |_path: &str, uuid: &str| match uuid {
+                "input-0" => Ok(input0.clone()),
+                "hidden-0" => Ok(hidden0.clone()),
+                "output-0" => Ok(output0.clone()),
+                other => Err(anyhow::anyhow!("unexpected uuid {other}")),
+            }),
+        );
+
+        (input, cache)
+    }
+
+    /// Acceptance-criterion test: a synthetic 1-in/1-out chain whose computed
+    /// bypass weight is `0.005` must be rejected and the rejection counter
+    /// incremented.
+    #[test]
+    fn rejects_collapse_when_bypass_weight_below_default_floor() {
+        let _guard = BypassFloorGuard::new("0.01");
+
+        let (input, cache) = build_collapse_input(0.005, 12);
+        let outcome = detect_collapsible_hidden_neurons(&input, &cache);
+
+        assert!(
+            outcome.candidates.is_empty(),
+            "Expected no collapse candidates with bypass weight 0.005 under a 0.01 floor; got: {:?}",
+            outcome.candidates
+        );
+        assert_eq!(
+            outcome.bypass_weight_below_floor_drops, 1,
+            "Expected exactly one bypass-weight-floor rejection"
+        );
+    }
+
+    /// Regression test for the GRQ-sampler creature `bcbca347` failure-cache
+    /// pattern: bypass weight `0.0021` must not produce a collapse candidate.
+    #[test]
+    fn reproduces_bcbca347_failure_cache_pattern() {
+        let _guard = BypassFloorGuard::new("0.01");
+
+        let (input, cache) = build_collapse_input(0.0021, 12);
+        let outcome = detect_collapsible_hidden_neurons(&input, &cache);
+
+        assert!(
+            outcome.candidates.is_empty(),
+            "Bypass weight 0.0021 (bcbca347 failure pattern) should be rejected"
+        );
+        assert_eq!(
+            outcome.bypass_weight_below_floor_drops, 1,
+            "bcbca347-style bypass weight must increment the rejection counter"
+        );
+    }
+
+    /// A bypass weight above the floor should still be emitted. This guards
+    /// against the floor accidentally rejecting legitimately useful
+    /// candidates after the Issue #1270 change.
+    #[test]
+    fn emits_candidate_when_bypass_weight_above_floor() {
+        let _guard = BypassFloorGuard::new("0.01");
+
+        // Computed weight ~0.05, comfortably above the 0.01 default floor.
+        let (input, cache) = build_collapse_input(0.05, 12);
+        let outcome = detect_collapsible_hidden_neurons(&input, &cache);
+
+        assert_eq!(
+            outcome.bypass_weight_below_floor_drops, 0,
+            "Above-floor bypass weight must not trigger the rejection counter"
+        );
+        assert_eq!(
+            outcome.candidates.len(),
+            1,
+            "Expected exactly one collapse candidate, got {} (candidates: {:?})",
+            outcome.candidates.len(),
+            outcome.candidates,
+        );
+    }
+
+    /// The env-var override (`NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE
+    /// = 0`) must disable the floor entirely so legacy callers that depend on
+    /// the pre-#1270 behaviour can opt out for tests.
+    #[test]
+    fn env_var_override_disables_floor() {
+        let _guard = BypassFloorGuard::new("0");
+
+        let (input, cache) = build_collapse_input(0.005, 12);
+        let outcome = detect_collapsible_hidden_neurons(&input, &cache);
+
+        assert_eq!(
+            outcome.bypass_weight_below_floor_drops, 0,
+            "Disabling the floor must suppress the rejection counter"
+        );
+        // The candidate may or may not survive the `improvement > 0` check
+        // — that path is unaffected by Issue #1270. We only assert the
+        // dispatch-side counter stays zero when the floor is disabled.
+    }
 }

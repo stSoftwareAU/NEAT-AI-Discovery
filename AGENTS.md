@@ -652,6 +652,7 @@ Key environment variables that control library behaviour:
 | `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` | Consecutive trailing empty discovery passes at which the drought diagnostic warn log fires and the `droughtDiagnostic` payload populates on `synapseMetadata` / `neuronMetadata`. Default `5`, must be `>= 1` (Issue #1202). |
 | `NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK` | Consecutive per-(creature, module) failure count at which a single discovery module is temporarily disabled for that creature. Default `15`, clamped to `[1, 1000]` (Issue #1273). |
 | `NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS` | Epochs that a starved module remains disabled before being re-armed. Default `10`, clamped to `[1, 10_000]` (Issue #1273). |
+| `NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE` | Minimum absolute bypass-synapse weight required to emit a 1-in/1-out hidden-neuron collapse candidate. Bypass weights below this floor signal the chain `a→h→b` was contributing nothing meaningful through `h`, so the 4-op coordinated collapse is rejected and recorded under `coordinated_collapse_bypass_weight_below_floor`. Default `0.01`, clamped to `[0.0, 0.1]` (Issue #1270). |
 
 See [README.md — Troubleshooting](README.md#troubleshooting) and
 [README.md — GPU Performance Tuning](README.md#gpu-performance-tuning) for

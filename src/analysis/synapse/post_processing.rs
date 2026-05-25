@@ -618,6 +618,10 @@ pub(crate) struct MetadataParams<'a> {
     /// Issue #1143: count of new add-synapse sources dropped because their
     /// target neuron was already saturated.
     pub target_saturated_drops: u32,
+    /// Issue #1270: count of 1-in/1-out hidden-neuron collapse candidates
+    /// rejected by the bypass-weight floor in
+    /// `detect_collapsible_hidden_neurons`.
+    pub collapse_bypass_below_floor_drops: u32,
 }
 
 /// Build the analysis metadata from collected atomic flags and timing data.
@@ -664,6 +668,13 @@ pub(crate) fn build_metadata(
             b.record_many_u32(
                 crate::analysis::diagnostics::rejection_reasons::REJECTION_TARGET_SATURATED,
                 params.target_saturated_drops,
+            );
+            // Issue #1270: record bypass-weight-floor drops from the
+            // hidden-neuron collapse detector so the dispatch-side counter
+            // shows up in the drought diagnostic.
+            b.record_many_u32(
+                crate::analysis::diagnostics::rejection_reasons::REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR,
+                params.collapse_bypass_below_floor_drops,
             );
             b
         },
