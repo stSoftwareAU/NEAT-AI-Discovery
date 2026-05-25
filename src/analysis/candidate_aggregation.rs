@@ -17,26 +17,26 @@ use crate::{
 };
 
 use super::constants::{
-    COORDINATED_POST_DISCOUNT_NOISE_FLOOR, MIN_COORDINATED_MULTI_OP_GAIN,
-    coordinated_empirical_discount,
+    MIN_COORDINATED_MULTI_OP_GAIN, coordinated_empirical_discount,
+    coordinated_post_discount_noise_floor,
 };
 use super::{cache, shared, synapse};
 
 /// Filter coordinated-structural candidates below the post-discount noise
-/// floor (Issue #1110, #1128).
+/// floor (Issue #1110, #1128, #1272).
 ///
 /// Intended as the **final** filter in the pipeline — applied after all
 /// pessimism, calibration, module-boost, and ensemble discounts so that gains
 /// discounted into the documented noise range (1e-7 to 1e-8 per Issue #1127
 /// failure evidence) cannot reach the FFI response.
 ///
-/// Uses `COORDINATED_POST_DISCOUNT_NOISE_FLOOR` (1e-6) rather than the
-/// pre-merge `COORDINATED_MIN_EXPECTED_GAIN` (1e-5). A candidate that cleared
-/// the pre-merge 1e-5 floor has legitimately been judged to be above noise;
-/// downstream discounts represent calibrated uncertainty, not a signal to
-/// re-filter at full strength. The lower sweep preserves those legitimately
-/// discounted candidates while still catching the exact 1e-7/1e-8 range that
-/// Issue #1127 captured hurting production networks.
+/// The floor is applied **per operation count** via
+/// [`coordinated_post_discount_noise_floor`] — 5e-7 for 1-op, 1e-6 for 2-op,
+/// 2e-6 for 3-op, and 5e-6 for 4+-op (Issue #1272). Higher-op candidates
+/// carry materially higher implementation risk (see GRQ-sampler `bcbca347`
+/// 4-op failures that just cleared the legacy single 5e-7 floor yet harmed
+/// the network by 1000–6000× the predicted magnitude), so a per-tier floor
+/// is enforced in step with the empirical-discount tiers from #1058.
 ///
 /// Issue #1129: Returns the number of candidates removed so callers can
 /// record the drop in the structured rejection breakdown.
@@ -46,21 +46,27 @@ pub fn apply_coordinated_gain_floor(
     apply_coordinated_gain_floor_with_multiplier(candidates, 1.0)
 }
 
-/// Variant of [`apply_coordinated_gain_floor`] that multiplies the base floor
-/// by a caller-supplied factor before filtering (Issue #1132).
+/// Variant of [`apply_coordinated_gain_floor`] that multiplies each
+/// candidate's per-op-count floor by a caller-supplied factor before
+/// filtering (Issue #1132, #1272).
 ///
 /// The `multiplier` must be `>= 1.0`; values below 1.0 are clamped to 1.0 so
 /// the floor can never become looser than the default. Conservative discovery
 /// mode passes a multiplier above 1.0 to bias away from borderline structural
-/// candidates when the creature has a low recent success rate.
+/// candidates when the creature has a low recent success rate. The multiplier
+/// is applied to the per-tier floor returned by
+/// [`coordinated_post_discount_noise_floor`], so the relative tier ordering
+/// is preserved.
 pub fn apply_coordinated_gain_floor_with_multiplier(
     candidates: &mut Vec<CoordinatedStructuralCandidateJson>,
     multiplier: f32,
 ) -> u32 {
     let factor = multiplier.max(1.0);
-    let floor = COORDINATED_POST_DISCOUNT_NOISE_FLOOR * factor;
     let before = candidates.len();
-    candidates.retain(|c| c.expected_creature_score_gain >= floor);
+    candidates.retain(|c| {
+        let floor = coordinated_post_discount_noise_floor(c.operations.len()) * factor;
+        c.expected_creature_score_gain >= floor
+    });
     u32::try_from(before.saturating_sub(candidates.len())).unwrap_or(u32::MAX)
 }
 
@@ -70,8 +76,9 @@ pub fn apply_coordinated_gain_floor_with_multiplier(
 /// This is the FFI-facing safety net: it must always run after variant
 /// generation (`pair_coordinated_structural_with_weight_variants`) because the
 /// `0.75×`/`0.5×`/`0.25×`/`0.1×` expected-gain multipliers can pull a variant
-/// below `COORDINATED_POST_DISCOUNT_NOISE_FLOOR` even when its base candidate
-/// is above the floor. Production evidence (GRQ-sampler discoveryVersion
+/// below its per-op-count noise floor (see
+/// `coordinated_post_discount_noise_floor`, Issue #1272) even when its base
+/// candidate is above the floor. Production evidence (GRQ-sampler discoveryVersion
 /// 0.74.16) captured `Gentle Nudge` variants with gains of ~1.3e-7 damaging
 /// creatures when tested.
 ///

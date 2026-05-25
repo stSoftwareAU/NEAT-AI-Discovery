@@ -95,6 +95,73 @@ impl Drop for GainFloorDisableGuard {
 }
 
 // ---------------------------------------------------------------------------
+// Issue #1272 — coordinated-structural noise-floor relaxation guard.
+//
+// The per-op-count post-discount noise floors (1-op 5e-7, 2-op 1e-6, 3-op
+// 2e-6, 4+-op 5e-6) reject 4-op coordinated candidates whose post-calibration
+// gain sits just below 1e-6 (e.g. the ~9.95e-7 candidate produced by the
+// `coordinated_structural_can_collapse_hidden_neuron_to_single_synapse`
+// fixture). Holding a `CoordinatedNoiseFloorRelaxGuard` for the duration of
+// such a test multiplies every per-tier floor by a small factor so the
+// collapse contract under test remains observable. Production callers leave
+// the env var unset and continue to receive the strict floors.
+// ---------------------------------------------------------------------------
+
+/// RAII guard that multiplies every coordinated-structural per-op-count noise
+/// floor by a small factor for the duration of a test, restoring the prior
+/// env-var value on drop (Issue #1272).
+///
+/// Use with `#[serial]` (or another env-serialisation strategy) to avoid
+/// concurrent env access.
+#[allow(dead_code)]
+pub struct CoordinatedNoiseFloorRelaxGuard {
+    previous: Option<String>,
+}
+
+impl CoordinatedNoiseFloorRelaxGuard {
+    /// Create a guard that sets
+    /// `NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER=0.01`. With the
+    /// default per-tier floors, this puts the effective 4+-op floor at
+    /// 5e-8 — well below any legitimate collapse fixture's post-calibration
+    /// gain — while still rejecting truly noise-level (1e-9 and below)
+    /// predictions.
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        let previous = std::env::var("NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER").ok();
+        // SAFETY: callers serialise env access (e.g. via `#[serial]`).
+        unsafe {
+            std::env::set_var(
+                "NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER",
+                "0.01",
+            );
+        }
+        Self { previous }
+    }
+}
+
+impl Default for CoordinatedNoiseFloorRelaxGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for CoordinatedNoiseFloorRelaxGuard {
+    fn drop(&mut self) {
+        // SAFETY: callers serialise env access (e.g. via `#[serial]`).
+        unsafe {
+            match &self.previous {
+                Some(v) => {
+                    std::env::set_var("NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER", v);
+                }
+                None => {
+                    std::env::remove_var("NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER");
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Neuron builders
 // ---------------------------------------------------------------------------
 

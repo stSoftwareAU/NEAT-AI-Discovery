@@ -9,10 +9,12 @@
 //! verify correct structural candidate generation.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use crate::common::CoordinatedNoiseFloorRelaxGuard;
 use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson, analyze_parallel_internal};
+use serial_test::serial;
 
 /// Helper: run analysis and return parsed JSON output.
 fn run_analysis(
@@ -274,11 +276,18 @@ fn noisy_vs_trusted_skipped_when_weights_differ() {
 /// A hidden neuron with exactly 1 incoming and 1 outgoing synapse should be
 /// proposed for collapse into a direct synapse.
 #[test]
+#[serial]
 fn collapse_hidden_neuron_with_identity_squash() {
     if !GpuAnalyzer::gpu_is_available() {
         eprintln!("Skipping test: no GPU available");
         return;
     }
+
+    // Issue #1272: the collapse candidate is a 4-op coordinated group whose
+    // post-calibration gain (~9.95e-7) sits just below the new 4+-op noise
+    // floor (5e-6). Relax the floor for this contract test so the collapse
+    // proposal is observable; production callers leave the env var unset.
+    let _noise_floor_guard = CoordinatedNoiseFloorRelaxGuard::new();
 
     let temp_dir = tempfile::tempdir().unwrap();
     let parquet_path = temp_dir

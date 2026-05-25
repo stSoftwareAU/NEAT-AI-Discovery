@@ -5,7 +5,7 @@
 //!
 //! GRQ-sampler commit `744ac60d` (`2026-04-22T22:31:14.839Z`,
 //! discoveryVersion `0.74.16`) captured two `Gentle Nudge` variants with
-//! `expectedCreatureScoreGain` below `COORDINATED_POST_DISCOUNT_NOISE_FLOOR`
+//! `expectedCreatureScoreGain` below `COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP`
 //! (5e-7) reaching the FFI response and damaging the creature when tested.
 //!
 //! ## Root cause
@@ -31,7 +31,7 @@
 //! 3. `candidates_returned` is refreshed.
 
 use neat_ai_discovery::analysis::candidate_aggregation::apply_final_coordinated_gain_floor;
-use neat_ai_discovery::analysis::constants::COORDINATED_POST_DISCOUNT_NOISE_FLOOR;
+use neat_ai_discovery::analysis::constants::COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP;
 use neat_ai_discovery::analysis::diagnostics::rejection_reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR;
 use neat_ai_discovery::analysis::discovery_mode::DiscoveryMode;
 use neat_ai_discovery::analysis::shared::{AnalyzeSynapsesResult, SynapseAnalysisMetadata};
@@ -78,7 +78,7 @@ fn variant_generation_can_produce_subfloor_gains() {
 
     let any_subfloor = variants
         .iter()
-        .any(|c| c.expected_creature_score_gain < COORDINATED_POST_DISCOUNT_NOISE_FLOOR);
+        .any(|c| c.expected_creature_score_gain < COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP);
     assert!(
         any_subfloor,
         "precondition: at least one variant should fall below the floor, \
@@ -108,7 +108,7 @@ fn final_floor_removes_subfloor_variants_and_updates_metadata() {
     let subfloor_before = syn
         .coordinated_structural_candidates
         .iter()
-        .filter(|c| c.expected_creature_score_gain < COORDINATED_POST_DISCOUNT_NOISE_FLOOR)
+        .filter(|c| c.expected_creature_score_gain < COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP)
         .count();
     assert!(
         subfloor_before > 0,
@@ -124,7 +124,7 @@ fn final_floor_removes_subfloor_variants_and_updates_metadata() {
     assert!(
         syn.coordinated_structural_candidates
             .iter()
-            .all(|c| c.expected_creature_score_gain >= COORDINATED_POST_DISCOUNT_NOISE_FLOOR),
+            .all(|c| c.expected_creature_score_gain >= COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP),
         "no sub-floor coordinated candidate should survive, got gains {:?}",
         syn.coordinated_structural_candidates
             .iter()
@@ -169,7 +169,7 @@ fn final_floor_honours_conservative_multiplier() {
     syn.coordinated_structural_candidates
         .push(add_synapse_candidate(
             0.1,
-            COORDINATED_POST_DISCOUNT_NOISE_FLOOR,
+            COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP,
         ));
 
     let removed_normal = apply_final_coordinated_gain_floor(&mut syn, DiscoveryMode::Normal, 10.0);
