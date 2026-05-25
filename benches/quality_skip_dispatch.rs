@@ -66,6 +66,7 @@ fn make_detection_results(
                     detected_count: candidates.len(),
                     candidates,
                 }),
+                starved: false,
             }
         })
         .collect();

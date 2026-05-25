@@ -75,6 +75,17 @@ pub const REJECTION_SAME_TARGET_SQUASH_DUPLICATE: &str = "same_target_squash_dup
 /// last operation's target neuron in the current batch (Issue #1271).
 pub const REJECTION_COORDINATED_TARGET_CAP_EXCEEDED: &str = "coordinated_target_cap_exceeded";
 
+/// Discovery module was skipped because the per-(creature, module) starvation
+/// tracker has the module in active cooldown after
+/// `MODULE_STARVATION_FAILURE_STREAK` consecutive failures (Issue #1273).
+///
+/// One rejection count is recorded per module skipped during the parallel
+/// detection phase. Unlike the population-wide `MODULE_GATE_THRESHOLD`
+/// (Issue #1060), this signal is creature-scoped: a module that has failed
+/// repeatedly for this creature is paused while the candidate budget is
+/// redirected to alternative modules.
+pub const REJECTION_MODULE_STARVED: &str = "module_starved";
+
 /// Synapse: no overlapping discovery samples between source and target.
 pub const REJECTION_NO_SAMPLES: &str = "no_samples";
 
@@ -144,6 +155,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_PER_TARGET_CAP,
     REJECTION_SAME_TARGET_SQUASH_DUPLICATE,
     REJECTION_COORDINATED_TARGET_CAP_EXCEEDED,
+    REJECTION_MODULE_STARVED,
     REJECTION_NO_SAMPLES,
     REJECTION_ZERO_IMPROVEMENT,
     REJECTION_BELOW_THRESHOLD,
@@ -302,6 +314,7 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_COORDINATED_TARGET_CAP_EXCEEDED => {
             "per-final-target coordinated-structural cap".to_string()
         }
+        REJECTION_MODULE_STARVED => "per-creature module starvation cooldown".to_string(),
         REJECTION_NO_SAMPLES => "no overlapping discovery samples".to_string(),
         REJECTION_ZERO_IMPROVEMENT => "zero consistent improvement in GPU stats".to_string(),
         REJECTION_BELOW_THRESHOLD => "expected-improvement per-target threshold".to_string(),

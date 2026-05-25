@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use super::candidate_cache::CandidateOutcomeCache;
 use super::diagnostics::RejectionBreakdown;
 use super::discovery_mode::DiscoveryMode;
+use super::module_starvation_tracker::ModuleStarvationTracker;
 use super::target_failure_tracker::TargetFailureTracker;
 
 /// Structured payload describing the current drought state (Issue #1202).
@@ -62,6 +63,13 @@ pub struct DroughtDiagnostic {
     pub total_candidates_considered: u32,
     /// Total candidates rejected across all reasons.
     pub total_candidates_rejected: u32,
+    /// Number of discovery modules currently in per-creature starvation
+    /// cooldown (Issue #1273). Reports how many modules are disabled for the
+    /// active creature after `MODULE_STARVATION_FAILURE_STREAK` consecutive
+    /// failures. `0` when the orchestrator does not supply a starvation
+    /// tracker.
+    #[serde(default)]
+    pub starved_module_count: u32,
 }
 
 /// Inputs gathered by the orchestrator before drought emission.
@@ -79,6 +87,10 @@ pub struct DroughtInputs<'a> {
     pub target_cooldown_skipped: u32,
     pub rejection_breakdown: &'a RejectionBreakdown,
     pub candidates_returned: u32,
+    /// Per-creature, per-module starvation tracker (Issue #1273). The
+    /// diagnostic reports the count of modules currently disabled. `None`
+    /// when the orchestrator does not maintain a starvation tracker.
+    pub starvation_tracker: Option<&'a ModuleStarvationTracker>,
 }
 
 /// Build a [`DroughtDiagnostic`] when the trailing-failure streak has crossed
@@ -103,6 +115,9 @@ pub fn emit_drought_diagnostic(
     let target_cooldown_active_count = inputs
         .target_tracker
         .map_or(0, |t| t.active_cooldown_count(inputs.current_epoch));
+    let starved_module_count = inputs.starvation_tracker.map_or(0_u32, |s| {
+        u32::try_from(s.starved_module_count(inputs.current_epoch)).unwrap_or(u32::MAX)
+    });
 
     let (dominant_rejection_reason, dominant_rejection_count) =
         match inputs.rejection_breakdown.dominant_reason() {
@@ -125,6 +140,7 @@ pub fn emit_drought_diagnostic(
         dominant_rejection_count,
         total_candidates_considered,
         total_candidates_rejected,
+        starved_module_count,
     };
 
     tracing::warn!(
@@ -142,6 +158,7 @@ pub fn emit_drought_diagnostic(
         dominant_rejection_count = diagnostic.dominant_rejection_count,
         total_candidates_considered = diagnostic.total_candidates_considered,
         total_candidates_rejected = diagnostic.total_candidates_rejected,
+        starved_module_count = diagnostic.starved_module_count,
         drought_threshold,
         "Issue #1202: discovery drought — no successful candidates for {} consecutive passes",
         diagnostic.consecutive_failures
@@ -173,6 +190,7 @@ mod tests {
             target_cooldown_skipped: 0,
             rejection_breakdown: &breakdown,
             candidates_returned: 0,
+            starvation_tracker: None,
         };
         assert!(emit_drought_diagnostic(&inputs, 5).is_none());
     }
@@ -190,6 +208,7 @@ mod tests {
             target_cooldown_skipped: 2,
             rejection_breakdown: &breakdown,
             candidates_returned: 0,
+            starvation_tracker: None,
         };
         let diag = emit_drought_diagnostic(&inputs, 5).expect("at threshold");
         assert_eq!(diag.consecutive_failures, 5);
@@ -226,6 +245,7 @@ mod tests {
             target_cooldown_skipped: 0,
             rejection_breakdown: &breakdown,
             candidates_returned: 1,
+            starvation_tracker: None,
         };
 
         let diag = emit_drought_diagnostic(&inputs, 5).expect("emits");
@@ -233,5 +253,34 @@ mod tests {
         assert_eq!(diag.candidate_cache_suppressed_count, 2);
         assert_eq!(diag.target_cooldown_active_count, 1);
         assert_eq!(diag.total_candidates_considered, 4); // 3 rejected + 1 returned.
+        assert_eq!(diag.starved_module_count, 0);
+    }
+
+    #[test]
+    fn diagnostic_reports_starved_module_count() {
+        let mut starvation = ModuleStarvationTracker::with_thresholds(2, 100);
+        starvation.record_failure("coordinated-structural", 0);
+        starvation.record_failure("coordinated-structural", 1);
+        starvation.record_failure("remove-neuron", 0);
+        starvation.record_failure("remove-neuron", 1);
+        // change-squash below threshold -> not starved.
+        starvation.record_failure("change-squash", 0);
+
+        let breakdown = breakdown_with("below_threshold", 1);
+        let inputs = DroughtInputs {
+            consecutive_failures: 6,
+            rolling_success_rate: 0.0,
+            discovery_mode: DiscoveryMode::Conservative,
+            candidate_cache: None,
+            target_tracker: None,
+            current_epoch: 1,
+            target_cooldown_skipped: 0,
+            rejection_breakdown: &breakdown,
+            candidates_returned: 0,
+            starvation_tracker: Some(&starvation),
+        };
+
+        let diag = emit_drought_diagnostic(&inputs, 5).expect("emits");
+        assert_eq!(diag.starved_module_count, 2);
     }
 }

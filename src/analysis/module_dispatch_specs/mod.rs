@@ -83,6 +83,29 @@ pub(crate) fn prepare_and_detect_discovery_modules(
     tracker: &ModuleOutcomeTracker,
     deadline: Option<std::time::SystemTime>,
 ) -> discovery_dispatch::DiscoveryModuleDetectionResults {
+    prepare_and_detect_discovery_modules_with_starvation(
+        creature,
+        hidden_neurons,
+        shared_cache,
+        tracker,
+        deadline,
+        None,
+        0,
+    )
+}
+
+/// Same contract as [`prepare_and_detect_discovery_modules`] but also forwards
+/// the per-creature [`ModuleStarvationTracker`] so modules in active
+/// starvation cooldown are skipped at detection time (Issue #1273).
+pub(crate) fn prepare_and_detect_discovery_modules_with_starvation(
+    creature: &Arc<crate::CreatureJson>,
+    hidden_neurons: &Arc<Vec<(String, String, f32)>>,
+    shared_cache: &Arc<cache::RecordCache>,
+    tracker: &ModuleOutcomeTracker,
+    deadline: Option<std::time::SystemTime>,
+    starvation_tracker: Option<&super::module_starvation_tracker::ModuleStarvationTracker>,
+    current_epoch: u64,
+) -> discovery_dispatch::DiscoveryModuleDetectionResults {
     // Issue #754: Pre-compute topology cache once for all detection modules.
     let topo = Arc::new(CreatureTopologyCache::new(creature));
     let mut modules = build_discovery_module_specs(creature, hidden_neurons, shared_cache, &topo);
@@ -97,7 +120,13 @@ pub(crate) fn prepare_and_detect_discovery_modules(
         }
     }
 
-    discovery_dispatch::detect_discovery_modules_parallel(modules, deadline, Some(tracker))
+    discovery_dispatch::detect_discovery_modules_parallel_with_starvation(
+        modules,
+        deadline,
+        Some(tracker),
+        starvation_tracker,
+        current_epoch,
+    )
 }
 
 /// Synthesise cross-detection candidates for co-flagged neurons (Issue #963).
