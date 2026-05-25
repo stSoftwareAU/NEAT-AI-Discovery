@@ -65,6 +65,59 @@ pub fn max_add_neuron_candidates_per_target() -> usize {
 }
 
 // =============================================================================
+// Per-Final-Target Coordinated-Structural Cap (Issue #1271)
+// =============================================================================
+
+/// Default maximum number of coordinated-structural candidates returned per
+/// final-operation target neuron in a single discovery batch (Issue #1271).
+///
+/// GRQ-sampler commit `e85c5d2` (creature `bcbca347`) showed 41 consecutive
+/// coordinated-structural failures whose final operation all targeted the same
+/// output neuron `533d8616-037c-4278-b95c-3a2a1ce15ee6`. A single problematic
+/// target consumed the entire coordinated-structural budget while other targets
+/// in the creature went unexplored. This cap mirrors the per-target add-neuron
+/// cap (Issue #1140) for the coordinated-structural pipeline.
+///
+/// The cap operates earlier in the pipeline than the cross-target diversity
+/// spread (`MIN_DISTINCT_TARGETS_PER_BATCH`, Issue #1193): it constrains the
+/// candidate pool *before* any diversity-aware reordering downstream.
+///
+/// Overridable via the `NEAT_AI_DISCOVERY_MAX_COORDINATED_PER_TARGET`
+/// environment variable.
+///
+/// ## Valid Range
+/// Must be >= 1. Values above ~10 defeat the purpose of the cap.
+pub const MAX_COORDINATED_PER_TARGET_OUTPUT: usize = 3;
+
+/// Minimum permitted per-final-target coordinated cap after env-var override
+/// clamping.
+pub const MIN_COORDINATED_PER_TARGET_OUTPUT: usize = 1;
+
+/// Maximum permitted per-final-target coordinated cap after env-var override
+/// clamping.
+pub const MAX_COORDINATED_PER_TARGET_OUTPUT_CEILING: usize = 32;
+
+/// Return the effective per-final-target coordinated-structural cap
+/// (Issue #1271).
+///
+/// Reads `NEAT_AI_DISCOVERY_MAX_COORDINATED_PER_TARGET` at call time so tests
+/// can override the default. Values outside the permitted range are clamped to
+/// `[MIN_COORDINATED_PER_TARGET_OUTPUT,
+/// MAX_COORDINATED_PER_TARGET_OUTPUT_CEILING]`. Unparsable or missing values
+/// fall back to `MAX_COORDINATED_PER_TARGET_OUTPUT`.
+#[must_use]
+pub fn max_coordinated_per_target_output() -> usize {
+    std::env::var("NEAT_AI_DISCOVERY_MAX_COORDINATED_PER_TARGET")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(MAX_COORDINATED_PER_TARGET_OUTPUT)
+        .clamp(
+            MIN_COORDINATED_PER_TARGET_OUTPUT,
+            MAX_COORDINATED_PER_TARGET_OUTPUT_CEILING,
+        )
+}
+
+// =============================================================================
 // Cross-Target Diversity Spread (Issue #1193)
 // =============================================================================
 

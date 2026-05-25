@@ -12,11 +12,13 @@
 //! via `rayon::into_par_iter()`, then merges results sequentially. This
 //! preserves deterministic ordering while utilising multiple CPU cores.
 
+use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use crate::CoordinatedStructuralCandidateJson;
+use crate::CoordinatedStructuralOpJson;
 use crate::observability::PhaseTimer;
 use rayon::prelude::*;
 
@@ -26,10 +28,81 @@ use super::constants::{
 };
 use super::diagnostics::rejection_reasons::{
     REJECTION_BELOW_EXPECTED_GAIN_FLOOR, REJECTION_BUDGET_TRUNCATED,
+    REJECTION_COORDINATED_TARGET_CAP_EXCEEDED,
 };
 use super::module_weights::{DiscoveryModuleStatsJson, ModuleOutcomeTracker};
 use super::shared;
 use super::utils;
+
+/// Return the target neuron UUID of the supplied operation, used as the
+/// grouping key for the per-final-target coordinated-structural cap
+/// (Issue #1271).
+fn op_target_uuid(op: &CoordinatedStructuralOpJson) -> &str {
+    match op {
+        CoordinatedStructuralOpJson::RemoveSynapse { to_neuron_uuid, .. }
+        | CoordinatedStructuralOpJson::AddSynapse { to_neuron_uuid, .. }
+        | CoordinatedStructuralOpJson::SetWeight { to_neuron_uuid, .. } => to_neuron_uuid,
+        CoordinatedStructuralOpJson::AddNeuron { neuron_uuid, .. }
+        | CoordinatedStructuralOpJson::RemoveNeuron { neuron_uuid }
+        | CoordinatedStructuralOpJson::ChangeSquash { neuron_uuid, .. }
+        | CoordinatedStructuralOpJson::SetBias { neuron_uuid, .. } => neuron_uuid,
+    }
+}
+
+/// Cap coordinated-structural candidates per **final-operation** target
+/// neuron within a single batch (Issue #1271).
+///
+/// Sorts `candidates` by `expected_creature_score_gain` descending (NaN-safe
+/// via `total_cmp`), then retains only the top-K candidates per last-operation
+/// target UUID, where K is
+/// [`super::constants::max_coordinated_per_target_output`]. Returns the number
+/// of candidates dropped by the cap so callers can record it in the rejection
+/// breakdown under [`REJECTION_COORDINATED_TARGET_CAP_EXCEEDED`].
+///
+/// This cap mirrors the per-target add-neuron cap (Issue #1140) for the
+/// coordinated-structural pipeline. It runs after the post-discount expected-
+/// gain floor and **before** any downstream cross-target diversity reordering,
+/// so it constrains the candidate pool rather than the emitted batch order.
+///
+/// Candidates whose last operation cannot supply a target UUID (an empty
+/// operations vec, which should not occur in practice) are retained unchanged
+/// — the cap is intentionally conservative and only drops candidates with an
+/// identifiable target.
+fn apply_coordinated_per_target_cap(
+    candidates: &mut Vec<CoordinatedStructuralCandidateJson>,
+) -> usize {
+    let cap = super::constants::max_coordinated_per_target_output();
+    if candidates.is_empty() || cap == 0 {
+        return 0;
+    }
+
+    // Sort gain-descending so the retained candidates per target are the
+    // highest-gain ones. `total_cmp` provides a total order including NaN,
+    // breaking ties deterministically.
+    candidates.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+
+    let original_len = candidates.len();
+    let mut per_target: HashMap<String, usize> = HashMap::new();
+    candidates.retain(|candidate| {
+        let Some(last_op) = candidate.operations.last() else {
+            // Candidate has no operations — keep it (the cap can only group
+            // by a known final target).
+            return true;
+        };
+        let target = op_target_uuid(last_op).to_string();
+        let count = per_target.entry(target).or_insert(0);
+        if *count < cap {
+            *count += 1;
+            true
+        } else {
+            false
+        }
+    });
+    original_len - candidates.len()
+}
 
 /// Result of a discovery module's detection phase.
 ///
@@ -81,6 +154,15 @@ pub fn run_discovery_module(
         syn.metadata
             .rejection_breakdown
             .record_many_u32(REJECTION_BELOW_EXPECTED_GAIN_FLOOR, dropped_floor);
+
+        // Issue #1271: After the post-discount floor, cap coordinated
+        // candidates by their final-operation target neuron so a single
+        // problematic target cannot consume the whole batch budget.
+        let dropped_cap_usize = apply_coordinated_per_target_cap(&mut result.candidates);
+        let dropped_cap = u32::try_from(dropped_cap_usize).unwrap_or(u32::MAX);
+        syn.metadata
+            .rejection_breakdown
+            .record_many_u32(REJECTION_COORDINATED_TARGET_CAP_EXCEEDED, dropped_cap);
 
         if utils::verbose_enabled() {
             tracing::debug!(
@@ -371,9 +453,19 @@ pub fn merge_discovery_module_results(
                 .rejection_breakdown
                 .record_many_u32(REJECTION_BELOW_EXPECTED_GAIN_FLOOR, dropped_floor);
 
-            // Issue #1060: Record pre-filtering soft failures for candidates that
-            // were truncated (budget exceeded) or filtered (non-positive gain).
-            let filtered_count = initial_count - post_filter_count;
+            // Issue #1271: After the post-discount floor, cap coordinated
+            // candidates by their final-operation target neuron so a single
+            // problematic target cannot consume the whole batch budget.
+            let dropped_cap_usize = apply_coordinated_per_target_cap(&mut result.candidates);
+            let dropped_cap = u32::try_from(dropped_cap_usize).unwrap_or(u32::MAX);
+            syn.metadata
+                .rejection_breakdown
+                .record_many_u32(REJECTION_COORDINATED_TARGET_CAP_EXCEEDED, dropped_cap);
+
+            // Issue #1060, #1271: Record pre-filtering soft failures for
+            // candidates that were truncated (budget exceeded), filtered
+            // (non-positive gain), or capped (per-final-target).
+            let filtered_count = initial_count - result.candidates.len();
             if filtered_count > 0 {
                 tracker.record_soft_failures(
                     &entry.module_name,

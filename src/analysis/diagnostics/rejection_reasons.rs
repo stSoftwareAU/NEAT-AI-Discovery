@@ -70,6 +70,11 @@ pub const REJECTION_PER_TARGET_CAP: &str = "per_target_cap";
 /// budget on near-identical failing bets.
 pub const REJECTION_SAME_TARGET_SQUASH_DUPLICATE: &str = "same_target_squash_duplicate";
 
+/// Coordinated-structural candidate was dropped because the per-final-target
+/// cap (`MAX_COORDINATED_PER_TARGET_OUTPUT`) was already reached for the
+/// last operation's target neuron in the current batch (Issue #1271).
+pub const REJECTION_COORDINATED_TARGET_CAP_EXCEEDED: &str = "coordinated_target_cap_exceeded";
+
 /// Synapse: no overlapping discovery samples between source and target.
 pub const REJECTION_NO_SAMPLES: &str = "no_samples";
 
@@ -138,6 +143,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_BUDGET_TRUNCATED,
     REJECTION_PER_TARGET_CAP,
     REJECTION_SAME_TARGET_SQUASH_DUPLICATE,
+    REJECTION_COORDINATED_TARGET_CAP_EXCEEDED,
     REJECTION_NO_SAMPLES,
     REJECTION_ZERO_IMPROVEMENT,
     REJECTION_BELOW_THRESHOLD,
@@ -293,6 +299,9 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_BUDGET_TRUNCATED => "per-module candidate budget".to_string(),
         REJECTION_PER_TARGET_CAP => "per-target add-neuron cap".to_string(),
         REJECTION_SAME_TARGET_SQUASH_DUPLICATE => "duplicate squash within same target".to_string(),
+        REJECTION_COORDINATED_TARGET_CAP_EXCEEDED => {
+            "per-final-target coordinated-structural cap".to_string()
+        }
         REJECTION_NO_SAMPLES => "no overlapping discovery samples".to_string(),
         REJECTION_ZERO_IMPROVEMENT => "zero consistent improvement in GPU stats".to_string(),
         REJECTION_BELOW_THRESHOLD => "expected-improvement per-target threshold".to_string(),
