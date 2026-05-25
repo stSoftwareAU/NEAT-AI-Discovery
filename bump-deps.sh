@@ -415,8 +415,9 @@ if [[ -f "$CARGO_MANIFEST" ]]; then
                 bump_deps::extract_dep_versions "$CARGO_MANIFEST" > "$BEFORE_VERSIONS"
 
                 # Apply compatible upgrades only (incompatible upgrades are
-                # higher-risk and require a human review; the worker can do
-                # those via the upgrade-dependencies.yml workflow).
+                # higher-risk and require a human review; raise a manual PR
+                # for those — the weekly upgrade-dependencies.yml workflow
+                # was removed in Issue #1282).
                 if cargo upgrade --compatible 2>&1 | tee /tmp/bump-deps-upgrade.log; then
                     bump_deps::extract_dep_versions "$CARGO_MANIFEST" > "$AFTER_VERSIONS"
 
