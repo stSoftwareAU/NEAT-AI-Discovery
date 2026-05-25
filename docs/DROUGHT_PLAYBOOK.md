@@ -14,6 +14,7 @@ It is the operator companion to:
 - Issue #1202 — drought diagnostic (`droughtDiagnostic`).
 - Issue #1203 — adaptive staleness window.
 - Issue #1205 — operator escape hatch (forced reset).
+- Issue #1274 — dominant-failure-pattern enrichment of the diagnostic.
 
 ## Symptoms
 
@@ -50,9 +51,21 @@ A discovery drought presents as one or more of:
     "dominantRejectionReason": "no_eligible_sources",
     "dominantRejectionCount": 91,
     "totalCandidatesConsidered": 91,
-    "totalCandidatesRejected": 91
+    "totalCandidatesRejected": 91,
+    "dominantFailedModule": "coordinated-structural",
+    "dominantFailedModuleShare": 0.91,
+    "dominantFailedTargetUuid": "533d8616-…",
+    "dominantFailedTargetShare": 0.96,
+    "dominantOperationCount": 4,
+    "predictedVsActualGapP50": -1000.0
   }
   ```
+
+  The final six fields (Issue #1274) summarise the **shape** of recent
+  failures: which module / target / op count dominates and how badly the
+  predicted gain compared with the measured one. They populate once the
+  rolling per-creature failure window holds at least five entries; below
+  that the dominant fields are `null` / `0.0`.
 
 - **`discovery_mode` flips to `"conservative"`** in FFI metadata (Issue #1132)
   once the rolling success rate over the last 10 passes drops below the
@@ -124,6 +137,12 @@ top-to-bottom and follow the lever each field points at.
 | `dominantRejectionCount` | Hits for that reason on the current pass. | Compare to `totalCandidatesRejected` to gauge how dominant it is. |
 | `totalCandidatesConsidered` | Returned + rejected. | If 0, no candidates reached post-processing — the cache and cooldown ate them. Reach for `DROUGHT_RESET_AFTER_EPOCHS`. |
 | `totalCandidatesRejected` | Rejected across all reasons. | High counts with `totalCandidatesConsidered == totalCandidatesRejected` mean every candidate failed a filter — read `dominantRejectionReason` first. |
+| `dominantFailedModule` | Discovery module responsible for most recent failures (e.g. `"coordinated-structural"`). `null` until ≥ 5 failures are recorded. | If one module dominates, its scoring / gain-floor settings are the first lever (e.g. `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` for coordinated-structural). |
+| `dominantFailedModuleShare` | Share (0.0–1.0) of recent failures from `dominantFailedModule`. | A share > 0.8 means the pipeline is essentially failing on one module — investigate that module's recommendation logic. |
+| `dominantFailedTargetUuid` | Target neuron UUID that absorbs the most recent failures. `null` until ≥ 5 failures are recorded. | A single dominant target usually means the cooldown tracker has not engaged yet, or the target is structurally unfit for new attachments. Compare with `targetCooldownActiveCount`. |
+| `dominantFailedTargetShare` | Share (0.0–1.0) of recent failures targeting `dominantFailedTargetUuid`. | A share at 1.0 means every recent failure hit the same neuron — almost certainly an output saturation or sink-neuron problem. |
+| `dominantOperationCount` | Most common operation count (e.g. `4` for 4-op coordinated-structural collapses). `null` until ≥ 5 failures are recorded. | High values (≥ 4) with a coordinated-structural dominant module point at collapse-variant overfitting. |
+| `predictedVsActualGapP50` | Median ratio of `actualErrorReduction / expectedCreatureScoreGain`. Negative means the candidates moved error the wrong way. `0.0` when the window is below the 5-failure floor or every prediction was zero. | Large magnitude (≥ 100 either way) means the scorer is mis-calibrated for the dominant module — bump the calibration prior (`NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR`) or shrink the conservative-mode gain multiplier. |
 
 Common `dominantRejectionReason` values and the lever each implies:
 
