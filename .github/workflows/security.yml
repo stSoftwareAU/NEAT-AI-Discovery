@@ -17,6 +17,10 @@ permissions:
 jobs:
   security:
     runs-on: ubuntu-latest
+    # cargo install cargo-audit + audit run + dependency-review.
+    # Compiling cargo-audit from source dominates runtime; 20 minutes
+    # covers a cold build while still bounding hangs (Issue #1287).
+    timeout-minutes: 20
     steps:
     - name: Checkout code
       # Pinned to actions/checkout v6.0.2 (Node.js 24) to avoid the
