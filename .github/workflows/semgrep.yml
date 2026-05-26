@@ -4,6 +4,11 @@ on:
   pull_request:
     branches: ["*"]
 
+# Cancel superseded runs on the same ref (Issue #1288).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

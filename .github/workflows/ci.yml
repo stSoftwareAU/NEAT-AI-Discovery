@@ -19,6 +19,14 @@ on:
       - Develop
   workflow_dispatch: # Allow manual trigger if needed
 
+# Cancel superseded runs on the same ref (Issue #1288). When a contributor
+# force-pushes a PR or lands several commits to Develop in quick succession,
+# in-flight runs are cancelled so the latest commit's checks finish sooner
+# and runner capacity is not wasted on stale builds.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Minimal top-level permissions — narrow the default GITHUB_TOKEN scope to
 # read-only for unprivileged jobs (quality, validation, spell-check). Jobs
 # that need write access (version-increment, auto-format) declare their own
