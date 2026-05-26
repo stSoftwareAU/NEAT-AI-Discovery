@@ -10,6 +10,9 @@ permissions:
 jobs:
   semgrep:
     runs-on: ubuntu-latest
+    # SAST scan over the tree — light job, 10 minute cap
+    # (Issue #1287).
+    timeout-minutes: 10
     container:
       # Pinned to semgrep/semgrep 1.163.0 (Issue #1258). The multi-arch
       # manifest digest below is immutable; Renovate's github-actions

@@ -35,6 +35,10 @@ jobs:
     name: Auto-increment Versions
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    # Cap runtime to surface wedged `cargo install` / `git fetch` steps
+    # as fast failures rather than letting them tie up a runner for the
+    # GitHub default 6h (Issue #1287).
+    timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
@@ -159,6 +163,10 @@ jobs:
     runs-on: 'ubuntu-latest'
     if: github.event_name == 'pull_request'
     needs: [version-increment, auto-format]
+    # Heaviest job: Rust compile, clippy, full test suite. 45 minutes
+    # leaves headroom for cold caches while still firing well before
+    # the 6h GitHub default (Issue #1287).
+    timeout-minutes: 45
     env:
       RUSTFLAGS: "-D warnings"
     
@@ -260,7 +268,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     needs: [version-increment]
-    
+    # File-presence and lightweight cargo check — 10 minutes is plenty
+    # while still capping wedged-runner exposure (Issue #1287).
+    timeout-minutes: 10
+
     steps:
     - name: Checkout code
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.
@@ -333,6 +344,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     needs: [version-increment]
+    # rustfmt + commit-and-push; 15 minutes covers a cold toolchain
+    # install while still bounding hangs (Issue #1287).
+    timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
@@ -404,7 +418,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     needs: [version-increment]
-    
+    # codespell over the tree — light job, 10 minute cap (Issue #1287).
+    timeout-minutes: 10
+
     steps:
     - name: Checkout code
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.
