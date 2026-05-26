@@ -28,20 +28,27 @@ use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use tempfile::NamedTempFile;
 
-/// Production pattern: STEP neuron gets full impact (no normalisation)
+/// Production pattern: STEP neuron contribution is squash-bounded (Issue #1300).
 ///
-/// From actual production data where STEP neurons were incorrectly diluted.
-/// Any synapse to a STEP neuron could flip the output, so each gets full impact.
+/// **Updated for Issue #1300 (May 2026)**: Previously this test locked in the OLD
+/// behaviour where every inbound synapse to a STEP neuron received the full
+/// `child_impact` (sum over N inbound = `N × child_impact`). That overstated the
+/// influence of small competing synapses and ignored the squash's emit ceiling.
+///
+/// Per Issue #1300, the threshold path now normalises by total inbound weight
+/// and caps by the squash's emit magnitude (`M = 1.0` for STEP). A tiny synapse
+/// (weight 0.001) competing with a large one (weight 100) gets its proportional
+/// share, not the full `child_impact`. The "any synapse can flip the output"
+/// intent is preserved by the cap at `min(M, child_impact)` — each synapse
+/// still receives its weighted share of the full emit-bounded influence.
 #[test]
-fn test_step_neuron_uses_full_impact_not_normalised() {
-    // A synapse to a STEP output neuron should have full downstream impact
-    // because any synapse could cause the threshold to be crossed
+fn test_step_neuron_contribution_is_squash_bounded() {
     let creature = CreatureJson {
         input: 1,
         output: 1,
         neurons: vec![
             hidden("candidate", "IDENTITY"),
-            output("step-output", "STEP"), // STEP = threshold function
+            output("step-output", "STEP"),
         ],
         synapses: vec![
             synapse("input-0", "candidate", 1.0),
@@ -53,12 +60,18 @@ fn test_step_neuron_uses_full_impact_not_normalised() {
     let impacts = compute_impacts_public(&creature);
     let candidate_impact = *impacts.get("candidate").unwrap_or(&0.0);
 
-    // For STEP targets, we use full impact (no normalisation)
-    // because any synapse could flip the output
+    // New normalised + squash-bounded behaviour (Issue #1300):
+    //   T_step = 0.001 + 100.0 = 100.001
+    //   candidate contribution = (0.001 / 100.001) × 1.0 ≈ 9.99e-6
+    //   capped at min(M=1.0, child_impact=1.0) — no further scaling.
     assert!(
-        (candidate_impact - 1.0).abs() < 0.001,
-        "STEP target should give full impact (1.0), got {candidate_impact:.4}. \
-         Threshold functions don't dilute impact."
+        candidate_impact > 0.0,
+        "candidate must keep positive influence under squash bounding, got {candidate_impact}"
+    );
+    assert!(
+        candidate_impact < 1e-4,
+        "candidate's tiny weight (0.001) versus competing weight (100) should yield a \
+         proportionally tiny squash-bounded impact, got {candidate_impact}"
     );
 }
 

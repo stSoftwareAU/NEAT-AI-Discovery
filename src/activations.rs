@@ -407,6 +407,49 @@ pub fn target_simulation_fn(name: &str) -> Option<fn(f32) -> f32> {
     }
 }
 
+/// Returns the maximum absolute output magnitude for bounded scalar squashes (Issue #1300).
+///
+/// This is used by the impact calculation to bound per-synapse contributions so the sum
+/// of inbound contributions into a neuron cannot exceed what the squash can actually emit
+/// (the "saturation ceiling"). For example, a TANH neuron emits values in `[-1, 1]`, so the
+/// magnitude is `1.0`; ten upstream synapses each feeding pre-activation `10` still share
+/// the same `±1` emit ceiling rather than each independently contributing `10`.
+///
+/// # Return value
+///
+/// - `Some(M)` where `M > 0` is the largest `|f(x)|` the squash can produce.
+/// - `None` for unbounded squashes (IDENTITY, RELU, ELU, LEAKYRELU, SELU, EXPONENTIAL,
+///   SOFTPLUS, CUBE, SQUARE, etc.) and aggregate squashes (MIN/MAX/IF/HYPOT — handled by
+///   selection statistics instead).
+///
+/// # Notes
+///
+/// - `STEP` outputs `{0, 1}` → magnitude `1.0`.
+/// - `BIPOLAR` outputs `{-1, +1}` → magnitude `1.0`.
+/// - `HARD_TANH`/`CLIPPED` clamps to `[-1, 1]` → magnitude `1.0`.
+/// - `GAUSSIAN` outputs `(0, 1]` → magnitude `1.0`.
+/// - `ARCTAN` outputs `(-π/2, π/2)` → magnitude `π/2 ≈ 1.5708`.
+/// - `RELU6` clamps to `[0, 6]` → magnitude `6.0`.
+#[must_use]
+pub fn squash_emit_magnitude(name: &str) -> Option<f32> {
+    let n = normalise_squash_name(name);
+    match n.as_ref() {
+        // Bounded to ±1
+        "TANH" | "LOGISTIC" | "HARD_TANH" | "CLIPPED" | "SOFTSIGN" | "BIPOLAR_SIGMOID" | "ISRU"
+        | "STEP" | "BIPOLAR" | "GAUSSIAN" => Some(1.0),
+        // ARCTAN: (-π/2, π/2)
+        "ARCTAN" => Some(std::f32::consts::FRAC_PI_2),
+        // RELU6: [0, 6]
+        "RELU6" => Some(6.0),
+        // LOGSIGMOID: (-∞, 0]; unbounded below — treat as unbounded.
+        // Unbounded scalar squashes: IDENTITY, RELU, LEAKYRELU, ELU, SELU,
+        // EXPONENTIAL, SOFTPLUS, CUBE, SQUARE, SINE, COSINE, TAN, MISH, SWISH,
+        // GELU, ABSOLUTE, STDINVERSE, SQRT, BENT_IDENTITY, COMPLEMENT/INVERSE.
+        // Aggregate squashes (MIN/MAX/IF/HYPOT/MEAN) — handled by selection stats.
+        _ => None,
+    }
+}
+
 /// Returns an approximate inverse function for monotonic activations (Issue #906).
 ///
 /// When `target_value` is missing but `target_activation` is available, the inverse function
