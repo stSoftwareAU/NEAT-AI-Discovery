@@ -394,6 +394,79 @@ when available. Different squash functions use different impact formulas:
 > weights (`|w|/T × child_impact`) as documented. Previously, it incorrectly used
 > absolute weights (`|w| × child_impact`), causing hidden neurons to get impact >= 1.0.
 
+> **Issue #1300 fix (mirrors `NEAT-AI-Explore#266`)**: Two further correctness gaps
+> have been addressed:
+>
+> 1. **Squash-bounded contribution.** The sum of inbound contributions to a neuron
+>    cannot exceed the downstream squash's *emit magnitude* (`M`). For bounded
+>    squashes (TANH, LOGISTIC, HARD_TANH, STEP, BIPOLAR, RELU6, ...), the sum is
+>    capped at `M` even when the neuron feeds multiple outputs (so `child_impact > 1`).
+>    Threshold squashes (STEP/BIPOLAR) previously returned the full `child_impact`
+>    for *every* inbound synapse — overstating influence by a factor of `N` for
+>    `N` inbound synapses. They now normalise by total inbound weight and apply
+>    the same emit-magnitude cap as Linear bounded squashes.
+> 2. **Downstream consumer gates.** A new `ConsumerContract` API lets callers
+>    declare external `min(output, constant)` / `max(output, constant)` gates so
+>    impact attribution is scaled by the gate's pass-through probability. Outputs
+>    not in the contract default to a fully-open gate (no change in behaviour).
+>    A helper `derive_regime_threshold_from_records` picks a percentile from the
+>    recorded activation distribution when no external constant is known.
+
+### 🛡️ Squash emit magnitude (Issue #1300)
+
+| Squash | Output range | `squash_emit_magnitude` |
+|--------|--------------|-------------------------|
+| `TANH`, `LOGISTIC`, `HARD_TANH`, `SOFTSIGN`, `BIPOLAR_SIGMOID`, `ISRU` | bounded `±1` | `Some(1.0)` |
+| `STEP`, `BIPOLAR`, `GAUSSIAN` | `{0, 1}` / `{-1, 1}` / `(0, 1]` | `Some(1.0)` |
+| `ARCTAN` | `(-π/2, π/2)` | `Some(π/2)` |
+| `RELU6` | `[0, 6]` | `Some(6.0)` |
+| `IDENTITY`, `RELU`, `LEAKYRELU`, `ELU`, `SELU`, `CUBE`, `SQUARE`, ... | unbounded | `None` |
+| `MINIMUM`, `MAXIMUM`, `IF`, `HYPOT`, `MEAN` | aggregate (selection stats handle these) | `None` |
+
+The bounding formula for a per-synapse contribution `c` into a child neuron with
+emit magnitude `M` and currently-accumulated `child_impact`:
+
+$$
+c_{\text{bounded}} = \begin{cases}
+c & \text{if } M = \infty \text{ or } \text{child\_impact} \le M \\
+c \cdot \dfrac{M}{\text{child\_impact}} & \text{otherwise}
+\end{cases}
+$$
+
+This preserves the relative shares of inbound synapses while ensuring the
+total influence respects the squash's saturation ceiling.
+
+### 🔁 Consumer contracts (Issue #1300)
+
+```rust
+use neat_ai_discovery::focus::{
+    ConsumerContract, OutputGate, compute_impacts_with_contract,
+};
+
+let contract = ConsumerContract::new()
+    .with_gate("volume-output", OutputGate::MinAgainstConstant(0.25));
+let impacts = compute_impacts_with_contract(&creature, Some(&records), Some(&contract))?;
+```
+
+When the gate is `MinAgainstConstant(t)`, the network output only drives the
+downstream consumer in the regime where `output < t`. The impact attribution is
+scaled by the fraction of recorded observations satisfying that condition.
+`MaxAgainstConstant(t)` is the symmetric case (gate fires when `output > t`).
+`Identity` is the no-op gate (equivalent to omitting the output from the
+contract). The above flow is depicted below.
+
+```mermaid
+flowchart LR
+    A[Recorded output<br/>activations] --> B{Gate?}
+    B -- "Identity" --> C[Factor = 1.0]
+    B -- "min(out, t)" --> D[Factor = P(out < t)]
+    B -- "max(out, t)" --> E[Factor = P(out > t)]
+    C --> F[Scale output<br/>initial impact]
+    D --> F
+    E --> F
+    F --> G[Backward propagate<br/>through network]
+```
+
 | Squash Function | Impact Model | Accuracy | Notes |
 |-----------------|--------------|----------|-------|
 | **IDENTITY** | Linear (normalised) | ✅ Accurate | Mathematically exact |

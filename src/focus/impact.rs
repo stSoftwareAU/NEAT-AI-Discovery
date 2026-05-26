@@ -6,12 +6,36 @@
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::ranking::{RecordProvider, SelectionStats};
+use crate::activations::squash_emit_magnitude;
 use crate::{CreatureJson, NeuronJson, SynapseJson};
 use anyhow::Result;
 use rayon::prelude::*;
 
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
+
+/// Apply the squash-bounded contribution cap (Issue #1300).
+///
+/// When the downstream neuron's squash has a bounded emit magnitude `M`, the sum of
+/// inbound contributions cannot exceed `M` (the saturation ceiling). The current per-
+/// synapse contribution `raw` is part of a sum that — without capping — equals
+/// `child_impact`. We rescale by `min(1, M / child_impact)` so the cap holds.
+///
+/// For unbounded squashes (IDENTITY, RELU, ELU, ...), `squash_emit_magnitude` returns
+/// `None` and the contribution is returned unchanged.
+fn apply_squash_bounding(raw: f32, child_impact: f32, squash: &str) -> f32 {
+    match squash_emit_magnitude(squash) {
+        Some(m) => {
+            if child_impact <= m {
+                raw
+            } else {
+                // Rescale: sum across inbound was child_impact, cap at m.
+                raw * (m / child_impact)
+            }
+        }
+        None => raw,
+    }
+}
 
 /// Categorise squash functions for impact calculation.
 /// See `docs/IMPACT_CALCULATION.md` for detailed explanation.
@@ -431,6 +455,49 @@ struct ImpactContext {
     /// When available, provides actual win probabilities for MIN/MAX/IF synapses
     /// instead of the conservative 1/N equal probability fallback.
     selection_stats: Option<SelectionStats>,
+    /// Per-output gate pass-through probability (Issue #1300).
+    /// When an output is gated by a downstream `min`/`max`, its initial impact
+    /// is scaled by the fraction of observations where the gate lets the
+    /// output drive the downstream value. Outputs not in the map default to
+    /// `1.0` (no gating).
+    output_gate_factors: HashMap<String, f32>,
+}
+
+/// Build the per-output gate pass-through probability map (Issue #1300).
+///
+/// When a contract is provided and records are available, each gated output
+/// gets its pass-through probability computed from the recorded activation
+/// distribution. Outputs absent from the contract — or with `Identity` gates
+/// — get factor `1.0`. The contract takes effect only on the outputs listed
+/// in it, so the existing behaviour is preserved when no contract is passed.
+fn build_output_gate_factors(
+    outputs: &HashSet<String>,
+    grouped_records: Option<&dyn RecordProvider>,
+    contract: Option<&ConsumerContract>,
+) -> HashMap<String, f32> {
+    let mut factors: HashMap<String, f32> = HashMap::new();
+    let Some(contract) = contract else {
+        return factors;
+    };
+    for output_uuid in outputs {
+        let gate = contract
+            .gates
+            .get(output_uuid)
+            .copied()
+            .unwrap_or(OutputGate::Identity);
+        if matches!(gate, OutputGate::Identity) {
+            continue;
+        }
+        let prob = match grouped_records {
+            Some(records) => match records.get(output_uuid).ok().flatten() {
+                Some(arc) => gate_pass_probability(gate, arc.as_ref()),
+                None => 1.0,
+            },
+            None => 1.0,
+        };
+        factors.insert(output_uuid.clone(), prob);
+    }
+    factors
 }
 
 fn build_adjacency(creature: &CreatureJson) -> HashMap<String, Vec<(String, f32)>> {
@@ -476,6 +543,16 @@ fn compute_impacts_internal_with_stats(
     creature: &CreatureJson,
     grouped_records: Option<&dyn RecordProvider>,
 ) -> Result<HashMap<String, f32>> {
+    compute_impacts_internal_with_stats_and_contract(creature, grouped_records, None)
+}
+
+/// Variant of [`compute_impacts_internal_with_stats`] that additionally accepts a
+/// [`ConsumerContract`] to model downstream gates (Issue #1300).
+fn compute_impacts_internal_with_stats_and_contract(
+    creature: &CreatureJson,
+    grouped_records: Option<&dyn RecordProvider>,
+    contract: Option<&ConsumerContract>,
+) -> Result<HashMap<String, f32>> {
     let adjacency = build_adjacency(creature);
     let squash_map = super::gradient::build_squash_map(creature);
 
@@ -508,6 +585,11 @@ fn compute_impacts_internal_with_stats(
         .map(|records| compute_selection_stats(creature, records))
         .transpose()?;
 
+    // Issue #1300: Compute per-output gate pass-through probabilities when a
+    // consumer contract is provided. Outputs without an explicit gate (or with
+    // OutputGate::Identity) default to 1.0 (unmasked).
+    let output_gate_factors = build_output_gate_factors(&outputs, grouped_records, contract);
+
     let ctx = ImpactContext {
         adjacency,
         inbound_count,
@@ -515,6 +597,7 @@ fn compute_impacts_internal_with_stats(
         squash_map,
         outputs,
         selection_stats,
+        output_gate_factors,
     };
 
     // Parallel impact computation using thread-local caches
@@ -569,7 +652,9 @@ fn compute_impact_with_shared_cache(
     }
 
     let impact = if ctx.outputs.contains(uuid) {
-        1.0
+        // Issue #1300: Scale by downstream consumer gate factor. Defaults to
+        // 1.0 when no contract is supplied or the gate is fully open.
+        ctx.output_gate_factors.get(uuid).copied().unwrap_or(1.0)
     } else if let Some(edges) = ctx.adjacency.get(uuid) {
         // Sum across all outgoing edges
         let mut total_impact = 0.0;
@@ -610,14 +695,43 @@ fn compute_impact_with_shared_cache(
                         .unwrap_or(1.0)
                         .max(weight.abs()); // Bounds ratio to [0,1]: total >= weight.abs() always
 
-                    if total <= 0.0 {
+                    let raw = if total <= 0.0 {
                         // All weights are zero (including this one) → zero contribution
                         0.0
                     } else {
                         (weight.abs() / total) * child_impact
+                    };
+                    // Issue #1300: Apply squash-bounded cap so the sum of inbound
+                    // contributions cannot exceed the downstream squash's emit magnitude
+                    // (e.g. TANH/LOGISTIC capped at ±1 even when child_impact > 1 because
+                    // the neuron feeds multiple outputs).
+                    apply_squash_bounding(raw, child_impact, squash)
+                }
+                SquashCategory::Threshold => {
+                    // Issue #1300: Threshold squashes (STEP/BIPOLAR) previously returned
+                    // the unnormalised `child_impact` for every inbound synapse, so the
+                    // sum across `N` inbound synapses was `N × child_impact`. This
+                    // overstated influence whenever multiple inputs feed the threshold.
+                    //
+                    // New behaviour: normalise by total inbound weight (same as Linear)
+                    // and apply the squash emit magnitude cap. The "any synapse can flip
+                    // the output" intent is preserved by the cap at `min(M, child_impact)`
+                    // — each synapse still receives its weighted share of the full
+                    // emit-bounded influence.
+                    let total = ctx
+                        .total_inbound_weight
+                        .get(to_uuid)
+                        .copied()
+                        .unwrap_or(1.0)
+                        .max(weight.abs());
+
+                    if total <= 0.0 {
+                        0.0
+                    } else {
+                        let raw = (weight.abs() / total) * child_impact;
+                        apply_squash_bounding(raw, child_impact, squash)
                     }
                 }
-                SquashCategory::Threshold => child_impact,
                 SquashCategory::Selection => {
                     if let Some(ref stats) = ctx.selection_stats {
                         let key = (uuid.to_string(), to_uuid.clone());
@@ -645,6 +759,139 @@ fn compute_impact_with_shared_cache(
     shared_cache.insert(uuid.to_string(), impact);
 
     impact
+}
+
+/// Downstream consumer gate model (Issue #1300).
+///
+/// Discovery's impact attribution assumes a network's output drives downstream
+/// consumers directly. In practice, consumers often combine outputs with `min(...)`
+/// gates (e.g. a trading pipeline applies the Volume recommendation only when
+/// volume is below a threshold). An output gated by a `min` only drives the
+/// downstream value when the network's output is the smaller operand;
+/// attributing influence across the masked regime overstates the output's effect.
+///
+/// A `ConsumerContract` lets callers describe these external gates so that the
+/// impact attribution scales each output's initial impact by the probability the
+/// gate lets the network's output through. Without a contract the existing
+/// "all outputs are unmasked" behaviour is preserved.
+#[derive(Debug, Clone, Default)]
+pub struct ConsumerContract {
+    /// Per-output gate type, keyed by output neuron UUID.
+    pub gates: HashMap<String, OutputGate>,
+}
+
+/// Downstream gate applied to a single output neuron (Issue #1300).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OutputGate {
+    /// No gating; output drives downstream directly. Equivalent to omitting the
+    /// output from the contract.
+    Identity,
+    /// Output is consumed by `min(output, threshold)`. Influence is only
+    /// attributed when the output's activation is `< threshold`. Use
+    /// [`derive_regime_threshold_from_records`] to pick `threshold` from the
+    /// recorded distribution when no external constant is known.
+    MinAgainstConstant(f32),
+    /// Output is consumed by `max(output, threshold)`. Influence is only
+    /// attributed when the output's activation is `> threshold`.
+    MaxAgainstConstant(f32),
+}
+
+impl ConsumerContract {
+    /// Construct an empty contract — equivalent to passing no contract at all.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            gates: HashMap::new(),
+        }
+    }
+
+    /// Register a gate for the given output neuron UUID.
+    pub fn with_gate(mut self, output_uuid: impl Into<String>, gate: OutputGate) -> Self {
+        self.gates.insert(output_uuid.into(), gate);
+        self
+    }
+}
+
+/// Derive a regime threshold from a recorded distribution (Issue #1300).
+///
+/// `percentile` should be in `[0.0, 1.0]`. Returns `None` when the records contain
+/// no finite activations. Non-finite activations (NaN/Inf) are filtered out before
+/// the percentile is taken.
+///
+/// Typical use: when modelling a `min(output, constant)` consumer gate but no
+/// explicit constant is known, pick the threshold from the recorded distribution
+/// (e.g. the 25th percentile so "low" inputs trigger the gate).
+#[must_use]
+pub fn derive_regime_threshold_from_records(
+    records: &[crate::types::DiscoverRecord],
+    percentile: f32,
+) -> Option<f32> {
+    let mut values: Vec<f32> = records
+        .iter()
+        .map(|r| r.activation)
+        .filter(|v| v.is_finite())
+        .collect();
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(f32::total_cmp);
+    let p = percentile.clamp(0.0, 1.0);
+    let len = values.len();
+    let span = (len - 1) as f32;
+    // `round()` gives a non-negative finite scalar in `[0, span]`; the cast is
+    // intentional (Issue #873) and bounded by `min(len - 1)`.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let idx = ((p * span).round() as usize).min(len - 1);
+    Some(values[idx])
+}
+
+/// Compute the gate pass-through probability from records (Issue #1300).
+///
+/// Returns the fraction of observations where the gate would "let through" the
+/// network output — that is, the regime where the network output actually drives
+/// the downstream value. Returns `1.0` for [`OutputGate::Identity`] or when no
+/// records are available (conservative: assume the gate is open).
+fn gate_pass_probability(gate: OutputGate, records: &[crate::types::DiscoverRecord]) -> f32 {
+    if matches!(gate, OutputGate::Identity) || records.is_empty() {
+        return 1.0;
+    }
+    let finite: Vec<f32> = records
+        .iter()
+        .map(|r| r.activation)
+        .filter(|v| v.is_finite())
+        .collect();
+    if finite.is_empty() {
+        return 1.0;
+    }
+    let n = finite.len() as f32;
+    let matching = match gate {
+        OutputGate::Identity => return 1.0,
+        OutputGate::MinAgainstConstant(threshold) => {
+            finite.iter().filter(|&&v| v < threshold).count()
+        }
+        OutputGate::MaxAgainstConstant(threshold) => {
+            finite.iter().filter(|&&v| v > threshold).count()
+        }
+    };
+    matching as f32 / n
+}
+
+/// Compute impacts with optional activation-based selection statistics AND a
+/// downstream consumer contract (Issue #1300).
+///
+/// When `contract` is provided, each output's initial impact is scaled by the
+/// probability that the downstream gate lets the output through. Outputs whose
+/// gate is `Identity` (or absent from the contract) keep impact `= 1.0`.
+///
+/// # Errors
+///
+/// Returns an error if the underlying selection-stats computation fails.
+pub fn compute_impacts_with_contract(
+    creature: &CreatureJson,
+    grouped_records: Option<&dyn RecordProvider>,
+    contract: Option<&ConsumerContract>,
+) -> Result<HashMap<String, f32>> {
+    compute_impacts_internal_with_stats_and_contract(creature, grouped_records, contract)
 }
 
 /// Public version that computes impacts with activation-based selection statistics.
