@@ -40,7 +40,8 @@ pub use gradient::{GradientFlowStats, compute_gradient_flow_stats};
 
 // From impact
 pub use impact::{
-    compute_impacts_public, compute_impacts_with_activations, compute_selection_stats,
+    ConsumerContract, OutputGate, compute_impacts_public, compute_impacts_with_activations,
+    compute_impacts_with_contract, compute_selection_stats, derive_regime_threshold_from_records,
 };
 
 // From ranking

@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v0.74.74]
+
+### Fixed
+
+#### Squash-bounded impact attribution and consumer-gate model (Issue #1300)
+
+Mirrors `NEAT-AI-Explore#266`. Three correctness gaps in the impact calculation:
+
+- **Squash-bounded contribution.** Per-synapse contribution now respects the
+  downstream squash's emit magnitude (`squash_emit_magnitude` in
+  `src/activations.rs`). For threshold squashes (STEP/BIPOLAR) the previous
+  behaviour returned the full `child_impact` for every inbound synapse —
+  overstating influence by `N×` for `N` inbound synapses. Threshold squashes
+  now normalise by total inbound weight and apply the emit cap, same as Linear
+  bounded squashes (TANH, LOGISTIC, HARD_TANH, ...).
+- **Min-gate awareness.** New `ConsumerContract` / `OutputGate` API and
+  `compute_impacts_with_contract` let callers declare downstream
+  `min(output, constant)` / `max(output, constant)` gates. Output impacts are
+  scaled by the gate's pass-through probability computed from records.
+- **Auto-derived regime thresholds.** New
+  `derive_regime_threshold_from_records` helper picks a percentile from the
+  recorded distribution so callers do not need to hard-code constants.
+
+See `docs/IMPACT_CALCULATION.md` for the updated semantics.
+
 ## [v0.72.34]
 
 ### Added
