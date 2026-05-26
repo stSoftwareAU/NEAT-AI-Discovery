@@ -93,11 +93,16 @@ fn ci_yml_jobs_declare_timeout_minutes() {
 
 #[test]
 fn cargo_quality_yml_job_declares_timeout_minutes() {
+    // The cargo-quality.yml workflow was trimmed to coverage-only in
+    // Issue #1289; its sole job is now `coverage` (the duplicate
+    // fmt/clippy gates were removed because they're already covered by
+    // ci.yml/quality).
     let body = read_workflow("cargo-quality.yml");
-    let block = job_block(&body, "quality").expect("job `quality` not found in cargo-quality.yml");
+    let block =
+        job_block(&body, "coverage").expect("job `coverage` not found in cargo-quality.yml");
     assert!(
         has_timeout_minutes(block),
-        "job `quality` in cargo-quality.yml must declare \
+        "job `coverage` in cargo-quality.yml must declare \
          `timeout-minutes:` (Issue #1287)",
     );
 }
