@@ -19,6 +19,13 @@ on:
       - Develop
   workflow_dispatch: # Allow manual trigger if needed
 
+# Minimal top-level permissions — narrow the default GITHUB_TOKEN scope to
+# read-only for unprivileged jobs (quality, validation, spell-check). Jobs
+# that need write access (version-increment, auto-format) declare their own
+# per-job `permissions:` blocks which override this default.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: "2"
