@@ -89,7 +89,9 @@ jobs:
       run: cargo install --locked --version 0.16.0 cargo-outdated
         
     - name: Check for source changes and increment version
+      shell: bash
       run: |
+        set -euo pipefail
         # Determine base branch name (try Develop first, then develop)
         BASE_BRANCH="Develop"
         if ! git show-ref --verify --quiet refs/remotes/origin/Develop; then
@@ -155,7 +157,9 @@ jobs:
         
     - name: Check if there are changes
       id: changes
+      shell: bash
       run: |
+        set -euo pipefail
         if ! git diff --quiet; then
           git add -A
           git commit -m "chore: auto-increment versions for changed projects"
@@ -196,7 +200,9 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Free up runner disk space
+      shell: bash
       run: |
+        set -euo pipefail
         # GitHub runners start with ~17GB free but Rust builds can exceed this.
         # Remove large pre-installed software we don't need to free 10-20GB.
         echo "Disk usage before cleanup:"
@@ -250,7 +256,9 @@ jobs:
       run: cargo build --lib
 
     - name: Clean intermediate artefacts before tests
+      shell: bash
       run: |
+        set -euo pipefail
         # Test compilation generates many large binaries. Remove incremental
         # compilation data and fingerprints to free space before this step.
         echo "Disk usage before cleanup:"
@@ -286,7 +294,9 @@ jobs:
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Check for required files
+      shell: bash
       run: |
+        set -euo pipefail
         echo "🔍 Checking for required project files..."
         
         required_files=(
@@ -311,7 +321,9 @@ jobs:
         fi
 
     - name: Validate Cargo.toml
+      shell: bash
       run: |
+        set -euo pipefail
         echo "🔍 Validating Cargo.toml..."
         
         if ! cargo check --manifest-path Cargo.toml --quiet; then
@@ -329,7 +341,9 @@ jobs:
         echo "✅ Cargo.toml validation passed"
 
     - name: Check documentation
+      shell: bash
       run: |
+        set -euo pipefail
         echo "🔍 Checking documentation..."
         
         readme_lines=$(wc -l < README.md)
@@ -369,7 +383,9 @@ jobs:
         token: ${{ secrets.ACTIONS_PUSH }}
 
     - name: Ensure bash scripts are executable
+      shell: bash
       run: |
+        set -euo pipefail
         echo "🔍 Ensuring all bash scripts are executable..."
         CHANGED=false
         while IFS= read -r script; do
