@@ -69,7 +69,9 @@ jobs:
         git config user.email "github-actions[bot]@users.noreply.github.com"
         
     - name: Pull latest changes
-      run: git pull origin ${{ github.head_ref }}
+      env:
+        HEAD_REF: ${{ github.head_ref }}
+      run: git pull origin "$HEAD_REF"
         
     - name: Fetch base branch
       run: |
@@ -158,12 +160,14 @@ jobs:
     - name: Check if there are changes
       id: changes
       shell: bash
+      env:
+        HEAD_REF: ${{ github.head_ref }}
       run: |
         set -euo pipefail
         if ! git diff --quiet; then
           git add -A
           git commit -m "chore: auto-increment versions for changed projects"
-          git push origin ${{ github.head_ref }}
+          git push origin "$HEAD_REF"
         else
           echo "No version changes to commit"
         fi
@@ -430,7 +434,9 @@ jobs:
 
     - name: Push Changes
       if: steps.check_changes.outputs.has_changes == 'true'
-      run: git push origin ${{ github.head_ref }}
+      env:
+        HEAD_REF: ${{ github.head_ref }}
+      run: git push origin "$HEAD_REF"
 
   # Shell script linting is handled by .github/workflows/shellcheck.yml
   # (ludeeus/action-shellcheck), which is a strict superset of `bash -n`

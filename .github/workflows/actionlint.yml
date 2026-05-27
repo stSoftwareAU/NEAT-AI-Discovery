@@ -46,16 +46,7 @@ jobs:
         # repo root are already linted by .github/workflows/shellcheck.yml
         # (ludeeus/action-shellcheck); double-linting `run:` blocks here
         # would duplicate that coverage and surface findings against
-        # ci.yml (which is gated by a "do not modify without approval"
-        # notice — see lines 1-5 of .github/workflows/ci.yml).
-        #
-        # `flags` suppresses pre-existing `github.head_ref` script-
-        # injection warnings in ci.yml so the gate passes today; the
-        # underlying findings should be addressed in a separate PR that
-        # touches ci.yml directly. Without these ignores the gate would
-        # block every PR on a pre-existing issue rather than catching
-        # new regressions.
+        # ci.yml.
         uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
         with:
           shellcheck: false
-          flags: -ignore "\"github\\.head_ref\" is potentially untrusted"
