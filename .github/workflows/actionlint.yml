@@ -4,7 +4,7 @@ name: actionlint
 # rhysd/actionlint — https://github.com/rhysd/actionlint). This is the
 # CI lint gate for the `github-actions` bucket — workflow regressions
 # (bad expressions, missing context, unsupported runner labels, etc.)
-# fail the build before they reach Develop.
+# fail the build before they reach Develop
 #
 # Issue #1292.
 
