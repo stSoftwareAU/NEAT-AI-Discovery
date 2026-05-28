@@ -156,6 +156,7 @@ fn test_optimised_params_vary_by_sample() {
             temperature: 1.0,
             failure_cache: None,
             discovery_outcome_log: None,
+            task_descriptor: None,
         };
 
         let result = analyze_neurons(&input).unwrap();
@@ -236,6 +237,7 @@ fn test_conservative_params_more_stable_across_samples() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let subset_result = analyze_neurons(&subset_input).unwrap();
@@ -371,6 +373,7 @@ fn test_relu_fixed_params_consistent_across_samples() {
             temperature: 1.0,
             failure_cache: None,
             discovery_outcome_log: None,
+            task_descriptor: None,
         };
 
         let result = analyze_neurons(&input).unwrap();

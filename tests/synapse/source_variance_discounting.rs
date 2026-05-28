@@ -133,6 +133,7 @@ fn test_constant_source_gives_zero_improvement() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -236,6 +237,7 @@ fn test_low_variance_source_discounts_prediction() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -339,6 +341,7 @@ fn test_high_variance_source_not_discounted() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -449,6 +452,7 @@ fn test_constant_vs_varying_source_comparison() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

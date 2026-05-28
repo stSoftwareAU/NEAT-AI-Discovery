@@ -73,6 +73,7 @@ fn analyze_neurons_rejects_duplicate_focus_targets() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let err =
@@ -780,6 +781,7 @@ fn analyze_neurons_reports_diagnostics_when_no_candidates() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result =
@@ -893,6 +895,7 @@ fn analyze_neurons_uses_vertical_timeout_with_randomized_order() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = pool

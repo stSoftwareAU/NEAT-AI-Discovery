@@ -173,6 +173,7 @@ fn test_step_hidden_neuron_prediction_vs_reality() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -266,6 +267,7 @@ fn test_identity_zero_bias_should_not_be_recommended() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -373,6 +375,7 @@ fn test_step_output_neuron_no_identity_candidates() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

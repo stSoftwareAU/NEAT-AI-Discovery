@@ -162,6 +162,7 @@ fn test_lock_free_error_collection_many_targets() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("Neuron analysis should succeed");
