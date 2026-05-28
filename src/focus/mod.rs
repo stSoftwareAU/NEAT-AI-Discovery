@@ -40,13 +40,15 @@ pub use gradient::{GradientFlowStats, compute_gradient_flow_stats};
 
 // From impact
 pub use impact::{
-    ConsumerContract, OutputGate, compute_impacts_public, compute_impacts_with_activations,
-    compute_impacts_with_contract, compute_selection_stats, derive_regime_threshold_from_records,
+    ConsumerContract, MARGIN_WEIGHT_EPS, OutputGate, compute_impacts_public,
+    compute_impacts_with_activations, compute_impacts_with_contract, compute_per_obs_margins,
+    compute_selection_stats, derive_regime_threshold_from_records, margin_weights_from_margins,
 };
 
 // From ranking
 pub use ranking::{
     FocusLazyReason, FocusLoadingMode, RankFocusStats, RankedNeuron, RecordProvider,
     RemovalCandidate, SelectionStats, SynapseCounts, calculate_removal_savings,
-    decide_loading_mode_for_budget, rank_focus_neurons, rank_focus_neurons_with_history,
+    decide_loading_mode_for_budget, rank_focus_neurons, rank_focus_neurons_with_descriptor,
+    rank_focus_neurons_with_history, rank_focus_neurons_with_history_and_descriptor,
 };

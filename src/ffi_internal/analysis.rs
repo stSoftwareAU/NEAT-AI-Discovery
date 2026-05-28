@@ -328,11 +328,16 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     // Uses an RAII guard so the counter is decremented even on panic.
     let _active_guard = crate::cancellation::AnalysisActiveGuard::new();
 
-    let rank_result = focus::rank_focus_neurons(
+    // Issue #1318: forward the optional task descriptor so OneHot / Margin
+    // topologies activate margin-aware focus ranking. Other topologies
+    // (Independent / Simplex / Unknown / OTHER) and `None` get the existing
+    // unweighted ranking.
+    let rank_result = focus::rank_focus_neurons_with_descriptor(
         &input.parquet_file,
         &input.creature,
         input.max_results,
         input.cost_of_growth,
+        input.task_descriptor.as_ref(),
     );
 
     match rank_result {
