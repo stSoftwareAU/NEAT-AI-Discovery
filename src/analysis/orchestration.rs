@@ -944,7 +944,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // surfaces. The orchestrator owns the only call site, so the warn fires
     // at most once per `analyze_all` invocation.
     let consecutive_failures = outcome_log.consecutive_trailing_failures();
-    let drought_threshold = crate::config::drought_log_threshold();
+    // Issue #1320: calibrate the drought threshold to the task descriptor.
+    // Classification topologies generate sparse per-sample improvement signal,
+    // so the base threshold is scaled up to avoid premature drought fires.
+    // OTHER / Unknown / Independent descriptors keep the base threshold (the
+    // regression guard).
+    let drought_threshold = super::drought_diagnostic::drought_threshold_for_task(
+        crate::config::drought_log_threshold(),
+        &task_descriptor,
+    );
     if consecutive_failures >= drought_threshold {
         // Snapshot the global target-cooldown tracker. Lock failures fall back
         // to "no tracker" so the diagnostic still fires.
