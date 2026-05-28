@@ -19,10 +19,15 @@
 //! absent string — falls back to [`TaskDescriptor::neutral`], which encodes
 //! "we know nothing; don't gate on this".
 //!
-//! This module is intentionally pure: it has no FFI surface, no I/O, and no
-//! dependency on other discovery modules. Wiring the descriptor through the
-//! FFI ingest path and consumer detectors is tracked separately (see
-//! issue #1314 and the per-consumer issues that reference #1312).
+//! The descriptor itself is intentionally pure (no FFI surface, no I/O) but
+//! it exposes a small projection — [`TaskDescriptor::cost_function_hint`] —
+//! that maps the task shape onto the [`crate::analysis::cost_function_hint::CostFunctionHint`]
+//! used by the implied-target reconstruction guard (issue #1317). Wiring the
+//! descriptor through the FFI ingest path and the remaining per-consumer
+//! sites is tracked separately (see issue #1314 and the per-consumer issues
+//! that reference #1312).
+
+use crate::analysis::cost_function_hint::CostFunctionHint;
 
 /// Topology of the recorded targets vector for a single training sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -163,6 +168,63 @@ impl TaskDescriptor {
             _ => Self::neutral(),
         }
     }
+
+    /// Map this descriptor onto a [`CostFunctionHint`] for the
+    /// target-reconstruction guard (issue #1317).
+    ///
+    /// The guard is consulted by detectors that reconstruct an "implied
+    /// target" as `activation ± error` (see
+    /// `src/analysis/cost_function_hint.rs`, issue #1250). That identity
+    /// only holds for **linear-residual** costs — those whose recorded
+    /// error obeys `error = target − output` (or its negation).
+    ///
+    /// Mapping rules:
+    ///
+    /// - `MSE` / `MAE` — `Independent` topology with `Unbounded` range ⇒
+    ///   [`CostFunctionHint::LinearResidual`].
+    /// - `BINARY_CROSS_ENTROPY` — `Independent` topology with `Unit` range
+    ///   and `BoundedUnipolar` outputs ⇒ [`CostFunctionHint::LinearResidual`]
+    ///   (NEAT-AI records BCE error as `target − output`).
+    /// - `CROSS_ENTROPY` — `Simplex` topology ⇒
+    ///   [`CostFunctionHint::LinearResidual`].
+    /// - `MAPE` / `MSLE` — `Independent` topology with `Positive` range ⇒
+    ///   [`CostFunctionHint::NonLinearResidual`].
+    /// - `HINGE` — `Margin` topology ⇒ [`CostFunctionHint::NonLinearResidual`].
+    /// - `CATEGORICAL_ERROR` — `OneHot` topology ⇒
+    ///   [`CostFunctionHint::NonLinearResidual`].
+    /// - Neutral / unknown / `OTHER` descriptors ⇒
+    ///   [`CostFunctionHint::NonLinearResidual`] (conservative skip — see
+    ///   issue #1317 acceptance criterion: "OTHER / Unknown / absent ⇒
+    ///   conservative skip").
+    ///
+    /// The conservative-skip mapping for neutral descriptors is intentional:
+    /// the existing [`CostFunctionHint::Unknown`] variant preserves the
+    /// pre-Issue-#1250 "assume linear" behaviour for callers that have not
+    /// been migrated, but at the dispatch level we want the *absence* of a
+    /// cost identity to gate the reconstruction-dependent detectors off so
+    /// they cannot emit spurious candidates against an unknown loss shape.
+    #[must_use]
+    pub fn cost_function_hint(&self) -> CostFunctionHint {
+        use OutputSquashFamily as F;
+        use TargetRange as R;
+        use TargetTopology as T;
+
+        match (
+            self.target_topology,
+            self.target_range,
+            self.output_squash_family,
+        ) {
+            // MSE / MAE
+            (T::Independent, R::Unbounded, F::Unbounded) => CostFunctionHint::LinearResidual,
+            // BINARY_CROSS_ENTROPY
+            (T::Independent, R::Unit, F::BoundedUnipolar) => CostFunctionHint::LinearResidual,
+            // CROSS_ENTROPY
+            (T::Simplex, R::Unit, _) => CostFunctionHint::LinearResidual,
+            // Everything else — MAPE / MSLE (Independent + Positive),
+            // HINGE (Margin), CATEGORICAL_ERROR (OneHot), neutral (Unknown).
+            _ => CostFunctionHint::NonLinearResidual,
+        }
+    }
 }
 
 impl Default for TaskDescriptor {
@@ -294,6 +356,56 @@ mod tests {
             let d = TaskDescriptor::from_name(name, 1);
             assert_eq!(d.target_topology, TargetTopology::Margin);
         }
+    }
+
+    #[test]
+    fn cost_function_hint_for_linear_residual_costs() {
+        // Issue #1317: MSE, MAE, BCE, CE map to LinearResidual.
+        for name in ["MSE", "MAE", "BINARY_CROSS_ENTROPY", "CROSS_ENTROPY"] {
+            let descriptor = TaskDescriptor::from_name(name, 4);
+            assert_eq!(
+                descriptor.cost_function_hint(),
+                CostFunctionHint::LinearResidual,
+                "{name} descriptor should map to LinearResidual",
+            );
+        }
+    }
+
+    #[test]
+    fn cost_function_hint_for_non_linear_residual_costs() {
+        // Issue #1317: MAPE, MSLE, HINGE, CATEGORICAL_ERROR map to
+        // NonLinearResidual so the reconstruction-dependent detectors skip.
+        for name in ["MAPE", "MSLE", "HINGE", "CATEGORICAL_ERROR"] {
+            let descriptor = TaskDescriptor::from_name(name, 4);
+            assert_eq!(
+                descriptor.cost_function_hint(),
+                CostFunctionHint::NonLinearResidual,
+                "{name} descriptor should map to NonLinearResidual",
+            );
+        }
+    }
+
+    #[test]
+    fn cost_function_hint_for_neutral_is_conservative_skip() {
+        // Issue #1317 acceptance: OTHER / Unknown / absent ⇒ conservative
+        // skip. The neutral descriptor maps to NonLinearResidual to gate
+        // the implied-target reconstructions off when we know nothing
+        // about the loss shape.
+        assert_eq!(
+            TaskDescriptor::neutral().cost_function_hint(),
+            CostFunctionHint::NonLinearResidual,
+            "neutral descriptor must conservatively skip",
+        );
+        assert_eq!(
+            TaskDescriptor::from_name("OTHER", 3).cost_function_hint(),
+            CostFunctionHint::NonLinearResidual,
+            "OTHER descriptor must conservatively skip",
+        );
+        assert_eq!(
+            TaskDescriptor::from_name("EXOTIC_LOSS", 3).cost_function_hint(),
+            CostFunctionHint::NonLinearResidual,
+            "Unrecognised descriptor must conservatively skip",
+        );
     }
 
     #[test]

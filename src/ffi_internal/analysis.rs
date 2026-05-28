@@ -261,6 +261,8 @@ pub(crate) fn build_analyze_all_input_from_parallel(
         max_discovery_wall_clock_minutes: input.max_discovery_wall_clock_minutes,
         failure_cache: input.failure_cache,
         discovery_outcome_log: input.discovery_outcome_log,
+        // Issue #1317: forward the cost-function identity into analysis.
+        cost_name: input.cost_name,
     }
 }
 

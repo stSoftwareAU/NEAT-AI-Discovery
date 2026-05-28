@@ -27,6 +27,7 @@ mod issue_1162_calibration_per_target_squash;
 mod issue_1165_calibration_miss_logging;
 mod issue_1202_drought_diagnostic;
 mod issue_1204_adaptive_target_cooldown;
+mod issue_1317_cost_identity_wiring;
 mod issue_199_dynamic_constant_source_threshold;
 mod issue_201_batched_activation;
 mod issue_204_activation_frequency_ranking;

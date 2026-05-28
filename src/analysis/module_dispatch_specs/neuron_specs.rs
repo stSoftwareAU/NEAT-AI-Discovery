@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use super::super::cost_function_hint::CostFunctionHint;
 use super::super::detection::{
     activation_mismatch, bias_perturbation, bimodal_neuron, bottleneck, co_adaptation, dead_neuron,
     high_error_squash_exploration, low_impact_neuron, monotonicity, noise_signal, operating_point,
@@ -17,12 +18,17 @@ use super::super::recommendation::activation_recommendation;
 use super::super::{cache, discovery_dispatch};
 
 /// Append neuron-focused discovery module specs to the provided vector.
+///
+/// `cost_hint` (Issue #1317) governs the implied-target reconstruction
+/// guard: linear-residual costs enable the high-error squash exploration
+/// detector, non-linear-residual costs (and neutral / absent) gate it off.
 pub(crate) fn append_neuron_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
     topo: &Arc<CreatureTopologyCache>,
+    cost_hint: CostFunctionHint,
 ) {
     // Issue #342: Saturated neuron detection
     discovery_spec!(modules, "saturation detection", "saturation_detection",
@@ -154,11 +160,13 @@ pub(crate) fn append_neuron_specs(
     );
 
     // Issue #788: High-error squash exploration (proactive change-squash volume)
+    // Issue #1317: forward the cost-function hint so the detector skips when
+    // the recorded error is not a linear residual (or is unknown).
     discovery_spec!(modules, "high error squash exploration", "high_error_squash_exploration",
         cache = shared_cache, hidden = hidden_neurons =>
         guard: hidden,
         records: cache.load_records_for_hidden(&hidden),
-        detect: |records| high_error_squash_exploration::detect_high_error_squash_candidates(&hidden, &records),
+        detect: |records| high_error_squash_exploration::detect_high_error_squash_candidates_with_cost_hint(&hidden, &records, cost_hint),
         convert: |detected| high_error_squash_exploration::high_error_squash_to_coordinated_candidates(&detected),
     );
 

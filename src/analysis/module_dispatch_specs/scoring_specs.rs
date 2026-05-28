@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use super::super::cost_function_hint::CostFunctionHint;
 use super::super::detection::{
     bounded_range, error_plateau, input_sensitivity, observation_utilisation,
     output_range_compression, output_squash_mismatch, sentinel_gating,
@@ -17,10 +18,17 @@ use super::super::recommendation::{
 use super::super::{cache, discovery_dispatch};
 
 /// Append scoring and recommendation discovery module specs to the provided vector.
+///
+/// `cost_hint` (Issue #1317) is forwarded into the
+/// `output_squash_mismatch` detector so Strategy 4 (the pre-activation
+/// squash comparison that reconstructs the implied target via
+/// `activation − error`) is skipped when the recorded error is not a
+/// linear residual (or is unknown).
 pub(crate) fn append_scoring_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
     shared_cache: &Arc<cache::RecordCache>,
+    cost_hint: CostFunctionHint,
 ) {
     // Issue #361: Output bias drift detection
     discovery_spec!(modules, "output bias drift detection", "output_bias_drift_detection",
@@ -127,9 +135,13 @@ pub(crate) fn append_scoring_specs(
                 return None;
             }
             let records = cache.load_records_for_neuron_types(&creature, &["output"]);
-            let detected = output_squash_mismatch::detect_output_squash_mismatches(
+            // Issue #1317: forward the cost-function hint so Strategy 4's
+            // implied-target reconstruction is skipped for non-linear /
+            // unknown costs.
+            let detected = output_squash_mismatch::detect_output_squash_mismatches_with_cost_hint(
                 &output_neurons,
                 &records,
+                cost_hint,
             );
             if detected.is_empty() {
                 return None;

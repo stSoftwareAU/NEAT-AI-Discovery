@@ -142,6 +142,7 @@ fn all_candidates_have_positive_expected_score_gain() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        cost_name: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");
@@ -231,6 +232,7 @@ fn metadata_consistent_after_positive_gain_filtering() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        cost_name: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");

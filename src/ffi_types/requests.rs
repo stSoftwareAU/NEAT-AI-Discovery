@@ -108,6 +108,17 @@ pub struct AnalyzeParallelInput {
     /// runs in [`analysis::discovery_mode::DiscoveryMode::Normal`].
     #[serde(default)]
     pub discovery_outcome_log: Option<analysis::discovery_mode::DiscoveryOutcomeLog>,
+    /// Cost-function name in use by NEAT-AI (Issue #1317).
+    ///
+    /// Forwarded into the implied-target reconstruction guard so
+    /// reconstruction-dependent detectors are enabled for linear-residual
+    /// costs (`MSE` / `MAE` / `CROSS_ENTROPY`) and skipped for non-linear
+    /// ones (`MAPE` / `MSLE` / `HINGE` / `CATEGORICAL_ERROR`). When absent
+    /// or unrecognised the guard conservatively skips those detectors.
+    /// See `src/analysis/cost_function_hint.rs` and issue #1250 for the
+    /// underlying defect.
+    #[serde(default)]
+    pub cost_name: Option<String>,
 }
 
 /// Internal input structure for synapse analysis (used by `analyze_all`)
@@ -245,6 +256,11 @@ pub struct AnalyzeAllInput {
     /// See `AnalyzeParallelInput` for full documentation.
     #[serde(default)]
     pub discovery_outcome_log: Option<analysis::discovery_mode::DiscoveryOutcomeLog>,
+    /// Cost-function name in use by NEAT-AI (Issue #1317).
+    ///
+    /// See `AnalyzeParallelInput::cost_name` for the full contract.
+    #[serde(default)]
+    pub cost_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
