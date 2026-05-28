@@ -894,6 +894,101 @@ pub fn compute_impacts_with_contract(
     compute_impacts_internal_with_stats_and_contract(creature, grouped_records, contract)
 }
 
+/// Smoothing constant for converting per-observation margin into a weight
+/// (Issue #1318). Prevents weight explosion when margin is zero and bounds
+/// the maximum weight to `1.0 / MARGIN_WEIGHT_EPS`.
+pub const MARGIN_WEIGHT_EPS: f32 = 0.05;
+
+/// Compute per-observation decision margin from recorded output activations
+/// (Issue #1318).
+///
+/// For `OneHot` / `Margin` classification topologies, the network's decision is the
+/// argmax over output activations. The **decision margin** for an observation is
+/// the gap between the top-1 and top-2 output activation: small margin ⇒ the
+/// decision is fragile, and a change that nudges the margin matters even when
+/// it does not yet flip the argmax. Large margin ⇒ the decision is dominant,
+/// and a change of similar magnitude is comparatively worthless.
+///
+/// Observations with fewer than two finite output activations are skipped.
+/// The returned map keys are `obs_index` values; observations absent from the
+/// map should be treated by callers as having an unknown / neutral margin.
+///
+/// # Errors
+///
+/// Returns an error if the underlying record provider fails to load any output
+/// neuron's records.
+pub fn compute_per_obs_margins(
+    creature: &CreatureJson,
+    grouped_records: &dyn RecordProvider,
+) -> Result<HashMap<u32, f32>> {
+    let output_uuids: Vec<&str> = creature
+        .neurons
+        .iter()
+        .filter(|n| n.neuron_type == "output")
+        .map(|n| n.uuid.as_str())
+        .collect();
+
+    if output_uuids.len() < 2 {
+        // Margin is undefined when there are fewer than two outputs.
+        return Ok(HashMap::new());
+    }
+
+    // Collect per-observation output activations.
+    let mut obs_to_acts: HashMap<u32, Vec<f32>> = HashMap::new();
+    for uuid in &output_uuids {
+        match grouped_records.get(uuid)? {
+            None => continue,
+            Some(records) => {
+                for record in records.iter() {
+                    if record.activation.is_finite() {
+                        obs_to_acts
+                            .entry(record.obs_index)
+                            .or_default()
+                            .push(record.activation);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut margins: HashMap<u32, f32> = HashMap::with_capacity(obs_to_acts.len());
+    for (obs, acts) in obs_to_acts {
+        if acts.len() < 2 {
+            continue;
+        }
+        // Find top-1 and top-2 in a single pass.
+        let mut top1 = f32::NEG_INFINITY;
+        let mut top2 = f32::NEG_INFINITY;
+        for &v in &acts {
+            if v > top1 {
+                top2 = top1;
+                top1 = v;
+            } else if v > top2 {
+                top2 = v;
+            }
+        }
+        if top2.is_finite() {
+            margins.insert(obs, (top1 - top2).max(0.0));
+        }
+    }
+    Ok(margins)
+}
+
+/// Convert per-observation margins into per-observation weights for
+/// margin-aware error aggregation (Issue #1318).
+///
+/// Weight = `1.0 / (margin + MARGIN_WEIGHT_EPS)`. Small-margin observations
+/// (decision near a flip) get high weight; wide-margin observations (decision
+/// dominant) get low weight. This is the per-observation reweighting used by
+/// the `OneHot` / `Margin` focus ranking path.
+#[must_use]
+pub fn margin_weights_from_margins(margins: &HashMap<u32, f32>) -> HashMap<u32, f32> {
+    margins
+        .iter()
+        .map(|(&obs, &m)| (obs, 1.0 / (m.max(0.0) + MARGIN_WEIGHT_EPS)))
+        .collect()
+}
+
 /// Public version that computes impacts with activation-based selection statistics.
 ///
 /// When activation records are provided, this function computes actual win probabilities
