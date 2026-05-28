@@ -22,15 +22,18 @@
 //! The descriptor itself is intentionally pure (no FFI surface, no I/O) but
 //! it exposes a small projection — [`TaskDescriptor::cost_function_hint`] —
 //! that maps the task shape onto the [`crate::analysis::cost_function_hint::CostFunctionHint`]
-//! used by the implied-target reconstruction guard (issue #1317). Wiring the
-//! descriptor through the FFI ingest path and the remaining per-consumer
-//! sites is tracked separately (see issue #1314 and the per-consumer issues
-//! that reference #1312).
+//! used by the implied-target reconstruction guard (issue #1317). The FFI
+//! ingest path now also carries an optional `task_descriptor` field on the
+//! discovery FFI inputs (Issue #1314) — pure plumbing, no consumer reads it
+//! yet. The remaining per-consumer wiring is tracked separately (see the
+//! consumer issues that reference #1312).
+
+use serde::Deserialize;
 
 use crate::analysis::cost_function_hint::CostFunctionHint;
 
 /// Topology of the recorded targets vector for a single training sample.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 pub enum TargetTopology {
     /// Each output is an independent scalar target (e.g. regression, BCE).
     Independent,
@@ -50,7 +53,7 @@ pub enum TargetTopology {
 }
 
 /// Numeric range the recorded targets can take.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 pub enum TargetRange {
     /// Targets are unbounded reals.
     #[default]
@@ -65,7 +68,7 @@ pub enum TargetRange {
 
 /// Family of activation functions that is compatible with the loss on the
 /// final layer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 pub enum OutputSquashFamily {
     /// Bounded, unipolar squash (range `[0, 1]`): LOGISTIC, `BIPOLAR_SIGMOID`
     /// rescaled to unipolar, etc.
@@ -87,7 +90,8 @@ pub enum OutputSquashFamily {
 /// Constructed via [`TaskDescriptor::from_name`] or
 /// [`TaskDescriptor::neutral`]. The struct is `Copy` and trivially cheap to
 /// pass by value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskDescriptor {
     /// Topology of the targets vector.
     pub target_topology: TargetTopology,

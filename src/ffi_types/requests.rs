@@ -5,6 +5,7 @@
 use serde::Deserialize;
 
 use crate::analysis;
+use crate::analysis::task_descriptor::TaskDescriptor;
 
 use super::{CreatureJson, TrainingRecord};
 
@@ -20,6 +21,13 @@ pub struct RecordDiscoveryInput {
     pub record_indices: Option<Vec<usize>>,
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+    /// Optional task-shape descriptor forwarded by the producer (Issue #1314).
+    ///
+    /// Pure plumbing for now — no recommendation generator reads this yet.
+    /// When absent, consumers should treat it as
+    /// [`TaskDescriptor::neutral`].
+    #[serde(default)]
+    pub task_descriptor: Option<TaskDescriptor>,
 }
 
 /// FFI request payload for
@@ -119,6 +127,13 @@ pub struct AnalyzeParallelInput {
     /// underlying defect.
     #[serde(default)]
     pub cost_name: Option<String>,
+    /// Optional task-shape descriptor forwarded by the producer (Issue #1314).
+    ///
+    /// Pure plumbing for now — no recommendation generator reads this yet.
+    /// When absent, consumers should treat it as
+    /// [`TaskDescriptor::neutral`].
+    #[serde(default)]
+    pub task_descriptor: Option<TaskDescriptor>,
 }
 
 /// Internal input structure for synapse analysis (used by `analyze_all`)
@@ -277,6 +292,13 @@ pub struct RankFocusNeuronsInput {
     /// Issue #132: Pass this from NEAT-AI's configured costOfGrowth for consistency.
     #[serde(default)]
     pub cost_of_growth: Option<f32>,
+    /// Optional task-shape descriptor forwarded by the producer (Issue #1314).
+    ///
+    /// Pure plumbing for now — no recommendation generator reads this yet.
+    /// When absent, consumers should treat it as
+    /// [`TaskDescriptor::neutral`].
+    #[serde(default)]
+    pub task_descriptor: Option<TaskDescriptor>,
 }
 
 #[derive(Debug, Deserialize)]
