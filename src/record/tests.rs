@@ -66,6 +66,7 @@ fn create_test_input() -> RecordDiscoveryInput {
         binary_file_path: None,
         record_indices: None,
         timeout_seconds: None,
+        task_descriptor: None,
     }
 }
 
