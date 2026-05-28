@@ -29,6 +29,7 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 
+use crate::analysis::task_descriptor::{TargetTopology, TaskDescriptor};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -41,6 +42,29 @@ const MIN_MAJORITY_SIGN_FRACTION: f32 = 0.7;
 
 /// Minimum absolute mean error to distinguish from noise.
 const MIN_MEAN_ERROR_MAGNITUDE: f32 = 0.01;
+
+/// Capacity-starvation threshold (Issue #1316).
+///
+/// A class is considered "positively supported" when the recorded target
+/// value is above this threshold. For `OneHot` / `Simplex` topologies the
+/// targets sit on `[0, 1]` and the "on" class records as 1.0, so any
+/// threshold in the middle of the unit interval reliably separates "on"
+/// from "off" while tolerating soft labels.
+const POSITIVE_SUPPORT_TARGET_THRESHOLD: f32 = 0.5;
+
+/// Saturating activation threshold (Issue #1316).
+///
+/// Mirrors the bounded-unipolar saturation threshold used by the saturated
+/// neuron detector. An output neuron whose maximum activation on its
+/// positive-support class never reaches this value is treated as
+/// capacity-starved for that class.
+const SATURATING_ACTIVATION_THRESHOLD: f32 = 0.85;
+
+/// Multiplier applied to the estimated improvement of a candidate that is
+/// also flagged as capacity-starved under a `OneHot` / `Simplex` task
+/// (Issue #1316). Picked to lift the candidate above peers without
+/// overwhelming the rest of the ranking.
+const CAPACITY_STARVED_GAIN_BOOST: f32 = 2.0;
 
 /// Result of detecting output bias drift.
 #[derive(Debug, Clone)]
@@ -59,6 +83,12 @@ pub struct OutputBiasDriftCandidate {
     pub recommended_bias_delta: f32,
     /// Estimated creature score improvement from fixing the bias.
     pub estimated_improvement: f32,
+    /// Whether this candidate was flagged as capacity-starved under a
+    /// `OneHot` / `Simplex` task descriptor (Issue #1316). Always `false`
+    /// for the legacy `detect_output_bias_drift` entry point; only the
+    /// role-aware `detect_output_bias_drift_with_descriptor` path can
+    /// set this to `true`.
+    pub capacity_starved: bool,
 }
 
 /// Detect output neurons with bias drift from recorded activations.
@@ -145,6 +175,7 @@ pub fn detect_output_bias_drift(
             sample_count: error_values.len(),
             recommended_bias_delta,
             estimated_improvement,
+            capacity_starved: false,
         });
     }
 
@@ -187,4 +218,170 @@ pub fn output_bias_drift_to_coordinated_candidates(
     });
 
     results
+}
+
+// =============================================================================
+// Role-aware output bias drift (Issue #1316)
+// =============================================================================
+//
+// Under `OneHot` / `Simplex` topologies the recorded target marks exactly one
+// "on" class per sample. An output neuron whose maximum activation on the
+// samples that *belong to its class* never crosses the saturating threshold is
+// suffering capacity starvation — its parameters cannot push the prediction
+// high enough even when the class is well supported. The role-aware path runs
+// the legacy detector first (so unrelated callers are unaffected) and then,
+// when the descriptor topology is `OneHot` or `Simplex`, boosts the
+// estimated improvement of any matching candidate and synthesises a fresh
+// candidate for capacity-starved output neurons that the legacy detector
+// missed.
+
+/// Whether a descriptor's topology gates the role-aware bias-drift path.
+fn role_aware_topology(descriptor: &TaskDescriptor) -> bool {
+    matches!(
+        descriptor.target_topology,
+        TargetTopology::OneHot | TargetTopology::Simplex
+    )
+}
+
+/// Diagnostics about an output neuron's positive-support class.
+struct PositiveSupportStats {
+    /// Count of records on the positive-support class (target above the
+    /// `POSITIVE_SUPPORT_TARGET_THRESHOLD`).
+    count: usize,
+    /// Maximum activation observed on the positive-support records.
+    max_activation: f32,
+    /// Mean activation observed on the positive-support records.
+    mean_activation: f32,
+    /// Mean error on the positive-support records (target − activation under
+    /// linear-residual costs).
+    mean_error: f32,
+}
+
+/// Summarise the positive-support behaviour of an output neuron given its
+/// records. Returns `None` when the recorded targets carry no positive
+/// support (no `value > POSITIVE_SUPPORT_TARGET_THRESHOLD`).
+fn summarise_positive_support(records: &[DiscoverRecord]) -> Option<PositiveSupportStats> {
+    let mut count = 0_usize;
+    let mut max_activation = f32::NEG_INFINITY;
+    let mut sum_activation = 0.0_f32;
+    let mut sum_error = 0.0_f32;
+
+    for r in records {
+        // Targets are recorded in `value` (Option<f32>). Records without a
+        // recorded target cannot contribute to positive-support reasoning.
+        let Some(target) = r.value else { continue };
+        if target <= POSITIVE_SUPPORT_TARGET_THRESHOLD {
+            continue;
+        }
+        count += 1;
+        sum_activation += r.activation;
+        if r.activation > max_activation {
+            max_activation = r.activation;
+        }
+        if let Some(&e) = r.errors.first() {
+            sum_error += e;
+        }
+    }
+
+    if count == 0 {
+        return None;
+    }
+
+    let n = count as f32;
+    Some(PositiveSupportStats {
+        count,
+        max_activation,
+        mean_activation: sum_activation / n,
+        mean_error: sum_error / n,
+    })
+}
+
+/// Determine whether the positive-support stats indicate capacity starvation:
+/// a well-supported class whose activations never cross the saturating
+/// threshold.
+fn is_capacity_starved(stats: &PositiveSupportStats) -> bool {
+    stats.count >= MIN_SAMPLES_FOR_BIAS_DRIFT
+        && stats.max_activation < SATURATING_ACTIVATION_THRESHOLD
+}
+
+/// Role-aware output bias drift detection (Issue #1316).
+///
+/// Behaves identically to [`detect_output_bias_drift`] when the descriptor
+/// reports a topology other than `OneHot` / `Simplex` — neutral, `OTHER`,
+/// `Independent`, `Margin`, and any future variant fall back to the legacy
+/// detector. For `OneHot` / `Simplex` descriptors, output neurons with
+/// positive class support whose activations never cross the saturating
+/// activation threshold are flagged as capacity-starved and their estimated
+/// improvement is boosted by a fixed gain multiplier. Capacity-starved
+/// neurons that the legacy detector missed receive a fresh candidate whose
+/// `recommended_bias_delta` matches the legacy convention (`−mean_error` on
+/// the positive-support records).
+pub fn detect_output_bias_drift_with_descriptor(
+    creature: &CreatureJson,
+    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    descriptor: &TaskDescriptor,
+) -> Vec<OutputBiasDriftCandidate> {
+    let mut candidates = detect_output_bias_drift(creature, neuron_records);
+
+    if !role_aware_topology(descriptor) {
+        return candidates;
+    }
+
+    let output_neurons: HashMap<&str, f32> = creature
+        .neurons
+        .iter()
+        .filter(|n| n.neuron_type == "output")
+        .map(|n| (n.uuid.as_str(), n.bias))
+        .collect();
+
+    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
+        .iter()
+        .map(|(uuid, records)| (uuid.as_str(), records))
+        .collect();
+
+    for (&uuid, &current_bias) in &output_neurons {
+        let Some(records) = records_map.get(uuid) else {
+            continue;
+        };
+        let Some(stats) = summarise_positive_support(records) else {
+            continue;
+        };
+        if !is_capacity_starved(&stats) {
+            continue;
+        }
+
+        if let Some(existing) = candidates.iter_mut().find(|c| c.neuron_uuid == uuid) {
+            existing.capacity_starved = true;
+            existing.estimated_improvement *= CAPACITY_STARVED_GAIN_BOOST;
+            continue;
+        }
+
+        // No legacy candidate for this neuron — synthesise one. Picking the
+        // bias delta from the positive-support mean error matches the legacy
+        // convention (`recommended_bias_delta = −mean_error`) and falls back
+        // to closing the gap to saturation when the recorded errors are
+        // unusable.
+        let recommended_bias_delta = if stats.mean_error.is_finite() && stats.mean_error.abs() > 0.0
+        {
+            -stats.mean_error
+        } else {
+            SATURATING_ACTIVATION_THRESHOLD - stats.mean_activation
+        };
+        let gap = (SATURATING_ACTIVATION_THRESHOLD - stats.max_activation).max(0.0);
+        let estimated_improvement = gap * 0.1 * CAPACITY_STARVED_GAIN_BOOST;
+
+        candidates.push(OutputBiasDriftCandidate {
+            neuron_uuid: uuid.to_string(),
+            current_bias,
+            mean_error: stats.mean_error,
+            positive_error_fraction: 0.0,
+            sample_count: stats.count,
+            recommended_bias_delta,
+            estimated_improvement,
+            capacity_starved: true,
+        });
+    }
+
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
+    candidates
 }
