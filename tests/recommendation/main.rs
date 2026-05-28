@@ -8,6 +8,7 @@ mod issue_1247_categorical_error_hardening;
 mod issue_1249_categorical_error_sse_gating;
 mod issue_1313_role_aware_output_squash;
 mod issue_1316_output_bias_drift_one_hot_capacity_starvation;
+mod issue_1321_output_competition_lateral_inhibition;
 mod issue_189_synergistic_discovery;
 mod issue_202_epistatic_neuron_pairs;
 mod issue_230_multi_hop_candidate_analysis;
