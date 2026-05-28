@@ -276,13 +276,16 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // dependent detectors run; for non-linear costs (MAPE / MSLE / HINGE /
     // CATEGORICAL_ERROR) they are skipped; absent / unrecognised / OTHER
     // collapses to `neutral()` which maps to a conservative skip.
-    let cost_hint: CostFunctionHint = input
+    // Issue #1316: also keep the full descriptor — the output_bias_drift
+    // module needs the topology (OneHot / Simplex) to weight up capacity-
+    // starved output neurons.
+    let task_descriptor: TaskDescriptor = input
         .cost_name
         .as_deref()
         .map_or_else(TaskDescriptor::neutral, |name| {
             TaskDescriptor::from_name(name, input.creature.output)
-        })
-        .cost_function_hint();
+        });
+    let cost_hint: CostFunctionHint = task_descriptor.cost_function_hint();
 
     // Issue #490: Compute current fingerprints and filter unchanged neurons.
     let current_fingerprints = neuron_fingerprint::compute_neuron_fingerprints(&input.creature);
@@ -761,6 +764,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                             &tracker,
                             discovery_deadline,
                             cost_hint,
+                            task_descriptor,
                         )
                     }))
                     .unwrap_or_else(|panic_payload| {

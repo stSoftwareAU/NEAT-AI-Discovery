@@ -15,6 +15,7 @@ use super::super::detection::{
 use super::super::recommendation::{
     batch_successful, gradient_discovery, output_bias_drift, sample_weighted,
 };
+use super::super::task_descriptor::TaskDescriptor;
 use super::super::{cache, discovery_dispatch};
 
 /// Append scoring and recommendation discovery module specs to the provided vector.
@@ -29,12 +30,20 @@ pub(crate) fn append_scoring_specs(
     creature: &Arc<crate::CreatureJson>,
     shared_cache: &Arc<cache::RecordCache>,
     cost_hint: CostFunctionHint,
+    task_descriptor: TaskDescriptor,
 ) {
-    // Issue #361: Output bias drift detection
+    // Issue #361 / #1316: Output bias drift detection. Under OneHot / Simplex
+    // descriptors the role-aware path additionally weights up output neurons
+    // that never cross a saturating threshold for a class with positive
+    // support (capacity starvation); other descriptors are unchanged.
     discovery_spec!(modules, "output bias drift detection", "output_bias_drift_detection",
         cache = shared_cache, creature = creature =>
         records: cache.load_records_for_neuron_types(&creature, &["output"]),
-        detect: |records| output_bias_drift::detect_output_bias_drift(&creature, &records),
+        detect: |records| output_bias_drift::detect_output_bias_drift_with_descriptor(
+            &creature,
+            &records,
+            &task_descriptor,
+        ),
         convert: |detected| output_bias_drift::output_bias_drift_to_coordinated_candidates(&detected),
     );
 
