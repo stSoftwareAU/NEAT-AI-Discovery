@@ -32,6 +32,7 @@
     clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use crate::analysis::task_descriptor::{OutputSquashFamily, TargetTopology, TaskDescriptor};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 use std::collections::HashMap;
@@ -558,6 +559,172 @@ pub fn recommend_activation_function(
     })
 }
 
+// =============================================================================
+// Role-aware Recommendation (Issue #1313)
+// =============================================================================
+//
+// For OneHot / Simplex tasks the output layer must sit on a `[0, 1]` manifold
+// (per-class scores). Unbounded squashes (IDENTITY / RELU / GELU / …) on the
+// output neuron cannot settle on that manifold at cold start. The role-aware
+// path restricts the candidate set for an **output** neuron to the descriptor's
+// `output_squash_family` whenever the topology constrains it (OneHot, Simplex).
+// Hidden-neuron behaviour and unconstrained descriptors (Unknown / Any /
+// `OTHER`) defer to the existing distribution-driven recommender.
+
+/// Bounded-unipolar output family — sigmoid-like squashes whose codomain is
+/// `[0, 1]`. Includes `STEP` for the binary/threshold case.
+const BOUNDED_UNIPOLAR_FAMILY: &[&str] = &["LOGISTIC", "STEP"];
+
+/// Bounded-bipolar output family — sigmoid-like squashes whose codomain is
+/// `[-1, 1]`. Used by hinge-style margin losses (descriptor: `Margin`).
+const BOUNDED_BIPOLAR_FAMILY: &[&str] = &["TANH", "HARD_TANH", "BIPOLAR_SIGMOID", "BIPOLAR"];
+
+/// Non-negative output family — `[0, +inf)`. Used by MAPE / MSLE-style losses.
+const POSITIVE_FAMILY: &[&str] = &["RELU", "RELU6", "SOFTPLUS", "ELU"];
+
+/// Unbounded output family — used by plain MSE / MAE.
+const UNBOUNDED_FAMILY: &[&str] = &["IDENTITY"];
+
+/// Squash candidates allowed for a given output-family constraint.
+fn family_candidates(family: OutputSquashFamily) -> &'static [&'static str] {
+    match family {
+        OutputSquashFamily::BoundedUnipolar => BOUNDED_UNIPOLAR_FAMILY,
+        OutputSquashFamily::BoundedBipolar => BOUNDED_BIPOLAR_FAMILY,
+        OutputSquashFamily::Positive => POSITIVE_FAMILY,
+        OutputSquashFamily::Unbounded => UNBOUNDED_FAMILY,
+        OutputSquashFamily::Any => &[],
+    }
+}
+
+/// Whether the role-aware path should bias an **output** neuron's candidate
+/// set toward the descriptor's `output_squash_family`. Issue #1313 scopes this
+/// to `OneHot` / `Simplex` topologies — the cases where an unbounded output squash
+/// cannot settle on the task's `[0, 1]` manifold. Other topologies (including
+/// `Unknown` / neutral / `OTHER`) defer to the legacy recommender.
+fn should_bias_to_family(descriptor: &TaskDescriptor, is_output: bool) -> bool {
+    if !is_output {
+        return false;
+    }
+    matches!(
+        descriptor.target_topology,
+        TargetTopology::OneHot | TargetTopology::Simplex
+    )
+}
+
+/// Role-aware activation recommendation (Issue #1313).
+///
+/// If the neuron is an **output** neuron and the task descriptor reports a
+/// `OneHot` or `Simplex` topology, the candidate set is restricted to the
+/// descriptor's [`OutputSquashFamily`] (e.g. LOGISTIC / STEP for the bounded
+/// unipolar `[0, 1]` family). In every other case — hidden neurons, neutral
+/// descriptor, `OTHER` cost, or any unrecognised topology — this function
+/// defers verbatim to [`recommend_activation_function`].
+///
+/// # Arguments
+/// * `records` - Discovery records for the neuron.
+/// * `current_squash` - The current activation function name.
+/// * `is_output` - `true` if the neuron is in the output layer.
+/// * `descriptor` - Task descriptor derived from the cost function.
+#[must_use]
+pub fn recommend_activation_function_for_role(
+    records: &[DiscoverRecord],
+    current_squash: &str,
+    is_output: bool,
+    descriptor: &TaskDescriptor,
+) -> Option<ActivationRecommendation> {
+    if !should_bias_to_family(descriptor, is_output) {
+        return recommend_activation_function(records, current_squash);
+    }
+
+    let candidates = family_candidates(descriptor.output_squash_family);
+    if candidates.is_empty() {
+        // Family is unconstrained even though topology says OneHot/Simplex —
+        // defensively defer to the legacy recommender so we never silently
+        // drop a recommendation.
+        return recommend_activation_function(records, current_squash);
+    }
+
+    if records.len() < MIN_SAMPLES_FOR_ANALYSIS {
+        return None;
+    }
+
+    let neuron_uuid = records
+        .first()
+        .map(|r| r.neuron_uuid.clone())
+        .unwrap_or_default();
+
+    let distribution = analyse_input_distribution(records);
+    if distribution.class == InputDistributionClass::Unknown {
+        return None;
+    }
+
+    // Score every member of the family. Any family member not scored by the
+    // distribution-driven classifier (e.g. STEP under a Bounded distribution)
+    // receives a neutral default so the family is never empty.
+    let suitability = classify_activation_suitability(&distribution);
+    let mut family_scores: Vec<(&'static str, f32)> = candidates
+        .iter()
+        .map(|name| (*name, suitability.get(*name).copied().unwrap_or(0.6)))
+        .collect();
+    family_scores.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let (best_squash, best_score) = *family_scores.first()?;
+
+    // Treat out-of-family current squashes as score-zero. The improvement
+    // delta then dominates the gating thresholds, and the rationale flags
+    // the family swap explicitly.
+    let current_in_family = candidates.contains(&current_squash);
+    let current_score = if current_in_family {
+        suitability.get(current_squash).copied().unwrap_or(0.6)
+    } else {
+        0.0
+    };
+
+    if best_squash == current_squash {
+        return None;
+    }
+
+    let improvement = best_score - current_score;
+    if improvement < MIN_IMPROVEMENT_THRESHOLD {
+        return None;
+    }
+
+    let sample_confidence = (records.len() as f32 / 100.0).min(1.0);
+    let improvement_confidence = (improvement * 5.0).min(1.0);
+    let confidence = (sample_confidence * 0.5 + improvement_confidence * 0.5).clamp(0.0, 1.0);
+
+    let topology_label = match descriptor.target_topology {
+        TargetTopology::OneHot => "one-hot",
+        TargetTopology::Simplex => "simplex",
+        _ => "constrained",
+    };
+    let family_label = match descriptor.output_squash_family {
+        OutputSquashFamily::BoundedUnipolar => "bounded unipolar [0,1]",
+        OutputSquashFamily::BoundedBipolar => "bounded bipolar [-1,1]",
+        OutputSquashFamily::Positive => "non-negative",
+        OutputSquashFamily::Unbounded => "unbounded",
+        OutputSquashFamily::Any => "any",
+    };
+    let reason = if current_in_family {
+        "better fit for the observed input distribution within the family"
+    } else {
+        "current squash is outside the family compatible with the loss"
+    };
+    let rationale = format!(
+        "Output neuron under {topology_label} task: restricting recommendation to the {family_label} \
+         family — replacing {current_squash} with {best_squash} ({reason})."
+    );
+
+    Some(ActivationRecommendation {
+        neuron_uuid,
+        current_squash: current_squash.to_string(),
+        recommended_squash: best_squash.to_string(),
+        confidence,
+        expected_improvement: improvement * 0.02,
+        rationale,
+        input_distribution: distribution.class,
+    })
+}
+
 /// Get the score for an activation function.
 ///
 /// Squash names are pre-normalised to uppercase at deserialisation (Issue #753),
@@ -688,6 +855,61 @@ mod tests {
 
         let scores = classify_activation_suitability(&dist);
         assert!(!scores.is_empty(), "Should have suitability scores");
+    }
+
+    #[test]
+    fn test_role_aware_one_hot_picks_bounded_unipolar() {
+        // Issue #1313: an unbounded output squash under a OneHot task must
+        // be replaced by something inside the bounded-unipolar family.
+        let records: Vec<DiscoverRecord> = (0..80)
+            .map(|i| make_record("output-0", i, -8.0 + (i as f32) * 0.2))
+            .collect();
+        let descriptor = TaskDescriptor::from_name("CATEGORICAL_ERROR", 3);
+
+        let rec = recommend_activation_function_for_role(&records, "IDENTITY", true, &descriptor)
+            .expect("must recommend a bounded squash for a OneHot output neuron");
+
+        assert!(
+            BOUNDED_UNIPOLAR_FAMILY.contains(&rec.recommended_squash.as_str()),
+            "expected BOUNDED_UNIPOLAR_FAMILY recommendation, got {}",
+            rec.recommended_squash,
+        );
+    }
+
+    #[test]
+    fn test_role_aware_hidden_unchanged_under_one_hot() {
+        // Hidden-neuron recommendations must mirror the legacy path even
+        // when the descriptor constrains the output family.
+        let records: Vec<DiscoverRecord> = (0..80)
+            .map(|i| make_record("hidden-1", i, -8.0 + (i as f32) * 0.2))
+            .collect();
+        let descriptor = TaskDescriptor::from_name("CATEGORICAL_ERROR", 3);
+
+        let hidden =
+            recommend_activation_function_for_role(&records, "IDENTITY", false, &descriptor);
+        let legacy = recommend_activation_function(&records, "IDENTITY");
+
+        assert_eq!(
+            hidden.map(|r| r.recommended_squash),
+            legacy.map(|r| r.recommended_squash),
+        );
+    }
+
+    #[test]
+    fn test_role_aware_neutral_descriptor_matches_legacy() {
+        let records: Vec<DiscoverRecord> = (0..80)
+            .map(|i| make_record("output-0", i, -8.0 + (i as f32) * 0.2))
+            .collect();
+        let neutral = TaskDescriptor::neutral();
+
+        let role_aware =
+            recommend_activation_function_for_role(&records, "IDENTITY", true, &neutral);
+        let legacy = recommend_activation_function(&records, "IDENTITY");
+
+        assert_eq!(
+            role_aware.map(|r| r.recommended_squash),
+            legacy.map(|r| r.recommended_squash),
+        );
     }
 
     #[test]
