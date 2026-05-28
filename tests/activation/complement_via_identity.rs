@@ -127,6 +127,7 @@ fn test_complement_is_discovered_as_identity_not_inverse() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)

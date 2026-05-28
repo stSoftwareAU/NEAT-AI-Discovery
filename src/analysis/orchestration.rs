@@ -531,6 +531,9 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             temperature: input.temperature,
             failure_cache: input.failure_cache.clone(),
             discovery_outcome_log: input.discovery_outcome_log.clone(),
+            // Issue #1319: thread the task descriptor down so the neuron
+            // post-processing can bias per-class allocation under OneHot.
+            task_descriptor: Some(task_descriptor),
         })
     } else {
         None

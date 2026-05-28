@@ -208,6 +208,13 @@ pub struct AnalyzeNeuronsInput {
     /// When absent or empty, cooldown uses the static configured thresholds.
     #[serde(default)]
     pub discovery_outcome_log: Option<analysis::discovery_mode::DiscoveryOutcomeLog>,
+    /// Task-shape descriptor derived from `AnalyzeAllInput::cost_name`
+    /// (Issue #1319). Threaded down so the neuron post-processing path can
+    /// bias per-class allocation under a `OneHot` descriptor. `None` (or a
+    /// non-`OneHot` topology) preserves the existing allocation verbatim —
+    /// regression guard.
+    #[serde(default)]
+    pub task_descriptor: Option<TaskDescriptor>,
 }
 
 /// Internal input structure for combined analysis (used by `analyze_parallel`)

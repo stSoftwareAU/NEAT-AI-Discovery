@@ -157,6 +157,7 @@ fn neuron_analysis_works_with_gpu_work_queue() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     // Run analysis - this uses the GPU work queue internally

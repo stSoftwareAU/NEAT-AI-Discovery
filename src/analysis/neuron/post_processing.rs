@@ -125,12 +125,24 @@ pub(crate) fn build_neuron_results(
     // remaining cap budget is spent on genuinely distinct proposals.
     let same_target_squash_drops = apply_same_target_squash_diversity(&mut helpful_results);
 
+    // Issue #1319: Under a OneHot task descriptor (e.g. CATEGORICAL_ERROR)
+    // bias the per-target cap's distinct-target spread toward output neurons
+    // (classes) with the highest cumulative per-target failure counts. The
+    // helper returns `None` for every non-OneHot descriptor (including OTHER /
+    // Unknown / absent) so the legacy allocation path is preserved verbatim.
+    let class_priority = build_one_hot_class_priority(
+        params.input.task_descriptor.as_ref(),
+        params.input.failure_cache.as_deref().unwrap_or(&[]),
+        params.neuron_type_map,
+    );
+
     // Issue #1140: Cap add-neuron candidates per target within a single
     // discovery batch. Without this cap, a single hopeless target can consume
     // most of the budget with minor variants (e.g. 17 of 19 failed add-neuron
     // candidates in GRQ-sampler commit 744ac60d targeted the same neuron).
     // The cross-batch cooldown (Issue #1130) does not help within a batch.
-    let per_target_cap_drops = apply_per_target_cap(&mut helpful_results);
+    let per_target_cap_drops =
+        apply_per_target_cap_with_priority(&mut helpful_results, class_priority.as_ref());
 
     // Deadline coverage (Jan 2026): diversify within the top-K
     if params.input.analysis_deadline_ms.is_some() {
@@ -391,7 +403,23 @@ pub(crate) fn apply_same_target_squash_diversity(
 /// gain-descending order) followed by the remaining candidates in gain-
 /// descending order. Returns the number of candidates dropped by the cap so
 /// callers can record it in the rejection breakdown.
+#[cfg(test)]
 pub(crate) fn apply_per_target_cap(candidates: &mut Vec<CandidateNeuronJson>) -> usize {
+    apply_per_target_cap_with_priority(candidates, None)
+}
+
+/// Issue #1319: Like [`apply_per_target_cap`] but accepts an optional
+/// per-target priority map. When `Some`, the cross-target spread step is
+/// replaced by
+/// [`crate::analysis::one_hot_class_allocation::apply_class_priority_spread`],
+/// which pulls the highest-priority targets (e.g. worst-performing output
+/// classes under a `OneHot` descriptor) to the front of the list before the
+/// per-target cap is applied. Passing `None` reproduces the legacy
+/// allocation verbatim — regression guard.
+pub(crate) fn apply_per_target_cap_with_priority(
+    candidates: &mut Vec<CandidateNeuronJson>,
+    class_priority: Option<&HashMap<String, u32>>,
+) -> usize {
     let cap = crate::analysis::constants::max_add_neuron_candidates_per_target();
     if candidates.is_empty() || cap == 0 {
         return 0;
@@ -405,11 +433,21 @@ pub(crate) fn apply_per_target_cap(candidates: &mut Vec<CandidateNeuronJson>) ->
             .total_cmp(&a.expected_creature_score_gain)
     });
 
-    // Issue #1193: reorder so the top of the list covers at least
+    // Issue #1193 / #1319: reorder so the top of the list covers at least
     // `MIN_DISTINCT_TARGETS_PER_BATCH` distinct targets when the pool supports
-    // it. This stops a single problematic target from filling all three cap
-    // slots before any other target is considered.
-    apply_distinct_target_spread(candidates);
+    // it. Under a OneHot descriptor with class-failure priority the worst-
+    // performing classes are pulled to the front first.
+    let min_distinct = crate::analysis::constants::min_distinct_targets_per_batch();
+    match class_priority {
+        Some(priority) if !priority.is_empty() => {
+            crate::analysis::one_hot_class_allocation::apply_class_priority_spread(
+                candidates,
+                priority,
+                min_distinct,
+            );
+        }
+        _ => apply_distinct_target_spread(candidates),
+    }
 
     let original_len = candidates.len();
     let mut per_target: HashMap<String, usize> = HashMap::new();
@@ -425,6 +463,39 @@ pub(crate) fn apply_per_target_cap(candidates: &mut Vec<CandidateNeuronJson>) ->
         }
     });
     original_len - candidates.len()
+}
+
+/// Issue #1319: Build the per-output-class priority map used by
+/// [`apply_per_target_cap_with_priority`].
+///
+/// Returns `None` when the supplied `task_descriptor` is not `OneHot` (or is
+/// absent / neutral / `OTHER`), preserving the legacy allocation path
+/// verbatim — regression guard. When `OneHot`, returns a map from each output
+/// neuron UUID to its cumulative within-batch / cross-batch failure count
+/// derived from `failure_cache` (Issue #1131, #1194). An empty map (no
+/// recorded class failures yet) is also returned as `None` so the legacy
+/// spread keeps the gain-order signal when there is no per-class evidence.
+fn build_one_hot_class_priority(
+    task_descriptor: Option<&crate::analysis::task_descriptor::TaskDescriptor>,
+    failure_cache: &[crate::analysis::scoring::calibration_correction::FailureCacheEntry],
+    neuron_type_map: &HashMap<super::preparation::SharedUuid, String>,
+) -> Option<HashMap<String, u32>> {
+    let descriptor = task_descriptor?;
+    let counts = crate::analysis::one_hot_class_allocation::compute_class_failure_counts(
+        descriptor,
+        failure_cache,
+        |uuid| {
+            neuron_type_map
+                .get(uuid)
+                .map(String::as_str)
+                .is_some_and(|t| t == "output")
+        },
+    )?;
+    if counts.is_empty() {
+        None
+    } else {
+        Some(counts)
+    }
 }
 
 /// Cross-target diversity spread (Issue #1193).
@@ -490,7 +561,8 @@ pub(crate) fn apply_distinct_target_spread(candidates: &mut Vec<CandidateNeuronJ
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_distinct_target_spread, apply_per_target_cap, apply_same_target_squash_diversity,
+        apply_distinct_target_spread, apply_per_target_cap, apply_per_target_cap_with_priority,
+        apply_same_target_squash_diversity,
     };
     use crate::CandidateNeuronJson;
     use serial_test::serial;
@@ -934,5 +1006,108 @@ mod tests {
         assert_eq!(candidates.len(), 1, "cap=1 should leave only one candidate");
         assert_eq!(dropped, 2);
         assert!((candidates[0].expected_creature_score_gain - 0.9).abs() < f32::EPSILON);
+    }
+
+    // =========================================================================
+    // Issue #1319 — per-class capacity allocation under OneHot
+    // =========================================================================
+
+    /// When the per-target cap is invoked with a non-empty priority map, the
+    /// spread step pulls the highest-priority targets to the front of the
+    /// list before the cap is applied. Mirrors the `OneHot` acceptance criterion
+    /// from issue #1319.
+    #[test]
+    #[serial]
+    fn per_target_cap_with_priority_pulls_high_priority_targets_to_front() {
+        let mut candidates = vec![
+            test_candidate("target-A", 0.99),
+            test_candidate("target-A", 0.95),
+            test_candidate("target-A", 0.92),
+            test_candidate("target-A", 0.90),
+            test_candidate("target-A", 0.87),
+            test_candidate("target-A", 0.85),
+            test_candidate("target-B", 0.50),
+            test_candidate("target-C", 0.40),
+            test_candidate("target-D", 0.30),
+        ];
+        let mut priority: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        priority.insert("target-D".to_string(), 7);
+        priority.insert("target-C".to_string(), 5);
+
+        let _dropped = apply_per_target_cap_with_priority(&mut candidates, Some(&priority));
+
+        // Cap defaults to 3; the spread fronts target-D and target-C ahead of
+        // the cap, so they must be present in the emitted batch even though
+        // target-A had the gain-dominant candidates.
+        let distinct: HashSet<&str> = candidates
+            .iter()
+            .map(|c| c.target_neuron_uuid.as_str())
+            .collect();
+        assert!(distinct.contains("target-D"));
+        assert!(distinct.contains("target-C"));
+
+        // Front of the emitted list must lead with the priority targets.
+        assert_eq!(candidates[0].target_neuron_uuid, "target-D");
+        assert_eq!(candidates[1].target_neuron_uuid, "target-C");
+    }
+
+    /// Regression guard: `None` priority preserves the existing distinct-
+    /// target spread behaviour byte-for-byte.
+    #[test]
+    #[serial]
+    fn per_target_cap_with_no_priority_matches_legacy_path() {
+        let mut legacy = vec![
+            test_candidate("target-A", 0.99),
+            test_candidate("target-A", 0.95),
+            test_candidate("target-A", 0.92),
+            test_candidate("target-A", 0.90),
+            test_candidate("target-A", 0.87),
+            test_candidate("target-A", 0.85),
+            test_candidate("target-B", 0.50),
+            test_candidate("target-C", 0.40),
+            test_candidate("target-D", 0.30),
+        ];
+        let mut with_none = legacy.clone();
+
+        let dropped_legacy = apply_per_target_cap(&mut legacy);
+        let dropped_with_none = apply_per_target_cap_with_priority(&mut with_none, None);
+        assert_eq!(dropped_legacy, dropped_with_none);
+        let legacy_view: Vec<(String, f32)> = legacy
+            .iter()
+            .map(|c| (c.target_neuron_uuid.clone(), c.expected_creature_score_gain))
+            .collect();
+        let new_view: Vec<(String, f32)> = with_none
+            .iter()
+            .map(|c| (c.target_neuron_uuid.clone(), c.expected_creature_score_gain))
+            .collect();
+        assert_eq!(legacy_view, new_view);
+    }
+
+    /// Acceptance: an empty priority map is treated as no signal, so the
+    /// legacy distinct-target spread runs (regression guard).
+    #[test]
+    #[serial]
+    fn per_target_cap_with_empty_priority_uses_legacy_spread() {
+        let empty: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut legacy = vec![
+            test_candidate("target-A", 0.99),
+            test_candidate("target-A", 0.95),
+            test_candidate("target-B", 0.50),
+            test_candidate("target-C", 0.40),
+        ];
+        let mut with_empty = legacy.clone();
+
+        apply_per_target_cap(&mut legacy);
+        apply_per_target_cap_with_priority(&mut with_empty, Some(&empty));
+
+        let legacy_view: Vec<&str> = legacy
+            .iter()
+            .map(|c| c.target_neuron_uuid.as_str())
+            .collect();
+        let new_view: Vec<&str> = with_empty
+            .iter()
+            .map(|c| c.target_neuron_uuid.as_str())
+            .collect();
+        assert_eq!(legacy_view, new_view);
     }
 }
