@@ -23,7 +23,7 @@ flowchart LR
 
 **Dependabot alert dismissed** via `gh api -X PATCH` with `dismissed_reason=tolerable_risk` and a documentation comment pointing at `deny.toml`. The alert at https://github.com/stSoftwareAU/NEAT-AI-Discovery/security/dependabot/1 is now in state `dismissed`.
 
-**`cargo deny check` output**: `advisories ok, bans ok, licenses ok, sources ok` (exit 0). Two informational warnings (`unknown-advisory`, `advisory-not-detected`) are expected — the GHSA is not yet in the RustSec database, so the ignore entry is pre-emptive and will quietly activate when RustSec picks it up.
+**`cargo deny check` output**: `advisories ok, bans ok, licenses ok, sources ok` (exit 0). Two informational warnings (`unknown-advisory`, `advisory-not-detected`) are expected — the GHSA is not yet in the RustSec database, so the ignore entry is preemptive and will quietly activate when RustSec picks it up.
 
 ## Test Plan
 
