@@ -19,6 +19,21 @@ on:
       - Develop
   workflow_dispatch: # Allow manual trigger if needed
 
+# Cancel superseded runs on the same ref (Issue #1288). When a contributor
+# force-pushes a PR or lands several commits to Develop in quick succession,
+# in-flight runs are cancelled so the latest commit's checks finish sooner
+# and runner capacity is not wasted on stale builds.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Minimal top-level permissions — narrow the default GITHUB_TOKEN scope to
+# read-only for unprivileged jobs (quality, validation, spell-check). Jobs
+# that need write access (version-increment, auto-format) declare their own
+# per-job `permissions:` blocks which override this default.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: "2"
@@ -28,6 +43,10 @@ jobs:
     name: Auto-increment Versions
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    # Cap runtime to surface wedged `cargo install` / `git fetch` steps
+    # as fast failures rather than letting them tie up a runner for the
+    # GitHub default 6h (Issue #1287).
+    timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
@@ -50,7 +69,9 @@ jobs:
         git config user.email "github-actions[bot]@users.noreply.github.com"
         
     - name: Pull latest changes
-      run: git pull origin ${{ github.head_ref }}
+      env:
+        HEAD_REF: ${{ github.head_ref }}
+      run: git pull origin "$HEAD_REF"
         
     - name: Fetch base branch
       run: |
@@ -70,7 +91,9 @@ jobs:
       run: cargo install --locked --version 0.16.0 cargo-outdated
         
     - name: Check for source changes and increment version
+      shell: bash
       run: |
+        set -euo pipefail
         # Determine base branch name (try Develop first, then develop)
         BASE_BRANCH="Develop"
         if ! git show-ref --verify --quiet refs/remotes/origin/Develop; then
@@ -136,11 +159,15 @@ jobs:
         
     - name: Check if there are changes
       id: changes
+      shell: bash
+      env:
+        HEAD_REF: ${{ github.head_ref }}
       run: |
+        set -euo pipefail
         if ! git diff --quiet; then
           git add -A
           git commit -m "chore: auto-increment versions for changed projects"
-          git push origin ${{ github.head_ref }}
+          git push origin "$HEAD_REF"
         else
           echo "No version changes to commit"
         fi
@@ -152,6 +179,10 @@ jobs:
     runs-on: 'ubuntu-latest'
     if: github.event_name == 'pull_request'
     needs: [version-increment, auto-format]
+    # Heaviest job: Rust compile, clippy, full test suite. 45 minutes
+    # leaves headroom for cold caches while still firing well before
+    # the 6h GitHub default (Issue #1287).
+    timeout-minutes: 45
     env:
       RUSTFLAGS: "-D warnings"
     
@@ -173,7 +204,9 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Free up runner disk space
+      shell: bash
       run: |
+        set -euo pipefail
         # GitHub runners start with ~17GB free but Rust builds can exceed this.
         # Remove large pre-installed software we don't need to free 10-20GB.
         echo "Disk usage before cleanup:"
@@ -200,7 +233,7 @@ jobs:
 
     - name: Cache dependencies
       # Pinned to a 40-char commit SHA (Issue #1216).
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: |
           ~/.cargo/registry
@@ -227,7 +260,9 @@ jobs:
       run: cargo build --lib
 
     - name: Clean intermediate artefacts before tests
+      shell: bash
       run: |
+        set -euo pipefail
         # Test compilation generates many large binaries. Remove incremental
         # compilation data and fingerprints to free space before this step.
         echo "Disk usage before cleanup:"
@@ -245,6 +280,13 @@ jobs:
     uses: ./.github/workflows/security.yml
     if: github.event_name == 'pull_request'
     needs: [version-increment]
+    # Reusable security.yml requests checks: write and issues: write for
+    # rustsec/audit-check and dependency-review-action. Override the
+    # top-level read-only default so the caller can grant them (Issue #1286).
+    permissions:
+      contents: read
+      issues: write
+      checks: write
     with:
       include-dependency-review: true
 
@@ -253,14 +295,19 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     needs: [version-increment]
-    
+    # File-presence and lightweight cargo check — 10 minutes is plenty
+    # while still capping wedged-runner exposure (Issue #1287).
+    timeout-minutes: 10
+
     steps:
     - name: Checkout code
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Check for required files
+      shell: bash
       run: |
+        set -euo pipefail
         echo "🔍 Checking for required project files..."
         
         required_files=(
@@ -285,7 +332,9 @@ jobs:
         fi
 
     - name: Validate Cargo.toml
+      shell: bash
       run: |
+        set -euo pipefail
         echo "🔍 Validating Cargo.toml..."
         
         if ! cargo check --manifest-path Cargo.toml --quiet; then
@@ -303,7 +352,9 @@ jobs:
         echo "✅ Cargo.toml validation passed"
 
     - name: Check documentation
+      shell: bash
       run: |
+        set -euo pipefail
         echo "🔍 Checking documentation..."
         
         readme_lines=$(wc -l < README.md)
@@ -326,6 +377,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     needs: [version-increment]
+    # rustfmt + commit-and-push; 15 minutes covers a cold toolchain
+    # install while still bounding hangs (Issue #1287).
+    timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
@@ -340,7 +394,9 @@ jobs:
         token: ${{ secrets.ACTIONS_PUSH }}
 
     - name: Ensure bash scripts are executable
+      shell: bash
       run: |
+        set -euo pipefail
         echo "🔍 Ensuring all bash scripts are executable..."
         CHANGED=false
         while IFS= read -r script; do
@@ -385,7 +441,9 @@ jobs:
 
     - name: Push Changes
       if: steps.check_changes.outputs.has_changes == 'true'
-      run: git push origin ${{ github.head_ref }}
+      env:
+        HEAD_REF: ${{ github.head_ref }}
+      run: git push origin "$HEAD_REF"
 
   # Shell script linting is handled by .github/workflows/shellcheck.yml
   # (ludeeus/action-shellcheck), which is a strict superset of `bash -n`
@@ -397,7 +455,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     needs: [version-increment]
-    
+    # codespell over the tree — light job, 10 minute cap (Issue #1287).
+    timeout-minutes: 10
+
     steps:
     - name: Checkout code
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.

@@ -54,6 +54,15 @@ ignore = [
     # paste is unmaintained but is a transitive dependency of metal (wgpu-hal)
     # and parquet — we cannot replace it until upstream crates migrate.
     { id = "RUSTSEC-2024-0436", reason = "transitive dep from metal/parquet; awaiting upstream migration to pastey" },
+    # CVE-2026-43868 / GHSA-2f9f-gq7v-9h6m — Apache Thrift memory allocation
+    # with excessive size (CWE-789, CVSS 5.3 medium, availability only). The
+    # Apache fix lands in Thrift 0.23.0, but the Rust `thrift` crate is at its
+    # latest published version (0.17.0) and has not yet been ported. It is a
+    # transitive dep via parquet, used only to parse parquet file metadata —
+    # we never decode untrusted Thrift over the network. Risk is bounded by
+    # the parquet files we choose to read. Issue #1297. Revisit when the
+    # Rust thrift crate publishes a patched release.
+    { id = "GHSA-2f9f-gq7v-9h6m", reason = "no Rust thrift release contains the fix yet; transitive via parquet, files we control (Issue #1297)" },
 ]
 
 # =============================================================================

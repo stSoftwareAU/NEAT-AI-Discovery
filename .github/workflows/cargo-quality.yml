@@ -1,39 +1,42 @@
-# Cargo Quality workflow (Issue #1180).
+# Coverage workflow (Issue #1180, #1289).
 #
-# Standalone formatting + lint + coverage gate raised by the VibeCoding
-# workflow sync. The repository's main CI workflow (`ci.yml`) also runs
-# `cargo fmt --check` and `cargo clippy`, but this dedicated workflow
-# provides a fast, focused signal on every pull request and uploads
-# coverage to Codecov (Issue #1636).
+# Trimmed to coverage-only: the repository's main CI workflow (`ci.yml`)
+# already runs `cargo fmt --check` and `cargo clippy` with the full
+# feature set and `RUSTFLAGS: "-D warnings"`, so the duplicate fmt and
+# clippy steps that used to live here doubled CI runtime for two checks
+# that always produce the same result. The fmt/clippy gate stays in
+# `ci.yml/quality`; this workflow now exists solely to generate and
+# upload Codecov coverage (Issue #1636).
 
-name: Cargo Quality
+name: Coverage
 
 on:
   pull_request:
     branches: ["*"]
 
+# Cancel superseded runs on the same ref (Issue #1288).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
-  quality:
-    name: Format, Clippy and Coverage
+  coverage:
+    name: Coverage
     runs-on: ubuntu-latest
+    # cargo-llvm-cov coverage build. Coverage instrumentation roughly
+    # doubles build time, so 45 minutes mirrors the heaviest cargo job
+    # (Issue #1287).
+    timeout-minutes: 45
     steps:
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install Rust toolchain (rustfmt + clippy)
+      - name: Install Rust toolchain
         # Pinned to a SHA on the action's `stable` branch (Issue #1216).
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Run linter
-        run: cargo clippy -- -D warnings
 
       # Coverage instrumentation and upload (Issue #1636).
       - name: Install cargo-llvm-cov

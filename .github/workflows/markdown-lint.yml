@@ -6,12 +6,20 @@ on:
   push:
     branches: [main, master, Develop]
 
+# Cancel superseded runs on the same ref (Issue #1288).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   markdownlint:
     runs-on: ubuntu-latest
+    # markdownlint-cli2 + optional Mermaid validation — light job,
+    # 10 minute cap (Issue #1287).
+    timeout-minutes: 10
     steps:
       # actions/checkout@v5
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
