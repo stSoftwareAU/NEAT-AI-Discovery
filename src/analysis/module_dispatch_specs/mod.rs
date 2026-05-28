@@ -24,6 +24,7 @@ mod synapse_specs;
 
 use std::sync::Arc;
 
+use super::cost_function_hint::CostFunctionHint;
 use super::detection::topology_cache::CreatureTopologyCache;
 use super::{
     cache, candidate_clustering, candidate_diversity, discovery_dispatch, ensemble_scoring,
@@ -45,10 +46,18 @@ pub(crate) fn build_discovery_module_specs(
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
     topo: &Arc<CreatureTopologyCache>,
+    cost_hint: CostFunctionHint,
 ) -> Vec<discovery_dispatch::DiscoveryModuleSpec> {
     let mut modules: Vec<discovery_dispatch::DiscoveryModuleSpec> = Vec::with_capacity(32);
 
-    neuron_specs::append_neuron_specs(&mut modules, creature, hidden_neurons, shared_cache, topo);
+    neuron_specs::append_neuron_specs(
+        &mut modules,
+        creature,
+        hidden_neurons,
+        shared_cache,
+        topo,
+        cost_hint,
+    );
     synapse_specs::append_synapse_specs(&mut modules, creature, hidden_neurons, shared_cache, topo);
     structural_specs::append_structural_specs(
         &mut modules,
@@ -57,7 +66,7 @@ pub(crate) fn build_discovery_module_specs(
         shared_cache,
         topo,
     );
-    scoring_specs::append_scoring_specs(&mut modules, creature, shared_cache);
+    scoring_specs::append_scoring_specs(&mut modules, creature, shared_cache, cost_hint);
 
     modules
 }
@@ -82,6 +91,7 @@ pub(crate) fn prepare_and_detect_discovery_modules(
     shared_cache: &Arc<cache::RecordCache>,
     tracker: &ModuleOutcomeTracker,
     deadline: Option<std::time::SystemTime>,
+    cost_hint: CostFunctionHint,
 ) -> discovery_dispatch::DiscoveryModuleDetectionResults {
     prepare_and_detect_discovery_modules_with_starvation(
         creature,
@@ -91,12 +101,14 @@ pub(crate) fn prepare_and_detect_discovery_modules(
         deadline,
         None,
         0,
+        cost_hint,
     )
 }
 
 /// Same contract as [`prepare_and_detect_discovery_modules`] but also forwards
 /// the per-creature [`ModuleStarvationTracker`] so modules in active
 /// starvation cooldown are skipped at detection time (Issue #1273).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_and_detect_discovery_modules_with_starvation(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
@@ -105,10 +117,12 @@ pub(crate) fn prepare_and_detect_discovery_modules_with_starvation(
     deadline: Option<std::time::SystemTime>,
     starvation_tracker: Option<&super::module_starvation_tracker::ModuleStarvationTracker>,
     current_epoch: u64,
+    cost_hint: CostFunctionHint,
 ) -> discovery_dispatch::DiscoveryModuleDetectionResults {
     // Issue #754: Pre-compute topology cache once for all detection modules.
     let topo = Arc::new(CreatureTopologyCache::new(creature));
-    let mut modules = build_discovery_module_specs(creature, hidden_neurons, shared_cache, &topo);
+    let mut modules =
+        build_discovery_module_specs(creature, hidden_neurons, shared_cache, &topo, cost_hint);
 
     // Issue #967: Allocate candidate budgets based on module success rates.
     let config = CandidateBudgetConfig::default();
@@ -407,7 +421,13 @@ mod tests {
             super::super::detection::topology_cache::CreatureTopologyCache::new(&creature),
         );
 
-        let specs = build_discovery_module_specs(&creature, &hidden, &cache, &topo);
+        let specs = build_discovery_module_specs(
+            &creature,
+            &hidden,
+            &cache,
+            &topo,
+            CostFunctionHint::Unknown,
+        );
 
         // We expect 47 modules across all four spec groups (batch-successful
         // is disabled by default, Issue #1059).
@@ -442,7 +462,13 @@ mod tests {
             super::super::detection::topology_cache::CreatureTopologyCache::new(&creature),
         );
 
-        let specs = build_discovery_module_specs(&creature, &hidden, &cache, &topo);
+        let specs = build_discovery_module_specs(
+            &creature,
+            &hidden,
+            &cache,
+            &topo,
+            CostFunctionHint::Unknown,
+        );
         let mut phase_names: Vec<&str> = specs.iter().map(|s| s.phase_name).collect();
         let total = phase_names.len();
         phase_names.sort();
@@ -465,7 +491,13 @@ mod tests {
             super::super::detection::topology_cache::CreatureTopologyCache::new(&creature),
         );
 
-        let specs = build_discovery_module_specs(&creature, &hidden, &cache, &topo);
+        let specs = build_discovery_module_specs(
+            &creature,
+            &hidden,
+            &cache,
+            &topo,
+            CostFunctionHint::Unknown,
+        );
 
         // With empty hidden neurons and no records, all modules should return None.
         for spec in specs {

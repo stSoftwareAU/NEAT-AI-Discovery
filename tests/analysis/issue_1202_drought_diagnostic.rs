@@ -138,6 +138,7 @@ fn make_input(parquet_file: String, outcomes: Vec<bool>) -> AnalyzeAllInput {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: Some(DiscoveryOutcomeLog::from_outcomes(outcomes)),
+        cost_name: None,
     }
 }
 

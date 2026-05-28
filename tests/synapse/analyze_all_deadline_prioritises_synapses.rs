@@ -127,6 +127,7 @@ fn synapse_analysis_runs_under_deadline() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        cost_name: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -177,6 +178,7 @@ fn metadata_indicates_target_value_available() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        cost_name: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -222,6 +224,7 @@ fn metadata_indicates_target_value_not_available() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        cost_name: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -273,6 +276,7 @@ fn metadata_indicates_saturation_aware_simulation_used() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        cost_name: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -321,6 +325,7 @@ fn candidate_counts_tracked_correctly() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        cost_name: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");
@@ -432,6 +437,7 @@ fn truncation_reflected_in_candidate_counts() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        cost_name: None,
     };
 
     let result = analyze_all(&input).expect("Analysis should succeed");

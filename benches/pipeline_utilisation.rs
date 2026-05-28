@@ -333,6 +333,7 @@ fn bench_pipeline_utilisation(c: &mut Criterion) {
                         temperature: 1.0,
                         failure_cache: None,
                         discovery_outcome_log: None,
+                        cost_name: None,
                     };
                     black_box(analyze_all(&input).expect("analyze_all failed"))
                 });
@@ -362,6 +363,7 @@ fn bench_pipeline_utilisation(c: &mut Criterion) {
                         temperature: 1.0,
                         failure_cache: None,
                         discovery_outcome_log: None,
+                        cost_name: None,
                     };
                     black_box(analyze_all(&input).expect("analyze_all failed"))
                 });
@@ -391,6 +393,7 @@ fn bench_pipeline_utilisation(c: &mut Criterion) {
                         temperature: 1.0,
                         failure_cache: None,
                         discovery_outcome_log: None,
+                        cost_name: None,
                     };
                     black_box(analyze_all(&input).expect("analyze_all failed"))
                 });
@@ -416,6 +419,7 @@ fn bench_pipeline_utilisation(c: &mut Criterion) {
             temperature: 1.0,
             failure_cache: None,
             discovery_outcome_log: None,
+            cost_name: None,
         };
 
         let mut profile = ProfileData::new();

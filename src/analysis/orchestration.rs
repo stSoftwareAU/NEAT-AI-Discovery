@@ -16,7 +16,9 @@ use crate::observability::{
 };
 use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
 
+use super::cost_function_hint::CostFunctionHint;
 use super::shared::{AnalyzeAllResult, AnalyzeNeuronsResult, AnalyzeSynapsesResult};
+use super::task_descriptor::TaskDescriptor;
 use super::{
     cache, candidate_aggregation, candidate_compression, discovery_dispatch, module_dispatch_specs,
     module_weights, neuron, neuron_fingerprint, synapse, utils,
@@ -267,6 +269,20 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
     let include_synapse = input.include_synapse_analysis.unwrap_or(true);
     let include_neuron = input.include_neuron_analysis.unwrap_or(true);
+
+    // Issue #1317: Derive the cost-function hint that gates the
+    // implied-target reconstruction guard. When the caller supplies a known
+    // linear-residual cost name (MSE / MAE / CE / BCE) the reconstruction-
+    // dependent detectors run; for non-linear costs (MAPE / MSLE / HINGE /
+    // CATEGORICAL_ERROR) they are skipped; absent / unrecognised / OTHER
+    // collapses to `neutral()` which maps to a conservative skip.
+    let cost_hint: CostFunctionHint = input
+        .cost_name
+        .as_deref()
+        .map_or_else(TaskDescriptor::neutral, |name| {
+            TaskDescriptor::from_name(name, input.creature.output)
+        })
+        .cost_function_hint();
 
     // Issue #490: Compute current fingerprints and filter unchanged neurons.
     let current_fingerprints = neuron_fingerprint::compute_neuron_fingerprints(&input.creature);
@@ -744,6 +760,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                             &shared_cache,
                             &tracker,
                             discovery_deadline,
+                            cost_hint,
                         )
                     }))
                     .unwrap_or_else(|panic_payload| {

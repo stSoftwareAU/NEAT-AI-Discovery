@@ -720,6 +720,7 @@ fn analyze_all_runs_synapse_and_neuron_phases() {
         max_discovery_wall_clock_minutes: None,
         failure_cache: None,
         discovery_outcome_log: None,
+        cost_name: None,
     };
 
     let result = analyze_all(&input).expect("Combined analysis should succeed");
