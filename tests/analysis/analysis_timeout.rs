@@ -203,6 +203,7 @@ fn neuron_analysis_respects_deadline() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let start = Instant::now();
@@ -289,6 +290,7 @@ fn focus_neurons_are_randomised_across_runs() {
             temperature: 1.0,
             failure_cache: None,
             discovery_outcome_log: None,
+            task_descriptor: None,
         };
 
         let result = analyze_neurons(&input).expect("Analysis should complete successfully");

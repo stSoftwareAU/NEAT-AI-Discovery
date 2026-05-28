@@ -364,6 +364,39 @@ impl EarlyTerminationConfig {
         }
     }
 
+    /// Calibrate the early-termination config to the supervised-learning task
+    /// (Issue #1320).
+    ///
+    /// Absolute error scale is cost-dependent: a `0.1` categorical error
+    /// already implies ~90% accuracy, while a `0.1` MSE is mediocre. The
+    /// per-sample improvement signal is therefore much sparser for
+    /// classification topologies (one-hot / simplex / margin), and the SPRT
+    /// must collect more samples and require a stricter threshold before
+    /// committing to an Accept / Reject decision — otherwise a clearly
+    /// beneficial classification candidate is rejected on noise.
+    ///
+    /// Regression guard: `OTHER` / `Unknown` / neutral descriptors and any
+    /// `Independent` (regression) topology return [`Self::default`]
+    /// unchanged.
+    #[must_use]
+    pub fn for_task(descriptor: &super::task_descriptor::TaskDescriptor) -> Self {
+        use super::task_descriptor::TargetTopology;
+
+        let base = Self::default();
+        match descriptor.target_topology {
+            TargetTopology::OneHot | TargetTopology::Simplex | TargetTopology::Margin => Self {
+                // Classification: roughly double the sample budget and lift
+                // the SPRT threshold off the 50% baseline so a sparse signal
+                // is not mistaken for evidence.
+                min_samples: base.min_samples.saturating_mul(2),
+                threshold: base.threshold + 0.1,
+                ..base
+            },
+            // Independent (regression) / Unknown ⇒ current thresholds.
+            TargetTopology::Independent | TargetTopology::Unknown => base,
+        }
+    }
+
     /// Create an evaluator from this config.
     #[must_use]
     pub fn create_evaluator(&self) -> SequentialEvaluator {

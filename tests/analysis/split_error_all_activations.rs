@@ -152,6 +152,7 @@ fn test_non_relu_activations_use_split_error_evaluation() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");
@@ -286,6 +287,7 @@ fn test_skewed_errors_return_candidates() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("Analysis should succeed");

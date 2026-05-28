@@ -106,6 +106,7 @@ fn hidden_neuron_reported_as_filtered_in_neuron_diagnostics() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("analysis should succeed");
@@ -163,6 +164,7 @@ fn input_neuron_reported_as_filtered_in_neuron_diagnostics() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("analysis should succeed");

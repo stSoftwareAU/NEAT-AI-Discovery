@@ -27,6 +27,36 @@ use super::diagnostics::RejectionBreakdown;
 use super::discovery_mode::DiscoveryMode;
 use super::module_starvation_tracker::ModuleStarvationTracker;
 use super::target_failure_tracker::TargetFailureTracker;
+use super::task_descriptor::{TargetTopology, TaskDescriptor};
+
+/// Multiplier applied to the base drought threshold for classification
+/// topologies (Issue #1320). Classification per-sample signal is sparse — a
+/// trailing streak of empty passes is normal early in training — so we lift
+/// the warn / `droughtDiagnostic` fire point above the regression default.
+const CLASSIFICATION_DROUGHT_MULTIPLIER: u32 = 2;
+
+/// Calibrate the drought-diagnostic threshold to the supervised-learning task
+/// (Issue #1320).
+///
+/// Classification topologies (one-hot, simplex, margin) generate sparser
+/// per-sample improvement signal than regression — a `0.1` categorical error
+/// is excellent (~90% accuracy) while a `0.1` MSE is mediocre. Treating a
+/// short trailing-failure streak as a "drought" on a classification run fires
+/// the diagnostic prematurely and, when the operator escape hatch is enabled,
+/// can trigger an unnecessary cache / cooldown reset. This helper scales the
+/// threshold up so the warn fires later.
+///
+/// Regression guard: `OTHER` / `Unknown` / neutral descriptors and
+/// `Independent` (regression) topologies return `base` unchanged.
+#[must_use]
+pub fn drought_threshold_for_task(base: u32, descriptor: &TaskDescriptor) -> u32 {
+    match descriptor.target_topology {
+        TargetTopology::OneHot | TargetTopology::Simplex | TargetTopology::Margin => {
+            base.saturating_mul(CLASSIFICATION_DROUGHT_MULTIPLIER)
+        }
+        TargetTopology::Independent | TargetTopology::Unknown => base,
+    }
+}
 
 /// Structured payload describing the current drought state (Issue #1202).
 ///

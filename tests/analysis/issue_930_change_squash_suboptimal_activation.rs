@@ -232,6 +232,7 @@ fn run_analysis() -> Vec<neat_ai_discovery::CoordinatedStructuralCandidateJson> 
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        cost_name: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");
@@ -390,6 +391,7 @@ fn test_analyze_all_finds_change_squash_candidate() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        cost_name: None,
     };
 
     let result = analyze_all(&input).expect("analyze_all should succeed");

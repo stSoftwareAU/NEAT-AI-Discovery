@@ -5,6 +5,7 @@
 use serde::Deserialize;
 
 use crate::analysis;
+use crate::analysis::task_descriptor::TaskDescriptor;
 
 use super::{CreatureJson, TrainingRecord};
 
@@ -20,6 +21,13 @@ pub struct RecordDiscoveryInput {
     pub record_indices: Option<Vec<usize>>,
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+    /// Optional task-shape descriptor forwarded by the producer (Issue #1314).
+    ///
+    /// Pure plumbing for now — no recommendation generator reads this yet.
+    /// When absent, consumers should treat it as
+    /// [`TaskDescriptor::neutral`].
+    #[serde(default)]
+    pub task_descriptor: Option<TaskDescriptor>,
 }
 
 /// FFI request payload for
@@ -108,6 +116,24 @@ pub struct AnalyzeParallelInput {
     /// runs in [`analysis::discovery_mode::DiscoveryMode::Normal`].
     #[serde(default)]
     pub discovery_outcome_log: Option<analysis::discovery_mode::DiscoveryOutcomeLog>,
+    /// Cost-function name in use by NEAT-AI (Issue #1317).
+    ///
+    /// Forwarded into the implied-target reconstruction guard so
+    /// reconstruction-dependent detectors are enabled for linear-residual
+    /// costs (`MSE` / `MAE` / `CROSS_ENTROPY`) and skipped for non-linear
+    /// ones (`MAPE` / `MSLE` / `HINGE` / `CATEGORICAL_ERROR`). When absent
+    /// or unrecognised the guard conservatively skips those detectors.
+    /// See `src/analysis/cost_function_hint.rs` and issue #1250 for the
+    /// underlying defect.
+    #[serde(default)]
+    pub cost_name: Option<String>,
+    /// Optional task-shape descriptor forwarded by the producer (Issue #1314).
+    ///
+    /// Pure plumbing for now — no recommendation generator reads this yet.
+    /// When absent, consumers should treat it as
+    /// [`TaskDescriptor::neutral`].
+    #[serde(default)]
+    pub task_descriptor: Option<TaskDescriptor>,
 }
 
 /// Internal input structure for synapse analysis (used by `analyze_all`)
@@ -182,6 +208,13 @@ pub struct AnalyzeNeuronsInput {
     /// When absent or empty, cooldown uses the static configured thresholds.
     #[serde(default)]
     pub discovery_outcome_log: Option<analysis::discovery_mode::DiscoveryOutcomeLog>,
+    /// Task-shape descriptor derived from `AnalyzeAllInput::cost_name`
+    /// (Issue #1319). Threaded down so the neuron post-processing path can
+    /// bias per-class allocation under a `OneHot` descriptor. `None` (or a
+    /// non-`OneHot` topology) preserves the existing allocation verbatim —
+    /// regression guard.
+    #[serde(default)]
+    pub task_descriptor: Option<TaskDescriptor>,
 }
 
 /// Internal input structure for combined analysis (used by `analyze_parallel`)
@@ -245,6 +278,11 @@ pub struct AnalyzeAllInput {
     /// See `AnalyzeParallelInput` for full documentation.
     #[serde(default)]
     pub discovery_outcome_log: Option<analysis::discovery_mode::DiscoveryOutcomeLog>,
+    /// Cost-function name in use by NEAT-AI (Issue #1317).
+    ///
+    /// See `AnalyzeParallelInput::cost_name` for the full contract.
+    #[serde(default)]
+    pub cost_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -261,6 +299,13 @@ pub struct RankFocusNeuronsInput {
     /// Issue #132: Pass this from NEAT-AI's configured costOfGrowth for consistency.
     #[serde(default)]
     pub cost_of_growth: Option<f32>,
+    /// Optional task-shape descriptor forwarded by the producer (Issue #1314).
+    ///
+    /// Pure plumbing for now — no recommendation generator reads this yet.
+    /// When absent, consumers should treat it as
+    /// [`TaskDescriptor::neutral`].
+    #[serde(default)]
+    pub task_descriptor: Option<TaskDescriptor>,
 }
 
 #[derive(Debug, Deserialize)]

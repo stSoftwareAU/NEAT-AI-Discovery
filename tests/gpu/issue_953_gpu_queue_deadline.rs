@@ -92,6 +92,7 @@ fn neuron_analysis_with_deadline_completes() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = analyze_neurons(&input).expect("Neuron analysis with deadline should succeed");
@@ -177,6 +178,7 @@ fn analysis_with_expired_deadline_returns_promptly() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let start = std::time::Instant::now();

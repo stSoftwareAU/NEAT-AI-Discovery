@@ -185,6 +185,7 @@ fn bench_parallel_discovery(c: &mut Criterion) {
                         temperature: 1.0,
                         failure_cache: None,
                         discovery_outcome_log: None,
+                        cost_name: None,
                     };
                     black_box(analyze_all(&input).expect("analyze_all failed"))
                 });

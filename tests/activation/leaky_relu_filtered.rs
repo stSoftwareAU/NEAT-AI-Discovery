@@ -74,6 +74,7 @@ fn add_neuron_candidates_do_not_include_leaky_relu() {
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: None,
+        task_descriptor: None,
     };
 
     let result = neat_ai_discovery::analysis::analyze_neurons(&analyze_input)

@@ -136,6 +136,7 @@ fn make_input(parquet_file: String, outcome_log: Option<DiscoveryOutcomeLog>) ->
         temperature: 1.0,
         failure_cache: None,
         discovery_outcome_log: outcome_log,
+        cost_name: None,
     }
 }
 

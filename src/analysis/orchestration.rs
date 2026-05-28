@@ -16,7 +16,9 @@ use crate::observability::{
 };
 use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
 
+use super::cost_function_hint::CostFunctionHint;
 use super::shared::{AnalyzeAllResult, AnalyzeNeuronsResult, AnalyzeSynapsesResult};
+use super::task_descriptor::TaskDescriptor;
 use super::{
     cache, candidate_aggregation, candidate_compression, discovery_dispatch, module_dispatch_specs,
     module_weights, neuron, neuron_fingerprint, synapse, utils,
@@ -268,6 +270,23 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     let include_synapse = input.include_synapse_analysis.unwrap_or(true);
     let include_neuron = input.include_neuron_analysis.unwrap_or(true);
 
+    // Issue #1317: Derive the cost-function hint that gates the
+    // implied-target reconstruction guard. When the caller supplies a known
+    // linear-residual cost name (MSE / MAE / CE / BCE) the reconstruction-
+    // dependent detectors run; for non-linear costs (MAPE / MSLE / HINGE /
+    // CATEGORICAL_ERROR) they are skipped; absent / unrecognised / OTHER
+    // collapses to `neutral()` which maps to a conservative skip.
+    // Issue #1316: also keep the full descriptor — the output_bias_drift
+    // module needs the topology (OneHot / Simplex) to weight up capacity-
+    // starved output neurons.
+    let task_descriptor: TaskDescriptor = input
+        .cost_name
+        .as_deref()
+        .map_or_else(TaskDescriptor::neutral, |name| {
+            TaskDescriptor::from_name(name, input.creature.output)
+        });
+    let cost_hint: CostFunctionHint = task_descriptor.cost_function_hint();
+
     // Issue #490: Compute current fingerprints and filter unchanged neurons.
     let current_fingerprints = neuron_fingerprint::compute_neuron_fingerprints(&input.creature);
     let (effective_focus_neurons, fingerprint_cache_hits, fingerprint_cache_misses) =
@@ -512,6 +531,9 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             temperature: input.temperature,
             failure_cache: input.failure_cache.clone(),
             discovery_outcome_log: input.discovery_outcome_log.clone(),
+            // Issue #1319: thread the task descriptor down so the neuron
+            // post-processing can bias per-class allocation under OneHot.
+            task_descriptor: Some(task_descriptor),
         })
     } else {
         None
@@ -744,6 +766,8 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                             &shared_cache,
                             &tracker,
                             discovery_deadline,
+                            cost_hint,
+                            task_descriptor,
                         )
                     }))
                     .unwrap_or_else(|panic_payload| {
@@ -923,7 +947,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // surfaces. The orchestrator owns the only call site, so the warn fires
     // at most once per `analyze_all` invocation.
     let consecutive_failures = outcome_log.consecutive_trailing_failures();
-    let drought_threshold = crate::config::drought_log_threshold();
+    // Issue #1320: calibrate the drought threshold to the task descriptor.
+    // Classification topologies generate sparse per-sample improvement signal,
+    // so the base threshold is scaled up to avoid premature drought fires.
+    // OTHER / Unknown / Independent descriptors keep the base threshold (the
+    // regression guard).
+    let drought_threshold = super::drought_diagnostic::drought_threshold_for_task(
+        crate::config::drought_log_threshold(),
+        &task_descriptor,
+    );
     if consecutive_failures >= drought_threshold {
         // Snapshot the global target-cooldown tracker. Lock failures fall back
         // to "no tracker" so the diagnostic still fires.

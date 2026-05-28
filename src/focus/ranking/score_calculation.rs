@@ -67,6 +67,46 @@ pub(super) fn average_absolute_error_from_records(records: &[DiscoverRecord]) ->
     if count == 0 { 0.0 } else { sum / count as f32 }
 }
 
+/// Margin-weighted average absolute error (Issue #1318).
+///
+/// When `obs_weights` is provided, each record's contribution is multiplied by
+/// the per-observation weight before averaging. Observations absent from the
+/// map default to weight `1.0` (i.e. they contribute as in the unweighted mean).
+///
+/// When `obs_weights` is `None`, this is identical to
+/// [`average_absolute_error_from_records`] — used by the regression guard so
+/// callers without an `OneHot` / `Margin` descriptor get the legacy ranking.
+pub(super) fn weighted_average_absolute_error_from_records(
+    records: &[DiscoverRecord],
+    obs_weights: Option<&HashMap<u32, f32>>,
+) -> f32 {
+    let Some(weights) = obs_weights else {
+        return average_absolute_error_from_records(records);
+    };
+
+    let mut weighted_sum = 0.0f32;
+    let mut weight_total = 0.0f32;
+
+    for record in records {
+        let w = weights.get(&record.obs_index).copied().unwrap_or(1.0);
+        if !w.is_finite() || w <= 0.0 {
+            continue;
+        }
+        for err in &record.errors {
+            if err.is_finite() {
+                weighted_sum += w * err.abs();
+                weight_total += w;
+            }
+        }
+    }
+
+    if weight_total <= 0.0 {
+        0.0
+    } else {
+        weighted_sum / weight_total
+    }
+}
+
 /// Compute mean absolute activation from discovery records.
 /// Sum of |activation| divided by number of finite records.
 ///

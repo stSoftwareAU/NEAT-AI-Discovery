@@ -31,12 +31,16 @@ use removal_candidates::{detect_constant_neuron_removals, identify_removal_candi
 use score_calculation::{
     activation_frequency_from_records, average_absolute_error_from_records,
     compute_frequency_factor, mean_absolute_activation_from_records,
+    weighted_average_absolute_error_from_records,
 };
 
 use super::gradient::{
     build_squash_map, compute_gradient_flow_factor, compute_gradient_flow_for_neuron,
 };
-use super::impact::compute_impacts_with_activations;
+use super::impact::{
+    compute_impacts_with_activations, compute_per_obs_margins, margin_weights_from_margins,
+};
+use crate::analysis::task_descriptor::{TargetTopology, TaskDescriptor};
 use crate::analysis::utils::{
     bytes_to_mb_ceil, check_memory_for_parquet, estimate_parquet_in_memory_bytes, verbose_enabled,
 };
@@ -305,9 +309,14 @@ fn log_focus_ranking_summary(
 }
 
 /// Compute max output error across all output neurons.
+///
+/// When `obs_weights` is provided (`OneHot` / `Margin` descriptors), the per-output
+/// error is reweighted by the per-observation margin weight so the clamp scale
+/// stays consistent with the margin-weighted per-neuron error (Issue #1318).
 fn compute_max_output_error(
     creature: &CreatureJson,
     records_provider: &dyn RecordProvider,
+    obs_weights: Option<&std::collections::HashMap<u32, f32>>,
 ) -> Result<f32> {
     let output_neurons: Vec<&NeuronJson> = creature
         .neurons
@@ -323,7 +332,10 @@ fn compute_max_output_error(
         .iter()
         .map(|neuron| {
             let records = get_records_or_error(records_provider, &neuron.uuid)?;
-            Ok(average_absolute_error_from_records(&records))
+            Ok(weighted_average_absolute_error_from_records(
+                &records,
+                obs_weights,
+            ))
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -331,18 +343,27 @@ fn compute_max_output_error(
 }
 
 /// Build ranked neurons from selectable neurons with their metrics.
+///
+/// When `obs_weights` is provided (`OneHot` / `Margin` descriptors), per-neuron
+/// errors are aggregated using the per-observation margin weight rather than
+/// the unweighted mean. Issue #1318.
 fn build_ranked_neurons(
     selectable: &[&NeuronJson],
     records_provider: &dyn RecordProvider,
     impact_map: &std::collections::HashMap<String, f32>,
     squash_map: &std::collections::HashMap<String, String>,
     max_output_error: f32,
+    obs_weights: Option<&std::collections::HashMap<u32, f32>>,
 ) -> Result<Vec<RankedNeuron>> {
     selectable
         .par_iter()
         .map(|neuron| -> Result<RankedNeuron> {
             let records = get_records_or_error(records_provider, &neuron.uuid)?;
-            let raw_error = average_absolute_error_from_records(&records);
+            let raw_error = if obs_weights.is_some() {
+                weighted_average_absolute_error_from_records(&records, obs_weights)
+            } else {
+                average_absolute_error_from_records(&records)
+            };
             let structural_impact = *impact_map.get(&neuron.uuid).unwrap_or(&0.0);
             let mean_activation = mean_absolute_activation_from_records(&records);
 
@@ -386,6 +407,44 @@ pub fn rank_focus_neurons(
     creature: &CreatureJson,
     max_results: Option<usize>,
     cost_of_growth: Option<f32>,
+) -> Result<RankFocusStats> {
+    rank_focus_neurons_with_descriptor(parquet_file, creature, max_results, cost_of_growth, None)
+}
+
+/// Returns `true` when the descriptor's target topology should activate
+/// margin-aware focus ranking (Issue #1318). Currently `OneHot` and `Margin`.
+fn descriptor_activates_margin_ranking(descriptor: Option<&TaskDescriptor>) -> bool {
+    descriptor.is_some_and(|d| {
+        matches!(
+            d.target_topology,
+            TargetTopology::OneHot | TargetTopology::Margin
+        )
+    })
+}
+
+/// Rank focus neurons with an optional [`TaskDescriptor`] (Issue #1318).
+///
+/// When the descriptor reports a `OneHot` or `Margin` topology, the per-neuron
+/// error component of the ranking score is replaced with a **margin-weighted**
+/// average — observations where the network's decision margin (top-1 vs top-2
+/// output activation) is small contribute more, observations where the margin
+/// is wide contribute less. This targets the plateau where margin-improving
+/// changes that don't yet flip an argmax otherwise look worthless.
+///
+/// For `OTHER` / `Unknown` / `Independent` / `Simplex` topologies and for
+/// `None`, the ranking falls back to the existing arithmetic-mean error path
+/// (regression guard).
+///
+/// # Errors
+///
+/// Returns an error if the underlying record provider or impact computation
+/// fails.
+pub fn rank_focus_neurons_with_descriptor(
+    parquet_file: &str,
+    creature: &CreatureJson,
+    max_results: Option<usize>,
+    cost_of_growth: Option<f32>,
+    descriptor: Option<&TaskDescriptor>,
 ) -> Result<RankFocusStats> {
     let start = Instant::now();
     let selectable: Vec<&NeuronJson> = creature
@@ -434,7 +493,25 @@ pub fn rank_focus_neurons(
             .context("Failed to read discovery records for all selectable neurons")?;
     }
 
-    let max_output_error = compute_max_output_error(creature, records_provider.as_ref())?;
+    // Issue #1318: Under OneHot / Margin descriptors, compute per-observation
+    // margin weights from output activations. These reweight per-neuron error
+    // aggregation so candidates whose error mass lands on close-margin
+    // observations rank above those whose error mass lands on already-dominant
+    // decisions. Other topologies (Independent / Simplex / Unknown / None) fall
+    // back to the unweighted mean (regression guard).
+    let obs_weights = if descriptor_activates_margin_ranking(descriptor) {
+        let margins = compute_per_obs_margins(creature, records_provider.as_ref())?;
+        if margins.is_empty() {
+            None
+        } else {
+            Some(margin_weights_from_margins(&margins))
+        }
+    } else {
+        None
+    };
+
+    let max_output_error =
+        compute_max_output_error(creature, records_provider.as_ref(), obs_weights.as_ref())?;
 
     // Use activation-based impact calculation for more accurate MIN/MAX/IF statistics
     let impact_map = compute_impacts_with_activations(creature, records_provider.as_ref())?;
@@ -451,6 +528,7 @@ pub fn rank_focus_neurons(
         &impact_map,
         &squash_map,
         max_output_error,
+        obs_weights.as_ref(),
     )?;
 
     // Sort by weighted score (error × impact × gradient_factor × frequency_factor) to prioritise neurons that:
@@ -643,6 +721,34 @@ pub fn rank_focus_neurons_with_history(
     cost_of_growth: Option<f32>,
     history: Option<&DiscoveryHistory>,
 ) -> Result<RankFocusStats> {
+    rank_focus_neurons_with_history_and_descriptor(
+        parquet_file,
+        creature,
+        max_results,
+        cost_of_growth,
+        history,
+        None,
+    )
+}
+
+/// History-aware variant of [`rank_focus_neurons_with_descriptor`] (Issue #1318).
+///
+/// Combines the historical success multiplier with the margin-aware error
+/// reweighting under `OneHot` / `Margin` topologies. Behaviour is identical to
+/// [`rank_focus_neurons_with_history`] for other topologies and for `None`.
+///
+/// # Errors
+///
+/// Returns an error if the underlying record provider or impact computation
+/// fails.
+pub fn rank_focus_neurons_with_history_and_descriptor(
+    parquet_file: &str,
+    creature: &CreatureJson,
+    max_results: Option<usize>,
+    cost_of_growth: Option<f32>,
+    history: Option<&DiscoveryHistory>,
+    descriptor: Option<&TaskDescriptor>,
+) -> Result<RankFocusStats> {
     let start = Instant::now();
     let selectable: Vec<&NeuronJson> = creature
         .neurons
@@ -690,7 +796,20 @@ pub fn rank_focus_neurons_with_history(
             .context("Failed to read discovery records for all selectable neurons")?;
     }
 
-    let max_output_error = compute_max_output_error(creature, records_provider.as_ref())?;
+    // Issue #1318: Same margin-aware reweighting as `rank_focus_neurons_with_descriptor`.
+    let obs_weights = if descriptor_activates_margin_ranking(descriptor) {
+        let margins = compute_per_obs_margins(creature, records_provider.as_ref())?;
+        if margins.is_empty() {
+            None
+        } else {
+            Some(margin_weights_from_margins(&margins))
+        }
+    } else {
+        None
+    };
+
+    let max_output_error =
+        compute_max_output_error(creature, records_provider.as_ref(), obs_weights.as_ref())?;
 
     // Use activation-based impact calculation for more accurate MIN/MAX/IF statistics
     let impact_map = compute_impacts_with_activations(creature, records_provider.as_ref())?;
@@ -708,6 +827,7 @@ pub fn rank_focus_neurons_with_history(
         &impact_map,
         &squash_map,
         max_output_error,
+        obs_weights.as_ref(),
     )?;
 
     // Sort by weighted score with optional history factor, gradient flow factor, and frequency factor
