@@ -10,4 +10,5 @@ pub mod fan_in;
 pub mod gradient_discovery;
 pub mod multi_hop;
 pub mod output_bias_drift;
+pub mod output_competition;
 pub mod sample_weighted;
