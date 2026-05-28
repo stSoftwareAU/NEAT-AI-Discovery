@@ -60,6 +60,7 @@ pub mod streaming;
 pub mod synapse;
 pub mod system;
 pub mod target_failure_tracker;
+pub mod task_descriptor;
 pub mod utils;
 pub mod within_batch_failures;
 
