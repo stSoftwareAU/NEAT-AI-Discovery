@@ -295,7 +295,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     needs: [version-increment]
-    # File-presence and lightweight cargo check — 10 minutes is plenty
+    # File-presence and Cargo.toml field validation — 10 minutes is plenty
     # while still capping wedged-runner exposure (Issue #1287).
     timeout-minutes: 10
 
@@ -336,12 +336,10 @@ jobs:
       run: |
         set -euo pipefail
         echo "🔍 Validating Cargo.toml..."
-        
-        if ! cargo check --manifest-path Cargo.toml --quiet; then
-          echo "❌ Cargo.toml validation failed"
-          exit 1
-        fi
-        
+
+        # Manifest resolvability is proven by the broader compile gate in
+        # the `quality` job (Check types) on the same pull request;
+        # recompiling here only duplicated that work (Issue #1342).
         for field in "name" "version" "edition"; do
           if ! grep -vE "^[[:space:]]*#" Cargo.toml | grep -qE "^[[:space:]]*${field}[[:space:]]*="; then
             echo "❌ Missing '$field' field in Cargo.toml"
