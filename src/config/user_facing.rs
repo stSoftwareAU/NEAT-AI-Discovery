@@ -375,6 +375,42 @@ pub fn focus_ranking_memory_budget_mb() -> Option<u64> {
     }
 }
 
+/// Default safety margin (in megabytes) reserved from OS-available memory
+/// before the focus ranker pre-loads a parquet file (Issue #1376).
+pub const DEFAULT_FOCUS_RANKING_MEMORY_MARGIN_MB: u64 = 1024;
+
+/// Get the focus ranking memory safety margin in megabytes (Issue #1376).
+///
+/// When no explicit `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` is set,
+/// the eager-vs-lazy decision is based on **real OS-available memory** minus
+/// this margin. The margin reserves headroom for GPU buffers, the system, and
+/// allocator slack so a pre-load that *just* fits does not push the host into
+/// swap.
+///
+/// Override with `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB`. Falls back
+/// to [`DEFAULT_FOCUS_RANKING_MEMORY_MARGIN_MB`] when the variable is unset,
+/// empty, or non-numeric. A value of `0` is honoured (no margin reserved).
+pub fn focus_ranking_memory_margin_mb() -> u64 {
+    let Ok(raw) = std::env::var("NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB") else {
+        return DEFAULT_FOCUS_RANKING_MEMORY_MARGIN_MB;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return DEFAULT_FOCUS_RANKING_MEMORY_MARGIN_MB;
+    }
+    match trimmed.parse::<u64>() {
+        Ok(v) => v,
+        Err(_) => {
+            tracing::debug!(
+                raw_value = trimmed,
+                "Ignoring invalid NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB \
+                 (expected a non-negative integer in megabytes)"
+            );
+            DEFAULT_FOCUS_RANKING_MEMORY_MARGIN_MB
+        }
+    }
+}
+
 /// Default streaming session TTL in seconds (1 hour).
 pub const DEFAULT_SESSION_TTL_SECS: u64 = 3600;
 

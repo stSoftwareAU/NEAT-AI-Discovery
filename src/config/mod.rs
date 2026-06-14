@@ -36,7 +36,8 @@
 //! | `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` | f32 | `10.0` | Multiplier applied to `COORDINATED_MIN_EXPECTED_GAIN` in conservative mode (Issue #1132) |
 //! | `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` | u32 | `5` | Consecutive trailing empty discovery passes at which the drought diagnostic warn log fires and `droughtDiagnostic` populates on FFI metadata (Issue #1202) |
 //! | `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | u32 | unset | Operator escape hatch: force a one-shot reset of failed-candidate cache entries and active target cooldowns after this many consecutive empty discovery passes (Issue #1205). Default unset (off). |
-//! | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | u64 | unset | Cap eager pre-load size in `focus::rank_focus_neurons` (Issue #1172). When set, projected size = file size × 3; lazy mode is selected with a structured `info` log when the projection exceeds the budget. When unset, behaviour matches the prior auto-detect heuristic. |
+//! | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | u64 | unset | Cap eager pre-load size in `focus::rank_focus_neurons` (Issue #1172). When set, projected size = file size × 3; lazy mode is selected with a structured `info` log when the projection exceeds the budget. When unset, the auto-detect path (Issue #1376) is used. |
+//! | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` | u64 | `1024` | Safety margin reserved from real OS-available memory in the auto-detect (no explicit budget) eager-vs-lazy decision (Issue #1376). Pre-load is chosen when `projected ≤ available − margin`, keeping hosts with GBs free on the fast path. `0` reserves no margin. |
 //! | `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN` | f32 | `1e-5` | Absolute minimum `expected_creature_score_gain` for emitted add-neuron / add-synapse candidates (Issue #1191). Clamped to `[0.0, 1e-2]`. |
 //!
 //! ## Observability Variables

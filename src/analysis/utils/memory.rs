@@ -342,6 +342,28 @@ pub fn estimate_parquet_in_memory_bytes(parquet_file: &str) -> u64 {
     file_size.saturating_mul(PARQUET_MEMORY_MULTIPLIER)
 }
 
+/// Decide whether a projected parquet pre-load fits within OS-available
+/// memory after reserving a safety margin (Issue #1376).
+///
+/// Returns `true` (pre-load is safe) when
+/// `projected_bytes <= available_bytes − margin_bytes`. Uses saturating
+/// subtraction so a margin larger than available memory yields `0` usable
+/// bytes (lazy) rather than underflowing.
+///
+/// This is a pure function so the eager-vs-lazy decision can be unit-tested
+/// against fixed memory figures (e.g. the GRQ-13 numbers: ~1.6 GB projection
+/// with ~3 GB available → fits → pre-load) without sampling live system
+/// memory.
+#[must_use]
+pub const fn parquet_preload_fits_available(
+    projected_bytes: u64,
+    available_bytes: u64,
+    margin_bytes: u64,
+) -> bool {
+    let usable = available_bytes.saturating_sub(margin_bytes);
+    projected_bytes <= usable
+}
+
 /// Convert bytes to whole megabytes, rounding up so non-zero sizes always
 /// produce at least 1 MB.
 pub const fn bytes_to_mb_ceil(bytes: u64) -> u64 {
