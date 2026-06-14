@@ -95,12 +95,48 @@ impl LazyCache {
 impl LazyRecordProvider {
     const DEFAULT_CACHE_CAPACITY: usize = 8;
 
-    pub(super) fn new(parquet_file: &str) -> Self {
+    /// Create a lazy provider whose cache can hold `capacity` distinct neurons
+    /// without eviction (Issue #1374).
+    ///
+    /// Sizing the cache to the ranking working set guarantees each neuron is
+    /// materialised **at most once** per run, even though the ranking pipeline
+    /// sweeps over every selectable neuron several times (margins, max output
+    /// error, impacts, ranking). With the previous fixed 8-entry cache, a
+    /// larger working set thrashed and every `get()` triggered a full-file
+    /// parquet rescan — turning a 7s preload into over an hour in lazy mode.
+    ///
+    /// The capacity is floored at [`Self::DEFAULT_CACHE_CAPACITY`] so tiny
+    /// working sets keep a small amount of headroom.
+    pub(super) fn with_capacity(parquet_file: &str, capacity: usize) -> Self {
         Self {
             parquet_file: parquet_file.to_string(),
-            cache: Mutex::new(LazyCache::new(Self::DEFAULT_CACHE_CAPACITY)),
+            cache: Mutex::new(LazyCache::new(capacity.max(Self::DEFAULT_CACHE_CAPACITY))),
             loader: Arc::new(read_records_from_parquet),
         }
+    }
+
+    /// Pre-populate the cache from a single grouped parquet pass (Issue #1374).
+    ///
+    /// Warming the cache with one decode of the whole file replaces the
+    /// `O(passes × neurons)` per-neuron full-file rescans the lazy loader would
+    /// otherwise perform. Records are sorted by `obs_index` to match the
+    /// per-neuron load path so downstream ordering is identical.
+    ///
+    /// The cache must be sized (via [`Self::with_capacity`]) to hold the seeded
+    /// set, otherwise seeding would immediately evict its own entries.
+    pub(in crate::focus) fn seed(
+        &self,
+        grouped: HashMap<String, Vec<DiscoverRecord>>,
+    ) -> Result<()> {
+        let mut cache = lock_or_bail(&self.cache, "lazy record cache")?;
+        for (uuid, mut records) in grouped {
+            if records.is_empty() {
+                continue;
+            }
+            records.sort_by_key(|r| r.obs_index);
+            cache.insert(uuid, Arc::new(records));
+        }
+        Ok(())
     }
 
     #[cfg(test)]

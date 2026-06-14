@@ -193,20 +193,70 @@ pub fn decide_loading_mode_for_budget(
 /// - When the budget is unset, the existing `check_memory_for_parquet`
 ///   heuristic is used (auto-detect plus `WARN` on fallback) so behaviour on
 ///   big hosts is unchanged.
-fn load_records_provider(parquet_file: &str) -> Result<LoadingDecision> {
+fn load_records_provider(
+    parquet_file: &str,
+    selectable: &[&NeuronJson],
+) -> Result<LoadingDecision> {
     let budget_mb = focus_ranking_memory_budget_mb();
     let projected_bytes = estimate_parquet_in_memory_bytes(parquet_file);
     let projected_mb = bytes_to_mb_ceil(projected_bytes);
 
     if let Some(budget) = budget_mb {
-        return decide_with_budget(parquet_file, budget, projected_bytes, projected_mb);
+        return decide_with_budget(
+            parquet_file,
+            selectable,
+            budget,
+            projected_bytes,
+            projected_mb,
+        );
     }
 
-    decide_with_auto_detect(parquet_file, projected_mb)
+    decide_with_auto_detect(parquet_file, selectable, projected_mb)
+}
+
+/// Build a lazy record provider whose cache is sized to the ranking working set
+/// and warmed by a single grouped parquet pass (Issue #1374).
+///
+/// The ranking pipeline sweeps over every selectable neuron several times. The
+/// previous lazy provider used an 8-entry cache and re-read the entire parquet
+/// file on every cache miss, so a working set larger than 8 neurons thrashed
+/// into `O(passes × neurons)` full-file decodes. Here we:
+/// 1. size the cache to the selectable set so nothing is evicted mid-run, and
+/// 2. warm it with **one** grouped decode, retaining only the selectable
+///    neurons' records.
+///
+/// The per-neuron loader remains as a fallback for any neuron missing from the
+/// warm pass (e.g. neurons with no recorded data), and the bounded-but-
+/// sufficient cache still guarantees each is loaded at most once.
+fn build_lazy_provider(parquet_file: &str, selectable: &[&NeuronJson]) -> Arc<dyn RecordProvider> {
+    let provider = LazyRecordProvider::with_capacity(parquet_file, selectable.len());
+
+    match read_all_records_grouped_by_neuron(parquet_file) {
+        Ok(mut grouped) => {
+            let wanted: std::collections::HashSet<&str> =
+                selectable.iter().map(|n| n.uuid.as_str()).collect();
+            grouped.retain(|uuid, _| wanted.contains(uuid.as_str()));
+            if let Err(seed_err) = provider.seed(grouped) {
+                tracing::warn!(
+                    error = %seed_err,
+                    "Lazy focus-ranking cache seed failed; falling back to on-demand loading",
+                );
+            }
+        }
+        Err(read_err) => {
+            tracing::warn!(
+                error = %read_err,
+                "Lazy focus-ranking cache warm pass failed; falling back to on-demand per-neuron loading",
+            );
+        }
+    }
+
+    Arc::new(provider)
 }
 
 fn decide_with_budget(
     parquet_file: &str,
+    selectable: &[&NeuronJson],
     budget_mb: u64,
     projected_bytes: u64,
     projected_mb: u64,
@@ -223,7 +273,7 @@ fn decide_with_budget(
                 "focus::ranking selected lazy mode: projected pre-load exceeds configured budget",
             );
             Ok(LoadingDecision {
-                provider: Arc::new(LazyRecordProvider::new(parquet_file)),
+                provider: build_lazy_provider(parquet_file, selectable),
                 mode,
                 reason,
                 budget_mb: Some(budget_mb),
@@ -244,7 +294,11 @@ fn decide_with_budget(
     }
 }
 
-fn decide_with_auto_detect(parquet_file: &str, projected_mb: u64) -> Result<LoadingDecision> {
+fn decide_with_auto_detect(
+    parquet_file: &str,
+    selectable: &[&NeuronJson],
+    projected_mb: u64,
+) -> Result<LoadingDecision> {
     match check_memory_for_parquet(parquet_file) {
         Ok(()) => {
             let records = read_all_records_grouped_by_neuron(parquet_file)
@@ -266,7 +320,7 @@ fn decide_with_auto_detect(parquet_file: &str, projected_mb: u64) -> Result<Load
                 tracing::debug!(error = %memory_error, "Memory check failed");
             }
             Ok(LoadingDecision {
-                provider: Arc::new(LazyRecordProvider::new(parquet_file)),
+                provider: build_lazy_provider(parquet_file, selectable),
                 mode: FocusLoadingMode::Lazy,
                 reason: FocusLazyReason::MemoryPressure,
                 budget_mb: None,
@@ -477,7 +531,7 @@ pub fn rank_focus_neurons_with_descriptor(
         reason: lazy_reason,
         budget_mb,
         projected_mb,
-    } = load_records_provider(parquet_file)?;
+    } = load_records_provider(parquet_file, &selectable)?;
     let is_lazy_mode = loading_mode == FocusLoadingMode::Lazy;
 
     if is_lazy_mode && verbose_enabled() {
@@ -780,7 +834,7 @@ pub fn rank_focus_neurons_with_history_and_descriptor(
         reason: lazy_reason,
         budget_mb,
         projected_mb,
-    } = load_records_provider(parquet_file)?;
+    } = load_records_provider(parquet_file, &selectable)?;
     let is_lazy_mode = loading_mode == FocusLoadingMode::Lazy;
 
     if is_lazy_mode && verbose_enabled() {
