@@ -10,6 +10,7 @@ mod focus_layers;
 mod focus_ranking;
 mod issue_1172_focus_ranking_memory_budget;
 mod issue_1318_margin_aware_ranking;
+mod issue_1374_lazy_focus_ranking_single_pass;
 mod issue_156_hidden_focus_neurons_filtered;
 mod issue_182_focus_unused_observations;
 mod issue_222_hierarchical_focus;
