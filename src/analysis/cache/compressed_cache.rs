@@ -95,7 +95,7 @@ impl CompressedLruRecordCache {
         // Cache miss — load from parquet
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
         let records = self.load_neuron_records(neuron_uuid)?;
-        let entry = CompressedCacheEntry::new(&records);
+        let entry = CompressedCacheEntry::new(&records)?;
         let size = entry.compressed_size;
         let result = Arc::new(records);
 
