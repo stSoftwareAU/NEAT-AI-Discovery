@@ -54,6 +54,78 @@ fn test_memory_tier_high_threshold() {
 }
 
 // =============================================================================
+// Available-Memory Pre-load Decision Tests (Issue #1376)
+// =============================================================================
+
+const MB: u64 = 1024 * 1024;
+
+#[test]
+fn test_preload_fits_when_projection_under_available_minus_margin() {
+    // 1 GB projection, 4 GB available, 1 GB margin → usable 3 GB → fits.
+    assert!(parquet_preload_fits_available(
+        1024 * MB,
+        4096 * MB,
+        1024 * MB
+    ));
+}
+
+#[test]
+fn test_preload_does_not_fit_when_projection_exceeds_usable() {
+    // 3.5 GB projection, 4 GB available, 1 GB margin → usable 3 GB → lazy.
+    assert!(!parquet_preload_fits_available(
+        3584 * MB,
+        4096 * MB,
+        1024 * MB
+    ));
+}
+
+#[test]
+fn test_preload_fits_grq13_numbers() {
+    // GRQ-13 regression: parquet 531.10 MB → ×3 ≈ 1593 MB projection, with
+    // ~2990 MB available and the default 1 GB margin. usable = 2990 − 1024 =
+    // 1966 MB ≥ 1593 MB → must pre-load (stay on the fast path), not lazy.
+    let projected_bytes = 1593 * MB;
+    let available_bytes = 2990 * MB;
+    let margin_bytes = 1024 * MB;
+    assert!(parquet_preload_fits_available(
+        projected_bytes,
+        available_bytes,
+        margin_bytes
+    ));
+}
+
+#[test]
+fn test_preload_boundary_equal_fits() {
+    // Exactly equal to usable budget still fits (<=, not <).
+    assert!(parquet_preload_fits_available(
+        3072 * MB,
+        4096 * MB,
+        1024 * MB
+    ));
+    // One byte over does not.
+    assert!(!parquet_preload_fits_available(
+        3072 * MB + 1,
+        4096 * MB,
+        1024 * MB
+    ));
+}
+
+#[test]
+fn test_preload_margin_larger_than_available_saturates_to_lazy() {
+    // Margin larger than available → 0 usable bytes → only a 0-byte projection
+    // "fits"; any real projection is lazy. No underflow panic.
+    assert!(!parquet_preload_fits_available(MB, 512 * MB, 1024 * MB));
+    assert!(parquet_preload_fits_available(0, 512 * MB, 1024 * MB));
+}
+
+#[test]
+fn test_preload_zero_margin_uses_full_available() {
+    // With no margin the full available memory is usable.
+    assert!(parquet_preload_fits_available(2048 * MB, 2048 * MB, 0));
+    assert!(!parquet_preload_fits_available(2048 * MB + 1, 2048 * MB, 0));
+}
+
+// =============================================================================
 // Parquet Memory Check Tests
 // =============================================================================
 

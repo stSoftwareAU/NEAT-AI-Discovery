@@ -42,9 +42,10 @@ use super::impact::{
 };
 use crate::analysis::task_descriptor::{TargetTopology, TaskDescriptor};
 use crate::analysis::utils::{
-    bytes_to_mb_ceil, check_memory_for_parquet, estimate_parquet_in_memory_bytes, verbose_enabled,
+    bytes_to_mb_ceil, estimate_parquet_in_memory_bytes, get_memory_info,
+    parquet_preload_fits_available, verbose_enabled,
 };
-use crate::config::focus_ranking_memory_budget_mb;
+use crate::config::{focus_ranking_memory_budget_mb, focus_ranking_memory_margin_mb};
 use crate::discovery_history::DiscoveryHistory;
 use crate::parquet_format::read_all_records_grouped_by_neuron;
 use crate::{CoordinatedStructuralCandidateJson, CreatureJson, NeuronJson};
@@ -86,8 +87,8 @@ pub enum FocusLazyReason {
     /// `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` was set and the
     /// projected pre-load size exceeded it.
     Budget,
-    /// No explicit budget was set and the system memory check
-    /// ([`check_memory_for_parquet`]) reported insufficient memory.
+    /// No explicit budget was set and the projected pre-load did not fit
+    /// within real OS-available memory after the safety margin (Issue #1376).
     MemoryPressure,
 }
 
@@ -182,6 +183,33 @@ pub fn decide_loading_mode_for_budget(
     }
 }
 
+/// Pure decision helper for the auto-detect (no explicit budget) path
+/// (Issue #1376).
+///
+/// Bases the eager-vs-lazy decision on **real OS-available memory** with a
+/// safety margin reserved for the system / GPU buffers, rather than the
+/// 50%-of-total-RAM cap that previously rejected mid-sized parquet files on
+/// hosts with plenty of free memory (the GRQ-13 regression: ~1.6 GB projection
+/// dropped to lazy despite ~3 GB free).
+///
+/// Pre-loads when `projected_bytes <= available_bytes − margin_bytes`,
+/// otherwise selects lazy mode with [`FocusLazyReason::MemoryPressure`].
+///
+/// Exposed publicly so unit tests can exercise the available-memory branch
+/// directly without sampling live system memory.
+#[must_use]
+pub fn decide_loading_mode_for_available_memory(
+    projected_bytes: u64,
+    available_bytes: u64,
+    margin_bytes: u64,
+) -> (FocusLoadingMode, FocusLazyReason) {
+    if parquet_preload_fits_available(projected_bytes, available_bytes, margin_bytes) {
+        (FocusLoadingMode::Preload, FocusLazyReason::None)
+    } else {
+        (FocusLoadingMode::Lazy, FocusLazyReason::MemoryPressure)
+    }
+}
+
 /// Load records provider, taking the optional configurable memory budget into
 /// account.
 ///
@@ -190,9 +218,11 @@ pub fn decide_loading_mode_for_budget(
 ///   projected in-memory size (file size × 3) is compared against the budget.
 ///   Lazy mode is selected with a structured `info` log when the projection
 ///   exceeds the budget.
-/// - When the budget is unset, the existing `check_memory_for_parquet`
-///   heuristic is used (auto-detect plus `WARN` on fallback) so behaviour on
-///   big hosts is unchanged.
+/// - When the budget is unset, the auto-detect path compares the projection
+///   against real OS-available memory minus a configurable safety margin
+///   (Issue #1376). Pre-load is chosen whenever the projection fits, so hosts
+///   with GBs free stay on the fast path; lazy mode (with a `WARN`) is reserved
+///   for genuinely memory-constrained hosts.
 fn load_records_provider(
     parquet_file: &str,
     selectable: &[&NeuronJson],
@@ -211,7 +241,7 @@ fn load_records_provider(
         );
     }
 
-    decide_with_auto_detect(parquet_file, selectable, projected_mb)
+    decide_with_auto_detect(parquet_file, selectable, projected_bytes, projected_mb)
 }
 
 /// Build a lazy record provider whose cache is sized to the ranking working set
@@ -297,32 +327,49 @@ fn decide_with_budget(
 fn decide_with_auto_detect(
     parquet_file: &str,
     selectable: &[&NeuronJson],
+    projected_bytes: u64,
     projected_mb: u64,
 ) -> Result<LoadingDecision> {
-    match check_memory_for_parquet(parquet_file) {
-        Ok(()) => {
+    const BYTES_PER_MB: u64 = 1024 * 1024;
+
+    // Issue #1376: base the decision on real OS-available memory minus a safety
+    // margin, rather than the 50%-of-total-RAM cap that dropped mid-sized
+    // parquet files onto the slow lazy path while GBs of RAM were free.
+    let (available_bytes, _total_bytes) = get_memory_info();
+    let margin_mb = focus_ranking_memory_margin_mb();
+    let margin_bytes = margin_mb.saturating_mul(BYTES_PER_MB);
+    let available_mb = bytes_to_mb_ceil(available_bytes);
+
+    let (mode, reason) =
+        decide_loading_mode_for_available_memory(projected_bytes, available_bytes, margin_bytes);
+
+    match mode {
+        FocusLoadingMode::Preload => {
             let records = read_all_records_grouped_by_neuron(parquet_file)
                 .context("Failed to read discovery records from parquet file")?;
             Ok(LoadingDecision {
                 provider: Arc::new(EagerRecordProvider::new(records)),
-                mode: FocusLoadingMode::Preload,
-                reason: FocusLazyReason::None,
+                mode,
+                reason,
                 budget_mb: None,
                 projected_mb,
             })
         }
-        Err(memory_error) => {
+        FocusLoadingMode::Lazy => {
             tracing::warn!(
-                "Insufficient memory for full pre-load in focus ranking. \
-                 Using lazy-loading mode (slower but memory-efficient)."
+                target: "neat_ai_discovery::focus::ranking",
+                mode = FocusLoadingMode::Lazy.as_str(),
+                reason = reason.as_str(),
+                projected_mb,
+                available_mb,
+                margin_mb,
+                "Insufficient available memory for full pre-load in focus ranking. \
+                 Using lazy-loading mode (slower but memory-efficient).",
             );
-            if verbose_enabled() {
-                tracing::debug!(error = %memory_error, "Memory check failed");
-            }
             Ok(LoadingDecision {
                 provider: build_lazy_provider(parquet_file, selectable),
-                mode: FocusLoadingMode::Lazy,
-                reason: FocusLazyReason::MemoryPressure,
+                mode,
+                reason,
                 budget_mb: None,
                 projected_mb,
             })
