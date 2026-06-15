@@ -109,6 +109,48 @@ When `NEAT_AI_DISCOVERY_MH_TEMPERATURE` is also set, Metropolis-Hastings
 probabilistic acceptance is applied to synapse candidates, allowing
 occasionally weaker candidates through to maintain search diversity.
 
+### Phase Gating (`includeSynapseAnalysis` / `includeNeuronAnalysis`)
+
+`analyze_parallel` runs two independent analysis phases — synapse discovery and
+neuron discovery. Each phase can be switched off so a caller can run
+neuron-only or synapse-only discovery (for example, to spend the full time
+budget on one phase, or to skip a phase that is not relevant to the current
+generation).
+
+- **Field**: `includeSynapseAnalysis` (optional `bool`)
+- **Field**: `includeNeuronAnalysis` (optional `bool`)
+- **Default**: `true` for both — when the field is absent the corresponding
+  phase runs, preserving existing behaviour.
+- **Behaviour when `false`**: the corresponding phase is skipped entirely (no
+  GPU work is submitted for it) and **its output fields are omitted from the
+  response JSON** rather than emitted as empty values.
+
+When `includeSynapseAnalysis` is `false`, the following fields are absent from
+the output:
+
+- `helpfulSynapses`
+- `harmfulSynapses`
+- `synapseDiagnostics`
+- `synapseGpuUsed`
+- `synapseMetadata`
+- `synapseWeightUpdates`
+- `coordinatedStructuralCandidates`
+- `candidateClusters`
+
+When `includeNeuronAnalysis` is `false`, the following fields are absent:
+
+- `helpfulNeurons`
+- `neuronDiagnostics`
+- `neuronGpuUsed`
+- `neuronMetadata`
+
+When **both** are `false`, both phases are skipped and the call returns early
+with `success: true` and none of the phase-specific fields above. Callers must
+therefore treat a missing field as "phase not run", not as "phase ran and found
+nothing" — the absence of, say, `helpfulSynapses` means synapse analysis was
+disabled, whereas an empty `helpfulSynapses: []` means it ran and produced no
+candidates.
+
 ### Cancellation Signal (Issue #1047)
 
 Allows the host process to request graceful shutdown of in-flight analysis
