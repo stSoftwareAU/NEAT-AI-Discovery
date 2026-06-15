@@ -155,11 +155,6 @@ The impact calculation is **squash-aware** to handle special activation function
 **STEP** and **BIPOLAR** are threshold (binary) functions:
 
 ```mermaid
----
-config:
-  themeVariables:
-    fontSize: 14px
----
 graph TD
     subgraph STEP["🎚️ STEP(x)"]
         direction TB
