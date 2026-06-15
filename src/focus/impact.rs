@@ -13,6 +13,7 @@ use rayon::prelude::*;
 
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// Apply the squash-bounded contribution cap (Issue #1300).
 ///
@@ -153,7 +154,12 @@ pub fn compute_selection_stats(
 
 /// A synapse key paired with its weighted activation contribution.
 /// Used internally for tracking which synapse wins in MIN/MAX calculations.
-type SynapseContribution = ((String, String), f32);
+///
+/// The key is shared via `Arc` so the per-record push into `obs_contributions`
+/// is a single atomic refcount bump rather than two heap `String` clones
+/// (Issue #1370). The key is only ever hashed/compared downstream, never
+/// mutated, so the shared ownership is transparent.
+type SynapseContribution = (Arc<(String, String)>, f32);
 
 /// Map from observation index to list of synapse contributions for that observation.
 /// Used to determine which synapse wins (has min/max value) for each observation.
@@ -177,16 +183,17 @@ fn compute_min_stats(
         match grouped_records.get(&synapse.from_uuid)? {
             None => continue,
             Some(records) => {
-                // Hoist key creation outside inner loop (Issue #976):
-                // clone once per synapse, not once per record.
-                let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+                // Hoist key creation outside inner loop (Issue #976) and share it
+                // via Arc so each per-record push is one atomic refcount bump
+                // rather than two String clones (Issue #1370).
+                let key = Arc::new((synapse.from_uuid.clone(), synapse.to_uuid.clone()));
                 for record in records.iter() {
                     if record.activation.is_finite() {
                         let weighted = synapse.weight * record.activation;
                         obs_contributions
                             .entry(record.obs_index)
                             .or_default()
-                            .push((key.clone(), weighted));
+                            .push((Arc::clone(&key), weighted));
                     }
                 }
             }
@@ -217,10 +224,10 @@ fn compute_min_stats(
 
         // Avoid cloning key when it already exists in win_counts (Issue #976)
         for (key, _) in winners {
-            if let Some(count) = win_counts.get_mut(key) {
+            if let Some(count) = win_counts.get_mut(key.as_ref()) {
                 *count += 1;
             } else {
-                win_counts.insert(key.clone(), 1);
+                win_counts.insert(key.as_ref().clone(), 1);
             }
         }
     }
@@ -255,16 +262,17 @@ fn compute_max_stats(
         match grouped_records.get(&synapse.from_uuid)? {
             None => continue,
             Some(records) => {
-                // Hoist key creation outside inner loop (Issue #976):
-                // clone once per synapse, not once per record.
-                let key = (synapse.from_uuid.clone(), synapse.to_uuid.clone());
+                // Hoist key creation outside inner loop (Issue #976) and share it
+                // via Arc so each per-record push is one atomic refcount bump
+                // rather than two String clones (Issue #1370).
+                let key = Arc::new((synapse.from_uuid.clone(), synapse.to_uuid.clone()));
                 for record in records.iter() {
                     if record.activation.is_finite() {
                         let weighted = synapse.weight * record.activation;
                         obs_contributions
                             .entry(record.obs_index)
                             .or_default()
-                            .push((key.clone(), weighted));
+                            .push((Arc::clone(&key), weighted));
                     }
                 }
             }
@@ -295,10 +303,10 @@ fn compute_max_stats(
 
         // Avoid cloning key when it already exists in win_counts (Issue #976)
         for (key, _) in winners {
-            if let Some(count) = win_counts.get_mut(key) {
+            if let Some(count) = win_counts.get_mut(key.as_ref()) {
                 *count += 1;
             } else {
-                win_counts.insert(key.clone(), 1);
+                win_counts.insert(key.as_ref().clone(), 1);
             }
         }
     }
