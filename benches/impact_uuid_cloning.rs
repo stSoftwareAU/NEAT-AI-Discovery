@@ -10,9 +10,14 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::focus::SelectionStats;
-use neat_ai_discovery::focus::compute_impacts_public;
+use neat_ai_discovery::focus::{
+    RecordProvider, compute_impacts_public, compute_impacts_with_activations,
+};
+use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use std::collections::HashMap;
 use std::hint::black_box;
+use std::sync::Arc;
 
 /// Build a network with many synapses to stress adjacency map construction and
 /// impact traversal cloning. Each hidden neuron connects to every output.
@@ -183,9 +188,92 @@ fn bench_adjacency_construction(c: &mut Criterion) {
     group.finish();
 }
 
+/// In-memory record provider for benchmarking the selection-stats path.
+struct InMemoryProvider {
+    records: HashMap<String, Arc<Vec<DiscoverRecord>>>,
+}
+
+impl RecordProvider for InMemoryProvider {
+    fn get(&self, neuron_uuid: &str) -> anyhow::Result<Option<Arc<Vec<DiscoverRecord>>>> {
+        Ok(self.records.get(neuron_uuid).cloned())
+    }
+    fn len(&self) -> usize {
+        self.records.len()
+    }
+}
+
+/// Build a MINIMUM-squash network plus per-input activation records so that
+/// `compute_impacts_with_activations` exercises `compute_min_stats` — the hot
+/// loop that clones the `(from_uuid, to_uuid)` key once per record (Issue #1370).
+fn build_selection_with_records(inputs: usize, obs_count: u32) -> (CreatureJson, InMemoryProvider) {
+    let mut neurons = Vec::with_capacity(inputs + 1);
+    let mut synapses = Vec::with_capacity(inputs);
+    let mut records: HashMap<String, Arc<Vec<DiscoverRecord>>> = HashMap::with_capacity(inputs);
+
+    for i in 0..inputs {
+        let uuid = format!("input-{i}");
+        neurons.push(NeuronJson {
+            uuid: uuid.clone(),
+            neuron_type: "input".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        });
+        synapses.push(SynapseJson {
+            from_uuid: uuid.clone(),
+            to_uuid: "min-neuron".to_string(),
+            weight: 1.0 + 0.1 * i as f32,
+            synapse_type: None,
+        });
+        let recs: Vec<DiscoverRecord> = (0..obs_count)
+            .map(|obs| {
+                DiscoverRecord::new(
+                    obs,
+                    uuid.clone(),
+                    None,
+                    (obs as f32 * 0.01) + i as f32,
+                    Vec::new(),
+                )
+            })
+            .collect();
+        records.insert(uuid, Arc::new(recs));
+    }
+
+    neurons.push(NeuronJson {
+        uuid: "min-neuron".to_string(),
+        neuron_type: "output".to_string(),
+        squash: "MINIMUM".to_string(),
+        bias: 0.0,
+    });
+
+    let creature = CreatureJson {
+        input: inputs,
+        output: 1,
+        neurons,
+        synapses,
+    };
+
+    (creature, InMemoryProvider { records })
+}
+
+/// Benchmark the selection-stats path (`compute_min_stats`) where the
+/// per-record synapse-key clone lives (Issue #1370).
+fn bench_selection_stats_records(c: &mut Criterion) {
+    let mut group = c.benchmark_group("selection_stats_records");
+
+    for &(inputs, obs) in &[(20usize, 500u32), (100, 1000), (200, 2000)] {
+        let (creature, provider) = build_selection_with_records(inputs, obs);
+        group.bench_function(format!("min_{inputs}inputs_{obs}obs"), |b| {
+            b.iter(|| black_box(compute_impacts_with_activations(&creature, &provider).unwrap()));
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_impact_uuid_cloning,
-    bench_adjacency_construction
+    bench_adjacency_construction,
+    bench_selection_stats_records
 );
 criterion_main!(benches);
