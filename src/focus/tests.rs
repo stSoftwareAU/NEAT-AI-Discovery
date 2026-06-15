@@ -4,10 +4,12 @@
 //! tested through the public API alone.
 
 use super::ranking::*;
+use crate::ffi_types::{CreatureJson, DiscoveryError, DiscoveryErrorKind, NeuronJson, SynapseJson};
 use crate::types::DiscoverRecord;
 use anyhow::anyhow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
 // Issue #1375 — wall-clock budget on focus ranking with graceful fallback.
@@ -305,6 +307,150 @@ fn seeded_cache_serves_neurons_without_invoking_loader() -> anyhow::Result<()> {
         loads.load(Ordering::SeqCst),
         "seeded neurons must be served from cache without any per-neuron loads"
     );
+    Ok(())
+}
+
+// ===========================================================================
+// Issue #1375: focus-ranking wall-clock budget
+// ===========================================================================
+
+fn neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
+    NeuronJson {
+        uuid: uuid.to_string(),
+        neuron_type: neuron_type.to_string(),
+        squash: "IDENTITY".to_string(),
+        bias: 0.0,
+    }
+}
+
+fn record_for(uuid: &str) -> DiscoverRecord {
+    DiscoverRecord {
+        obs_index: 0,
+        neuron_uuid: uuid.to_string(),
+        value: None,
+        activation: 0.5,
+        errors: vec![0.1],
+    }
+}
+
+/// Build a small forward-only creature with `hidden` hidden neurons feeding a
+/// single output, fed by two inputs.
+fn small_creature(hidden: usize) -> CreatureJson {
+    let mut neurons = vec![neuron("input-0", "input"), neuron("input-1", "input")];
+    let mut synapses = Vec::new();
+    for h in 0..hidden {
+        let uuid = format!("h{h}");
+        neurons.push(neuron(&uuid, "hidden"));
+        synapses.push(SynapseJson {
+            from_uuid: "input-0".to_string(),
+            to_uuid: uuid.clone(),
+            weight: 0.5,
+            synapse_type: None,
+        });
+        synapses.push(SynapseJson {
+            from_uuid: uuid,
+            to_uuid: "out-0".to_string(),
+            weight: 0.5,
+            synapse_type: None,
+        });
+    }
+    neurons.push(neuron("out-0", "output"));
+    CreatureJson {
+        neurons,
+        synapses,
+        input: 2,
+        output: 1,
+    }
+}
+
+/// Issue #1375: a focus-ranking run whose record loading is pathologically slow
+/// must abort within `budget + grace` with a structured timeout error, rather
+/// than running unbounded (the GRQ-13 incident ran for 1h 11m).
+#[test]
+fn ranking_aborts_when_wall_clock_budget_exceeded() {
+    const HIDDEN: usize = 40;
+    const BUDGET_MS: u64 = 200;
+    const PER_LOAD: Duration = Duration::from_millis(40);
+    // Grace generous enough to absorb one in-flight slow load plus scheduling.
+    const GRACE_MS: u64 = 3_000;
+
+    let creature = small_creature(HIDDEN);
+
+    // Deliberately slow per-neuron loader simulating a thrashing parquet read.
+    let provider: Arc<dyn RecordProvider> = Arc::new(LazyRecordProvider::with_loader_for_tests(
+        "slow.parquet",
+        HIDDEN + 8,
+        Arc::new(move |_file, neuron_uuid| {
+            std::thread::sleep(PER_LOAD);
+            Ok(vec![record_for(neuron_uuid)])
+        }),
+    ));
+
+    let start = Instant::now();
+    let result = rank_focus_neurons_with_provider_for_tests(
+        &creature,
+        provider,
+        None,
+        None,
+        Some(BUDGET_MS),
+    );
+    let elapsed = start.elapsed();
+
+    let err = result.expect_err("a budget-exceeding run must abort with an error");
+    let typed = err
+        .downcast_ref::<DiscoveryError>()
+        .expect("abort must be a typed DiscoveryError so the FFI classifies it");
+    assert_eq!(
+        typed.error_kind(),
+        DiscoveryErrorKind::Timeout,
+        "budget abort must classify as a (retryable) timeout for graceful fallback"
+    );
+
+    assert!(
+        elapsed < Duration::from_millis(BUDGET_MS + GRACE_MS),
+        "ranking must abort within budget + grace; took {elapsed:?} \
+         (budget {BUDGET_MS}ms + grace {GRACE_MS}ms)"
+    );
+}
+
+/// Issue #1375: a fast run within budget must complete normally and return
+/// ranked neurons — the budget must not abort healthy runs.
+#[test]
+fn ranking_completes_within_budget_for_fast_loader() -> anyhow::Result<()> {
+    const HIDDEN: usize = 6;
+
+    let creature = small_creature(HIDDEN);
+
+    let provider: Arc<dyn RecordProvider> = Arc::new(LazyRecordProvider::with_loader_for_tests(
+        "fast.parquet",
+        HIDDEN + 8,
+        Arc::new(|_file, neuron_uuid| Ok(vec![record_for(neuron_uuid)])),
+    ));
+
+    let stats =
+        rank_focus_neurons_with_provider_for_tests(&creature, provider, None, None, Some(60_000))?;
+
+    // Selectable = hidden + output (inputs excluded).
+    assert_eq!(stats.total_neurons, HIDDEN + 1);
+    assert_eq!(stats.neurons.len(), HIDDEN + 1);
+    Ok(())
+}
+
+/// Issue #1375: a disabled budget (`None`) must never abort, preserving the
+/// previous unbounded behaviour for callers that explicitly opt out.
+#[test]
+fn ranking_with_disabled_budget_does_not_abort() -> anyhow::Result<()> {
+    const HIDDEN: usize = 4;
+
+    let creature = small_creature(HIDDEN);
+    let provider: Arc<dyn RecordProvider> = Arc::new(LazyRecordProvider::with_loader_for_tests(
+        "fast.parquet",
+        HIDDEN + 8,
+        Arc::new(|_file, neuron_uuid| Ok(vec![record_for(neuron_uuid)])),
+    ));
+
+    let stats = rank_focus_neurons_with_provider_for_tests(&creature, provider, None, None, None)?;
+    assert_eq!(stats.neurons.len(), HIDDEN + 1);
     Ok(())
 }
 
