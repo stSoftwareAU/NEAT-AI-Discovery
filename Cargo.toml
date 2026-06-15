@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.84"
+version = "0.74.85"
 edition = "2024"
 license = "Apache-2.0"
 description = "High-performance Rust library for recording neuron activations and errors during NEAT-AI discovery, and scanning the recorded data to identify beneficial new synapses/neurons."
@@ -16,8 +16,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
 thiserror = "2"  # Typed domain error enums (Issue #677)
-parquet = "58.3"  # Apache Parquet format (viewable with standard tools)
-arrow = { version = "58.3", default-features = false }  # Arrow arrays for Parquet
+parquet = "59.0"  # Apache Parquet format (viewable with standard tools)
+arrow = { version = "59.0", default-features = false }  # Arrow arrays for Parquet
 wgpu = "29"
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
