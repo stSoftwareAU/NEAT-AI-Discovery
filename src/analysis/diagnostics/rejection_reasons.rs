@@ -33,6 +33,15 @@ pub const REJECTION_BELOW_MULTI_OP_FLOOR: &str = "below_multi_op_floor";
 /// Candidate's expected gain was non-positive after pre-filtering.
 pub const REJECTION_NON_POSITIVE_GAIN: &str = "non_positive_gain";
 
+/// Candidate's expected gain was not finite (`NaN` or `±∞`) (Issue #1367).
+///
+/// Ranking sorts by `expected_creature_score_gain` via `total_cmp`, which
+/// orders a positive `NaN` above `+∞`, so a non-finite gain would otherwise
+/// sort to the top and be returned as the *best* candidate. A non-finite gain
+/// is not a valid positive improvement and is dropped before reranking / final
+/// selection.
+pub const REJECTION_NON_FINITE_GAIN: &str = "non_finite_gain";
+
 /// Target saturation discount collapsed the expected gain to (near) zero.
 pub const REJECTION_SATURATION_DISCOUNTED_TO_ZERO: &str = "saturation_discounted_to_zero";
 
@@ -156,6 +165,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_BELOW_EXPECTED_GAIN_FLOOR,
     REJECTION_BELOW_MULTI_OP_FLOOR,
     REJECTION_NON_POSITIVE_GAIN,
+    REJECTION_NON_FINITE_GAIN,
     REJECTION_SATURATION_DISCOUNTED_TO_ZERO,
     REJECTION_PESSIMISM_DISCOUNTED_TO_ZERO,
     REJECTION_INTERFERENCE_FILTERED,
@@ -310,6 +320,7 @@ fn friendly_reason(reason: &str) -> String {
             crate::analysis::constants::MIN_COORDINATED_MULTI_OP_GAIN
         ),
         REJECTION_NON_POSITIVE_GAIN => "non-positive expected gain".to_string(),
+        REJECTION_NON_FINITE_GAIN => "non-finite expected gain (NaN or ±∞)".to_string(),
         REJECTION_SATURATION_DISCOUNTED_TO_ZERO => {
             "saturation discount collapsed expected gain to zero".to_string()
         }
