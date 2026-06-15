@@ -181,6 +181,10 @@ name = "parquet_loading_comparison"
 harness = false
 
 [[bench]]
+name = "gpu_helpful_chunk_reuse"
+harness = false
+
+[[bench]]
 name = "input_uuid_precompute"
 harness = false
 
