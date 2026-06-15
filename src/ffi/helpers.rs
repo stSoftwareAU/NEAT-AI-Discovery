@@ -37,9 +37,38 @@ pub fn ffi_error_literal(msg: &str) -> *mut std::ffi::c_char {
     CString::new(msg).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// Maximum number of bytes of a panic message embedded in an FFI error
+/// response before truncation (4 KiB). Bounds the worst-case allocation so the
+/// "Never panics itself" path stays cheap even when a panic carries a large
+/// payload (Issue #1365).
+const MAX_PANIC_MSG_BYTES: usize = 4096;
+
+/// Marker appended to a panic message that has been truncated.
+const TRUNCATION_MARKER: &str = "… (truncated)";
+
+/// Truncate `msg` to at most `MAX_PANIC_MSG_BYTES` bytes on a UTF-8 char
+/// boundary, appending [`TRUNCATION_MARKER`] when truncation occurred.
+///
+/// Returns the message unchanged when it already fits within the cap. The
+/// returned string never exceeds `MAX_PANIC_MSG_BYTES + TRUNCATION_MARKER.len()`
+/// bytes and always lands on a char boundary, so it cannot split a multi-byte
+/// UTF-8 sequence.
+fn truncate_panic_msg(msg: &str) -> std::borrow::Cow<'_, str> {
+    if msg.len() <= MAX_PANIC_MSG_BYTES {
+        return std::borrow::Cow::Borrowed(msg);
+    }
+    // Walk back to the nearest char boundary at or below the cap.
+    let mut boundary = MAX_PANIC_MSG_BYTES;
+    while boundary > 0 && !msg.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    std::borrow::Cow::Owned(format!("{}{}", &msg[..boundary], TRUNCATION_MARKER))
+}
+
 /// Build an FFI-safe error response from a caught panic.
 ///
-/// Extracts the panic message and returns a JSON error string as
+/// Extracts the panic message, truncates it to a fixed cap (see
+/// [`MAX_PANIC_MSG_BYTES`]), and returns a JSON error string as
 /// `*mut c_char`. Never panics itself.
 pub fn panic_to_ffi_json(panic_info: Box<dyn std::any::Any + Send>) -> *mut std::ffi::c_char {
     let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
@@ -49,6 +78,7 @@ pub fn panic_to_ffi_json(panic_info: Box<dyn std::any::Any + Send>) -> *mut std:
     } else {
         "Unknown panic".to_string()
     };
+    let msg = truncate_panic_msg(&msg);
     let error_json = format!(
         "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
         msg.replace('\\', "\\\\").replace('"', "\\\"")
@@ -135,6 +165,48 @@ mod tests {
         let result = unsafe { CString::from_raw(ptr) };
         let json: serde_json::Value = serde_json::from_str(result.to_str().unwrap()).unwrap();
         assert!(json["error"].as_str().unwrap().contains("Unknown panic"));
+    }
+
+    #[test]
+    fn test_panic_to_ffi_json_truncates_oversized_message() {
+        // Panic message far larger than the cap.
+        let huge = "A".repeat(MAX_PANIC_MSG_BYTES * 4);
+        let panic_info: Box<dyn std::any::Any + Send> = Box::new(huge);
+        let ptr = panic_to_ffi_json(panic_info);
+        assert!(!ptr.is_null());
+        // SAFETY: we just created this pointer via CString::into_raw
+        let result = unsafe { CString::from_raw(ptr) };
+        let raw = result.to_str().unwrap();
+        // Still valid JSON.
+        let json: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let error = json["error"].as_str().unwrap();
+        // The embedded message is bounded to the cap plus the marker.
+        let embedded_cap = MAX_PANIC_MSG_BYTES + TRUNCATION_MARKER.len();
+        assert!(
+            error.len() <= "Internal panic caught: ".len() + embedded_cap,
+            "error field length {} exceeds bound",
+            error.len()
+        );
+        assert!(error.ends_with(TRUNCATION_MARKER));
+    }
+
+    #[test]
+    fn test_truncate_panic_msg_respects_char_boundary() {
+        // Multi-byte char (3 bytes each) straddling the cap must not be split.
+        let multibyte = "字".repeat(MAX_PANIC_MSG_BYTES); // 3 bytes each
+        let truncated = truncate_panic_msg(&multibyte);
+        // Must remain valid UTF-8 (guaranteed by &str) and end with the marker.
+        assert!(truncated.ends_with(TRUNCATION_MARKER));
+        // Truncation point lands on a char boundary at or below the cap.
+        let body = truncated.strip_suffix(TRUNCATION_MARKER).unwrap();
+        assert!(body.len() <= MAX_PANIC_MSG_BYTES);
+        assert!(multibyte.is_char_boundary(body.len()));
+    }
+
+    #[test]
+    fn test_truncate_panic_msg_short_message_unchanged() {
+        let short = "small panic";
+        assert_eq!(truncate_panic_msg(short), short);
     }
 
     #[test]
