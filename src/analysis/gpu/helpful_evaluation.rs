@@ -6,10 +6,8 @@
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};
-use bytemuck::Zeroable;
 use std::sync::mpsc;
 use std::time::Duration;
-use wgpu::util::DeviceExt;
 
 use crate::analysis::gpu::device::{
     GPU_BUFFER_MAP_TIMEOUT_SECS, poll_device_until_idle, wait_for_buffer_maps_batch,
@@ -61,6 +59,137 @@ impl GpuAnalyzer {
             &STANDARD_BINDINGS,
             label,
         )
+    }
+}
+
+// =============================================================================
+// Reusable per-slot GPU buffers (Issue #1369)
+// =============================================================================
+
+/// Reusable GPU buffers and bind groups for one slot in a batch chunk.
+///
+/// Allocated once before the chunk loop, sized to the worst-case sample length,
+/// then refilled per chunk via [`wgpu::Queue::write_buffer`] instead of calling
+/// `create_buffer_init` for every sample set in every chunk (Issue #1369). The
+/// bind groups reference these stable buffers via `as_entire_binding`, so they
+/// stay valid for the lifetime of the pool and are never rebuilt per chunk.
+///
+/// Because each slot is sized to the largest sample set, a shorter set simply
+/// writes a sub-range and dispatches its own count; the shader bounds every read
+/// by `uniforms.length` (helpful) / `contribution_count` (reduce), so stale tail
+/// bytes from a previous chunk are never read and results stay bit-identical.
+struct HelpfulSlotBuffers {
+    sample_buffer: wgpu::Buffer,
+    contributions_buffer: wgpu::Buffer,
+    uniform_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    partial_sums_buffer: wgpu::Buffer,
+    reduction_uniform_buffer: wgpu::Buffer,
+    reduction_bind_group: wgpu::BindGroup,
+    /// Sized to the largest possible copy (full contributions); a chunk maps only
+    /// the leading sub-range it actually wrote.
+    staging_buffer: wgpu::Buffer,
+}
+
+impl HelpfulSlotBuffers {
+    /// Allocate one reusable slot sized to the worst-case sample length.
+    fn new(
+        device: &wgpu::Device,
+        helpful_layout: &wgpu::BindGroupLayout,
+        helpful_reduce_layout: &wgpu::BindGroupLayout,
+        sample_buf_size: u64,
+        contrib_buf_size: u64,
+        partial_buf_size: u64,
+    ) -> Self {
+        let sample_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("helpful-samples-buffer-pool"),
+            size: sample_buf_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let contributions_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("helpful-contributions-buffer-pool"),
+            size: contrib_buf_size,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("helpful-uniform-buffer-pool"),
+            size: std::mem::size_of::<HelpfulUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: helpful_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: sample_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: contributions_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("helpful-bind-group-pool"),
+        });
+
+        let partial_sums_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("helpful-partial-sums-buffer-pool"),
+            size: partial_buf_size,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let reduction_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("helpful-reduction-uniform-buffer-pool"),
+            size: std::mem::size_of::<ReductionUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let reduction_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: helpful_reduce_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: contributions_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: partial_sums_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: reduction_uniform_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("helpful-reduction-bind-group-pool"),
+        });
+
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("helpful-staging-buffer-pool"),
+            size: contrib_buf_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            sample_buffer,
+            contributions_buffer,
+            uniform_buffer,
+            bind_group,
+            partial_sums_buffer,
+            reduction_uniform_buffer,
+            reduction_bind_group,
+            staging_buffer,
+        }
     }
 }
 
@@ -136,13 +265,40 @@ impl GpuAnalyzer {
             );
         }
 
+        // Issue #1369: Allocate reusable per-slot buffers once, sized to the
+        // worst-case sample length, then refill them per chunk via
+        // `queue.write_buffer` instead of `create_buffer_init` for every sample
+        // set in every chunk. A chunk holds at most `effective_batch_size` sample
+        // sets, and never more than the total input, so that many slots suffice.
+        let pool_size = effective_batch_size.min(samples_batch.len());
+        let pool: Vec<HelpfulSlotBuffers> = if max_sample_len == 0 {
+            // Every sample set is empty: no GPU work, no buffers needed.
+            Vec::new()
+        } else {
+            let contrib_struct = std::mem::size_of::<HelpfulContribution>();
+            let sample_buf_size = (max_sample_len * std::mem::size_of::<GpuHelpfulSample>()) as u64;
+            let contrib_buf_size = (max_sample_len * contrib_struct) as u64;
+            let max_workgroups = (max_sample_len as u32).div_ceil(WORKGROUP_SIZE).max(1);
+            let partial_buf_size = (max_workgroups as usize * contrib_struct) as u64;
+            (0..pool_size)
+                .map(|_| {
+                    HelpfulSlotBuffers::new(
+                        device,
+                        helpful_layout,
+                        helpful_reduce_layout,
+                        sample_buf_size,
+                        contrib_buf_size,
+                        partial_buf_size,
+                    )
+                })
+                .collect()
+        };
+
         for batch_chunk in samples_batch.chunks(effective_batch_size) {
             let mut empty_flags = Vec::with_capacity(batch_chunk.len());
-            let mut batch_staging_buffers = Vec::new();
-            let mut batch_contribution_sizes = Vec::new();
-            let mut batch_contributions_buffers = Vec::new();
-            // Issue #218: Track whether each sample set uses reduction
-            let mut uses_reduction_flags: Vec<bool> = Vec::with_capacity(batch_chunk.len());
+            // Per non-empty sample set, in chunk order:
+            // (slot index, copy size in bytes, element count to sum, used reduction).
+            let mut used: Vec<(usize, u64, usize, bool)> = Vec::with_capacity(batch_chunk.len());
 
             // Single encoder for entire batch - reduces Metal driver overhead on Apple Silicon
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -150,35 +306,25 @@ impl GpuAnalyzer {
             });
 
             // Prepare all operations in this batch
+            let mut slot_idx = 0usize;
             for samples in batch_chunk {
                 if samples.is_empty() {
                     empty_flags.push(true);
-                    uses_reduction_flags.push(false);
                     continue;
                 }
                 empty_flags.push(false);
+                let slot = &pool[slot_idx];
 
                 let gpu_samples: Vec<GpuHelpfulSample> = samples
                     .iter()
                     .copied()
                     .map(GpuHelpfulSample::from)
                     .collect();
-                let contributions_zeroed = vec![HelpfulContribution::zeroed(); samples.len()];
 
-                let sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("helpful-samples-buffer-batch"),
-                    contents: bytemuck::cast_slice(&gpu_samples),
-                    usage: wgpu::BufferUsages::STORAGE,
-                });
-
-                let contributions_buffer =
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("helpful-contributions-buffer-batch"),
-                        contents: bytemuck::cast_slice(&contributions_zeroed),
-                        usage: wgpu::BufferUsages::STORAGE
-                            | wgpu::BufferUsages::COPY_SRC
-                            | wgpu::BufferUsages::COPY_DST,
-                    });
+                // Refill the reusable buffers for this sample set. The helpful
+                // shader overwrites every contribution it later reads, so the
+                // contributions buffer needs no zero-initialisation.
+                queue.write_buffer(&slot.sample_buffer, 0, bytemuck::cast_slice(&gpu_samples));
 
                 let uniforms = HelpfulUniforms {
                     length: samples.len() as u32,
@@ -186,30 +332,7 @@ impl GpuAnalyzer {
                     epsilon: EPSILON,
                     pad1: 0.0,
                 };
-                let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("helpful-uniform-buffer-batch"),
-                    contents: bytemuck::bytes_of(&uniforms),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: helpful_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: sample_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: contributions_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: uniform_buffer.as_entire_binding(),
-                        },
-                    ],
-                    label: Some("helpful-bind-group-batch"),
-                });
+                queue.write_buffer(&slot.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
                 // Add compute pass for per-sample contribution calculation
                 {
@@ -219,14 +342,13 @@ impl GpuAnalyzer {
                             timestamp_writes: None,
                         });
                     compute_pass.set_pipeline(helpful_pipeline);
-                    compute_pass.set_bind_group(0, &bind_group, &[]);
+                    compute_pass.set_bind_group(0, &slot.bind_group, &[]);
                     let workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE);
                     compute_pass.dispatch_workgroups(workgroups.max(1), 1, 1);
                 }
 
                 // Issue #218: Use reduction for large sample counts
                 let use_reduction = samples.len() >= GPU_REDUCTION_THRESHOLD;
-                uses_reduction_flags.push(use_reduction);
 
                 if use_reduction {
                     // Calculate number of workgroups for reduction
@@ -235,52 +357,19 @@ impl GpuAnalyzer {
                         * num_workgroups as usize)
                         as u64;
 
-                    // Create partial sums buffer for reduction output
-                    let partial_sums_zeroed =
-                        vec![HelpfulContribution::zeroed(); num_workgroups as usize];
-                    let partial_sums_buffer =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("helpful-partial-sums-buffer"),
-                            contents: bytemuck::cast_slice(&partial_sums_zeroed),
-                            usage: wgpu::BufferUsages::STORAGE
-                                | wgpu::BufferUsages::COPY_SRC
-                                | wgpu::BufferUsages::COPY_DST,
-                        });
-
-                    // Create reduction uniforms
+                    // Reduction uniforms (partial sums and contributions buffers are
+                    // overwritten by the shader, so they need no zero-initialisation).
                     let reduction_uniforms = ReductionUniforms {
                         contribution_count: samples.len() as u32,
                         pad0: 0,
                         pad1: 0,
                         pad2: 0,
                     };
-                    let reduction_uniform_buffer =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("helpful-reduction-uniform-buffer"),
-                            contents: bytemuck::bytes_of(&reduction_uniforms),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
-
-                    // Create reduction bind group
-                    let reduction_bind_group =
-                        device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            layout: helpful_reduce_layout,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: contributions_buffer.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: partial_sums_buffer.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: reduction_uniform_buffer.as_entire_binding(),
-                                },
-                            ],
-                            label: Some("helpful-reduction-bind-group"),
-                        });
+                    queue.write_buffer(
+                        &slot.reduction_uniform_buffer,
+                        0,
+                        bytemuck::bytes_of(&reduction_uniforms),
+                    );
 
                     // Add reduction compute pass
                     {
@@ -290,60 +379,44 @@ impl GpuAnalyzer {
                                 timestamp_writes: None,
                             });
                         compute_pass.set_pipeline(helpful_reduce_pipeline);
-                        compute_pass.set_bind_group(0, &reduction_bind_group, &[]);
+                        compute_pass.set_bind_group(0, &slot.reduction_bind_group, &[]);
                         compute_pass.dispatch_workgroups(num_workgroups, 1, 1);
                     }
 
-                    // Staging buffer for partial sums (much smaller than full contributions)
-                    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("helpful-staging-buffer-reduced"),
-                        size: partial_sums_size,
-                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-
-                    batch_contributions_buffers.push(partial_sums_buffer);
-                    batch_staging_buffers.push(staging_buffer);
-                    batch_contribution_sizes.push((partial_sums_size, num_workgroups as usize));
+                    used.push((slot_idx, partial_sums_size, num_workgroups as usize, true));
                 } else {
                     // Original path: transfer all contributions to CPU
                     let contribution_size =
                         (std::mem::size_of::<HelpfulContribution>() * samples.len()) as u64;
-                    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("helpful-staging-buffer-batch"),
-                        size: contribution_size,
-                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-
-                    batch_contributions_buffers.push(contributions_buffer);
-                    batch_staging_buffers.push(staging_buffer);
-                    batch_contribution_sizes.push((contribution_size, samples.len()));
+                    used.push((slot_idx, contribution_size, samples.len(), false));
                 }
+
+                slot_idx += 1;
             }
 
-            // Add all buffer copies after compute passes (better GPU scheduling)
-            for (i, staging_buffer) in batch_staging_buffers.iter().enumerate() {
-                let (contribution_size, _) = batch_contribution_sizes[i];
-                encoder.copy_buffer_to_buffer(
-                    &batch_contributions_buffers[i],
-                    0,
-                    staging_buffer,
-                    0,
-                    contribution_size,
-                );
+            // Add all buffer copies after compute passes (better GPU scheduling).
+            // Copy only the leading sub-range written this chunk out of each reusable
+            // buffer: the partial-sums buffer for the reduction path, otherwise the
+            // full contributions buffer.
+            for &(slot, copy_size, _, is_reduction) in &used {
+                let source = if is_reduction {
+                    &pool[slot].partial_sums_buffer
+                } else {
+                    &pool[slot].contributions_buffer
+                };
+                encoder.copy_buffer_to_buffer(source, 0, &pool[slot].staging_buffer, 0, copy_size);
             }
 
             // Submit single command buffer for entire batch - reduces Metal driver overhead
-            if !batch_staging_buffers.is_empty() {
+            if !used.is_empty() {
                 queue.submit(Some(encoder.finish()));
             }
 
             // OPTIMISATION: Map ALL buffers first, then poll ONCE for all.
             // This reduces GPU-CPU round trips compared to mapping each buffer individually.
-            let mut map_receivers = Vec::with_capacity(batch_staging_buffers.len());
-            for staging_buffer in &batch_staging_buffers {
-                let buffer_slice = staging_buffer.slice(..);
+            let mut map_receivers = Vec::with_capacity(used.len());
+            for &(slot, copy_size, _, _) in &used {
+                let buffer_slice = pool[slot].staging_buffer.slice(0..copy_size);
                 let (sender, receiver) = mpsc::channel();
                 buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
                     sender
@@ -358,18 +431,9 @@ impl GpuAnalyzer {
                 .context("Helpful batch buffer mapping failed")?;
 
             // Now read all the mapped data (buffers are already mapped)
-            let mut batch_results = Vec::with_capacity(batch_contribution_sizes.len());
-            // Buffer mappings already verified by wait_for_buffer_maps_batch
-            // Issue #218: Filter uses_reduction_flags to only include non-empty samples
-            let non_empty_reduction_flags: Vec<bool> = uses_reduction_flags
-                .iter()
-                .zip(empty_flags.iter())
-                .filter(|&(_, &empty)| !empty)
-                .map(|(&reduce, _)| reduce)
-                .collect();
-
-            for (i, staging_buffer) in batch_staging_buffers.iter().enumerate() {
-                let buffer_slice = staging_buffer.slice(..);
+            let mut batch_results = Vec::with_capacity(used.len());
+            for &(slot, copy_size, count, is_reduction) in &used {
+                let buffer_slice = pool[slot].staging_buffer.slice(0..copy_size);
                 let data = buffer_slice.get_mapped_range();
                 let contributions: &[HelpfulContribution] = bytemuck::cast_slice(&data);
 
@@ -389,8 +453,7 @@ impl GpuAnalyzer {
                 }
 
                 // Log reduction usage at trace level
-                if non_empty_reduction_flags.get(i).copied().unwrap_or(false) {
-                    let (_, count) = batch_contribution_sizes[i];
+                if is_reduction {
                     tracing::trace!(
                         partial_sums = count,
                         "GPU reduction (helpful): transferred partial sums instead of full contributions"
@@ -398,7 +461,7 @@ impl GpuAnalyzer {
                 }
 
                 drop(data);
-                staging_buffer.unmap();
+                pool[slot].staging_buffer.unmap();
 
                 batch_results.push(stats);
             }

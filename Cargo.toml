@@ -180,6 +180,10 @@ harness = false
 name = "parquet_loading_comparison"
 harness = false
 
+[[bench]]
+name = "gpu_helpful_chunk_reuse"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
