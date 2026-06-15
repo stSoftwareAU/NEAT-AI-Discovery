@@ -47,7 +47,7 @@ use crate::analysis::utils::{
 };
 use crate::config::{
     FOCUS_RANKING_BUDGET_GRACE_MS, focus_ranking_budget_ms, focus_ranking_memory_budget_mb,
-    focus_ranking_memory_margin_mb,
+    focus_ranking_memory_margin_mb, focus_ranking_perf_cliff_ms,
 };
 use crate::discovery_history::DiscoveryHistory;
 use crate::ffi_types::DiscoveryError;
@@ -289,6 +289,23 @@ pub fn decide_loading_mode_for_available_memory(
     }
 }
 
+/// Pure perf-cliff decision for a completed focus-ranking pass (Issue #1377).
+///
+/// Returns `true` only for a **lazy** pass whose wall-clock `elapsed_ms` reaches
+/// the configured `threshold_ms`. The fast preload path never trips it, and a
+/// `threshold_ms` of `0` disables the perf-cliff warning entirely.
+///
+/// Exposed publicly so unit tests can exercise the boundary directly without
+/// timing a real ranking pass.
+#[must_use]
+pub fn lazy_pass_exceeds_perf_cliff(
+    mode: FocusLoadingMode,
+    elapsed_ms: u128,
+    threshold_ms: u64,
+) -> bool {
+    mode == FocusLoadingMode::Lazy && threshold_ms > 0 && elapsed_ms >= u128::from(threshold_ms)
+}
+
 /// Load records provider, taking the optional configurable memory budget into
 /// account.
 ///
@@ -373,12 +390,17 @@ fn decide_with_budget(
     let (mode, reason) = decide_loading_mode_for_budget(projected_bytes, budget_mb);
     match mode {
         FocusLoadingMode::Lazy => {
-            tracing::info!(
+            // Issue #1377: escalate to WARN and record available memory
+            // alongside projected/budget so the eager-vs-lazy trade-off is
+            // visible at the decision point, not split across log lines.
+            let (available_bytes, _total_bytes) = get_memory_info();
+            tracing::warn!(
                 target: "neat_ai_discovery::focus::ranking",
                 mode = FocusLoadingMode::Lazy.as_str(),
                 reason = reason.as_str(),
                 budget_mb,
                 projected_mb,
+                available_mb = bytes_to_mb_ceil(available_bytes),
                 "focus::ranking selected lazy mode: projected pre-load exceeds configured budget",
             );
             Ok(LoadingDecision {
@@ -441,6 +463,9 @@ fn decide_with_auto_detect(
                 reason = reason.as_str(),
                 projected_mb,
                 available_mb,
+                // Issue #1377: no explicit budget on the auto-detect path; log 0
+                // so the field is uniform with the budget path's lazy log.
+                budget_mb = 0u64,
                 margin_mb,
                 "Insufficient available memory for full pre-load in focus ranking. \
                  Using lazy-loading mode (slower but memory-efficient).",
@@ -485,6 +510,46 @@ fn log_focus_ranking_summary(
             elapsed_ms = elapsed_ms.min(u64::MAX as u128) as u64,
             "focus::ranking pass complete",
         ),
+    }
+
+    maybe_warn_perf_cliff(
+        decision_mode,
+        decision_reason,
+        projected_mb,
+        entries,
+        elapsed_ms,
+    );
+}
+
+/// Emit a single, clearly-labelled perf-cliff `WARN` when a lazy focus-ranking
+/// pass exceeds the configured threshold (Issue #1377).
+///
+/// The #1373 incident — a lazy ranking pass running for 1h 11m — surfaced only
+/// as an opaque per-phase timing figure with no attribution to the lazy Rust
+/// path. This makes the cliff loud at the moment it happens, naming the neuron
+/// count and projected dataset size so the trade-off and likely remedy (raise
+/// the memory budget or free host memory to re-enable preload) are obvious.
+fn maybe_warn_perf_cliff(
+    mode: FocusLoadingMode,
+    reason: FocusLazyReason,
+    projected_mb: u64,
+    entries: usize,
+    elapsed_ms: u128,
+) {
+    let threshold_ms = focus_ranking_perf_cliff_ms();
+    if lazy_pass_exceeds_perf_cliff(mode, elapsed_ms, threshold_ms) {
+        tracing::warn!(
+            target: "neat_ai_discovery::focus::ranking",
+            mode = mode.as_str(),
+            reason = reason.as_str(),
+            neurons = entries,
+            projected_mb,
+            elapsed_ms = elapsed_ms.min(u64::MAX as u128) as u64,
+            threshold_ms,
+            "focus::ranking PERF CLIFF: lazy ranking pass exceeded the perf-cliff \
+             threshold — raise NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB or free \
+             host memory to re-enable the faster preload path",
+        );
     }
 }
 

@@ -49,7 +49,7 @@ pub use impact::{
 pub use ranking::{
     FocusLazyReason, FocusLoadingMode, RankFocusStats, RankedNeuron, RecordProvider,
     RemovalCandidate, SelectionStats, SynapseCounts, calculate_removal_savings,
-    decide_loading_mode_for_available_memory, decide_loading_mode_for_budget, rank_focus_neurons,
-    rank_focus_neurons_with_descriptor, rank_focus_neurons_with_history,
-    rank_focus_neurons_with_history_and_descriptor,
+    decide_loading_mode_for_available_memory, decide_loading_mode_for_budget,
+    lazy_pass_exceeds_perf_cliff, rank_focus_neurons, rank_focus_neurons_with_descriptor,
+    rank_focus_neurons_with_history, rank_focus_neurons_with_history_and_descriptor,
 };
