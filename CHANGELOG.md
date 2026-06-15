@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+#### Wall-clock budget on focus ranking with graceful fallback (Issue #1375)
+
+Focus ranking previously had no wall-clock bound. In the #1373 incident it ran
+for 1h 11m and contributed to the whole discovery task overrunning its 3h budget
+and being killed. The per-chunk Rust FFI analysis already enforces a budget;
+focus ranking now has the same safety net.
+
+- New `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` env var (default `120000` =
+  2 minutes) bounds every `focus::rank_focus_neurons*` run. `0` disables the
+  bound; other values clamp to `[1000, 3600000]`.
+- The budget is checked between passes and inside the per-neuron loops
+  (record verification and the parallel ranking map). On exceed the run aborts
+  with a structured `DiscoveryError::Timeout` (classified retryable) so the
+  TypeScript caller routes it into the existing local-ranking fallback instead
+  of running unbounded.
+- Fast / preload runs are unchanged — the per-neuron check is a single
+  `Instant::now()` comparison with negligible overhead.
+
 ## [v0.74.74]
 
 ### Fixed

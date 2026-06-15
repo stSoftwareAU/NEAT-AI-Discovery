@@ -45,3 +45,13 @@ fuzz/corpus/
 # Dependency upgrade workflow artefacts
 upgrade-dry-run.txt
 upgrade.log
+
+# --- Vibe Coder safety patterns (Issue #1751) ---
+!.github
+.config.json
+.config*.json
+*.secret.json
+.secrets/
+.env
+.env.*
+# --- end Vibe Coder safety patterns ---

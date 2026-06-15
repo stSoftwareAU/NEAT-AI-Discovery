@@ -1,0 +1,26 @@
+
+# --- Vibe Coder gitattributes line-ending pins (Issue #2332) ---
+* text=auto
+*.sh text eol=lf
+*.bash text eol=lf
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+# --- end Vibe Coder gitattributes ---
