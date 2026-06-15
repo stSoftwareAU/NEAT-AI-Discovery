@@ -16,10 +16,8 @@ be split or restructured.
 > 🚨 A non-monotonic neuron sends **contradictory signals** to downstream neurons — it cannot consistently reduce error by adjusting its activation in any single direction.
 
 ```mermaid
----
-title: "U-Shaped Activation vs Error (Non-Monotonic Neuron)"
----
 xychart-beta
+    title "U-Shaped Activation vs Error (Non-Monotonic Neuron)"
     x-axis "Activation" [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     y-axis "Error" 0.0 --> 1.0
     line [0.8, 0.7, 0.4, 0.2, 0.12, 0.1, 0.12, 0.3, 0.5, 0.7, 0.85]
