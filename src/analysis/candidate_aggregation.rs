@@ -70,6 +70,24 @@ pub fn apply_coordinated_gain_floor_with_multiplier(
     u32::try_from(before.saturating_sub(candidates.len())).unwrap_or(u32::MAX)
 }
 
+/// Remove coordinated-structural candidates whose `expected_creature_score_gain`
+/// is not finite (`NaN` or `±∞`) (Issue #1367).
+///
+/// Ranking sorts by `expected_creature_score_gain` via `total_cmp`, which
+/// orders a positive `NaN` **above** `+∞` — so a non-finite gain would sort to
+/// the top and be returned as the *best* candidate, wasting the controller's
+/// ablation-test budget on a meaningless candidate. A non-finite gain is not a
+/// valid positive improvement, so it is dropped here before any reranking or
+/// final selection. The relative order of the finite survivors is preserved.
+///
+/// Returns the number of candidates removed so callers can record the drop in
+/// the structured rejection breakdown.
+pub fn reject_non_finite_gains(candidates: &mut Vec<CoordinatedStructuralCandidateJson>) -> u32 {
+    let before = candidates.len();
+    candidates.retain(|c| c.expected_creature_score_gain.is_finite());
+    u32::try_from(before.saturating_sub(candidates.len())).unwrap_or(u32::MAX)
+}
+
 /// Apply the final coordinated-structural gain floor to a synapse result and
 /// refresh dependent metadata (Issue #1139).
 ///
@@ -100,7 +118,18 @@ pub fn apply_final_coordinated_gain_floor(
     discovery_mode: super::discovery_mode::DiscoveryMode,
     conservative_multiplier: f32,
 ) -> u32 {
-    use super::diagnostics::rejection_reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR;
+    use super::diagnostics::rejection_reasons::{
+        REJECTION_BELOW_EXPECTED_GAIN_FLOOR, REJECTION_NON_FINITE_GAIN,
+    };
+
+    // Issue #1367: Drop non-finite gains (NaN / ±∞) before the floor comparison.
+    // `total_cmp`-based ranking would otherwise sort a positive NaN above +∞ and
+    // return it as the best candidate, and `+∞ >= floor` would survive the floor.
+    let non_finite = reject_non_finite_gains(&mut synapse.coordinated_structural_candidates);
+    synapse
+        .metadata
+        .rejection_breakdown
+        .record_many_u32(REJECTION_NON_FINITE_GAIN, non_finite);
 
     let gain_multiplier = super::discovery_mode::coordinated_gain_multiplier_for_mode(
         discovery_mode,
@@ -168,9 +197,21 @@ pub(crate) fn merge_coordinated_structural_replacements(
     diversify: bool,
 ) {
     use crate::analysis::diagnostics::rejection_reasons::{
-        REJECTION_BELOW_MULTI_OP_FLOOR, REJECTION_NON_POSITIVE_GAIN,
+        REJECTION_BELOW_MULTI_OP_FLOOR, REJECTION_NON_FINITE_GAIN, REJECTION_NON_POSITIVE_GAIN,
     };
 
+    if replacements.is_empty() {
+        return;
+    }
+
+    // Issue #1367: Drop non-finite gains (NaN / ±∞) before any sort or rerank.
+    // `total_cmp` orders a positive NaN above +∞, so a non-finite candidate
+    // would otherwise sort to the top and be returned as the best candidate.
+    let dropped_non_finite = reject_non_finite_gains(&mut replacements);
+    synapse
+        .metadata
+        .rejection_breakdown
+        .record_many_u32(REJECTION_NON_FINITE_GAIN, dropped_non_finite);
     if replacements.is_empty() {
         return;
     }
