@@ -6,7 +6,10 @@
 //! safety net. The abort behaviour itself is exercised by the in-crate unit
 //! tests (`src/focus/tests.rs`) using an injected slow record provider.
 
-use neat_ai_discovery::config::{DEFAULT_FOCUS_RANKING_BUDGET_MS, focus_ranking_budget_ms};
+use neat_ai_discovery::config::{
+    DEFAULT_FOCUS_RANKING_BUDGET_MS, FOCUS_RANKING_BUDGET_MAX_MS, FOCUS_RANKING_BUDGET_MIN_MS,
+    focus_ranking_budget_ms,
+};
 use serial_test::serial;
 
 const BUDGET_ENV: &str = "NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS";
@@ -71,6 +74,40 @@ fn zero_budget_disables_the_bound() {
         None,
         "0 must opt out of the wall-clock bound (fully unbounded)"
     );
+}
+
+#[test]
+#[serial]
+fn below_min_budget_clamps_up_to_min() {
+    // Issue #1385: a misconfigured tiny value must not abort every run after a
+    // few milliseconds — it is clamped up to the supported minimum.
+    let _guard = EnvVarGuard::set("5");
+    assert_eq!(focus_ranking_budget_ms(), Some(FOCUS_RANKING_BUDGET_MIN_MS));
+    assert_eq!(FOCUS_RANKING_BUDGET_MIN_MS, 1_000);
+}
+
+#[test]
+#[serial]
+fn above_max_budget_clamps_down_to_max() {
+    // Issue #1385: a huge value must not restore the unbounded behaviour
+    // Issue #1375 prevented — it is clamped down to the supported maximum.
+    let _guard = EnvVarGuard::set("999999999");
+    assert_eq!(focus_ranking_budget_ms(), Some(FOCUS_RANKING_BUDGET_MAX_MS));
+    assert_eq!(FOCUS_RANKING_BUDGET_MAX_MS, 3_600_000);
+}
+
+#[test]
+#[serial]
+fn min_boundary_is_used_verbatim() {
+    let _guard = EnvVarGuard::set("1000");
+    assert_eq!(focus_ranking_budget_ms(), Some(FOCUS_RANKING_BUDGET_MIN_MS));
+}
+
+#[test]
+#[serial]
+fn max_boundary_is_used_verbatim() {
+    let _guard = EnvVarGuard::set("3600000");
+    assert_eq!(focus_ranking_budget_ms(), Some(FOCUS_RANKING_BUDGET_MAX_MS));
 }
 
 #[test]

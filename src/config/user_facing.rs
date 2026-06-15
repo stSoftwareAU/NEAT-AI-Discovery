@@ -418,6 +418,20 @@ pub fn focus_ranking_memory_margin_mb() -> u64 {
 /// blowing the whole discovery wall-clock budget.
 pub const DEFAULT_FOCUS_RANKING_BUDGET_MS: u64 = 120_000;
 
+/// Lower bound (in milliseconds) for the focus-ranking wall-clock budget
+/// (Issue #1385). A positive override below this is clamped up so a
+/// misconfigured tiny value (e.g. `5`) cannot silently abort every run after a
+/// few milliseconds and degrade every creature to the fallback path. `0`
+/// remains the explicit opt-out and bypasses the clamp.
+pub const FOCUS_RANKING_BUDGET_MIN_MS: u64 = 1_000;
+
+/// Upper bound (in milliseconds) for the focus-ranking wall-clock budget
+/// (Issue #1385). A positive override above this is clamped down so a huge
+/// value (e.g. `999999999`) cannot effectively restore the unbounded
+/// behaviour Issue #1375 set out to prevent. One hour mirrors the discovery
+/// wall-clock budget.
+pub const FOCUS_RANKING_BUDGET_MAX_MS: u64 = 3_600_000;
+
 /// Grace period (in milliseconds) added on top of the focus-ranking budget
 /// before an in-flight pass is forced to abort (Issue #1375). Mirrors the
 /// per-chunk FFI "grace 1s" allowance so a check that lands mid-operation does
@@ -434,7 +448,8 @@ pub const FOCUS_RANKING_BUDGET_GRACE_MS: u64 = 1_000;
 /// Override with `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS`:
 /// - Unset / empty / non-numeric: returns [`DEFAULT_FOCUS_RANKING_BUDGET_MS`].
 /// - `0`: disables the budget (returns `None`, fully unbounded — opt-out).
-/// - Any positive integer: that many milliseconds.
+/// - Any positive integer: clamped to
+///   `[FOCUS_RANKING_BUDGET_MIN_MS, FOCUS_RANKING_BUDGET_MAX_MS]` (Issue #1385).
 ///
 /// Returns `None` only when the budget is explicitly disabled with `0`.
 pub fn focus_ranking_budget_ms() -> Option<u64> {
@@ -453,7 +468,20 @@ pub fn focus_ranking_budget_ms() -> Option<u64> {
             );
             None
         }
-        Ok(v) => Some(v),
+        Ok(v) => {
+            let clamped = v.clamp(FOCUS_RANKING_BUDGET_MIN_MS, FOCUS_RANKING_BUDGET_MAX_MS);
+            if clamped != v {
+                tracing::debug!(
+                    requested_ms = v,
+                    clamped_ms = clamped,
+                    min_ms = FOCUS_RANKING_BUDGET_MIN_MS,
+                    max_ms = FOCUS_RANKING_BUDGET_MAX_MS,
+                    "Clamped NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS to the \
+                     supported range"
+                );
+            }
+            Some(clamped)
+        }
         Err(_) => {
             tracing::debug!(
                 raw_value = trimmed,
