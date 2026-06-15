@@ -465,6 +465,45 @@ pub fn focus_ranking_budget_ms() -> Option<u64> {
     }
 }
 
+/// Default perf-cliff threshold (in milliseconds) for a lazy focus-ranking
+/// pass (Issue #1377). When a *lazy* pass runs longer than this, a single,
+/// clearly-labelled perf-cliff `WARN` is emitted naming the neuron count and
+/// projected dataset size, so the #1373-style "lazy ranking ran for over an
+/// hour" cliff is one log line instead of a forensic exercise. 60 seconds is
+/// well below the #1375 wall-clock budget (120s) so the warning fires before
+/// the budget aborts the run.
+pub const DEFAULT_FOCUS_RANKING_PERF_CLIFF_MS: u64 = 60_000;
+
+/// Get the lazy focus-ranking perf-cliff threshold in milliseconds (Issue #1377).
+///
+/// A lazy ranking pass exceeding this threshold emits one explicit perf-cliff
+/// `WARN`. The fast preload path never trips it.
+///
+/// Override with `NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS`:
+/// - Unset / empty / non-numeric: returns [`DEFAULT_FOCUS_RANKING_PERF_CLIFF_MS`].
+/// - `0`: disables the perf-cliff warning (opt-out).
+/// - Any positive integer: that many milliseconds.
+pub fn focus_ranking_perf_cliff_ms() -> u64 {
+    let Ok(raw) = std::env::var("NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS") else {
+        return DEFAULT_FOCUS_RANKING_PERF_CLIFF_MS;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return DEFAULT_FOCUS_RANKING_PERF_CLIFF_MS;
+    }
+    match trimmed.parse::<u64>() {
+        Ok(v) => v,
+        Err(_) => {
+            tracing::debug!(
+                raw_value = trimmed,
+                "Ignoring invalid NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS \
+                 (expected a non-negative integer in milliseconds)"
+            );
+            DEFAULT_FOCUS_RANKING_PERF_CLIFF_MS
+        }
+    }
+}
+
 /// Default streaming session TTL in seconds (1 hour).
 pub const DEFAULT_SESSION_TTL_SECS: u64 = 3600;
 

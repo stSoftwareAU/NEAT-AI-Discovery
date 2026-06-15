@@ -13,6 +13,7 @@ mod issue_1318_margin_aware_ranking;
 mod issue_1374_lazy_focus_ranking_single_pass;
 mod issue_1375_focus_ranking_budget;
 mod issue_1376_focus_ranking_available_memory;
+mod issue_1377_focus_ranking_perf_cliff;
 mod issue_156_hidden_focus_neurons_filtered;
 mod issue_182_focus_unused_observations;
 mod issue_222_hierarchical_focus;
