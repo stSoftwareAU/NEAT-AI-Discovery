@@ -8,6 +8,25 @@
 use crate::types::DiscoverRecord;
 use anyhow::{Context, Result, bail};
 
+/// Append a `u16` little-endian length prefix, guarding against overflow.
+///
+/// The wire format stores `uuid` and `errors` lengths as `u16`. A bare
+/// `len as u16` cast silently truncates any length ≥ 65 536, which would make
+/// the deserialiser read back the wrong number of bytes and mis-parse every
+/// subsequent record — silent cache corruption. Returning an error instead
+/// keeps the on-disk format unchanged while refusing to write a value that
+/// cannot round-trip (Issue #1366).
+fn push_len_u16(buf: &mut Vec<u8>, len: usize, field: &str) -> Result<()> {
+    if len > u16::MAX as usize {
+        bail!(
+            "Cannot serialise {field}: length {len} exceeds u16 maximum {} — would overflow the length prefix and corrupt the cache",
+            u16::MAX
+        );
+    }
+    buf.extend_from_slice(&(len as u16).to_le_bytes());
+    Ok(())
+}
+
 /// Serialise records to a compact binary format for LZ4 compression.
 ///
 /// Format per record:
@@ -19,12 +38,15 @@ use anyhow::{Context, Result, bail};
 /// - activation: f32 (4 bytes)
 /// - `errors_len`: u16 (2 bytes)
 /// - errors: [f32; `errors_len`]
-pub(crate) fn serialise_records(records: &[DiscoverRecord]) -> Vec<u8> {
+///
+/// Returns `Err` if a `uuid` or `errors` length exceeds `u16::MAX`, rather than
+/// silently truncating the length prefix and corrupting the cache (Issue #1366).
+pub(crate) fn serialise_records(records: &[DiscoverRecord]) -> Result<Vec<u8>> {
     let mut buf = Vec::with_capacity(records.len() * 32);
     for r in records {
         buf.extend_from_slice(&r.obs_index.to_le_bytes());
         let uuid_bytes = r.neuron_uuid.as_bytes();
-        buf.extend_from_slice(&(uuid_bytes.len() as u16).to_le_bytes());
+        push_len_u16(&mut buf, uuid_bytes.len(), "neuron_uuid")?;
         buf.extend_from_slice(uuid_bytes);
         match r.value {
             Some(v) => {
@@ -36,12 +58,12 @@ pub(crate) fn serialise_records(records: &[DiscoverRecord]) -> Vec<u8> {
             }
         }
         buf.extend_from_slice(&r.activation.to_le_bytes());
-        buf.extend_from_slice(&(r.errors.len() as u16).to_le_bytes());
+        push_len_u16(&mut buf, r.errors.len(), "errors")?;
         for &e in &r.errors {
             buf.extend_from_slice(&e.to_le_bytes());
         }
     }
-    buf
+    Ok(buf)
 }
 
 /// Deserialise records from the compact binary format.
@@ -176,15 +198,15 @@ pub(crate) struct CompressedCacheEntry {
 }
 
 impl CompressedCacheEntry {
-    pub(crate) fn new(records: &[DiscoverRecord]) -> Self {
-        let serialised = serialise_records(records);
+    pub(crate) fn new(records: &[DiscoverRecord]) -> Result<Self> {
+        let serialised = serialise_records(records)?;
         let compressed = lz4_flex::compress_prepend_size(&serialised);
         let compressed_size = compressed.len();
-        Self {
+        Ok(Self {
             compressed_data: compressed,
             compressed_size,
             last_access: std::time::Instant::now(),
-        }
+        })
     }
 
     pub(crate) fn decompress(&self) -> Result<Vec<DiscoverRecord>> {
@@ -217,7 +239,7 @@ mod tests {
                 vec![0.4, 0.5, 0.6],
             ),
         ];
-        let serialised = serialise_records(&records);
+        let serialised = serialise_records(&records).expect("normal records should serialise");
         let result = deserialise_records(&serialised);
         assert!(result.is_ok(), "Valid data should deserialise successfully");
         let deserialized = result.unwrap();
@@ -318,6 +340,97 @@ mod tests {
         assert!(result.is_err(), "Corrupted LZ4 data should return Err");
     }
 
+    // Issue #1366: Guard against u16 length-prefix overflow.
+
+    #[test]
+    fn serialise_records_rejects_oversize_errors() {
+        // An errors vector longer than u16::MAX cannot have its length encoded
+        // in the 2-byte prefix and must be rejected rather than truncated.
+        let oversize = vec![0.0f32; u16::MAX as usize + 1];
+        let records = vec![DiscoverRecord::new(
+            0,
+            "uuid".to_string(),
+            None,
+            0.5,
+            oversize,
+        )];
+        let result = serialise_records(&records);
+        assert!(
+            result.is_err(),
+            "Over-length errors vector must return Err, not a mis-deserialising buffer"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("errors") && err.contains("u16"),
+            "Error should explain the errors length prefix overflow: {err}"
+        );
+    }
+
+    #[test]
+    fn serialise_records_rejects_oversize_uuid() {
+        // A UUID longer than u16::MAX bytes overflows the 2-byte prefix.
+        let oversize_uuid = "a".repeat(u16::MAX as usize + 1);
+        let records = vec![DiscoverRecord::new(0, oversize_uuid, None, 0.5, vec![0.1])];
+        let result = serialise_records(&records);
+        assert!(
+            result.is_err(),
+            "Over-length UUID must return Err, not a mis-deserialising buffer"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("neuron_uuid") && err.contains("u16"),
+            "Error should explain the uuid length prefix overflow: {err}"
+        );
+    }
+
+    #[test]
+    fn serialise_records_max_length_boundary_is_accepted() {
+        // Exactly u16::MAX still fits the prefix and must round-trip cleanly.
+        let max_errors = vec![0.0f32; u16::MAX as usize];
+        let records = vec![DiscoverRecord::new(
+            0,
+            "uuid".to_string(),
+            None,
+            0.5,
+            max_errors,
+        )];
+        let serialised =
+            serialise_records(&records).expect("u16::MAX-length errors must serialise");
+        let deserialised = deserialise_records(&serialised).expect("must round-trip");
+        assert_eq!(deserialised.len(), 1);
+        assert_eq!(deserialised[0].errors.len(), u16::MAX as usize);
+    }
+
+    #[test]
+    fn serialise_records_normal_sizes_are_byte_identical() {
+        // Normal-sized records must serialise to exactly the bytes the wire
+        // format defines, confirming the guard left the format unchanged.
+        let records = vec![DiscoverRecord::new(
+            7,
+            "ab".to_string(),
+            Some(1.5),
+            0.25,
+            vec![0.5, -0.5],
+        )];
+        let serialised = serialise_records(&records).expect("normal records should serialise");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&7u32.to_le_bytes()); // obs_index
+        expected.extend_from_slice(&2u16.to_le_bytes()); // uuid_len
+        expected.extend_from_slice(b"ab"); // uuid
+        expected.push(1); // has_value
+        expected.extend_from_slice(&1.5f32.to_le_bytes()); // value
+        expected.extend_from_slice(&0.25f32.to_le_bytes()); // activation
+        expected.extend_from_slice(&2u16.to_le_bytes()); // errors_len
+        expected.extend_from_slice(&0.5f32.to_le_bytes());
+        expected.extend_from_slice(&(-0.5f32).to_le_bytes());
+
+        assert_eq!(
+            serialised, expected,
+            "Wire format must be byte-identical for normal-sized records"
+        );
+    }
+
     #[test]
     fn decompress_valid_data_round_trip() {
         let records = vec![DiscoverRecord::new(
@@ -327,7 +440,7 @@ mod tests {
             0.5,
             vec![0.1],
         )];
-        let entry = CompressedCacheEntry::new(&records);
+        let entry = CompressedCacheEntry::new(&records).expect("normal records should compress");
         let result = entry.decompress();
         assert!(result.is_ok(), "Valid compressed data should decompress");
         let decompressed = result.unwrap();

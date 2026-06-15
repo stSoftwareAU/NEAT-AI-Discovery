@@ -605,6 +605,11 @@ fn max_coordinated_per_target_output_default_is_three() {
 #[test]
 #[serial_test::serial]
 fn coordinated_per_target_cap_env_override() {
+    // Hold the same serialisation lock the cap-reading tests use so this
+    // env-var mutation can never overlap a concurrent reader under
+    // `--test-threads>1` (those tests read the cap, this one mutates it).
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+
     // SAFETY: env access is serialised via `#[serial]`.
     unsafe {
         std::env::set_var("NEAT_AI_DISCOVERY_MAX_COORDINATED_PER_TARGET", "1");
