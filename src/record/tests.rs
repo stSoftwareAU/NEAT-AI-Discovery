@@ -727,3 +727,65 @@ fn test_record_discovery_data_skips_non_existent_neurons() {
         "Should have 0 records for non-existent-neuron (should be skipped)"
     );
 }
+
+#[test]
+fn test_record_discovery_data_input_uuids_stable_across_observations() {
+    // Regression guard for Issue #1368: the input-neuron UUIDs are precomputed
+    // once per batch rather than formatted per observation. This test pins the
+    // observable behaviour — identical `input-N` UUIDs and the matching input
+    // values are recorded for every observation.
+    let temp_dir = TempDir::new().unwrap();
+    let mut input = create_test_input();
+    input.temp_dir = temp_dir.path().to_str().unwrap().to_string();
+
+    // Three observations, each with two inputs (matches creature.input == 2).
+    input.training_data = (0..3)
+        .map(|i| crate::TrainingRecord {
+            input: vec![i as f32 * 0.5, i as f32 * 0.5 + 0.25],
+            output: vec![i as f32],
+            neuron_data: Some(vec![crate::NeuronData {
+                neuron_uuid: "output-0".to_string(),
+                activation: i as f32,
+                value: Some(i as f32),
+                errors: vec![0.0],
+            }]),
+        })
+        .collect();
+    input.record_indices = None;
+
+    let result = record_discovery_data(&input).unwrap();
+    let parquet_file = Path::new(&result.temp_dir).join(&result.file);
+
+    use crate::parquet_format::read_records_from_parquet;
+
+    // input-0 records: one per observation, value equal to the recorded input.
+    let mut input0 = read_records_from_parquet(parquet_file.to_str().unwrap(), "input-0").unwrap();
+    input0.sort_by_key(|r| r.obs_index);
+    assert_eq!(
+        input0.len(),
+        3,
+        "Should have one input-0 record per observation"
+    );
+    for (i, record) in input0.iter().enumerate() {
+        let expected = i as f32 * 0.5;
+        assert_eq!(record.obs_index, i as u32);
+        assert_eq!(record.value, Some(expected));
+        assert_eq!(record.activation, expected);
+        assert!(record.errors.is_empty());
+    }
+
+    // input-1 records: same structure, second input value.
+    let mut input1 = read_records_from_parquet(parquet_file.to_str().unwrap(), "input-1").unwrap();
+    input1.sort_by_key(|r| r.obs_index);
+    assert_eq!(
+        input1.len(),
+        3,
+        "Should have one input-1 record per observation"
+    );
+    for (i, record) in input1.iter().enumerate() {
+        let expected = i as f32 * 0.5 + 0.25;
+        assert_eq!(record.obs_index, i as u32);
+        assert_eq!(record.value, Some(expected));
+        assert_eq!(record.activation, expected);
+    }
+}
