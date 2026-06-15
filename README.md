@@ -300,6 +300,21 @@ success rates, see [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md).
 For impact calculation details, see
 [docs/IMPACT_CALCULATION.md](docs/IMPACT_CALCULATION.md).
 
+## 🎯 Focus Selection
+
+Discovery cannot evaluate *every* neuron within a run's budget, so each run
+**focuses** on a small set (about half a dozen, ~6) of selectable neurons. That
+focus list started as a *random* pick, moved to an **impact-weighted ranking**
+(`rank_focus_neurons*`, `src/focus/`) that scores neurons by their estimated
+effect on the output error, and now runs under a **wall-clock budget**
+(`NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS`, default 120 s). On budget overrun
+the crate returns a retryable `Timeout` and the caller falls back to an instant,
+**error-guided** local ranking (not a literal random pick).
+
+The full design — rationale, history, performance guard, fallback semantics, and
+env knobs — is documented end-to-end in
+[docs/FOCUS_SELECTION.md](docs/FOCUS_SELECTION.md).
+
 ## ⚙️ Configuration
 
 ### 🔧 Environment Variables
@@ -559,6 +574,7 @@ graph TD
 | [AGENTS.md](AGENTS.md) | Coding guidelines and invariants for AI agents |
 | [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md) | All discovery types with success/failure rates |
 | [docs/IMPACT_CALCULATION.md](docs/IMPACT_CALCULATION.md) | Neuron impact calculation details |
+| [docs/FOCUS_SELECTION.md](docs/FOCUS_SELECTION.md) | Focus-selection design end-to-end: why ~6 neurons, random → impact-weighted ranking, the wall-clock budget guard, and the error-guided fallback |
 | [docs/ANALYSIS_DEEP_DIVE.md](docs/ANALYSIS_DEEP_DIVE.md) | Detailed analysis workflow and detection algorithms |
 | [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) | GPU performance tuning, troubleshooting, and debugging |
 | [docs/FFI_API.md](docs/FFI_API.md) | Full FFI API reference and JSON interface |
