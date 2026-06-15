@@ -348,3 +348,80 @@ fn test_log_likelihood_ratio() {
     assert!(ratio1 > 0.0, "80% positive should have positive LLR");
     assert!(ratio2 < 0.0, "20% positive should have negative LLR");
 }
+
+/// Boundary case (Issue #1371): every sample is a failure (`k = 0, n > 0`).
+///
+/// This is the extreme of the "certain harm" regime. It is the input most
+/// likely to expose a `log(0)` / divide-by-zero / saturation bug in the
+/// log-likelihood-ratio and SPRT-bound maths. We assert on the observable
+/// decision (the WHAT) — the evaluator must reach `Reject` well before all
+/// samples are consumed — and that the LLR stays finite throughout.
+#[test]
+fn test_all_failures_triggers_early_reject() {
+    let mut evaluator = SequentialEvaluator::new(0.01, 0.01, 0.0);
+    let total_samples = 1_000;
+
+    for _ in 0..total_samples {
+        evaluator.add_sample(false); // every sample a failure: k stays 0
+
+        // The LLR must never become NaN or infinite, even at the extreme.
+        let llr = evaluator.log_likelihood_ratio();
+        assert!(
+            llr.is_finite(),
+            "LLR must stay finite for all-failure input, got {llr}"
+        );
+
+        if let EarlyTerminationDecision::Reject = evaluator.should_stop() {
+            assert!(
+                evaluator.sample_count() < total_samples,
+                "Expected early Reject before consuming all {total_samples} samples, got {} samples",
+                evaluator.sample_count()
+            );
+            assert_eq!(
+                evaluator.positive_count(),
+                0,
+                "All-failure input must leave the positive count at zero"
+            );
+            return;
+        }
+    }
+
+    panic!("Expected early Reject for an all-failure candidate (k = 0)");
+}
+
+/// Boundary case (Issue #1371): every sample is a success (`k = n`).
+///
+/// Symmetric to [`test_all_failures_triggers_early_reject`] — the extreme of
+/// the "certain benefit" regime. Assert the evaluator reaches `Accept` early
+/// and the LLR remains finite.
+#[test]
+fn test_all_successes_triggers_early_accept() {
+    let mut evaluator = SequentialEvaluator::new(0.01, 0.01, 0.0);
+    let total_samples = 1_000;
+
+    for _ in 0..total_samples {
+        evaluator.add_sample(true); // every sample a success: k == n
+
+        let llr = evaluator.log_likelihood_ratio();
+        assert!(
+            llr.is_finite(),
+            "LLR must stay finite for all-success input, got {llr}"
+        );
+
+        if let EarlyTerminationDecision::Accept = evaluator.should_stop() {
+            assert!(
+                evaluator.sample_count() < total_samples,
+                "Expected early Accept before consuming all {total_samples} samples, got {} samples",
+                evaluator.sample_count()
+            );
+            assert_eq!(
+                evaluator.negative_count(),
+                0,
+                "All-success input must leave the negative count at zero"
+            );
+            return;
+        }
+    }
+
+    panic!("Expected early Accept for an all-success candidate (k = n)");
+}
