@@ -475,5 +475,6 @@ jobs:
         # renderD is a Linux GPU device node name (/dev/dri/renderD128), not a typo
         # nknown appears in regex pattern [Uu]nknown used to match both "unknown" and "Unknown"
         # MAPE is Mean Absolute Percentage Error, one of the seven built-in NEAT-AI cost functions
-        ignore_words_list: renderD,nknown,MAPE
+        # OT is a diagram label for "Orphan Tests" in pr-summary-1384.md
+        ignore_words_list: renderD,nknown,MAPE,OT
 
