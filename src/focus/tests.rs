@@ -9,6 +9,159 @@ use anyhow::anyhow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+// ---------------------------------------------------------------------------
+// Issue #1375 — wall-clock budget on focus ranking with graceful fallback.
+// ---------------------------------------------------------------------------
+
+use crate::ffi_types::{DiscoveryErrorKind, classify_anyhow_error};
+use crate::{CreatureJson, NeuronJson, SynapseJson};
+use std::time::{Duration, Instant};
+
+/// A [`RecordProvider`] that sleeps on every `get`, simulating a pathologically
+/// slow record loader (the #1373 incident: focus selection ran for 1h 11m).
+struct SleepyProvider {
+    per_call: Duration,
+    neurons: usize,
+    calls: AtomicUsize,
+}
+
+impl SleepyProvider {
+    fn new(per_call: Duration, neurons: usize) -> Self {
+        Self {
+            per_call,
+            neurons,
+            calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl RecordProvider for SleepyProvider {
+    fn get(&self, neuron_uuid: &str) -> anyhow::Result<Option<Arc<Vec<DiscoverRecord>>>> {
+        std::thread::sleep(self.per_call);
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Some(Arc::new(vec![
+            DiscoverRecord {
+                obs_index: 0,
+                neuron_uuid: neuron_uuid.to_string(),
+                value: None,
+                activation: 0.5,
+                errors: vec![0.1],
+            },
+            DiscoverRecord {
+                obs_index: 1,
+                neuron_uuid: neuron_uuid.to_string(),
+                value: None,
+                activation: 0.2,
+                errors: vec![0.2],
+            },
+        ])))
+    }
+
+    fn len(&self) -> usize {
+        self.neurons
+    }
+}
+
+/// Build a creature with `hidden` selectable hidden neurons plus one output.
+fn make_creature(hidden: usize) -> CreatureJson {
+    let mut neurons: Vec<NeuronJson> = (0..hidden)
+        .map(|i| NeuronJson {
+            uuid: format!("hidden-{i}"),
+            neuron_type: "hidden".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        })
+        .collect();
+    neurons.push(NeuronJson {
+        uuid: "out".to_string(),
+        neuron_type: "output".to_string(),
+        squash: "IDENTITY".to_string(),
+        bias: 0.0,
+    });
+
+    let mut synapses: Vec<SynapseJson> = (0..hidden)
+        .map(|i| SynapseJson {
+            from_uuid: "input-0".to_string(),
+            to_uuid: format!("hidden-{i}"),
+            weight: 1.0,
+            synapse_type: None,
+        })
+        .collect();
+    for i in 0..hidden {
+        synapses.push(SynapseJson {
+            from_uuid: format!("hidden-{i}"),
+            to_uuid: "out".to_string(),
+            weight: 1.0,
+            synapse_type: None,
+        });
+    }
+
+    CreatureJson {
+        input: 1,
+        output: 1,
+        neurons,
+        synapses,
+    }
+}
+
+/// Issue #1375: a focus-ranking run that exceeds its wall-clock budget must
+/// abort within `budget + grace` with a structured `Timeout` error, instead of
+/// grinding through every slow record load. Regression guard for the 1h 11m
+/// unbounded focus selection in the #1373 incident.
+#[test]
+fn focus_ranking_aborts_when_budget_exceeded() {
+    const HIDDEN: usize = 80;
+    let per_call = Duration::from_millis(25);
+    let budget_ms = 50;
+
+    // Unbounded cost would be ~(HIDDEN + outputs) × per_call. The budget plus
+    // the fixed 1s grace must cut this off well before completion.
+    let unbounded = per_call * u32::try_from(HIDDEN + 1).expect("neuron count fits u32");
+
+    let creature = make_creature(HIDDEN);
+    let provider = Arc::new(SleepyProvider::new(per_call, HIDDEN));
+
+    let start = Instant::now();
+    let result = rank_with_provider_for_tests(&creature, provider, budget_ms);
+    let elapsed = start.elapsed();
+
+    let err = result.expect_err("ranking should abort once the budget is exceeded");
+    assert_eq!(
+        classify_anyhow_error(&err),
+        DiscoveryErrorKind::Timeout,
+        "budget abort must be classified as a retryable Timeout: {err:#}"
+    );
+
+    // Aborted within budget + grace (+ one in-flight sleep of slop), and clearly
+    // faster than running the full slow loop to completion.
+    let max_allowed = Duration::from_millis(budget_ms + 1000) + per_call * 3;
+    assert!(
+        elapsed < max_allowed,
+        "expected abort within {max_allowed:?}, took {elapsed:?}"
+    );
+    assert!(
+        elapsed < unbounded,
+        "abort ({elapsed:?}) must be faster than the unbounded run ({unbounded:?})"
+    );
+}
+
+/// Issue #1375: a generous budget must not abort a legitimate (merely slow)
+/// run — the default fast path stays correct and complete.
+#[test]
+fn focus_ranking_completes_within_generous_budget() {
+    const HIDDEN: usize = 3;
+    let creature = make_creature(HIDDEN);
+    let provider = Arc::new(SleepyProvider::new(Duration::from_millis(1), HIDDEN));
+
+    let stats = rank_with_provider_for_tests(&creature, provider, 60_000)
+        .expect("a fast run within a generous budget must not abort");
+
+    // Output neurons are selectable too (only inputs/constants are excluded),
+    // so the ranked set is the hidden neurons plus the single output.
+    assert_eq!(stats.processed_neurons, HIDDEN + 1);
+    assert_eq!(stats.neurons.len(), HIDDEN + 1);
+}
+
 #[test]
 fn lazy_provider_defers_loading_and_bounds_cache() -> anyhow::Result<()> {
     let loads = Arc::new(AtomicUsize::new(0));

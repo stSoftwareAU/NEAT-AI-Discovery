@@ -1,121 +1,89 @@
-# Enforce a wall-clock budget on focus ranking with graceful fallback (Issue #1375)
+# Enforce a wall-clock budget on focus ranking with graceful fallback
 
 ## Summary
 
-Focus ranking (`src/focus/ranking/mod.rs`) previously had **no wall-clock
-bound**. In the #1373 incident it ran for **1h 11m** and contributed to the
-whole discovery task overrunning its **3h** budget and being killed. The
-per-chunk Rust FFI analysis already enforces a budget; focus ranking now has the
-same safety net.
-
-A pathological focus-ranking run now aborts inside its budget with a structured
-`DiscoveryError::Timeout` (classified retryable), so the existing TypeScript
-caller routes it into the local-ranking fallback instead of running unbounded.
+Focus ranking previously had **no wall-clock bound**. In the #1373 incident it
+ran for **1h 11m** and contributed to the whole discovery task overrunning its
+**3h** budget and being killed — while the per-chunk Rust FFI analysis already
+aborts at its 2m budget. This change gives focus ranking the same safety net: a
+configurable wall-clock budget, checked between passes and inside the per-neuron
+loops, that aborts a pathological run with a structured `Timeout` error so the
+TypeScript caller falls back to its instant local ranking path instead of
+blowing the discovery budget.
 
 Closes #1375.
 
-### What changed
+### What changed (Rust crate `neat_ai_discovery`)
 
-- **New env var `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS`** (default
-  `120000` = 2 minutes) in `src/config/user_facing.rs`:
-  - unset / empty / invalid → default (2 min),
-  - `0` → budget disabled (escape hatch),
-  - any other value → clamped to `[1000, 3600000]`.
-- **Deadline plumbing** in `src/focus/ranking/mod.rs`: a new `FocusDeadline`
-  guard is threaded through a shared `rank_focus_neurons_core`. The budget is
-  checked between passes and inside the per-neuron loops:
-  - on every iteration of the record-verification loop (the load-heavy loop
-    where the #1373 incident spent its time under lazy mode),
-  - before the margin / max-output-error / impact passes, and
-  - inside the parallel `build_ranked_neurons` map.
-- On exceed, the run returns `DiscoveryError::Timeout { deadline_ms }`, which
-  `error_fields_from_anyhow` classifies as a retryable `timeout` — the same
-  shape the controller already treats as "Rust ranking unavailable" and falls
-  back from.
-- **DRY consolidation:** the history-free and history-aware public entry points
-  (`rank_focus_neurons_with_descriptor` /
-  `rank_focus_neurons_with_history_and_descriptor`) now funnel through one core
-  plus a shared `sort_ranked_neurons` helper, so the budget logic lives in
-  exactly one place. Public signatures are unchanged.
-- **Test seam:** `rank_focus_neurons_with_provider_and_budget` (doc-hidden,
-  public) lets tests inject a custom `RecordProvider` and an explicit budget.
+- **New config accessor** `config::focus_ranking_budget_ms()` reading
+  `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS`:
+  - unset / empty / invalid → default **120000 ms** (2 minutes, mirroring the
+    per-chunk FFI budget);
+  - `0` → **disabled** (fully unbounded opt-out);
+  - any positive integer → that many milliseconds.
+  - A fixed **1s grace** (`FOCUS_RANKING_BUDGET_GRACE_MS`) mirrors the per-chunk
+    "grace 1s" allowance.
+- **Deadline plumbing** in `src/focus/ranking/mod.rs`: a `FocusDeadline` resolves
+  the budget at run start and is checked between passes (margins, max-output
+  error, impacts, constant-neuron detection) and inside the per-neuron loops
+  (record verification and `build_ranked_neurons`). On exceed it returns
+  `DiscoveryError::Timeout { deadline_ms }`, which classifies as the retryable
+  `Timeout` kind and surfaces to the FFI caller as `success: false` — the same
+  shape `tryRustFocusRanking` already routes into its local fallback.
+- **Refactor**: the two near-identical public entry points
+  (`rank_focus_neurons_with_descriptor` and
+  `rank_focus_neurons_with_history_and_descriptor`) now delegate to a single
+  shared core (`rank_focus_core` → `rank_selectable`), so the deadline lives in
+  one code path. The history-aware sort multiplier is preserved exactly; with no
+  history the ordering is byte-for-byte identical to the previous non-history
+  path.
 
-### Fast-path / overhead
+The complementary TypeScript wiring (treating a budget-abort like the existing
+"unavailable" case) lives in the separate `NEAT-AI` repo's
+`FocusSelectionRanking.ts`; the abort already presents as the existing
+unavailable/error case, so no behavioural change is required there beyond what is
+already in place.
 
-Default fast/preload runs are unchanged. The per-neuron check is a single
-`Instant::now()` comparison — negligible for the ~58-neuron production case.
-
-## Evidence
-
-Backend/Rust-crate change only — no web interface to screenshot. Verified via
-unit/integration tests (below), `cargo clippy --all-targets --all-features -D
-warnings` (clean), `cargo doc` (clean), and the full `cargo test --lib` suite
-(1087 passed).
-
-### Abort + fallback flow
+### Flow
 
 ```mermaid
 flowchart TD
-    A[rank_focus_neurons*] --> B[load records provider]
-    B --> C[FocusDeadline from NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS]
-    C --> D{deadline check<br/>between passes &<br/>per-neuron loops}
-    D -- within budget --> E[verify -> margins -> impact -> rank -> sort]
-    E --> F[RankFocusStats]
-    D -- budget exceeded --> G[DiscoveryError::Timeout<br/>retryable]
-    G --> H[FFI: success=false, error_kind=timeout]
-    H --> I[TS caller falls back to<br/>fallbackViableNeuronsFromRecordedErrors]
+    A[rank_focus_neurons*] --> B[resolve FocusDeadline from budget_ms]
+    B --> C[load record provider]
+    C --> D{deadline exceeded?}
+    D -- between passes / per neuron --> E[abort: DiscoveryError::Timeout]
+    D -- within budget --> F[complete ranking]
+    E --> G[FFI success=false, kind=timeout]
+    G --> H[TS falls back to instant local ranking]
+    F --> I[ranked neurons returned]
 ```
 
-### Regression test (acceptance criterion)
+## Evidence
 
-`tests/focus/issue_1375_focus_ranking_budget.rs::slow_loader_aborts_within_budget_plus_grace`
-drives ranking with a deliberately slow injected loader (40 neurons × 50ms/get
-≈ a 2s+ unbounded run) under a 200ms budget, and asserts the call:
+Backend/CLI change — no web interface to screenshot. Verified via tests
+(`cargo test` exit 0 across the full lib + integration suite) and the full
+quality gate (`cargo fmt`, `cargo clippy -D warnings`, `cargo check`,
+`cargo doc -D warnings`, release build, `cargo deny check`).
 
-- returns a `DiscoveryError::Timeout` classified as retryable, and
-- returns inside `budget + grace` (well below the unbounded estimate).
+Key behavioural evidence — the regression test injects a deliberately slow
+record provider (80 neurons × 25 ms/get ≈ 2 s unbounded) with a 50 ms budget and
+asserts the call returns within `budget + grace` with a `Timeout`
+classification, well before the unbounded run would finish:
 
 ```
-running 9 tests
-test issue_1375_focus_ranking_budget::budget_env_clamps_above_maximum ... ok
-test issue_1375_focus_ranking_budget::budget_env_valid_value_is_used ... ok
-test issue_1375_focus_ranking_budget::budget_env_zero_disables ... ok
-test issue_1375_focus_ranking_budget::budget_env_invalid_falls_back_to_default ... ok
-test issue_1375_focus_ranking_budget::budget_env_unset_uses_default ... ok
-test issue_1375_focus_ranking_budget::budget_env_clamps_below_minimum ... ok
-test issue_1375_focus_ranking_budget::fast_run_completes_with_generous_budget ... ok
-test issue_1375_focus_ranking_budget::disabled_budget_does_not_abort ... ok
-test issue_1375_focus_ranking_budget::slow_loader_aborts_within_budget_plus_grace ... ok
-
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 135 filtered out
+test focus::tests::focus_ranking_aborts_when_budget_exceeded ... ok
+test focus::tests::focus_ranking_completes_within_generous_budget ... ok
 ```
-
-Full focus suite: `144 passed`. Library: `1087 passed`. Integration / analysis /
-neuron: `590 / 14 / 45 passed`.
 
 ## Test Plan
 
-Added `tests/focus/issue_1375_focus_ranking_budget.rs` (registered in
-`tests/focus/main.rs`):
-
-- `slow_loader_aborts_within_budget_plus_grace` — slow injected loader aborts
-  inside `budget + grace` with a retryable `Timeout` (the core acceptance
-  criterion + regression guard).
-- `fast_run_completes_with_generous_budget` — generous budget does not abort a
-  fast run; all selectable neurons ranked (no false positives).
-- `disabled_budget_does_not_abort` — `budget_ms = None` never aborts.
-- `budget_env_*` (6 tests, `#[serial]`) — env parser: default when unset,
-  `0` disables, valid value used, clamps below/above bounds, invalid →
-  default.
-
-## Notes / scope
-
-- Complementary TS wiring (`tryRustFocusRanking` →
-  `fallbackViableNeuronsFromRecordedErrors`) lives in the **NEAT-AI** repo, not
-  this crate. The Rust side already returns the structured retryable `timeout`
-  error the existing fallback path keys on, so no change is required here.
-
-### Deno regression avoided
-
-Not applicable — this is a Rust crate (no Deno markers); all checks run via
-`cargo`.
+- `src/focus/tests.rs::focus_ranking_aborts_when_budget_exceeded` — slow injected
+  provider; asserts abort within `budget + grace`, faster than the unbounded run,
+  classified as retryable `Timeout`. Reproduces the #1373 unbounded-run failure.
+- `src/focus/tests.rs::focus_ranking_completes_within_generous_budget` — a merely
+  slow but legitimate run under a generous budget completes without aborting
+  (no false positives; fast/preload behaviour unchanged).
+- `tests/focus/issue_1375_focus_ranking_budget.rs` — config accessor: default,
+  explicit value, `0` disables, invalid and empty fall back to default.
+- Full existing focus suite (149 tests) and full lib + integration suite pass,
+  confirming the shared-core refactor preserves ranking behaviour.

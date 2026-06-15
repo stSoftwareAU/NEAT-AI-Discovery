@@ -411,6 +411,60 @@ pub fn focus_ranking_memory_margin_mb() -> u64 {
     }
 }
 
+/// Default wall-clock budget (in milliseconds) for a single focus-ranking run
+/// (Issue #1375). Two minutes mirrors the per-chunk Rust FFI analysis budget.
+/// A pathological focus-ranking run that exceeds this aborts gracefully so the
+/// TypeScript caller can fall back to its instant local ranking path instead of
+/// blowing the whole discovery wall-clock budget.
+pub const DEFAULT_FOCUS_RANKING_BUDGET_MS: u64 = 120_000;
+
+/// Grace period (in milliseconds) added on top of the focus-ranking budget
+/// before an in-flight pass is forced to abort (Issue #1375). Mirrors the
+/// per-chunk FFI "grace 1s" allowance so a check that lands mid-operation does
+/// not abort a run that was about to finish anyway.
+pub const FOCUS_RANKING_BUDGET_GRACE_MS: u64 = 1_000;
+
+/// Get the focus-ranking wall-clock budget in milliseconds (Issue #1375).
+///
+/// Focus ranking previously had **no** wall-clock bound: in the #1373 incident
+/// it ran for 1h 11m and contributed to the whole discovery task overrunning
+/// its 3h budget and being killed. This budget gives focus ranking the same
+/// safety net the per-chunk FFI analysis already enforces.
+///
+/// Override with `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS`:
+/// - Unset / empty / non-numeric: returns [`DEFAULT_FOCUS_RANKING_BUDGET_MS`].
+/// - `0`: disables the budget (returns `None`, fully unbounded — opt-out).
+/// - Any positive integer: that many milliseconds.
+///
+/// Returns `None` only when the budget is explicitly disabled with `0`.
+pub fn focus_ranking_budget_ms() -> Option<u64> {
+    let Ok(raw) = std::env::var("NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS") else {
+        return Some(DEFAULT_FOCUS_RANKING_BUDGET_MS);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Some(DEFAULT_FOCUS_RANKING_BUDGET_MS);
+    }
+    match trimmed.parse::<u64>() {
+        Ok(0) => {
+            tracing::debug!(
+                "Focus-ranking wall-clock budget disabled via \
+                 NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS=0"
+            );
+            None
+        }
+        Ok(v) => Some(v),
+        Err(_) => {
+            tracing::debug!(
+                raw_value = trimmed,
+                "Ignoring invalid NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS \
+                 (expected a non-negative integer in milliseconds)"
+            );
+            Some(DEFAULT_FOCUS_RANKING_BUDGET_MS)
+        }
+    }
+}
+
 /// Default streaming session TTL in seconds (1 hour).
 pub const DEFAULT_SESSION_TTL_SECS: u64 = 3600;
 

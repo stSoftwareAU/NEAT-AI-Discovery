@@ -45,15 +45,19 @@ use crate::analysis::utils::{
     bytes_to_mb_ceil, estimate_parquet_in_memory_bytes, get_memory_info,
     parquet_preload_fits_available, verbose_enabled,
 };
-use crate::config::{focus_ranking_memory_budget_mb, focus_ranking_memory_margin_mb};
+use crate::config::{
+    FOCUS_RANKING_BUDGET_GRACE_MS, focus_ranking_budget_ms, focus_ranking_memory_budget_mb,
+    focus_ranking_memory_margin_mb,
+};
 use crate::discovery_history::DiscoveryHistory;
+use crate::ffi_types::DiscoveryError;
 use crate::parquet_format::read_all_records_grouped_by_neuron;
 use crate::{CoordinatedStructuralCandidateJson, CreatureJson, NeuronJson};
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Loading mode chosen by [`rank_focus_neurons`] for accessing recorded
 /// discovery data (Issue #1172).
@@ -144,6 +148,81 @@ pub struct RankFocusStats {
 
 pub(super) fn is_selectable_type(neuron_type: &str) -> bool {
     neuron_type != "input" && neuron_type != "constant"
+}
+
+/// Wall-clock deadline guarding a focus-ranking run (Issue #1375).
+///
+/// Focus ranking previously had no time bound, so a pathological run (the
+/// #1373 incident: 1h 11m) could blow the entire discovery wall-clock budget.
+/// This mirrors the per-chunk Rust FFI analysis budget: the ranking pipeline
+/// checks the deadline between passes and inside the per-neuron loops, and
+/// aborts with a structured [`DiscoveryError::Timeout`] when exceeded so the
+/// TypeScript caller falls back to its instant local ranking path.
+#[derive(Debug, Clone, Copy)]
+pub struct FocusDeadline {
+    /// Instant beyond which the run must abort (budget + grace from `start`).
+    expires_at: Instant,
+    /// Configured budget in milliseconds, surfaced in the timeout error.
+    budget_ms: u64,
+}
+
+impl FocusDeadline {
+    /// Build a deadline `budget_ms` (+ grace) after `start`.
+    #[must_use]
+    pub fn new(start: Instant, budget_ms: u64) -> Self {
+        let total = budget_ms.saturating_add(FOCUS_RANKING_BUDGET_GRACE_MS);
+        Self {
+            expires_at: start + Duration::from_millis(total),
+            budget_ms,
+        }
+    }
+
+    /// Resolve the optional deadline for a run starting at `start` from the
+    /// configured budget. Returns `None` when the budget is disabled
+    /// (`NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS=0`).
+    fn from_config(start: Instant) -> Option<Self> {
+        focus_ranking_budget_ms().map(|budget_ms| Self::new(start, budget_ms))
+    }
+
+    /// Abort with a structured timeout error if the deadline has passed.
+    ///
+    /// `context` names the pass that observed the overrun so logs make the
+    /// abort point obvious. Kept cheap (a single `Instant::now()`) so the
+    /// per-neuron checks add no measurable overhead on fast runs.
+    fn check(&self, context: &str) -> Result<()> {
+        if Instant::now() >= self.expires_at {
+            tracing::warn!(
+                target: "neat_ai_discovery::focus::ranking",
+                budget_ms = self.budget_ms,
+                grace_ms = FOCUS_RANKING_BUDGET_GRACE_MS,
+                context,
+                "focus::ranking aborted: wall-clock budget exceeded",
+            );
+            return Err(DiscoveryError::Timeout {
+                deadline_ms: self.budget_ms,
+            }
+            .into());
+        }
+        Ok(())
+    }
+}
+
+/// Optional deadline check helper — a no-op when no deadline is configured.
+fn check_deadline(deadline: Option<FocusDeadline>, context: &str) -> Result<()> {
+    match deadline {
+        Some(d) => d.check(context),
+        None => Ok(()),
+    }
+}
+
+/// Loading-decision metadata threaded into the shared ranking core so both
+/// public entry points report identical mode/projection stats (Issue #1375).
+#[derive(Debug, Clone, Copy)]
+struct LoadingMeta {
+    mode: FocusLoadingMode,
+    reason: FocusLazyReason,
+    budget_mb: Option<u64>,
+    projected_mb: u64,
 }
 
 const DEFAULT_COST_OF_GROWTH: f32 = 1e-7;
@@ -455,10 +534,14 @@ fn build_ranked_neurons(
     squash_map: &std::collections::HashMap<String, String>,
     max_output_error: f32,
     obs_weights: Option<&std::collections::HashMap<u32, f32>>,
+    deadline: Option<FocusDeadline>,
 ) -> Result<Vec<RankedNeuron>> {
     selectable
         .par_iter()
         .map(|neuron| -> Result<RankedNeuron> {
+            // Issue #1375: bound the per-neuron ranking loop so a pathological
+            // run aborts within budget instead of grinding for an hour.
+            check_deadline(deadline, "build_ranked_neurons")?;
             let records = get_records_or_error(records_provider, &neuron.uuid)?;
             let raw_error = if obs_weights.is_some() {
                 weighted_average_absolute_error_from_records(&records, obs_weights)
@@ -547,15 +630,49 @@ pub fn rank_focus_neurons_with_descriptor(
     cost_of_growth: Option<f32>,
     descriptor: Option<&TaskDescriptor>,
 ) -> Result<RankFocusStats> {
+    rank_focus_core(&RankCoreArgs {
+        parquet_file,
+        creature,
+        max_results,
+        cost_of_growth,
+        descriptor,
+        history: None,
+    })
+}
+
+/// Inputs shared by both public focus-ranking entry points (Issue #1375).
+///
+/// Unifying the two near-identical functions behind one core lets the
+/// wall-clock deadline be threaded through a single code path. The optional
+/// `history` reproduces the history-aware sort multiplier — when `None`, the
+/// ranking is byte-for-byte identical to the non-history path.
+struct RankCoreArgs<'a> {
+    parquet_file: &'a str,
+    creature: &'a CreatureJson,
+    max_results: Option<usize>,
+    cost_of_growth: Option<f32>,
+    descriptor: Option<&'a TaskDescriptor>,
+    history: Option<&'a DiscoveryHistory>,
+}
+
+/// Shared focus-ranking core (Issue #1375).
+///
+/// Resolves the optional wall-clock deadline from configuration, chooses the
+/// record loading mode, and delegates the ranking passes to
+/// [`rank_selectable`]. Returns an empty result (no loading, no deadline) when
+/// the creature has no selectable neurons.
+fn rank_focus_core(args: &RankCoreArgs<'_>) -> Result<RankFocusStats> {
     let start = Instant::now();
-    let selectable: Vec<&NeuronJson> = creature
+    let deadline = FocusDeadline::from_config(start);
+
+    let selectable: Vec<&NeuronJson> = args
+        .creature
         .neurons
         .iter()
         .filter(|neuron| is_selectable_type(&neuron.neuron_type))
         .collect();
-    let total_neurons = selectable.len();
 
-    if total_neurons == 0 {
+    if selectable.is_empty() {
         return Ok(RankFocusStats {
             neurons: Vec::new(),
             removal_candidates: Vec::new(),
@@ -573,23 +690,51 @@ pub fn rank_focus_neurons_with_descriptor(
     }
 
     let LoadingDecision {
-        provider: records_provider,
-        mode: loading_mode,
-        reason: lazy_reason,
+        provider,
+        mode,
+        reason,
         budget_mb,
         projected_mb,
-    } = load_records_provider(parquet_file, &selectable)?;
-    let is_lazy_mode = loading_mode == FocusLoadingMode::Lazy;
+    } = load_records_provider(args.parquet_file, &selectable)?;
+    let meta = LoadingMeta {
+        mode,
+        reason,
+        budget_mb,
+        projected_mb,
+    };
 
-    if is_lazy_mode && verbose_enabled() {
+    rank_selectable(args, &selectable, provider, meta, deadline, start)
+}
+
+/// Run the ranking passes over an already-loaded record provider (Issue #1375).
+///
+/// Separated from provider construction so the wall-clock deadline can be
+/// exercised in isolation with a deliberately slow injected provider. The
+/// deadline is checked between passes and inside the per-neuron loops; on
+/// exceed the run aborts with [`DiscoveryError::Timeout`].
+fn rank_selectable(
+    args: &RankCoreArgs<'_>,
+    selectable: &[&NeuronJson],
+    records_provider: Arc<dyn RecordProvider>,
+    meta: LoadingMeta,
+    deadline: Option<FocusDeadline>,
+    start: Instant,
+) -> Result<RankFocusStats> {
+    let creature = args.creature;
+    let total_neurons = selectable.len();
+
+    if meta.mode == FocusLoadingMode::Lazy && verbose_enabled() {
         tracing::debug!(
             cached_neurons = records_provider.len(),
             "Lazy record cache initialised"
         );
     }
 
-    // Verify that all selectable neurons have records (restore old error behaviour)
-    for neuron in &selectable {
+    // Verify that all selectable neurons have records (restore old error
+    // behaviour). Issue #1375: check the deadline per neuron so a slow record
+    // loader aborts within budget instead of grinding for an hour.
+    for neuron in selectable {
+        check_deadline(deadline, "verify_selectable_records")?;
         get_records_or_error(records_provider.as_ref(), &neuron.uuid)
             .context("Failed to read discovery records for all selectable neurons")?;
     }
@@ -600,7 +745,8 @@ pub fn rank_focus_neurons_with_descriptor(
     // observations rank above those whose error mass lands on already-dominant
     // decisions. Other topologies (Independent / Simplex / Unknown / None) fall
     // back to the unweighted mean (regression guard).
-    let obs_weights = if descriptor_activates_margin_ranking(descriptor) {
+    check_deadline(deadline, "compute_margins")?;
+    let obs_weights = if descriptor_activates_margin_ranking(args.descriptor) {
         let margins = compute_per_obs_margins(creature, records_provider.as_ref())?;
         if margins.is_empty() {
             None
@@ -611,10 +757,12 @@ pub fn rank_focus_neurons_with_descriptor(
         None
     };
 
+    check_deadline(deadline, "compute_max_output_error")?;
     let max_output_error =
         compute_max_output_error(creature, records_provider.as_ref(), obs_weights.as_ref())?;
 
     // Use activation-based impact calculation for more accurate MIN/MAX/IF statistics
+    check_deadline(deadline, "compute_impacts")?;
     let impact_map = compute_impacts_with_activations(creature, records_provider.as_ref())?;
 
     // Issue #208: Pre-compute synapse counts to eliminate O(n×m) complexity.
@@ -624,12 +772,13 @@ pub fn rank_focus_neurons_with_descriptor(
     let squash_map = build_squash_map(creature);
 
     let mut neurons = build_ranked_neurons(
-        &selectable,
+        selectable,
         records_provider.as_ref(),
         &impact_map,
         &squash_map,
         max_output_error,
         obs_weights.as_ref(),
+        deadline,
     )?;
 
     // Sort by weighted score (error × impact × gradient_factor × frequency_factor) to prioritise neurons that:
@@ -650,6 +799,11 @@ pub fn rank_focus_neurons_with_descriptor(
     // - Rarely-firing neurons (< 10% activation rate) are de-prioritised (0.8x penalty)
     // - Always-firing neurons (> 90% activation rate) are de-prioritised (0.8x penalty)
     // - Moderate-frequency neurons (10-90%) get no penalty
+    //
+    // Issue #227: When discovery history is provided, the score is additionally
+    // scaled by a Bayesian success multiplier (0.5 + history). With no history
+    // the multiplier is absent and the ordering matches the non-history path.
+    let history = args.history;
     neurons.sort_by(|a, b| {
         // Base weighted score: error × impact^gamma
         let a_base = a.total_error * (a.impact + IMPACT_EPSILON).powf(IMPACT_GAMMA);
@@ -663,8 +817,24 @@ pub fn rank_focus_neurons_with_descriptor(
         let a_frequency_factor = compute_frequency_factor(a.activation_frequency);
         let b_frequency_factor = compute_frequency_factor(b.activation_frequency);
 
-        let a_weighted = a_base * a_gradient_factor * a_frequency_factor;
-        let b_weighted = b_base * b_gradient_factor * b_frequency_factor;
+        let a_with_gradient = a_base * a_gradient_factor * a_frequency_factor;
+        let b_with_gradient = b_base * b_gradient_factor * b_frequency_factor;
+
+        // Issue #227: Apply history factor if available.
+        // History factor is in [0, 1], where 0.5 is neutral:
+        // - 0.5 (neutral) → multiplier of 1.0 (no change)
+        // - 1.0 (perfect success) → multiplier of 1.5 (50% boost)
+        // - 0.0 (complete failure) → multiplier of 0.5 (50% penalty)
+        let (a_weighted, b_weighted) = if let Some(h) = history {
+            let a_history = h.bayesian_score_for(&a.neuron_uuid) as f32;
+            let b_history = h.bayesian_score_for(&b.neuron_uuid) as f32;
+            (
+                a_with_gradient * (0.5 + a_history),
+                b_with_gradient * (0.5 + b_history),
+            )
+        } else {
+            (a_with_gradient, b_with_gradient)
+        };
 
         b_weighted
             .total_cmp(&a_weighted)
@@ -673,7 +843,7 @@ pub fn rank_focus_neurons_with_descriptor(
     });
 
     // Identify removal candidates
-    let cost_of_growth_threshold = cost_of_growth.unwrap_or(DEFAULT_COST_OF_GROWTH);
+    let cost_of_growth_threshold = args.cost_of_growth.unwrap_or(DEFAULT_COST_OF_GROWTH);
 
     // Issue #414: High-error exploratory ablation DISABLED
     //
@@ -701,7 +871,7 @@ pub fn rank_focus_neurons_with_descriptor(
     let removal_outcome =
         identify_removal_candidates(&neurons, &synapse_counts, cost_of_growth_threshold);
 
-    if let Some(limit) = max_results
+    if let Some(limit) = args.max_results
         && neurons.len() > limit
     {
         neurons.truncate(limit);
@@ -709,8 +879,9 @@ pub fn rank_focus_neurons_with_descriptor(
 
     // Issue #306: Detect constant-value neurons and create coordinated structural candidates
     // that remove the neuron and adjust downstream biases.
+    check_deadline(deadline, "detect_constant_neuron_removals")?;
     let constant_neuron_removals = detect_constant_neuron_removals(
-        &selectable,
+        selectable,
         &records_provider,
         &synapse_counts,
         creature,
@@ -720,10 +891,10 @@ pub fn rank_focus_neurons_with_descriptor(
     let rejection_breakdown = build_rejection_breakdown(&removal_outcome);
     let duration_ms = start.elapsed().as_millis();
     log_focus_ranking_summary(
-        loading_mode,
-        lazy_reason,
-        budget_mb,
-        projected_mb,
+        meta.mode,
+        meta.reason,
+        meta.budget_mb,
+        meta.projected_mb,
         neurons.len(),
         duration_ms,
     );
@@ -737,10 +908,10 @@ pub fn rank_focus_neurons_with_descriptor(
         total_neurons,
         duration_ms,
         rejection_breakdown,
-        loading_mode,
-        lazy_reason,
-        budget_mb,
-        projected_mb,
+        loading_mode: meta.mode,
+        lazy_reason: meta.reason,
+        budget_mb: meta.budget_mb,
+        projected_mb: meta.projected_mb,
     })
 }
 
@@ -850,180 +1021,51 @@ pub fn rank_focus_neurons_with_history_and_descriptor(
     history: Option<&DiscoveryHistory>,
     descriptor: Option<&TaskDescriptor>,
 ) -> Result<RankFocusStats> {
+    rank_focus_core(&RankCoreArgs {
+        parquet_file,
+        creature,
+        max_results,
+        cost_of_growth,
+        descriptor,
+        history,
+    })
+}
+
+/// Test-only seam for the wall-clock budget (Issue #1375).
+///
+/// Runs the ranking passes over an injected [`RecordProvider`] with an explicit
+/// `budget_ms`, bypassing parquet loading so a deliberately slow provider can
+/// exercise the deadline guard in isolation. Returns the same
+/// [`DiscoveryError::Timeout`] error the production path emits when the budget
+/// is exceeded.
+#[cfg(test)]
+pub(in crate::focus) fn rank_with_provider_for_tests(
+    creature: &CreatureJson,
+    provider: Arc<dyn RecordProvider>,
+    budget_ms: u64,
+) -> Result<RankFocusStats> {
     let start = Instant::now();
+    let deadline = Some(FocusDeadline::new(start, budget_ms));
     let selectable: Vec<&NeuronJson> = creature
         .neurons
         .iter()
         .filter(|neuron| is_selectable_type(&neuron.neuron_type))
         .collect();
-    let total_neurons = selectable.len();
-
-    if total_neurons == 0 {
-        return Ok(RankFocusStats {
-            neurons: Vec::new(),
-            removal_candidates: Vec::new(),
-            constant_neuron_removals: Vec::new(),
-            max_output_error: 0.0,
-            processed_neurons: 0,
-            total_neurons: 0,
-            duration_ms: start.elapsed().as_millis(),
-            rejection_breakdown: std::collections::HashMap::new(),
-            loading_mode: FocusLoadingMode::Preload,
-            lazy_reason: FocusLazyReason::None,
-            budget_mb: focus_ranking_memory_budget_mb(),
-            projected_mb: 0,
-        });
-    }
-
-    let LoadingDecision {
-        provider: records_provider,
-        mode: loading_mode,
-        reason: lazy_reason,
-        budget_mb,
-        projected_mb,
-    } = load_records_provider(parquet_file, &selectable)?;
-    let is_lazy_mode = loading_mode == FocusLoadingMode::Lazy;
-
-    if is_lazy_mode && verbose_enabled() {
-        tracing::debug!(
-            cached_neurons = records_provider.len(),
-            "Lazy record cache initialised"
-        );
-    }
-
-    // Verify that all selectable neurons have records
-    for neuron in &selectable {
-        get_records_or_error(records_provider.as_ref(), &neuron.uuid)
-            .context("Failed to read discovery records for all selectable neurons")?;
-    }
-
-    // Issue #1318: Same margin-aware reweighting as `rank_focus_neurons_with_descriptor`.
-    let obs_weights = if descriptor_activates_margin_ranking(descriptor) {
-        let margins = compute_per_obs_margins(creature, records_provider.as_ref())?;
-        if margins.is_empty() {
-            None
-        } else {
-            Some(margin_weights_from_margins(&margins))
-        }
-    } else {
-        None
+    let meta = LoadingMeta {
+        mode: FocusLoadingMode::Lazy,
+        reason: FocusLazyReason::None,
+        budget_mb: None,
+        projected_mb: 0,
     };
-
-    let max_output_error =
-        compute_max_output_error(creature, records_provider.as_ref(), obs_weights.as_ref())?;
-
-    // Use activation-based impact calculation for more accurate MIN/MAX/IF statistics
-    let impact_map = compute_impacts_with_activations(creature, records_provider.as_ref())?;
-
-    // Pre-compute synapse counts for O(1) lookup
-    let synapse_counts = SynapseCounts::new(creature);
-
-    // Issue #206: Build squash map for gradient flow analysis
-    let squash_map = build_squash_map(creature);
-
-    // Build neurons with base metrics
-    let mut neurons = build_ranked_neurons(
-        &selectable,
-        records_provider.as_ref(),
-        &impact_map,
-        &squash_map,
-        max_output_error,
-        obs_weights.as_ref(),
-    )?;
-
-    // Sort by weighted score with optional history factor, gradient flow factor, and frequency factor
-    // Issue #227: Incorporate historical success rate into ranking
-    // Issue #206: Incorporate gradient flow analysis into ranking
-    neurons.sort_by(|a, b| {
-        let a_base = a.total_error * (a.impact + IMPACT_EPSILON).powf(IMPACT_GAMMA);
-        let b_base = b.total_error * (b.impact + IMPACT_EPSILON).powf(IMPACT_GAMMA);
-
-        // Issue #206: Apply gradient flow factor
-        let a_gradient_factor = compute_gradient_flow_factor(&a.gradient_flow);
-        let b_gradient_factor = compute_gradient_flow_factor(&b.gradient_flow);
-
-        // Issue #204: Apply activation frequency factor
-        let a_frequency_factor = compute_frequency_factor(a.activation_frequency);
-        let b_frequency_factor = compute_frequency_factor(b.activation_frequency);
-
-        let a_with_gradient = a_base * a_gradient_factor * a_frequency_factor;
-        let b_with_gradient = b_base * b_gradient_factor * b_frequency_factor;
-
-        // Apply history factor if available
-        // History factor is in [0, 1], where 0.5 is neutral
-        // We scale it so that:
-        // - 0.5 (neutral) → multiplier of 1.0 (no change)
-        // - 1.0 (perfect success) → multiplier of 1.5 (50% boost)
-        // - 0.0 (complete failure) → multiplier of 0.5 (50% penalty)
-        // Formula: multiplier = 0.5 + history_score
-        let (a_weighted, b_weighted) = if let Some(h) = history {
-            let a_history = h.bayesian_score_for(&a.neuron_uuid) as f32;
-            let b_history = h.bayesian_score_for(&b.neuron_uuid) as f32;
-            let a_multiplier = 0.5 + a_history;
-            let b_multiplier = 0.5 + b_history;
-            (
-                a_with_gradient * a_multiplier,
-                b_with_gradient * b_multiplier,
-            )
-        } else {
-            (a_with_gradient, b_with_gradient)
-        };
-
-        b_weighted
-            .total_cmp(&a_weighted)
-            .then_with(|| b.impact.total_cmp(&a.impact))
-            .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
-    });
-
-    // Identify removal candidates (same logic as rank_focus_neurons)
-    let cost_of_growth_threshold = cost_of_growth.unwrap_or(DEFAULT_COST_OF_GROWTH);
-
-    // Issue #414: High-error exploratory ablation DISABLED (see rank_focus_neurons for rationale)
-
-    let removal_outcome =
-        identify_removal_candidates(&neurons, &synapse_counts, cost_of_growth_threshold);
-
-    if let Some(limit) = max_results
-        && neurons.len() > limit
-    {
-        neurons.truncate(limit);
-    }
-
-    // Constant neuron removals (same as rank_focus_neurons)
-    let constant_neuron_removals = detect_constant_neuron_removals(
-        &selectable,
-        &records_provider,
-        &synapse_counts,
+    let args = RankCoreArgs {
+        parquet_file: "test.parquet",
         creature,
-        cost_of_growth_threshold,
-    );
-
-    let rejection_breakdown = build_rejection_breakdown(&removal_outcome);
-    let removal_candidates = removal_outcome.candidates;
-    let duration_ms = start.elapsed().as_millis();
-    log_focus_ranking_summary(
-        loading_mode,
-        lazy_reason,
-        budget_mb,
-        projected_mb,
-        neurons.len(),
-        duration_ms,
-    );
-
-    Ok(RankFocusStats {
-        neurons,
-        removal_candidates,
-        constant_neuron_removals,
-        max_output_error,
-        processed_neurons: total_neurons,
-        total_neurons,
-        duration_ms,
-        rejection_breakdown,
-        loading_mode,
-        lazy_reason,
-        budget_mb,
-        projected_mb,
-    })
+        max_results: None,
+        cost_of_growth: None,
+        descriptor: None,
+        history: None,
+    };
+    rank_selectable(&args, &selectable, provider, meta, deadline, start)
 }
 
 // NOTE: Tests for focus module have been moved to tests/focus.rs
