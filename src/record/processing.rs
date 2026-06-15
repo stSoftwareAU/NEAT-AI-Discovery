@@ -18,6 +18,21 @@ pub fn process_training_data(
 ) -> Result<()> {
     let mut wrote_any_records = false;
 
+    // Precompute the fixed input-neuron UUID strings once for the whole batch
+    // (`input-0`, `input-1`, …) instead of re-allocating them per observation
+    // (Issue #1368). Size to the widest training record so every per-observation
+    // index is an in-bounds cache lookup followed by a single clone.
+    let max_inputs = input
+        .training_data
+        .iter()
+        .map(|record| record.input.len())
+        .max()
+        .unwrap_or(0)
+        .max(input.creature.input);
+    let input_uuids: Vec<String> = (0..max_inputs)
+        .map(|index| format!("input-{index}"))
+        .collect();
+
     for (relative_idx, training_record) in input.training_data.iter().enumerate() {
         let obs_index_u32 = obs_indices[relative_idx];
 
@@ -61,12 +76,16 @@ pub fn process_training_data(
             ));
         }
 
-        // Record input neuron activations for GPU-assisted analysis
+        // Record input neuron activations for GPU-assisted analysis. UUIDs are
+        // looked up from the precomputed cache rather than formatted per record.
         for (input_index, value) in training_record.input.iter().enumerate() {
-            let input_uuid = format!("input-{input_index}");
-
-            let record =
-                DiscoverRecord::new(obs_index_u32, input_uuid, Some(*value), *value, Vec::new());
+            let record = DiscoverRecord::new(
+                obs_index_u32,
+                input_uuids[input_index].clone(),
+                Some(*value),
+                *value,
+                Vec::new(),
+            );
 
             batch_records.push(record);
         }
