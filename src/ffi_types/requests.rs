@@ -2,12 +2,65 @@
 //!
 //! All `*Input` types used at the FFI boundary for deserialising JSON requests.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::analysis;
 use crate::analysis::task_descriptor::TaskDescriptor;
 
 use super::{CreatureJson, TrainingRecord};
+
+/// Permissive deserialiser for the optional `task_descriptor` FFI field
+/// (Issue #1402).
+///
+/// Issue #1314 plumbed the field through with a strict derive: an **absent**
+/// field defaults to `None`, but a **present-but-malformed** field (wrong
+/// enum casing, unexpected shape, type mismatch) failed the *entire* FFI
+/// request to deserialise. That surfaced in production as a
+/// "Failed to parse input JSON: unknown variant `unbounded`" error when
+/// NEAT-AI #2785 forwarded the internal TypeScript descriptor shape instead
+/// of the documented `PascalCase` wire shape, silently disabling Rust
+/// synapse/neuron analysis.
+///
+/// This adapter buffers the field into a [`serde_json::Value`] and then
+/// attempts the strict conversion. On any error it logs once and falls back
+/// to [`TaskDescriptor::neutral`] — "we know nothing; don't gate on this" —
+/// rather than failing the whole call. Valid wire payloads still round-trip
+/// verbatim.
+fn deserialize_permissive_task_descriptor<'de, D>(
+    deserializer: D,
+) -> Result<Option<TaskDescriptor>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // Buffer the field so a malformed subtree cannot abort the parent parse.
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    match serde_json::from_value::<TaskDescriptor>(value.clone()) {
+        Ok(descriptor) => Ok(Some(descriptor)),
+        Err(error) => {
+            warn_malformed_task_descriptor_once(&value, &error);
+            Ok(Some(TaskDescriptor::neutral()))
+        }
+    }
+}
+
+/// Emit a single `warn!` for a malformed `task_descriptor`, regardless of how
+/// many requests carry the same bad shape. Repeated producer mistakes would
+/// otherwise flood the logs on every discovery call.
+fn warn_malformed_task_descriptor_once(value: &serde_json::Value, error: &serde_json::Error) {
+    use std::sync::Once;
+    static WARN_ONCE: Once = Once::new();
+    WARN_ONCE.call_once(|| {
+        tracing::warn!(
+            malformed_task_descriptor = %value,
+            error = %error,
+            "task_descriptor failed strict parse; falling back to TaskDescriptor::neutral() \
+             (Issue #1402). Producer should send the PascalCase wire shape.",
+        );
+    });
+}
 
 /// JSON input for `record_discovery` function
 #[derive(Debug, Deserialize, Clone)]
@@ -25,8 +78,9 @@ pub struct RecordDiscoveryInput {
     ///
     /// Pure plumbing for now — no recommendation generator reads this yet.
     /// When absent, consumers should treat it as
-    /// [`TaskDescriptor::neutral`].
-    #[serde(default)]
+    /// [`TaskDescriptor::neutral`]. A present-but-malformed descriptor falls
+    /// back to neutral rather than failing the whole request (Issue #1402).
+    #[serde(default, deserialize_with = "deserialize_permissive_task_descriptor")]
     pub task_descriptor: Option<TaskDescriptor>,
 }
 
@@ -131,8 +185,9 @@ pub struct AnalyzeParallelInput {
     ///
     /// Pure plumbing for now — no recommendation generator reads this yet.
     /// When absent, consumers should treat it as
-    /// [`TaskDescriptor::neutral`].
-    #[serde(default)]
+    /// [`TaskDescriptor::neutral`]. A present-but-malformed descriptor falls
+    /// back to neutral rather than failing the whole request (Issue #1402).
+    #[serde(default, deserialize_with = "deserialize_permissive_task_descriptor")]
     pub task_descriptor: Option<TaskDescriptor>,
 }
 
@@ -303,8 +358,9 @@ pub struct RankFocusNeuronsInput {
     ///
     /// Pure plumbing for now — no recommendation generator reads this yet.
     /// When absent, consumers should treat it as
-    /// [`TaskDescriptor::neutral`].
-    #[serde(default)]
+    /// [`TaskDescriptor::neutral`]. A present-but-malformed descriptor falls
+    /// back to neutral rather than failing the whole request (Issue #1402).
+    #[serde(default, deserialize_with = "deserialize_permissive_task_descriptor")]
     pub task_descriptor: Option<TaskDescriptor>,
 }
 
