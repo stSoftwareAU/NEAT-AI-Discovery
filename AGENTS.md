@@ -245,6 +245,7 @@ src/
 │   │   ├── lru_cache.rs      # LruRecordCache, LruCacheStats, eviction
 │   │   ├── compressed_cache.rs # CompressedLruRecordCache (LZ4)
 │   │   ├── tiered_cache.rs   # TieredRecordCache, auto strategy selection
+│   │   ├── shared_records.rs # Cross-phase grouped-record bridge (Issue #1406)
 │   │   └── serialisation.rs  # Binary serialisation, CompressedCacheEntry
 │   ├── candidate_compression/ # Candidate compression (Issue #939)
 │   │   ├── mod.rs            # Public API, re-exports
