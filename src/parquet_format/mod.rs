@@ -7,6 +7,7 @@
 
 mod reader;
 pub mod schema;
+pub mod shared_records;
 mod writer;
 
 // Re-export public API at the parquet_format level for backward compatibility
