@@ -30,12 +30,23 @@ pub(super) struct EagerRecordProvider {
 }
 
 impl EagerRecordProvider {
-    pub(super) fn new(records: HashMap<String, Vec<DiscoverRecord>>) -> Self {
-        let records = records
-            .into_iter()
-            .map(|(uuid, mut recs)| {
-                recs.sort_by_key(|r| r.obs_index);
-                (uuid, Arc::new(recs))
+    /// Build an eager provider from the process-shared grouped records
+    /// (Issue #1406).
+    ///
+    /// The shared cache hands back records in decode order behind `Arc`s; focus
+    /// ranking needs them sorted by `obs_index` (matching [`Self::new`]), so we
+    /// clone each neuron's records to sort our own copy. This keeps focus output
+    /// byte-identical while letting the analysis phase reuse the same decode
+    /// without a second parquet scan.
+    pub(super) fn from_shared(
+        shared: &crate::parquet_format::shared_records::SharedGroupedRecords,
+    ) -> Self {
+        let records = shared
+            .iter()
+            .map(|(uuid, recs)| {
+                let mut sorted = (**recs).clone();
+                sorted.sort_by_key(|r| r.obs_index);
+                (uuid.clone(), Arc::new(sorted))
             })
             .collect();
         Self { records }

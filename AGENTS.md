@@ -60,7 +60,8 @@ src/
 │   ├── mod.rs                # Public API, re-exports
 │   ├── schema.rs             # Schema definitions and validation
 │   ├── writer.rs             # Parquet writing and serialisation
-│   └── reader.rs             # Parquet reading and deserialisation
+│   ├── reader.rs             # Parquet reading and deserialisation
+│   └── shared_records.rs     # Cross-phase single-decode cache (Issue #1406)
 ├── export/                   # Visualisation snapshot export (Issue #980)
 │   ├── mod.rs                # Public API, re-exports
 │   ├── types.rs              # Snapshot structs, export options, stats types

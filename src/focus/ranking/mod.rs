@@ -52,6 +52,7 @@ use crate::config::{
 use crate::discovery_history::DiscoveryHistory;
 use crate::ffi_types::DiscoveryError;
 use crate::parquet_format::read_all_records_grouped_by_neuron;
+use crate::parquet_format::shared_records::load_grouped_records_shared;
 use crate::{CoordinatedStructuralCandidateJson, CreatureJson, NeuronJson};
 use anyhow::{Context, Result};
 use rayon::prelude::*;
@@ -412,10 +413,13 @@ fn decide_with_budget(
             })
         }
         FocusLoadingMode::Preload => {
-            let records = read_all_records_grouped_by_neuron(parquet_file)
+            // Issue #1406: decode through the process-shared cache so the
+            // following analysis phase can reuse this load instead of scanning
+            // the same parquet file a second time.
+            let shared = load_grouped_records_shared(parquet_file, None)
                 .context("Failed to read discovery records from parquet file")?;
             Ok(LoadingDecision {
-                provider: Arc::new(EagerRecordProvider::new(records)),
+                provider: Arc::new(EagerRecordProvider::from_shared(&shared)),
                 mode,
                 reason,
                 budget_mb: Some(budget_mb),
@@ -446,10 +450,12 @@ fn decide_with_auto_detect(
 
     match mode {
         FocusLoadingMode::Preload => {
-            let records = read_all_records_grouped_by_neuron(parquet_file)
+            // Issue #1406: decode through the process-shared cache (see the
+            // budget-path branch) so the analysis phase reuses this load.
+            let shared = load_grouped_records_shared(parquet_file, None)
                 .context("Failed to read discovery records from parquet file")?;
             Ok(LoadingDecision {
-                provider: Arc::new(EagerRecordProvider::new(records)),
+                provider: Arc::new(EagerRecordProvider::from_shared(&shared)),
                 mode,
                 reason,
                 budget_mb: None,

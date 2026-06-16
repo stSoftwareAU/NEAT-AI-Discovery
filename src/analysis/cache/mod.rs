@@ -179,22 +179,29 @@ impl RecordCache {
         parquet_file: &str,
         deadline: Option<std::time::SystemTime>,
     ) -> Result<Self> {
-        use crate::parquet_format::read_all_records_grouped_by_neuron_with_deadline;
+        use crate::parquet_format::shared_records::load_grouped_records_shared;
         use std::time::Instant;
 
         let start = Instant::now();
-        let grouped = read_all_records_grouped_by_neuron_with_deadline(parquet_file, deadline)?;
+        // Issue #1406: reuse the grouped decode produced by the focus-selection
+        // phase when it ran on the same parquet file this cycle. On a cache hit
+        // no second full scan occurs, freeing the analysis deadline for the
+        // synapse / neuron work. The records keep their decode order (matching
+        // the previous direct read) so analysis output is unchanged.
+        let shared = load_grouped_records_shared(parquet_file, deadline)?;
         let elapsed = start.elapsed();
 
-        // Pre-populate the cache with OnceLock-wrapped records
+        // Pre-populate the cache with OnceLock-wrapped records. Each neuron's
+        // records are Arc-shared with the cache, so this is a cheap clone of the
+        // Arc rather than the underlying Vec.
         let cache: RwLock<HashMap<String, Arc<CachedNeuronRecords>>> = RwLock::new(
-            grouped
-                .into_iter()
+            shared
+                .iter()
                 .map(|(k, v)| {
                     let cell = OnceLock::new();
                     // OnceLock::set can't fail here - cell was just created
-                    cell.set(Ok(Arc::new(v))).ok();
-                    (k, Arc::new(cell))
+                    cell.set(Ok(Arc::clone(v))).ok();
+                    (k.clone(), Arc::new(cell))
                 })
                 .collect(),
         );
