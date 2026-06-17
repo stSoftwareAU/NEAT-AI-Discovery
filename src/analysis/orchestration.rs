@@ -119,16 +119,35 @@ pub(crate) fn run_optional_analysis<T>(
     }
 }
 
+/// Wall-clock milliseconds spent in each analysis phase (Issue #1409).
+///
+/// `None` when the corresponding analysis was disabled for the run. Feeds the
+/// consolidated per-cycle deadline-consumption breakdown.
+#[derive(Debug, Clone, Copy, Default)]
+struct DispatchDurations {
+    synapse_ms: Option<u64>,
+    neuron_ms: Option<u64>,
+}
+
 /// Run synapse and neuron analyses concurrently when both are enabled (Issue #1002).
 ///
 /// Uses `rayon::join` to run both analyses in parallel with a shared GPU queue,
 /// reducing wall-clock time. When only one analysis is enabled, it runs alone.
+///
+/// Also returns the per-phase wall-clock durations (Issue #1409) so the
+/// orchestrator can attribute deadline consumption.
 fn dispatch_analyses(
     synapse_input: Option<AnalyzeSynapsesInput>,
     neuron_input: Option<AnalyzeNeuronsInput>,
     shared_cache: &Arc<cache::RecordCache>,
     shared_gpu_queue: &Arc<super::gpu::GpuWorkQueue>,
-) -> Result<(Option<AnalyzeSynapsesResult>, Option<AnalyzeNeuronsResult>)> {
+) -> Result<(
+    Option<AnalyzeSynapsesResult>,
+    Option<AnalyzeNeuronsResult>,
+    DispatchDurations,
+)> {
+    use std::time::Instant;
+
     let both_enabled = synapse_input.is_some() && neuron_input.is_some();
 
     if both_enabled {
@@ -144,9 +163,11 @@ fn dispatch_analyses(
 
         // Issue #1087: Wrap each rayon::join branch with catch_unwind so a
         // panic in one analysis does not corrupt results from the other.
-        let (syn_result, neu_result) = rayon::join(
+        // Issue #1409: Each branch also returns its wall-clock duration.
+        let ((syn_result, syn_ms), (neu_result, neu_ms)) = rayon::join(
             || {
-                std::panic::catch_unwind(AssertUnwindSafe(|| {
+                let started = Instant::now();
+                let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
                     run_optional_analysis(
                         true,
                         "analysis::analyze_all → synapse analysis starting",
@@ -170,10 +191,12 @@ fn dispatch_analyses(
                         "Synapse analysis panicked — caught and converted to error (Issue #1087)"
                     );
                     Err(anyhow::anyhow!("synapse analysis module panicked: {msg}"))
-                })
+                });
+                (result, started.elapsed().as_millis() as u64)
             },
             || {
-                std::panic::catch_unwind(AssertUnwindSafe(|| {
+                let started = Instant::now();
+                let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
                     run_optional_analysis(
                         true,
                         "analysis::analyze_all → neuron analysis starting",
@@ -197,17 +220,24 @@ fn dispatch_analyses(
                         "Neuron analysis panicked — caught and converted to error (Issue #1087)"
                     );
                     Err(anyhow::anyhow!("neuron analysis module panicked: {msg}"))
-                })
+                });
+                (result, started.elapsed().as_millis() as u64)
             },
         );
         Ok((
             syn_result.context("failed during synapse analysis phase")?,
             neu_result.context("failed during neuron analysis phase")?,
+            DispatchDurations {
+                synapse_ms: Some(syn_ms),
+                neuron_ms: Some(neu_ms),
+            },
         ))
     } else {
         // Only one (or neither) analysis is enabled — run sequentially.
+        let synapse_enabled = synapse_input.is_some();
+        let synapse_started = Instant::now();
         let synapse_result = run_optional_analysis(
-            synapse_input.is_some(),
+            synapse_enabled,
             "analysis::analyze_all → synapse analysis starting",
             "analysis::analyze_all → synapse analysis finished",
             "analysis::analyze_all → synapse analysis skipped",
@@ -221,9 +251,12 @@ fn dispatch_analyses(
                 )
             },
         )?;
+        let synapse_ms = synapse_enabled.then(|| synapse_started.elapsed().as_millis() as u64);
 
+        let neuron_enabled = neuron_input.is_some();
+        let neuron_started = Instant::now();
         let neuron_result = run_optional_analysis(
-            neuron_input.is_some(),
+            neuron_enabled,
             "analysis::analyze_all → neuron analysis starting",
             "analysis::analyze_all → neuron analysis finished",
             "analysis::analyze_all → neuron analysis skipped",
@@ -237,8 +270,16 @@ fn dispatch_analyses(
                 )
             },
         )?;
+        let neuron_ms = neuron_enabled.then(|| neuron_started.elapsed().as_millis() as u64);
 
-        Ok((synapse_result, neuron_result))
+        Ok((
+            synapse_result,
+            neuron_result,
+            DispatchDurations {
+                synapse_ms,
+                neuron_ms,
+            },
+        ))
     }
 }
 
@@ -256,8 +297,9 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // so that a prior SIGTERM does not immediately abort this invocation.
     crate::cancellation::reset_cancellation();
 
-    // Phase timer for total analysis (Issue #214)
-    let _total_timer = PhaseTimer::new("total_analysis");
+    // Phase timer for total analysis (Issue #214). Also drives the consolidated
+    // per-cycle deadline-consumption breakdown total (Issue #1409).
+    let total_timer = PhaseTimer::new("total_analysis");
 
     // Profile data collection (when NEAT_AI_DISCOVERY_PROFILE=json)
     let mut profile = ProfileData::new();
@@ -488,10 +530,10 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
         Err(e) => return Err(e).context("failed to load parquet record cache for analysis"),
     };
-    profile.record_phase(
-        "parquet_loading",
-        parquet_loading_start.elapsed().as_millis() as u64,
-    );
+    // Issue #1409: capture the parquet reload duration for the consolidated
+    // per-cycle deadline-consumption breakdown.
+    let parquet_reload_ms = parquet_loading_start.elapsed().as_millis() as u64;
+    profile.record_phase("parquet_loading", parquet_reload_ms);
     crate::watchdog::beat("analysis::analyze_all → parquet cache loaded");
 
     // Issue #1028: Check memory budget after parquet loading (often the largest
@@ -594,7 +636,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
     // Issue #1047: If analysis was cancelled during dispatch, return a clean
     // partial result rather than propagating the error.
-    let (synapse_result, neuron_result) = match dispatch_result {
+    let (synapse_result, neuron_result, dispatch_durations) = match dispatch_result {
         Ok(results) => results,
         Err(_) if crate::cancellation::is_cancelled() => {
             tracing::info!("analysis dispatch cancelled by host — returning empty result");
@@ -1075,6 +1117,30 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             super::drought_reset::rearm_drought_reset(None, Some(&mut *guard));
         }
     }
+
+    // Issue #1409 (GRQ-23): Emit one consolidated, greppable summary attributing
+    // deadline consumption across the analysis phases, plus an explicit STARVED
+    // warning when synapse/neuron analysis was curtailed by the deadline. The
+    // focus phase (parquet load + focus ranking) runs in the separate
+    // rank_focus_neurons call and is surfaced there (Issue #1377).
+    use super::deadline_breakdown::{DeadlineConsumptionBreakdown, PhaseCompletion};
+    let breakdown = DeadlineConsumptionBreakdown {
+        parquet_reload_ms,
+        synapse_analysis_ms: dispatch_durations.synapse_ms,
+        neuron_analysis_ms: dispatch_durations.neuron_ms,
+        total_analysis_ms: total_timer.elapsed_ms(),
+        synapse: synapse_result.as_ref().map(|s| PhaseCompletion {
+            timed_out: s.metadata.timed_out,
+            completed_focus_neurons: s.metadata.completed_focus_neurons,
+            total_focus_neurons: s.metadata.total_focus_neurons,
+        }),
+        neuron: neuron_result.as_ref().map(|n| PhaseCompletion {
+            timed_out: n.metadata.timed_out,
+            completed_focus_neurons: n.metadata.completed_focus_neurons,
+            total_focus_neurons: n.metadata.total_focus_neurons,
+        }),
+    };
+    breakdown.emit();
 
     Ok(AnalyzeAllResult {
         synapse: synapse_result,

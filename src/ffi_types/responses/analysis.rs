@@ -128,6 +128,12 @@ pub struct SynapseAnalysisMetadataJson {
     pub completed_focus_neurons: usize,
     /// Total focus neurons requested for this analysis invocation.
     pub total_focus_neurons: usize,
+    /// True when synapse analysis was curtailed by the deadline: it timed out
+    /// **and** left at least one focus neuron unanalysed (Issue #1409).
+    ///
+    /// Lets the GRQ layer detect synapse starvation programmatically without
+    /// recomputing `timedOut && completedFocusNeurons < totalFocusNeurons`.
+    pub starved: bool,
     /// Minimum input index observed with non-empty records (eg 0).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_index_min_seen_with_records: Option<usize>,
@@ -285,6 +291,12 @@ pub struct NeuronAnalysisMetadataJson {
     pub completed_focus_neurons: usize,
     /// Total focus neurons requested for this analysis invocation.
     pub total_focus_neurons: usize,
+    /// True when neuron analysis was curtailed by the deadline: it timed out
+    /// **and** left at least one focus neuron unanalysed (Issue #1409).
+    ///
+    /// Lets the GRQ layer detect neuron starvation programmatically without
+    /// recomputing `timedOut && completedFocusNeurons < totalFocusNeurons`.
+    pub starved: bool,
     /// GPU timing data for performance diagnostics (Issue #195).
     /// Only present when `NEAT_AI_DISCOVERY_GPU_TIMING=1` is set.
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -358,6 +358,7 @@ env knobs — is documented end-to-end in
 | **GPU not available** | Check system meets minimum requirements; on Linux check `/dev/dri` permissions |
 | **Out of memory (exit 137)** | Reduce `--max-old-space-size`; see [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) |
 | **Analysis timeout** | Expected under deadlines; coverage improves over repeated runs |
+| **Synapse/neuron starvation** | Grep logs for `GRQ-23` to see the per-cycle deadline-consumption breakdown, and `STARVED` for the curtailed-phase warning with skipped/total counts; the `starved` flag on `synapseMetadata`/`neuronMetadata` exposes the same signal programmatically |
 | **GPU timeout errors** | Reduce `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE`; restart if GPU driver hung |
 | **Low GPU utilisation** | Often CPU-bound sample building; see [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) |
 | **Deadlock or stuck** | Send `kill -USR1 <pid>` for thread dump; see [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) |

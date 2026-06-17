@@ -39,6 +39,7 @@ pub mod candidate_compression;
 pub mod candidate_diversity;
 pub mod constants;
 pub mod cost_function_hint;
+pub mod deadline_breakdown;
 pub mod diagnostics;
 pub mod discovery_dispatch;
 pub mod discovery_mode;
