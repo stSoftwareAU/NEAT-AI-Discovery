@@ -56,8 +56,10 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-fuzz-
 
+    # --locked honours the committed fuzz/Cargo.lock so CI fuzz runs use the
+    # pinned, reviewed dependency tree rather than re-resolving (Issue #1427).
     - name: Fuzz FFI deserialisation
-      run: cargo +nightly fuzz run fuzz_ffi_deserialisation -- -max_total_time=30
+      run: cargo +nightly fuzz run --locked fuzz_ffi_deserialisation -- -max_total_time=30
 
     - name: Fuzz FFI entry points
-      run: cargo +nightly fuzz run fuzz_ffi_entry_points -- -max_total_time=30
+      run: cargo +nightly fuzz run --locked fuzz_ffi_entry_points -- -max_total_time=30

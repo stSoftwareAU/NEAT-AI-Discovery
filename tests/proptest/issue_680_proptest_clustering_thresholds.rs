@@ -142,21 +142,45 @@ proptest! {
     /// should form separate clusters.
     #[test]
     fn different_types_separate_clusters(
-        input_candidates in prop::collection::vec(candidate_strategy("t1", "input"), 3..10),
-        hidden_candidates in prop::collection::vec(candidate_strategy("t1", "hidden"), 3..10),
+        input_parts in prop::collection::vec(("[a-z]{1,4}", 0.001f32..1.0), 3..10),
+        hidden_parts in prop::collection::vec(("[a-z]{1,4}", 0.001f32..1.0), 3..10),
     ) {
-        let mut all = input_candidates;
-        all.extend(hidden_candidates);
+        // Tag each from-uuid with a type-specific prefix so a cluster's
+        // membership can be traced back to a single neuron_type.
+        let mut all: Vec<ClusterableCandidate> = input_parts
+            .into_iter()
+            .map(|(from, improvement)| ClusterableCandidate {
+                from_neuron_uuid: format!("i_{from}"),
+                to_neuron_uuid: "t1".to_string(),
+                expected_improvement: improvement,
+                neuron_type: "input".to_string(),
+            })
+            .collect();
+        all.extend(hidden_parts.into_iter().map(|(from, improvement)| ClusterableCandidate {
+            from_neuron_uuid: format!("h_{from}"),
+            to_neuron_uuid: "t1".to_string(),
+            expected_improvement: improvement,
+            neuron_type: "hidden".to_string(),
+        }));
 
         let clusters = cluster_candidates(&all);
 
-        // Verify no cluster mixes neuron types
-        // (We can only check indirectly: all member UUIDs should come from
-        // candidates of the same type)
+        // No cluster may mix neuron types: every member must share the same
+        // type-specific from-uuid prefix.
         for cluster in &clusters {
+            let from_inputs = cluster
+                .member_from_uuids
+                .iter()
+                .filter(|u| u.starts_with("i_"))
+                .count();
+            let from_hidden = cluster
+                .member_from_uuids
+                .iter()
+                .filter(|u| u.starts_with("h_"))
+                .count();
             prop_assert!(
-                cluster.member_count >= 2,
-                "All clusters should have >= 2 members"
+                from_inputs == 0 || from_hidden == 0,
+                "Cluster mixes neuron types: {from_inputs} input-sourced and {from_hidden} hidden-sourced members"
             );
         }
     }
