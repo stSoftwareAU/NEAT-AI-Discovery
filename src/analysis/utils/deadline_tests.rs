@@ -316,6 +316,71 @@ fn calculate_effective_timeout_ms_matches_build_deadline_logic() {
 }
 
 // ============================================================================
+// remaining_ms_until tests (Issue #1407)
+// ============================================================================
+
+#[test]
+fn remaining_ms_until_passes_through_relative_durations() {
+    // Values below the year-2000 threshold are relative durations and are
+    // returned unchanged regardless of `now_ms`.
+    assert_eq!(remaining_ms_until(Some(120_000), 999_999), Some(120_000));
+    assert_eq!(remaining_ms_until(Some(0), 42), Some(0));
+}
+
+#[test]
+fn remaining_ms_until_subtracts_now_for_absolute_timestamps() {
+    let now = YEAR_2000_MS + 1_000_000;
+    let deadline = now + 30_000; // 30s in the future
+    assert_eq!(remaining_ms_until(Some(deadline), now), Some(30_000));
+}
+
+#[test]
+fn remaining_ms_until_saturates_to_zero_when_deadline_passed() {
+    let now = YEAR_2000_MS + 1_000_000;
+    let deadline = now - 5_000; // already passed
+    assert_eq!(remaining_ms_until(Some(deadline), now), Some(0));
+}
+
+#[test]
+fn remaining_ms_until_none_without_deadline() {
+    assert_eq!(remaining_ms_until(None, 123), None);
+}
+
+/// Issue #1407 acceptance criterion: focus selection and analysis bill against
+/// ONE shared absolute deadline. Time spent in focus selection must reduce the
+/// window left for analysis — it must NOT receive a fresh full window.
+#[test]
+fn shared_absolute_deadline_reduces_remaining_window_for_later_phase() {
+    let discovery_start_ms = YEAR_2000_MS + 10_000_000;
+    let budget_ms = 100_000; // 100s total discovery budget
+    let shared_deadline = Some(discovery_start_ms + budget_ms);
+
+    // Focus selection starts at the beginning of the cycle — it sees the full
+    // budget.
+    let focus_window =
+        remaining_ms_until(shared_deadline, discovery_start_ms).expect("shared deadline present");
+    assert_eq!(
+        focus_window, budget_ms,
+        "focus should see the full budget at the start of the cycle"
+    );
+
+    // Focus selection (plus its parquet load) consumes 80s of wall clock.
+    let focus_cost_ms = 80_000;
+    let analysis_start_ms = discovery_start_ms + focus_cost_ms;
+    let analysis_window =
+        remaining_ms_until(shared_deadline, analysis_start_ms).expect("shared deadline present");
+
+    // Analysis must get only the remainder (20s), not a fresh 100s window.
+    assert_eq!(analysis_window, budget_ms - focus_cost_ms);
+    assert!(
+        analysis_window < focus_window,
+        "time spent in focus must shrink the analysis window"
+    );
+    // The phases are coordinated under one budget: focus_cost + remainder == budget.
+    assert_eq!(focus_cost_ms + analysis_window, budget_ms);
+}
+
+// ============================================================================
 // parse_input_index tests
 // ============================================================================
 

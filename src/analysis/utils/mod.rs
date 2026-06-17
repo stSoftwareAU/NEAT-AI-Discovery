@@ -64,7 +64,7 @@ pub use deadline::{
     calculate_gpu_batch_timeout, cap_deadline_to_wall_clock, deadline_passed,
     deadline_to_absolute_ms, derive_seed, focus_unused_observations_from_env, log_analysis_start,
     log_analysis_timeout, order_eligible_sources, order_focus_targets, parse_input_index,
-    shuffle_slice, shuffle_within_top_k, source_input_index_bias_from_env,
+    remaining_ms_until, shuffle_slice, shuffle_within_top_k, source_input_index_bias_from_env,
 };
 
 // Re-export deadline override for tests

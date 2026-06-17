@@ -332,12 +332,16 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     // topologies activate margin-aware focus ranking. Other topologies
     // (Independent / Simplex / Unknown / OTHER) and `None` get the existing
     // unweighted ranking.
-    let rank_result = focus::rank_focus_neurons_with_descriptor(
+    // Issue #1407: thread the shared absolute discovery deadline so focus
+    // selection bills against the same budget as the analysis phase rather
+    // than opening a fresh independent window.
+    let rank_result = focus::rank_focus_neurons_with_descriptor_and_deadline(
         &input.parquet_file,
         &input.creature,
         input.max_results,
         input.cost_of_growth,
         input.task_descriptor.as_ref(),
+        input.analysis_deadline_ms,
     );
 
     match rank_result {
