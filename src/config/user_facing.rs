@@ -825,21 +825,47 @@ pub fn min_available_memory_gb() -> f64 {
     )
 }
 
+/// Default consecutive-empty-pass count after which the operator escape hatch
+/// fires when `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` is unset
+/// (Issue #1422).
+///
+/// Chosen as `2.5 ×` the conservative-mode cap
+/// ([`crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS`],
+/// 20) so the gentler adaptive levers — conservative-gain multiplier
+/// (#1132) and the adaptive staleness window (#1203) — have ample time to
+/// recover before the heavier one-shot cache flush fires. Previously the
+/// escape hatch was opt-in and stayed disarmed in production through the
+/// weeks-long drought it was built for (Issue #1205, #1418); arming it by
+/// default closes that gap.
+pub const DEFAULT_DROUGHT_RESET_AFTER_EPOCHS: u32 = 50;
+
 /// Operator escape hatch — force a one-shot reset of the candidate cache
 /// failed entries and target cooldown tracker after this many consecutive
 /// empty discovery passes (Issue #1205).
 ///
-/// Set `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` to a positive integer
-/// to enable. Returns `None` when unset, zero, or invalid — meaning the
-/// escape hatch is off.
+/// **Armed by default** (Issue #1422): when
+/// `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` is unset or invalid the lever
+/// returns [`DEFAULT_DROUGHT_RESET_AFTER_EPOCHS`] (50) so the escape hatch
+/// fires without any operator action. Set the env var to a positive integer to
+/// override the threshold, or to `0` to deliberately disable the lever
+/// (returns `None`).
 ///
 /// The reset clears all failed `CandidateOutcomeCache` outcomes (preserving
 /// successes and source-type stats) and all `TargetFailureTracker` entries
 /// currently in cooldown. The reset fires at most once per consecutive
 /// failure streak; a successful pass re-arms the lever.
 pub fn drought_reset_after_epochs() -> Option<u32> {
-    std::env::var("NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u32>().ok())
-        .filter(|v| *v >= 1)
+    match std::env::var("NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS") {
+        // Explicit, parseable override: `0` disables the lever, any positive
+        // integer sets the threshold.
+        Ok(raw) => match raw.trim().parse::<u32>() {
+            Ok(0) => None,
+            Ok(n) => Some(n),
+            // Unparsable value — fall back to the armed default rather than
+            // silently disabling the escape hatch.
+            Err(_) => Some(DEFAULT_DROUGHT_RESET_AFTER_EPOCHS),
+        },
+        // Unset — armed by default.
+        Err(_) => Some(DEFAULT_DROUGHT_RESET_AFTER_EPOCHS),
+    }
 }

@@ -162,6 +162,10 @@ pub(crate) fn log_version_once() {
             "NEAT-AI-Discovery library initialised"
         );
 
+        // Issue #1422: log the effective drought-mitigation config once at
+        // startup so an in-progress drought is diagnosable from one log line.
+        config::log_effective_drought_mitigation_config();
+
         // Initialise debug handlers (deadlock detection + kill -3 thread dump)
         debug::init_debug_handlers();
     });
