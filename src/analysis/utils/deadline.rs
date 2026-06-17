@@ -11,7 +11,11 @@
 //! 2. Randomised ordering (avoid category starvation)
 //! 3. Verbose logging (controlled by `NEAT_AI_DISCOVERY_VERBOSE`)
 
-#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)] // Intentional numeric casts for GPU/neural network computation (Issue #873). The reserve fraction is clamped to [0.0, 1.0] and remaining_ms is unsigned, so the product is always non-negative (Issue #1408).
 use super::verbose_enabled;
 use rand::seq::SliceRandom;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
@@ -191,6 +195,126 @@ pub fn cap_deadline_to_wall_clock(
         (Some(ad), None) => Some(ad),
         (None, Some(wd)) => Some(wd),
         (None, None) => None,
+    }
+}
+
+// ============================================================================
+// Reserved Analysis Budget (Issue #1408)
+// ============================================================================
+
+/// Hard floor (milliseconds) below which a reserved analysis window is treated
+/// as unusable (Issue #1408).
+///
+/// When focus selection and parquet loading consume so much of the shared
+/// discovery deadline that less than this many milliseconds remain for
+/// synapse/neuron analysis, the run should fail fast with an actionable error
+/// instead of analysing 0 of N targets. One second is comfortably below any
+/// realistic per-target evaluation, so tripping it means the budget is
+/// genuinely exhausted, not merely tight.
+pub const ANALYSIS_RESERVE_HARD_FLOOR_MS: u64 = 1_000;
+
+/// Effective reserved analysis window in milliseconds (Issue #1408).
+///
+/// Synapse/neuron analysis is guaranteed at least this slice of the remaining
+/// discovery budget. The reserve is the smaller of:
+/// - the absolute `reserve_ms` floor (a fixed minimum, e.g. 60s), and
+/// - `remaining_ms * reserve_fraction` (a proportional cap).
+///
+/// Capping by a fraction of the remaining window is what keeps the reserve safe
+/// on small budgets: on a 10s window with a 60s floor and a 0.5 fraction, the
+/// effective reserve is 5s — leaving the other 5s for focus residue and parquet
+/// loading rather than starving them to zero. On a generous 10-minute window the
+/// fraction cap (300s) never binds, so the full 60s floor is honoured.
+///
+/// `reserve_ms == 0` disables the reserve (opt-out) and returns 0.
+#[must_use]
+pub fn effective_analysis_reserve_ms(
+    remaining_ms: u64,
+    reserve_ms: u64,
+    reserve_fraction: f64,
+) -> u64 {
+    if reserve_ms == 0 {
+        return 0;
+    }
+    let fraction = reserve_fraction.clamp(0.0, 1.0);
+    let fraction_cap = (remaining_ms as f64 * fraction).floor() as u64;
+    reserve_ms.min(fraction_cap)
+}
+
+/// Absolute deadline (ms since epoch) by which the loading phase — focus
+/// selection residue plus parquet loading — must finish so synapse/neuron
+/// analysis keeps its reserved window (Issue #1408).
+///
+/// Returns `overall_deadline_ms - effective_reserve`, which is always at or
+/// after `now_ms` (the reserve can never exceed the remaining window). Returns
+/// `None` when there is no overall deadline, leaving loading uncapped.
+#[must_use]
+pub fn loading_deadline_with_reserve_ms(
+    overall_deadline_ms: Option<u64>,
+    now_ms: u64,
+    reserve_ms: u64,
+    reserve_fraction: f64,
+) -> Option<u64> {
+    let overall = overall_deadline_ms?;
+    let remaining = overall.saturating_sub(now_ms);
+    let reserve = effective_analysis_reserve_ms(remaining, reserve_ms, reserve_fraction);
+    Some(overall.saturating_sub(reserve))
+}
+
+/// `SystemTime` wrapper around [`loading_deadline_with_reserve_ms`] (Issue #1408).
+///
+/// Caps a loading-phase `SystemTime` deadline so synapse/neuron analysis retains
+/// its reserved window. Returns the original deadline unchanged when there is no
+/// deadline or the reserve is disabled.
+#[must_use]
+pub fn reserved_loading_deadline(
+    overall_deadline: Option<SystemTime>,
+    reserve_ms: u64,
+    reserve_fraction: f64,
+) -> Option<SystemTime> {
+    let overall = overall_deadline?;
+    if reserve_ms == 0 {
+        return Some(overall);
+    }
+    let remaining_ms = overall
+        .duration_since(SystemTime::now())
+        .map_or(0, |d| d.as_millis() as u64);
+    let reserve = effective_analysis_reserve_ms(remaining_ms, reserve_ms, reserve_fraction);
+    // Subtract the reserve from the overall deadline; on underflow keep the
+    // original deadline (reserve can never exceed the remaining window anyway).
+    Some(
+        overall
+            .checked_sub(Duration::from_millis(reserve))
+            .unwrap_or(overall),
+    )
+}
+
+/// Remaining analysis window when it falls below the usable hard floor
+/// (Issue #1408).
+///
+/// Returns `Some(remaining_ms)` when a discovery deadline is set, the reserve is
+/// enabled, and the effective reserved window is below
+/// [`ANALYSIS_RESERVE_HARD_FLOOR_MS`] — i.e. focus selection and parquet loading
+/// have starved analysis and the run should fail fast with an actionable error.
+/// Returns `None` when the reserve can be honoured (or no deadline / reserve is
+/// set), meaning analysis may proceed.
+#[must_use]
+pub fn analysis_reserve_shortfall_ms(
+    overall_deadline_ms: Option<u64>,
+    now_ms: u64,
+    reserve_ms: u64,
+    reserve_fraction: f64,
+) -> Option<u64> {
+    if reserve_ms == 0 {
+        return None;
+    }
+    let overall = overall_deadline_ms?;
+    let remaining = overall.saturating_sub(now_ms);
+    let effective = effective_analysis_reserve_ms(remaining, reserve_ms, reserve_fraction);
+    if effective < ANALYSIS_RESERVE_HARD_FLOOR_MS {
+        Some(remaining)
+    } else {
+        None
     }
 }
 

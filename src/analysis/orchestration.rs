@@ -429,10 +429,41 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     }
     let shared_deadline_abs_ms = utils::deadline_to_absolute_ms(&overall_deadline);
 
+    // Issue #1408: Reserve a guaranteed minimum window for synapse/neuron
+    // analysis so focus selection and parquet loading cannot starve it. If the
+    // shared deadline has already been so consumed that less than the usable
+    // hard floor remains for analysis, fail fast with an actionable error
+    // instead of running analysis that completes 0 of N targets.
+    let analysis_reserve_ms = crate::config::analysis_reserve_ms();
+    let analysis_reserve_fraction = crate::config::analysis_reserve_fraction();
+    let now_abs_ms = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    if let Some(remaining_ms) = utils::analysis_reserve_shortfall_ms(
+        shared_deadline_abs_ms,
+        now_abs_ms,
+        analysis_reserve_ms,
+        analysis_reserve_fraction,
+    ) {
+        return Err(anyhow::anyhow!(
+            "discovery budget exhausted: only {remaining_ms}ms remain for synapse/neuron \
+             analysis after focus selection and parquet loading, below the {floor}ms minimum \
+             (Issue #1408). Increase discoveryAnalysisTimeoutMinutes, or set \
+             NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS=0 to opt out of the reserve.",
+            floor = utils::ANALYSIS_RESERVE_HARD_FLOOR_MS,
+        ));
+    }
+
     // Pre-load ALL records from parquet in one pass. This is MUCH faster than
     // lazy-loading each neuron separately (1 scan vs ~2000 scans for large creatures).
     // Issue #648: Pass the analysis deadline so loading can abort early if time runs out.
-    let loading_deadline = overall_deadline;
+    // Issue #1408: Curtail loading at `overall_deadline - reserve` so the reserved
+    // analysis window survives even if parquet loading is slow.
+    let loading_deadline = utils::reserved_loading_deadline(
+        overall_deadline,
+        analysis_reserve_ms,
+        analysis_reserve_fraction,
+    );
     let parquet_loading_start = std::time::Instant::now();
     let cache_result =
         cache::RecordCache::new_adaptive_with_deadline(&input.parquet_file, loading_deadline);
