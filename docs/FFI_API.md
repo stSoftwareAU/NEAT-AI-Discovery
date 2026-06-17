@@ -81,6 +81,36 @@ found so far. Coverage improves over repeated runs.
 - **Default**: no deadline
 - **Behaviour**: deadline is passed to the record cache and detection dispatch
 
+#### Shared across focus selection (Issue #1407)
+
+Focus selection (`rank_focus_neurons`) runs as a **separate** FFI call before
+`analyze_parallel`. To stop the two phases opening independent time windows,
+`rank_focus_neurons` now also accepts `analysisDeadlineMs` — pass the **same
+absolute** discovery deadline (ms-since-epoch) to both calls. Focus selection
+then bills against that one deadline and aborts at whichever is sooner: the
+shared deadline or the `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` wall-clock
+budget.
+
+Because the deadline is absolute, time consumed by focus selection (plus its
+parquet load) naturally shrinks the window left for synapse/neuron analysis —
+the later phase sees the remaining budget, not a fresh full window. When
+`analysisDeadlineMs` is omitted from the focus call, the legacy budget-only
+behaviour applies (backwards compatible).
+
+```mermaid
+sequenceDiagram
+    participant Host as NEAT-AI (caller)
+    participant Focus as rank_focus_neurons
+    participant Analysis as analyze_parallel
+    Note over Host: compute ONE absolute deadline D (ms-since-epoch)
+    Host->>Focus: analysisDeadlineMs = D
+    Note over Focus: abort at min(D, focus budget)
+    Focus-->>Host: ranked focus neurons
+    Host->>Analysis: analysisDeadlineMs = D
+    Note over Analysis: remaining window = D − now (already reduced by focus)
+    Analysis-->>Host: candidates
+```
+
 ### Wall-Clock Cap (`maxDiscoveryWallClockMinutes`) — Issue #1098
 
 Caps the total elapsed time from discovery start (recording + analysis),

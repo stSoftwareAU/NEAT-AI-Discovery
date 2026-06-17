@@ -452,6 +452,17 @@ pub const FOCUS_RANKING_BUDGET_GRACE_MS: u64 = 1_000;
 ///   `[FOCUS_RANKING_BUDGET_MIN_MS, FOCUS_RANKING_BUDGET_MAX_MS]` (Issue #1385).
 ///
 /// Returns `None` only when the budget is explicitly disabled with `0`.
+///
+/// ## Relationship to the shared discovery deadline (Issue #1407)
+///
+/// This budget is no longer an *independent* window. When the caller supplies
+/// the shared absolute discovery deadline (`analysisDeadlineMs`) to
+/// `rank_focus_neurons`, focus selection aborts at whichever is **sooner**: the
+/// shared deadline or this wall-clock budget. The budget therefore acts purely
+/// as a safety net that caps a pathological ranking run; it cannot extend focus
+/// selection past the shared discovery deadline that the synapse/neuron
+/// analysis phase also bills against. When no shared deadline is supplied, the
+/// budget behaves exactly as before.
 pub fn focus_ranking_budget_ms() -> Option<u64> {
     let Ok(raw) = std::env::var("NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS") else {
         return Some(DEFAULT_FOCUS_RANKING_BUDGET_MS);

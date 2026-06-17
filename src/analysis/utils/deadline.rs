@@ -125,6 +125,36 @@ pub fn build_deadline(deadline_ms: Option<u64>) -> Option<SystemTime> {
         .and_then(|validated_ms| SystemTime::now().checked_add(Duration::from_millis(validated_ms)))
 }
 
+/// Remaining milliseconds from `now_ms` until a discovery deadline (Issue #1407).
+///
+/// Interprets `deadline_ms` with the same epoch heuristic as
+/// [`calculate_effective_timeout_ms`]: values at or above [`YEAR_2000_MS`] are
+/// absolute timestamps (milliseconds since the UNIX epoch); smaller values are
+/// relative durations measured from `now_ms`.
+///
+/// This is the shared accounting primitive that lets focus selection and
+/// synapse/neuron analysis bill against ONE absolute discovery deadline instead
+/// of two independent windows. Because an absolute deadline is fixed, a later
+/// phase naturally sees a smaller remainder — time consumed by an earlier phase
+/// is not handed back as a fresh full window.
+///
+/// Returns:
+/// - `None` when no deadline is supplied.
+/// - `Some(0)` when an absolute deadline has already passed (saturating).
+/// - `Some(remaining_ms)` otherwise.
+#[must_use]
+pub fn remaining_ms_until(deadline_ms: Option<u64>, now_ms: u64) -> Option<u64> {
+    let target_ms = deadline_ms?;
+    if target_ms < YEAR_2000_MS {
+        // Relative duration — already expressed as "from now".
+        Some(target_ms)
+    } else {
+        // Absolute timestamp — remaining time is the target minus now (saturating
+        // so a passed deadline yields zero rather than wrapping).
+        Some(target_ms.saturating_sub(now_ms))
+    }
+}
+
 /// Convert a `SystemTime` deadline to an absolute millisecond timestamp (Issue #1097).
 ///
 /// This is the inverse of `build_deadline`: given a `SystemTime`, return the

@@ -362,6 +362,18 @@ pub struct RankFocusNeuronsInput {
     /// back to neutral rather than failing the whole request (Issue #1402).
     #[serde(default, deserialize_with = "deserialize_permissive_task_descriptor")]
     pub task_descriptor: Option<TaskDescriptor>,
+    /// Shared absolute discovery deadline in milliseconds (Issue #1407).
+    ///
+    /// When provided, focus selection bills against the **same** deadline as
+    /// the subsequent synapse/neuron analysis phase rather than opening a fresh
+    /// independent window. Focus ranking aborts at whichever is sooner: this
+    /// deadline or the `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` wall-clock
+    /// budget. Interpreted with the same heuristic as `analysisDeadlineMs` on
+    /// `analyzeParallel`: values at or above year-2000-in-ms are absolute
+    /// timestamps; smaller values are relative durations. When absent, the
+    /// legacy budget-only behaviour applies (backwards compatible).
+    #[serde(default)]
+    pub analysis_deadline_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
