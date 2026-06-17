@@ -53,6 +53,7 @@ pub mod module_starvation_tracker;
 pub mod module_weights;
 pub mod neuron;
 pub mod neuron_fingerprint;
+pub mod novelty_escalation;
 pub mod one_hot_class_allocation;
 pub mod quantised_error;
 pub mod recent_failure_window;

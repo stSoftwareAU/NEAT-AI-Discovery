@@ -765,6 +765,42 @@ pub fn drought_log_threshold() -> u32 {
 }
 
 // =============================================================================
+// Issue #1423 — novelty / diversification escalation for plateaued creatures
+// =============================================================================
+
+/// Fraction of the considered candidate pool that must be cache-suppressed
+/// before novelty escalation engages (Issue #1423).
+///
+/// Set `NEAT_AI_DISCOVERY_NOVELTY_SUPPRESSION_RATIO` to a value in `(0.0, 1.0]`
+/// to override. Out-of-range or unparsable values fall back to
+/// [`crate::analysis::novelty_escalation::DEFAULT_SUPPRESSION_RATIO_THRESHOLD`]
+/// (0.8).
+pub fn novelty_suppression_ratio() -> f64 {
+    std::env::var("NEAT_AI_DISCOVERY_NOVELTY_SUPPRESSION_RATIO")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0 && *v <= 1.0)
+        .unwrap_or(crate::analysis::novelty_escalation::DEFAULT_SUPPRESSION_RATIO_THRESHOLD)
+}
+
+/// Multiplier applied to the coordinated-structural expected-gain floor when
+/// novelty escalation engages (Issue #1423).
+///
+/// Set `NEAT_AI_DISCOVERY_NOVELTY_GAIN_RELAXATION` to a value in `(0.0, 1.0]`
+/// to override. Values below or equal to `0.0`, above `1.0`, or unparsable
+/// fall back to
+/// [`crate::analysis::novelty_escalation::DEFAULT_GAIN_FLOOR_RELAXATION`] (0.5).
+/// The relaxation only ever loosens the floor; it never raises it above the
+/// base constant.
+pub fn novelty_gain_relaxation() -> f32 {
+    std::env::var("NEAT_AI_DISCOVERY_NOVELTY_GAIN_RELAXATION")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0 && *v <= 1.0)
+        .unwrap_or(crate::analysis::novelty_escalation::DEFAULT_GAIN_FLOOR_RELAXATION)
+}
+
+// =============================================================================
 // Issue #1420 — configurable available-memory floor for the discovery gate
 // =============================================================================
 
