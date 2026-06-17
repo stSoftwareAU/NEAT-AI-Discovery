@@ -686,5 +686,7 @@ pub(crate) fn build_metadata(
         rolling_success_rate: 1.0,
         // Issue #1202: populated by orchestration when in drought.
         drought_diagnostic: None,
+        // Issue #1424: populated by orchestration on the alarm crossing.
+        creature_drought_alarm: None,
     }
 }

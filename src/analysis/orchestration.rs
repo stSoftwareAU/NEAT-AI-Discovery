@@ -1118,6 +1118,46 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
     }
 
+    // Issue #1424: Creature-level drought alarm. Independent of the per-pass
+    // drought diagnostic above, this emits a single durable alarm when the
+    // creature's epochs-since-last-acceptance crosses the configured "weeks"
+    // threshold. `genuinely_empty` is the trailing search-exhausted streak;
+    // `environmentally_disabled` is the host-gated passes the log accumulated.
+    // Their sum is the epochs since the creature last accepted a candidate.
+    // Disabled when `NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS=0`.
+    if let Some(alarm_threshold) = crate::config::drought_alarm_epochs() {
+        let genuinely_empty = consecutive_failures;
+        let environmentally_disabled = outcome_log.environmentally_disabled_passes;
+        let epochs_since_last_accepted = genuinely_empty.saturating_add(environmentally_disabled);
+        // The FFI creature carries no uuid; derive a stable identity from its
+        // persistent output-neuron uuids (Issue #1424).
+        let output_uuids: Vec<&str> = input
+            .creature
+            .neurons
+            .iter()
+            .filter(|n| n.neuron_type == "output")
+            .map(|n| n.uuid.as_str())
+            .collect();
+        let creature_id = super::creature_drought_alarm::derive_creature_id(&output_uuids);
+        let alarm_inputs = super::creature_drought_alarm::CreatureDroughtAlarmInputs {
+            creature_uuid: &creature_id,
+            epochs_since_last_accepted,
+            genuinely_empty_passes: genuinely_empty,
+            environmentally_disabled_passes: environmentally_disabled,
+        };
+        if let Some(alarm) = super::creature_drought_alarm::emit_creature_drought_alarm(
+            &alarm_inputs,
+            alarm_threshold,
+        ) {
+            if let Some(syn) = synapse_result.as_mut() {
+                syn.metadata.creature_drought_alarm = Some(alarm.clone());
+            }
+            if let Some(neu) = neuron_result.as_mut() {
+                neu.metadata.creature_drought_alarm = Some(alarm);
+            }
+        }
+    }
+
     // Issue #1409 (GRQ-23): Emit one consolidated, greppable summary attributing
     // deadline consumption across the analysis phases, plus an explicit STARVED
     // warning when synapse/neuron analysis was curtailed by the deadline. The

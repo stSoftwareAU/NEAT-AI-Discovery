@@ -764,6 +764,43 @@ pub fn drought_log_threshold() -> u32 {
         .unwrap_or(DEFAULT_DROUGHT_LOG_THRESHOLD)
 }
 
+/// Resolve the creature-level drought-alarm threshold from a raw env value
+/// (Issue #1424).
+///
+/// Pure function for testability (no environment access). Returns:
+/// - `None` when `raw` parses to `0` — the explicit operator opt-out.
+/// - `Some(n)` for any other positive integer.
+/// - `Some(default)` when `raw` is `None`, empty, or unparsable.
+#[must_use]
+pub fn resolve_drought_alarm_epochs(raw: Option<&str>, default: u32) -> Option<u32> {
+    match raw {
+        Some(value) => match value.trim().parse::<u32>() {
+            Ok(0) => None,
+            Ok(n) => Some(n),
+            Err(_) => Some(default),
+        },
+        None => Some(default),
+    }
+}
+
+/// Epochs-since-last-acceptance at which the creature-level drought alarm fires
+/// (Issue #1424).
+///
+/// Set `NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS` to a positive integer to
+/// override the default
+/// ([`crate::analysis::creature_drought_alarm::DEFAULT_DROUGHT_ALARM_EPOCHS`],
+/// 100). Set it to `0` to disable the alarm entirely. Unparsable values fall
+/// back to the default.
+#[must_use]
+pub fn drought_alarm_epochs() -> Option<u32> {
+    resolve_drought_alarm_epochs(
+        std::env::var("NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS")
+            .ok()
+            .as_deref(),
+        crate::analysis::creature_drought_alarm::DEFAULT_DROUGHT_ALARM_EPOCHS,
+    )
+}
+
 // =============================================================================
 // Issue #1423 — novelty / diversification escalation for plateaued creatures
 // =============================================================================

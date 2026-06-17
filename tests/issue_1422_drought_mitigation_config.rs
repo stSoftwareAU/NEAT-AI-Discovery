@@ -15,6 +15,7 @@ use neat_ai_discovery::analysis::constants::{
     STALENESS_EXTENDED_DROUGHT_DIVISOR, TARGET_COOLDOWN_CONSECUTIVE_FAILURES,
     TARGET_COOLDOWN_EPOCHS,
 };
+use neat_ai_discovery::analysis::creature_drought_alarm::DEFAULT_DROUGHT_ALARM_EPOCHS;
 use neat_ai_discovery::analysis::discovery_mode::{
     DEFAULT_CONSERVATIVE_GAIN_MULTIPLIER, DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS,
     DEFAULT_LOW_SUCCESS_RATE_THRESHOLD,
@@ -132,6 +133,7 @@ fn from_env_reports_compiled_defaults_when_unset() {
         EnvGuard::unset("NEAT_AI_DISCOVERY_STALENESS_CONSERVATIVE_DIVISOR"),
         EnvGuard::unset("NEAT_AI_DISCOVERY_STALENESS_EXTENDED_DROUGHT_DIVISOR"),
         EnvGuard::unset("NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK"),
+        EnvGuard::unset("NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS"),
     ];
 
     let cfg = DroughtMitigationConfig::from_env();
@@ -139,6 +141,11 @@ fn from_env_reports_compiled_defaults_when_unset() {
     assert_eq!(
         cfg.drought_reset_after_epochs,
         Some(DEFAULT_DROUGHT_RESET_AFTER_EPOCHS)
+    );
+    assert_eq!(
+        cfg.drought_alarm_epochs,
+        Some(DEFAULT_DROUGHT_ALARM_EPOCHS),
+        "with no env override the creature-level drought alarm is armed at the default"
     );
     assert_eq!(cfg.drought_log_threshold, DEFAULT_DROUGHT_LOG_THRESHOLD);
     assert_eq!(
@@ -187,6 +194,7 @@ fn from_env_reflects_overrides() {
         EnvGuard::set("NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES", "4"),
         EnvGuard::set("NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS", "25"),
         EnvGuard::set("NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK", "30"),
+        EnvGuard::set("NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS", "0"),
     ];
 
     let cfg = DroughtMitigationConfig::from_env();
@@ -196,7 +204,9 @@ fn from_env_reflects_overrides() {
     assert_eq!(cfg.target_cooldown_failures, 4);
     assert_eq!(cfg.target_cooldown_epochs, 25);
     assert_eq!(cfg.module_starvation_failure_streak, 30);
+    assert_eq!(cfg.drought_alarm_epochs, None);
 
-    // Disabled lever renders as "disabled" for the structured log line.
+    // Disabled levers render as "disabled" for the structured log line.
     assert_eq!(cfg.drought_reset_display(), "disabled");
+    assert_eq!(cfg.drought_alarm_display(), "disabled");
 }
