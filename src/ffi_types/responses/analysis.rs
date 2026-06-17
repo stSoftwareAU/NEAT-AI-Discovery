@@ -200,6 +200,16 @@ pub struct SynapseAnalysisMetadataJson {
     /// can react without scraping logs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drought_diagnostic: Option<analysis::drought_diagnostic::DroughtDiagnostic>,
+    /// Creature-level drought alarm payload (Issue #1424).
+    ///
+    /// Populated only on the single pass where the creature's epochs-since-
+    /// last-acceptance crosses `NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS`
+    /// (default 100). Carries the creature uuid, epochs since the last
+    /// acceptance, and the environmental-vs-search-exhaustion classification so
+    /// the controller can raise a "weeks-long drought" alert without scraping
+    /// logs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creature_drought_alarm: Option<analysis::creature_drought_alarm::CreatureDroughtAlarm>,
 }
 
 /// MCMC diagnostics summary for the analysis output JSON (Issue #1021).
@@ -331,6 +341,10 @@ pub struct NeuronAnalysisMetadataJson {
     /// `SynapseAnalysisMetadataJson::drought_diagnostic` for full docs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drought_diagnostic: Option<analysis::drought_diagnostic::DroughtDiagnostic>,
+    /// Creature-level drought alarm payload (Issue #1424). See
+    /// `SynapseAnalysisMetadataJson::creature_drought_alarm` for full docs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creature_drought_alarm: Option<analysis::creature_drought_alarm::CreatureDroughtAlarm>,
 }
 
 // ============================================================================

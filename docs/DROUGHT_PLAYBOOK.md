@@ -16,6 +16,7 @@ It is the operator companion to:
 - Issue #1205 — operator escape hatch (forced reset).
 - Issue #1274 — dominant-failure-pattern enrichment of the diagnostic.
 - Issue #1422 — escape hatch armed by default + startup config log line.
+- Issue #1424 — creature-level drought alarm (`creatureDroughtAlarm`).
 
 ## Effective config at startup
 
@@ -30,10 +31,53 @@ INFO Issue #1422: effective drought-mitigation config
     conservative_gain_multiplier=10 target_cooldown_failures=3
     target_cooldown_epochs=10 staleness_conservative_divisor=2
     staleness_extended_drought_divisor=4 module_starvation_failure_streak=15
+    drought_alarm_epochs="100"
 ```
 
 `drought_reset_after_epochs` renders as `"disabled"` when the operator has set
-`NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS=0`.
+`NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS=0`; `drought_alarm_epochs`
+renders as `"disabled"` when `NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS=0`.
+
+## Creature-level drought alarm (Issue #1424)
+
+The `droughtDiagnostic` above fires per pass once the *short* trailing-empty
+streak crosses `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` (default 5). It does
+not, on its own, surface a creature that has gone *weeks* with no accepted
+candidate — that case (Issue #1418) was previously only found by hand.
+
+The creature-level **drought alarm** closes that gap. When a creature's
+epochs-since-last-accepted-candidate crosses
+`NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS` (default 100) the library emits a
+single, durable alarm — once per drought, on the crossing pass:
+
+```text
+WARN Issue #1424: creature-level discovery drought — no accepted candidate
+for 100 epochs (search_exhaustion)
+    creature_uuid="…" epochs_since_last_accepted=100
+    genuinely_empty_passes=100 environmentally_disabled_passes=0
+    classification="search_exhaustion" alarm_threshold=100
+```
+
+The same payload is attached to both `synapseMetadata.creatureDroughtAlarm`
+and `neuronMetadata.creatureDroughtAlarm` so the surrounding automation can
+raise an alert/issue without scraping logs:
+
+```json
+{
+  "creatureUuid": "…",
+  "epochsSinceLastAccepted": 100,
+  "genuinelyEmptyPasses": 100,
+  "environmentallyDisabledPasses": 0,
+  "classification": "search_exhaustion"
+}
+```
+
+`classification` reuses the Issue #1421 disambiguation:
+
+- `"environmental"` — the drought is dominated by passes the host could not
+  evaluate (memory budget, memory pressure, missing GPU). **Fix the host.**
+- `"search_exhaustion"` — the drought is dominated by passes that evaluated
+  the creature and found no improving move. **Escalate the creature.**
 
 ## Symptoms
 

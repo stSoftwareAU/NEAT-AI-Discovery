@@ -44,6 +44,9 @@ pub struct DroughtMitigationConfig {
     /// Consecutive per-module failures before a module is starved out
     /// (Issue #1273).
     pub module_starvation_failure_streak: u32,
+    /// Epochs-since-last-acceptance at which the creature-level drought alarm
+    /// fires, or `None` when deliberately disabled (Issue #1424).
+    pub drought_alarm_epochs: Option<u32>,
 }
 
 impl DroughtMitigationConfig {
@@ -69,7 +72,16 @@ impl DroughtMitigationConfig {
             staleness_conservative_divisor: staleness_conservative_divisor(),
             staleness_extended_drought_divisor: staleness_extended_drought_divisor(),
             module_starvation_failure_streak: module_starvation_failure_streak(),
+            drought_alarm_epochs: super::drought_alarm_epochs(),
         }
+    }
+
+    /// Render the creature-level drought-alarm lever for logging: the
+    /// threshold, or `"disabled"` when the operator has opted out.
+    #[must_use]
+    pub fn drought_alarm_display(&self) -> String {
+        self.drought_alarm_epochs
+            .map_or_else(|| "disabled".to_string(), |n| n.to_string())
     }
 
     /// Render the drought-reset lever for logging: the threshold, or
@@ -99,6 +111,7 @@ pub fn log_effective_drought_mitigation_config() {
         staleness_conservative_divisor = cfg.staleness_conservative_divisor,
         staleness_extended_drought_divisor = cfg.staleness_extended_drought_divisor,
         module_starvation_failure_streak = cfg.module_starvation_failure_streak,
+        drought_alarm_epochs = cfg.drought_alarm_display().as_str(),
         "Issue #1422: effective drought-mitigation config"
     );
 }

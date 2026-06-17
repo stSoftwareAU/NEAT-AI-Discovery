@@ -138,6 +138,17 @@ pub struct SynapseAnalysisMetadata {
     /// dominant rejection reason in a single payload so operators can
     /// root-cause "no successful candidates" without re-running analysis.
     pub drought_diagnostic: Option<crate::analysis::drought_diagnostic::DroughtDiagnostic>,
+
+    /// Creature-level drought alarm payload (Issue #1424).
+    ///
+    /// Populated on the single pass where the creature's epochs-since-last-
+    /// acceptance crosses the configured alarm threshold (default 100, env var
+    /// `NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS`). Carries the creature uuid,
+    /// epochs since the last acceptance, and the environmental-vs-search-
+    /// exhaustion classification so the surrounding automation can raise an
+    /// alert without scraping logs.
+    pub creature_drought_alarm:
+        Option<crate::analysis::creature_drought_alarm::CreatureDroughtAlarm>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.
@@ -204,6 +215,12 @@ pub struct NeuronAnalysisMetadata {
     ///
     /// See `SynapseAnalysisMetadata::drought_diagnostic` for full docs.
     pub drought_diagnostic: Option<crate::analysis::drought_diagnostic::DroughtDiagnostic>,
+
+    /// Creature-level drought alarm payload (Issue #1424).
+    ///
+    /// See `SynapseAnalysisMetadata::creature_drought_alarm` for full docs.
+    pub creature_drought_alarm:
+        Option<crate::analysis::creature_drought_alarm::CreatureDroughtAlarm>,
 }
 
 /// Result of synapse analysis
