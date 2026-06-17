@@ -166,13 +166,49 @@ impl DiscoveryMode {
 pub struct DiscoveryOutcomeLog {
     /// Chronological list of booleans: `true` = success, `false` = failure.
     pub outcomes: Vec<bool>,
+    /// Count of passes skipped because the host could not run discovery
+    /// (memory/GPU gated). These never evaluated the creature, so they are
+    /// NOT appended to `outcomes` and never extend the trailing-failure streak
+    /// (Issue #1421). `#[serde(default)]` keeps older payloads loadable.
+    #[serde(default)]
+    pub environmentally_disabled_passes: u32,
 }
 
 impl DiscoveryOutcomeLog {
     /// Creates a log from an explicit list of outcomes.
     #[must_use]
     pub fn from_outcomes(outcomes: Vec<bool>) -> Self {
-        Self { outcomes }
+        Self {
+            outcomes,
+            environmentally_disabled_passes: 0,
+        }
+    }
+
+    /// Record a pass outcome, ignoring environmentally-disabled passes
+    /// (Issue #1421).
+    ///
+    /// A [`Completed`](crate::analysis::AnalysisOutcome::Completed) pass appends
+    /// `true` (productive) or `false` (genuinely empty). An
+    /// [`EnvironmentallyDisabled`](crate::analysis::AnalysisOutcome::EnvironmentallyDisabled)
+    /// pass is NOT appended — it only bumps
+    /// [`Self::environmentally_disabled_passes`] — so a host that cannot run
+    /// discovery cannot manufacture a fake drought.
+    pub fn record_outcome(&mut self, outcome: &crate::analysis::AnalysisOutcome) {
+        use crate::analysis::AnalysisOutcome;
+        match outcome {
+            AnalysisOutcome::Completed { candidates } => self.outcomes.push(*candidates > 0),
+            AnalysisOutcome::EnvironmentallyDisabled { .. } => {
+                self.environmentally_disabled_passes =
+                    self.environmentally_disabled_passes.saturating_add(1);
+            }
+        }
+    }
+
+    /// Number of genuinely-empty (search-exhausted) passes recorded — distinct
+    /// from environmentally-disabled passes (Issue #1421).
+    #[must_use]
+    pub fn genuinely_empty_passes(&self) -> usize {
+        self.outcomes.iter().filter(|&&ok| !ok).count()
     }
 
     /// Returns the number of outcomes recorded.
@@ -377,6 +413,77 @@ mod tests {
 
     fn successes(n: usize) -> Vec<bool> {
         vec![true; n]
+    }
+
+    #[test]
+    fn record_outcome_ignores_environmentally_disabled_passes() {
+        use crate::analysis::{AnalysisOutcome, EnvironmentalDisableReason};
+
+        let mut log = DiscoveryOutcomeLog::default();
+        // Five consecutive gated passes must NOT extend the failure streak.
+        for _ in 0..5 {
+            log.record_outcome(&AnalysisOutcome::EnvironmentallyDisabled {
+                reason: EnvironmentalDisableReason::GpuUnavailable,
+            });
+        }
+        assert_eq!(log.consecutive_trailing_failures(), 0);
+        assert_eq!(log.genuinely_empty_passes(), 0);
+        assert_eq!(log.environmentally_disabled_passes, 5);
+        assert!(log.outcomes.is_empty());
+    }
+
+    #[test]
+    fn record_outcome_counts_genuine_empty_and_productive() {
+        use crate::analysis::AnalysisOutcome;
+
+        let mut log = DiscoveryOutcomeLog::default();
+        log.record_outcome(&AnalysisOutcome::Completed { candidates: 2 });
+        log.record_outcome(&AnalysisOutcome::Completed { candidates: 0 });
+        log.record_outcome(&AnalysisOutcome::Completed { candidates: 0 });
+
+        assert_eq!(log.outcomes, vec![true, false, false]);
+        assert_eq!(log.consecutive_trailing_failures(), 2);
+        assert_eq!(log.genuinely_empty_passes(), 2);
+        assert_eq!(log.environmentally_disabled_passes, 0);
+    }
+
+    #[test]
+    fn gated_passes_between_failures_do_not_break_streak() {
+        use crate::analysis::{AnalysisOutcome, EnvironmentalDisableReason};
+
+        let mut log = DiscoveryOutcomeLog::default();
+        log.record_outcome(&AnalysisOutcome::Completed { candidates: 0 });
+        log.record_outcome(&AnalysisOutcome::EnvironmentallyDisabled {
+            reason: EnvironmentalDisableReason::MemoryGated,
+        });
+        log.record_outcome(&AnalysisOutcome::Completed { candidates: 0 });
+        // Two genuine empties with a gated pass between them: streak is 2, not
+        // reset and not inflated by the gated pass.
+        assert_eq!(log.consecutive_trailing_failures(), 2);
+        assert_eq!(log.environmentally_disabled_passes, 1);
+    }
+
+    #[test]
+    fn disabled_log_round_trips_through_serde() {
+        use crate::analysis::{AnalysisOutcome, EnvironmentalDisableReason};
+
+        let mut log = DiscoveryOutcomeLog::from_outcomes(vec![true, false]);
+        log.record_outcome(&AnalysisOutcome::EnvironmentallyDisabled {
+            reason: EnvironmentalDisableReason::MemoryPressure,
+        });
+        let json = serde_json::to_string(&log).expect("serialise");
+        let restored: DiscoveryOutcomeLog = serde_json::from_str(&json).expect("deserialise");
+        assert_eq!(restored, log);
+        assert_eq!(restored.environmentally_disabled_passes, 1);
+    }
+
+    #[test]
+    fn legacy_log_without_disabled_field_deserialises() {
+        // Older persisted payloads omit the new field; serde(default) fills 0.
+        let restored: DiscoveryOutcomeLog =
+            serde_json::from_str(r#"{"outcomes":[true,false,false]}"#).expect("deserialise");
+        assert_eq!(restored.outcomes, vec![true, false, false]);
+        assert_eq!(restored.environmentally_disabled_passes, 0);
     }
 
     #[test]

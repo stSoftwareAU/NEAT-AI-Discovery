@@ -218,6 +218,7 @@ pub unsafe extern "C" fn analyze_parallel(
                     memory_budget_exceeded: None,
                     cancelled: None,
                     memory_pressure_cancelled: None,
+                    environmentally_disabled: None,
                     error: Some(err_msg),
                     error_kind,
                     retryable,

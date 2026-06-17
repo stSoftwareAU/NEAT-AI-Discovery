@@ -32,6 +32,7 @@
 
 // Core modules (remain at root level)
 pub mod activation;
+pub mod analysis_outcome;
 pub mod cache;
 pub mod candidate_cache;
 pub mod candidate_clustering;
@@ -91,6 +92,10 @@ pub use candidate_aggregation::apply_coordinated_gain_floor;
 pub(crate) use candidate_aggregation::apply_kept_neuron_candidates;
 #[cfg(test)]
 pub(crate) use orchestration::run_optional_analysis;
+
+// Issue #1421: outcome classification distinguishing environmentally-disabled
+// passes from genuine search exhaustion.
+pub use analysis_outcome::{AnalysisOutcome, EnvironmentalDisableReason, PassOutcomeCounts};
 
 // Core public API entry points
 pub use gpu::GpuAnalyzer;

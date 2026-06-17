@@ -37,6 +37,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 memory_budget_exceeded: None,
                 cancelled: None,
                 memory_pressure_cancelled: None,
+                environmentally_disabled: None,
                 error: Some(typed.to_string()),
                 error_kind: Some(kind),
                 retryable: Some(kind.is_retryable()),
@@ -74,6 +75,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
             memory_budget_exceeded: None,
             cancelled: None,
             memory_pressure_cancelled: None,
+            environmentally_disabled: None,
             error: Some(typed.to_string()),
             error_kind: Some(kind),
             retryable: Some(kind.is_retryable()),
@@ -94,6 +96,20 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
 
     match analysis_result {
         Ok(result) => {
+            // Issue #1421: classify the pass before destructuring so an
+            // environmentally-disabled pass (memory/GPU gated) is surfaced as a
+            // distinct, countable category rather than conflated with genuine
+            // search exhaustion ("0 candidates").
+            let outcome = analysis::AnalysisOutcome::from_result(&result);
+            let environmentally_disabled = outcome.disable_reason();
+            if let Some(reason) = environmentally_disabled {
+                tracing::warn!(
+                    reason = reason.as_str(),
+                    "Issue #1421: discovery pass environmentally disabled — \
+                     creature not evaluated; excluded from drought/cooldown/starvation accounting"
+                );
+            }
+
             let synapse = result.synapse;
             let neuron = result.neuron;
             let synapse_weight_updates = synapse.as_ref().and_then(|s| {
@@ -208,6 +224,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 } else {
                     None
                 },
+                environmentally_disabled,
                 error: None,
                 error_kind: None,
                 retryable: None,
@@ -216,6 +233,23 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
         }
         Err(e) => {
             let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
+            // Issue #1421: the GPU-unavailable early return is an environmental
+            // gate, not search exhaustion — surface it as such so the host
+            // excludes it from drought / cooldown / starvation accounting.
+            let environmentally_disabled = match e.downcast_ref::<DiscoveryError>() {
+                Some(DiscoveryError::GpuUnavailable { .. }) => {
+                    let reason = analysis::AnalysisOutcome::gpu_unavailable()
+                        .disable_reason()
+                        .expect("gpu_unavailable carries a reason");
+                    tracing::warn!(
+                        reason = reason.as_str(),
+                        "Issue #1421: discovery pass environmentally disabled — \
+                         creature not evaluated; excluded from drought/cooldown/starvation accounting"
+                    );
+                    Some(reason)
+                }
+                _ => None,
+            };
             let output = AnalyzeParallelOutput {
                 success: false,
                 schema_version: SCHEMA_VERSION.to_string(),
@@ -238,6 +272,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 memory_budget_exceeded: None,
                 cancelled: None,
                 memory_pressure_cancelled: None,
+                environmentally_disabled,
                 error: Some(err_msg),
                 error_kind,
                 retryable,

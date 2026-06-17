@@ -256,6 +256,29 @@ impl CandidateOutcomeCache {
         }
     }
 
+    /// Records a candidate outcome unless the pass was environmentally
+    /// disabled (Issue #1421).
+    ///
+    /// A memory/GPU-gated pass never evaluated the candidate, so recording a
+    /// `false` (failure) outcome would falsely suppress it on the next genuine
+    /// pass. Returns `true` when the outcome was recorded, `false` when it was
+    /// skipped.
+    pub fn record_unless_disabled(
+        &mut self,
+        source_uuid: &str,
+        target_uuid: &str,
+        operation: &str,
+        succeeded: bool,
+        epoch: u64,
+        outcome: &crate::analysis::AnalysisOutcome,
+    ) -> bool {
+        if outcome.is_environmentally_disabled() {
+            return false;
+        }
+        self.record(source_uuid, target_uuid, operation, succeeded, epoch);
+        true
+    }
+
     /// Records a candidate outcome and also updates source-type statistics.
     pub fn record_with_source_type(
         &mut self,
@@ -473,5 +496,37 @@ impl CandidateOutcomeCache {
         let removed = before.saturating_sub(self.outcomes.len());
         self.tombstone_reset_epoch = Some(current_epoch);
         removed
+    }
+}
+
+#[cfg(test)]
+mod issue_1421_tests {
+    use super::*;
+    use crate::analysis::{AnalysisOutcome, EnvironmentalDisableReason};
+
+    #[test]
+    fn gated_pass_does_not_suppress_candidate() {
+        let disabled = AnalysisOutcome::EnvironmentallyDisabled {
+            reason: EnvironmentalDisableReason::GpuUnavailable,
+        };
+        let mut cache = CandidateOutcomeCache::new();
+        let recorded =
+            cache.record_unless_disabled("src", "tgt", "addSynapse", false, 0, &disabled);
+        assert!(!recorded, "gated pass must not be recorded");
+        assert!(cache.get_outcome("src", "tgt", "addSynapse").is_none());
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.suppressed_count(0), 0);
+    }
+
+    #[test]
+    fn genuine_failure_is_recorded_via_guard() {
+        let empty = AnalysisOutcome::Completed { candidates: 0 };
+        let mut cache = CandidateOutcomeCache::new();
+        let recorded = cache.record_unless_disabled("src", "tgt", "addSynapse", false, 0, &empty);
+        assert!(recorded);
+        let outcome = cache
+            .get_outcome("src", "tgt", "addSynapse")
+            .expect("recorded");
+        assert!(!outcome.succeeded);
     }
 }
