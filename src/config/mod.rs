@@ -35,7 +35,7 @@
 //! | `NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS` | u32 | `20` | Max consecutive failed passes before abandoning conservative mode (Issue #1132) |
 //! | `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` | f32 | `10.0` | Multiplier applied to `COORDINATED_MIN_EXPECTED_GAIN` in conservative mode (Issue #1132) |
 //! | `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` | u32 | `5` | Consecutive trailing empty discovery passes at which the drought diagnostic warn log fires and `droughtDiagnostic` populates on FFI metadata (Issue #1202) |
-//! | `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | u32 | unset | Operator escape hatch: force a one-shot reset of failed-candidate cache entries and active target cooldowns after this many consecutive empty discovery passes (Issue #1205). Default unset (off). |
+//! | `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | u32 | `50` | Operator escape hatch: force a one-shot reset of failed-candidate cache entries and active target cooldowns after this many consecutive empty discovery passes (Issue #1205). Armed by default at `50` (Issue #1422); set to `0` to deliberately disable. Unparsable values fall back to the armed default. |
 //! | `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB` | f64 | platform default (0.5 macOS / 1.0 Linux) | Minimum available memory (GB) below which the discovery gate disables analysis (Issue #1420). Lets a small-but-capable ~8GB host — where the discovery runtime itself already holds most of the RAM — opt in by lowering the floor. `0` disables the available-memory gate; invalid / out-of-range (`0.0–64.0`) values fall back to the platform default. The total-memory minimum (4GB) is unaffected. |
 //! | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | u64 | unset | Cap eager pre-load size in `focus::rank_focus_neurons` (Issue #1172). When set, projected size = file size × 3; lazy mode is selected with a structured `info` log when the projection exceeds the budget. When unset, the auto-detect path (Issue #1376) is used. |
 //! | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` | u64 | `1024` | Safety margin reserved from real OS-available memory in the auto-detect (no explicit budget) eager-vs-lazy decision (Issue #1376). Pre-load is chosen when `projected ≤ available − margin`, keeping hosts with GBs free on the fast path. `0` reserves no margin. |
@@ -84,12 +84,14 @@
 //! | `XDG_RUNTIME_DIR` | String | (not set) | Auto-created if missing (Wayland requirement) |
 
 mod detection;
+mod drought_mitigation;
 mod helpers;
 mod observability;
 mod user_facing;
 
 // Re-export all public items so existing `crate::config::*` paths keep working.
 pub use detection::*;
+pub use drought_mitigation::*;
 pub use observability::*;
 pub use user_facing::*;
 

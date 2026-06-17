@@ -15,6 +15,25 @@ It is the operator companion to:
 - Issue #1203 — adaptive staleness window.
 - Issue #1205 — operator escape hatch (forced reset).
 - Issue #1274 — dominant-failure-pattern enrichment of the diagnostic.
+- Issue #1422 — escape hatch armed by default + startup config log line.
+
+## Effective config at startup
+
+Since Issue #1422 the library logs the effective value of every
+drought-mitigation lever once at startup, so a drought is diagnosable from a
+single log line without reading source:
+
+```text
+INFO Issue #1422: effective drought-mitigation config
+    drought_reset_after_epochs="50" drought_log_threshold=5
+    low_success_rate_threshold=0.2 conservative_mode_max_epochs=20
+    conservative_gain_multiplier=10 target_cooldown_failures=3
+    target_cooldown_epochs=10 staleness_conservative_divisor=2
+    staleness_extended_drought_divisor=4 module_starvation_failure_streak=15
+```
+
+`drought_reset_after_epochs` renders as `"disabled"` when the operator has set
+`NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS=0`.
 
 ## Symptoms
 
@@ -247,7 +266,7 @@ flipped between runs without recompilation.
 | `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` | u32 | 5 | ≥ 1 | Lower to surface droughts earlier in noisy environments; raise to suppress the warn log when short droughts are expected. |
 | `NEAT_AI_DISCOVERY_STALENESS_CONSERVATIVE_DIVISOR` | u64 | 2 | 1–64 (clamped) | Larger value (e.g. 4) shrinks the Conservative-mode cache window further, re-enabling failed candidates sooner. Use only when conservative bias plus halved window is not freeing candidates. |
 | `NEAT_AI_DISCOVERY_STALENESS_EXTENDED_DROUGHT_DIVISOR` | u64 | 4 | 1–64 (clamped) | Larger value (e.g. 8) shrinks the Extended-Drought cache window further. Effective window has a hard floor of 5 epochs regardless of divisor. |
-| `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | u32 | unset (off) | ≥ 1 | Enable the operator escape hatch. Set to e.g. 30 to force a one-shot cache + cooldown reset after a 30-pass drought. Most operators leave this off and intervene manually. |
+| `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | u32 | `50` (armed) | ≥ 1, or `0` to disable | The operator escape hatch is **armed by default** at 50 passes (Issue #1422) so the one-shot cache + cooldown reset fires without operator action during a sustained drought. Lower (e.g. 30) to intervene sooner, or set to `0` to deliberately disable and intervene manually. |
 | `NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD` | f32 | 0.2 | (0.0, 1.0] | Raise to enter Conservative mode earlier (e.g. 0.3 if 30 % success is too low for this workload). Values outside the range are ignored. |
 | `NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS` | u32 | 20 | ≥ 1 | Lower to revert to Normal sooner when bias is not helping; raise to give Conservative mode more time before it gives up. |
 | `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` | f32 | 10.0 | ≥ 1.0 (values < 1 clamped) | Lower (e.g. 3.0) when 10× is starving the pipeline of coordinated-structural candidates. The floor never relaxes below the base constant. |

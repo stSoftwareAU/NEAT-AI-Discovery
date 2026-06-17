@@ -116,10 +116,12 @@ fn successful_pass_rearms_lever_for_next_drought() {
     assert_eq!(second.target_cooldown_cleared, 1);
 }
 
-/// When the env var is unset, the lever is disabled and never fires —
-/// `drought_reset_after_epochs()` returns `None` and the helper is not called.
-/// This test exercises the disabled-path directly via `drought_reset_after = 0`,
-/// matching how a disabled env var is forwarded by the orchestrator.
+/// When the operator explicitly opts out (env var `0`), the lever is disabled
+/// and never fires — `drought_reset_after_epochs()` returns `None` and the
+/// helper is not called. This test exercises the disabled-path directly via
+/// `drought_reset_after = 0`, matching how a disabled env var is forwarded by
+/// the orchestrator. (Since Issue #1422 the lever is armed by default when
+/// unset; `0` is the deliberate opt-out.)
 #[test]
 fn lever_disabled_when_threshold_zero() {
     let mut cache = CandidateOutcomeCache::new();
