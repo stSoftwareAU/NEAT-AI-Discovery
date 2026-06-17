@@ -142,6 +142,16 @@ pub const CHANGE_TYPE_ADD_SYNAPSES: &str = "add-synapses";
 /// Change-type key for `coordinated-structural` candidates.
 pub const CHANGE_TYPE_COORDINATED_STRUCTURAL: &str = "coordinated-structural";
 
+/// Change-type key for `remove-neuron` (harmful-neuron) candidates (Issue #1425).
+///
+/// A single-op `RemoveNeuron` coordinated candidate is recorded in the failure
+/// cache under this change type. Grouping these failures separately from the
+/// generic `coordinated-structural` bucket lets the failure-cache EWMA learn
+/// the remove-neuron-specific over-prediction (the harmful-neuron path
+/// historically over-predicted gain by ~800×) and feed it back via
+/// [`CalibrationCorrection::correction_for`].
+pub const CHANGE_TYPE_REMOVE_NEURON: &str = "remove-neuron";
+
 // =============================================================================
 // Failure cache entry
 // =============================================================================

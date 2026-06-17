@@ -8,6 +8,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+#### Harmful-neuron (remove-neuron) failure-cache calibration correction (Issue #1425)
+
+Harmful-neuron (`remove-neuron`) candidates over-predicted their score gain by
+~800× (failure bucket `247b83ab`): predicted `+0.166` vs actual `≈0`. Because
+`expected_creature_score_gain` is the candidate ranking key, these inflated
+predictions crowded the top of the candidate list every pass, failed scoring,
+and landed in the failure cache only to be regenerated next time — sustaining
+the discovery drought.
+
+The failure-cache calibration correction (`CalibrationCorrection::correction_for`,
+Issues #1131 / #1162) was applied to the add-neuron and add-synapse paths but
+not to the harmful-neuron path.
+
+- A single-op `RemoveNeuron` coordinated candidate is now keyed under the new
+  `remove-neuron` change type (`CHANGE_TYPE_REMOVE_NEURON`) when its predicted
+  gain is calibrated, so repeated remove-neuron over-predictions shrink future
+  remove-neuron predictions via the failure-cache EWMA.
+- Multi-op coordinated candidates and non-removal single ops keep the generic
+  `coordinated-structural` correction — regression preserved.
+
 #### Wall-clock budget on focus ranking with graceful fallback (Issue #1375)
 
 Focus ranking previously had no wall-clock bound. In the #1373 incident it ran

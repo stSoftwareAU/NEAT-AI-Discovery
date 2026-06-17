@@ -17,7 +17,8 @@ use super::scoring::{
 use crate::analysis::cache::RecordCache;
 use crate::analysis::samples::EPSILON;
 use crate::analysis::scoring::calibration_correction::{
-    CHANGE_TYPE_ADD_SYNAPSES, CHANGE_TYPE_COORDINATED_STRUCTURAL, CalibrationCorrection,
+    CHANGE_TYPE_ADD_SYNAPSES, CHANGE_TYPE_COORDINATED_STRUCTURAL, CHANGE_TYPE_REMOVE_NEURON,
+    CalibrationCorrection,
 };
 
 /// Drop add-synapse candidates whose `expected_creature_score_gain` is below
@@ -332,6 +333,29 @@ fn apply_impact_to_harmful(
 /// The pessimism discount has been folded into the per-op-count empirical factors
 /// applied in `candidate_aggregation::apply_operation_count_discount`. This avoids
 /// the three-layer compound discount that was too aggressive and poorly calibrated.
+/// Determine the failure-cache change-type key for a coordinated candidate
+/// (Issue #1425).
+///
+/// A coordinated candidate consisting of a single `RemoveNeuron` operation is
+/// functionally a `remove-neuron` (harmful-neuron) change and is recorded under
+/// [`CHANGE_TYPE_REMOVE_NEURON`] in the failure cache. Every other coordinated
+/// candidate (multi-op groups, or single ops of other kinds) keeps the generic
+/// [`CHANGE_TYPE_COORDINATED_STRUCTURAL`] key, preserving existing behaviour.
+fn coordinated_candidate_change_type(
+    candidate: &crate::CoordinatedStructuralCandidateJson,
+) -> &'static str {
+    if candidate.operations.len() == 1
+        && matches!(
+            candidate.operations.first(),
+            Some(crate::CoordinatedStructuralOpJson::RemoveNeuron { .. })
+        )
+    {
+        CHANGE_TYPE_REMOVE_NEURON
+    } else {
+        CHANGE_TYPE_COORDINATED_STRUCTURAL
+    }
+}
+
 fn apply_impact_to_coordinated(
     candidate: &mut crate::CoordinatedStructuralCandidateJson,
     impact_scores: &HashMap<String, f32>,
@@ -387,9 +411,18 @@ fn apply_impact_to_coordinated(
     // Issue #1131: Scaled by the per-creature failure-cache correction.
     // Issue #1162: prefer the per-(change_type, target_squash) specific value
     // when the target neuron's squash is known.
+    //
+    // Issue #1425: a single-op `RemoveNeuron` coordinated candidate is
+    // functionally a `remove-neuron` (harmful-neuron) change and is recorded
+    // in the failure cache under that change type. Use the remove-neuron
+    // correction key for it so repeated remove-neuron over-predictions (the
+    // ~800× over-prediction in failure bucket `247b83ab`) shrink future
+    // remove-neuron predictions, rather than the generic coordinated-structural
+    // correction which never learns from remove-neuron-keyed failures.
+    let change_type = coordinated_candidate_change_type(candidate);
     let target_squash = target_squash_map.get(target_uuid).copied();
     let coordinated_calibration = crate::analysis::constants::COORDINATED_PREDICTION_CALIBRATION
-        * calibration_correction.correction_for(CHANGE_TYPE_COORDINATED_STRUCTURAL, target_squash);
+        * calibration_correction.correction_for(change_type, target_squash);
     candidate.expected_creature_score_gain = apply_prediction_calibration(
         candidate.expected_creature_score_gain,
         coordinated_calibration,
@@ -688,5 +721,190 @@ pub(crate) fn build_metadata(
         drought_diagnostic: None,
         // Issue #1424: populated by orchestration on the alarm crossing.
         creature_drought_alarm: None,
+    }
+}
+
+// =============================================================================
+// Tests (Issue #1425) — remove-neuron / harmful-neuron calibration correction
+// =============================================================================
+
+#[cfg(test)]
+mod remove_neuron_calibration_tests {
+    //! Issue #1425: harmful-neuron (`remove-neuron`) candidates must have the
+    //! failure-cache calibration correction applied to their predicted gain.
+    //! A single-op `RemoveNeuron` coordinated candidate is keyed under
+    //! `remove-neuron`, so repeated remove-neuron over-predictions shrink future
+    //! remove-neuron predictions instead of being re-emitted every pass.
+
+    use super::{apply_impact_to_coordinated, coordinated_candidate_change_type};
+    use crate::analysis::scoring::calibration_correction::{
+        CHANGE_TYPE_COORDINATED_STRUCTURAL, CHANGE_TYPE_REMOVE_NEURON, CalibrationCorrection,
+        FailureCacheEntry,
+    };
+    use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
+    use std::collections::HashMap;
+
+    /// Build a failure-cache entry mirroring the `247b83ab` evidence shape:
+    /// `change_type = remove-neuron`, predicted ≈ 0.166, actual ≈ 0 (slightly
+    /// negative) — a ~800× over-prediction.
+    fn remove_neuron_failure() -> FailureCacheEntry {
+        FailureCacheEntry {
+            change_type: CHANGE_TYPE_REMOVE_NEURON.to_string(),
+            expected_error_reduction: 0.165_710_48,
+            actual_error_reduction: -0.000_207_19,
+            target_squash: None,
+            variant_key: None,
+            target_uuid: None,
+            improved_count: None,
+            total_count: None,
+        }
+    }
+
+    fn single_remove_neuron_candidate(gain: f32) -> CoordinatedStructuralCandidateJson {
+        CoordinatedStructuralCandidateJson {
+            operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
+                neuron_uuid: "h-1075292892".to_string(),
+            }],
+            expected_creature_score_gain: gain,
+            comment: None,
+        }
+    }
+
+    /// Apply `apply_impact_to_coordinated` with a fixed impact of 1.0 for the
+    /// target so the calibration factor is the only variable under test.
+    fn calibrated_gain(
+        candidate: &mut CoordinatedStructuralCandidateJson,
+        correction: &CalibrationCorrection,
+    ) -> f32 {
+        let mut impact_scores: HashMap<String, f32> = HashMap::new();
+        impact_scores.insert("h-1075292892".to_string(), 1.0);
+        let neuron_type_map: HashMap<&str, &str> = HashMap::new();
+        let target_squash_map: HashMap<&str, &str> = HashMap::new();
+        apply_impact_to_coordinated(
+            candidate,
+            &impact_scores,
+            &neuron_type_map,
+            &target_squash_map,
+            correction,
+        );
+        candidate.expected_creature_score_gain
+    }
+
+    /// Criterion 3: a single-op `RemoveNeuron` coordinated candidate is keyed
+    /// under the `remove-neuron` change type; everything else stays
+    /// `coordinated-structural`.
+    #[test]
+    fn single_remove_neuron_is_keyed_as_remove_neuron() {
+        let remove = single_remove_neuron_candidate(0.1);
+        assert_eq!(
+            coordinated_candidate_change_type(&remove),
+            CHANGE_TYPE_REMOVE_NEURON
+        );
+
+        // Multi-op group containing a RemoveNeuron stays coordinated-structural.
+        let multi = CoordinatedStructuralCandidateJson {
+            operations: vec![
+                CoordinatedStructuralOpJson::SetBias {
+                    neuron_uuid: "out-0".to_string(),
+                    bias: 0.1,
+                },
+                CoordinatedStructuralOpJson::RemoveNeuron {
+                    neuron_uuid: "h-1".to_string(),
+                },
+            ],
+            expected_creature_score_gain: 0.1,
+            comment: None,
+        };
+        assert_eq!(
+            coordinated_candidate_change_type(&multi),
+            CHANGE_TYPE_COORDINATED_STRUCTURAL
+        );
+
+        // A non-removal single op stays coordinated-structural too.
+        let add = CoordinatedStructuralCandidateJson {
+            operations: vec![CoordinatedStructuralOpJson::AddSynapse {
+                from_neuron_uuid: "a".to_string(),
+                to_neuron_uuid: "b".to_string(),
+                weight: 0.5,
+            }],
+            expected_creature_score_gain: 0.1,
+            comment: None,
+        };
+        assert_eq!(
+            coordinated_candidate_change_type(&add),
+            CHANGE_TYPE_COORDINATED_STRUCTURAL
+        );
+    }
+
+    /// Criteria 1 & 2: replaying the cached remove-neuron failures shrinks the
+    /// predicted gain of a fresh remove-neuron candidate toward the observed
+    /// ≈ 0 — far below the gain it receives under a neutral (empty) cache.
+    #[test]
+    fn remove_neuron_failures_shrink_predicted_gain() {
+        // Nine cached remove-neuron failures, matching the evidence bucket.
+        let cache: Vec<FailureCacheEntry> = (0..9).map(|_| remove_neuron_failure()).collect();
+        let correction = CalibrationCorrection::from_failure_cache(&cache);
+
+        // The remove-neuron correction must learn the ~800× over-prediction and
+        // collapse to (near) the floor.
+        let learned = correction.correction_for(CHANGE_TYPE_REMOVE_NEURON, None);
+        assert!(
+            learned <= 0.01,
+            "remove-neuron correction should be near the floor, got {learned}"
+        );
+
+        let raw_gain = 0.165_710_48_f32;
+        let mut with_failures = single_remove_neuron_candidate(raw_gain);
+        let gain_with = calibrated_gain(&mut with_failures, &correction);
+
+        let neutral = CalibrationCorrection::neutral();
+        let mut without = single_remove_neuron_candidate(raw_gain);
+        let gain_without = calibrated_gain(&mut without, &neutral);
+
+        // Both must remain positive (sign preserved) but the learned correction
+        // must shrink the prediction by roughly the over-prediction factor.
+        assert!(gain_with > 0.0 && gain_without > 0.0);
+        assert!(
+            gain_with < gain_without * 0.05,
+            "learned correction must shrink the gain by >20×: with={gain_with}, without={gain_without}"
+        );
+    }
+
+    /// Regression guard: the remove-neuron correction must NOT bleed into a
+    /// coordinated-structural candidate — only remove-neuron-keyed candidates
+    /// are discounted by remove-neuron failures.
+    #[test]
+    fn coordinated_structural_unaffected_by_remove_neuron_failures() {
+        let cache: Vec<FailureCacheEntry> = (0..9).map(|_| remove_neuron_failure()).collect();
+        let correction = CalibrationCorrection::from_failure_cache(&cache);
+
+        let raw_gain = 0.165_710_48_f32;
+        let mut coordinated = CoordinatedStructuralCandidateJson {
+            operations: vec![
+                CoordinatedStructuralOpJson::RemoveSynapse {
+                    from_neuron_uuid: "a".to_string(),
+                    to_neuron_uuid: "h-1075292892".to_string(),
+                },
+                CoordinatedStructuralOpJson::RemoveNeuron {
+                    neuron_uuid: "h-1075292892".to_string(),
+                },
+            ],
+            expected_creature_score_gain: raw_gain,
+            comment: None,
+        };
+        let gain_coord = calibrated_gain(&mut coordinated, &correction);
+
+        let neutral = CalibrationCorrection::neutral();
+        let mut coordinated_neutral = coordinated.clone();
+        coordinated_neutral.expected_creature_score_gain = raw_gain;
+        let gain_neutral = calibrated_gain(&mut coordinated_neutral, &neutral);
+
+        // No coordinated-structural failures recorded, so the correction is
+        // neutral for this candidate — gain is identical with or without the
+        // remove-neuron failures.
+        assert!(
+            (gain_coord - gain_neutral).abs() < f32::EPSILON,
+            "coordinated-structural gain must be unaffected: {gain_coord} vs {gain_neutral}"
+        );
     }
 }
