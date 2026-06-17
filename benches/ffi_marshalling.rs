@@ -203,6 +203,7 @@ fn create_analysis_output(candidate_count: usize) -> AnalyzeParallelOutput {
         memory_budget_exceeded: Some(false),
         cancelled: Some(false),
         memory_pressure_cancelled: None,
+        environmentally_disabled: None,
         error: None,
         error_kind: None,
         retryable: None,

@@ -170,6 +170,25 @@ impl TargetFailureTracker {
         entry.last_failure_epoch = Some(epoch);
     }
 
+    /// Records a per-target failure unless the pass was environmentally
+    /// disabled (Issue #1421).
+    ///
+    /// A memory/GPU-gated pass never evaluated the target, so it is not
+    /// evidence of failure and must not extend the cooldown streak. Returns
+    /// `true` when the failure was recorded, `false` when it was skipped.
+    pub fn record_failure_unless_disabled(
+        &mut self,
+        target_uuid: &str,
+        epoch: u64,
+        outcome: &crate::analysis::AnalysisOutcome,
+    ) -> bool {
+        if outcome.is_environmentally_disabled() {
+            return false;
+        }
+        self.record_failure(target_uuid, epoch);
+        true
+    }
+
     /// Records a successful improvement for `target_uuid` at `epoch`.
     ///
     /// Resets the consecutive-failure counter to zero (clearing any active
@@ -430,6 +449,38 @@ mod tests {
         assert_eq!(tracker.len(), 0);
         assert_eq!(tracker.cooldown_consecutive_failures(), 3);
         assert_eq!(tracker.cooldown_epochs(), 10);
+    }
+
+    /// Issue #1421: environmentally-disabled passes never increment the
+    /// per-target cooldown streak.
+    #[test]
+    fn gated_passes_never_trip_target_cooldown() {
+        use crate::analysis::{AnalysisOutcome, EnvironmentalDisableReason};
+
+        let disabled = AnalysisOutcome::EnvironmentallyDisabled {
+            reason: EnvironmentalDisableReason::GpuUnavailable,
+        };
+        let mut tracker = TargetFailureTracker::with_thresholds(3, 10);
+        // Far more gated passes than the threshold — none must count.
+        for epoch in 0..10 {
+            let recorded = tracker.record_failure_unless_disabled("T", epoch, &disabled);
+            assert!(!recorded, "gated pass must not be recorded");
+        }
+        assert!(tracker.state("T").is_none());
+        assert!(!tracker.is_in_cooldown("T", 10));
+    }
+
+    /// Issue #1421: a genuine empty pass still records and trips cooldown.
+    #[test]
+    fn genuine_empty_pass_records_via_guard() {
+        use crate::analysis::AnalysisOutcome;
+
+        let empty = AnalysisOutcome::Completed { candidates: 0 };
+        let mut tracker = TargetFailureTracker::with_thresholds(2, 10);
+        assert!(tracker.record_failure_unless_disabled("T", 0, &empty));
+        assert!(tracker.record_failure_unless_disabled("T", 1, &empty));
+        assert_eq!(tracker.state("T").expect("state").consecutive_failures, 2);
+        assert!(tracker.is_in_cooldown("T", 1));
     }
 
     /// Transition 1: `record_failure` increments the counter.

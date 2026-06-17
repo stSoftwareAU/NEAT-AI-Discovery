@@ -71,6 +71,51 @@ A discovery drought presents as one or more of:
   once the rolling success rate over the last 10 passes drops below the
   threshold.
 
+## Environmentally-disabled passes vs genuine exhaustion (Issue #1421)
+
+Not every empty pass is a drought. When a pass is gated by the memory budget,
+CRITICAL memory pressure, or a missing GPU adapter, the analysis **never
+evaluated the creature** — it returns 0 candidates for the same reason a search
+that found nothing does, but it carries no search-exhaustion signal. Counting
+such passes as failures conflates *"this host can't run discovery"* with *"the
+creature has no improving move"* and corrupts every downstream mitigation.
+
+The FFI response distinguishes the two:
+
+- `environmentallyDisabled` on `AnalyzeParallelOutput` is set to
+  `"memoryGated"`, `"memoryPressure"`, or `"gpuUnavailable"` when the pass was
+  gated. It is **absent** for a genuine pass (including a genuine empty one).
+- A distinct `tracing::warn!` fires — `Issue #1421: discovery pass
+  environmentally disabled` with a `reason=` field — separate from the
+  `Issue #1202` drought warn.
+
+```mermaid
+flowchart TD
+    A[analyze_parallel] --> B{Environmental gate?}
+    B -- "memory / pressure / GPU" --> C["EnvironmentallyDisabled { reason }"]
+    B -- evaluated --> D{Candidates > 0?}
+    D -- yes --> E["Completed: productive"]
+    D -- no --> F["Completed: genuinely empty"]
+    C -. excluded from .-> G[Drought / cooldown / starvation accounting]
+    F --> G
+    E --> G
+```
+
+**Operator action:** when `environmentallyDisabled` is set, do **not** append
+the pass to the discovery outcome log as a failure and do **not** record a
+per-target / per-module failure. The Rust helpers enforce this:
+
+- `DiscoveryOutcomeLog::record_outcome` skips gated passes (bumping the
+  `environmentallyDisabledPasses` counter instead of the trailing streak).
+- `TargetFailureTracker::record_failure_unless_disabled`,
+  `ModuleStarvationTracker::record_failure_unless_disabled`, and
+  `CandidateOutcomeCache::record_unless_disabled` no-op on a gated pass and
+  return `false`.
+
+Repeated `environmentallyDisabled` passes point at the **host**, not the
+creature — chase the memory-gate / GPU-fallback follow-ups, not the drought
+levers below.
+
 ## Suppression Layers
 
 Four mechanisms can independently suppress candidate emission. They run in

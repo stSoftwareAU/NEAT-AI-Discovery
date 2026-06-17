@@ -93,6 +93,13 @@ pub struct AnalyzeParallelOutput {
     /// recovery actions such as clearing WASM caches and discovery buffers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_pressure_cancelled: Option<bool>,
+    /// When set, this pass was gated by a host-environment check (memory budget,
+    /// memory pressure, or missing GPU) and never evaluated the creature
+    /// (Issue #1421). Such a pass returns 0 candidates but is NOT evidence of
+    /// search exhaustion — the host must exclude it from drought / target
+    /// cooldown / module starvation accounting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environmentally_disabled: Option<analysis::EnvironmentalDisableReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Structured error classification for retry decisions (Issue #651).

@@ -132,6 +132,25 @@ impl ModuleStarvationTracker {
         }
     }
 
+    /// Records a per-module failure unless the pass was environmentally
+    /// disabled (Issue #1421).
+    ///
+    /// A memory/GPU-gated pass never ran the module, so it is not evidence of
+    /// starvation and must not extend the failure streak. Returns `true` when
+    /// the failure was recorded, `false` when it was skipped.
+    pub fn record_failure_unless_disabled(
+        &mut self,
+        module_name: &str,
+        epoch: u64,
+        outcome: &crate::analysis::AnalysisOutcome,
+    ) -> bool {
+        if outcome.is_environmentally_disabled() {
+            return false;
+        }
+        self.record_failure(module_name, epoch);
+        true
+    }
+
     /// Records a success for `module_name` at `epoch`.
     ///
     /// Resets the consecutive-failure counter to zero and clears any active
@@ -213,6 +232,36 @@ impl ModuleStarvationTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #1421: environmentally-disabled passes never starve a module.
+    #[test]
+    fn gated_passes_never_starve_module() {
+        use crate::analysis::{AnalysisOutcome, EnvironmentalDisableReason};
+
+        let disabled = AnalysisOutcome::EnvironmentallyDisabled {
+            reason: EnvironmentalDisableReason::MemoryGated,
+        };
+        let mut tracker = ModuleStarvationTracker::with_thresholds(3, 10);
+        for epoch in 0..10 {
+            let recorded =
+                tracker.record_failure_unless_disabled("coordinated-structural", epoch, &disabled);
+            assert!(!recorded, "gated pass must not be recorded");
+        }
+        assert!(tracker.state("coordinated-structural").is_none());
+        assert!(!tracker.is_starved("coordinated-structural", 10));
+    }
+
+    /// Issue #1421: a genuine empty pass still records and starves.
+    #[test]
+    fn genuine_empty_pass_records_via_guard() {
+        use crate::analysis::AnalysisOutcome;
+
+        let empty = AnalysisOutcome::Completed { candidates: 0 };
+        let mut tracker = ModuleStarvationTracker::with_thresholds(2, 10);
+        assert!(tracker.record_failure_unless_disabled("M", 0, &empty));
+        assert!(tracker.record_failure_unless_disabled("M", 1, &empty));
+        assert!(tracker.is_starved("M", 1));
+    }
 
     /// Streak counting: consecutive failures bump the counter.
     #[test]
