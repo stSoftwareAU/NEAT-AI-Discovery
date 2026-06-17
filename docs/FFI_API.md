@@ -240,18 +240,34 @@ suitable GPU, controllers must disable discovery entirely.
   }
   ```
 
-  When GPU is unavailable:
+  When GPU is unavailable (Issue #1419):
 
   ```json
   {
     "success": true,
     "gpuAvailable": false,
-    "reason": "No GPU adapter found. Discovery disabled on this machine..."
+    "reason": "No GPU adapter found. Discovery disabled on this machine...",
+    "errorKind": "gpu_permanent",
+    "retryable": false
   }
   ```
 
 - When `"gpuAvailable"` is `false`, controllers should treat discovery as disabled.
+  Discovery hard-requires a GPU — running a pass on a GPU-less host produces a
+  guaranteed `0 candidates` result that is indistinguishable from genuine search
+  exhaustion, so controllers must branch on this verdict **before** scheduling a
+  pass. There is no CPU fallback; do not advertise one.
 - When `"gpuAvailable"` is `true`, controllers may safely schedule discovery jobs.
+- **Capability verdict (Issue #1419)**: when `"gpuAvailable"` is `false`, the
+  response also carries a structured `errorKind`/`retryable` pair so controllers
+  can distinguish a permanent skip from a transient retry without scraping the
+  `reason` text:
+  - `"errorKind": "gpu_permanent"`, `"retryable": false` — no usable GPU on this
+    host. Skip discovery cleanly with a logged reason; do not retry.
+  - `"errorKind": "gpu_transient"`, `"retryable": true` — a transient GPU failure
+    (device lost, creation failure). Retrying may succeed.
+  - `"errorKind": "memory_exhausted"`, `"retryable": true` — minimum system
+    memory was not met; retry after freeing resources.
 
 ### 🌏 Platform-specific GPU behaviour
 
