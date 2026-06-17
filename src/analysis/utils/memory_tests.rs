@@ -283,6 +283,100 @@ fn test_system_requirements_linux_stricter_threshold() {
 }
 
 // =============================================================================
+// Configurable available-memory floor (Issue #1420)
+// =============================================================================
+
+const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+
+#[test]
+fn floor_check_passes_above_explicit_floor() {
+    // 1.5GB available with a 1.0GB floor → requirements met.
+    let result =
+        check_system_memory_requirements_with_floor((1.5 * GB) as u64, 8 * 1024 * 1024 * 1024, 1.0);
+    assert!(
+        result.is_none(),
+        "1.5GB available should pass a 1.0GB floor"
+    );
+}
+
+#[test]
+fn floor_check_fails_below_explicit_floor() {
+    // 0.5GB available with a 1.0GB floor → gated off.
+    let result =
+        check_system_memory_requirements_with_floor((0.5 * GB) as u64, 8 * 1024 * 1024 * 1024, 1.0);
+    assert!(
+        result.is_some(),
+        "0.5GB available should fail a 1.0GB floor"
+    );
+    assert!(result.unwrap().contains("Insufficient available memory"));
+}
+
+#[test]
+fn floor_check_boundary_is_inclusive() {
+    // Exactly at the floor passes (uses `<`, so equal is allowed).
+    let result =
+        check_system_memory_requirements_with_floor((GB) as u64, 8 * 1024 * 1024 * 1024, 1.0);
+    assert!(
+        result.is_none(),
+        "Available exactly at the floor should pass"
+    );
+
+    // Fractionally below the floor fails.
+    let result = check_system_memory_requirements_with_floor(
+        (0.99 * GB) as u64,
+        8 * 1024 * 1024 * 1024,
+        1.0,
+    );
+    assert!(
+        result.is_some(),
+        "Available just below the floor should fail"
+    );
+}
+
+#[test]
+fn floor_lowered_lets_small_host_proceed() {
+    // Reproduces the Issue #1420 scenario: ~8GB host with ~0.15GB free that the
+    // default 1.0GB Linux floor gates off. Lowering the floor to 0.1GB lets
+    // discovery proceed; a 0 floor disables the available-memory gate entirely.
+    let available = (0.15 * GB) as u64;
+    let total = (7.6 * GB) as u64;
+
+    // Default-ish floor (1.0GB) gates it off.
+    let gated = check_system_memory_requirements_with_floor(available, total, 1.0);
+    assert!(
+        gated.is_some(),
+        "Default floor should gate off a 0.15GB host"
+    );
+
+    // Lowered floor lets it run.
+    let allowed = check_system_memory_requirements_with_floor(available, total, 0.1);
+    assert!(
+        allowed.is_none(),
+        "A 0.1GB floor should allow a 0.15GB host"
+    );
+
+    // Disabling the gate (floor 0) also allows it.
+    let disabled = check_system_memory_requirements_with_floor(available, total, 0.0);
+    assert!(
+        disabled.is_none(),
+        "A 0 floor disables the available-memory gate"
+    );
+}
+
+#[test]
+fn floor_check_total_memory_gate_still_applies() {
+    // Total-memory gate is independent of the available-memory floor: a host
+    // below the 4GB total minimum is rejected even with a 0 available floor.
+    let result =
+        check_system_memory_requirements_with_floor((2.0 * GB) as u64, (3.0 * GB) as u64, 0.0);
+    assert!(
+        result.is_some(),
+        "Sub-4GB total RAM should still be rejected"
+    );
+    assert!(result.unwrap().contains("Insufficient system memory"));
+}
+
+// =============================================================================
 // macOS vm_stat Parsing Tests
 // =============================================================================
 

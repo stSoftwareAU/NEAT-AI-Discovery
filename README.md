@@ -352,6 +352,7 @@ env knobs — is documented end-to-end in
 | `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` | off | Stall watchdog timeout |
 | `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` | 2 | Delay between dump and abort |
 | `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | unset | Operator escape hatch: force a one-shot reset of failed-candidate cache entries and active target cooldowns after this many consecutive empty discovery passes (Issue #1205). |
+| `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB` | 0.5 macOS / 1.0 Linux | Minimum available memory (GB) below which discovery is gated off (Issue #1420). Lower it (e.g. `0.1`) so a small-but-capable ~8GB host — where the discovery runtime itself already holds most of the RAM — can proceed; `0` disables the available-memory gate. Invalid / out-of-range (`0.0–64.0`) values fall back to the platform default. The 4GB total-memory minimum is unaffected. |
 
 ## 🛠️ Troubleshooting
 
@@ -361,6 +362,7 @@ env knobs — is documented end-to-end in
 | **FFI permission errors** | Launch with `--allow-ffi --allow-env --allow-read --allow-write` |
 | **Empty Parquet output** | Confirm caller supplies sampled discovery dataset with aligned observations, activations, and errors |
 | **GPU not available** | Check system meets minimum requirements; on Linux check `/dev/dri` permissions |
+| **`Memory check failed — discovery disabled` on a capable host** | On an ~8GB host the discovery runtime can hold most of the RAM, leaving free memory below the default floor (0.5GB macOS / 1.0GB Linux) every pass. Lower the floor with `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB=0.1` (or `0` to disable the gate). If the host is genuinely too small, exclude it at the scheduler rather than aborting every pass (Issue #1420). |
 | **Out of memory (exit 137)** | Reduce `--max-old-space-size`; see [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) |
 | **Analysis timeout** | Expected under deadlines; coverage improves over repeated runs |
 | **Synapse/neuron starvation** | Grep logs for `GRQ-23` to see the per-cycle deadline-consumption breakdown, and `STARVED` for the curtailed-phase warning with skipped/total counts; the `starved` flag on `synapseMetadata`/`neuronMetadata` exposes the same signal programmatically |
