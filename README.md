@@ -120,8 +120,13 @@ discovery phase. This is by design:
 | **GPU** | Metal (macOS) or Vulkan (Linux) | Required for compute shaders |
 
 When requirements aren't met, `check_gpu_available()` returns `gpuAvailable: false`
-with a descriptive reason. NEAT-AI's evolution process continues normally — only
-the discovery optimisation is skipped.
+with a descriptive `reason` plus a structured capability verdict — `errorKind`
+(`gpu_permanent`, `gpu_transient`, or `memory_exhausted`) and `retryable` — so the
+caller can branch on a permanent skip versus a transient retry **before** starting
+a pass (Issue #1419). NEAT-AI's evolution process continues normally — only the
+discovery optimisation is skipped. There is no CPU fallback: callers must not
+advertise one, since a GPU-less host would otherwise run every pass to a
+guaranteed `0 candidates` result indistinguishable from genuine search exhaustion.
 
 For GPU performance tuning, troubleshooting, and debugging, see
 [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md).
