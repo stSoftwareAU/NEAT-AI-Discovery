@@ -36,6 +36,7 @@
 //! | `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` | f32 | `10.0` | Multiplier applied to `COORDINATED_MIN_EXPECTED_GAIN` in conservative mode (Issue #1132) |
 //! | `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` | u32 | `5` | Consecutive trailing empty discovery passes at which the drought diagnostic warn log fires and `droughtDiagnostic` populates on FFI metadata (Issue #1202) |
 //! | `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | u32 | unset | Operator escape hatch: force a one-shot reset of failed-candidate cache entries and active target cooldowns after this many consecutive empty discovery passes (Issue #1205). Default unset (off). |
+//! | `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB` | f64 | platform default (0.5 macOS / 1.0 Linux) | Minimum available memory (GB) below which the discovery gate disables analysis (Issue #1420). Lets a small-but-capable ~8GB host — where the discovery runtime itself already holds most of the RAM — opt in by lowering the floor. `0` disables the available-memory gate; invalid / out-of-range (`0.0–64.0`) values fall back to the platform default. The total-memory minimum (4GB) is unaffected. |
 //! | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | u64 | unset | Cap eager pre-load size in `focus::rank_focus_neurons` (Issue #1172). When set, projected size = file size × 3; lazy mode is selected with a structured `info` log when the projection exceeds the budget. When unset, the auto-detect path (Issue #1376) is used. |
 //! | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` | u64 | `1024` | Safety margin reserved from real OS-available memory in the auto-detect (no explicit budget) eager-vs-lazy decision (Issue #1376). Pre-load is chosen when `projected ≤ available − margin`, keeping hosts with GBs free on the fast path. `0` reserves no margin. |
 //! | `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` | u64 | `120000` | Wall-clock budget (milliseconds) for a single focus-ranking run (Issue #1375). Checked between passes and inside the per-neuron loops; on exceed the run aborts with a structured `Timeout` error (+ a 1s grace) so the caller falls back to its instant local ranking instead of blowing the discovery budget. `0` disables the bound (fully unbounded); other values clamp to `[1000, 3600000]` (Issue #1385). |
@@ -273,5 +274,59 @@ mod tests {
         // of whether the env var happens to be set in the test environment.
         let result = drought_log_threshold();
         assert!(result >= 1);
+    }
+
+    // -------------------------------------------------------------------
+    // Issue #1420 — configurable available-memory floor
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn min_available_memory_gb_unset_returns_default() {
+        // No env value → caller-supplied default is returned unchanged.
+        assert!((resolve_min_available_memory_gb(None, 1.0) - 1.0).abs() < f64::EPSILON);
+        assert!((resolve_min_available_memory_gb(None, 0.5) - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn min_available_memory_gb_accepts_valid_overrides() {
+        // Operators can lower the floor (small-but-capable 8GB host)...
+        assert!((resolve_min_available_memory_gb(Some("0.1"), 1.0) - 0.1).abs() < f64::EPSILON);
+        // ...or disable the gate entirely with 0...
+        assert!((resolve_min_available_memory_gb(Some("0"), 1.0)).abs() < f64::EPSILON);
+        // ...or raise it.
+        assert!((resolve_min_available_memory_gb(Some("2.5"), 1.0) - 2.5).abs() < f64::EPSILON);
+        // Whitespace is tolerated.
+        assert!((resolve_min_available_memory_gb(Some(" 0.25 "), 1.0) - 0.25).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn min_available_memory_gb_rejects_invalid_overrides() {
+        // Empty / non-numeric / negative / NaN / out-of-range fall back to default.
+        for raw in ["", "  ", "abc", "-1", "NaN", "inf", "65", "100"] {
+            let resolved = resolve_min_available_memory_gb(Some(raw), 1.0);
+            assert!(
+                (resolved - 1.0).abs() < f64::EPSILON,
+                "raw {raw:?} should fall back to default 1.0, got {resolved}"
+            );
+        }
+    }
+
+    #[test]
+    fn min_available_memory_gb_boundary_values() {
+        // Exactly at the max bound is accepted; just above is rejected.
+        assert!(
+            (resolve_min_available_memory_gb(Some("64"), 1.0) - MAX_MIN_AVAILABLE_MEMORY_GB).abs()
+                < f64::EPSILON
+        );
+        assert!((resolve_min_available_memory_gb(Some("64.01"), 1.0) - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn min_available_memory_gb_accessor_returns_sane_default() {
+        // The live accessor must always return a non-negative, finite value.
+        let result = min_available_memory_gb();
+        assert!(result.is_finite());
+        assert!(result >= 0.0);
+        assert!(result <= MAX_MIN_AVAILABLE_MEMORY_GB);
     }
 }

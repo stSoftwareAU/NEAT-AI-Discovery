@@ -764,6 +764,67 @@ pub fn drought_log_threshold() -> u32 {
         .unwrap_or(DEFAULT_DROUGHT_LOG_THRESHOLD)
 }
 
+// =============================================================================
+// Issue #1420 — configurable available-memory floor for the discovery gate
+// =============================================================================
+
+/// Maximum sane override (GB) for the available-memory discovery floor.
+///
+/// Guards against typos (e.g. passing megabytes where gigabytes are expected).
+/// Values above this are treated as invalid and the default is used.
+pub const MAX_MIN_AVAILABLE_MEMORY_GB: f64 = 64.0;
+
+/// Resolve the available-memory floor (in GB) from a raw env value.
+///
+/// Pure function for testability (no environment access). Returns `default_gb`
+/// when `raw` is `None`, empty, non-numeric, or out of the accepted range.
+/// Accepts any finite value in `[0.0, MAX_MIN_AVAILABLE_MEMORY_GB]`; `0.0`
+/// effectively disables the available-memory gate for a small-but-capable host.
+#[must_use]
+pub fn resolve_min_available_memory_gb(raw: Option<&str>, default_gb: f64) -> f64 {
+    let Some(raw) = raw else {
+        return default_gb;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return default_gb;
+    }
+    match trimmed.parse::<f64>() {
+        Ok(v) if v.is_finite() && (0.0..=MAX_MIN_AVAILABLE_MEMORY_GB).contains(&v) => v,
+        _ => {
+            tracing::debug!(
+                raw_value = trimmed,
+                "Ignoring invalid NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB \
+                 (expected a finite number in 0.0–{MAX_MIN_AVAILABLE_MEMORY_GB})"
+            );
+            default_gb
+        }
+    }
+}
+
+/// Get the minimum available-memory floor (in GB) for the discovery gate
+/// (Issue #1420).
+///
+/// On an ~8GB host the discovery runtime itself can hold most of the RAM by the
+/// time analysis starts, so the platform default floor
+/// ([`crate::analysis::utils::memory::DEFAULT_MIN_AVAILABLE_MEMORY_GB`]: 0.5GB
+/// macOS / 1GB Linux) gates discovery off almost every pass. Operators can
+/// raise or lower the floor at runtime via
+/// `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB` without recompiling. A value of
+/// `0` effectively disables the available-memory gate.
+///
+/// Falls back to the platform default when unset, empty, non-numeric, or out of
+/// the accepted range (`0.0–64.0`).
+#[must_use]
+pub fn min_available_memory_gb() -> f64 {
+    resolve_min_available_memory_gb(
+        std::env::var("NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB")
+            .ok()
+            .as_deref(),
+        crate::analysis::utils::memory::DEFAULT_MIN_AVAILABLE_MEMORY_GB,
+    )
+}
+
 /// Operator escape hatch — force a one-shot reset of the candidate cache
 /// failed entries and target cooldown tracker after this many consecutive
 /// empty discovery passes (Issue #1205).

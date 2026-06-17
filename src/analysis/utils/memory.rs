@@ -30,7 +30,7 @@ const STANDARD_MEMORY_THRESHOLD_GB: f64 = 16.0;
 /// Minimum total system memory required for discovery (4GB).
 const MINIMUM_TOTAL_MEMORY_GB: f64 = 4.0;
 
-/// Minimum available memory required for discovery.
+/// Default minimum available memory required for discovery.
 ///
 /// Platform-specific thresholds:
 /// - **macOS (0.5GB)**: macOS aggressively caches files, so "available" memory appears low.
@@ -38,12 +38,17 @@ const MINIMUM_TOTAL_MEMORY_GB: f64 = 4.0;
 ///   unified memory where GPU shares system RAM.
 /// - **Linux (1GB)**: Standard threshold for headless servers without aggressive file caching.
 ///
+/// This is the *default* floor. Operators can override it at runtime via
+/// `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB` (Issue #1420) — on small-but-capable
+/// hosts where the discovery runtime itself already holds most of the RAM, the
+/// default would otherwise gate discovery off every pass.
+///
 /// Issue #326: GPU detection failed on Mac due to overly strict memory check.
 #[cfg(target_os = "macos")]
-const MINIMUM_AVAILABLE_MEMORY_GB: f64 = 0.5;
+pub const DEFAULT_MIN_AVAILABLE_MEMORY_GB: f64 = 0.5;
 
 #[cfg(not(target_os = "macos"))]
-const MINIMUM_AVAILABLE_MEMORY_GB: f64 = 1.0;
+pub const DEFAULT_MIN_AVAILABLE_MEMORY_GB: f64 = 1.0;
 
 // =============================================================================
 // Memory Tier Classification
@@ -426,7 +431,32 @@ pub fn check_memory_for_parquet(parquet_file: &str) -> Result<()> {
 /// - Apple Silicon has unified memory, so GPU shares system RAM efficiently
 ///
 /// Issue #326: GPU detection failed on Mac due to overly strict memory check.
+///
+/// The available-memory floor is resolved from
+/// `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB` (Issue #1420), falling back to
+/// the platform default ([`DEFAULT_MIN_AVAILABLE_MEMORY_GB`]) when unset or
+/// invalid. Use [`check_system_memory_requirements_with_floor`] to supply an
+/// explicit floor (e.g. in unit tests).
 pub fn check_system_memory_requirements(available_bytes: u64, total_bytes: u64) -> Option<String> {
+    check_system_memory_requirements_with_floor(
+        available_bytes,
+        total_bytes,
+        crate::config::min_available_memory_gb(),
+    )
+}
+
+/// Check system memory against an explicit available-memory floor (in GB).
+///
+/// This is the pure core of [`check_system_memory_requirements`]: it takes the
+/// floor as a parameter so the threshold boundary can be unit-tested without
+/// mutating process-global environment state.
+///
+/// Returns `Some(reason)` if requirements are NOT met, `None` if they ARE.
+pub fn check_system_memory_requirements_with_floor(
+    available_bytes: u64,
+    total_bytes: u64,
+    min_available_gb: f64,
+) -> Option<String> {
     let available_gb = available_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
     let total_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
 
@@ -439,13 +469,15 @@ pub fn check_system_memory_requirements(available_bytes: u64, total_bytes: u64) 
         ));
     }
 
-    // Check available memory - MINIMUM_AVAILABLE_MEMORY_GB is platform-specific
-    // (0.5GB on macOS, 1GB on Linux). See constant definition for rationale.
-    if available_gb < MINIMUM_AVAILABLE_MEMORY_GB {
+    // Check available memory against the (possibly operator-overridden) floor.
+    // Default is platform-specific (0.5GB macOS, 1GB Linux); see
+    // DEFAULT_MIN_AVAILABLE_MEMORY_GB and NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB.
+    if available_gb < min_available_gb {
         return Some(format!(
-            "Insufficient available memory: {available_gb:.2}GB available (minimum: {MINIMUM_AVAILABLE_MEMORY_GB}GB required). \
+            "Insufficient available memory: {available_gb:.2}GB available (minimum: {min_available_gb}GB required). \
              Discovery is disabled to prevent hangs from memory pressure. \
-             Try closing other applications or reboot to free memory."
+             Lower the floor via NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB if this host is capable, \
+             or close other applications / reboot to free memory."
         ));
     }
 
