@@ -806,3 +806,146 @@ fn shared_deadline_does_not_reset_on_rebuild() {
          timestamp should NOT re-add the duration (Issue #1097)"
     );
 }
+
+// ============================================================================
+// Reserved analysis budget tests (Issue #1408)
+// ============================================================================
+
+#[test]
+fn effective_reserve_uses_absolute_floor_on_generous_budget() {
+    // 10-minute window: the 60s floor binds, not the 50% fraction cap (300s).
+    let reserve = effective_analysis_reserve_ms(600_000, 60_000, 0.5);
+    assert_eq!(reserve, 60_000);
+}
+
+#[test]
+fn effective_reserve_capped_by_fraction_on_small_budget() {
+    // 10s window with a 60s floor: the 50% fraction caps the reserve at 5s so
+    // loading is not starved to zero.
+    let reserve = effective_analysis_reserve_ms(10_000, 60_000, 0.5);
+    assert_eq!(reserve, 5_000);
+}
+
+#[test]
+fn effective_reserve_zero_floor_disables() {
+    assert_eq!(effective_analysis_reserve_ms(600_000, 0, 0.5), 0);
+}
+
+#[test]
+fn effective_reserve_clamps_fraction_above_one() {
+    // A nonsensical fraction > 1.0 is clamped so the reserve never exceeds the
+    // whole remaining window.
+    let reserve = effective_analysis_reserve_ms(10_000, 60_000, 5.0);
+    assert_eq!(reserve, 10_000);
+}
+
+#[test]
+fn loading_deadline_leaves_reserve_for_analysis() {
+    // overall = now + 600s. With a 60s reserve, loading must finish 60s earlier.
+    let now = 1_000_000_000_000u64;
+    let overall = now + 600_000;
+    let loading = loading_deadline_with_reserve_ms(Some(overall), now, 60_000, 0.5).unwrap();
+    assert_eq!(loading, overall - 60_000);
+    // Analysis therefore keeps the full reserve.
+    assert_eq!(overall - loading, 60_000);
+}
+
+#[test]
+fn loading_deadline_never_before_now() {
+    // Even when focus/parquet have consumed almost everything, the loading
+    // deadline never precedes `now` (reserve cannot exceed the remaining window).
+    let now = 1_000_000_000_000u64;
+    let overall = now + 4_000; // only 4s remain
+    let loading = loading_deadline_with_reserve_ms(Some(overall), now, 60_000, 0.5).unwrap();
+    assert!(
+        loading >= now,
+        "loading deadline {loading} precedes now {now}"
+    );
+    // Reserve is fraction-capped to 2s, so loading keeps the other 2s.
+    assert_eq!(overall - loading, 2_000);
+}
+
+#[test]
+fn loading_deadline_none_without_deadline() {
+    assert_eq!(
+        loading_deadline_with_reserve_ms(None, 1_000, 60_000, 0.5),
+        None
+    );
+}
+
+#[test]
+fn reserve_shortfall_none_when_window_is_ample() {
+    // Issue #1408 core scenario: focus + parquet consumed most of a 10-minute
+    // budget, leaving 90s. The reserve (capped to 45s by the 0.5 fraction) is
+    // well above the hard floor, so analysis proceeds — it still gets its window.
+    let now = 1_000_000_000_000u64;
+    let overall = now + 90_000;
+    assert_eq!(
+        analysis_reserve_shortfall_ms(Some(overall), now, 60_000, 0.5),
+        None
+    );
+    // And the reserved analysis window is positive (completed targets > 0).
+    let loading = loading_deadline_with_reserve_ms(Some(overall), now, 60_000, 0.5).unwrap();
+    assert_eq!(overall - loading, 45_000);
+}
+
+#[test]
+fn reserve_shortfall_some_when_budget_exhausted() {
+    // Focus + parquet consumed nearly everything: only 500ms remain. The
+    // effective reserve (250ms) is below the 1s hard floor, so the run must
+    // fail fast rather than analyse 0/N targets.
+    let now = 1_000_000_000_000u64;
+    let overall = now + 500;
+    assert_eq!(
+        analysis_reserve_shortfall_ms(Some(overall), now, 60_000, 0.5),
+        Some(500)
+    );
+}
+
+#[test]
+fn reserve_shortfall_disabled_when_reserve_zero() {
+    let now = 1_000_000_000_000u64;
+    let overall = now + 100; // tiny window, but reserve disabled
+    assert_eq!(
+        analysis_reserve_shortfall_ms(Some(overall), now, 0, 0.5),
+        None
+    );
+}
+
+#[test]
+fn reserve_shortfall_none_without_deadline() {
+    assert_eq!(
+        analysis_reserve_shortfall_ms(None, 1_000, 60_000, 0.5),
+        None
+    );
+}
+
+#[test]
+fn reserved_loading_deadline_systemtime_subtracts_reserve() {
+    let now = SystemTime::now();
+    let overall_time = now + Duration::from_secs(600);
+    let loading =
+        reserved_loading_deadline(Some(overall_time), 60_000, 0.5).expect("some deadline");
+    // Loading deadline should be ~60s before the overall deadline.
+    let gap = overall_time
+        .duration_since(loading)
+        .expect("overall after loading");
+    let gap_ms = gap.as_millis() as u64;
+    assert!(
+        gap_ms.abs_diff(60_000) < 2_000,
+        "expected ~60s reserve gap, got {gap_ms}ms"
+    );
+}
+
+#[test]
+fn reserved_loading_deadline_passthrough_when_disabled() {
+    let now = SystemTime::now();
+    let overall = Some(now + Duration::from_secs(600));
+    // reserve_ms == 0 → overall deadline returned unchanged.
+    assert_eq!(reserved_loading_deadline(overall, 0, 0.5), overall);
+}
+
+#[test]
+fn reserved_loading_deadline_none_without_deadline() {
+    assert_eq!(reserved_loading_deadline(None, 60_000, 0.5), None);
+}
