@@ -43,7 +43,7 @@ use super::impact::{
 use crate::analysis::task_descriptor::{TargetTopology, TaskDescriptor};
 use crate::analysis::utils::{
     bytes_to_mb_ceil, estimate_parquet_in_memory_bytes, get_memory_info,
-    parquet_preload_fits_available, verbose_enabled,
+    parquet_preload_fits_available, remaining_ms_until, verbose_enabled,
 };
 use crate::config::{
     FOCUS_RANKING_BUDGET_GRACE_MS, focus_ranking_budget_ms, focus_ranking_memory_budget_mb,
@@ -52,12 +52,13 @@ use crate::config::{
 use crate::discovery_history::DiscoveryHistory;
 use crate::ffi_types::DiscoveryError;
 use crate::parquet_format::read_all_records_grouped_by_neuron;
+use crate::parquet_format::shared_records::load_grouped_records_shared;
 use crate::{CoordinatedStructuralCandidateJson, CreatureJson, NeuronJson};
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Loading mode chosen by [`rank_focus_neurons`] for accessing recorded
 /// discovery data (Issue #1172).
@@ -177,11 +178,56 @@ impl FocusDeadline {
         }
     }
 
-    /// Resolve the optional deadline for a run starting at `start` from the
-    /// configured budget. Returns `None` when the budget is disabled
-    /// (`NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS=0`).
-    fn from_config(start: Instant) -> Option<Self> {
-        focus_ranking_budget_ms().map(|budget_ms| Self::new(start, budget_ms))
+    /// Resolve the optional focus-ranking deadline for a run starting at
+    /// `start` (Issue #1407).
+    ///
+    /// Two budgets bound focus ranking and the **earlier** wins:
+    /// 1. The shared **absolute** discovery deadline (`shared_deadline_ms`,
+    ///    ms-since-epoch) that the synapse/neuron analysis phase also bills
+    ///    against. Threading the same deadline through both phases means time
+    ///    spent selecting focus neurons reduces the window left for analysis
+    ///    instead of each phase opening a fresh independent window.
+    /// 2. Focus ranking's own wall-clock safety net
+    ///    (`NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS`, default
+    ///    [`crate::config::DEFAULT_FOCUS_RANKING_BUDGET_MS`]) which still guards
+    ///    a pathological ranking run even when no shared deadline is supplied.
+    ///
+    /// Returns `None` only when both bounds are absent — no shared deadline AND
+    /// the focus budget explicitly disabled with `0`.
+    fn resolve(start: Instant, shared_deadline_ms: Option<u64>) -> Option<Self> {
+        let budget_deadline =
+            focus_ranking_budget_ms().map(|budget_ms| Self::new(start, budget_ms));
+        let shared_deadline = Self::from_shared_deadline(start, shared_deadline_ms);
+
+        match (budget_deadline, shared_deadline) {
+            (Some(budget), Some(shared)) => Some(if shared.expires_at <= budget.expires_at {
+                shared
+            } else {
+                budget
+            }),
+            (Some(budget), None) => Some(budget),
+            (None, Some(shared)) => Some(shared),
+            (None, None) => None,
+        }
+    }
+
+    /// Build a focus deadline anchored on `start` from the shared absolute
+    /// discovery deadline (Issue #1407).
+    ///
+    /// The shared deadline is the same value the analysis phase enforces, so no
+    /// focus-ranking grace is added here — the budget path keeps its own grace.
+    /// Returns `None` when no shared deadline is supplied or the system clock is
+    /// before the UNIX epoch.
+    fn from_shared_deadline(start: Instant, shared_deadline_ms: Option<u64>) -> Option<Self> {
+        let now_ms = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()?
+            .as_millis() as u64;
+        let remaining_ms = remaining_ms_until(shared_deadline_ms, now_ms)?;
+        Some(Self {
+            expires_at: start + Duration::from_millis(remaining_ms),
+            budget_ms: remaining_ms,
+        })
     }
 
     /// Abort with a structured timeout error if the deadline has passed.
@@ -412,10 +458,13 @@ fn decide_with_budget(
             })
         }
         FocusLoadingMode::Preload => {
-            let records = read_all_records_grouped_by_neuron(parquet_file)
+            // Issue #1406: decode through the process-shared cache so the
+            // following analysis phase can reuse this load instead of scanning
+            // the same parquet file a second time.
+            let shared = load_grouped_records_shared(parquet_file, None)
                 .context("Failed to read discovery records from parquet file")?;
             Ok(LoadingDecision {
-                provider: Arc::new(EagerRecordProvider::new(records)),
+                provider: Arc::new(EagerRecordProvider::from_shared(&shared)),
                 mode,
                 reason,
                 budget_mb: Some(budget_mb),
@@ -446,10 +495,12 @@ fn decide_with_auto_detect(
 
     match mode {
         FocusLoadingMode::Preload => {
-            let records = read_all_records_grouped_by_neuron(parquet_file)
+            // Issue #1406: decode through the process-shared cache (see the
+            // budget-path branch) so the analysis phase reuses this load.
+            let shared = load_grouped_records_shared(parquet_file, None)
                 .context("Failed to read discovery records from parquet file")?;
             Ok(LoadingDecision {
-                provider: Arc::new(EagerRecordProvider::new(records)),
+                provider: Arc::new(EagerRecordProvider::from_shared(&shared)),
                 mode,
                 reason,
                 budget_mb: None,
@@ -702,6 +753,41 @@ pub fn rank_focus_neurons_with_descriptor(
         cost_of_growth,
         descriptor,
         history: None,
+        shared_deadline_ms: None,
+    })
+}
+
+/// Focus-ranking entry point that bills against the shared discovery deadline
+/// (Issue #1407).
+///
+/// Identical to [`rank_focus_neurons_with_descriptor`] but additionally accepts
+/// the absolute discovery deadline (`analysis_deadline_ms`, ms-since-epoch) that
+/// the subsequent synapse/neuron analysis phase also enforces. Focus selection
+/// aborts at whichever is sooner: this shared deadline or the focus-ranking
+/// wall-clock budget. Passing `None` reproduces the budget-only behaviour, so
+/// the two phases no longer open independent time windows.
+///
+/// # Errors
+///
+/// Returns an error if the underlying record provider or impact computation
+/// fails, or a [`DiscoveryError::Timeout`] if the shared deadline (or focus
+/// budget) is exceeded mid-run.
+pub fn rank_focus_neurons_with_descriptor_and_deadline(
+    parquet_file: &str,
+    creature: &CreatureJson,
+    max_results: Option<usize>,
+    cost_of_growth: Option<f32>,
+    descriptor: Option<&TaskDescriptor>,
+    analysis_deadline_ms: Option<u64>,
+) -> Result<RankFocusStats> {
+    rank_focus_core(&RankCoreArgs {
+        parquet_file,
+        creature,
+        max_results,
+        cost_of_growth,
+        descriptor,
+        history: None,
+        shared_deadline_ms: analysis_deadline_ms,
     })
 }
 
@@ -718,6 +804,10 @@ struct RankCoreArgs<'a> {
     cost_of_growth: Option<f32>,
     descriptor: Option<&'a TaskDescriptor>,
     history: Option<&'a DiscoveryHistory>,
+    /// Shared absolute discovery deadline (ms-since-epoch) billed against by
+    /// both focus selection and analysis (Issue #1407). `None` keeps the
+    /// budget-only behaviour.
+    shared_deadline_ms: Option<u64>,
 }
 
 /// Shared focus-ranking core (Issue #1375).
@@ -728,7 +818,7 @@ struct RankCoreArgs<'a> {
 /// the creature has no selectable neurons.
 fn rank_focus_core(args: &RankCoreArgs<'_>) -> Result<RankFocusStats> {
     let start = Instant::now();
-    let deadline = FocusDeadline::from_config(start);
+    let deadline = FocusDeadline::resolve(start, args.shared_deadline_ms);
 
     let selectable: Vec<&NeuronJson> = args
         .creature
@@ -1093,6 +1183,7 @@ pub fn rank_focus_neurons_with_history_and_descriptor(
         cost_of_growth,
         descriptor,
         history,
+        shared_deadline_ms: None,
     })
 }
 
@@ -1129,6 +1220,7 @@ pub(in crate::focus) fn rank_with_provider_for_tests(
         cost_of_growth: None,
         descriptor: None,
         history: None,
+        shared_deadline_ms: None,
     };
     rank_selectable(&args, &selectable, provider, meta, deadline, start)
 }
@@ -1136,3 +1228,75 @@ pub(in crate::focus) fn rank_with_provider_for_tests(
 // NOTE: Tests for focus module have been moved to tests/focus.rs
 // following the testing philosophy documented in README.md
 // (prefer tests/ over inline unit tests for tests that use public APIs).
+//
+// The tests below stay inline because `FocusDeadline` and its `resolve`
+// constructor are private to this module and cannot be reached from `tests/`.
+
+#[cfg(test)]
+mod focus_deadline_tests {
+    //! Issue #1407: `FocusDeadline::resolve` must bound focus selection by the
+    //! shared absolute discovery deadline, capped by the focus-ranking budget.
+    use super::FocusDeadline;
+    use std::time::{Duration, Instant, SystemTime};
+
+    fn now_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system clock after UNIX epoch")
+            .as_millis() as u64
+    }
+
+    fn abs_diff(a: Instant, b: Instant) -> Duration {
+        if a > b { a - b } else { b - a }
+    }
+
+    #[test]
+    fn resolve_uses_shared_deadline_when_sooner_than_budget() {
+        let start = Instant::now();
+        // Absolute deadline 5s out — well inside the default 120s focus budget.
+        let shared = Some(now_ms() + 5_000);
+        let resolved = FocusDeadline::resolve(start, shared).expect("deadline present");
+        let budget_only = FocusDeadline::resolve(start, None).expect("budget present");
+
+        // The shared deadline (5s) bounds the run more tightly than the budget,
+        // so it must win — this is the unification the issue requires.
+        assert!(
+            resolved.expires_at < budget_only.expires_at,
+            "shared deadline should expire before the focus budget window",
+        );
+        // Expiry sits roughly 5s from start (tolerant of scheduling jitter).
+        assert!(
+            abs_diff(resolved.expires_at, start + Duration::from_millis(5_000))
+                < Duration::from_millis(1_000),
+            "expiry should track the shared deadline",
+        );
+    }
+
+    #[test]
+    fn resolve_uses_budget_when_shared_deadline_is_distant() {
+        let start = Instant::now();
+        // Absolute deadline far beyond the focus budget (50 minutes out).
+        let shared = Some(now_ms() + 3_000_000);
+        let resolved = FocusDeadline::resolve(start, shared).expect("deadline present");
+        let budget_only = FocusDeadline::resolve(start, None).expect("budget present");
+
+        // The nearer focus budget caps the distant deadline, so both expire at
+        // effectively the same point.
+        assert!(
+            abs_diff(resolved.expires_at, budget_only.expires_at) < Duration::from_millis(50),
+            "the focus budget should cap a distant shared deadline",
+        );
+    }
+
+    #[test]
+    fn resolve_with_passed_deadline_aborts_immediately() {
+        let start = Instant::now();
+        // An absolute deadline already in the past saturates to zero remaining.
+        let shared = Some(now_ms().saturating_sub(10_000));
+        let resolved = FocusDeadline::resolve(start, shared).expect("deadline present");
+        assert!(
+            resolved.check("test").is_err(),
+            "a passed shared deadline must abort focus ranking immediately",
+        );
+    }
+}

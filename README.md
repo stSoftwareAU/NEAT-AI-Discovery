@@ -342,6 +342,8 @@ env knobs — is documented end-to-end in
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | unset | Cap focus-ranking eager pre-load size in MB; lazy mode + structured `info` log when projected size (file × 3) exceeds the budget (Issue #1172) |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` | 120000 | Wall-clock budget for focus ranking; a run that exceeds it aborts with a structured `Timeout` error so the caller falls back to local ranking. `0` disables the bound; other values clamp to `[1000, 3600000]` (Issue #1375) |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS` | 60000 | Perf-cliff threshold for a *lazy* focus-ranking pass; a lazy pass at or above this emits one explicit perf-cliff `WARN` naming the neuron count and projected dataset size. Preload never trips it. `0` disables the warning (Issue #1377) |
+| `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS` | 60000 | Guaranteed minimum window (ms) reserved for synapse/neuron analysis so focus selection + parquet loading cannot starve it (Issue #1408). Parquet loading is curtailed at `deadline − reserve`; if less than 1s would remain, `analyze_all` fails fast with an actionable error instead of analysing 0/N targets. `0` disables the reserve; other values clamp to `[1, 3600000]` |
+| `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION` | 0.5 | Fraction of the remaining discovery window the reserve may claim (Issue #1408). Effective reserve = `min(ANALYSIS_RESERVE_MS, remaining × fraction)`, so tight budgets are split rather than starving loading. Honoured in `(0.0, 0.9]`; invalid values fall back to `0.5` |
 | `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` | off | Stall watchdog timeout |
 | `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` | 2 | Delay between dump and abort |
 | `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | unset | Operator escape hatch: force a one-shot reset of failed-candidate cache entries and active target cooldowns after this many consecutive empty discovery passes (Issue #1205). |
@@ -356,6 +358,7 @@ env knobs — is documented end-to-end in
 | **GPU not available** | Check system meets minimum requirements; on Linux check `/dev/dri` permissions |
 | **Out of memory (exit 137)** | Reduce `--max-old-space-size`; see [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) |
 | **Analysis timeout** | Expected under deadlines; coverage improves over repeated runs |
+| **Synapse/neuron starvation** | Grep logs for `GRQ-23` to see the per-cycle deadline-consumption breakdown, and `STARVED` for the curtailed-phase warning with skipped/total counts; the `starved` flag on `synapseMetadata`/`neuronMetadata` exposes the same signal programmatically |
 | **GPU timeout errors** | Reduce `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE`; restart if GPU driver hung |
 | **Low GPU utilisation** | Often CPU-bound sample building; see [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) |
 | **Deadlock or stuck** | Send `kill -USR1 <pid>` for thread dump; see [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) |

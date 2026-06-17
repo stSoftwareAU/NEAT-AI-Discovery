@@ -143,6 +143,9 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     timed_out: s.metadata.timed_out,
                     completed_focus_neurons: s.metadata.completed_focus_neurons,
                     total_focus_neurons: s.metadata.total_focus_neurons,
+                    // Issue #1409: explicit starvation flag for the GRQ layer.
+                    starved: s.metadata.timed_out
+                        && s.metadata.completed_focus_neurons < s.metadata.total_focus_neurons,
                     input_index_min_seen_with_records: s.metadata.input_index_min_seen_with_records,
                     input_index_max_seen_with_records: s.metadata.input_index_max_seen_with_records,
                     timing: s.metadata.timing.as_ref().map(timing_to_json),
@@ -170,6 +173,9 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     timed_out: n.metadata.timed_out,
                     completed_focus_neurons: n.metadata.completed_focus_neurons,
                     total_focus_neurons: n.metadata.total_focus_neurons,
+                    // Issue #1409: explicit starvation flag for the GRQ layer.
+                    starved: n.metadata.timed_out
+                        && n.metadata.completed_focus_neurons < n.metadata.total_focus_neurons,
                     timing: n.metadata.timing.as_ref().map(timing_to_json),
                     gpu_info: n.metadata.gpu_info.as_ref().map(gpu_info_to_json),
                     rejection_breakdown: n.metadata.rejection_breakdown.counts().clone(),
@@ -332,12 +338,16 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     // topologies activate margin-aware focus ranking. Other topologies
     // (Independent / Simplex / Unknown / OTHER) and `None` get the existing
     // unweighted ranking.
-    let rank_result = focus::rank_focus_neurons_with_descriptor(
+    // Issue #1407: thread the shared absolute discovery deadline so focus
+    // selection bills against the same budget as the analysis phase rather
+    // than opening a fresh independent window.
+    let rank_result = focus::rank_focus_neurons_with_descriptor_and_deadline(
         &input.parquet_file,
         &input.creature,
         input.max_results,
         input.cost_of_growth,
         input.task_descriptor.as_ref(),
+        input.analysis_deadline_ms,
     );
 
     match rank_result {

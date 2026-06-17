@@ -452,6 +452,17 @@ pub const FOCUS_RANKING_BUDGET_GRACE_MS: u64 = 1_000;
 ///   `[FOCUS_RANKING_BUDGET_MIN_MS, FOCUS_RANKING_BUDGET_MAX_MS]` (Issue #1385).
 ///
 /// Returns `None` only when the budget is explicitly disabled with `0`.
+///
+/// ## Relationship to the shared discovery deadline (Issue #1407)
+///
+/// This budget is no longer an *independent* window. When the caller supplies
+/// the shared absolute discovery deadline (`analysisDeadlineMs`) to
+/// `rank_focus_neurons`, focus selection aborts at whichever is **sooner**: the
+/// shared deadline or this wall-clock budget. The budget therefore acts purely
+/// as a safety net that caps a pathological ranking run; it cannot extend focus
+/// selection past the shared discovery deadline that the synapse/neuron
+/// analysis phase also bills against. When no shared deadline is supplied, the
+/// budget behaves exactly as before.
 pub fn focus_ranking_budget_ms() -> Option<u64> {
     let Ok(raw) = std::env::var("NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS") else {
         return Some(DEFAULT_FOCUS_RANKING_BUDGET_MS);
@@ -489,6 +500,94 @@ pub fn focus_ranking_budget_ms() -> Option<u64> {
                  (expected a non-negative integer in milliseconds)"
             );
             Some(DEFAULT_FOCUS_RANKING_BUDGET_MS)
+        }
+    }
+}
+
+// ============================================================================
+// Reserved analysis budget (Issue #1408)
+// ============================================================================
+
+/// Default reserved minimum analysis window: 60 seconds.
+///
+/// Guarantees synapse/neuron analysis at least this slice of the shared
+/// discovery deadline so focus selection and parquet loading cannot starve it
+/// (Issue #1408). Matches the 60s "only N seconds remaining" warning threshold
+/// already emitted by the analysis logger.
+pub const DEFAULT_ANALYSIS_RESERVE_MS: u64 = 60_000;
+
+/// Maximum reserved analysis window: 1 hour (matches the maximum timeout).
+pub const ANALYSIS_RESERVE_MAX_MS: u64 = 3_600_000;
+
+/// Default fraction of the remaining discovery window reserved for analysis.
+///
+/// The effective reserve is `min(reserve_ms, remaining * fraction)`, so this
+/// caps the reserve on small budgets and stops it starving focus/parquet to
+/// zero. A balanced 0.5 splits a tight window evenly between loading and
+/// analysis.
+pub const DEFAULT_ANALYSIS_RESERVE_FRACTION: f64 = 0.5;
+
+/// Maximum reserve fraction. Capped below 1.0 so loading always keeps a slice.
+pub const ANALYSIS_RESERVE_FRACTION_MAX: f64 = 0.9;
+
+/// Reserved minimum analysis window in milliseconds (Issue #1408).
+///
+/// Override with `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS`:
+/// - Unset / empty / non-numeric: returns [`DEFAULT_ANALYSIS_RESERVE_MS`].
+/// - `0`: disables the reserve (opt-out — restores pre-#1408 behaviour where
+///   focus/parquet may consume the whole window).
+/// - Any positive integer: clamped to `[1, ANALYSIS_RESERVE_MAX_MS]` ms.
+pub fn analysis_reserve_ms() -> u64 {
+    let Ok(raw) = std::env::var("NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS") else {
+        return DEFAULT_ANALYSIS_RESERVE_MS;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return DEFAULT_ANALYSIS_RESERVE_MS;
+    }
+    match trimmed.parse::<u64>() {
+        Ok(0) => {
+            tracing::debug!(
+                "Analysis reserve disabled via NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS=0"
+            );
+            0
+        }
+        Ok(v) => v.clamp(1, ANALYSIS_RESERVE_MAX_MS),
+        Err(_) => {
+            tracing::debug!(
+                raw_value = trimmed,
+                "Ignoring invalid NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS \
+                 (expected a non-negative integer in milliseconds)"
+            );
+            DEFAULT_ANALYSIS_RESERVE_MS
+        }
+    }
+}
+
+/// Fraction of the remaining discovery window reserved for analysis (Issue #1408).
+///
+/// Override with `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION`:
+/// - Unset / empty / non-finite / out of range: returns
+///   [`DEFAULT_ANALYSIS_RESERVE_FRACTION`].
+/// - Any finite value in `(0.0, ANALYSIS_RESERVE_FRACTION_MAX]`: clamped to that
+///   range.
+pub fn analysis_reserve_fraction() -> f64 {
+    let Ok(raw) = std::env::var("NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION") else {
+        return DEFAULT_ANALYSIS_RESERVE_FRACTION;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return DEFAULT_ANALYSIS_RESERVE_FRACTION;
+    }
+    match trimmed.parse::<f64>() {
+        Ok(v) if v.is_finite() && v > 0.0 => v.min(ANALYSIS_RESERVE_FRACTION_MAX),
+        _ => {
+            tracing::debug!(
+                raw_value = trimmed,
+                "Ignoring invalid NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION \
+                 (expected a finite number in 0.0–{ANALYSIS_RESERVE_FRACTION_MAX})"
+            );
+            DEFAULT_ANALYSIS_RESERVE_FRACTION
         }
     }
 }

@@ -59,12 +59,15 @@ pub use platform::{ensure_xdg_runtime_dir, suppress_mesa_warnings_if_requested};
 
 // Re-export deadline handling functions (Issue #268)
 pub use deadline::{
-    DEFAULT_DURATION_MS, GPU_QUEUE_TIMEOUT_MAX_SECS, GPU_QUEUE_TIMEOUT_MIN_SECS, MAX_DURATION_MS,
-    MIN_DURATION_MS, OrderedNeuron, YEAR_2000_MS, build_deadline, calculate_effective_timeout_ms,
+    ANALYSIS_RESERVE_HARD_FLOOR_MS, DEFAULT_DURATION_MS, GPU_QUEUE_TIMEOUT_MAX_SECS,
+    GPU_QUEUE_TIMEOUT_MIN_SECS, MAX_DURATION_MS, MIN_DURATION_MS, OrderedNeuron, YEAR_2000_MS,
+    analysis_reserve_shortfall_ms, build_deadline, calculate_effective_timeout_ms,
     calculate_gpu_batch_timeout, cap_deadline_to_wall_clock, deadline_passed,
-    deadline_to_absolute_ms, derive_seed, focus_unused_observations_from_env, log_analysis_start,
+    deadline_to_absolute_ms, derive_seed, effective_analysis_reserve_ms,
+    focus_unused_observations_from_env, loading_deadline_with_reserve_ms, log_analysis_start,
     log_analysis_timeout, order_eligible_sources, order_focus_targets, parse_input_index,
-    shuffle_slice, shuffle_within_top_k, source_input_index_bias_from_env,
+    remaining_ms_until, reserved_loading_deadline, shuffle_slice, shuffle_within_top_k,
+    source_input_index_bias_from_env,
 };
 
 // Re-export deadline override for tests
