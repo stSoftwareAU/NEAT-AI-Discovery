@@ -49,6 +49,7 @@ pub mod drought_diagnostic;
 pub mod drought_reset;
 pub mod early_termination;
 pub mod ensemble_scoring;
+pub mod failure_cache_handshake;
 pub mod gpu;
 pub mod insufficient_recording;
 pub mod module_starvation_tracker;
