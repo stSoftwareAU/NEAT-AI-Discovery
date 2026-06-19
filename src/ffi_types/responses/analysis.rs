@@ -100,6 +100,16 @@ pub struct AnalyzeParallelOutput {
     /// cooldown / module starvation accounting.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environmentally_disabled: Option<analysis::EnvironmentalDisableReason>,
+    /// Consolidated explanation for a zero-candidate pass (Issue #1446).
+    ///
+    /// Present only when this pass produced no candidates of any kind. It
+    /// surfaces the dominant rejection reason, the full rejection breakdown,
+    /// the drought diagnostic / creature drought alarm (when active), and the
+    /// host-environment gate flags in a single object so operators can
+    /// root-cause "Built 0 candidates" without opening `.discovery/` JSON
+    /// sidecars or enabling verbose Rust logging.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zero_candidate_summary: Option<ZeroCandidateSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Structured error classification for retry decisions (Issue #651).
@@ -108,6 +118,97 @@ pub struct AnalyzeParallelOutput {
     /// Whether this error is typically worth retrying (Issue #651).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retryable: Option<bool>,
+}
+
+/// Consolidated diagnostic for a discovery pass that returned zero candidates
+/// (Issue #1446).
+///
+/// Serialised as `zeroCandidateSummary` on [`AnalyzeParallelOutput`]. All
+/// fields use camelCase in JSON. The struct pulls together the existing
+/// per-metadata diagnostics (#1129 rejection breakdown, #1202 drought
+/// diagnostic, #1424 creature drought alarm) plus the #1421 environmental
+/// gate flags so the controller can print a single WARN line naming the
+/// dominant reason instead of hunting through JSON sidecars.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZeroCandidateSummary {
+    /// Most-frequent rejection reason across synapse and neuron analysis, by
+    /// stable name (e.g. `"no_target_records"`). `None` when the pass recorded
+    /// no rejections (for example an environmentally-gated pass that never
+    /// evaluated the creature).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dominant_rejection_reason: Option<String>,
+    /// Merged synapse + neuron rejection counts keyed by stable reason name.
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub rejection_breakdown: std::collections::HashMap<String, u32>,
+    /// Drought diagnostic (Issue #1202), present only when the trailing-failure
+    /// streak has crossed `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drought_diagnostic: Option<analysis::drought_diagnostic::DroughtDiagnostic>,
+    /// Creature-level drought alarm (Issue #1424), present only on the single
+    /// pass where the creature's epochs-since-last-acceptance crosses the
+    /// configured threshold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creature_drought_alarm: Option<analysis::creature_drought_alarm::CreatureDroughtAlarm>,
+    /// Host-environment gate flags for this pass (Issue #1421). Lets the host
+    /// tell a memory / GPU / cancellation-gated pass apart from genuine search
+    /// exhaustion.
+    pub environmental_gates: EnvironmentalGatesJson,
+}
+
+/// Host-environment gate flags surfaced inside [`ZeroCandidateSummary`]
+/// (Issue #1446 / #1421).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentalGatesJson {
+    /// The Rust-side memory budget (`maxAnalysisMemoryMb`) was exceeded.
+    pub memory_budget_exceeded: bool,
+    /// Analysis was cancelled under CRITICAL system memory pressure.
+    pub memory_pressure_cancelled: bool,
+    /// The host requested graceful cancellation via `cancel_analysis()`.
+    pub cancelled: bool,
+    /// When set, this pass was environmentally gated and never evaluated the
+    /// creature — its zero-candidate outcome is NOT search exhaustion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environmentally_disabled: Option<analysis::EnvironmentalDisableReason>,
+}
+
+/// Build a [`ZeroCandidateSummary`] from the internal analysis metadata and the
+/// environmental gate flags (Issue #1446).
+///
+/// Merges the synapse and neuron rejection breakdowns so the dominant reason
+/// reflects the whole pass, and prefers the synapse-side drought / alarm
+/// payloads (falling back to the neuron side) since both halves carry the same
+/// creature-level signal.
+#[must_use]
+pub fn build_zero_candidate_summary(
+    synapse_metadata: Option<&analysis::shared::SynapseAnalysisMetadata>,
+    neuron_metadata: Option<&analysis::shared::NeuronAnalysisMetadata>,
+    environmental_gates: EnvironmentalGatesJson,
+) -> ZeroCandidateSummary {
+    let mut merged = analysis::diagnostics::RejectionBreakdown::new();
+    if let Some(s) = synapse_metadata {
+        merged.merge_from(s.rejection_breakdown.counts());
+    }
+    if let Some(n) = neuron_metadata {
+        merged.merge_from(n.rejection_breakdown.counts());
+    }
+    let dominant_rejection_reason = merged.dominant_reason().map(|(r, _)| r.to_string());
+
+    let drought_diagnostic = synapse_metadata
+        .and_then(|s| s.drought_diagnostic.clone())
+        .or_else(|| neuron_metadata.and_then(|n| n.drought_diagnostic.clone()));
+    let creature_drought_alarm = synapse_metadata
+        .and_then(|s| s.creature_drought_alarm.clone())
+        .or_else(|| neuron_metadata.and_then(|n| n.creature_drought_alarm.clone()));
+
+    ZeroCandidateSummary {
+        dominant_rejection_reason,
+        rejection_breakdown: merged.into_counts(),
+        drought_diagnostic,
+        creature_drought_alarm,
+        environmental_gates,
+    }
 }
 
 // Coordinated structural candidates are now produced inside synapse analysis and surfaced via

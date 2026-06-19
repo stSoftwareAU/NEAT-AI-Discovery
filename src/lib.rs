@@ -78,6 +78,8 @@ pub use ffi_types::{
     DiscoveryError,
     DiscoveryErrorKind,
     DiversityMetricJson,
+    // Zero-candidate summary types (`ffi_types::responses::analysis`, Issue #1446).
+    EnvironmentalGatesJson,
     ExportVisualisationSnapshotInput,
     ExportVisualisationSnapshotOutput,
     ExportVisualisationStats,
@@ -118,6 +120,8 @@ pub use ffi_types::{
     SynapseJson,
     SynapseWeightUpdateCandidateJson,
     TrainingRecord,
+    ZeroCandidateSummary,
+    build_zero_candidate_summary,
     classify_anyhow_error,
     classify_error,
     classify_panic,

@@ -52,10 +52,11 @@ use neat_ai_discovery::{GetVersionOutput, RankFocusNeuronsOutput, RecordDiscover
 // Response types (analysis).
 use neat_ai_discovery::{
     AcceptanceRateJson, AnalyzeParallelOutput, CalibrationMissEntryJson, DiversityMetricJson,
-    McmcDiagnosticsJson, NeuronAnalysisMetadataJson, NeuronDiagnosticDetailJson,
-    NeuronDiagnosticJson, NeuronDiagnosticReasonJson, ProposalQualityJson,
-    SynapseAnalysisMetadataJson, SynapseDiagnosticDetailJson, SynapseDiagnosticJson,
-    SynapseDiagnosticReasonJson,
+    EnvironmentalGatesJson, McmcDiagnosticsJson, NeuronAnalysisMetadataJson,
+    NeuronDiagnosticDetailJson, NeuronDiagnosticJson, NeuronDiagnosticReasonJson,
+    ProposalQualityJson, SynapseAnalysisMetadataJson, SynapseDiagnosticDetailJson,
+    SynapseDiagnosticJson, SynapseDiagnosticReasonJson, ZeroCandidateSummary,
+    build_zero_candidate_summary,
 };
 
 // Response types (export / parquet).
