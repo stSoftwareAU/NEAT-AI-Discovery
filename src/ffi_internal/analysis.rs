@@ -144,6 +144,45 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 None
             };
 
+            // Issue #1447: cross-stack failure-cache handshake. Count how many
+            // returned candidates match the per-creature failure cache (the set
+            // NEAT-AI's `CandidateFiltering.ts` will drop) and decide whether
+            // novelty escalation should fire so the host can bypass that filter
+            // for the top-K candidates. Computed at the FFI boundary because
+            // matching is against the same failure-cache identities NEAT-AI
+            // filters on.
+            let failure_cache = combined_input.failure_cache.as_deref().unwrap_or(&[]);
+            let syn_identities = synapse
+                .as_ref()
+                .map(synapse_candidate_identities)
+                .unwrap_or_default();
+            let neu_identities = neuron
+                .as_ref()
+                .map(neuron_candidate_identities)
+                .unwrap_or_default();
+            let syn_suppressed =
+                analysis::failure_cache_handshake::count_suppressed(&syn_identities, failure_cache);
+            let neu_suppressed =
+                analysis::failure_cache_handshake::count_suppressed(&neu_identities, failure_cache);
+            // Creature-level escalation across all returned candidates; the
+            // rolling success rate is creature-scoped (identical on both
+            // surfaces), defaulting to neutral when neither surface is present.
+            let rolling_success_rate = synapse
+                .as_ref()
+                .map(|s| s.metadata.rolling_success_rate)
+                .or_else(|| neuron.as_ref().map(|n| n.metadata.rolling_success_rate))
+                .unwrap_or(1.0);
+            let mut all_identities = syn_identities;
+            all_identities.extend(neu_identities);
+            let handshake = analysis::failure_cache_handshake::evaluate(
+                &all_identities,
+                failure_cache,
+                rolling_success_rate,
+                crate::config::low_success_rate_threshold(),
+                crate::config::novelty_suppression_ratio(),
+            );
+            let novelty_escalation_active = handshake.novelty_escalation_active;
+
             // Issue #1446: when a pass produces no candidates of any kind,
             // attach a consolidated `zeroCandidateSummary` so operators can see
             // the dominant rejection reason without opening JSON sidecars.
@@ -216,11 +255,16 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     gpu_info: s.metadata.gpu_info.as_ref().map(gpu_info_to_json),
                     discovery_module_stats: s.metadata.discovery_module_stats.clone(),
                     mcmc_diagnostics: s.metadata.mcmc_diagnostics.as_ref().map(mcmc_to_json),
-                    rejection_breakdown: s.metadata.rejection_breakdown.counts().clone(),
+                    rejection_breakdown: breakdown_with_failure_cache(
+                        &s.metadata.rejection_breakdown,
+                        syn_suppressed,
+                    ),
                     top_level_summary: s.metadata.top_level_summary.clone(),
                     calibration_corrections: s.metadata.calibration_corrections.clone(),
                     discovery_mode: s.metadata.discovery_mode,
                     rolling_success_rate: s.metadata.rolling_success_rate,
+                    failure_cache_suppressed_count: syn_suppressed,
+                    novelty_escalation_active,
                     drought_diagnostic: s.metadata.drought_diagnostic.clone(),
                     creature_drought_alarm: s.metadata.creature_drought_alarm.clone(),
                     insufficient_recording: s.metadata.insufficient_recording.clone(),
@@ -244,11 +288,16 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                         && n.metadata.completed_focus_neurons < n.metadata.total_focus_neurons,
                     timing: n.metadata.timing.as_ref().map(timing_to_json),
                     gpu_info: n.metadata.gpu_info.as_ref().map(gpu_info_to_json),
-                    rejection_breakdown: n.metadata.rejection_breakdown.counts().clone(),
+                    rejection_breakdown: breakdown_with_failure_cache(
+                        &n.metadata.rejection_breakdown,
+                        neu_suppressed,
+                    ),
                     top_level_summary: n.metadata.top_level_summary.clone(),
                     calibration_corrections: n.metadata.calibration_corrections.clone(),
                     discovery_mode: n.metadata.discovery_mode,
                     rolling_success_rate: n.metadata.rolling_success_rate,
+                    failure_cache_suppressed_count: neu_suppressed,
+                    novelty_escalation_active,
                     drought_diagnostic: n.metadata.drought_diagnostic.clone(),
                     creature_drought_alarm: n.metadata.creature_drought_alarm.clone(),
                     insufficient_recording: n.metadata.insufficient_recording.clone(),
@@ -334,6 +383,74 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
             Ok(serde_json::to_string(&output)?)
         }
     }
+}
+
+/// Build failure-cache match identities for the returned synapse candidates
+/// (Issue #1447). Covers add-synapse candidates (keyed by target neuron) and
+/// coordinated-structural candidates (target-agnostic — they have no single
+/// target neuron).
+fn synapse_candidate_identities(
+    syn: &analysis::shared::AnalyzeSynapsesResult,
+) -> Vec<analysis::failure_cache_handshake::CandidateIdentity> {
+    use analysis::failure_cache_handshake::{
+        CHANGE_TYPE_ADD_SYNAPSES, CHANGE_TYPE_COORDINATED_STRUCTURAL, CandidateIdentity,
+    };
+    let mut ids = Vec::with_capacity(
+        syn.helpful_synapses.len() + syn.coordinated_structural_candidates.len(),
+    );
+    for c in &syn.helpful_synapses {
+        ids.push(CandidateIdentity::new(
+            CHANGE_TYPE_ADD_SYNAPSES,
+            Some(c.to_neuron_uuid.clone()),
+            None,
+        ));
+    }
+    for _ in &syn.coordinated_structural_candidates {
+        ids.push(CandidateIdentity::new(
+            CHANGE_TYPE_COORDINATED_STRUCTURAL,
+            None,
+            None,
+        ));
+    }
+    ids
+}
+
+/// Build failure-cache match identities for the returned neuron candidates
+/// (Issue #1447). Add-neuron candidates are keyed by target neuron and squash.
+fn neuron_candidate_identities(
+    neu: &analysis::shared::AnalyzeNeuronsResult,
+) -> Vec<analysis::failure_cache_handshake::CandidateIdentity> {
+    use analysis::failure_cache_handshake::{CHANGE_TYPE_ADD_NEURONS, CandidateIdentity};
+    neu.helpful_neurons
+        .iter()
+        .map(|c| {
+            CandidateIdentity::new(
+                CHANGE_TYPE_ADD_NEURONS,
+                Some(c.target_neuron_uuid.clone()),
+                Some(c.squash.clone()),
+            )
+        })
+        .collect()
+}
+
+/// Clone a rejection breakdown into its wire map, wiring the previously-dead
+/// `REJECTION_DUPLICATE_OF_FAILURE_CACHE` reason with the cross-stack
+/// failure-cache suppression count (Issue #1447). Keeps duplicate suppression
+/// visible in the surfaced rejection stats.
+fn breakdown_with_failure_cache(
+    breakdown: &analysis::diagnostics::RejectionBreakdown,
+    suppressed: usize,
+) -> std::collections::HashMap<String, u32> {
+    let mut map = breakdown.counts().clone();
+    if suppressed > 0 {
+        let count = u32::try_from(suppressed).unwrap_or(u32::MAX);
+        *map.entry(
+            analysis::diagnostics::rejection_reasons::REJECTION_DUPLICATE_OF_FAILURE_CACHE
+                .to_string(),
+        )
+        .or_insert(0) += count;
+    }
+    map
 }
 
 pub(crate) fn build_analyze_all_input_from_parallel(
@@ -645,4 +762,140 @@ pub fn get_calibration_summary_internal(input_json: &str) -> Result<String> {
         retryable,
     };
     Ok(serde_json::to_string(&output)?)
+}
+
+#[cfg(test)]
+mod failure_cache_handshake_wiring_tests {
+    //! FFI-layer wiring for the cross-stack failure-cache handshake (Issue #1447).
+
+    use super::*;
+    use crate::analysis::diagnostics::RejectionBreakdown;
+    use crate::analysis::diagnostics::rejection_reasons::{
+        REJECTION_BELOW_THRESHOLD, REJECTION_DUPLICATE_OF_FAILURE_CACHE,
+    };
+    use crate::analysis::failure_cache_handshake::{
+        CHANGE_TYPE_ADD_NEURONS, CHANGE_TYPE_ADD_SYNAPSES, CHANGE_TYPE_COORDINATED_STRUCTURAL,
+    };
+    use crate::analysis::shared::{AnalyzeNeuronsResult, AnalyzeSynapsesResult};
+    use crate::ffi_types::{
+        CandidateNeuronJson, CandidateSynapseJson, CoordinatedStructuralCandidateJson,
+    };
+
+    fn synapse(to: &str) -> CandidateSynapseJson {
+        CandidateSynapseJson {
+            from_neuron_uuid: "src".to_string(),
+            to_neuron_uuid: to.to_string(),
+            from_neuron_index: None,
+            to_neuron_index: None,
+            weight: 0.1,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: 0.01,
+            expected_creature_score_gain: 0.01,
+            improved_count: 8,
+            total_count: 10,
+            improvement_magnitude_ratio: None,
+            target_neuron_stats: None,
+            outlier_reduction_info: None,
+            prediction_confidence: 0.8,
+            expected_score_gain_confidence_interval: [0.0, 0.02],
+            comment: None,
+            variant_key: None,
+        }
+    }
+
+    fn neuron(target: &str, squash: &str) -> CandidateNeuronJson {
+        CandidateNeuronJson {
+            source_neuron_uuid: "src".to_string(),
+            target_neuron_uuid: target.to_string(),
+            source_neuron_index: None,
+            target_neuron_index: None,
+            incoming_weight: 0.1,
+            outgoing_weight: 0.1,
+            squash: squash.to_string(),
+            bias: 0.0,
+            comment: None,
+            target_neuron_impact: 1.0,
+            expected_creature_error_reduction: 0.01,
+            expected_creature_score_gain: 0.01,
+            improved_count: 8,
+            total_count: 10,
+            improvement_magnitude_ratio: None,
+            target_neuron_stats: None,
+            prediction_confidence: 0.8,
+            expected_score_gain_confidence_interval: [0.0, 0.02],
+            target_saturation_factor: None,
+            variant_key: None,
+        }
+    }
+
+    fn coordinated() -> CoordinatedStructuralCandidateJson {
+        CoordinatedStructuralCandidateJson {
+            operations: Vec::new(),
+            expected_creature_score_gain: 0.01,
+            comment: None,
+        }
+    }
+
+    fn synapse_result(
+        helpful: Vec<CandidateSynapseJson>,
+        coordinated_cands: Vec<CoordinatedStructuralCandidateJson>,
+    ) -> AnalyzeSynapsesResult {
+        AnalyzeSynapsesResult {
+            helpful_synapses: helpful,
+            harmful_synapses: Vec::new(),
+            synapse_weight_updates: Vec::new(),
+            coordinated_structural_candidates: coordinated_cands,
+            candidate_clusters: Vec::new(),
+            gpu_used: false,
+            no_candidate_reasons: Vec::new(),
+            metadata: crate::analysis::shared::SynapseAnalysisMetadata::default(),
+        }
+    }
+
+    fn neuron_result(helpful: Vec<CandidateNeuronJson>) -> AnalyzeNeuronsResult {
+        AnalyzeNeuronsResult {
+            helpful_neurons: helpful,
+            gpu_used: false,
+            no_candidate_reasons: Vec::new(),
+            metadata: crate::analysis::shared::NeuronAnalysisMetadata::default(),
+        }
+    }
+
+    #[test]
+    fn synapse_identities_cover_add_synapse_and_coordinated() {
+        let result = synapse_result(vec![synapse("n1"), synapse("n2")], vec![coordinated()]);
+        let ids = synapse_candidate_identities(&result);
+        assert_eq!(ids.len(), 3);
+        assert_eq!(ids[0].change_type, CHANGE_TYPE_ADD_SYNAPSES);
+        assert_eq!(ids[0].target_uuid.as_deref(), Some("n1"));
+        // Coordinated candidates are target-agnostic.
+        assert_eq!(ids[2].change_type, CHANGE_TYPE_COORDINATED_STRUCTURAL);
+        assert!(ids[2].target_uuid.is_none());
+    }
+
+    #[test]
+    fn neuron_identities_carry_target_and_squash() {
+        let result = neuron_result(vec![neuron("n1", "RELU")]);
+        let ids = neuron_candidate_identities(&result);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].change_type, CHANGE_TYPE_ADD_NEURONS);
+        assert_eq!(ids[0].target_uuid.as_deref(), Some("n1"));
+        assert_eq!(ids[0].target_squash.as_deref(), Some("RELU"));
+    }
+
+    #[test]
+    fn breakdown_wires_failure_cache_reason_when_suppressed() {
+        let mut breakdown = RejectionBreakdown::new();
+        breakdown.record_many(REJECTION_BELOW_THRESHOLD, 3);
+        let map = breakdown_with_failure_cache(&breakdown, 2);
+        assert_eq!(map.get(REJECTION_DUPLICATE_OF_FAILURE_CACHE), Some(&2));
+        assert_eq!(map.get(REJECTION_BELOW_THRESHOLD), Some(&3));
+    }
+
+    #[test]
+    fn breakdown_omits_failure_cache_reason_when_none_suppressed() {
+        let breakdown = RejectionBreakdown::new();
+        let map = breakdown_with_failure_cache(&breakdown, 0);
+        assert!(!map.contains_key(REJECTION_DUPLICATE_OF_FAILURE_CACHE));
+    }
 }
