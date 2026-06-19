@@ -861,6 +861,51 @@ pub fn drought_alarm_epochs() -> Option<u32> {
 }
 
 // =============================================================================
+// Issue #1448 — remove-neuron deprioritisation during a search-exhaustion drought
+// =============================================================================
+
+/// Resolve the remove-neuron drought deprioritisation factor from a raw env
+/// value (Issue #1448).
+///
+/// Pure function for testability (no environment access). Returns `default`
+/// when `raw` is `None`, empty, non-numeric, or non-finite. Any finite value is
+/// clamped to
+/// `[MIN_REMOVE_NEURON_DROUGHT_FACTOR, NEUTRAL_DEPRIORITISATION_FACTOR]`
+/// (= `[0.001, 1.0]`); `1.0` disables the deprioritisation.
+#[must_use]
+pub fn resolve_remove_neuron_drought_factor(raw: Option<&str>, default: f32) -> f32 {
+    use crate::analysis::remove_neuron_drought::{
+        MIN_REMOVE_NEURON_DROUGHT_FACTOR, NEUTRAL_DEPRIORITISATION_FACTOR,
+    };
+    raw.and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+        .unwrap_or(default)
+        .clamp(
+            MIN_REMOVE_NEURON_DROUGHT_FACTOR,
+            NEUTRAL_DEPRIORITISATION_FACTOR,
+        )
+}
+
+/// Multiplier applied to a single-op remove-neuron candidate's expected gain
+/// while the creature is in a search-exhaustion drought (Issue #1448).
+///
+/// Set `NEAT_AI_DISCOVERY_REMOVE_NEURON_DROUGHT_FACTOR` to a value in
+/// `[0.001, 1.0]` to override the default
+/// ([`crate::analysis::remove_neuron_drought::DEFAULT_REMOVE_NEURON_DROUGHT_FACTOR`],
+/// 0.1). Set it to `1.0` to disable the deprioritisation entirely.
+/// Out-of-range or unparsable values fall back to the default; the value is
+/// clamped so the factor can never zero a prediction or inflate it.
+#[must_use]
+pub fn remove_neuron_drought_factor() -> f32 {
+    resolve_remove_neuron_drought_factor(
+        std::env::var("NEAT_AI_DISCOVERY_REMOVE_NEURON_DROUGHT_FACTOR")
+            .ok()
+            .as_deref(),
+        crate::analysis::remove_neuron_drought::DEFAULT_REMOVE_NEURON_DROUGHT_FACTOR,
+    )
+}
+
+// =============================================================================
 // Issue #1423 — novelty / diversification escalation for plateaued creatures
 // =============================================================================
 

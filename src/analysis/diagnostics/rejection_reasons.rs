@@ -168,6 +168,19 @@ pub const REJECTION_TARGET_SATURATED: &str = "target_saturated";
 /// error reduction.
 pub const REJECTION_REMOVAL_BELOW_NOISE_FLOOR: &str = "removal_below_noise_floor";
 
+/// Single-op remove-neuron coordinated candidate had its expected gain demoted
+/// because the creature is in a search-exhaustion drought (Issue #1448).
+///
+/// This is a *deprioritisation*, not an outright rejection: the demoted gain
+/// sorts the destructive remove-neuron proposals below the constructive change
+/// types, and the most over-confident ones subsequently fall through the
+/// coordinated noise floor (recorded separately under
+/// [`REJECTION_BELOW_EXPECTED_GAIN_FLOOR`]). The count here is how many
+/// remove-neuron candidates were demoted on the pass, so operators can see the
+/// destructive module surrendering budget during a plateau.
+pub const REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED: &str =
+    "remove_neuron_drought_deprioritised";
+
 /// All documented rejection reason names. Used for assertions and
 /// documentation. Keep this list in sync with the constants above.
 pub const ALL_REJECTION_REASONS: &[&str] = &[
@@ -199,6 +212,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_NO_DIAGNOSTICS,
     REJECTION_TARGET_SATURATED,
     REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
+    REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED,
 ];
 
 // =============================================================================
@@ -374,6 +388,9 @@ fn friendly_reason(reason: &str) -> String {
             "remove-low-impact noise floor of {:e}",
             crate::analysis::constants::remove_low_impact_noise_floor()
         ),
+        REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED => {
+            "remove-neuron deprioritised during search-exhaustion drought".to_string()
+        }
         other => other.replace('_', " "),
     }
 }

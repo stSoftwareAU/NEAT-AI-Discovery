@@ -47,6 +47,10 @@ pub struct DroughtMitigationConfig {
     /// Epochs-since-last-acceptance at which the creature-level drought alarm
     /// fires, or `None` when deliberately disabled (Issue #1424).
     pub drought_alarm_epochs: Option<u32>,
+    /// Multiplier applied to single-op remove-neuron candidates during a
+    /// search-exhaustion drought; `1.0` disables the deprioritisation
+    /// (Issue #1448).
+    pub remove_neuron_drought_factor: f32,
 }
 
 impl DroughtMitigationConfig {
@@ -73,6 +77,7 @@ impl DroughtMitigationConfig {
             staleness_extended_drought_divisor: staleness_extended_drought_divisor(),
             module_starvation_failure_streak: module_starvation_failure_streak(),
             drought_alarm_epochs: super::drought_alarm_epochs(),
+            remove_neuron_drought_factor: super::remove_neuron_drought_factor(),
         }
     }
 
@@ -112,6 +117,7 @@ pub fn log_effective_drought_mitigation_config() {
         staleness_extended_drought_divisor = cfg.staleness_extended_drought_divisor,
         module_starvation_failure_streak = cfg.module_starvation_failure_streak,
         drought_alarm_epochs = cfg.drought_alarm_display().as_str(),
+        remove_neuron_drought_factor = cfg.remove_neuron_drought_factor,
         "Issue #1422: effective drought-mitigation config"
     );
 }
