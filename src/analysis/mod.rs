@@ -50,6 +50,7 @@ pub mod drought_reset;
 pub mod early_termination;
 pub mod ensemble_scoring;
 pub mod gpu;
+pub mod insufficient_recording;
 pub mod module_starvation_tracker;
 pub mod module_weights;
 pub mod neuron;

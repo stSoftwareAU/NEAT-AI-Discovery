@@ -30,6 +30,7 @@ mod issue_1204_adaptive_target_cooldown;
 mod issue_1317_cost_identity_wiring;
 mod issue_1408_analysis_reserve;
 mod issue_1425_remove_neuron_calibration;
+mod issue_1444_insufficient_recording_fail_fast;
 mod issue_199_dynamic_constant_source_threshold;
 mod issue_201_batched_activation;
 mod issue_204_activation_frequency_ranking;

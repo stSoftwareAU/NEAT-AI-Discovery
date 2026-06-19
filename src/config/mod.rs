@@ -45,6 +45,7 @@
 //! | `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN` | f32 | `1e-5` | Absolute minimum `expected_creature_score_gain` for emitted add-neuron / add-synapse candidates (Issue #1191). Clamped to `[0.0, 1e-2]`. |
 //! | `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS` | u64 | `60000` | Guaranteed minimum window (milliseconds) reserved for synapse/neuron analysis so focus selection + parquet loading cannot starve it (Issue #1408). Parquet loading is curtailed at `deadline − reserve`; if focus/parquet have already consumed so much that less than 1s would remain, `analyze_all` fails fast with an actionable error instead of analysing 0/N targets. `0` disables the reserve (restores pre-#1408 behaviour); other values clamp to `[1, 3600000]`. The effective reserve is also capped by `ANALYSIS_RESERVE_FRACTION` so small budgets are split rather than starving loading. |
 //! | `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION` | f64 | `0.5` | Fraction of the remaining discovery window the reserve may claim (Issue #1408). The effective reserve is `min(ANALYSIS_RESERVE_MS, remaining × fraction)`, so on a tight budget the reserve shrinks and loading keeps the rest. Finite values in `(0.0, 0.9]` are honoured (clamped to `0.9`); invalid or non-positive values fall back to `0.5`. |
+//! | `NEAT_AI_DISCOVERY_INSUFFICIENT_RECORDING_FRACTION` | f64 | `1.0` | Fraction of selected focus neurons that must have **zero** Parquet rows before the fail-fast insufficient-recording gate skips synapse/neuron analysis (Issue #1444). A partial record phase leaves focus neurons with no rows, so analysis is guaranteed empty yet still burns the full budget; the gate detects this with a cheap record-count scan *before* GPU work and surfaces `insufficient_recording` as the dominant rejection reason plus an `insufficientRecording` diagnostic on `synapseMetadata` / `neuronMetadata`. Honoured in `(0.0, 1.0]`; `0` disables the gate. |
 //!
 //! ## Observability Variables
 //!
@@ -360,5 +361,59 @@ mod tests {
         assert!(result.is_finite());
         assert!(result >= 0.0);
         assert!(result <= MAX_MIN_AVAILABLE_MEMORY_GB);
+    }
+
+    // -------------------------------------------------------------------
+    // Issue #1444 — insufficient-recording fail-fast fraction
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn insufficient_recording_fraction_unset_returns_default() {
+        assert_eq!(
+            resolve_insufficient_recording_fraction(None),
+            Some(DEFAULT_INSUFFICIENT_RECORDING_FRACTION)
+        );
+        assert_eq!(
+            resolve_insufficient_recording_fraction(Some("")),
+            Some(DEFAULT_INSUFFICIENT_RECORDING_FRACTION)
+        );
+        assert_eq!(
+            resolve_insufficient_recording_fraction(Some("  ")),
+            Some(DEFAULT_INSUFFICIENT_RECORDING_FRACTION)
+        );
+    }
+
+    #[test]
+    fn insufficient_recording_fraction_zero_disables_gate() {
+        assert_eq!(resolve_insufficient_recording_fraction(Some("0")), None);
+        assert_eq!(resolve_insufficient_recording_fraction(Some("0.0")), None);
+    }
+
+    #[test]
+    fn insufficient_recording_fraction_accepts_valid_range() {
+        assert_eq!(
+            resolve_insufficient_recording_fraction(Some("1.0")),
+            Some(1.0)
+        );
+        assert_eq!(
+            resolve_insufficient_recording_fraction(Some("0.5")),
+            Some(0.5)
+        );
+        assert_eq!(
+            resolve_insufficient_recording_fraction(Some(" 0.25 ")),
+            Some(0.25)
+        );
+    }
+
+    #[test]
+    fn insufficient_recording_fraction_rejects_invalid() {
+        // Out of range / non-finite / non-numeric / negative fall back to default.
+        for raw in ["1.5", "2", "-0.5", "NaN", "inf", "abc"] {
+            assert_eq!(
+                resolve_insufficient_recording_fraction(Some(raw)),
+                Some(DEFAULT_INSUFFICIENT_RECORDING_FRACTION),
+                "raw {raw:?} should fall back to default"
+            );
+        }
     }
 }

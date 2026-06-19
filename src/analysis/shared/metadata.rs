@@ -149,6 +149,16 @@ pub struct SynapseAnalysisMetadata {
     /// alert without scraping logs.
     pub creature_drought_alarm:
         Option<crate::analysis::creature_drought_alarm::CreatureDroughtAlarm>,
+
+    /// Fail-fast insufficient-recording diagnostic (Issue #1444).
+    ///
+    /// Populated when the pass was skipped before any GPU work because the
+    /// selected focus neurons had insufficient Parquet coverage (a partial
+    /// record phase). Carries the focus-neuron coverage counts and the records
+    /// the record phase actually produced so the host can distinguish a
+    /// recording failure from genuine search exhaustion.
+    pub insufficient_recording:
+        Option<crate::analysis::insufficient_recording::InsufficientRecordingDiagnostic>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.
@@ -221,6 +231,12 @@ pub struct NeuronAnalysisMetadata {
     /// See `SynapseAnalysisMetadata::creature_drought_alarm` for full docs.
     pub creature_drought_alarm:
         Option<crate::analysis::creature_drought_alarm::CreatureDroughtAlarm>,
+
+    /// Fail-fast insufficient-recording diagnostic (Issue #1444).
+    ///
+    /// See `SynapseAnalysisMetadata::insufficient_recording` for full docs.
+    pub insufficient_recording:
+        Option<crate::analysis::insufficient_recording::InsufficientRecordingDiagnostic>,
 }
 
 /// Result of synapse analysis

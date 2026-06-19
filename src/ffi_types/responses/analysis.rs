@@ -210,6 +210,15 @@ pub struct SynapseAnalysisMetadataJson {
     /// logs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub creature_drought_alarm: Option<analysis::creature_drought_alarm::CreatureDroughtAlarm>,
+    /// Fail-fast insufficient-recording diagnostic (Issue #1444).
+    ///
+    /// Present only when the pass was skipped before any GPU work because the
+    /// selected focus neurons had insufficient Parquet coverage (a partial
+    /// record phase). The host can branch on this to retry recording rather
+    /// than escalate the creature as search-exhausted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insufficient_recording:
+        Option<analysis::insufficient_recording::InsufficientRecordingDiagnostic>,
 }
 
 /// MCMC diagnostics summary for the analysis output JSON (Issue #1021).
@@ -345,6 +354,11 @@ pub struct NeuronAnalysisMetadataJson {
     /// `SynapseAnalysisMetadataJson::creature_drought_alarm` for full docs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub creature_drought_alarm: Option<analysis::creature_drought_alarm::CreatureDroughtAlarm>,
+    /// Fail-fast insufficient-recording diagnostic (Issue #1444). See
+    /// `SynapseAnalysisMetadataJson::insufficient_recording` for full docs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insufficient_recording:
+        Option<analysis::insufficient_recording::InsufficientRecordingDiagnostic>,
 }
 
 // ============================================================================
