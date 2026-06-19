@@ -374,7 +374,36 @@ pub struct RankFocusNeuronsInput {
     /// legacy budget-only behaviour applies (backwards compatible).
     #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
+    /// Number of discovery passes since this creature last had a candidate
+    /// accepted (Issue #1445). Drives diversity-aware focus selection:
+    ///
+    /// - Once it meets or exceeds the drought threshold
+    ///   (`NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD`, #1202) focus selection
+    ///   switches from weighted ranking to **round-robin rotation** across the
+    ///   top `K × N` ranked neurons so a plateaued creature stops revisiting the
+    ///   same dominant neuron every pass.
+    /// - It also seeds the rotation cursor, so successive passes pick fresh
+    ///   targets.
+    ///
+    /// When absent (or below the threshold) the diversity-floor path applies
+    /// instead. Backwards compatible: omitting it preserves the legacy
+    /// non-drought selection behaviour.
+    #[serde(default)]
+    pub epochs_since_last_accepted_candidate: Option<u64>,
+    /// Final focus-set size `N` — the number of neurons the caller will
+    /// actually analyse this pass (NEAT-AI's `discoveryMaxNeurons`, default 6).
+    /// Issue #1445: diversity-aware focus selection picks `N` diverse targets
+    /// from the ranked pool (`max_results` neurons). For drought rotation to
+    /// draw from unexplored targets, pass `max_results >= K × N`
+    /// (K = [`crate::focus::DROUGHT_ROTATION_POOL_FACTOR`]). When absent,
+    /// defaults to [`DEFAULT_FOCUS_SET_SIZE`].
+    #[serde(default)]
+    pub focus_set_size: Option<usize>,
 }
+
+/// Default final focus-set size `N` when `focusSetSize` is not supplied
+/// (Issue #1445). Matches NEAT-AI's `discoveryMaxNeurons` default.
+pub const DEFAULT_FOCUS_SET_SIZE: usize = 6;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

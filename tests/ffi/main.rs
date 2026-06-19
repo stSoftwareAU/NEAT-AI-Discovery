@@ -10,6 +10,7 @@ mod issue_1188_grq3_strip_pattern_rejection;
 mod issue_1314_task_descriptor_plumbing;
 mod issue_1402_lowercase_task_descriptor_regression;
 mod issue_1407_focus_shared_deadline;
+mod issue_1445_focus_selection_diversity;
 mod issue_574_ffi_json_fuzz_edge_cases;
 mod issue_711_ffi_safety_unsafe_markers;
 mod issue_950_numeric_neuron_ids;

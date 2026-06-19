@@ -49,6 +49,13 @@ pub struct RankedNeuron {
     /// - `activation_frequency` > 0.9: Always fires, behaves like a constant (no discriminative power)
     /// - 0.1 <= `activation_frequency` <= 0.9: "Sweet spot" with good discriminative power
     pub activation_frequency: f32,
+    /// Issue #1445: Combined impact-weighted ranking score used both to order
+    /// the focus list and as the roulette weight for diversity-aware focus
+    /// selection. Computed once after construction (see
+    /// `crate::focus::ranking::compute_focus_weighted_score`) and stored so the
+    /// sort comparator and the downstream selection share a single source of
+    /// truth. Defaults to `0.0` until populated.
+    pub weighted_score: f32,
 }
 
 pub(super) fn average_absolute_error_from_records(records: &[DiscoverRecord]) -> f32 {

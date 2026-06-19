@@ -321,6 +321,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 success: false,
                 schema_version: SCHEMA_VERSION.to_string(),
                 neurons: None,
+                focus_selection: None,
                 removal_candidates: None,
                 constant_neuron_removals: None,
                 max_output_error: None,
@@ -348,6 +349,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
             success: false,
             schema_version: SCHEMA_VERSION.to_string(),
             neurons: None,
+            focus_selection: None,
             removal_candidates: None,
             constant_neuron_removals: None,
             max_output_error: None,
@@ -389,6 +391,59 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
 
     match rank_result {
         Ok(stats) => {
+            // Issue #1445: Build the diversity-aware focus selection over the
+            // ranked pool BEFORE the neurons are consumed into JSON. The
+            // weighted_score stored on each ranked neuron is the roulette
+            // weight; selection enforces a diversity floor (or drought
+            // rotation) so a single dominant neuron cannot collapse the focus
+            // set to one target.
+            let focus_candidates: Vec<focus::FocusCandidate> = stats
+                .neurons
+                .iter()
+                .map(|n| focus::FocusCandidate {
+                    neuron_uuid: n.neuron_uuid.clone(),
+                    weight: n.weighted_score,
+                })
+                .collect();
+            let focus_set_size = input.focus_set_size.unwrap_or(DEFAULT_FOCUS_SET_SIZE);
+            let drought_threshold = u64::from(crate::config::drought_log_threshold());
+            let epochs = input.epochs_since_last_accepted_candidate.unwrap_or(0);
+            let drought_active = drought_threshold > 0 && epochs >= drought_threshold;
+            let focus_selection = focus::select_focus_neurons(
+                &focus_candidates,
+                focus_set_size,
+                drought_active,
+                epochs,
+            );
+
+            // Issue #1445: WARN when the raw roulette is pathologically
+            // single-target so operators can see the collapse the diversity
+            // floor / rotation just corrected.
+            if focus_selection.raw_weight_concentration_ratio > focus::CONCENTRATION_WARN_THRESHOLD
+            {
+                tracing::warn!(
+                    raw_weight_concentration_ratio = focus_selection.raw_weight_concentration_ratio,
+                    effective_weight_concentration_ratio =
+                        focus_selection.weight_concentration_ratio,
+                    diversity_floor_applied = focus_selection.diversity_floor_applied,
+                    rotation_applied = focus_selection.rotation_applied,
+                    pool_size = focus_selection.pool_size,
+                    focus_set_size,
+                    "focus_selection_weight_concentration_high: a single neuron \
+                     dominated the focus-selection roulette; diversity floor / \
+                     drought rotation applied to spread the focus set"
+                );
+            }
+
+            let focus_selection_json = FocusSelectionJson {
+                selected: focus_selection.selected,
+                raw_weight_concentration_ratio: focus_selection.raw_weight_concentration_ratio,
+                weight_concentration_ratio: focus_selection.weight_concentration_ratio,
+                diversity_floor_applied: focus_selection.diversity_floor_applied,
+                rotation_applied: focus_selection.rotation_applied,
+                pool_size: focus_selection.pool_size,
+            };
+
             let neurons: Vec<RankedNeuronJson> = stats
                 .neurons
                 .into_iter()
@@ -398,6 +453,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                     impact: neuron.impact,
                     mean_activation: neuron.mean_activation,
                     activation_weighted_impact: neuron.activation_weighted_impact,
+                    weighted_score: neuron.weighted_score,
                 })
                 .collect();
             let removal_candidates: Vec<RemovalCandidateJson> = stats
@@ -421,6 +477,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 success: true,
                 schema_version: SCHEMA_VERSION.to_string(),
                 neurons: Some(neurons),
+                focus_selection: Some(focus_selection_json),
                 removal_candidates: if removal_candidates.is_empty() {
                     None
                 } else {
@@ -463,6 +520,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 success: false,
                 schema_version: SCHEMA_VERSION.to_string(),
                 neurons: None,
+                focus_selection: None,
                 removal_candidates: None,
                 constant_neuron_removals: None,
                 max_output_error: None,

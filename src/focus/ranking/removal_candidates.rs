@@ -442,6 +442,7 @@ mod noise_floor_tests {
             activation_weighted_impact,
             gradient_flow: GradientFlowStats::default(),
             activation_frequency: 0.5,
+            weighted_score: 0.0,
         }
     }
 
