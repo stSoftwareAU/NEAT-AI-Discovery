@@ -23,7 +23,6 @@ pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
 rayon = "1.12"
 rand = "0.10"
-uuid = { version = "1.23", features = ["v4"] }  # Session ID generation for streaming API
 
 crossbeam-channel = "0.5"  # Efficient multi-producer work queues for GPU thread
 lz4_flex = "0.13"  # Pure Rust LZ4 compression for memory-constrained cache (Issue #420)
