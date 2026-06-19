@@ -320,6 +320,7 @@ fn analyze_parallel_output_contains_all_candidate_fields() {
         cancelled: None,
         memory_pressure_cancelled: None,
         environmentally_disabled: None,
+        zero_candidate_summary: None,
         error: None,
         error_kind: None,
         retryable: None,

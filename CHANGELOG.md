@@ -8,6 +8,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+#### Zero-candidate summary on the analysis response (Issue #1446)
+
+When a discovery pass found nothing, operators saw an unhelpful "Built 0
+candidates" block with no visible reason, even though the Rust side already
+populated `rejectionBreakdown`, `droughtDiagnostic`, and `creatureDroughtAlarm`
+in analysis metadata. Those diagnostics had to be hunted for in `.discovery/`
+JSON sidecars or by enabling verbose logging.
+
+- `analyze_parallel` now attaches a `zeroCandidateSummary` object to the
+  top-level response **only when the pass produced no candidates of any kind**.
+  It carries `dominantRejectionReason` (merged across synapse and neuron
+  analysis), the full `rejectionBreakdown`, the `droughtDiagnostic` /
+  `creatureDroughtAlarm` (when active), and `environmentalGates` (memory / GPU /
+  cancellation flags) so the dominant reason is identifiable at a glance.
+- For genuinely-empty passes (not environmentally gated) a single
+  `tracing::warn!` event names the dominant rejection reason and drought streak.
+- New public types `ZeroCandidateSummary` and `EnvironmentalGatesJson` plus the
+  `build_zero_candidate_summary` helper, documented in `docs/FFI_API.md`.
+
 #### Diversity-aware focus selection (Issue #1445)
 
 On a plateaued mature network a single high-impact neuron could hold ~98.5% of

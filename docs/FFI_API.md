@@ -400,6 +400,58 @@ per `analyze_all` invocation when the diagnostic fires.
 | `totalCandidatesConsidered` | `totalCandidatesRejected + candidatesReturned`. |
 | `totalCandidatesRejected` | Sum across the rejection breakdown. |
 
+### Zero-Candidate Summary (Issue #1446)
+
+When a discovery pass produces **no candidates of any kind** (no helpful or
+harmful synapses, no helpful neurons, no synapse weight updates, and no
+coordinated structural candidates), `analyze_parallel` attaches a single
+`zeroCandidateSummary` object to the top-level response. It consolidates the
+diagnostics already populated elsewhere (#1129 rejection breakdown, #1202
+drought diagnostic, #1424 creature drought alarm) plus the #1421 environmental
+gate flags so operators can root-cause "Built 0 candidates" without opening
+`.discovery/` JSON sidecars or enabling verbose Rust logging.
+
+**Trigger:** present only when the pass returned zero candidates. When the pass
+produced at least one candidate the field is omitted from the JSON entirely. It
+is attached for both genuinely-empty passes (true search exhaustion) and
+environmentally-gated passes — `environmentalGates` tells the two apart.
+
+For a genuinely-empty pass (not environmentally gated) a single
+`tracing::warn!` event is emitted naming the dominant rejection reason and the
+drought streak, so the outcome is visible in logs as well as in the response.
+
+```json
+{
+  "zeroCandidateSummary": {
+    "dominantRejectionReason": "no_target_records",
+    "rejectionBreakdown": {
+      "no_target_records": 4,
+      "no_samples": 2
+    },
+    "droughtDiagnostic": { "...": "present only when in drought (Issue #1202)" },
+    "creatureDroughtAlarm": { "...": "present only on the alarm-crossing pass (Issue #1424)" },
+    "environmentalGates": {
+      "memoryBudgetExceeded": false,
+      "memoryPressureCancelled": false,
+      "cancelled": false,
+      "environmentallyDisabled": null
+    }
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `dominantRejectionReason` | Stable name of the most-frequent rejection reason merged across synapse and neuron analysis. Omitted when no rejections were recorded (e.g. an environmentally-gated pass). |
+| `rejectionBreakdown` | Merged synapse + neuron rejection counts keyed by stable reason name. Omitted when empty. |
+| `droughtDiagnostic` | Same shape as `synapseMetadata.droughtDiagnostic` (Issue #1202). Present only while in drought. |
+| `creatureDroughtAlarm` | Same shape as `synapseMetadata.creatureDroughtAlarm` (Issue #1424). Present only on the alarm-crossing pass. |
+| `environmentalGates` | Host-environment gate flags for this pass (see below). |
+| `environmentalGates.memoryBudgetExceeded` | `true` when the Rust-side memory budget (`maxAnalysisMemoryMb`) was exceeded. |
+| `environmentalGates.memoryPressureCancelled` | `true` when analysis was cancelled under CRITICAL system memory pressure. |
+| `environmentalGates.cancelled` | `true` when the host requested graceful cancellation via `cancel_analysis()`. |
+| `environmentalGates.environmentallyDisabled` | `"memoryGated"`, `"memoryPressure"`, or `"gpuUnavailable"` when the pass was gated before evaluating the creature (Issue #1421); omitted otherwise. A gated pass is **not** evidence of search exhaustion. |
+
 ### Neuron Identity Contract (Issue #952)
 
 All neuron and synapse identity fields in FFI JSON payloads must use **stable UUID
