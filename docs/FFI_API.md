@@ -400,6 +400,50 @@ per `analyze_all` invocation when the diagnostic fires.
 | `totalCandidatesConsidered` | `totalCandidatesRejected + candidatesReturned`. |
 | `totalCandidatesRejected` | Sum across the rejection breakdown. |
 
+### Failure-Cache Handshake (Issue #1447)
+
+Rust proposes candidates; NEAT-AI (`CandidateFiltering.ts`) then **drops every
+candidate whose identity matches the per-creature failure cache before Phase-1
+evaluation**. When a plateaued creature re-proposes only cache-suppressed
+edits, every built candidate is filtered out and the operator sees
+`Built 0 candidates` — the drought persists even though Rust returned a full
+batch. To close this cross-stack gap, every analysis response carries two
+always-present fields on both `synapseMetadata` and `neuronMetadata`:
+
+```json
+{
+  "synapseMetadata": {
+    "failureCacheSuppressedCount": 2,
+    "noveltyEscalationActive": true,
+    "rejectionBreakdown": { "duplicate_of_failure_cache": 2 }
+  },
+  "neuronMetadata": {
+    "failureCacheSuppressedCount": 0,
+    "noveltyEscalationActive": true
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `failureCacheSuppressedCount` | Number of **returned** candidates on this surface whose identity (`changeType` + target neuron + squash) matches a `failureCache` entry — i.e. how many NEAT-AI will drop. Always present (`0` when none). |
+| `noveltyEscalationActive` | Creature-level flag: `true` when the creature is plateaued (`rollingSuccessRate < NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD`) **and** the failure cache suppresses at least `NEAT_AI_DISCOVERY_NOVELTY_SUPPRESSION_RATIO` (default `0.8`) of the returned candidates. Identical on both surfaces. |
+
+The suppressed count is also wired into `rejectionBreakdown` under the stable
+reason `duplicate_of_failure_cache`, so duplicate suppression is no longer
+invisible in the Rust-side rejection stats.
+
+**Handshake contract.** When `noveltyEscalationActive` is `true`, the NEAT-AI
+consumer should **skip its failure-cache filter for the top-K candidates** of
+this pass (mirroring the Issue #1423 novelty-escalation intent) so at least one
+candidate reaches Phase-1 evaluation instead of being suppressed as a known
+failure. When `false`, the failure-cache filter applies as normal. Identity
+matching uses the same tuple NEAT-AI keys on: an entry field left unset
+(`targetUuid`, `targetSquash`) acts as a wildcard, so a target-agnostic
+`coordinated-structural` failure entry still suppresses any coordinated
+candidate. The TypeScript-side filter bypass is tracked as a separate NEAT-AI
+change.
+
 ### Neuron Identity Contract (Issue #952)
 
 All neuron and synapse identity fields in FFI JSON payloads must use **stable UUID

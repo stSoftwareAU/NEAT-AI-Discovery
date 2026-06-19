@@ -192,6 +192,22 @@ pub struct SynapseAnalysisMetadataJson {
     /// [`analysis::discovery_mode::ROLLING_WINDOW`] discovery passes
     /// (Issue #1132).
     pub rolling_success_rate: f32,
+    /// Number of returned candidates whose identity matches the per-creature
+    /// failure cache (Issue #1447).
+    ///
+    /// These are the candidates NEAT-AI's failure-cache filter
+    /// (`CandidateFiltering.ts`) will drop before Phase-1 evaluation. Lets the
+    /// host log when Rust proposed candidates that TS then suppressed —
+    /// root-causing `Built 0 candidates` without re-running analysis.
+    pub failure_cache_suppressed_count: usize,
+    /// Whether Rust-side novelty escalation is active this pass (Issue #1447).
+    ///
+    /// `true` when the creature is plateaued **and** the failure cache is
+    /// suppressing the bulk of the returned candidates. The handshake contract:
+    /// when set, NEAT-AI should bypass its failure-cache filter for the top-K
+    /// candidates so at least one reaches Phase-1 evaluation. See
+    /// `docs/FFI_API.md`.
+    pub novelty_escalation_active: bool,
     /// Drought diagnostic payload (Issue #1202).
     ///
     /// Populated only when the trailing-failure streak crosses the configured
@@ -346,6 +362,13 @@ pub struct NeuronAnalysisMetadataJson {
     /// Rolling success rate over the most recent discovery passes
     /// (Issue #1132).
     pub rolling_success_rate: f32,
+    /// Number of returned candidates suppressed by the failure cache
+    /// (Issue #1447). See
+    /// `SynapseAnalysisMetadataJson::failure_cache_suppressed_count`.
+    pub failure_cache_suppressed_count: usize,
+    /// Whether Rust-side novelty escalation is active this pass (Issue #1447).
+    /// See `SynapseAnalysisMetadataJson::novelty_escalation_active`.
+    pub novelty_escalation_active: bool,
     /// Drought diagnostic payload (Issue #1202). See
     /// `SynapseAnalysisMetadataJson::drought_diagnostic` for full docs.
     #[serde(skip_serializing_if = "Option::is_none")]
