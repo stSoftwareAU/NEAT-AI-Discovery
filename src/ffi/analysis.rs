@@ -126,6 +126,7 @@ pub unsafe extern "C" fn rank_focus_neurons(
                     success: false,
                     schema_version: SCHEMA_VERSION.to_string(),
                     neurons: None,
+                    focus_selection: None,
                     removal_candidates: None,
                     constant_neuron_removals: None,
                     max_output_error: None,

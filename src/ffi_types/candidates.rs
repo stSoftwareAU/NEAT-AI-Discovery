@@ -288,6 +288,12 @@ pub struct RankedNeuronJson {
     /// Activation-weighted impact = `structural_impact` × `mean_activation`
     /// This reflects the actual contribution the neuron makes during inference
     pub activation_weighted_impact: f32,
+    /// Issue #1445: Combined impact-weighted ranking score (error × impact^γ ×
+    /// gradient × frequency × history) — the same value the focus list is
+    /// ordered by and the roulette weight used for diversity-aware focus
+    /// selection. Surfaced so callers can reuse the Rust weight directly rather
+    /// than recomputing a (squared) weight that re-concentrates onto one neuron.
+    pub weighted_score: f32,
 }
 
 /// A neuron with activation-weighted impact below costOfGrowth threshold - candidate for removal.

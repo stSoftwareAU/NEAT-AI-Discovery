@@ -697,9 +697,35 @@ fn build_ranked_neurons(
                 activation_weighted_impact,
                 gradient_flow,
                 activation_frequency,
+                // Issue #1445: populated after construction by the ranking pass
+                // via compute_focus_weighted_score; 0.0 is a safe placeholder.
+                weighted_score: 0.0,
             })
         })
         .collect::<Result<Vec<_>>>()
+}
+
+/// Compute the combined impact-weighted ranking score for a neuron (Issue
+/// #1445). This is the single source of truth for both the focus-list ordering
+/// and the roulette weight used by diversity-aware focus selection.
+///
+/// Score = `error × (impact + ε)^γ × gradient_factor × frequency_factor`, scaled
+/// by the optional Bayesian history multiplier `0.5 + history` (Issue #227) when
+/// a per-neuron history factor is supplied. With no history the multiplier is
+/// absent and the ordering matches the non-history path.
+#[must_use]
+pub(super) fn compute_focus_weighted_score(
+    neuron: &RankedNeuron,
+    history_factor: Option<f32>,
+) -> f32 {
+    let base = neuron.total_error * (neuron.impact + IMPACT_EPSILON).powf(IMPACT_GAMMA);
+    let gradient_factor = compute_gradient_flow_factor(&neuron.gradient_flow);
+    let frequency_factor = compute_frequency_factor(neuron.activation_frequency);
+    let with_gradient = base * gradient_factor * frequency_factor;
+    match history_factor {
+        Some(h) => with_gradient * (0.5 + h),
+        None => with_gradient,
+    }
 }
 
 pub fn rank_focus_neurons(
@@ -959,40 +985,25 @@ fn rank_selectable(
     // scaled by a Bayesian success multiplier (0.5 + history). With no history
     // the multiplier is absent and the ordering matches the non-history path.
     let history = args.history;
+
+    // Issue #1445: Precompute and store each neuron's combined weighted score
+    // once (error × impact^γ × gradient × frequency × history). Storing it on
+    // the neuron gives the sort comparator and the downstream diversity-aware
+    // focus selection a single source of truth — and avoids recomputing the
+    // score on every comparison.
+    //
+    // History factor is in [0, 1], where 0.5 is neutral (Issue #227):
+    // - 0.5 (neutral) → multiplier of 1.0 (no change)
+    // - 1.0 (perfect success) → multiplier of 1.5 (50% boost)
+    // - 0.0 (complete failure) → multiplier of 0.5 (50% penalty)
+    for neuron in &mut neurons {
+        let history_factor = history.map(|h| h.bayesian_score_for(&neuron.neuron_uuid) as f32);
+        neuron.weighted_score = compute_focus_weighted_score(neuron, history_factor);
+    }
+
     neurons.sort_by(|a, b| {
-        // Base weighted score: error × impact^gamma
-        let a_base = a.total_error * (a.impact + IMPACT_EPSILON).powf(IMPACT_GAMMA);
-        let b_base = b.total_error * (b.impact + IMPACT_EPSILON).powf(IMPACT_GAMMA);
-
-        // Issue #206: Apply gradient flow factor
-        let a_gradient_factor = compute_gradient_flow_factor(&a.gradient_flow);
-        let b_gradient_factor = compute_gradient_flow_factor(&b.gradient_flow);
-
-        // Issue #204: Apply activation frequency factor
-        let a_frequency_factor = compute_frequency_factor(a.activation_frequency);
-        let b_frequency_factor = compute_frequency_factor(b.activation_frequency);
-
-        let a_with_gradient = a_base * a_gradient_factor * a_frequency_factor;
-        let b_with_gradient = b_base * b_gradient_factor * b_frequency_factor;
-
-        // Issue #227: Apply history factor if available.
-        // History factor is in [0, 1], where 0.5 is neutral:
-        // - 0.5 (neutral) → multiplier of 1.0 (no change)
-        // - 1.0 (perfect success) → multiplier of 1.5 (50% boost)
-        // - 0.0 (complete failure) → multiplier of 0.5 (50% penalty)
-        let (a_weighted, b_weighted) = if let Some(h) = history {
-            let a_history = h.bayesian_score_for(&a.neuron_uuid) as f32;
-            let b_history = h.bayesian_score_for(&b.neuron_uuid) as f32;
-            (
-                a_with_gradient * (0.5 + a_history),
-                b_with_gradient * (0.5 + b_history),
-            )
-        } else {
-            (a_with_gradient, b_with_gradient)
-        };
-
-        b_weighted
-            .total_cmp(&a_weighted)
+        b.weighted_score
+            .total_cmp(&a.weighted_score)
             .then_with(|| b.impact.total_cmp(&a.impact))
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });

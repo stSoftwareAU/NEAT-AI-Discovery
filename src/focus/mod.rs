@@ -21,6 +21,7 @@ mod gradient;
 mod impact;
 pub(crate) mod layers;
 pub(crate) mod ranking;
+pub mod selection;
 
 #[cfg(test)]
 mod tests;
@@ -43,6 +44,12 @@ pub use impact::{
     ConsumerContract, MARGIN_WEIGHT_EPS, OutputGate, compute_impacts_public,
     compute_impacts_with_activations, compute_impacts_with_contract, compute_per_obs_margins,
     compute_selection_stats, derive_regime_threshold_from_records, margin_weights_from_margins,
+};
+
+// From selection (Issue #1445)
+pub use selection::{
+    CONCENTRATION_WARN_THRESHOLD, DROUGHT_ROTATION_POOL_FACTOR, FocusCandidate, FocusSelection,
+    select_focus_neurons, weight_concentration_ratio,
 };
 
 // From ranking

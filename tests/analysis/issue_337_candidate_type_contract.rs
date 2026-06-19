@@ -364,6 +364,7 @@ fn rank_focus_neurons_output_contains_removal_candidate_fields() {
         success: true,
         schema_version: neat_ai_discovery::SCHEMA_VERSION.to_string(),
         neurons: Some(vec![]),
+        focus_selection: None,
         removal_candidates: Some(vec![]),
         constant_neuron_removals: Some(vec![]),
         max_output_error: Some(0.01),

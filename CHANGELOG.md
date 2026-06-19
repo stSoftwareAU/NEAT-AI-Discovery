@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+#### Diversity-aware focus selection (Issue #1445)
+
+On a plateaued mature network a single high-impact neuron could hold ~98.5% of
+the focus-selection roulette weight (production GRQ-3 creature), so the weighted
+roulette collapsed to a single target and discovery revisited the same
+neighbourhood every pass. Impact-weighted ranking only ordered neurons; it did
+not enforce diversity in the final focus set.
+
+- New `src/focus/selection.rs` (`select_focus_neurons`) adds a deterministic
+  selection layer over the ranked list with a **diversity floor** (stratified
+  pick across the ranked bands when one neuron exceeds its even `1/N` share) and
+  **drought-aware round-robin rotation** across the top `K × N` neurons once
+  `epochsSinceLastAcceptedCandidate` reaches the drought threshold
+  (`NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD`, #1202).
+- `rank_focus_neurons` now returns a `focusSelection` block
+  (`selected`, `rawWeightConcentrationRatio`, `weightConcentrationRatio`,
+  `diversityFloorApplied`, `rotationApplied`, `poolSize`) and each ranked neuron
+  carries its `weightedScore`. A `focus_selection_weight_concentration_high`
+  WARN fires when the raw concentration exceeds `0.5`.
+- New optional FFI inputs `epochsSinceLastAcceptedCandidate` and `focusSetSize`
+  (default 6); both are backwards compatible when omitted.
+
 ### Fixed
 
 #### Harmful-neuron (remove-neuron) failure-cache calibration correction (Issue #1425)

@@ -93,6 +93,70 @@ All knobs are defined in the README
 
 ---
 
+## 6. Diversity floor and drought rotation (Issue #1445)
+
+Impact-weighted ranking only **orders** neurons; it does not enforce
+**diversity** in the final focus set. On a plateaued mature network a single
+high-impact neuron can hold the vast majority of the roulette weight — on the
+production GRQ-3 creature one neuron held **~98.5%** of the weight, so the
+weighted roulette collapsed to a **single target** and discovery revisited the
+same neighbourhood every pass.
+
+[`src/focus/selection.rs`](../src/focus/selection.rs) adds a deterministic
+selection layer over the ranked list (`select_focus_neurons`). Each ranked
+neuron now carries its combined `weighted_score` (surfaced as `weightedScore` on
+each `neurons[]` entry), which is the roulette weight selection operates on.
+
+The FFI surfaces a `focusSelection` block on the `rank_focus_neurons` response:
+
+| Field | Meaning |
+|-------|---------|
+| `selected` | The chosen focus uuids, in order. |
+| `rawWeightConcentrationRatio` | max weight ÷ sum over the ranked pool — the diagnostic that exposes single-target collapse (~0.985 on GRQ-3). |
+| `weightConcentrationRatio` | Concentration **after** the diversity floor / rotation — below `0.5` for any focus set of 3+ targets. |
+| `diversityFloorApplied` / `rotationApplied` | Which guard fired. |
+| `poolSize` | Candidates considered (rotation pool under drought, else the full ranked count). |
+
+When `rawWeightConcentrationRatio` exceeds `0.5` the crate emits a single
+`focus_selection_weight_concentration_high` WARN naming both ratios and which
+guard corrected it.
+
+### Diversity floor
+
+When one neuron exceeds its even `1/N` share of the roulette weight, the final
+set is picked **stratified** across the ranked list: the list is divided into
+`N` contiguous bands and the strongest neuron of each band is taken. Band 0
+keeps the dominant neuron; later bands draw from progressively lower-ranked
+regions, guaranteeing quartile-style coverage instead of "dominant + N−1 noise".
+
+### Drought-aware rotation
+
+Once the creature's `epochsSinceLastAcceptedCandidate` meets or exceeds the
+drought threshold (`NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD`, Issue #1202),
+selection switches from weighted ranking to **round-robin** across the top
+`K × N` ranked neurons (K = `DROUGHT_ROTATION_POOL_FACTOR` = 3). The epoch count
+seeds the rotation cursor, so successive passes pick fresh targets and the
+unexplored tail of the ranking finally gets analysis budget.
+
+> **Caller contract.** The focus-set size `N` comes from `focusSetSize`
+> (default 6, NEAT-AI's `discoveryMaxNeurons`); the candidate pool is the
+> `maxResults` ranked neurons. For rotation to draw from unexplored targets,
+> pass `maxResults >= K × N`.
+
+```mermaid
+flowchart TD
+    R[Ranked neurons<br/>weightedScore each] --> C{epochs >= drought<br/>threshold?}
+    C -- Yes --> RR[Round-robin across top K×N<br/>cursor = epochs]
+    C -- No --> D{max weight share<br/>over 1/N?}
+    D -- Yes --> ST[Stratified pick:<br/>strongest of each of N bands]
+    D -- No --> TN[Weighted top-N]
+    RR --> O[focusSelection<br/>concentration ratio + WARN if raw over 0.5]
+    ST --> O
+    TN --> O
+```
+
+---
+
 ## End-to-end flow
 
 ```mermaid
@@ -114,6 +178,8 @@ flowchart TD
 - [docs/IMPACT_CALCULATION.md](IMPACT_CALCULATION.md) — how neuron impact is
   estimated.
 - [`src/focus/`](../src/focus/) — the ranking implementation
-  (`ranking/mod.rs`, `impact.rs`, `gradient.rs`, `layers.rs`, `allocation.rs`).
+  (`ranking/mod.rs`, `impact.rs`, `gradient.rs`, `layers.rs`, `allocation.rs`,
+  `selection.rs`).
 - Issues: #1373 (incident), #1374, #1375, #1376, #1377, #1385 (guard work);
-  #1382, #1386 (this confirmation).
+  #1382, #1386 (this confirmation); #1445 (diversity floor and drought
+  rotation).

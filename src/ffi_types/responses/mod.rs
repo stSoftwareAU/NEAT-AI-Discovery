@@ -65,6 +65,34 @@ pub struct GetVersionOutput {
     pub retryable: Option<bool>,
 }
 
+/// Diversity-aware focus-selection diagnostics (Issue #1445).
+///
+/// Surfaces the final focus set the diversity floor / drought rotation chose
+/// over the impact-ranked list, plus the concentration metrics that motivated
+/// it. Serialised as `focusSelection` on [`RankFocusNeuronsOutput`].
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FocusSelectionJson {
+    /// Selected neuron uuids, in selection order — the focus set the caller
+    /// should analyse this pass.
+    pub selected: Vec<String>,
+    /// Concentration ratio (max weight ÷ sum) of the **raw** roulette weights
+    /// over the ranked pool. The diagnostic that exposes single-target
+    /// collapse — ~0.985 on the GRQ-3 plateau fixture.
+    pub raw_weight_concentration_ratio: f32,
+    /// Concentration ratio after the diversity floor / rotation is applied.
+    /// Below [`crate::focus::CONCENTRATION_WARN_THRESHOLD`] for any focus set of
+    /// 3+ targets.
+    pub weight_concentration_ratio: f32,
+    /// Whether the diversity floor reshaped the selection.
+    pub diversity_floor_applied: bool,
+    /// Whether drought-aware round-robin rotation was used.
+    pub rotation_applied: bool,
+    /// Number of candidates considered (rotation pool size under drought, else
+    /// the full ranked candidate count).
+    pub pool_size: usize,
+}
+
 /// FFI response payload returned by the `rank_focus_neurons` FFI entry
 /// point — ranked neurons, removal candidates, coordinated structural
 /// candidates, and observability fields for the chosen loading mode.
@@ -76,6 +104,12 @@ pub struct RankFocusNeuronsOutput {
     pub schema_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neurons: Option<Vec<RankedNeuronJson>>,
+    /// Diversity-aware focus selection over the ranked neurons (Issue #1445).
+    /// Carries the chosen focus set, the raw vs effective concentration ratios,
+    /// and whether the diversity floor or drought rotation fired. Omitted on
+    /// error paths and when no ranking pass ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focus_selection: Option<FocusSelectionJson>,
     /// Neurons with high error but very low impact - candidates for removal
     #[serde(skip_serializing_if = "Option::is_none")]
     pub removal_candidates: Option<Vec<RemovalCandidateJson>>,
