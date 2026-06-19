@@ -971,6 +971,51 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
     } // end if !memory_budget_exceeded (Issue #1028)
 
+    // Issue #1448: Deprioritise destructive remove-neuron candidates during a
+    // search-exhaustion drought. On a plateaued dense creature the remove-neuron
+    // path dominates the failure cache (bucket `247b83ab`) with low-impact
+    // proposals that never pass scoring, starving the constructive modules. When
+    // the trailing-failure streak marks an active, search-exhausted drought
+    // (the #1424/#1421 classification — environmental droughts are left alone),
+    // demote single-op remove-neuron gains so they sort below add-synapse /
+    // squash / multi-op coordinated candidates and the most over-confident ones
+    // fall through the noise floor applied immediately below. Runs before the
+    // final gain floor so the demoted gains are screened in the same pass.
+    if let Some(syn) = synapse_result.as_mut() {
+        let drought_threshold = super::drought_diagnostic::drought_threshold_for_task(
+            crate::config::drought_log_threshold(),
+            &task_descriptor,
+        );
+        let deprioritisation_inputs = super::remove_neuron_drought::DroughtDeprioritisationInputs {
+            consecutive_failures: outcome_log.consecutive_trailing_failures(),
+            environmentally_disabled_passes: outcome_log.environmentally_disabled_passes,
+            drought_threshold,
+        };
+        let factor = super::remove_neuron_drought::remove_neuron_deprioritisation_factor(
+            &deprioritisation_inputs,
+            crate::config::remove_neuron_drought_factor(),
+        );
+        let demoted = super::remove_neuron_drought::deprioritise_remove_neuron_candidates(
+            &mut syn.coordinated_structural_candidates,
+            factor,
+        );
+        if demoted > 0 {
+            syn.metadata.rejection_breakdown.record_many_u32(
+                super::diagnostics::rejection_reasons::REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED,
+                demoted,
+            );
+            tracing::warn!(
+                demoted,
+                factor,
+                drought_threshold,
+                consecutive_failures = deprioritisation_inputs.consecutive_failures,
+                "Issue #1448: search-exhaustion drought — deprioritised {demoted} \
+                 remove-neuron candidate(s) by {factor}× in favour of constructive \
+                 change types"
+            );
+        }
+    }
+
     // Issue #1110, #1128, #1139: Final coordinated-structural gain floor.
     //
     // MUST run unconditionally — outside the memory/deadline guard — because

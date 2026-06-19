@@ -60,6 +60,7 @@ pub mod novelty_escalation;
 pub mod one_hot_class_allocation;
 pub mod quantised_error;
 pub mod recent_failure_window;
+pub mod remove_neuron_drought;
 pub mod samples;
 pub mod scale_outcomes;
 pub mod shared;

@@ -8,6 +8,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+#### Deprioritise remove-neuron candidates during a search-exhaustion drought (Issue #1448)
+
+On the plateaued GRQ-3 production creature (#1418, 1673 neurons at score
+~0.4224) the destructive remove-neuron path dominated the failure cache (bucket
+`247b83ab`: 9 of 11 files) with low-impact proposals that never pass scoring.
+The #1425 failure-cache calibration shrinks remove-neuron predictions but only
+*after* the failures are cached, so it cannot stop the first wave of
+over-confident proposals on a creature whose search is already exhausted.
+
+- New `analysis::remove_neuron_drought` module. When the trailing-failure streak
+  reaches the (task-calibrated) drought threshold **and** the drought classifies
+  as `search_exhaustion` (reusing the #1421/#1424 environmental-vs-exhaustion
+  disambiguation), single-op `RemoveNeuron` coordinated candidates have their
+  `expectedCreatureScoreGain` multiplied by a deprioritisation factor (default
+  `0.1`). The demoted gains sort below the constructive change types
+  (add-synapse / squash / multi-op coordinated) and the most over-confident ones
+  fall through the existing coordinated noise floor, so the destructive module
+  yields budget to the constructive ones during a plateau.
+- Environmental droughts (memory / GPU gated passes) are left untouched — only a
+  genuine search-exhaustion drought triggers the deprioritisation.
+- New `NEAT_AI_DISCOVERY_REMOVE_NEURON_DROUGHT_FACTOR` lever (clamped
+  `[0.001, 1.0]`; `1.0` disables). Demotions are counted under the new
+  `remove_neuron_drought_deprioritised` rejection reason and a single
+  `tracing::warn!` reports how many candidates were demoted.
+
 #### Zero-candidate summary on the analysis response (Issue #1446)
 
 When a discovery pass found nothing, operators saw an unhelpful "Built 0
