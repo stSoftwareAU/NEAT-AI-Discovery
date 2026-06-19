@@ -38,6 +38,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 cancelled: None,
                 memory_pressure_cancelled: None,
                 environmentally_disabled: None,
+                zero_candidate_summary: None,
                 error: Some(typed.to_string()),
                 error_kind: Some(kind),
                 retryable: Some(kind.is_retryable()),
@@ -76,6 +77,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
             cancelled: None,
             memory_pressure_cancelled: None,
             environmentally_disabled: None,
+            zero_candidate_summary: None,
             error: Some(typed.to_string()),
             error_kind: Some(kind),
             retryable: Some(kind.is_retryable()),
@@ -181,6 +183,52 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
             );
             let novelty_escalation_active = handshake.novelty_escalation_active;
 
+            // Issue #1446: when a pass produces no candidates of any kind,
+            // attach a consolidated `zeroCandidateSummary` so operators can see
+            // the dominant rejection reason without opening JSON sidecars.
+            let has_candidates = synapse.as_ref().is_some_and(|s| {
+                !s.helpful_synapses.is_empty()
+                    || !s.harmful_synapses.is_empty()
+                    || !s.synapse_weight_updates.is_empty()
+                    || !s.coordinated_structural_candidates.is_empty()
+            }) || neuron
+                .as_ref()
+                .is_some_and(|n| !n.helpful_neurons.is_empty());
+
+            let zero_candidate_summary = if has_candidates {
+                None
+            } else {
+                let environmental_gates = EnvironmentalGatesJson {
+                    memory_budget_exceeded: result.memory_budget_exceeded,
+                    memory_pressure_cancelled: result.memory_pressure_cancelled,
+                    cancelled: result.cancelled,
+                    environmentally_disabled,
+                };
+                let summary = build_zero_candidate_summary(
+                    synapse.as_ref().map(|s| &s.metadata),
+                    neuron.as_ref().map(|n| &n.metadata),
+                    environmental_gates,
+                );
+                // Emit a single structured WARN naming the dominant reason for
+                // genuinely-empty passes. Environmentally-gated passes already
+                // warned above (Issue #1421), so we don't double-log them.
+                if environmentally_disabled.is_none() {
+                    tracing::warn!(
+                        dominant_rejection_reason = summary
+                            .dominant_rejection_reason
+                            .as_deref()
+                            .unwrap_or("unknown"),
+                        drought_consecutive_failures = summary
+                            .drought_diagnostic
+                            .as_ref()
+                            .map(|d| d.consecutive_failures),
+                        "Issue #1446: discovery pass produced 0 candidates — \
+                         zeroCandidateSummary attached"
+                    );
+                }
+                Some(summary)
+            };
+
             let output = AnalyzeParallelOutput {
                 success: true,
                 schema_version: SCHEMA_VERSION.to_string(),
@@ -278,6 +326,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     None
                 },
                 environmentally_disabled,
+                zero_candidate_summary,
                 error: None,
                 error_kind: None,
                 retryable: None,
@@ -326,6 +375,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 cancelled: None,
                 memory_pressure_cancelled: None,
                 environmentally_disabled,
+                zero_candidate_summary: None,
                 error: Some(err_msg),
                 error_kind,
                 retryable,
