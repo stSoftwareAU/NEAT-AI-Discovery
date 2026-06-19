@@ -102,7 +102,7 @@ pub(crate) fn deserialise_records(data: &[u8]) -> Result<Vec<DiscoverRecord>> {
         if pos + uuid_len > data.len() {
             bail!("Cache truncated at offset {pos}: expected {uuid_len} bytes for UUID");
         }
-        let neuron_uuid = String::from_utf8_lossy(&data[pos..pos + uuid_len]).to_string();
+        let neuron_uuid = String::from_utf8_lossy(&data[pos..pos + uuid_len]).into_owned();
         pos += uuid_len;
 
         // has_value: u8 (1 byte)
@@ -251,6 +251,31 @@ mod tests {
         assert_eq!(deserialized[0].errors, vec![0.1, 0.2]);
         assert_eq!(deserialized[1].value, None);
         assert_eq!(deserialized[2].errors.len(), 3);
+    }
+
+    #[test]
+    fn deserialise_records_invalid_utf8_uuid_uses_lossy_replacement() {
+        // Issue #1456: a UUID field carrying invalid UTF-8 bytes drives
+        // String::from_utf8_lossy into the Cow::Owned branch. into_owned()
+        // must yield the same lossy-decoded value as before.
+        let invalid_uuid = [0x66, 0x6f, 0x6f, 0xff, 0x62, 0x61, 0x72]; // "foo\u{FFFD}bar"
+        let mut data = Vec::new();
+        data.extend_from_slice(&7u32.to_le_bytes()); // obs_index
+        data.extend_from_slice(&(invalid_uuid.len() as u16).to_le_bytes()); // uuid_len
+        data.extend_from_slice(&invalid_uuid); // uuid (invalid UTF-8)
+        data.push(0); // has_value = false
+        data.extend_from_slice(&0.5f32.to_le_bytes()); // activation
+        data.extend_from_slice(&0u16.to_le_bytes()); // errors_len = 0
+
+        let result = deserialise_records(&data).expect("invalid UTF-8 UUID should still decode");
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].neuron_uuid,
+            String::from_utf8_lossy(&invalid_uuid),
+            "neuron_uuid should match the lossy-decoded UUID with the replacement character"
+        );
+        assert!(result[0].neuron_uuid.contains('\u{FFFD}'));
+        assert_eq!(result[0].obs_index, 7);
     }
 
     #[test]
