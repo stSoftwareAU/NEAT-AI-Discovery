@@ -592,6 +592,65 @@ pub fn analysis_reserve_fraction() -> f64 {
     }
 }
 
+/// Default fraction of selected focus neurons that must have zero Parquet rows
+/// before the fail-fast insufficient-recording gate skips analysis (Issue #1444).
+///
+/// `1.0` (the default) means the gate only fires when **every** selected focus
+/// neuron has zero recorded rows — the unambiguous "record phase produced no
+/// usable data for any target" case. Lower it (e.g. `0.5`) to fail fast when at
+/// least that fraction of focus neurons are missing.
+pub const DEFAULT_INSUFFICIENT_RECORDING_FRACTION: f64 = 1.0;
+
+/// Fraction of selected focus neurons with zero Parquet rows above which the
+/// fail-fast insufficient-recording gate skips synapse/neuron analysis
+/// (Issue #1444).
+///
+/// When the record phase times out, many focus neurons can have zero Parquet
+/// rows, so the GPU analysis is guaranteed to return nothing yet still consumes
+/// the full analysis budget. This gate detects that scenario cheaply (an
+/// in-memory record-count scan) and skips the wasted work, surfacing
+/// `insufficient_recording` as the dominant rejection reason instead.
+///
+/// Override with `NEAT_AI_DISCOVERY_INSUFFICIENT_RECORDING_FRACTION`:
+/// - Unset / empty / non-finite / out of range: returns
+///   `Some(`[`DEFAULT_INSUFFICIENT_RECORDING_FRACTION`]`)`.
+/// - `0`: disables the gate (opt-out — analysis always runs).
+/// - Any finite value in `(0.0, 1.0]`: that fraction.
+#[must_use]
+pub fn insufficient_recording_fraction() -> Option<f64> {
+    resolve_insufficient_recording_fraction(
+        std::env::var("NEAT_AI_DISCOVERY_INSUFFICIENT_RECORDING_FRACTION")
+            .ok()
+            .as_deref(),
+    )
+}
+
+/// Resolve the insufficient-recording zero-row fraction from a raw env value
+/// (Issue #1444).
+///
+/// Pure function for testability (no environment access). Returns:
+/// - `None` when `raw` parses to `0` — the explicit operator opt-out.
+/// - `Some(v)` for any finite value in `(0.0, 1.0]`.
+/// - `Some(`[`DEFAULT_INSUFFICIENT_RECORDING_FRACTION`]`)` when `raw` is `None`,
+///   empty, non-finite, or out of range.
+#[must_use]
+pub fn resolve_insufficient_recording_fraction(raw: Option<&str>) -> Option<f64> {
+    let Some(value) = raw else {
+        return Some(DEFAULT_INSUFFICIENT_RECORDING_FRACTION);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Some(DEFAULT_INSUFFICIENT_RECORDING_FRACTION);
+    }
+    match trimmed.parse::<f64>() {
+        // A valid in-range fraction is honoured.
+        Ok(v) if v.is_finite() && v > 0.0 && v <= 1.0 => Some(v),
+        // Exactly `0` is the explicit opt-out (disable the gate).
+        Ok(v) if v.is_finite() && v == 0.0 => None,
+        _ => Some(DEFAULT_INSUFFICIENT_RECORDING_FRACTION),
+    }
+}
+
 /// Default perf-cliff threshold (in milliseconds) for a lazy focus-ranking
 /// pass (Issue #1377). When a *lazy* pass runs longer than this, a single,
 /// clearly-labelled perf-cliff `WARN` is emitted naming the neuron count and

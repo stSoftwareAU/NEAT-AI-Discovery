@@ -291,6 +291,27 @@ impl RecordCache {
         self.cache.read().is_empty()
     }
 
+    /// Total number of records currently materialised in the cache (Issue #1444).
+    ///
+    /// Sums the record counts of every already-loaded neuron entry without
+    /// triggering any lazy loads. In pre-loaded mode (the common case after a
+    /// full parquet scan) this is the total record count of the file; in lazy
+    /// mode it counts only the neurons fetched so far. Used by the fail-fast
+    /// insufficient-recording gate to report how many records the record phase
+    /// actually produced.
+    #[must_use]
+    pub fn loaded_record_count(&self) -> usize {
+        self.cache
+            .read()
+            .values()
+            .map(|cell| {
+                cell.get()
+                    .and_then(|result| result.as_ref().ok())
+                    .map_or(0, |records| records.len())
+            })
+            .sum()
+    }
+
     /// Load records for a slice of neuron UUIDs in one call (Issue #493).
     ///
     /// Returns `(uuid, records)` pairs for each UUID.

@@ -119,6 +119,15 @@ pub const REJECTION_BELOW_THRESHOLD: &str = "below_threshold";
 /// phase likely timed out).
 pub const REJECTION_NO_TARGET_RECORDS: &str = "no_target_records";
 
+/// Analysis was skipped before any GPU work because the selected focus neurons
+/// had insufficient Parquet coverage — the record phase produced zero rows for
+/// (at least the configured fraction of) the focus neurons, so analysis was
+/// guaranteed to return nothing (Issue #1444). Distinct from
+/// [`REJECTION_NO_TARGET_RECORDS`], which is recorded per-target *during*
+/// analysis; this reason fails fast *before* analysis to avoid spending the
+/// full budget on a guaranteed-empty pass.
+pub const REJECTION_INSUFFICIENT_RECORDING: &str = "insufficient_recording";
+
 /// Target had no upstream neurons eligible for analysis.
 pub const REJECTION_NO_ELIGIBLE_SOURCES: &str = "no_eligible_sources";
 
@@ -182,6 +191,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_ZERO_IMPROVEMENT,
     REJECTION_BELOW_THRESHOLD,
     REJECTION_NO_TARGET_RECORDS,
+    REJECTION_INSUFFICIENT_RECORDING,
     REJECTION_NO_ELIGIBLE_SOURCES,
     REJECTION_INPUT_NEURON_FILTERED,
     REJECTION_HIDDEN_NEURON_FILTERED,
@@ -346,6 +356,11 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_ZERO_IMPROVEMENT => "zero consistent improvement in GPU stats".to_string(),
         REJECTION_BELOW_THRESHOLD => "expected-improvement per-target threshold".to_string(),
         REJECTION_NO_TARGET_RECORDS => "no target activation records".to_string(),
+        REJECTION_INSUFFICIENT_RECORDING => {
+            "insufficient Parquet recording for the selected focus neurons \
+             (record phase likely timed out)"
+                .to_string()
+        }
         REJECTION_NO_ELIGIBLE_SOURCES => "no eligible upstream sources".to_string(),
         REJECTION_INPUT_NEURON_FILTERED => "input-neuron pre-filter".to_string(),
         REJECTION_HIDDEN_NEURON_FILTERED => "hidden-neuron pre-filter".to_string(),

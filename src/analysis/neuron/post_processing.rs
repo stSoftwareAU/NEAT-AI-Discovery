@@ -228,6 +228,8 @@ pub(crate) fn build_neuron_results(
             drought_diagnostic: None,
             // Issue #1424: populated by orchestration on the alarm crossing.
             creature_drought_alarm: None,
+            // Issue #1444: populated by orchestration's fail-fast gate only.
+            insufficient_recording: None,
         },
     })
 }

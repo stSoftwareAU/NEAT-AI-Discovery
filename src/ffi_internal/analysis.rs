@@ -175,6 +175,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     rolling_success_rate: s.metadata.rolling_success_rate,
                     drought_diagnostic: s.metadata.drought_diagnostic.clone(),
                     creature_drought_alarm: s.metadata.creature_drought_alarm.clone(),
+                    insufficient_recording: s.metadata.insufficient_recording.clone(),
                 }),
                 helpful_neurons: neuron.as_ref().map(|n| n.helpful_neurons.clone()),
                 synapse_weight_updates,
@@ -202,6 +203,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     rolling_success_rate: n.metadata.rolling_success_rate,
                     drought_diagnostic: n.metadata.drought_diagnostic.clone(),
                     creature_drought_alarm: n.metadata.creature_drought_alarm.clone(),
+                    insufficient_recording: n.metadata.insufficient_recording.clone(),
                 }),
                 neuron_fingerprints: result.neuron_fingerprints,
                 fingerprint_cache_hits: if result.fingerprint_cache_hits > 0 {

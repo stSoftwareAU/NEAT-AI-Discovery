@@ -575,6 +575,62 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         });
     }
 
+    // Issue #1444: Fail-fast insufficient-recording gate. When the record phase
+    // times out, the selected focus neurons can have zero Parquet rows, so the
+    // full synapse/neuron analysis is guaranteed to return nothing yet still
+    // burns the entire analysis budget. Detect that cheaply here (an in-memory
+    // record-count scan of the just-loaded cache) and skip the wasted GPU work,
+    // surfacing `insufficient_recording` as the dominant rejection reason in the
+    // performance-summary metadata. Disabled via
+    // NEAT_AI_DISCOVERY_INSUFFICIENT_RECORDING_FRACTION=0.
+    if let Some(fraction) = crate::config::insufficient_recording_fraction() {
+        let coverage = super::insufficient_recording::assess_focus_recording_coverage(
+            &shared_cache,
+            &effective_focus_neurons,
+        );
+        if super::insufficient_recording::is_insufficient_recording(&coverage, fraction) {
+            let diagnostic = super::insufficient_recording::InsufficientRecordingDiagnostic {
+                focus_neurons_total: coverage.focus_neurons_total,
+                focus_neurons_with_zero_rows: coverage.focus_neurons_with_zero_rows,
+                focus_neuron_records_total: coverage.focus_neuron_records_total,
+                records_processed: shared_cache.loaded_record_count(),
+                threshold_fraction: fraction,
+            };
+            tracing::warn!(
+                focus_neurons_total = diagnostic.focus_neurons_total,
+                focus_neurons_with_zero_rows = diagnostic.focus_neurons_with_zero_rows,
+                records_processed = diagnostic.records_processed,
+                threshold_fraction = fraction,
+                "Issue #1444: insufficient Parquet recording for the selected focus neurons — \
+                 skipping synapse/neuron analysis to avoid spending the full budget on a \
+                 guaranteed-empty pass (record phase likely timed out)"
+            );
+            let synapse = include_synapse.then(|| {
+                super::insufficient_recording::synapse_skip_result(
+                    &diagnostic,
+                    &effective_focus_neurons,
+                )
+            });
+            let neuron = include_neuron.then(|| {
+                super::insufficient_recording::neuron_skip_result(
+                    &diagnostic,
+                    &effective_focus_neurons,
+                )
+            });
+            return Ok(AnalyzeAllResult {
+                synapse,
+                neuron,
+                memory_budget_exceeded: false,
+                cancelled: false,
+                memory_pressure_cancelled: false,
+                neuron_fingerprints: Some(current_fingerprints),
+                fingerprint_cache_hits,
+                fingerprint_cache_misses,
+                module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            });
+        }
+    }
+
     // Issue #1097: Pass the shared absolute deadline to sub-phases so they
     // all count down from the same point in time.
     let synapse_input = if include_synapse {
