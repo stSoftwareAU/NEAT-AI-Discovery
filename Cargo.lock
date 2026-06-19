@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "neat_ai_discovery"
-version = "0.74.99"
+version = "0.74.100"
 dependencies = [
  "anyhow",
  "arrow",
