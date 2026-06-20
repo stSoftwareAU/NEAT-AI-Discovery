@@ -104,6 +104,16 @@ impl ParquetRecordWriter {
         })
     }
 
+    /// Validates and writes a batch of `records` to the underlying Parquet file.
+    ///
+    /// An empty slice is a no-op. Records are split into Arrow-offset-safe
+    /// batches before being appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `records` exceeds the writer's remaining capacity,
+    /// if record validation fails (e.g. an invalid neuron UUID), or if the
+    /// underlying Arrow/Parquet write fails.
     pub fn write_records(&mut self, records: &[DiscoverRecord]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
@@ -202,6 +212,15 @@ impl ParquetRecordWriter {
         Ok(())
     }
 
+    /// Finalises the file, flushing buffered data and closing the writer.
+    ///
+    /// Must be called after the final [`Self::write_records`] to produce a valid
+    /// Parquet file; consumes the writer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if closing the underlying Parquet writer fails (e.g. an
+    /// I/O error while flushing the file footer).
     pub fn finish(self) -> Result<()> {
         self.writer
             .close()
