@@ -102,7 +102,7 @@ pub(crate) fn deserialise_records(data: &[u8]) -> Result<Vec<DiscoverRecord>> {
         if pos + uuid_len > data.len() {
             bail!("Cache truncated at offset {pos}: expected {uuid_len} bytes for UUID");
         }
-        let neuron_uuid = String::from_utf8_lossy(&data[pos..pos + uuid_len]).to_string();
+        let neuron_uuid = String::from_utf8_lossy(&data[pos..pos + uuid_len]).into_owned();
         pos += uuid_len;
 
         // has_value: u8 (1 byte)
@@ -251,6 +251,34 @@ mod tests {
         assert_eq!(deserialized[0].errors, vec![0.1, 0.2]);
         assert_eq!(deserialized[1].value, None);
         assert_eq!(deserialized[2].errors.len(), 3);
+    }
+
+    #[test]
+    fn deserialise_records_invalid_utf8_uuid() {
+        // Issue #1456: the UUID is decoded with `String::from_utf8_lossy(..).into_owned()`.
+        // On the invalid-UTF-8 path the lossy decode replaces each bad byte with U+FFFD
+        // and `into_owned()` takes ownership of that buffer without re-allocating.
+        // Build a record by hand with invalid UTF-8 bytes in the UUID field.
+        let mut data = Vec::new();
+        data.extend_from_slice(&7u32.to_le_bytes()); // obs_index
+        let uuid_bytes = [0xFF, 0xFE, b'i', b'd']; // 0xFF/0xFE are invalid UTF-8
+        data.extend_from_slice(&(uuid_bytes.len() as u16).to_le_bytes());
+        data.extend_from_slice(&uuid_bytes);
+        data.push(0); // has_value = false
+        data.extend_from_slice(&0.5f32.to_le_bytes()); // activation
+        data.extend_from_slice(&0u16.to_le_bytes()); // errors_len = 0
+
+        let result = deserialise_records(&data);
+        assert!(
+            result.is_ok(),
+            "Invalid UTF-8 in the UUID should decode lossily, not error"
+        );
+        let records = result.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].obs_index, 7);
+        // Each invalid byte becomes the Unicode replacement character U+FFFD.
+        assert_eq!(records[0].neuron_uuid, "\u{FFFD}\u{FFFD}id");
+        assert_eq!(records[0].activation, 0.5);
     }
 
     #[test]
