@@ -340,6 +340,8 @@ pub struct AnalyzeAllInput {
     pub cost_name: Option<String>,
 }
 
+/// JSON input for the `rank_focus_neurons` FFI function — the parquet file,
+/// creature, and focus-selection tuning knobs.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RankFocusNeuronsInput {
@@ -405,6 +407,8 @@ pub struct RankFocusNeuronsInput {
 /// (Issue #1445). Matches NEAT-AI's `discoveryMaxNeurons` default.
 pub const DEFAULT_FOCUS_SET_SIZE: usize = 6;
 
+/// JSON input for the `merge_discovery_parquet` FFI function — the input
+/// Parquet files to merge and the destination output file.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeParquetInput {

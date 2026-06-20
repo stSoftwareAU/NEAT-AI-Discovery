@@ -15,6 +15,8 @@ use std::collections::HashMap;
 /// For IF: probability this synapse's branch is taken (condition always 1.0).
 pub type SelectionStats = HashMap<(String, String), f32>;
 
+/// A single neuron's focus-ranking metrics derived from its recorded samples:
+/// error, impact, activation statistics, and the combined ranking score.
 #[derive(Debug)]
 pub struct RankedNeuron {
     pub neuron_uuid: String,

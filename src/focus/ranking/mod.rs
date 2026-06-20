@@ -109,6 +109,8 @@ impl FocusLazyReason {
     }
 }
 
+/// Outcome of a focus-ranking pass: the ranked neurons plus removal candidates,
+/// run statistics, and diagnostics produced by [`rank_focus_neurons`].
 #[derive(Debug, Default)]
 pub struct RankFocusStats {
     pub neurons: Vec<RankedNeuron>,
@@ -728,6 +730,33 @@ pub(super) fn compute_focus_weighted_score(
     }
 }
 
+/// Ranks a creature's focus neurons by impact, loading recorded samples from
+/// `parquet_file`.
+///
+/// This is the primary public entry point for focus selection. It computes the
+/// per-neuron ranking score (error × impact, gradient- and frequency-weighted),
+/// orders the neurons, and returns the ranking alongside removal candidates and
+/// run statistics in a [`RankFocusStats`]. `max_results` caps the size of the
+/// returned ranked pool; `cost_of_growth` sets the impact threshold below which
+/// neurons become removal candidates. This is the descriptor-free, deadline-free
+/// convenience wrapper around [`rank_focus_neurons_with_descriptor`].
+///
+/// # Errors
+///
+/// Returns an error if the Parquet file cannot be read, its schema is invalid,
+/// or the underlying impact computation fails.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use neat_ai_discovery::rank_focus_neurons;
+///
+/// let stats = rank_focus_neurons("discovery.parquet", &creature, Some(6), Some(1e-7))?;
+/// for neuron in &stats.neurons {
+///     println!("{}: {}", neuron.neuron_uuid, neuron.weighted_score);
+/// }
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 pub fn rank_focus_neurons(
     parquet_file: &str,
     creature: &CreatureJson,

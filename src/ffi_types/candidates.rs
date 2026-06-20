@@ -200,6 +200,8 @@ pub struct CoordinatedStructuralCandidateJson {
     pub comment: Option<String>,
 }
 
+/// JSON-serialisable `addNeuron` candidate: a proposed hidden neuron bridging a
+/// source and target, with its weights, activation, and expected-gain metrics.
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CandidateNeuronJson {
@@ -276,6 +278,8 @@ pub struct CandidateNeuronJson {
     pub variant_key: Option<String>,
 }
 
+/// JSON-serialisable view of a ranked focus neuron returned to NEAT-AI: its
+/// error, impact, activation metrics, and combined ranking score.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RankedNeuronJson {
