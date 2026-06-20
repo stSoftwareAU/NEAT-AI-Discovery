@@ -6,9 +6,10 @@
 
 // Global tracking allocator — wraps the system allocator to report Rust-side
 // memory usage via FFI (Issue #1027). Overhead is a single atomic add/sub per
-// allocation, which is negligible for polling every 5-30 seconds.
+// allocation, which is negligible for polling every 5-30 seconds. Implemented
+// in-repo (Issue #1463) after the unmaintained `cap` crate was dropped.
 #[global_allocator]
-static ALLOCATOR: cap::Cap<std::alloc::System> = cap::Cap::new(std::alloc::System, usize::MAX);
+static ALLOCATOR: tracking_alloc::TrackingAlloc = tracking_alloc::TrackingAlloc::new();
 
 pub mod activations;
 pub mod analysis;
@@ -27,6 +28,7 @@ pub mod observability;
 pub mod parquet_format;
 pub mod record;
 pub mod streaming;
+pub mod tracking_alloc;
 pub mod types;
 mod watchdog;
 

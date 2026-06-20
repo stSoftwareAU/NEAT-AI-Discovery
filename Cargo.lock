@@ -420,12 +420,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
 
 [[package]]
-name = "cap"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f125eb85b84a24c36b02ed1d22c9dd8632f53b3cde6e4d23512f94021030003"
-
-[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1259,12 +1253,11 @@ dependencies = [
 
 [[package]]
 name = "neat_ai_discovery"
-version = "0.74.104"
+version = "0.74.105"
 dependencies = [
  "anyhow",
  "arrow",
  "bytemuck",
- "cap",
  "criterion",
  "crossbeam-channel",
  "dashmap",
