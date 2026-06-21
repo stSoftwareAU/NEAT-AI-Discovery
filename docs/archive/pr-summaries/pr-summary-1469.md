@@ -13,7 +13,7 @@ Note: a pure `MIN <= DEFAULT <= MAX` assertion on `const` operands is itself
 rejected by Clippy's `assertions_on_constants` lint (the comparison is a
 compile-time constant), so a meaningful runtime test must exercise a
 getter/function rather than the bare constants — reinforcing why the pins added
-no value.
+no value
 
 Closes #1469.
 
