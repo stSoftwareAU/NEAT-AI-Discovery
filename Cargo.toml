@@ -37,6 +37,7 @@ tempfile = "3.27"
 serial_test = "3.5"
 criterion = { version = "0.8", default-features = false, features = ["rayon", "cargo_bench_support"] }
 proptest = "1.11"  # Property-based testing for mathematical functions (Issue #573)
+naga = { version = "29", features = ["wgsl-in"] }  # WGSL parse/validate for shader behaviour tests (Issue #1467)
 
 [[bench]]
 name = "synapse_counts"
