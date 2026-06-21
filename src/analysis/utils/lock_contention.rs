@@ -105,8 +105,8 @@ mod tests {
         assert_eq!(*guard, 0);
     }
 
-    #[test]
-    fn default_threshold_is_100ms() {
-        assert_eq!(DEFAULT_LOCK_WAIT_THRESHOLD, Duration::from_millis(100));
-    }
+    // Tautological `default_threshold_is_100ms` pin removed (Issue #1469): it
+    // only re-asserted the constant's own literal. The default threshold is
+    // exercised behaviourally by `traced_lock_default_acquires_lock` and the
+    // other `traced_lock_default` tests above.
 }

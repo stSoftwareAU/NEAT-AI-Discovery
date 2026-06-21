@@ -478,22 +478,14 @@ impl GpuAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::gpu::shaders::{MIN_NEURON_SAMPLE_COUNT, WORKGROUP_SIZE};
 
-    #[test]
-    fn test_workgroup_size_constant() {
-        assert_eq!(WORKGROUP_SIZE, 256);
-    }
-
-    #[test]
-    fn test_min_neuron_sample_count() {
-        assert_eq!(MIN_NEURON_SAMPLE_COUNT, 10);
-    }
-
-    #[test]
-    fn test_gpu_max_batch_alloc_bytes() {
-        assert_eq!(GPU_MAX_BATCH_ALLOC_BYTES, 256 * 1024 * 1024);
-    }
+    // Tautological constant-pin tests removed (Issue #1469):
+    // `test_workgroup_size_constant`, `test_min_neuron_sample_count` and
+    // `test_gpu_max_batch_alloc_bytes` only re-asserted each constant's own
+    // literal — they could never catch a bug, only flag a deliberate retune.
+    // The WORKGROUP_SIZE invariants (power-of-two, within hardware limits) are
+    // already guarded at compile time in `shaders.rs`; the batch-size tiering
+    // behaviour is covered by `test_batch_size_for_tier` below.
 
     #[test]
     fn test_batch_size_for_tier() {

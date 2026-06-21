@@ -85,10 +85,9 @@ pub fn is_memory_exhaustion_error(error: &anyhow::Error) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_default_retry_limit() {
-        assert_eq!(DEFAULT_GPU_RETRY_LIMIT, 3);
-    }
+    // Tautological `test_default_retry_limit` pin removed (Issue #1469): it only
+    // re-asserted the constant's own literal. The retry-limit parsing behaviour
+    // is exercised through `gpu_retry_limit()` in the config module.
 
     #[test]
     fn test_retry_limit_env_var_name() {
@@ -202,16 +201,10 @@ mod tests {
         assert_eq!(result, 1_000);
     }
 
-    #[test]
-    fn test_default_backoff_constants() {
-        assert_eq!(DEFAULT_BACKOFF_INITIAL_MS, 10);
-        assert_eq!(DEFAULT_BACKOFF_MAX_MS, 1_000);
-    }
-
-    #[test]
-    fn test_minimum_gpu_batch_size_constant() {
-        assert_eq!(MINIMUM_GPU_BATCH_SIZE, 64);
-    }
+    // Tautological `test_default_backoff_constants` and
+    // `test_minimum_gpu_batch_size_constant` pins removed (Issue #1469): they
+    // only re-asserted each constant's literal. The backoff behaviour using
+    // these defaults is covered by `test_backoff_delay_with_default_constants`.
 
     #[test]
     fn test_is_memory_exhaustion_error_detects_oom() {

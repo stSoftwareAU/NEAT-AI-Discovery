@@ -140,10 +140,12 @@ mod tests {
     }
 
     #[test]
-    fn block_size_defaults() {
-        assert_eq!(DEFAULT_BLOCK_SIZE, 10_000);
-        assert_eq!(MIN_BLOCK_SIZE, 10);
-        assert_eq!(MAX_BLOCK_SIZE, 100_000);
+    fn block_size_getter_returns_value_within_bounds() {
+        // WHAT-test: the configured block-size getter must always return a value
+        // within its [MIN, MAX] range, whatever the literals are tuned to. This
+        // exercises the clamp in block_size() rather than pinning the constants.
+        let result = block_size();
+        assert!((MIN_BLOCK_SIZE..=MAX_BLOCK_SIZE).contains(&result));
     }
 
     #[test]
@@ -154,12 +156,9 @@ mod tests {
         assert!(result > 0 && result < 100);
     }
 
-    #[test]
-    fn session_ttl_default_values() {
-        assert_eq!(DEFAULT_SESSION_TTL_SECS, 3600);
-        assert_eq!(MIN_SESSION_TTL_SECS, 60);
-        assert_eq!(MAX_SESSION_TTL_SECS, 86400);
-    }
+    // Tautological `session_ttl_default_values` pin test removed (Issue #1469):
+    // `session_ttl_returns_valid_value` below is the behavioural companion that
+    // asserts the getter stays within [MIN, MAX], making the pin redundant.
 
     #[test]
     fn session_ttl_returns_valid_value() {
@@ -222,12 +221,9 @@ mod tests {
         assert!(delay.as_secs() >= 1);
     }
 
-    #[test]
-    fn wall_clock_minutes_default_values() {
-        assert_eq!(DEFAULT_MAX_WALL_CLOCK_MINUTES, 20);
-        assert_eq!(MIN_WALL_CLOCK_MINUTES, 1);
-        assert_eq!(MAX_WALL_CLOCK_MINUTES, 120);
-    }
+    // Tautological `wall_clock_minutes_default_values` pin test removed (Issue
+    // #1469): `wall_clock_minutes_returns_valid_value` below is the behavioural
+    // companion that asserts the getter stays within [MIN, MAX].
 
     #[test]
     fn wall_clock_minutes_returns_valid_value() {
@@ -249,10 +245,11 @@ mod tests {
     }
 
     #[test]
-    fn drought_log_threshold_default_is_five() {
-        assert_eq!(DEFAULT_DROUGHT_LOG_THRESHOLD, 5);
-        // Nothing supplied → default.
-        assert_eq!(parse_drought_threshold(None), 5);
+    fn drought_log_threshold_unset_resolves_to_default() {
+        // WHAT-test: with nothing supplied the parser must fall back to the
+        // default. Exercises the parser's fallback branch rather than pinning
+        // the default's literal value.
+        assert_eq!(parse_drought_threshold(None), DEFAULT_DROUGHT_LOG_THRESHOLD);
     }
 
     #[test]
