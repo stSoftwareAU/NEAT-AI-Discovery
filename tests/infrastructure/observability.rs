@@ -37,29 +37,30 @@ macro_rules! skip_without_gpu {
 // PhaseTimer Tests
 // =============================================================================
 
-/// Test that `PhaseTimer` records duration accurately (within 10ms tolerance).
+/// Test that `PhaseTimer` reports at least the elapsed sleep duration.
+///
+/// This is a "what" test: it asserts on the value the timer itself reports
+/// (`elapsed_ms`), not on externally-measured host wall-clock. The only
+/// behavioural guarantee is monotonicity — having slept for at least
+/// `sleep_duration`, the timer must report at least that much. A fragile
+/// upper bound on overhead is intentionally omitted: thread-scheduling jitter
+/// on a loaded CI runner can exceed any tight margin without any regression in
+/// `PhaseTimer` itself (Issue #1468).
 #[test]
 fn phase_timer_accuracy() {
-    // Create a timer and sleep for a known duration
-    let phase_name = "test_phase";
     let sleep_duration = Duration::from_millis(50);
 
-    let start = std::time::Instant::now();
-    {
-        let _timer = PhaseTimer::new(phase_name);
-        std::thread::sleep(sleep_duration);
-    }
-    let elapsed = start.elapsed();
+    let timer = PhaseTimer::new("test_phase");
+    std::thread::sleep(sleep_duration);
+    let reported = Duration::from_millis(timer.elapsed_ms());
 
-    // The timer should have recorded approximately the sleep duration
-    // We allow 10ms tolerance for scheduling variance
+    // Monotonicity: the timer reports at least the time we slept. `elapsed_ms`
+    // truncates to whole milliseconds and `thread::sleep` guarantees sleeping
+    // for at least the requested duration, so this holds without a host-speed
+    // assumption.
     assert!(
-        elapsed >= sleep_duration,
-        "Timer should record at least the sleep duration"
-    );
-    assert!(
-        elapsed < sleep_duration + Duration::from_millis(50),
-        "Timer should not have excessive overhead (>50ms)"
+        reported >= sleep_duration,
+        "PhaseTimer should report at least the slept duration ({sleep_duration:?}), got {reported:?}"
     );
 }
 
