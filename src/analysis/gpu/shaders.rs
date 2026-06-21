@@ -202,6 +202,36 @@ pub const GPU_REDUCTION_THRESHOLD: usize = 10_000;
 mod tests {
     use super::*;
 
+    /// Every embedded shader, paired with a human-readable name for assertions.
+    const ALL_SHADERS: &[(&str, &str)] = &[
+        ("helpful", HELPFUL_SHADER),
+        ("harmful", HARMFUL_SHADER),
+        ("relu", RELU_SHADER),
+        ("activation", ACTIVATION_SHADER),
+        ("bias", BIAS_SHADER),
+        ("helpful_reduce", HELPFUL_REDUCE_SHADER),
+        ("harmful_reduce", HARMFUL_REDUCE_SHADER),
+        ("relu_reduce", RELU_REDUCE_SHADER),
+        ("activation_reduce", ACTIVATION_REDUCE_SHADER),
+    ];
+
+    /// Parse and validate a WGSL shader with naga, returning the compiled
+    /// module. Panics with a descriptive message if the shader does not parse
+    /// or fails validation — this "does it compile" property is behavioural
+    /// (a caller observes a broken shader as a failed pipeline), unlike a
+    /// substring grep of the source text.
+    fn validate_wgsl(name: &str, source: &str) -> naga::Module {
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e| panic!("{name} shader is not valid WGSL: {e}"));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{name} shader failed WGSL validation: {e:?}"));
+        module
+    }
+
     #[test]
     fn test_shader_sources_are_not_empty() {
         // Verify all shaders have content
@@ -247,46 +277,33 @@ mod tests {
     }
 
     #[test]
-    fn test_shader_sources_contain_workgroup_size() {
-        // Verify shaders declare the correct workgroup size
-        let expected_workgroup = format!("@workgroup_size({WORKGROUP_SIZE})");
-
-        assert!(
-            HELPFUL_SHADER.contains(&expected_workgroup),
-            "HELPFUL_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
-        );
-        assert!(
-            HARMFUL_SHADER.contains(&expected_workgroup),
-            "HARMFUL_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
-        );
-        assert!(
-            RELU_SHADER.contains(&expected_workgroup),
-            "RELU_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
-        );
-        assert!(
-            ACTIVATION_SHADER.contains(&expected_workgroup),
-            "ACTIVATION_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
-        );
-        assert!(
-            BIAS_SHADER.contains(&expected_workgroup),
-            "BIAS_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
-        );
-        assert!(
-            HELPFUL_REDUCE_SHADER.contains(&expected_workgroup),
-            "HELPFUL_REDUCE_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
-        );
-        assert!(
-            HARMFUL_REDUCE_SHADER.contains(&expected_workgroup),
-            "HARMFUL_REDUCE_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
-        );
-        assert!(
-            RELU_REDUCE_SHADER.contains(&expected_workgroup),
-            "RELU_REDUCE_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
-        );
-        assert!(
-            ACTIVATION_REDUCE_SHADER.contains(&expected_workgroup),
-            "ACTIVATION_REDUCE_SHADER should declare @workgroup_size({WORKGROUP_SIZE})"
-        );
+    fn test_compute_entry_points_declare_workgroup_size() {
+        // WHAT-test: every compute entry point must declare the configured
+        // workgroup size. Reads the validated module's structured
+        // `workgroup_size` instead of grepping for the formatted
+        // "@workgroup_size(N)" text, so it is immune to whitespace and
+        // formatting changes (e.g. "@workgroup_size( 256 )") yet still fails
+        // if a shader genuinely declares the wrong size.
+        for (name, shader) in ALL_SHADERS {
+            let module = validate_wgsl(name, shader);
+            let compute_points: Vec<_> = module
+                .entry_points
+                .iter()
+                .filter(|ep| ep.stage == naga::ShaderStage::Compute)
+                .collect();
+            assert!(
+                !compute_points.is_empty(),
+                "{name} shader should expose a @compute entry point"
+            );
+            for ep in compute_points {
+                assert_eq!(
+                    ep.workgroup_size,
+                    [WORKGROUP_SIZE, 1, 1],
+                    "{name} entry point '{}' should declare workgroup size {WORKGROUP_SIZE}",
+                    ep.name
+                );
+            }
+        }
     }
 
     #[test]
@@ -325,26 +342,21 @@ mod tests {
     }
 
     #[test]
-    fn test_shader_wgsl_syntax_basics() {
-        // Basic syntax verification - shaders should have struct and fn declarations
-        for (name, shader) in [
-            ("helpful", HELPFUL_SHADER),
-            ("harmful", HARMFUL_SHADER),
-            ("relu", RELU_SHADER),
-            ("activation", ACTIVATION_SHADER),
-            ("bias", BIAS_SHADER),
-            ("helpful_reduce", HELPFUL_REDUCE_SHADER),
-            ("harmful_reduce", HARMFUL_REDUCE_SHADER),
-            ("relu_reduce", RELU_REDUCE_SHADER),
-            ("activation_reduce", ACTIVATION_REDUCE_SHADER),
-        ] {
+    fn test_shaders_are_valid_wgsl() {
+        // WHAT-test: each shader must parse and validate as WGSL via naga (the
+        // same front-end wgpu uses) and expose at least one @compute entry
+        // point. Unlike a substring grep for "fn " or "struct", this actually
+        // fails when a shader is malformed, and it survives any internal
+        // rename, reformat, or rewrite that keeps the shader compilable.
+        for (name, shader) in ALL_SHADERS {
+            let module = validate_wgsl(name, shader);
+            let has_compute = module
+                .entry_points
+                .iter()
+                .any(|ep| ep.stage == naga::ShaderStage::Compute);
             assert!(
-                shader.contains("struct") || shader.contains("fn "),
-                "{name} shader should contain struct or fn declarations"
-            );
-            assert!(
-                shader.contains("@compute"),
-                "{name} shader should contain @compute decorator"
+                has_compute,
+                "{name} shader should expose a @compute entry point"
             );
         }
     }
@@ -363,61 +375,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_reduction_shaders_contain_required_functions() {
-        // Verify reduction shaders have the required add_contributions and zero_contribution functions
-        assert!(
-            HELPFUL_REDUCE_SHADER.contains("fn add_contributions"),
-            "HELPFUL_REDUCE_SHADER should contain add_contributions function"
-        );
-        assert!(
-            HELPFUL_REDUCE_SHADER.contains("fn zero_contribution"),
-            "HELPFUL_REDUCE_SHADER should contain zero_contribution function"
-        );
-        assert!(
-            HARMFUL_REDUCE_SHADER.contains("fn add_contributions"),
-            "HARMFUL_REDUCE_SHADER should contain add_contributions function"
-        );
-        assert!(
-            HARMFUL_REDUCE_SHADER.contains("fn zero_contribution"),
-            "HARMFUL_REDUCE_SHADER should contain zero_contribution function"
-        );
-        assert!(
-            RELU_REDUCE_SHADER.contains("fn add_contributions"),
-            "RELU_REDUCE_SHADER should contain add_contributions function"
-        );
-        assert!(
-            RELU_REDUCE_SHADER.contains("fn zero_contribution"),
-            "RELU_REDUCE_SHADER should contain zero_contribution function"
-        );
-        assert!(
-            ACTIVATION_REDUCE_SHADER.contains("fn add_outputs"),
-            "ACTIVATION_REDUCE_SHADER should contain add_outputs function"
-        );
-        assert!(
-            ACTIVATION_REDUCE_SHADER.contains("fn zero_output"),
-            "ACTIVATION_REDUCE_SHADER should contain zero_output function"
-        );
-    }
-
-    #[test]
-    fn test_reduction_shaders_use_shared_memory() {
-        // Verify reduction shaders use workgroup shared memory
-        assert!(
-            HELPFUL_REDUCE_SHADER.contains("var<workgroup>"),
-            "HELPFUL_REDUCE_SHADER should use workgroup shared memory"
-        );
-        assert!(
-            HARMFUL_REDUCE_SHADER.contains("var<workgroup>"),
-            "HARMFUL_REDUCE_SHADER should use workgroup shared memory"
-        );
-        assert!(
-            RELU_REDUCE_SHADER.contains("var<workgroup>"),
-            "RELU_REDUCE_SHADER should use workgroup shared memory"
-        );
-        assert!(
-            ACTIVATION_REDUCE_SHADER.contains("var<workgroup>"),
-            "ACTIVATION_REDUCE_SHADER should use workgroup shared memory"
-        );
-    }
+    // NOTE (Issue #1467): the former HOW-tests
+    // `test_reduction_shaders_contain_required_functions` and
+    // `test_reduction_shaders_use_shared_memory` were removed. They grepped the
+    // reduce shaders' source for internal helper names (`add_contributions`,
+    // `zero_contribution`, ...) and the `var<workgroup>` memory strategy —
+    // implementation details that a behaviour-preserving refactor (renaming a
+    // helper, switching reduction strategy) would break for no reason. The
+    // observable behaviour they were standing in for — that the reduce shaders
+    // produce correct aggregated statistics — is verified end-to-end by
+    // `tests/gpu/gpu_workgroup_reduction.rs` (`test_helpful_reduction_correctness`,
+    // `test_harmful_reduction_correctness`, etc.), and the reduce shaders'
+    // WGSL validity plus workgroup size are now covered by
+    // `test_shaders_are_valid_wgsl` and
+    // `test_compute_entry_points_declare_workgroup_size` above.
 }
