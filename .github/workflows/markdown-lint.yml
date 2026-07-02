@@ -28,7 +28,12 @@ jobs:
         with:
           node-version: "22"
       - name: Install markdownlint-cli2
-        run: npm install -g markdownlint-cli2
+        # Version-pinned and lifecycle scripts disabled to harden the
+        # supply chain (Issue #1484): a poisoned release cannot silently
+        # bump the resolved version or run install/postinstall scripts on
+        # the runner. Renovate keeps this pin current under the shared
+        # >=24h quarantine via the customManager in renovate.json.
+        run: npm install -g --ignore-scripts markdownlint-cli2@0.23.0
       - name: Run markdownlint-cli2
         run: markdownlint-cli2
       # Optional: mirror the local check-mermaid quality gate when Deno
