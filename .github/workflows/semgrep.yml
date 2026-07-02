@@ -28,6 +28,19 @@ jobs:
     steps:
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - run: semgrep ci --config p/default
+      # Exclude renovate-missing-minimum-release-age (Issue #1490): this
+      # repo enforces a deliberate, tested supply-chain quarantine of
+      # >=24h (Issue #1234; stSoftwareAU/VibeCoding#1614) via an explicit
+      # `minimumReleaseAge` on every packageRule. The rule's premise —
+      # "no minimum release age is set" — is false here; it fires only
+      # because it hardcodes a >=7 day threshold and cannot express the
+      # org's 24h standard, so no compliant value exists that also
+      # satisfies the 24h invariant asserted in
+      # tests/issue_1234_quarantine_enforcement.rs. The window is enforced
+      # independently by bump-deps.sh and the Deno P1D floor.
+      - run: >-
+          semgrep ci --config p/default
+          --exclude-rule package_managers.renovate.renovate-missing-minimum-release-age.renovate-missing-minimum-release-age
+          --exclude-rule renovate-missing-minimum-release-age
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
