@@ -49,10 +49,7 @@ fn has_pinned_version(s: &str) -> bool {
     };
     let after = &s[idx + "markdownlint-cli2@".len()..];
     // First token must look like `NUMBER.NUMBER.NUMBER`.
-    let token: String = after
-        .chars()
-        .take_while(|c| !c.is_whitespace())
-        .collect();
+    let token: String = after.chars().take_while(|c| !c.is_whitespace()).collect();
     let parts: Vec<&str> = token.split('.').collect();
     parts.len() >= 3
         && parts[..3]
