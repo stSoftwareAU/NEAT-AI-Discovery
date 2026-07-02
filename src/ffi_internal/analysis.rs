@@ -6,6 +6,9 @@ use anyhow::Result;
 use crate::ffi_types::*;
 use crate::{analysis, focus};
 
+/// Runs parallel discovery analysis over recorded data.
+///
+/// Takes JSON input and returns JSON output for easy integration with TypeScript/DenoJS.
 pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
     let input: AnalyzeParallelInput = match serde_json::from_str::<AnalyzeParallelInput>(input_json)
     {
@@ -478,6 +481,9 @@ pub(crate) fn build_analyze_all_input_from_parallel(
     }
 }
 
+/// Ranks focus neurons for the next discovery pass.
+///
+/// Takes JSON input and returns JSON output for easy integration with TypeScript/DenoJS.
 pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     let input: RankFocusNeuronsInput = match serde_json::from_str(input_json) {
         Ok(value) => value,

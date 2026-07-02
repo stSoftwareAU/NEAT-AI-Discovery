@@ -5,6 +5,9 @@ use anyhow::Result;
 use crate::ffi_types::*;
 use crate::{export, parquet_format};
 
+/// Merges multiple discovery Parquet recordings into one.
+///
+/// Takes JSON input and returns JSON output for easy integration with TypeScript/DenoJS.
 pub fn merge_discovery_parquet_internal(input_json: &str) -> Result<String> {
     let input: MergeParquetInput = match serde_json::from_str(input_json) {
         Ok(input) => input,
