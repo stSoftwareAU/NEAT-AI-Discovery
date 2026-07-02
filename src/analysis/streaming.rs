@@ -365,9 +365,17 @@ impl StreamingRecordCache {
         for batch_result in reader {
             let batch = batch_result.context("Failed to read record batch")?;
 
-            // Get neuron_uuid column
+            // Resolve the neuron_uuid column by name rather than by fixed
+            // position. `RecordBatch::column(index)` panics on an out-of-bounds
+            // index, so a short/mismatched schema (fewer columns than expected)
+            // would otherwise crash the process instead of returning a
+            // recoverable error (Issue #1482).
+            let schema = batch.schema();
+            let uuid_idx = schema
+                .index_of("neuron_uuid")
+                .context("Parquet schema mismatch: missing 'neuron_uuid' column")?;
             let neuron_uuid_col = batch
-                .column(1)
+                .column(uuid_idx)
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .context("Failed to cast neuron_uuid column")?;
@@ -434,28 +442,51 @@ impl StreamingRecordCache {
         for batch_result in reader {
             let batch = batch_result.context("Failed to read record batch")?;
 
+            // Resolve every column by name rather than by fixed position.
+            // `RecordBatch::column(index)` panics on an out-of-bounds index, so
+            // a structurally valid Parquet whose batches expose fewer columns
+            // than expected would otherwise crash the process (potentially on
+            // the spawned prefetch thread, outside the FFI catch_unwind) rather
+            // than returning a recoverable error (Issue #1482).
+            let schema = batch.schema();
+            let obs_idx = schema
+                .index_of("obs_index")
+                .context("Parquet schema mismatch: missing 'obs_index' column")?;
+            let uuid_idx = schema
+                .index_of("neuron_uuid")
+                .context("Parquet schema mismatch: missing 'neuron_uuid' column")?;
+            let value_idx = schema
+                .index_of("value")
+                .context("Parquet schema mismatch: missing 'value' column")?;
+            let activation_idx = schema
+                .index_of("activation")
+                .context("Parquet schema mismatch: missing 'activation' column")?;
+            let errors_idx = schema
+                .index_of("errors")
+                .context("Parquet schema mismatch: missing 'errors' column")?;
+
             let obs_index_col = batch
-                .column(0)
+                .column(obs_idx)
                 .as_any()
                 .downcast_ref::<UInt32Array>()
                 .context("Failed to cast obs_index column")?;
             let neuron_uuid_col = batch
-                .column(1)
+                .column(uuid_idx)
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .context("Failed to cast neuron_uuid column")?;
             let value_col = batch
-                .column(2)
+                .column(value_idx)
                 .as_any()
                 .downcast_ref::<Float32Array>()
                 .context("Failed to cast value column")?;
             let activation_col = batch
-                .column(3)
+                .column(activation_idx)
                 .as_any()
                 .downcast_ref::<Float32Array>()
                 .context("Failed to cast activation column")?;
             let errors_col = batch
-                .column(4)
+                .column(errors_idx)
                 .as_any()
                 .downcast_ref::<ListArray>()
                 .context("Failed to cast errors column")?;

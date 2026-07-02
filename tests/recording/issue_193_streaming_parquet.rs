@@ -387,3 +387,108 @@ fn streaming_mode_matches_preloaded_data() {
         }
     }
 }
+
+// ============================================================================
+// Issue #1482: Unvalidated positional Parquet column access must not panic
+// ============================================================================
+//
+// The streaming reader previously accessed record-batch columns by fixed
+// position (`batch.column(1)` in build_block_index, `batch.column(0)..column(4)`
+// in load_block_records). `RecordBatch::column(index)` panics on an
+// out-of-bounds index, so a structurally valid Parquet with fewer columns than
+// expected caused a denial-of-service panic instead of a recoverable error.
+// These tests write short-schema Parquet files and assert that the cache
+// surfaces a `Result::Err` rather than panicking.
+
+/// Write a Parquet file with an arbitrary Arrow schema/batch and return its path.
+fn write_custom_parquet(temp_dir: &TempDir, batch: arrow::array::RecordBatch) -> String {
+    use parquet::arrow::ArrowWriter;
+
+    let parquet_path = temp_dir.path().join("custom_schema.parquet");
+    let path_str = parquet_path.to_str().unwrap().to_string();
+
+    let file = std::fs::File::create(&path_str).expect("Failed to create parquet file");
+    let mut writer =
+        ArrowWriter::try_new(file, batch.schema(), None).expect("Failed to create ArrowWriter");
+    writer.write(&batch).expect("Failed to write batch");
+    writer.close().expect("Failed to close writer");
+
+    path_str
+}
+
+/// A single-column Parquet (no `neuron_uuid`) must not panic `build_block_index`
+/// during `StreamingRecordCache::new`; it must return an `Err` instead.
+#[test]
+#[serial]
+fn streaming_cache_new_rejects_short_schema_without_panic() {
+    use arrow::array::{Int64Array, RecordBatch};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use neat_ai_discovery::analysis::cache::StreamingRecordCache;
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // One column that is NOT the expected discovery schema. Positional access
+    // would read column(1) — out of bounds for a one-column batch — and panic.
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+    let ids = Int64Array::from(vec![1_i64, 2, 3]);
+    let batch = RecordBatch::try_new(schema, vec![Arc::new(ids)]).unwrap();
+    let path = write_custom_parquet(&temp_dir, batch);
+
+    let result = StreamingRecordCache::new(&path, None, Some(0));
+    assert!(
+        result.is_err(),
+        "Short-schema Parquet should yield an Err from StreamingRecordCache::new, not a panic"
+    );
+    let err_msg = result.err().unwrap().to_string().to_lowercase();
+    assert!(
+        err_msg.contains("schema") || err_msg.contains("column") || err_msg.contains("neuron_uuid"),
+        "Error should mention the schema/column mismatch: {err_msg}"
+    );
+}
+
+/// A Parquet that has `neuron_uuid` (so the index builds) but is missing the
+/// remaining discovery columns must not panic `load_block_records` when
+/// `get()` triggers a cache-miss load; it must return an `Err` instead.
+#[test]
+#[serial]
+fn streaming_cache_get_rejects_missing_columns_without_panic() {
+    use arrow::array::{RecordBatch, StringArray, UInt32Array};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use neat_ai_discovery::analysis::cache::StreamingRecordCache;
+
+    setup_test_block_size();
+    let temp_dir = TempDir::new().unwrap();
+
+    // Two columns: obs_index + neuron_uuid. build_block_index resolves
+    // neuron_uuid (index 1), but load_block_records needs value/activation/errors.
+    // Positional access of column(4) would panic on this two-column batch.
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("obs_index", DataType::UInt32, false),
+        Field::new("neuron_uuid", DataType::Utf8, false),
+    ]));
+    let obs = UInt32Array::from(vec![0_u32, 1]);
+    let uuids = StringArray::from(vec!["neuron-0", "neuron-0"]);
+    let batch = RecordBatch::try_new(schema, vec![Arc::new(obs), Arc::new(uuids)]).unwrap();
+    let path = write_custom_parquet(&temp_dir, batch);
+
+    // Disable prefetch (Some(0)) so the load happens on this thread and any
+    // panic would surface here rather than on the prefetch worker.
+    let cache = StreamingRecordCache::new(&path, None, Some(0))
+        .expect("Index build should succeed when neuron_uuid is present");
+
+    let result = cache.get("neuron-0");
+    teardown_test_block_size();
+
+    assert!(
+        result.is_err(),
+        "Missing-column Parquet should yield an Err from get(), not a panic"
+    );
+    let err_msg = result.err().unwrap().to_string().to_lowercase();
+    assert!(
+        err_msg.contains("schema")
+            || err_msg.contains("column")
+            || err_msg.contains("value")
+            || err_msg.contains("errors"),
+        "Error should mention the schema/column mismatch: {err_msg}"
+    );
+}
