@@ -111,11 +111,15 @@ containing the following sections.
 
 ### 👥 Code Owners & Branch Protection
 
-High-blast-radius paths are owned by `@stSoftwareAU/developers` in
+High-blast-radius paths are owned by the admin maintainers
+(`@Green-Beret @nleck @stservice`) in
 [`.github/CODEOWNERS`](.github/CODEOWNERS): the CI workflows (which hold the
 `ACTIONS_PUSH` PAT plus `SEMGREP_APP_TOKEN` and `CODECOV_TOKEN`), the
 dependency manifests (`Cargo.toml` / `Cargo.lock`), and the security policy.
-A pull request touching any of these requires maintainer review.
+A pull request touching any of these requires maintainer review. Individual
+maintainers are named (rather than a team) because no org team holds direct
+write access to this repo, so a team owner would not enforce; switch to a team
+reference once one is granted write access.
 
 `CODEOWNERS` only takes effect once branch protection enforces it. A repository
 admin must enable the following on the default branch (`Develop`):
