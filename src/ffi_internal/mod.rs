@@ -9,6 +9,13 @@
 //! - `gpu` — GPU availability probe, library version
 //! - `utilities` — parquet merge, record reading, visualisation export
 
+// Guard the re-exported public API surface: every `*_internal` function
+// re-exported at the crate root must carry rustdoc, so an rlib consumer never
+// sees blank documentation for a crate-root entry point (Issue #1485). Scoped
+// to this module because the wider crate exposes many undocumented public
+// struct fields that are out of scope for this guard.
+#![warn(missing_docs)]
+
 mod analysis;
 mod gpu;
 mod recording;

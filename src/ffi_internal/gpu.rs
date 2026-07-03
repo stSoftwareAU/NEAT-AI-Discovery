@@ -6,6 +6,9 @@ use crate::analysis;
 use crate::analysis::gpu::GpuAvailabilityResult;
 use crate::ffi_types::*;
 
+/// Probes whether a compatible GPU is available.
+///
+/// Returns JSON output for easy integration with TypeScript/DenoJS.
 pub fn check_gpu_available_internal() -> Result<String> {
     let result = analysis::GpuAnalyzer::check_gpu_availability();
     let output = build_check_gpu_output(result);
@@ -87,6 +90,9 @@ fn classify_gpu_unavailable_reason(reason: Option<&str>) -> DiscoveryErrorKind {
     }
 }
 
+/// Returns the library version string as JSON.
+///
+/// Returns JSON output for easy integration with TypeScript/DenoJS.
 pub fn get_library_version_internal() -> Result<String> {
     let (error_kind, retryable) = no_error_fields();
     let output = GetVersionOutput {
