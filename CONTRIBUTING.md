@@ -109,6 +109,33 @@ containing the following sections.
    changes, or test references for bug fixes
 3. **Test Plan** — list of tests added or modified
 
+### 👥 Code Owners & Branch Protection
+
+High-blast-radius paths are owned by the admin maintainers
+(`@Green-Beret @nleck @stservice`) in
+[`.github/CODEOWNERS`](.github/CODEOWNERS): the CI workflows (which hold the
+`ACTIONS_PUSH` PAT plus `SEMGREP_APP_TOKEN` and `CODECOV_TOKEN`), the
+dependency manifests (`Cargo.toml` / `Cargo.lock`), and the security policy.
+A pull request touching any of these requires maintainer review. Individual
+maintainers are named (rather than a team) because no org team holds direct
+write access to this repo, so a team owner would not enforce; switch to a team
+reference once one is granted write access.
+
+`CODEOWNERS` only takes effect once branch protection enforces it. A repository
+admin must enable the following on the default branch (`Develop`):
+
+- **Require a pull request before merging** — with **Require review from Code
+  Owners**.
+- **Block direct pushes and force-pushes** to the protected branch.
+- **Require linear history** (no merge commits).
+- Confirm the required status checks (the `quality.sh` gate) are green before
+  merge.
+
+As defence-in-depth, consider **Require signed commits**. An admin can apply
+these settings via **Settings → Branches → Branch protection rules**, or with
+the GitHub CLI (`gh api -X PUT repos/stSoftwareAU/NEAT-AI-Discovery/branches/Develop/protection ...`).
+These are repository-level settings that cannot be committed as files.
+
 ### 💬 Commit Messages
 
 - Reference the issue number (e.g., `Add CONTRIBUTING.md (#372)`)

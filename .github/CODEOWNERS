@@ -1,0 +1,37 @@
+# CODEOWNERS — mandatory owner review for high-blast-radius paths (Issue #1486)
+#
+# GitHub requires an owner listed here to approve any pull request that touches
+# a matched path, once the "Require review from Code Owners" branch-protection
+# rule is enabled on the default branch (Develop). See CONTRIBUTING.md for the
+# branch-protection settings that must accompany this file.
+#
+# Owners must hold write access for their rules to enforce. The suggested
+# @stSoftwareAU/maintainers team does not exist, and no org team (e.g.
+# @stSoftwareAU/developers) has been granted *direct* write access to this repo
+# — its members are individual collaborators — so a team owner would be treated
+# as invalid and enforce nothing. The three admin maintainers with write access
+# are therefore named directly. Switch to a team reference once a team is
+# granted write access to the repo.
+#
+# Syntax: `<pattern> <owner> [<owner> ...]`. Later matches take precedence, so
+# the broad `*` default comes first and the sensitive paths override it below.
+
+# Default owner for everything not otherwise matched.
+*                       @Green-Beret @nleck @stservice
+
+# CI/CD workflows and composite actions run with privileged secrets beyond the
+# default GITHUB_TOKEN — a write-capable PAT (ACTIONS_PUSH), plus
+# SEMGREP_APP_TOKEN and CODECOV_TOKEN. A careless or malicious edit here is a
+# direct path to secret exfiltration or unauthorised pushes to protected
+# branches, so these paths demand maintainer review.
+/.github/               @Green-Beret @nleck @stservice
+/.github/workflows/     @Green-Beret @nleck @stservice
+
+# Dependency manifests — the supply-chain surface.
+/Cargo.toml             @Green-Beret @nleck @stservice
+/Cargo.lock             @Green-Beret @nleck @stservice
+
+# Release / security-sensitive automation and policy.
+/deny.toml              @Green-Beret @nleck @stservice
+/renovate.json          @Green-Beret @nleck @stservice
+/SECURITY.md            @Green-Beret @nleck @stservice
