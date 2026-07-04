@@ -501,19 +501,53 @@ fn test_considers_gradient_flow() {
 }
 
 // =============================================================================
-// Test 16: Documentation Consistency
+// Test 16: Documented Behaviour — Activation Recommendation emits changeSquash
 // =============================================================================
 
-/// Test that activation recommendation is documented in `DISCOVERY_TYPES.md`.
+/// Assert the behaviour `DISCOVERY_TYPES.md` promises for activation
+/// recommendation (Issue #1503): the public recommender, run on a neuron whose
+/// input distribution favours a different activation, produces a recommendation
+/// that converts to the documented `changeSquash` candidate operation naming a
+/// valid squash op.
+///
+/// This replaces a former doc-prose grep (which only checked that a heading
+/// string appeared in the Markdown file) with a WHAT-test that exercises the
+/// real recommender output — the behaviour the documentation describes.
 #[test]
-fn test_activation_recommendation_documented() {
-    let doc_content =
-        std::fs::read_to_string("docs/DISCOVERY_TYPES.md").expect("Should read DISCOVERY_TYPES.md");
+fn test_activation_recommendation_produces_change_squash_candidate() {
+    use neat_ai_discovery::analysis::recommendation::activation_recommendation::recommendation_to_coordinated_candidate;
 
+    // Gaussian-like inputs on a neuron currently using RELU: the documented
+    // scenario where a better-matched activation should be recommended.
+    let records: Vec<DiscoverRecord> = (0..100)
+        .map(|i| {
+            let x = (i as f32 - 50.0) / 25.0;
+            record("hidden-doc-behaviour", i, x, Some(x))
+        })
+        .collect();
+
+    let recommendation = recommend_activation_function(&records, "RELU")
+        .expect("activation recommendation should be produced for a Gaussian neuron");
+
+    // The recommendation must name a non-empty squash op distinct from current.
     assert!(
-        doc_content.contains("Activation Recommendation")
-            || doc_content.contains("activation recommendation")
-            || doc_content.contains("Activation Function Recommendation"),
-        "DISCOVERY_TYPES.md should document activation recommendation"
+        !recommendation.recommended_squash.is_empty(),
+        "recommended squash op should be named"
+    );
+    assert_ne!(
+        recommendation.recommended_squash, recommendation.current_squash,
+        "a recommendation should change the activation function"
+    );
+
+    // The documented candidate operation is `changeSquash` (DISCOVERY_TYPES.md).
+    let candidate = recommendation_to_coordinated_candidate(&recommendation);
+    let ops_json = serde_json::to_string(&candidate.operations).unwrap();
+    assert!(
+        ops_json.contains("changeSquash"),
+        "activation recommendation should emit the documented changeSquash operation, got {ops_json}"
+    );
+    assert!(
+        ops_json.contains(&recommendation.recommended_squash),
+        "changeSquash operation should carry the recommended squash op"
     );
 }
