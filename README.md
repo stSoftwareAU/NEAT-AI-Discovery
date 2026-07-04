@@ -93,7 +93,10 @@ The library exposes a Deno FFI-friendly symbol set. The authoritative list lives
 | **Recording (streaming)** | `start_discovery_session`, `append_discovery_records`, `finish_discovery_session`, `cancel_discovery_session` |
 | **Recording (single-call)** | `record_discovery` (avoid for large runs) |
 | **Analysis** | `rank_focus_neurons`, `analyze_parallel` |
+| **Cancellation** | `cancel_analysis`, `cancel_analysis_memory_pressure` (CRITICAL memory pressure), `reset_cancellation`, `is_analysis_active` |
 | **Utilities** | `merge_discovery_parquet`, `read_discovery_records_ffi`, `export_visualisation_snapshot` |
+| **Calibration** | `get_calibration_summary` |
+| **Lifecycle / cleanup** | `cleanup_discovery_lib` (call before process exit), `cleanup_discovery_dir`, `clean_orphaned_discovery_dirs` |
 | **Memory usage** | `discovery_memory_usage_bytes` |
 | **Memory management** | `free_discovery_result` |
 

@@ -18,8 +18,10 @@ The most commonly used entry points are:
 - **Recording**:
   - Streaming: `start_discovery_session`, `append_discovery_records`, `finish_discovery_session`, `cancel_discovery_session`
   - Single-call: `record_discovery` (avoid for large runs; prefer streaming to prevent JS/V8 string limits)
-- **Analysis**: `rank_focus_neurons`, `analyze_parallel`, `cancel_analysis`, `reset_cancellation`, `is_analysis_active`
+- **Analysis**: `rank_focus_neurons`, `analyze_parallel`, `cancel_analysis`, `cancel_analysis_memory_pressure`, `reset_cancellation`, `is_analysis_active`
 - **Utilities**: `merge_discovery_parquet`, `read_discovery_records_ffi`, `export_visualisation_snapshot`
+- **Calibration**: `get_calibration_summary` (returns JSON)
+- **Lifecycle / cleanup**: `cleanup_discovery_lib` (call before process exit), `cleanup_discovery_dir`, `clean_orphaned_discovery_dirs`
 - **Memory usage**: `discovery_memory_usage_bytes()` (returns `u64`)
 - **Memory management**: `free_discovery_result`
 
@@ -190,6 +192,17 @@ Allows the host process to request graceful shutdown of in-flight analysis
   - **Input**: no arguments
   - **Output**: no return value
   - **Thread safety**: safe to call from any thread at any time
+- **Symbol**: `cancel_analysis_memory_pressure` — cancel due to CRITICAL memory
+  pressure (Issue #1099)
+  - **Input**: no arguments
+  - **Output**: no return value
+  - **Behaviour**: sets **both** the general cancellation flag and a
+    memory-pressure-specific flag, so the pipeline can report the specific
+    reason (`environmentalGates.memoryPressureCancelled: true`) and the host can
+    take additional recovery actions (e.g. clearing WASM caches, evicting
+    discovery buffers). Call this instead of `cancel_analysis` when the memory
+    monitor detects CRITICAL pressure (e.g. ≥85% heap usage).
+  - **Thread safety**: safe to call from any thread at any time
 - **Symbol**: `reset_cancellation` — clears the flag before a new analysis run
   - Called automatically at the start of `analyze_all`, but can also be
     called explicitly by the host
@@ -220,6 +233,103 @@ still reading from it.
   `CompressedLruRecordCache` hold an open file handle to the parquet file.
   On Unix, this keeps the inode alive even if the path is unlinked, so
   in-flight reads succeed even under a race condition.
+
+---
+
+## 📈 Calibration Summary (Issue #605)
+
+Query the per-module prediction-calibration summary accumulated in a
+`DiscoveryHistory`. Controllers use it to inspect how well each module's
+predicted gains have matched observed outcomes.
+
+- **Symbol**: `get_calibration_summary`
+- **Input**: JSON string carrying the serialised discovery history:
+
+  ```json
+  {
+    "discoveryHistory": "<serialised DiscoveryHistory JSON string>"
+  }
+  ```
+
+- **Output**: JSON string:
+
+  ```json
+  {
+    "success": true,
+    "calibrationSummary": [
+      {
+        "moduleName": "saturation",
+        "candidateType": "addSynapse",
+        "sampleCount": 10,
+        "meanAbsoluteError": 0.02,
+        "bias": 0.01,
+        "calibrationFactor": 0.95
+      }
+    ]
+  }
+  ```
+
+- **Errors**: on failure, `success` is `false`, `calibrationSummary` is empty,
+  and `error` / `errorKind` / `retryable` describe the failure.
+- **Memory**: the returned pointer **must** be freed with `free_discovery_result`.
+
+---
+
+## 🧹 Library Lifecycle & Directory Cleanup
+
+### Library Shutdown (`cleanup_discovery_lib`, Issue #994)
+
+Shut down the background threads (deadlock-detector and signal-handler) spawned
+by the library. **The host must call this before process exit** — without it,
+those threads may keep the host process alive after all FFI work has finished.
+
+- **Symbol**: `cleanup_discovery_lib`
+- **Input**: no arguments
+- **Output**: no return value
+- **Idempotent**: safe to call multiple times and from any thread.
+
+### Discovery Directory Cleanup (`cleanup_discovery_dir`, Issue #1100)
+
+Atomically remove a single discovery temp directory tree in one recursive call,
+so the lock file is never absent while the directory still exists.
+
+- **Symbol**: `cleanup_discovery_dir`
+- **Input**: JSON string:
+
+  ```json
+  { "tempDir": "/path/to/.discovery/abc123" }
+  ```
+
+- **Output**: JSON string. When another actor already removed the directory,
+  `alreadyGone` is `true` with `success: true` (no error):
+
+  ```json
+  { "success": true, "alreadyGone": false }
+  ```
+
+- **Memory**: the returned pointer **must** be freed with `free_discovery_result`.
+
+### Orphaned Directory Sweep (`clean_orphaned_discovery_dirs`, Issue #1100)
+
+Scan a base directory for orphaned discovery directories (subdirectories with no
+`discovery.lock` file) and remove them. `NotFound` races are suppressed because
+the async cleanup actor may have removed a directory between the orphan check and
+the removal call.
+
+- **Symbol**: `clean_orphaned_discovery_dirs`
+- **Input**: JSON string:
+
+  ```json
+  { "baseDir": "/path/to/.discovery" }
+  ```
+
+- **Output**: JSON string:
+
+  ```json
+  { "success": true, "removed": 2, "alreadyGone": 0, "removalErrors": [] }
+  ```
+
+- **Memory**: the returned pointer **must** be freed with `free_discovery_result`.
 
 ---
 
