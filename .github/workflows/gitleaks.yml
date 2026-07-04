@@ -32,6 +32,7 @@ jobs:
         # from the official gitleaks_8.24.3_checksums.txt published
         # alongside the release.
         run: |
+          set -euo pipefail
           GITLEAKS_VERSION="8.24.3"
           EXPECTED_SHA256="9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c"
           curl -fsSLo /tmp/gitleaks.tar.gz \
