@@ -17,8 +17,7 @@ permissions:
 jobs:
   markdownlint:
     runs-on: ubuntu-latest
-    # markdownlint-cli2 + optional Mermaid validation — light job,
-    # 10 minute cap (Issue #1287).
+    # markdownlint-cli2 — light job, 10 minute cap (Issue #1287).
     timeout-minutes: 10
     steps:
       # actions/checkout@v5
@@ -36,21 +35,3 @@ jobs:
         run: npm install -g --ignore-scripts markdownlint-cli2@0.23.0
       - name: Run markdownlint-cli2
         run: markdownlint-cli2
-      # Optional: mirror the local check-mermaid quality gate when Deno
-      # and the worker module are available in the repo (Issue #1683).
-      - name: Detect Deno worker module
-        id: detect-deno
-        run: |
-          if [ -f worker/deno/mod.ts ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
-      # denoland/setup-deno@v2
-      - if: steps.detect-deno.outputs.present == 'true'
-        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
-        with:
-          deno-version: v2.x
-      - if: steps.detect-deno.outputs.present == 'true'
-        name: Validate Mermaid blocks
-        run: deno run --allow-read --allow-env=DEBUG,LOG_LEVEL,CONFIG_PATH,OUTPUT_JSON worker/deno/mod.ts check-mermaid
