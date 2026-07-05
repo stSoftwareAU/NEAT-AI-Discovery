@@ -507,8 +507,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         analysis_reserve_fraction,
     );
     let parquet_loading_start = std::time::Instant::now();
-    let cache_result =
-        cache::RecordCache::new_adaptive_with_deadline(&input.parquet_file, loading_deadline);
+    // Issue #3176: honour the supplied #1567 analysis memory budget so the cache
+    // pre-load makes the same eager-vs-lazy decision as focus ranking (corrected
+    // available-memory accounting + budget), rather than the divergent
+    // 50%-of-total-RAM heuristic that forced eager-capable hosts onto lazy mode.
+    let cache_result = cache::RecordCache::new_adaptive_with_deadline_and_budget(
+        &input.parquet_file,
+        loading_deadline,
+        input.max_analysis_memory_mb,
+    );
 
     // Issue #1047: If parquet loading was cancelled, return a clean partial
     // result instead of propagating the error.

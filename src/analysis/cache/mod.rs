@@ -68,7 +68,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::sync::{Arc, OnceLock};
 
-use crate::analysis::utils::{check_memory_for_parquet, get_memory_info, verbose_enabled};
+use crate::analysis::utils::{
+    bytes_to_mb_ceil, estimate_parquet_in_memory_bytes, get_memory_info,
+    parquet_preload_fits_available, verbose_enabled,
+};
 
 type RecordCacheLoader = dyn Fn(&str, &str) -> Result<Vec<DiscoverRecord>> + Send + Sync + 'static;
 type CachedNeuronRecords = OnceLock<Result<Arc<Vec<DiscoverRecord>>, String>>;
@@ -129,22 +132,42 @@ impl RecordCache {
         parquet_file: &str,
         deadline: Option<std::time::SystemTime>,
     ) -> Result<Self> {
-        // Check if we have enough memory for pre-loading
-        match check_memory_for_parquet(parquet_file) {
-            Ok(()) => {
-                // Sufficient memory - use fast pre-loaded mode
-                Self::new_preloaded_with_deadline(parquet_file, deadline)
-            }
-            Err(memory_error) => {
-                // Insufficient memory - fall back to lazy loading
-                tracing::warn!(
-                    "insufficient memory for pre-loading — falling back to lazy-loading mode"
-                );
-                if verbose_enabled() {
-                    tracing::debug!(%memory_error, "memory check failed");
-                }
-                Self::new_lazy(parquet_file)
-            }
+        Self::new_adaptive_with_deadline_and_budget(parquet_file, deadline, None)
+    }
+
+    /// Create an adaptive cache honouring an optional supplied memory budget
+    /// (Issue #3176).
+    ///
+    /// This is the eager-vs-lazy pre-load decision, now aligned with focus
+    /// ranking so the fleet behaves consistently across very different machine
+    /// sizes:
+    ///
+    /// - When `budget_mb` is supplied (the analysis phase forwards the #1567
+    ///   `--rustMemoryBudgetMB` value as `max_analysis_memory_mb`), the
+    ///   projected in-memory pre-load size (parquet file × 3) is compared
+    ///   against the budget. Eager pre-load is chosen when it fits.
+    /// - When no budget is supplied, the decision uses the **corrected**
+    ///   OS-available accounting from [`get_memory_info`] (Issue #3173) minus
+    ///   the shared focus-ranking safety margin, via the same
+    ///   [`parquet_preload_fits_available`] primitive focus ranking uses. This
+    ///   removes the divergent 50%-of-total-RAM heuristic that forced a
+    ///   ~14.3 GB projection onto the slow lazy path on the 24 GB exemplar host
+    ///   despite ample reclaimable memory (Issue #3170).
+    ///
+    /// Lazy mode is reserved for genuinely constrained hosts and still
+    /// completes: its per-neuron loads are bounded by the shared analysis
+    /// deadline the caller already threads through, so the cache pre-load has no
+    /// separate wall-clock net that needs scaling (unlike focus ranking's
+    /// independent 120 s budget in Issue #3172).
+    #[tracing::instrument(skip_all, fields(parquet_file))]
+    pub fn new_adaptive_with_deadline_and_budget(
+        parquet_file: &str,
+        deadline: Option<std::time::SystemTime>,
+        budget_mb: Option<u64>,
+    ) -> Result<Self> {
+        match plan_cache_preload(parquet_file, budget_mb) {
+            CachePreloadMode::Preload => Self::new_preloaded_with_deadline(parquet_file, deadline),
+            CachePreloadMode::Lazy => Self::new_lazy(parquet_file),
         }
     }
 
@@ -488,3 +511,140 @@ impl RecordCache {
         }
     }
 }
+
+/// One megabyte in bytes — converts MB budgets/margins into byte space for the
+/// pre-load decision (Issue #3176).
+const BYTES_PER_MB: u64 = 1024 * 1024;
+
+/// Whether the analysis-cache pre-load runs eager (whole-file, fast) or falls
+/// back to lazy on-demand loading (Issue #3176).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CachePreloadMode {
+    /// Pre-load the entire parquet file into memory (fast path).
+    Preload,
+    /// Load records on demand per neuron (memory-efficient fallback).
+    Lazy,
+}
+
+/// Why the analysis-cache pre-load selected lazy mode (Issue #3176).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheLazyReason {
+    /// Eager pre-load selected — not a lazy fallback.
+    None,
+    /// A supplied memory budget was smaller than the projected pre-load.
+    Budget,
+    /// No budget set and OS-available memory (minus margin) could not fit it.
+    MemoryPressure,
+}
+
+impl CacheLazyReason {
+    /// Stable string used in the structured lazy-fallback WARN log.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Budget => "budget",
+            Self::MemoryPressure => "memory_pressure",
+        }
+    }
+}
+
+/// Budget-path decision (Issue #3176): eager when the projected pre-load fits
+/// the supplied budget, lazy otherwise.
+///
+/// Mirrors the focus-ranking budget decision so both phases treat a supplied
+/// `--rustMemoryBudgetMB` identically. Pure so it is unit-testable without a
+/// parquet file.
+#[must_use]
+pub fn decide_cache_preload_for_budget(
+    projected_bytes: u64,
+    budget_mb: u64,
+) -> (CachePreloadMode, CacheLazyReason) {
+    let budget_bytes = budget_mb.saturating_mul(BYTES_PER_MB);
+    if projected_bytes > budget_bytes {
+        (CachePreloadMode::Lazy, CacheLazyReason::Budget)
+    } else {
+        (CachePreloadMode::Preload, CacheLazyReason::None)
+    }
+}
+
+/// Auto-detect decision (Issue #3176): eager when the projected pre-load fits
+/// OS-available memory minus a safety margin.
+///
+/// Delegates to the **shared** [`parquet_preload_fits_available`] accounting
+/// primitive focus ranking uses (Issue #1376/#3173) — there is deliberately no
+/// second, divergent heuristic (the old 50%-of-total-RAM cap is gone). Pure so
+/// the boundary can be unit-tested against fixed memory figures.
+#[must_use]
+pub fn decide_cache_preload_for_available_memory(
+    projected_bytes: u64,
+    available_bytes: u64,
+    margin_bytes: u64,
+) -> (CachePreloadMode, CacheLazyReason) {
+    if parquet_preload_fits_available(projected_bytes, available_bytes, margin_bytes) {
+        (CachePreloadMode::Preload, CacheLazyReason::None)
+    } else {
+        (CachePreloadMode::Lazy, CacheLazyReason::MemoryPressure)
+    }
+}
+
+/// Decide the analysis-cache pre-load mode and log a structured WARN on a lazy
+/// fallback (Issue #3176).
+///
+/// Uses the supplied budget when present, otherwise the corrected OS-available
+/// accounting minus the shared focus-ranking margin. The WARN keeps the
+/// `insufficient memory for pre-loading` phrase (so existing log scraping still
+/// matches) but now carries projection, budget, available and margin so the
+/// eager-vs-lazy trade-off is visible at the decision point rather than being
+/// implicit in an opaque memory-check error.
+fn plan_cache_preload(parquet_file: &str, budget_mb: Option<u64>) -> CachePreloadMode {
+    let projected_bytes = estimate_parquet_in_memory_bytes(parquet_file);
+    let projected_mb = bytes_to_mb_ceil(projected_bytes);
+
+    if let Some(budget) = budget_mb {
+        let (mode, reason) = decide_cache_preload_for_budget(projected_bytes, budget);
+        if mode == CachePreloadMode::Lazy {
+            let (available_bytes, _total) = get_memory_info();
+            tracing::warn!(
+                target: "neat_ai_discovery::analysis::cache",
+                mode = "lazy",
+                reason = reason.as_str(),
+                budget_mb = budget,
+                projected_mb,
+                available_mb = bytes_to_mb_ceil(available_bytes),
+                "insufficient memory for pre-loading — falling back to lazy-loading mode: \
+                 projected pre-load exceeds configured budget",
+            );
+        }
+        return mode;
+    }
+
+    // Auto-detect: base the decision on real OS-available memory (corrected
+    // reclaimable accounting, Issue #3173) minus the shared focus-ranking safety
+    // margin, rather than the old 50%-of-total-RAM cap that dropped a fitting
+    // projection onto the slow lazy path while GBs of RAM were reclaimable.
+    let (available_bytes, _total) = get_memory_info();
+    let margin_mb = crate::config::focus_ranking_memory_margin_mb();
+    let margin_bytes = margin_mb.saturating_mul(BYTES_PER_MB);
+    let (mode, reason) =
+        decide_cache_preload_for_available_memory(projected_bytes, available_bytes, margin_bytes);
+    if mode == CachePreloadMode::Lazy {
+        tracing::warn!(
+            target: "neat_ai_discovery::analysis::cache",
+            mode = "lazy",
+            reason = reason.as_str(),
+            projected_mb,
+            available_mb = bytes_to_mb_ceil(available_bytes),
+            // No explicit budget on the auto-detect path; log 0 so the field is
+            // uniform with the budget path's lazy log.
+            budget_mb = 0u64,
+            margin_mb,
+            "insufficient memory for pre-loading — falling back to lazy-loading mode",
+        );
+    }
+    mode
+}
+
+#[cfg(test)]
+#[path = "preload_decision_tests.rs"]
+mod preload_decision_tests;
