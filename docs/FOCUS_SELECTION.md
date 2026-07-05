@@ -55,7 +55,7 @@ Ranking now runs under a layered performance guard:
 
 | Guard | Mechanism | Issue |
 |-------|-----------|-------|
-| **Wall-clock budget** | `FocusDeadline` checks the deadline between passes and inside the per-neuron loops; on overrun it aborts with a structured retryable `Timeout`. Configured by `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` (default 120 s). | #1375 |
+| **Wall-clock budget** | `FocusDeadline` checks the deadline between passes and inside the per-neuron loops; on overrun it aborts with a structured retryable `Timeout`. Configured by `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` (default 120 s). The default is **scaled by loading mode + dataset size**: an eager run keeps 120 s, while a slower lazy fallback earns `4 × default + 20 ms/projected MB` (clamped to 1 h) so a legitimate lazy run finishes instead of aborting. An explicit env override wins verbatim and is never scaled. | #1375, #3172 |
 | **Single-pass record loading** | Records are loaded once and reused across the ranking passes instead of re-read per neuron. | #1374 |
 | **Eager vs lazy decision** | `decide_loading_mode_for_available_memory` / `decide_loading_mode_for_budget` choose an eager pre-load or a lazy per-neuron loader based on available memory and the projected dataset size (file × 3), capped by `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB`. | #1376, #1172 |
 | **Perf-cliff observability** | A lazy pass at or above `NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS` (default 60 s) emits one explicit perf-cliff `WARN` naming the neuron count and projected dataset size (`lazy_pass_exceeds_perf_cliff`). | #1377 |
@@ -87,7 +87,7 @@ All knobs are defined in the README
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` | `120000` | Wall-clock budget for focus ranking; overrun aborts with a retryable `Timeout`. `0` disables; other values clamp to `[1000, 3600000]` (#1375, #1385). |
+| `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` | `120000` (eager); scaled for lazy | Wall-clock budget for focus ranking; overrun aborts with a retryable `Timeout`. When **unset**, the default is scaled by loading mode + projected dataset size — eager keeps 120 s, lazy earns `4 × 120 s + 20 ms/projected MB` (clamped to `[1000, 3600000]`) so a legitimate lazy fallback finishes (#3172). An explicit value **wins verbatim** (never scaled); `0` disables; other values clamp to `[1000, 3600000]` (#1375, #1385). |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | unset | Cap the eager pre-load size; projected size (file × 3) above the cap forces lazy mode with a structured `info` log (#1172). |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS` | `60000` | Perf-cliff threshold for a *lazy* pass; at/above it emits one perf-cliff `WARN`. Preload never trips it. `0` disables (#1377). |
 
