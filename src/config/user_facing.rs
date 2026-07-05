@@ -463,13 +463,43 @@ pub const FOCUS_RANKING_BUDGET_GRACE_MS: u64 = 1_000;
 /// selection past the shared discovery deadline that the synapse/neuron
 /// analysis phase also bills against. When no shared deadline is supplied, the
 /// budget behaves exactly as before.
+///
+/// This accessor returns the **unscaled** budget (the default, or an explicit
+/// override). For a run whose loading mode + dataset size are known, prefer
+/// [`effective_focus_ranking_budget_ms`] (Issue #3172), which scales the default
+/// for the slower lazy-loading path.
 pub fn focus_ranking_budget_ms() -> Option<u64> {
+    match focus_ranking_budget_override() {
+        FocusBudgetOverride::Explicit(v) => Some(v),
+        FocusBudgetOverride::Disabled => None,
+        FocusBudgetOverride::Default => Some(DEFAULT_FOCUS_RANKING_BUDGET_MS),
+    }
+}
+
+/// Parsed outcome of the `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` override
+/// (Issue #3172).
+///
+/// Distinguishing an **explicit** operator value from the fall-through default
+/// lets [`effective_focus_ranking_budget_ms`] scale only the default while
+/// honouring an explicit override verbatim.
+enum FocusBudgetOverride {
+    /// Explicit positive value, already clamped to the supported range.
+    Explicit(u64),
+    /// Explicit `0` — the budget is disabled (fully unbounded opt-out).
+    Disabled,
+    /// Unset / empty / invalid — use the (scalable) default budget.
+    Default,
+}
+
+/// Parse the `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` override once, shared by
+/// [`focus_ranking_budget_ms`] and [`effective_focus_ranking_budget_ms`].
+fn focus_ranking_budget_override() -> FocusBudgetOverride {
     let Ok(raw) = std::env::var("NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS") else {
-        return Some(DEFAULT_FOCUS_RANKING_BUDGET_MS);
+        return FocusBudgetOverride::Default;
     };
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Some(DEFAULT_FOCUS_RANKING_BUDGET_MS);
+        return FocusBudgetOverride::Default;
     }
     match trimmed.parse::<u64>() {
         Ok(0) => {
@@ -477,7 +507,7 @@ pub fn focus_ranking_budget_ms() -> Option<u64> {
                 "Focus-ranking wall-clock budget disabled via \
                  NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS=0"
             );
-            None
+            FocusBudgetOverride::Disabled
         }
         Ok(v) => {
             let clamped = v.clamp(FOCUS_RANKING_BUDGET_MIN_MS, FOCUS_RANKING_BUDGET_MAX_MS);
@@ -491,7 +521,7 @@ pub fn focus_ranking_budget_ms() -> Option<u64> {
                      supported range"
                 );
             }
-            Some(clamped)
+            FocusBudgetOverride::Explicit(clamped)
         }
         Err(_) => {
             tracing::debug!(
@@ -499,7 +529,77 @@ pub fn focus_ranking_budget_ms() -> Option<u64> {
                 "Ignoring invalid NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS \
                  (expected a non-negative integer in milliseconds)"
             );
-            Some(DEFAULT_FOCUS_RANKING_BUDGET_MS)
+            FocusBudgetOverride::Default
+        }
+    }
+}
+
+/// Multiplier applied to the **default** focus-ranking wall-clock budget when a
+/// run falls back to lazy-loading mode (Issue #3172).
+///
+/// Lazy mode is chosen only when the host cannot pre-load the dataset, and it is
+/// materially slower by design (records are decoded on demand). The fixed
+/// default budget that comfortably covers a fast eager run is therefore
+/// near-guaranteed to abort a large lazy run into degraded recorded-error
+/// aggregation. A lazy run gets `multiplier ×` the base default before the
+/// per-megabyte term is added.
+pub const FOCUS_RANKING_LAZY_BUDGET_MULTIPLIER: u64 = 4;
+
+/// Extra wall-clock budget (in milliseconds) granted per projected megabyte of
+/// the pre-load dataset when scaling a lazy run's budget (Issue #3172).
+///
+/// A larger dataset takes proportionally longer to scan on the lazy path, so the
+/// budget grows with the projected in-memory size. The #3170 incident projected
+/// ~14 297 MB and aborted at the fixed 120 s; this per-MB term plus the lazy
+/// multiplier lifts such a run well clear of the fixed net (clamped to
+/// [`FOCUS_RANKING_BUDGET_MAX_MS`]).
+pub const FOCUS_RANKING_BUDGET_MS_PER_PROJECTED_MB: u64 = 20;
+
+/// Scale the **default** focus-ranking wall-clock budget for a resolved run
+/// (Issue #3172).
+///
+/// - **Eager** (`is_lazy == false`): returns [`DEFAULT_FOCUS_RANKING_BUDGET_MS`]
+///   unchanged — the fast path keeps its current budget with no regression.
+/// - **Lazy** (`is_lazy == true`): returns `default × lazy_multiplier +
+///   projected_mb × per_mb`, clamped to
+///   `[FOCUS_RANKING_BUDGET_MIN_MS, FOCUS_RANKING_BUDGET_MAX_MS]`, so a
+///   legitimate lazy fallback on a large dataset has enough wall-clock to finish
+///   instead of aborting into recorded-error aggregation. The scaling constants
+///   are [`FOCUS_RANKING_LAZY_BUDGET_MULTIPLIER`] and
+///   [`FOCUS_RANKING_BUDGET_MS_PER_PROJECTED_MB`].
+///
+/// Pure and saturating so it is trivially unit-testable and cannot overflow.
+#[must_use]
+pub fn scale_default_focus_ranking_budget_ms(is_lazy: bool, projected_mb: u64) -> u64 {
+    if !is_lazy {
+        return DEFAULT_FOCUS_RANKING_BUDGET_MS;
+    }
+    let scaled = DEFAULT_FOCUS_RANKING_BUDGET_MS
+        .saturating_mul(FOCUS_RANKING_LAZY_BUDGET_MULTIPLIER)
+        .saturating_add(projected_mb.saturating_mul(FOCUS_RANKING_BUDGET_MS_PER_PROJECTED_MB));
+    scaled.clamp(FOCUS_RANKING_BUDGET_MIN_MS, FOCUS_RANKING_BUDGET_MAX_MS)
+}
+
+/// Effective focus-ranking wall-clock budget for a resolved run, scaled to the
+/// chosen loading mode + dataset size (Issue #3172).
+///
+/// Combines the override precedence of [`focus_ranking_budget_ms`] with
+/// mode/dataset scaling:
+/// - An explicit `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` override **wins**
+///   verbatim (clamped) and is never scaled — the operator's value is
+///   authoritative.
+/// - `0` disables the budget (returns `None`, fully unbounded opt-out).
+/// - Otherwise the default budget is scaled for `is_lazy` + `projected_mb` via
+///   [`scale_default_focus_ranking_budget_ms`].
+///
+/// Returns `None` only when the budget is explicitly disabled with `0`.
+#[must_use]
+pub fn effective_focus_ranking_budget_ms(is_lazy: bool, projected_mb: u64) -> Option<u64> {
+    match focus_ranking_budget_override() {
+        FocusBudgetOverride::Explicit(v) => Some(v),
+        FocusBudgetOverride::Disabled => None,
+        FocusBudgetOverride::Default => {
+            Some(scale_default_focus_ranking_budget_ms(is_lazy, projected_mb))
         }
     }
 }

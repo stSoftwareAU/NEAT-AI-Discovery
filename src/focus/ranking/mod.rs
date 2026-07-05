@@ -46,8 +46,8 @@ use crate::analysis::utils::{
     parquet_preload_fits_available, remaining_ms_until, verbose_enabled,
 };
 use crate::config::{
-    FOCUS_RANKING_BUDGET_GRACE_MS, focus_ranking_budget_ms, focus_ranking_memory_budget_mb,
-    focus_ranking_memory_margin_mb, focus_ranking_perf_cliff_ms,
+    FOCUS_RANKING_BUDGET_GRACE_MS, effective_focus_ranking_budget_ms,
+    focus_ranking_memory_budget_mb, focus_ranking_memory_margin_mb, focus_ranking_perf_cliff_ms,
 };
 use crate::discovery_history::DiscoveryHistory;
 use crate::ffi_types::DiscoveryError;
@@ -193,12 +193,23 @@ impl FocusDeadline {
     ///    (`NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS`, default
     ///    [`crate::config::DEFAULT_FOCUS_RANKING_BUDGET_MS`]) which still guards
     ///    a pathological ranking run even when no shared deadline is supplied.
+    ///    Issue #3172: this safety net is **scaled** by the resolved loading
+    ///    `mode` + `projected_mb` — a lazy fallback on a large dataset is
+    ///    materially slower, so it earns a larger budget than the fast eager
+    ///    path, which keeps the unscaled default. An explicit env override still
+    ///    wins verbatim.
     ///
     /// Returns `None` only when both bounds are absent — no shared deadline AND
     /// the focus budget explicitly disabled with `0`.
-    fn resolve(start: Instant, shared_deadline_ms: Option<u64>) -> Option<Self> {
-        let budget_deadline =
-            focus_ranking_budget_ms().map(|budget_ms| Self::new(start, budget_ms));
+    fn resolve(
+        start: Instant,
+        shared_deadline_ms: Option<u64>,
+        mode: FocusLoadingMode,
+        projected_mb: u64,
+    ) -> Option<Self> {
+        let is_lazy = mode == FocusLoadingMode::Lazy;
+        let budget_deadline = effective_focus_ranking_budget_ms(is_lazy, projected_mb)
+            .map(|budget_ms| Self::new(start, budget_ms));
         let shared_deadline = Self::from_shared_deadline(start, shared_deadline_ms);
 
         match (budget_deadline, shared_deadline) {
@@ -277,10 +288,14 @@ const DEFAULT_COST_OF_GROWTH: f32 = 1e-7;
 const IMPACT_EPSILON: f32 = 0.0001;
 const IMPACT_GAMMA: f32 = 0.8;
 
-/// Outcome of choosing eager vs lazy loading for a focus-ranking run
-/// (Issue #1172).
-struct LoadingDecision {
-    provider: Arc<dyn RecordProvider>,
+/// Loading plan: the eager-vs-lazy decision plus its projection, decided
+/// **before** the (possibly expensive) record provider is built (Issue #3172).
+///
+/// Separating the cheap decision from the provider build lets the wall-clock
+/// deadline be scaled to the chosen `mode` + `projected_mb` before the lazy warm
+/// pass (a full parquet decode) starts consuming the budget.
+#[derive(Debug, Clone, Copy)]
+struct LoadingPlan {
     mode: FocusLoadingMode,
     reason: FocusLazyReason,
     budget_mb: Option<u64>,
@@ -354,38 +369,111 @@ pub fn lazy_pass_exceeds_perf_cliff(
     mode == FocusLoadingMode::Lazy && threshold_ms > 0 && elapsed_ms >= u128::from(threshold_ms)
 }
 
-/// Load records provider, taking the optional configurable memory budget into
-/// account.
+/// Decide eager-vs-lazy loading and log the decision, **without** building the
+/// (possibly expensive) record provider (Issue #3172).
+///
+/// This is the cheap half of loading — a parquet-size estimate plus an
+/// OS-memory query — split out so [`FocusDeadline::resolve`] can scale the
+/// wall-clock budget to the chosen `mode` + `projected_mb` before the lazy warm
+/// pass (a full parquet decode) begins consuming that budget.
 ///
 /// Behaviour (Issue #1172):
 /// - When `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` is set, the
 ///   projected in-memory size (file size × 3) is compared against the budget.
-///   Lazy mode is selected with a structured `info` log when the projection
-///   exceeds the budget.
+///   Lazy mode is selected with a structured `WARN` when the projection exceeds
+///   the budget.
 /// - When the budget is unset, the auto-detect path compares the projection
 ///   against real OS-available memory minus a configurable safety margin
 ///   (Issue #1376). Pre-load is chosen whenever the projection fits, so hosts
 ///   with GBs free stay on the fast path; lazy mode (with a `WARN`) is reserved
 ///   for genuinely memory-constrained hosts.
-fn load_records_provider(
-    parquet_file: &str,
-    selectable: &[&NeuronJson],
-) -> Result<LoadingDecision> {
+fn plan_loading(parquet_file: &str, selectable_len: usize) -> LoadingPlan {
+    const BYTES_PER_MB: u64 = 1024 * 1024;
     let budget_mb = focus_ranking_memory_budget_mb();
     let projected_bytes = estimate_parquet_in_memory_bytes(parquet_file);
     let projected_mb = bytes_to_mb_ceil(projected_bytes);
 
     if let Some(budget) = budget_mb {
-        return decide_with_budget(
-            parquet_file,
-            selectable,
-            budget,
-            projected_bytes,
+        let (mode, reason) = decide_loading_mode_for_budget(projected_bytes, budget);
+        if mode == FocusLoadingMode::Lazy {
+            // Issue #1377: escalate to WARN and record available memory
+            // alongside projected/budget so the eager-vs-lazy trade-off is
+            // visible at the decision point, not split across log lines.
+            let (available_bytes, _total_bytes) = get_memory_info();
+            tracing::warn!(
+                target: "neat_ai_discovery::focus::ranking",
+                mode = FocusLoadingMode::Lazy.as_str(),
+                reason = reason.as_str(),
+                budget_mb = budget,
+                projected_mb,
+                available_mb = bytes_to_mb_ceil(available_bytes),
+                selectable = selectable_len,
+                "focus::ranking selected lazy mode: projected pre-load exceeds configured budget",
+            );
+        }
+        return LoadingPlan {
+            mode,
+            reason,
+            budget_mb: Some(budget),
             projected_mb,
+        };
+    }
+
+    // Issue #1376: base the decision on real OS-available memory minus a safety
+    // margin, rather than the 50%-of-total-RAM cap that dropped mid-sized
+    // parquet files onto the slow lazy path while GBs of RAM were free.
+    let (available_bytes, _total_bytes) = get_memory_info();
+    let margin_mb = focus_ranking_memory_margin_mb();
+    let margin_bytes = margin_mb.saturating_mul(BYTES_PER_MB);
+    let available_mb = bytes_to_mb_ceil(available_bytes);
+    let (mode, reason) =
+        decide_loading_mode_for_available_memory(projected_bytes, available_bytes, margin_bytes);
+
+    if mode == FocusLoadingMode::Lazy {
+        tracing::warn!(
+            target: "neat_ai_discovery::focus::ranking",
+            mode = FocusLoadingMode::Lazy.as_str(),
+            reason = reason.as_str(),
+            projected_mb,
+            available_mb,
+            // Issue #1377: no explicit budget on the auto-detect path; log 0
+            // so the field is uniform with the budget path's lazy log.
+            budget_mb = 0u64,
+            margin_mb,
+            selectable = selectable_len,
+            "Insufficient available memory for full pre-load in focus ranking. \
+             Using lazy-loading mode (slower but memory-efficient).",
         );
     }
 
-    decide_with_auto_detect(parquet_file, selectable, projected_bytes, projected_mb)
+    LoadingPlan {
+        mode,
+        reason,
+        budget_mb: None,
+        projected_mb,
+    }
+}
+
+/// Build the record provider for a resolved [`LoadingPlan`] (Issue #3172).
+///
+/// The expensive half of loading: an eager pre-load decodes the whole parquet
+/// file through the process-shared cache (Issue #1406) so the analysis phase can
+/// reuse it; a lazy plan warms a bounded, working-set-sized cache
+/// ([`build_lazy_provider`]). Kept separate from [`plan_loading`] so this work
+/// runs *after* the wall-clock deadline has been scaled to the plan.
+fn build_provider(
+    parquet_file: &str,
+    selectable: &[&NeuronJson],
+    plan: LoadingPlan,
+) -> Result<Arc<dyn RecordProvider>> {
+    match plan.mode {
+        FocusLoadingMode::Lazy => Ok(build_lazy_provider(parquet_file, selectable)),
+        FocusLoadingMode::Preload => {
+            let shared = load_grouped_records_shared(parquet_file, None)
+                .context("Failed to read discovery records from parquet file")?;
+            Ok(Arc::new(EagerRecordProvider::from_shared(&shared)))
+        }
+    }
 }
 
 /// Build a lazy record provider whose cache is sized to the ranking working set
@@ -426,112 +514,6 @@ fn build_lazy_provider(parquet_file: &str, selectable: &[&NeuronJson]) -> Arc<dy
     }
 
     Arc::new(provider)
-}
-
-fn decide_with_budget(
-    parquet_file: &str,
-    selectable: &[&NeuronJson],
-    budget_mb: u64,
-    projected_bytes: u64,
-    projected_mb: u64,
-) -> Result<LoadingDecision> {
-    let (mode, reason) = decide_loading_mode_for_budget(projected_bytes, budget_mb);
-    match mode {
-        FocusLoadingMode::Lazy => {
-            // Issue #1377: escalate to WARN and record available memory
-            // alongside projected/budget so the eager-vs-lazy trade-off is
-            // visible at the decision point, not split across log lines.
-            let (available_bytes, _total_bytes) = get_memory_info();
-            tracing::warn!(
-                target: "neat_ai_discovery::focus::ranking",
-                mode = FocusLoadingMode::Lazy.as_str(),
-                reason = reason.as_str(),
-                budget_mb,
-                projected_mb,
-                available_mb = bytes_to_mb_ceil(available_bytes),
-                "focus::ranking selected lazy mode: projected pre-load exceeds configured budget",
-            );
-            Ok(LoadingDecision {
-                provider: build_lazy_provider(parquet_file, selectable),
-                mode,
-                reason,
-                budget_mb: Some(budget_mb),
-                projected_mb,
-            })
-        }
-        FocusLoadingMode::Preload => {
-            // Issue #1406: decode through the process-shared cache so the
-            // following analysis phase can reuse this load instead of scanning
-            // the same parquet file a second time.
-            let shared = load_grouped_records_shared(parquet_file, None)
-                .context("Failed to read discovery records from parquet file")?;
-            Ok(LoadingDecision {
-                provider: Arc::new(EagerRecordProvider::from_shared(&shared)),
-                mode,
-                reason,
-                budget_mb: Some(budget_mb),
-                projected_mb,
-            })
-        }
-    }
-}
-
-fn decide_with_auto_detect(
-    parquet_file: &str,
-    selectable: &[&NeuronJson],
-    projected_bytes: u64,
-    projected_mb: u64,
-) -> Result<LoadingDecision> {
-    const BYTES_PER_MB: u64 = 1024 * 1024;
-
-    // Issue #1376: base the decision on real OS-available memory minus a safety
-    // margin, rather than the 50%-of-total-RAM cap that dropped mid-sized
-    // parquet files onto the slow lazy path while GBs of RAM were free.
-    let (available_bytes, _total_bytes) = get_memory_info();
-    let margin_mb = focus_ranking_memory_margin_mb();
-    let margin_bytes = margin_mb.saturating_mul(BYTES_PER_MB);
-    let available_mb = bytes_to_mb_ceil(available_bytes);
-
-    let (mode, reason) =
-        decide_loading_mode_for_available_memory(projected_bytes, available_bytes, margin_bytes);
-
-    match mode {
-        FocusLoadingMode::Preload => {
-            // Issue #1406: decode through the process-shared cache (see the
-            // budget-path branch) so the analysis phase reuses this load.
-            let shared = load_grouped_records_shared(parquet_file, None)
-                .context("Failed to read discovery records from parquet file")?;
-            Ok(LoadingDecision {
-                provider: Arc::new(EagerRecordProvider::from_shared(&shared)),
-                mode,
-                reason,
-                budget_mb: None,
-                projected_mb,
-            })
-        }
-        FocusLoadingMode::Lazy => {
-            tracing::warn!(
-                target: "neat_ai_discovery::focus::ranking",
-                mode = FocusLoadingMode::Lazy.as_str(),
-                reason = reason.as_str(),
-                projected_mb,
-                available_mb,
-                // Issue #1377: no explicit budget on the auto-detect path; log 0
-                // so the field is uniform with the budget path's lazy log.
-                budget_mb = 0u64,
-                margin_mb,
-                "Insufficient available memory for full pre-load in focus ranking. \
-                 Using lazy-loading mode (slower but memory-efficient).",
-            );
-            Ok(LoadingDecision {
-                provider: build_lazy_provider(parquet_file, selectable),
-                mode,
-                reason,
-                budget_mb: None,
-                projected_mb,
-            })
-        }
-    }
 }
 
 /// Emit the structured end-of-pass summary (Issue #1172). Always logged at
@@ -873,7 +855,6 @@ struct RankCoreArgs<'a> {
 /// the creature has no selectable neurons.
 fn rank_focus_core(args: &RankCoreArgs<'_>) -> Result<RankFocusStats> {
     let start = Instant::now();
-    let deadline = FocusDeadline::resolve(start, args.shared_deadline_ms);
 
     let selectable: Vec<&NeuronJson> = args
         .creature
@@ -899,21 +880,43 @@ fn rank_focus_core(args: &RankCoreArgs<'_>) -> Result<RankFocusStats> {
         });
     }
 
-    let LoadingDecision {
-        provider,
-        mode,
-        reason,
-        budget_mb,
-        projected_mb,
-    } = load_records_provider(args.parquet_file, &selectable)?;
+    // Issue #3172: decide the loading mode + projection *first* (cheap), so the
+    // wall-clock deadline can be scaled to the chosen mode and dataset size
+    // before the (possibly expensive) provider build starts spending it. A lazy
+    // fallback on a large dataset thereby earns a larger budget instead of being
+    // set up to abort at the fixed default.
+    let plan = plan_loading(args.parquet_file, selectable.len());
+    let deadline =
+        FocusDeadline::resolve(start, args.shared_deadline_ms, plan.mode, plan.projected_mb);
+    log_effective_budget(plan, deadline);
+
+    let provider = build_provider(args.parquet_file, &selectable, plan)?;
     let meta = LoadingMeta {
-        mode,
-        reason,
-        budget_mb,
-        projected_mb,
+        mode: plan.mode,
+        reason: plan.reason,
+        budget_mb: plan.budget_mb,
+        projected_mb: plan.projected_mb,
     };
 
     rank_selectable(args, &selectable, provider, meta, deadline, start)
+}
+
+/// Log the resolved wall-clock budget for a run so the mode + effective
+/// `budget_ms` are visible for diagnosis (Issue #3172 acceptance criterion).
+///
+/// `budget_enabled == false` marks a run whose budget was explicitly disabled
+/// (`..._BUDGET_MS=0`) and which has no shared discovery deadline either — i.e.
+/// fully unbounded.
+fn log_effective_budget(plan: LoadingPlan, deadline: Option<FocusDeadline>) {
+    let budget_ms = deadline.map(|d| d.budget_ms);
+    tracing::info!(
+        target: "neat_ai_discovery::focus::ranking",
+        mode = plan.mode.as_str(),
+        projected_mb = plan.projected_mb,
+        budget_ms = budget_ms.unwrap_or(0),
+        budget_enabled = budget_ms.is_some(),
+        "focus::ranking wall-clock budget resolved",
+    );
 }
 
 /// Run the ranking passes over an already-loaded record provider (Issue #1375).
@@ -1276,7 +1279,7 @@ pub(in crate::focus) fn rank_with_provider_for_tests(
 mod focus_deadline_tests {
     //! Issue #1407: `FocusDeadline::resolve` must bound focus selection by the
     //! shared absolute discovery deadline, capped by the focus-ranking budget.
-    use super::FocusDeadline;
+    use super::{FocusDeadline, FocusLoadingMode};
     use std::time::{Duration, Instant, SystemTime};
 
     fn now_ms() -> u64 {
@@ -1290,13 +1293,19 @@ mod focus_deadline_tests {
         if a > b { a - b } else { b - a }
     }
 
+    /// Resolve using the eager default budget (no mode/dataset scaling), the
+    /// baseline these #1407 tests were written against.
+    fn resolve_eager(start: Instant, shared: Option<u64>) -> Option<FocusDeadline> {
+        FocusDeadline::resolve(start, shared, FocusLoadingMode::Preload, 0)
+    }
+
     #[test]
     fn resolve_uses_shared_deadline_when_sooner_than_budget() {
         let start = Instant::now();
         // Absolute deadline 5s out — well inside the default 120s focus budget.
         let shared = Some(now_ms() + 5_000);
-        let resolved = FocusDeadline::resolve(start, shared).expect("deadline present");
-        let budget_only = FocusDeadline::resolve(start, None).expect("budget present");
+        let resolved = resolve_eager(start, shared).expect("deadline present");
+        let budget_only = resolve_eager(start, None).expect("budget present");
 
         // The shared deadline (5s) bounds the run more tightly than the budget,
         // so it must win — this is the unification the issue requires.
@@ -1317,8 +1326,8 @@ mod focus_deadline_tests {
         let start = Instant::now();
         // Absolute deadline far beyond the focus budget (50 minutes out).
         let shared = Some(now_ms() + 3_000_000);
-        let resolved = FocusDeadline::resolve(start, shared).expect("deadline present");
-        let budget_only = FocusDeadline::resolve(start, None).expect("budget present");
+        let resolved = resolve_eager(start, shared).expect("deadline present");
+        let budget_only = resolve_eager(start, None).expect("budget present");
 
         // The nearer focus budget caps the distant deadline, so both expire at
         // effectively the same point.
@@ -1333,10 +1342,53 @@ mod focus_deadline_tests {
         let start = Instant::now();
         // An absolute deadline already in the past saturates to zero remaining.
         let shared = Some(now_ms().saturating_sub(10_000));
-        let resolved = FocusDeadline::resolve(start, shared).expect("deadline present");
+        let resolved = resolve_eager(start, shared).expect("deadline present");
         assert!(
             resolved.check("test").is_err(),
             "a passed shared deadline must abort focus ranking immediately",
+        );
+    }
+
+    // Issue #3172: the budget-only deadline must scale with the resolved loading
+    // mode + dataset size — a lazy fallback on a large dataset earns a materially
+    // larger window than the fast eager path, which keeps the unscaled default.
+    #[test]
+    fn resolve_scales_lazy_budget_above_eager_default() {
+        let start = Instant::now();
+        // No shared deadline: only the (scaled) focus budget bounds the run.
+        let eager = FocusDeadline::resolve(start, None, FocusLoadingMode::Preload, 0)
+            .expect("eager budget present");
+        let lazy = FocusDeadline::resolve(start, None, FocusLoadingMode::Lazy, 14_297)
+            .expect("lazy budget present");
+
+        assert!(
+            lazy.expires_at > eager.expires_at,
+            "a large lazy run must get a later deadline than the eager default \
+             so it can finish instead of aborting into recorded-error aggregation",
+        );
+        // The eager default stays at the fixed 120s net (no regression).
+        assert_eq!(
+            eager.budget_ms,
+            crate::config::DEFAULT_FOCUS_RANKING_BUDGET_MS,
+            "eager mode must keep the unscaled default budget",
+        );
+        assert!(
+            lazy.budget_ms > crate::config::DEFAULT_FOCUS_RANKING_BUDGET_MS,
+            "lazy mode on a large dataset must exceed the fixed default budget",
+        );
+    }
+
+    // Issue #3172: a bigger projected dataset earns a bigger lazy budget.
+    #[test]
+    fn resolve_lazy_budget_grows_with_projected_size() {
+        let start = Instant::now();
+        let small = FocusDeadline::resolve(start, None, FocusLoadingMode::Lazy, 100)
+            .expect("small lazy budget present");
+        let large = FocusDeadline::resolve(start, None, FocusLoadingMode::Lazy, 20_000)
+            .expect("large lazy budget present");
+        assert!(
+            large.budget_ms >= small.budget_ms,
+            "a larger projected dataset must not shrink the lazy budget",
         );
     }
 }
