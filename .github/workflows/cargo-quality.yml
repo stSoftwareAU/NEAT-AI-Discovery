@@ -60,7 +60,15 @@ jobs:
         # (Issue #1489).
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
-        run: cargo llvm-cov --lcov --output-path lcov.info
+        # Run the test binaries with `--test-threads=2` to match `ci.yml/quality`
+        # and `quality.sh`. Parts of the suite share process-wide state (the
+        # global tracking allocator counter) and wall-clock timing budgets that
+        # are not robust to unbounded parallelism; `cargo llvm-cov` otherwise
+        # defaults to one thread per core, which surfaces as spurious failures
+        # (e.g. `tracking_alloc` / focus-ranking budget tests) under coverage
+        # instrumentation only. Keeping the thread count aligned with the other
+        # gates removes that divergence (PR #1515).
+        run: cargo llvm-cov --lcov --output-path lcov.info -- --test-threads=2
 
       - name: Upload coverage to Codecov
         # Pinned to a 40-char commit SHA (Issue #1216).

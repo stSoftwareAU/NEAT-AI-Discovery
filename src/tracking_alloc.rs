@@ -213,11 +213,21 @@ mod tests {
     /// during the test binary must be reflected by a non-zero counter.
     #[test]
     fn global_allocator_reports_live_usage() {
-        let before = crate::ALLOCATOR.allocated();
         // Force a heap allocation that outlives the read below.
         let buf: Vec<u8> = vec![7u8; 4096];
-        let after = crate::ALLOCATOR.allocated();
-        assert!(after >= before + buf.len());
+        // The counter tracks *all* live allocations process-wide, so while
+        // `buf` is alive the reported total must be at least its size. Assert
+        // this absolute invariant rather than a before/after delta: the delta
+        // races under parallel test execution (e.g. `cargo llvm-cov`, which
+        // runs the suite multi-threaded) when other threads free memory
+        // between the two reads, making `after < before + buf.len()` even
+        // though the allocator is working correctly.
+        let live = crate::ALLOCATOR.allocated();
+        assert!(
+            live >= buf.len(),
+            "global live usage {live} should be at least the {} bytes just allocated",
+            buf.len()
+        );
         // Keep `buf` alive until after the measurement.
         assert_eq!(buf[0], 7);
     }
