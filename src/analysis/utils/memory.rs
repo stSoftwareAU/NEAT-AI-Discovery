@@ -138,38 +138,96 @@ pub fn get_memory_info() -> (u64, u64) {
         })
         .unwrap_or(8 * 1024 * 1024 * 1024); // Default 8GB
 
-    // Get page size and free/inactive pages from vm_stat
+    // Reclaimable available memory is parsed from vm_stat (Issue #3173).
     let vm_stat = Command::new("vm_stat").output().ok();
     let available = vm_stat.map_or(total / 2, |o| {
         let output = String::from_utf8_lossy(&o.stdout);
-        // Parse page size from vm_stat header - handles both Apple Silicon (16KB)
-        // and Intel Macs (4KB) correctly
-        let page_size = parse_vm_stat_page_size(&output);
-
-        let mut free_pages: u64 = 0;
-        let mut inactive_pages: u64 = 0;
-        let mut purgeable_pages: u64 = 0;
-
-        for line in output.lines() {
-            if line.starts_with("Pages free:") {
-                free_pages = parse_vm_stat_line(line);
-            } else if line.starts_with("Pages inactive:") {
-                inactive_pages = parse_vm_stat_line(line);
-            } else if line.starts_with("Pages purgeable:") {
-                purgeable_pages = parse_vm_stat_line(line);
-            }
-        }
-
-        // Available = free + inactive + purgeable (memory that can be reclaimed)
-        (free_pages + inactive_pages + purgeable_pages) * page_size
-    }); // Default to half of total
+        parse_macos_available_bytes(&output, total)
+    }); // Default to half of total when vm_stat is unavailable
 
     (available, total)
 }
 
+/// Compute reclaimable available memory (bytes) from raw `vm_stat` output and
+/// the total physical memory (Issue #3173).
+///
+/// macOS keeps a large share of RAM as reclaimable file-cache, purgeable and
+/// free pages. The previous `free + inactive + purgeable` figure undercounted
+/// true headroom: file-backed cache sitting in the **active** list was treated
+/// as unavailable, so a ~14.3 GB pre-load projection on a 24 GB host was forced
+/// onto the slow lazy path despite the machine being able to run eager. This
+/// counts every genuinely-reclaimable page class:
+///
+/// - **Pages free** — unused RAM,
+/// - **File-backed pages** — clean file cache (active **and** inactive), which
+///   the kernel drops on demand without I/O,
+/// - **Pages purgeable** — caches the kernel may discard on demand.
+///
+/// Wired, compressed and dirty anonymous (app) pages are deliberately excluded:
+/// reclaiming them needs swap / compression — the very memory pressure the
+/// pre-load margin guards against, so counting them would risk the OOM the
+/// margin exists to prevent.
+///
+/// Falls back to `total_bytes / 2` when no reclaimable field can be parsed (an
+/// unexpected `vm_stat` format) so the whole machine is never reported as
+/// available, and the result is clamped to `total_bytes`.
+#[cfg(any(target_os = "macos", test))]
+#[must_use]
+pub fn parse_macos_available_bytes(vm_stat_output: &str, total_bytes: u64) -> u64 {
+    // Parse page size from the header - handles both Apple Silicon (16KB) and
+    // Intel Macs (4KB) correctly.
+    let page_size = parse_vm_stat_page_size(vm_stat_output);
+
+    let mut free_pages: u64 = 0;
+    let mut file_backed_pages: u64 = 0;
+    let mut purgeable_pages: u64 = 0;
+    let mut parsed_any = false;
+
+    for line in vm_stat_output.lines() {
+        if line.starts_with("Pages free:") {
+            free_pages = parse_vm_stat_line(line);
+            parsed_any = true;
+        } else if line.starts_with("File-backed pages:") {
+            file_backed_pages = parse_vm_stat_line(line);
+            parsed_any = true;
+        } else if line.starts_with("Pages purgeable:") {
+            purgeable_pages = parse_vm_stat_line(line);
+            parsed_any = true;
+        }
+    }
+
+    if !parsed_any {
+        // Unexpected format — be conservative rather than reporting the whole
+        // machine as available.
+        return total_bytes / 2;
+    }
+
+    macos_reclaimable_available_bytes(page_size, free_pages, file_backed_pages, purgeable_pages)
+        .min(total_bytes)
+}
+
+/// Sum the reclaimable macOS page classes and convert to bytes (Issue #3173).
+///
+/// Pure arithmetic split out from [`parse_macos_available_bytes`] so the
+/// reclaimable-memory accounting can be unit-tested against fixed page counts.
+/// Uses saturating arithmetic so implausibly large counts cannot overflow.
+#[cfg(any(target_os = "macos", test))]
+#[must_use]
+pub const fn macos_reclaimable_available_bytes(
+    page_size: u64,
+    free_pages: u64,
+    file_backed_pages: u64,
+    purgeable_pages: u64,
+) -> u64 {
+    free_pages
+        .saturating_add(file_backed_pages)
+        .saturating_add(purgeable_pages)
+        .saturating_mul(page_size)
+}
+
 /// Parse a page count from a `vm_stat` output line.
 /// Example: "Pages free:                              123456." -> 123456
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 pub fn parse_vm_stat_line(line: &str) -> u64 {
     line.split(':')
         .nth(1)
@@ -183,7 +241,7 @@ pub fn parse_vm_stat_line(line: &str) -> u64 {
 ///
 /// Apple Silicon uses 16KB pages, Intel Macs use 4KB pages.
 /// Parsing dynamically ensures correct memory calculations on both.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 pub fn parse_vm_stat_page_size(output: &str) -> u64 {
     // Default page sizes by architecture
     // Apple Silicon (ARM64): 16384 bytes (16KB)

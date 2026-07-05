@@ -126,6 +126,111 @@ fn test_preload_zero_margin_uses_full_available() {
 }
 
 // =============================================================================
+// macOS reclaimable available-memory accounting (Issue #3173)
+// =============================================================================
+
+/// `vm_stat` output for a mostly-idle 24 GB Apple Silicon host. Most RAM sits
+/// in reclaimable file-backed cache (much of it in the *active* list, which the
+/// old free+inactive accounting missed), so a ~14.3 GB pre-load must fit.
+const IDLE_24GB_VM_STAT: &str = "\
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                              200000.
+Pages active:                            300000.
+Pages inactive:                          150000.
+Pages speculative:                        20000.
+Pages throttled:                              0.
+Pages wired down:                        200000.
+Pages purgeable:                           4000.
+File-backed pages:                       820000.
+Anonymous pages:                         250000.
+Pages stored in compressor:              500000.
+Pages occupied by compressor:            120000.
+";
+
+/// `vm_stat` output for a genuinely constrained 24 GB host: little free RAM,
+/// little file cache, and most memory tied up in dirty anonymous / compressed
+/// app pages that are NOT cheaply reclaimable.
+const CONSTRAINED_24GB_VM_STAT: &str = "\
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                               20000.
+Pages active:                            900000.
+Pages inactive:                          400000.
+Pages wired down:                        300000.
+Pages purgeable:                              0.
+File-backed pages:                       100000.
+Anonymous pages:                        1200000.
+Pages occupied by compressor:            300000.
+";
+
+#[test]
+fn macos_available_counts_file_backed_cache_not_just_free_inactive() {
+    const TOTAL: u64 = 24 * 1024 * MB; // 24 GB
+    let available = parse_macos_available_bytes(IDLE_24GB_VM_STAT, TOTAL);
+    // free 200000 + file-backed 820000 + purgeable 4000 = 1_024_000 pages
+    // × 16384 bytes = 16_000 MB reclaimable.
+    assert_eq!(available, 16_000 * MB);
+    // The old free+inactive+purgeable figure would have been only
+    // (200000 + 150000 + 4000) × 16384 ≈ 5.5 GB — far too low, forcing lazy.
+    assert!(available > 15_000 * MB);
+}
+
+#[test]
+fn macos_idle_host_selects_eager_for_14gb_projection() {
+    const TOTAL: u64 = 24 * 1024 * MB;
+    let available = parse_macos_available_bytes(IDLE_24GB_VM_STAT, TOTAL);
+    let projected = 14_297 * MB; // ~14.3 GB pre-load projection
+    let margin = 1024 * MB;
+    assert!(
+        parquet_preload_fits_available(projected, available, margin),
+        "corrected accounting must fit the 14.3 GB projection → eager",
+    );
+}
+
+#[test]
+fn macos_constrained_host_still_selects_lazy() {
+    const TOTAL: u64 = 24 * 1024 * MB;
+    let available = parse_macos_available_bytes(CONSTRAINED_24GB_VM_STAT, TOTAL);
+    // free 20000 + file-backed 100000 + purgeable 0 = 120000 pages
+    // × 16384 bytes = 1_875 MB reclaimable.
+    assert_eq!(available, 1_875 * MB);
+    let projected = 14_297 * MB;
+    let margin = 1024 * MB;
+    assert!(
+        !parquet_preload_fits_available(projected, available, margin),
+        "a genuinely constrained host must stay on the lazy path",
+    );
+}
+
+#[test]
+fn macos_reclaimable_helper_sums_classes_times_page_size() {
+    // (1 + 2 + 3) pages × 4096 bytes = 24576 bytes.
+    assert_eq!(macos_reclaimable_available_bytes(4096, 1, 2, 3), 24_576);
+    // Saturating arithmetic: implausible counts clamp instead of overflowing.
+    assert_eq!(
+        macos_reclaimable_available_bytes(u64::MAX, u64::MAX, 0, 0),
+        u64::MAX
+    );
+}
+
+#[test]
+fn macos_available_falls_back_to_half_total_on_unparseable_output() {
+    const TOTAL: u64 = 16 * 1024 * MB;
+    let available = parse_macos_available_bytes("garbage output\nno fields here", TOTAL);
+    assert_eq!(available, TOTAL / 2);
+}
+
+#[test]
+fn macos_available_never_exceeds_total() {
+    // Absurdly large page counts must clamp to total, never over-report.
+    let output = "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n\
+                  Pages free:                          99999999.\n\
+                  File-backed pages:                   99999999.\n\
+                  Pages purgeable:                            0.\n";
+    const TOTAL: u64 = 8 * 1024 * MB;
+    assert_eq!(parse_macos_available_bytes(output, TOTAL), TOTAL);
+}
+
+// =============================================================================
 // Parquet Memory Check Tests
 // =============================================================================
 
