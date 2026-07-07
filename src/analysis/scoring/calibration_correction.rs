@@ -53,6 +53,30 @@
 //! over as it does for every other squash. Non-risky squashes (`ReLU` family,
 //! Sigmoid, Tanh, …) keep the existing 1.0 cold-start default.
 //!
+//! ## Thin failure cache is safe (Issue #1521)
+//!
+//! A creature whose failure cache holds only a couple of entries (the parent
+//! milestone #1516 observed just 2 for creature `247b83ab`) does **not** starve
+//! this EWMA into suppressing candidate suggestion. Two safeguards make a thin
+//! cache safe:
+//!
+//! - Every per-`change_type` EWMA is clamped to
+//!   `[MIN_CALIBRATION_CORRECTION, NEUTRAL_CORRECTION]` (= `[0.001, 1.0]`), so
+//!   even two ~800× over-predictions produce a correction of `0.001` — heavily
+//!   discounted but strictly non-zero. The correction is applied by a plain
+//!   multiply, so the corrected candidate gain stays strictly positive and the
+//!   candidate stream is never collapsed to zero by this layer.
+//! - The per-`(change_type, target_squash)` specific layer requires
+//!   [`MIN_SPECIFIC_TARGET_SQUASH_SAMPLES`] entries; below that threshold
+//!   [`CalibrationCorrection::correction_for`] falls back to the per-`change_type`
+//!   EWMA (populated by any single usable entry) rather than leaving the
+//!   correction undefined.
+//!
+//! The floor is therefore the cold-start / warm-up handling for a thin cache.
+//! `tests/issue_1521_thin_failure_cache_calibration.rs` locks in this
+//! behaviour so a future change cannot re-suppress candidates by starving the
+//! EWMA.
+//!
 //! # Formula
 //!
 //! Given failure cache entries with `expected_error_reduction` and
