@@ -43,6 +43,70 @@
 use crate::CreatureJson;
 use crate::focus::compute_impacts_public;
 
+/// Squash-error magnitude above which a neuron is treated as "broken" for
+/// hygiene purposes (Issue #1519).
+///
+/// A neuron whose baseline squash error exceeds this bound is producing
+/// astronomically large activation errors that break WASM compilation of the
+/// exported network downstream. It must be removed regardless of its estimated
+/// gain — the NEAT-AI `#2483` hygiene guarantee. This mirrors the Deno-side
+/// `MAX_REASONABLE_SQUASH_ERROR` so the removal-eligibility decision uses the
+/// same threshold on both sides of the FFI boundary.
+pub const MAX_REASONABLE_SQUASH_ERROR: f64 = 1e10;
+
+/// Decoupled remove-neuron assessment (Issue #1519).
+///
+/// Separates hygiene **removal-eligibility** from the **ranking value** so an
+/// over-threshold broken neuron is removed regardless of its gain, while its
+/// reported gain stays honest and never crowds out realistic (~`1e-4`)
+/// candidates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RemoveNeuronAssessment {
+    /// `true` when the neuron must be removed on hygiene grounds — its squash
+    /// error exceeds [`MAX_REASONABLE_SQUASH_ERROR`]. Derived purely from the
+    /// hygiene threshold, never from [`gain`](Self::gain).
+    pub removal_eligible: bool,
+    /// The honest, propagation-aware gain used purely for ranking. Always the
+    /// [`estimate_remove_neuron_gain`] value (≈0 or negative for a broken
+    /// neuron), never the retired synthetic `[0.1, 0.5]` floor.
+    pub gain: f64,
+}
+
+/// Assess a remove-neuron candidate, decoupling hygiene removal-eligibility
+/// from the honest ranking gain (Issue #1519).
+///
+/// Removal-eligibility is driven solely by `squash_error` against
+/// [`MAX_REASONABLE_SQUASH_ERROR`]; the gain is the honest, propagation-aware
+/// [`estimate_remove_neuron_gain`] estimate. The two are independent: a broken
+/// (over-threshold) neuron stays removal-eligible even when its honest gain is
+/// ≈0 or negative, and that honest gain — not a fabricated floor — is what the
+/// downstream ranking sorts on.
+///
+/// # Arguments
+/// * `creature` - The creature's network topology (neurons and synapses).
+/// * `neuron_uuid` - UUID of the neuron whose removal is being assessed.
+/// * `squash_error` - The neuron's baseline squash error, used only for the
+///   hygiene removal-eligibility decision.
+///
+/// # Returns
+/// `Some(assessment)` for a hidden neuron present in the topology, or `None`
+/// when the neuron is absent or is an output neuron (outputs are never removal
+/// candidates).
+#[must_use]
+pub fn assess_remove_neuron(
+    creature: &CreatureJson,
+    neuron_uuid: &str,
+    squash_error: f64,
+) -> Option<RemoveNeuronAssessment> {
+    // The honest gain also gates candidacy: `None` here means the neuron is an
+    // output or not present, so it is never a removal candidate.
+    let gain = estimate_remove_neuron_gain(creature, neuron_uuid)?;
+    Some(RemoveNeuronAssessment {
+        removal_eligible: squash_error > MAX_REASONABLE_SQUASH_ERROR,
+        gain,
+    })
+}
+
 /// Estimate the honest, propagation-aware creature-score gain from removing a
 /// neuron.
 ///
