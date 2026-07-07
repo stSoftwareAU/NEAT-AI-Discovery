@@ -16,19 +16,20 @@
 //!   failure, carrying the placeholder gain and the measured actual effect.
 //!
 //! This file ships two tests:
-//! - [`placeholder_gain_is_wrong_at_depth`] (runnable) — the red-state guard.
-//!   It proves the recorded placeholder gain differs from the measured actual by
-//!   more than an order of magnitude, and fails if the placeholder silently
-//!   changes.
-//! - [`remove_neuron_effect_at_production_depth`] (`#[ignore]`) — the estimator
-//!   spec. It is red until the #1516 propagation-aware estimator lands: the
-//!   "current estimate" (the recorded placeholder) does not yet match the
-//!   measured actual. The propagation reference corroborates that the true
-//!   effect really is tiny.
+//! - [`placeholder_gain_is_wrong_at_depth`] (runnable) — since #1518 landed the
+//!   propagation-aware estimator, this is inverted into a regression guard: it
+//!   asserts the estimator no longer emits the floor-clamped `[0.1, 0.5]`
+//!   placeholder range for this deep neuron. If the placeholder path is ever
+//!   accidentally reinstated (e.g. a fallback branch resurfaces), it fails.
+//! - [`remove_neuron_effect_at_production_depth`] — the estimator spec. Now that
+//!   the #1516/#1518 propagation-aware estimator lands, the `#[ignore]` is
+//!   removed and this is the permanent regression gate: the estimate must match
+//!   the measured actual within one order of magnitude and in sign.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts (Issue #873)
 
 use neat_ai_discovery::CreatureJson;
+use neat_ai_discovery::analysis::estimate_remove_neuron_gain;
 use neat_ai_discovery::focus::compute_impacts_public;
 use std::path::{Path, PathBuf};
 
@@ -109,13 +110,19 @@ fn propagation_aware_impact(creature: &CreatureJson, neuron_uuid: &str) -> f64 {
     f64::from(impact)
 }
 
-/// Red-state guard (runnable in CI). Proves the recorded placeholder gain is
-/// wrong at depth: it differs from the measured actual by more than an order of
-/// magnitude. If the placeholder is ever silently changed, this test turns CI
-/// red at that commit so the fixture / spec can be re-validated.
+/// Regression guard (runnable in CI). Inverted by #1518: the propagation-aware
+/// estimator has replaced the placeholder, so this now asserts that the
+/// estimator no longer emits the floor-clamped `[0.1, 0.5]` placeholder range
+/// for this deep neuron. If the placeholder path is ever accidentally
+/// reinstated (e.g. a fallback branch resurfaces and clamps the gain back up),
+/// this test turns CI red at that commit.
+///
+/// It still pins the recorded fixture values so drift in the known-bad
+/// placeholder / measured-actual constants is caught in the same run.
 #[test]
 fn placeholder_gain_is_wrong_at_depth() {
     let (recorded_gain, recorded_actual, uuid) = load_failure_fixture();
+    let creature = load_network();
 
     // The fixture still encodes the known-bad placeholder and measured actual.
     // Drift in either value flips this guard red.
@@ -131,39 +138,33 @@ fn placeholder_gain_is_wrong_at_depth() {
     );
     assert_eq!(uuid, TARGET_NEURON, "fixture target neuron changed");
 
-    // Core red-state fact: the placeholder is more than an order of magnitude
-    // larger than the measured actual (it is ~920×).
-    let ratio = magnitude_ratio(recorded_gain, recorded_actual);
+    // Inverted guard: the estimator must NOT emit the floor-clamped
+    // `[0.1, 0.5]` placeholder range for this deep neuron. The honest gain is a
+    // tiny (~1e-4) value, far below the fabricated floor of 0.1.
+    let estimate = estimate_remove_neuron_gain(&creature, &uuid)
+        .expect("estimator must return a gain for the target hidden neuron");
     assert!(
-        ratio > 10.0,
-        "placeholder gain must differ from the measured actual by > 1 order of magnitude, \
-         got ratio {ratio:.1}"
-    );
-
-    // ...and it points the wrong way (positive vs the measured negative effect).
-    assert!(
-        recorded_gain.signum() != recorded_actual.signum(),
-        "placeholder gain should be opposite in sign to the measured actual"
+        !(0.1..=0.5).contains(&estimate.abs()),
+        "estimator emitted a value {estimate} inside the retired placeholder floor range \
+         [0.1, 0.5]; the fabricated floor-clamped placeholder path has resurfaced"
     );
 }
 
-/// Estimator spec — red until the #1516 propagation-aware estimator lands.
+/// Estimator spec — the permanent regression gate (#1516/#1518).
 ///
-/// The "current estimate" is the recorded placeholder gain (there is no
-/// propagation-aware estimator to call yet). This case asserts the estimate
-/// matches the measured actual within tolerance — which FAILS today (hence
-/// `#[ignore]`). Once #1516 replaces the placeholder with a propagation-aware
-/// estimate, remove the `#[ignore]` and this becomes the permanent regression
-/// gate on the committed fixtures.
+/// The propagation-aware estimator ([`estimate_remove_neuron_gain`]) replaces
+/// the fabricated placeholder. This case asserts the estimate matches the
+/// measured actual within one order of magnitude AND in sign on the committed
+/// fixtures. Any future estimator change that breaks the scale or sign fidelity
+/// fails `cargo test` in CI before merge.
 ///
 /// The propagation reference (computed live from the committed topology)
 /// corroborates that the true effect at production depth really is tiny —
 /// within an order of magnitude of the measured actual and thousands of times
-/// below the placeholder.
+/// below the retired placeholder.
 #[test]
-#[ignore = "red until #1516 estimator lands"]
 fn remove_neuron_effect_at_production_depth() {
-    let (current_estimate, measured_actual, uuid) = load_failure_fixture();
+    let (placeholder_gain, measured_actual, uuid) = load_failure_fixture();
     let creature = load_network();
 
     // Reference computation: propagate the neuron's contribution through all
@@ -180,18 +181,18 @@ fn remove_neuron_effect_at_production_depth() {
 
     // ...and thousands of times below the fabricated placeholder.
     assert!(
-        magnitude_ratio(current_estimate, reference) > 100.0,
-        "placeholder {current_estimate} should dwarf the propagation reference {reference:e}"
+        magnitude_ratio(placeholder_gain, reference) > 100.0,
+        "placeholder {placeholder_gain} should dwarf the propagation reference {reference:e}"
     );
 
-    // The executable specification: a correct estimator matches the measured
-    // actual within one order of magnitude AND in sign. TODO(#1516): replace
-    // `current_estimate` with a call to the propagation-aware estimator. Until
-    // then this uses the recorded placeholder and is RED.
+    // The executable specification: the propagation-aware estimator matches the
+    // measured actual within one order of magnitude AND in sign.
+    let estimate = estimate_remove_neuron_gain(&creature, &uuid)
+        .expect("estimator must return a gain for the target hidden neuron");
     assert!(
-        within_one_order(current_estimate, measured_actual)
-            && current_estimate.signum() == measured_actual.signum(),
-        "estimate {current_estimate} must match the measured actual {measured_actual:e} \
+        within_one_order(estimate, measured_actual)
+            && estimate.signum() == measured_actual.signum(),
+        "estimate {estimate:e} must match the measured actual {measured_actual:e} \
          within one order of magnitude and in sign"
     );
 }
