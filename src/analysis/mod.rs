@@ -61,6 +61,7 @@ pub mod one_hot_class_allocation;
 pub mod quantised_error;
 pub mod recent_failure_window;
 pub mod remove_neuron_drought;
+pub mod remove_neuron_gain;
 pub mod samples;
 pub mod scale_outcomes;
 pub mod shared;
@@ -101,6 +102,10 @@ pub(crate) use orchestration::run_optional_analysis;
 // Issue #1421: outcome classification distinguishing environmentally-disabled
 // passes from genuine search exhaustion.
 pub use analysis_outcome::{AnalysisOutcome, EnvironmentalDisableReason, PassOutcomeCounts};
+
+// Issue #1518: propagation-aware remove-neuron gain estimator (replaces the
+// fabricated floor-at-0.1 placeholder).
+pub use remove_neuron_gain::estimate_remove_neuron_gain;
 
 // Core public API entry points
 pub use gpu::GpuAnalyzer;
