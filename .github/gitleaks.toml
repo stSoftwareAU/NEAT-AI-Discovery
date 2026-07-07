@@ -19,10 +19,18 @@
 # false positive. The allowlist is restricted to this fixture directory
 # and to the generic-api-key rule, keeping secret scanning fully active
 # everywhere else.
+#
+# NOTE: this MUST be the singular [allowlist] table, not the plural
+# [[allowlists]] array-of-tables. The gitleaks version pinned in
+# .github/workflows/gitleaks.yml (8.24.3) does not apply top-level
+# [[allowlists]] entries during a git-log scan (the mode CI runs via
+# --log-opts), so the false positive slipped through. The singular
+# [allowlist] table is honoured in that mode by both 8.24.3 and current
+# releases, and still supports targetRules for rule-scoped allowlisting.
 [extend]
 useDefault = true
 
-[[allowlists]]
+[allowlist]
 description = "Synthetic remove-neuron propagation test fixtures (no real secrets)"
 targetRules = ["generic-api-key"]
 paths = [
