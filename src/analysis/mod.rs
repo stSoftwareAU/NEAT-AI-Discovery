@@ -107,6 +107,12 @@ pub use analysis_outcome::{AnalysisOutcome, EnvironmentalDisableReason, PassOutc
 // fabricated floor-at-0.1 placeholder).
 pub use remove_neuron_gain::estimate_remove_neuron_gain;
 
+// Issue #1519: decoupled hygiene removal-eligibility (squash-error threshold)
+// from the honest ranking gain.
+pub use remove_neuron_gain::{
+    MAX_REASONABLE_SQUASH_ERROR, RemoveNeuronAssessment, assess_remove_neuron,
+};
+
 // Core public API entry points
 pub use gpu::GpuAnalyzer;
 pub use gpu::supports_unified_memory;
