@@ -16,8 +16,8 @@ measured actual effect. The propagation-aware estimator
 (`estimate_remove_neuron_gain`, Issue #1518) attenuates the target neuron's
 contribution through downstream weights and squash bounds to the output; its
 signed estimate is a small negative value within an order of magnitude of the
-measured `~1.9e-4` and thousands of times below the placeholder. See Issue
-#1516 for the root-cause analysis and #1518 for the estimator.
+measured `~1.9e-4` and thousands of times below the placeholder. See
+Issue #1516 for the root-cause analysis and #1518 for the estimator.
 
 Do not edit these fixtures by hand. If either upstream source changes, refresh
 the file and re-validate `placeholder_gain_is_wrong_at_depth`.
