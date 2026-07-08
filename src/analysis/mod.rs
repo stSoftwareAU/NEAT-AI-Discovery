@@ -38,6 +38,7 @@ pub mod candidate_cache;
 pub mod candidate_clustering;
 pub mod candidate_compression;
 pub mod candidate_diversity;
+pub mod change_squash_gain;
 pub mod constants;
 pub mod cost_function_hint;
 pub mod creature_drought_alarm;
@@ -106,6 +107,10 @@ pub use analysis_outcome::{AnalysisOutcome, EnvironmentalDisableReason, PassOutc
 // Issue #1518: propagation-aware remove-neuron gain estimator (replaces the
 // fabricated floor-at-0.1 placeholder).
 pub use remove_neuron_gain::estimate_remove_neuron_gain;
+
+// Issue #1532: propagation-aware change-squash gain estimator (extends the
+// #1518 approach to the change-squash estimate path).
+pub use change_squash_gain::estimate_change_squash_gain;
 
 // Issue #1519: decoupled hygiene removal-eligibility (squash-error threshold)
 // from the honest ranking gain.

@@ -8,6 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+#### Propagation-aware change-squash gain estimate (Issue #1532)
+
+Extends the #1518 propagation-aware approach — which fixed the **remove-neuron**
+estimate — to the **change-squash** estimate path, the second estimate path
+cited on GRQ-Discovery commit `2596f073`. For the recorded failure
+(`neuron-1481550544`, `SELU → SQUARE`) the pipeline emitted a near-zero
+placeholder gain of `+8.6e-10` while the measured effect was `-0.000341` —
+~400,000× too small and the wrong sign.
+
+- New `analysis::change_squash_gain` module exporting
+  `estimate_change_squash_gain(creature, neuron_uuid, current_local_error,
+  proposed_local_error)`. It reuses `compute_impacts_public` for the neuron's
+  propagation-aware downstream influence (DRY with the remove-neuron estimator)
+  and scales it by the local perturbation the swap induces (the reduction in the
+  neuron's local error). The signed estimate is non-positive: on a converged
+  network, re-fitting a neuron's activation disrupts the downstream layers
+  trained around its original behaviour.
+- New production-scale guards in `tests/change_squash_propagation.rs` against the
+  committed GRQ-cluster fixture: the estimate matches the measured actual in sign
+  and within one order of magnitude (the #1529 pass criterion), and the near-zero
+  placeholder path is never re-emitted.
+
 #### Deprioritise remove-neuron candidates during a search-exhaustion drought (Issue #1448)
 
 On the plateaued GRQ-3 production creature (#1418, 1673 neurons at score

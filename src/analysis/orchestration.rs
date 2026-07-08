@@ -978,6 +978,29 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
     } // end if !memory_budget_exceeded (Issue #1028)
 
+    // Issue #1530: Make the propagation-aware remove-neuron estimator the source
+    // of truth for the emitted gain. Milestone #1516 merged
+    // `estimate_remove_neuron_gain` (PR #1523) but nothing in the live pipeline
+    // invoked it, so the reported remove-neuron gain was still the fabricated
+    // NEAT-AI #2483 placeholder (+0.17879 on creature 45a04ef1, versus a
+    // measured -0.00032). Override every single-op RemoveNeuron candidate's gain
+    // with the honest, propagation-aware estimate before the drought demotion
+    // and final gain floor act on it, so downstream scoring, sorting, and
+    // filtering all operate on the honest value rather than the placeholder.
+    if let Some(syn) = synapse_result.as_mut() {
+        let overridden = super::discovery_dispatch::apply_honest_remove_neuron_gain(
+            &input.creature,
+            &mut syn.coordinated_structural_candidates,
+        );
+        if overridden > 0 {
+            tracing::debug!(
+                overridden,
+                "Issue #1530: replaced {overridden} remove-neuron candidate gain(s) with the \
+                 propagation-aware estimate"
+            );
+        }
+    }
+
     // Issue #1448: Deprioritise destructive remove-neuron candidates during a
     // search-exhaustion drought. On a plateaued dense creature the remove-neuron
     // path dominates the failure cache (bucket `247b83ab`) with low-impact
