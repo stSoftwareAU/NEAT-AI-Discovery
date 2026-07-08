@@ -15,7 +15,15 @@
 //! - `v2_remove-neuron_neuron-1802938338.json` — the recorded GRQ-Discovery
 //!   failure, carrying the placeholder gain and the measured actual effect.
 //!
-//! This file ships two tests:
+//! This file ships three tests:
+//! - [`propagation_estimate_beats_placeholder_at_production_scale`] (Issue
+//!   #1531) — the explicit before/after accuracy comparison. It computes both
+//!   the retired NEAT-AI #2483 placeholder floor formula and the
+//!   propagation-aware [`estimate_remove_neuron_gain`] against the recorded
+//!   actual error change on the committed 1,666-neuron / 21,532-synapse
+//!   GRQ-cluster fixture, then asserts the placeholder *fails* the #1529 pass
+//!   criterion (wrong sign / >10× off) while the new estimator *passes* it and
+//!   is measurably closer to the measured actual.
 //! - [`placeholder_gain_is_wrong_at_depth`] (runnable) — since #1518 landed the
 //!   propagation-aware estimator, this is inverted into a regression guard: it
 //!   asserts the estimator no longer emits the floor-clamped `[0.1, 0.5]`
@@ -74,6 +82,39 @@ fn load_failure_fixture() -> (f64, f64, String) {
         .expect("fixture missing rustRequest.harmfulNeuronCandidate.neuronUuid")
         .to_string();
     (gain, actual, uuid)
+}
+
+/// Load the recorded squash-error magnitude (`errorMagnitude`) that the retired
+/// #2483 placeholder formula consumed. This is the sole input the placeholder
+/// ever looked at — it is topology-blind — so reproducing the placeholder gain
+/// needs only this value.
+fn load_error_magnitude() -> f64 {
+    let path = fixture_dir().join("v2_remove-neuron_neuron-1802938338.json");
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read failure fixture {}: {e}", path.display()));
+    let json: serde_json::Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("failed to parse failure fixture {}: {e}", path.display()));
+    json["rustRequest"]["harmfulNeuronCandidate"]["errorMagnitude"]
+        .as_f64()
+        .expect("fixture missing rustRequest.harmfulNeuronCandidate.errorMagnitude")
+}
+
+/// The retired NEAT-AI #2483 over-threshold placeholder floor formula:
+/// `0.1 + (log10(err) − 10)/10 × 0.4`, clamped to the synthetic `[0.1, 0.5]`
+/// floor. It is topology-blind — a deep neuron and a shallow one with the same
+/// squash error get the same fabricated positive "gain" — which is exactly the
+/// defect #1516/#1518 removed. Reproduced here so the before/after test can show
+/// what the pipeline used to emit.
+fn placeholder_floor_gain(error_magnitude: f64) -> f64 {
+    (0.1 + (error_magnitude.log10() - 10.0) / 10.0 * 0.4).clamp(0.1, 0.5)
+}
+
+/// The #1529 accuracy pass criterion: an estimate passes when it matches the
+/// measured actual error change within one order of magnitude (10×) **and** in
+/// sign. Both the placeholder and the estimator are graded against this single
+/// criterion so the before/after comparison is apples-to-apples.
+fn meets_pass_criterion(estimate: f64, measured_actual: f64) -> bool {
+    within_one_order(estimate, measured_actual) && estimate.signum() == measured_actual.signum()
 }
 
 /// Load the production creature topology from the committed fixture.
@@ -194,5 +235,109 @@ fn remove_neuron_effect_at_production_depth() {
             && estimate.signum() == measured_actual.signum(),
         "estimate {estimate:e} must match the measured actual {measured_actual:e} \
          within one order of magnitude and in sign"
+    );
+}
+
+/// Before/after accuracy proof (Issue #1531).
+///
+/// The explicit user ask: don't just show the new estimator passes — prove it
+/// yields a **more accurate** estimate than the retired #2483 placeholder at
+/// production scale. Against the committed 1,666-neuron / 21,532-synapse
+/// GRQ-cluster fixture this computes:
+///
+/// - **before** — the retired placeholder floor formula on the recorded
+///   `errorMagnitude` (reproducing the fabricated `+0.17882921` the pipeline
+///   emitted for creature 45a04ef1), and
+/// - **after** — the propagation-aware [`estimate_remove_neuron_gain`],
+///
+/// then grades both against the measured `actualErrorReduction` using the single
+/// #1529 pass criterion. The placeholder must **fail** it (wrong sign and >10×
+/// off) while the new estimator **passes** it, and the estimator's absolute
+/// error must be strictly smaller — documenting the regression the fix removed.
+///
+/// If a future change lets the estimator drift outside the pass criterion, or
+/// the placeholder branch unexpectedly starts passing (the comparison has
+/// degenerated), this turns CI red before merge.
+#[test]
+fn propagation_estimate_beats_placeholder_at_production_scale() {
+    let (recorded_gain, measured_actual, uuid) = load_failure_fixture();
+    let creature = load_network();
+    let error_magnitude = load_error_magnitude();
+
+    // Sanity-check we are exercising the intended production-scale creature so
+    // the accuracy claim is anchored to the 1,666 / 21,532 GRQ-cluster snapshot.
+    assert_eq!(
+        creature.neurons.len(),
+        1666,
+        "fixture creature is not the expected 1,666-neuron production snapshot"
+    );
+    assert_eq!(
+        creature.synapses.len(),
+        21_532,
+        "fixture creature is not the expected 21,532-synapse production snapshot"
+    );
+
+    // BEFORE: the retired #2483 placeholder floor formula reproduces the
+    // fabricated `+0.17882921` gain recorded on creature 45a04ef1 from the
+    // topology-blind `errorMagnitude` alone.
+    let placeholder = placeholder_floor_gain(error_magnitude);
+    assert!(
+        (placeholder - PLACEHOLDER_GAIN).abs() < 1e-9,
+        "placeholder formula {placeholder} should reproduce the recorded fabricated \
+         gain {PLACEHOLDER_GAIN}"
+    );
+    assert!(
+        (placeholder - recorded_gain).abs() < 1e-9,
+        "placeholder formula {placeholder} should reproduce the fixture's recorded \
+         expectedCreatureScoreGain {recorded_gain}"
+    );
+
+    // AFTER: the propagation-aware estimator.
+    let estimate = estimate_remove_neuron_gain(&creature, &uuid)
+        .expect("estimator must return a gain for the target hidden neuron");
+
+    // The placeholder FAILS the #1529 pass criterion — wrong sign (fabricated
+    // positive vs measured negative) and far more than 10× off in magnitude.
+    assert!(
+        !meets_pass_criterion(placeholder, measured_actual),
+        "placeholder {placeholder} must fail the #1529 pass criterion against the \
+         measured actual {measured_actual:e}"
+    );
+    assert_ne!(
+        placeholder.signum(),
+        measured_actual.signum(),
+        "placeholder {placeholder} should have the wrong sign vs the measured actual \
+         {measured_actual:e}"
+    );
+    assert!(
+        magnitude_ratio(placeholder, measured_actual) > 10.0,
+        "placeholder {placeholder} should be >10× off the measured actual \
+         {measured_actual:e}"
+    );
+
+    // The new estimator PASSES the same criterion — correct sign, within 10×.
+    assert!(
+        meets_pass_criterion(estimate, measured_actual),
+        "propagation-aware estimate {estimate:e} must pass the #1529 pass criterion \
+         against the measured actual {measured_actual:e}"
+    );
+
+    // The headline before/after claim: the propagation-aware estimate is
+    // measurably closer to the measured actual than the placeholder ever was.
+    let placeholder_error = (placeholder - measured_actual).abs();
+    let estimate_error = (estimate - measured_actual).abs();
+    assert!(
+        estimate_error < placeholder_error,
+        "propagation-aware estimate error {estimate_error:e} must be strictly smaller \
+         than the placeholder error {placeholder_error:e} (measured actual \
+         {measured_actual:e}): the fix must be more accurate, not just passing"
+    );
+
+    // And by a wide margin at production depth: the placeholder is >100× less
+    // accurate, so the improvement is unambiguous rather than marginal.
+    assert!(
+        placeholder_error / estimate_error > 100.0,
+        "placeholder error {placeholder_error:e} should dwarf the estimate error \
+         {estimate_error:e} by >100× at production scale"
     );
 }
