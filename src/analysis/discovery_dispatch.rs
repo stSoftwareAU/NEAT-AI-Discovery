@@ -19,8 +19,11 @@ use std::time::SystemTime;
 
 use crate::CoordinatedStructuralCandidateJson;
 use crate::CoordinatedStructuralOpJson;
+use crate::CreatureJson;
 use crate::observability::PhaseTimer;
 use rayon::prelude::*;
+
+use super::remove_neuron_gain::estimate_remove_neuron_gain;
 
 use super::constants::{
     COORDINATED_MIN_EXPECTED_GAIN, MODULE_GATE_THRESHOLD, QUALITY_SKIP_GAIN_THRESHOLD,
@@ -103,6 +106,52 @@ fn apply_coordinated_per_target_cap(
         }
     });
     original_len - candidates.len()
+}
+
+/// Override the reported gain of every single-op `RemoveNeuron` coordinated
+/// candidate with the honest, propagation-aware estimate (Issue #1530).
+///
+/// Milestone #1516 merged [`estimate_remove_neuron_gain`] (PR #1523) but nothing
+/// in the live pipeline invoked it, so the emitted remove-neuron gain stayed the
+/// fabricated NEAT-AI `#2483` placeholder (`+0.17879` on creature `45a04ef1`,
+/// versus a measured `−0.00032`). This makes Discovery the source of truth: for
+/// each candidate whose **sole** operation is a `RemoveNeuron`, the reported
+/// `expected_creature_score_gain` is replaced with the propagation-aware
+/// estimate for that neuron, which attenuates a deep neuron's influence all the
+/// way to the output(s) and is signed (non-positive) — no fabricated large
+/// positive gain survives to crowd out realistic candidates.
+///
+/// Multi-operation coordinated candidates are left untouched: their gain
+/// reflects the combined effect of the whole atomic group, not a bare neuron
+/// removal. Candidates whose neuron is absent or is an output (the estimator
+/// returns `None`) are also left untouched.
+///
+/// Returns the number of candidates whose gain was overridden, for diagnostics.
+// The estimator works in f64; the candidate carries f32. The gain is a small
+// value in `[-1, 0]`, well within f32 range, so the narrowing is intentional
+// precision loss, not overflow (Issue #873).
+#[allow(clippy::cast_possible_truncation)]
+pub fn apply_honest_remove_neuron_gain(
+    creature: &CreatureJson,
+    candidates: &mut [CoordinatedStructuralCandidateJson],
+) -> usize {
+    let mut overridden = 0;
+    for candidate in candidates.iter_mut() {
+        // A lone RemoveNeuron op is the only bare neuron removal; anything else
+        // (multi-op group, or a different single op) is not this estimator's
+        // concern.
+        let [CoordinatedStructuralOpJson::RemoveNeuron { neuron_uuid }] =
+            candidate.operations.as_slice()
+        else {
+            continue;
+        };
+
+        if let Some(gain) = estimate_remove_neuron_gain(creature, neuron_uuid) {
+            candidate.expected_creature_score_gain = gain as f32;
+            overridden += 1;
+        }
+    }
+    overridden
 }
 
 /// Result of a discovery module's detection phase.
