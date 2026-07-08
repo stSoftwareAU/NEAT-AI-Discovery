@@ -626,3 +626,132 @@ fn coordinated_per_target_cap_env_override() {
         crate::analysis::constants::MAX_COORDINATED_PER_TARGET_OUTPUT,
     );
 }
+
+// =============================================================================
+// Issue #1530: honest propagation-aware remove-neuron gain override
+// =============================================================================
+
+use super::apply_honest_remove_neuron_gain;
+use crate::CreatureJson;
+
+/// A creature whose hidden neuron `deep` sits behind a heavily-shared output
+/// inbound budget (weight 1 of 20), so its propagation-aware influence — and
+/// hence its honest remove-gain magnitude — is a small `0.05`, well below the
+/// retired `[0.1, 0.5]` placeholder floor. `deep` carries real, if small,
+/// downstream influence, so its honest gain is strictly negative.
+fn creature_with_deep_neuron() -> CreatureJson {
+    serde_json::from_str(
+        r#"{
+            "input": 1, "output": 1,
+            "neurons": [
+                {"uuid": "input-0", "type": "constant"},
+                {"uuid": "deep", "type": "hidden", "squash": "IDENTITY"},
+                {"uuid": "sib", "type": "hidden", "squash": "IDENTITY"},
+                {"uuid": "out-0", "type": "output", "squash": "IDENTITY"}
+            ],
+            "synapses": [
+                {"fromUUID": "input-0", "toUUID": "deep", "weight": 1.0},
+                {"fromUUID": "input-0", "toUUID": "sib", "weight": 1.0},
+                {"fromUUID": "deep", "toUUID": "out-0", "weight": 1.0},
+                {"fromUUID": "sib", "toUUID": "out-0", "weight": 19.0}
+            ]
+        }"#,
+    )
+    .expect("valid creature JSON")
+}
+
+fn remove_neuron_candidate(uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
+    CoordinatedStructuralCandidateJson {
+        operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
+            neuron_uuid: uuid.to_string(),
+        }],
+        expected_creature_score_gain: gain,
+        comment: Some("fabricated placeholder gain".to_string()),
+    }
+}
+
+/// The core wiring: a single-op `RemoveNeuron` candidate carrying a fabricated
+/// placeholder gain is overwritten with the honest, propagation-aware estimate
+/// (which is non-positive), not left echoing the supplied value.
+#[test]
+fn honest_gain_overrides_fabricated_remove_neuron_gain() {
+    let creature = creature_with_deep_neuron();
+    // Deliberately wrong, fabricated placeholder-range gain.
+    let mut candidates = vec![remove_neuron_candidate("deep", 0.17879)];
+
+    let overridden = apply_honest_remove_neuron_gain(&creature, &mut candidates);
+    assert_eq!(
+        overridden, 1,
+        "the single RemoveNeuron candidate is overridden"
+    );
+
+    let honest = crate::analysis::estimate_remove_neuron_gain(&creature, "deep")
+        .expect("estimator gain for the hidden neuron");
+    let reported = f64::from(candidates[0].expected_creature_score_gain);
+    assert!(
+        (reported - honest).abs() < 1e-6,
+        "reported gain {reported} must equal the honest estimate {honest}, not the placeholder"
+    );
+    assert!(
+        reported <= 0.0,
+        "honest remove-neuron gain must be non-positive, got {reported}"
+    );
+    assert!(
+        !(0.1..=0.5).contains(&reported.abs()),
+        "gain {reported} must not land in the retired fabricated floor range [0.1, 0.5]"
+    );
+}
+
+/// Multi-operation coordinated candidates reflect the whole atomic group's
+/// effect, so their gain is left untouched by the bare-removal estimator.
+#[test]
+fn multi_op_candidate_gain_is_not_overridden() {
+    let creature = creature_with_deep_neuron();
+    let mut candidates = vec![CoordinatedStructuralCandidateJson {
+        operations: vec![
+            CoordinatedStructuralOpJson::RemoveSynapse {
+                from_neuron_uuid: "input-0".to_string(),
+                to_neuron_uuid: "deep".to_string(),
+            },
+            CoordinatedStructuralOpJson::RemoveNeuron {
+                neuron_uuid: "deep".to_string(),
+            },
+        ],
+        expected_creature_score_gain: 0.05,
+        comment: None,
+    }];
+
+    let overridden = apply_honest_remove_neuron_gain(&creature, &mut candidates);
+    assert_eq!(overridden, 0, "multi-op candidates are not touched");
+    assert!(
+        (candidates[0].expected_creature_score_gain - 0.05).abs() < f32::EPSILON,
+        "multi-op gain must be preserved"
+    );
+}
+
+/// Non-RemoveNeuron single-op candidates are left untouched.
+#[test]
+fn non_remove_neuron_candidate_is_not_overridden() {
+    let creature = creature_with_deep_neuron();
+    let mut candidates = vec![make_candidate(0.42)]; // a RemoveSynapse candidate
+
+    let overridden = apply_honest_remove_neuron_gain(&creature, &mut candidates);
+    assert_eq!(overridden, 0, "non-RemoveNeuron candidates are not touched");
+    assert!((candidates[0].expected_creature_score_gain - 0.42).abs() < f32::EPSILON);
+}
+
+/// A `RemoveNeuron` candidate targeting an output or an absent neuron yields no
+/// estimate (`None`), so its gain is left untouched rather than being zeroed.
+#[test]
+fn output_and_absent_neuron_candidates_are_not_overridden() {
+    let creature = creature_with_deep_neuron();
+    let mut candidates = vec![
+        remove_neuron_candidate("out-0", 0.9),
+        remove_neuron_candidate("does-not-exist", 0.8),
+    ];
+
+    let overridden = apply_honest_remove_neuron_gain(&creature, &mut candidates);
+    assert_eq!(overridden, 0, "output/absent neurons yield no estimate");
+    assert!((candidates[0].expected_creature_score_gain - 0.9).abs() < f32::EPSILON);
+    assert!((candidates[1].expected_creature_score_gain - 0.8).abs() < f32::EPSILON);
+}
