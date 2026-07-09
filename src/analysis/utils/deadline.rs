@@ -776,6 +776,43 @@ pub fn order_eligible_sources<S: std::borrow::Borrow<str> + std::hash::Hash + Eq
     interleave_sources(eligible_sources, sorted_inputs, non_inputs);
 }
 
+/// Apply the optional per-target source budget (Issue #1542).
+///
+/// Truncates the already priority-ordered `eligible_sources` to at most
+/// `NEAT_AI_DISCOVERY_MAX_SOURCES_PER_TARGET` entries. This is the second stage
+/// of the two-stage per-target search: [`order_eligible_sources`] is the cheap
+/// CPU pre-score (stage 1) that places the highest-priority sources first, and
+/// this cap restricts the expensive sample-building + GPU evaluation (stage 2)
+/// to that leading window.
+///
+/// **Must be called after [`order_eligible_sources`]** so the retained sources
+/// are the highest priority; the low-priority tail is dropped before any sample
+/// building or GPU work. Selection is deterministic under a fixed `random_seed`
+/// because the ordering is deterministic.
+///
+/// Returns the number of sources dropped — `0` when the budget is unset (the
+/// unlimited back-compat default) or the list is already within budget — so
+/// callers can record diagnostics.
+pub fn apply_source_budget(eligible_sources: &mut Vec<&OrderedNeuron>) -> usize {
+    let Some(budget) = crate::config::max_sources_per_target() else {
+        return 0;
+    };
+    if eligible_sources.len() <= budget {
+        return 0;
+    }
+    let dropped = eligible_sources.len() - budget;
+    eligible_sources.truncate(budget);
+    if verbose_enabled() {
+        tracing::debug!(
+            budget,
+            dropped,
+            retained = budget,
+            "Issue #1542: applied per-target source budget (dropped low-priority tail)"
+        );
+    }
+    dropped
+}
+
 // =============================================================================
 // Target-Type Prioritisation (Issue #468)
 // =============================================================================

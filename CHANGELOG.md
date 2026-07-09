@@ -8,6 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+#### Two-stage per-target source budget (Issue #1542)
+
+Caps the number of upstream source neurons that reach the expensive
+sample-building + GPU evaluation stage for each focus target, controlled by the
+new `NEAT_AI_DISCOVERY_MAX_SOURCES_PER_TARGET` environment variable. On sparse
+deep creatures (thousands of inputs × several focus targets) unbounded source
+enumeration is the dominant wall-clock multiplier that micro-optimisations
+cannot address.
+
+- Stage 1 is the existing cheap CPU pre-score (`order_eligible_sources`), which
+  already places the highest-priority sources first (unused-input bias,
+  input-index bias, hidden interleaving). Stage 2 is the new
+  `apply_source_budget`, which deterministically truncates the ordered list to
+  the top-K, dropping only the low-priority tail before any GPU work. Candidate
+  scoring semantics for the sources that *are* evaluated are unchanged.
+- Applied to both synapse analysis (`target_analysis`) and neuron analysis
+  (`neuron::preparation`) so the two share one budget.
+- `0`, unset, empty, or invalid values preserve the pre-#1542 unlimited
+  behaviour (back-compat, and the shipped default).
+- New `benches/source_budget.rs` A/B measures end-to-end `analyze_synapses` for a
+  large fan-in target at unlimited vs K ∈ {64, 128, 256}.
+
 #### Propagation-aware change-squash gain estimate (Issue #1532)
 
 Extends the #1518 propagation-aware approach — which fixed the **remove-neuron**

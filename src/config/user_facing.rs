@@ -197,6 +197,45 @@ pub fn source_input_index_bias() -> Option<f64> {
     }
 }
 
+/// Maximum number of source neurons evaluated per focus target (Issue #1542).
+///
+/// For each focus target, synapse and neuron analysis enumerate every eligible
+/// upstream source, then sample-build and GPU-evaluate them. On sparse deep
+/// creatures (thousands of inputs × several focus targets) this is the dominant
+/// wall-clock multiplier.
+///
+/// Set `NEAT_AI_DISCOVERY_MAX_SOURCES_PER_TARGET` to a positive integer to cap
+/// the number of sources that proceed to sample building and GPU evaluation for
+/// each target. Sources are already ordered by priority (unused-input bias,
+/// input-index bias, hidden interleaving) via `order_eligible_sources`, so the
+/// cap deterministically keeps the highest-priority sources and drops the
+/// low-priority tail.
+///
+/// Returns `None` when unset, empty, `0`, or unparsable — preserving the
+/// pre-#1542 unlimited behaviour for back-compat.
+///
+/// Not cached: read per call so `#[serial]` tests and A/B benchmark runs can
+/// toggle the budget within a single process (matches `source_input_index_bias`).
+pub fn max_sources_per_target() -> Option<usize> {
+    let raw = std::env::var("NEAT_AI_DISCOVERY_MAX_SOURCES_PER_TARGET").ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<usize>() {
+        Ok(0) => None,
+        Ok(v) => Some(v),
+        Err(_) => {
+            tracing::debug!(
+                raw_value = trimmed,
+                "Ignoring invalid NEAT_AI_DISCOVERY_MAX_SOURCES_PER_TARGET \
+                 (expected a positive integer)"
+            );
+            None
+        }
+    }
+}
+
 /// Get the zero-copy buffer override.
 ///
 /// Set `NEAT_AI_DISCOVERY_ZERO_COPY`:
