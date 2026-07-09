@@ -54,6 +54,7 @@ pub mod failure_cache_handshake;
 pub mod gpu;
 pub mod insufficient_recording;
 pub mod module_starvation_tracker;
+pub mod module_tiering;
 pub mod module_weights;
 pub mod neuron;
 pub mod neuron_fingerprint;

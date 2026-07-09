@@ -84,6 +84,10 @@ name = "quality_skip_dispatch"
 harness = false
 
 [[bench]]
+name = "module_tiering_dispatch"
+harness = false
+
+[[bench]]
 name = "memory_streaming"
 harness = false
 

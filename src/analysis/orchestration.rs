@@ -769,6 +769,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
     };
 
+    // Issue #1547: Creature-scale module tiering re-enables the full discovery
+    // module set whenever the creature is in a drought / novelty-escalation pass.
+    // Conservative discovery mode (#1132) engages on the same low rolling
+    // success-rate condition that drives novelty escalation (#1423) and drought
+    // escape (#1422), so it is the signal — available before dispatch — used to
+    // keep every expensive module running while the creature is struggling.
+    let tiering_escalation_active =
+        discovery_mode == super::discovery_mode::DiscoveryMode::Conservative;
+
     // Issue #1057: Gate add-synapse candidates based on historical success rate
     // and synapse density. When the ModuleOutcomeTracker shows consistent failure
     // or the network is too dense, clear helpful_synapses to save compute.
@@ -904,6 +913,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                             discovery_deadline,
                             cost_hint,
                             task_descriptor,
+                            tiering_escalation_active,
                         )
                     }))
                     .unwrap_or_else(|panic_payload| {
