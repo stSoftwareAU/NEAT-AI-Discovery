@@ -182,6 +182,36 @@ pub fn cpu_pre_reject_enabled() -> bool {
     parse_optional_bool_env("NEAT_AI_DISCOVERY_CPU_PRE_REJECT").unwrap_or(true)
 }
 
+/// Whether squash-aware hidden-target activation scan pruning is enabled
+/// (Issue #1545).
+///
+/// When enabled (the default), hidden add-neuron targets scan only the core /
+/// history-widened squash set instead of the full `ACTIVATION_SPECS`
+/// cross-product, unless the search is escalated (drought / novelty) which
+/// restores the full set. Set `NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE=0` (or
+/// `false`/`no`) to disable pruning and always scan the full set — e.g. for A/B
+/// benchmarking. Unset or unrecognised values keep pruning enabled.
+pub fn hidden_squash_prune_enabled() -> bool {
+    parse_optional_bool_env("NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE").unwrap_or(true)
+}
+
+/// Maximum (orientation × scale) activation configs scanned per (source, target)
+/// pair for hidden add-neuron evaluation, after squash-family filtering
+/// (Issue #1545).
+///
+/// `0` (the default) disables the cap — every scale/orientation of the pruned
+/// squash set is scanned. A positive value keeps the `N` configs whose scale is
+/// closest to `1.0` (the historically productive band) and drops the numerically
+/// unstable extreme scales first. Set via
+/// `NEAT_AI_DISCOVERY_MAX_ACTIVATION_CONFIGS_PER_TARGET`. Unparsable values fall
+/// back to `0` (uncapped).
+pub fn max_activation_configs_per_target() -> usize {
+    std::env::var("NEAT_AI_DISCOVERY_MAX_ACTIVATION_CONFIGS_PER_TARGET")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
 /// Maximum valid source input index bias.
 pub const MAX_SOURCE_INPUT_INDEX_BIAS: f64 = 10.0;
 
