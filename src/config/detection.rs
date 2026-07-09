@@ -33,6 +33,21 @@ pub fn gradient_threshold(default: f32) -> f32 {
         .unwrap_or(default)
 }
 
+/// Hidden-neuron count above which expensive discovery modules are tiered out
+/// on non-escalation passes (Issue #1547).
+///
+/// Set `NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD` to override. A value
+/// of `0` disables creature-scale module tiering entirely (every module always
+/// runs). Falls back to
+/// [`crate::analysis::module_tiering::DEFAULT_MODULE_TIERING_HIDDEN_THRESHOLD`]
+/// when unset or unparseable.
+pub fn module_tiering_hidden_neuron_threshold() -> usize {
+    std::env::var("NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(crate::analysis::module_tiering::DEFAULT_MODULE_TIERING_HIDDEN_THRESHOLD)
+}
+
 /// Read the env-var override for target-neuron cooldown consecutive failures
 /// (Issue #1130).
 ///

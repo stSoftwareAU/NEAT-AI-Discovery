@@ -102,6 +102,7 @@ pub(crate) fn prepare_and_detect_discovery_modules(
     deadline: Option<std::time::SystemTime>,
     cost_hint: CostFunctionHint,
     task_descriptor: TaskDescriptor,
+    escalation_active: bool,
 ) -> discovery_dispatch::DiscoveryModuleDetectionResults {
     prepare_and_detect_discovery_modules_with_starvation(
         creature,
@@ -113,12 +114,22 @@ pub(crate) fn prepare_and_detect_discovery_modules(
         0,
         cost_hint,
         task_descriptor,
+        escalation_active,
     )
 }
 
 /// Same contract as [`prepare_and_detect_discovery_modules`] but also forwards
 /// the per-creature [`ModuleStarvationTracker`] so modules in active
 /// starvation cooldown are skipped at detection time (Issue #1273).
+///
+/// ## Creature-scale module tiering (Issue #1547)
+///
+/// When the creature is large (`hidden_neurons.len()` exceeds
+/// [`crate::config::module_tiering_hidden_neuron_threshold`]) and no drought /
+/// novelty escalation is active (`escalation_active == false`), expensive-tier
+/// discovery modules are filtered out of the dispatched set before detection.
+/// On escalation passes, below the threshold, or with tiering disabled
+/// (threshold `0`), the full set is dispatched exactly as before.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_and_detect_discovery_modules_with_starvation(
     creature: &Arc<crate::CreatureJson>,
@@ -130,6 +141,7 @@ pub(crate) fn prepare_and_detect_discovery_modules_with_starvation(
     current_epoch: u64,
     cost_hint: CostFunctionHint,
     task_descriptor: TaskDescriptor,
+    escalation_active: bool,
 ) -> discovery_dispatch::DiscoveryModuleDetectionResults {
     // Issue #754: Pre-compute topology cache once for all detection modules.
     let topo = Arc::new(CreatureTopologyCache::new(creature));
@@ -141,6 +153,12 @@ pub(crate) fn prepare_and_detect_discovery_modules_with_starvation(
         cost_hint,
         task_descriptor,
     );
+
+    // Issue #1547: Creature-scale module tiering — on large creatures outside
+    // escalation, drop expensive-tier modules before dispatch so post-processing
+    // budget is not spent on super-linear scans. Escalation passes keep the full
+    // set (and log that they did, so a missing re-enable is diagnosable).
+    apply_module_tiering(&mut modules, hidden_neurons.len(), escalation_active);
 
     // Issue #967: Allocate candidate budgets based on module success rates.
     let config = CandidateBudgetConfig::default();
@@ -159,6 +177,67 @@ pub(crate) fn prepare_and_detect_discovery_modules_with_starvation(
         starvation_tracker,
         current_epoch,
     )
+}
+
+/// Filter expensive-tier discovery modules out of the dispatch set on large
+/// creatures outside escalation (Issue #1547).
+///
+/// The predicate is [`super::module_tiering::should_skip_module`], so this
+/// filtering shares exactly the logic exercised by the unit and integration
+/// tests. When escalation is active on a large creature, nothing is filtered and
+/// a re-enable line is logged — its absence during a drought pass is the
+/// documented diagnostic signal.
+fn apply_module_tiering(
+    modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
+    hidden_neuron_count: usize,
+    escalation_active: bool,
+) {
+    use super::module_tiering;
+
+    let threshold = crate::config::module_tiering_hidden_neuron_threshold();
+
+    if !module_tiering::tiering_applies(hidden_neuron_count, threshold, escalation_active) {
+        // Large-and-escalating is the case worth logging: the full set is
+        // deliberately kept so the escalation pass can try everything (#1422/#1423).
+        if escalation_active && threshold > 0 && hidden_neuron_count > threshold {
+            tracing::info!(
+                hidden_neuron_count,
+                threshold,
+                module_count = modules.len(),
+                "Issue #1547: drought/novelty escalation active — full discovery module \
+                 set re-enabled on large creature"
+            );
+        }
+        return;
+    }
+
+    let before = modules.len();
+    let mut skipped: Vec<String> = Vec::new();
+    modules.retain(|m| {
+        let skip = module_tiering::should_skip_module(
+            &m.module_name,
+            hidden_neuron_count,
+            threshold,
+            escalation_active,
+        );
+        if skip {
+            skipped.push(m.module_name.clone());
+        }
+        !skip
+    });
+
+    if !skipped.is_empty() {
+        tracing::info!(
+            hidden_neuron_count,
+            threshold,
+            skipped_count = skipped.len(),
+            dispatched_count = modules.len(),
+            total_count = before,
+            skipped_modules = ?skipped,
+            "Issue #1547: creature-scale tiering — expensive discovery modules skipped on \
+             large creature (no escalation active)"
+        );
+    }
 }
 
 /// Synthesise cross-detection candidates for co-flagged neurons (Issue #963).
