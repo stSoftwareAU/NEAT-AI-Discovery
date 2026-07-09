@@ -60,15 +60,17 @@ fn execute_request(
             samples,
             response_tx,
         } => {
-            let sample_count: usize = samples.iter().map(std::vec::Vec::len).sum();
+            let sample_count: usize = samples.iter().map(|s| s.len()).sum();
             let start = if track_metrics {
                 Some(Instant::now())
             } else {
                 None
             };
 
+            // Issue #1548: borrow each Arc-shared sample Vec as a slice — the
+            // GPU thread never takes ownership, so refcount sharing is safe.
             let samples_refs: Vec<&[HelpfulSample]> =
-                samples.iter().map(std::vec::Vec::as_slice).collect();
+                samples.iter().map(|s| s.as_slice()).collect();
             let result = analyzer.evaluate_helpful_batch(&samples_refs);
 
             if let Some(start) = start {

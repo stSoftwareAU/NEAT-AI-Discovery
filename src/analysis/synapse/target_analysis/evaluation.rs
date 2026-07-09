@@ -20,6 +20,7 @@ use crate::analysis::scoring::weights::{
 };
 use crate::analysis::shared::TimingScope;
 use anyhow::Result;
+use std::sync::Arc;
 
 use super::statistics::PreparedHarmfulWork;
 use super::{HelpfulWork, TargetAnalysisContext, TargetAnalysisResults};
@@ -37,9 +38,13 @@ pub(crate) fn submit_helpful_gpu_work(
     ctx: &TargetAnalysisContext,
     results: &mut TargetAnalysisResults,
 ) -> Result<crate::analysis::gpu::queue::GpuFuture<Vec<HelpfulStats>>> {
-    let helpful_samples: Vec<Vec<HelpfulSample>> = helpful_work_batch
+    // Issue #1548: share each work item's samples with the GPU queue via a
+    // cheap Arc refcount clone instead of deep-copying the sample Vec. The CPU
+    // still reads `work.samples` during result post-processing, so the buffer
+    // is shared (not moved); dropping either side is safe (Arc handles it).
+    let helpful_samples: Vec<Arc<Vec<HelpfulSample>>> = helpful_work_batch
         .iter()
-        .map(|w| w.samples.clone()) // Clone required: GPU queue takes ownership of sample data
+        .map(|w| Arc::clone(&w.samples))
         .collect();
 
     // Track metadata
@@ -326,7 +331,9 @@ pub(crate) fn collect_and_process_helpful_results(
             if work.existing_weight.is_none() {
                 source_contributions.push(build_source_contribution(
                     &work.source_uuid,
-                    work.samples.clone(), // Clone required: SourceContribution takes ownership
+                    // SourceContribution owns its samples; deep-clone from the
+                    // Arc-shared buffer (only for accepted new-synapse candidates).
+                    work.samples.as_ref().clone(),
                     *stats,
                     applied_weight,
                     neuron_error_improvement,
@@ -473,7 +480,7 @@ pub(crate) fn collect_and_process_helpful_results(
                     let mut act_max = f32::NEG_INFINITY;
                     let mut act_sum = 0.0f64;
                     let mut act_count: u32 = 0;
-                    for s in &work.samples {
+                    for s in work.samples.iter() {
                         if s.activation.is_finite() {
                             act_min = act_min.min(s.activation);
                             act_max = act_max.max(s.activation);
@@ -605,9 +612,12 @@ pub(crate) fn process_harmful_batch_from_prepared(
     cache: &RecordCache,
     results: &mut TargetAnalysisResults,
 ) -> Result<()> {
-    let batch_input: Vec<(Vec<HelpfulSample>, f32)> = harmful_work
+    // Issue #1548: share samples with the GPU queue via an Arc refcount clone
+    // instead of deep-copying each sample Vec for queue ownership. The CPU
+    // still reads `work.samples` when building candidates below.
+    let batch_input: Vec<(Arc<Vec<HelpfulSample>>, f32)> = harmful_work
         .iter()
-        .map(|w| (w.samples.clone(), w.weight)) // Clone required: GPU queue takes ownership
+        .map(|w| (Arc::clone(&w.samples), w.weight))
         .collect();
 
     let batch_stats = {

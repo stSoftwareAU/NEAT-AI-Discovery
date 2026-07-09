@@ -98,10 +98,15 @@ pub(crate) struct InputMetadata {
 }
 
 /// Work item for helpful synapse evaluation via GPU.
+///
+/// Issue #1548: `samples` is `Arc`-shared so the GPU submit path can take a
+/// cheap refcount clone instead of deep-copying the whole sample `Vec` for
+/// queue ownership. The CPU still reads the samples during post-processing,
+/// so the buffer is shared (not moved) between the queue and the caller.
 struct HelpfulWork {
     source_uuid: String,
     target_uuid: String,
-    samples: Vec<HelpfulSample>,
+    samples: Arc<Vec<HelpfulSample>>,
     /// Existing synapse weight (when the synapse already exists).
     existing_weight: Option<f32>,
 }

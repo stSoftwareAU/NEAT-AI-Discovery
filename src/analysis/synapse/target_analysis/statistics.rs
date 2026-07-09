@@ -197,7 +197,9 @@ pub(crate) fn build_helpful_work_items(
                             Some(HelpfulWork {
                                 source_uuid: source_uuid.to_string(),
                                 target_uuid: target_uuid.to_string(),
-                                samples,
+                                // Issue #1548: Arc-wrap once so the GPU submit
+                                // path clones a refcount, not the sample Vec.
+                                samples: Arc::new(samples),
                                 existing_weight: None,
                             })
                         } else {
@@ -262,10 +264,13 @@ pub(crate) fn build_existing_edge_work(
         .collect();
 
     // Create work items by cloning samples from contributions (single clone instead of double).
+    // Issue #1548: the contribution keeps its own copy for redundant-path
+    // detection, so one deep clone is unavoidable here; wrapping in Arc lets
+    // the subsequent GPU submit share the buffer without re-cloning.
     helpful_work_batch.extend(existing_path_contributions.iter().map(|c| HelpfulWork {
         source_uuid: c.source_uuid.clone(),
         target_uuid: target_uuid.to_string(),
-        samples: c.samples.clone(), // Clone required: GPU queue takes ownership
+        samples: Arc::new(c.samples.clone()),
         existing_weight: Some(c.existing_weight),
     }));
 
@@ -302,7 +307,9 @@ pub(crate) fn prepare_harmful_samples<'a>(
             from_uuid: synapse.from_uuid.as_str(),
             to_uuid: synapse.to_uuid.as_str(),
             weight: synapse.weight,
-            samples,
+            // Issue #1548: Arc-wrap so the harmful GPU submit shares the buffer
+            // rather than deep-copying it for queue ownership.
+            samples: Arc::new(samples),
         });
     }
 
@@ -317,5 +324,7 @@ pub(crate) struct PreparedHarmfulWork<'a> {
     pub from_uuid: &'a str,
     pub to_uuid: &'a str,
     pub weight: f32,
-    pub samples: Vec<HelpfulSample>,
+    /// Issue #1548: `Arc`-shared so the GPU submit path takes a refcount clone
+    /// instead of deep-copying the sample `Vec` for queue ownership.
+    pub samples: Arc<Vec<HelpfulSample>>,
 }
