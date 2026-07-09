@@ -50,6 +50,7 @@ mod submission;
 
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
@@ -100,7 +101,11 @@ pub(crate) enum GpuWorkRequest {
     /// Each item is a slice of samples to evaluate.
     HelpfulBatch {
         /// Samples for each evaluation, indexed by request ID.
-        samples: Vec<Vec<HelpfulSample>>,
+        ///
+        /// Issue #1548: `Arc`-shared so submitting caller passes a refcount
+        /// clone rather than a deep copy of every sample `Vec`. The GPU thread
+        /// only borrows the samples (via `as_slice`) during evaluation.
+        samples: Vec<Arc<Vec<HelpfulSample>>>,
         /// Channel to send results back.
         response_tx: Sender<Result<Vec<HelpfulStats>>>,
     },
@@ -108,7 +113,9 @@ pub(crate) enum GpuWorkRequest {
     /// Each item is (samples, weight) pair.
     HarmfulBatch {
         /// (samples, weight) pairs for each evaluation.
-        samples_with_weights: Vec<(Vec<HelpfulSample>, f32)>,
+        ///
+        /// Issue #1548: samples are `Arc`-shared to avoid a deep copy on submit.
+        samples_with_weights: Vec<(Arc<Vec<HelpfulSample>>, f32)>,
         /// Channel to send results back.
         response_tx: Sender<Result<Vec<HarmfulStats>>>,
     },
