@@ -40,7 +40,7 @@ pub fn gradient_threshold(default: f32) -> f32 {
 /// of `0` disables creature-scale module tiering entirely (every module always
 /// runs). Falls back to
 /// [`crate::analysis::module_tiering::DEFAULT_MODULE_TIERING_HIDDEN_THRESHOLD`]
-/// when unset or unparseable.
+/// when unset or unparsable.
 pub fn module_tiering_hidden_neuron_threshold() -> usize {
     std::env::var("NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD")
         .ok()
