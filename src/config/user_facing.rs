@@ -170,6 +170,18 @@ pub fn focus_unused_observations() -> bool {
     parse_bool_env("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS")
 }
 
+/// Whether the CPU pre-reject screen runs before the helpful GPU submit
+/// (Issue #1544).
+///
+/// The screen drops helpful add-synapse candidates that provably cannot yield a
+/// usable outgoing weight, avoiding a wasted GPU round-trip for candidates the
+/// downstream result loop would reject anyway. Enabled by default; set
+/// `NEAT_AI_DISCOVERY_CPU_PRE_REJECT=0` (or `false`/`no`) to disable it (e.g.
+/// for A/B benchmarking). Unset or unrecognised values keep it enabled.
+pub fn cpu_pre_reject_enabled() -> bool {
+    parse_optional_bool_env("NEAT_AI_DISCOVERY_CPU_PRE_REJECT").unwrap_or(true)
+}
+
 /// Maximum valid source input index bias.
 pub const MAX_SOURCE_INPUT_INDEX_BIAS: f64 = 10.0;
 

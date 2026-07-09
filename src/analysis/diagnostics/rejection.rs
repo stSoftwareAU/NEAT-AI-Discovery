@@ -135,6 +135,10 @@ pub(crate) struct TargetDiagnostics {
     /// is saturated (Issue #1143). Surfaced via the
     /// `REJECTION_TARGET_SATURATED` entry on `synapseMetadata`.
     target_saturated_drops: std::sync::atomic::AtomicU32,
+    /// Count of helpful add-synapse candidates dropped by the CPU pre-reject
+    /// screen before GPU submit (Issue #1544). Surfaced via the
+    /// `REJECTION_CPU_PRE_REJECT_NO_SIGNAL` entry on `synapseMetadata`.
+    cpu_pre_reject_no_signal_drops: std::sync::atomic::AtomicU32,
 }
 
 impl TargetDiagnostics {
@@ -148,6 +152,7 @@ impl TargetDiagnostics {
             log_enabled,
             entries,
             target_saturated_drops: std::sync::atomic::AtomicU32::new(0),
+            cpu_pre_reject_no_signal_drops: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -161,6 +166,7 @@ impl TargetDiagnostics {
             log_enabled: true,
             entries,
             target_saturated_drops: std::sync::atomic::AtomicU32::new(0),
+            cpu_pre_reject_no_signal_drops: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -176,6 +182,21 @@ impl TargetDiagnostics {
     /// Snapshot of the target-saturated-drop counter (Issue #1143).
     pub(crate) fn target_saturated_drop_count(&self) -> u32 {
         self.target_saturated_drops
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Record that `count` helpful add-synapse candidates were dropped by the
+    /// CPU pre-reject screen before GPU submit (Issue #1544).
+    pub(crate) fn record_cpu_pre_reject_no_signal(&self, count: u32) {
+        if count > 0 {
+            self.cpu_pre_reject_no_signal_drops
+                .fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Snapshot of the CPU pre-reject no-signal drop counter (Issue #1544).
+    pub(crate) fn cpu_pre_reject_no_signal_drop_count(&self) -> u32 {
+        self.cpu_pre_reject_no_signal_drops
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 

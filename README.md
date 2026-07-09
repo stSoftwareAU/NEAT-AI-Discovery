@@ -345,6 +345,7 @@ env knobs — is documented end-to-end in
 | `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` | off | Bias toward newer input indices |
 | `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS` | off | Prioritise unused input neurons |
 | `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | dynamic | Constant-source folding threshold |
+| `NEAT_AI_DISCOVERY_CPU_PRE_REJECT` | on | CPU pre-reject screen before the helpful GPU submit (Issue #1544); set `0` to disable |
 | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | off | Metropolis-Hastings temperature for probabilistic acceptance |
 | `NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL` | off | Re-enable disabled batch-successful module (Issue #1059) |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | unset | Cap focus-ranking eager pre-load size in MB; lazy mode + structured `info` log when projected size (file × 3) exceeds the budget (Issue #1172) |
