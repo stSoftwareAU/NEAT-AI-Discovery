@@ -102,7 +102,7 @@ pub struct OutputBiasDriftCandidate {
 /// sorted by estimated improvement (best first).
 pub fn detect_output_bias_drift(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<OutputBiasDriftCandidate> {
     // Identify output neurons with their bias
     let output_neurons: HashMap<&str, f32> = creature
@@ -113,9 +113,9 @@ pub fn detect_output_bias_drift(
         .collect();
 
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
+    let records_map: HashMap<&str, &[DiscoverRecord]> = neuron_records
         .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
+        .map(|(uuid, records)| (uuid.as_str(), records.as_ref()))
         .collect();
 
     let mut candidates = Vec::new();
@@ -318,7 +318,7 @@ fn is_capacity_starved(stats: &PositiveSupportStats) -> bool {
 /// the positive-support records).
 pub fn detect_output_bias_drift_with_descriptor(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     descriptor: &TaskDescriptor,
 ) -> Vec<OutputBiasDriftCandidate> {
     let mut candidates = detect_output_bias_drift(creature, neuron_records);
@@ -334,9 +334,9 @@ pub fn detect_output_bias_drift_with_descriptor(
         .map(|n| (n.uuid.as_str(), n.bias))
         .collect();
 
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
+    let records_map: HashMap<&str, &[DiscoverRecord]> = neuron_records
         .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
+        .map(|(uuid, records)| (uuid.as_str(), records.as_ref()))
         .collect();
 
     for (&uuid, &current_bias) in &output_neurons {

@@ -162,7 +162,7 @@ pub struct SymmetricCancellationCandidate {
 /// Vector of candidates identifying neurons with incoherent weight ratios.
 pub fn detect_incoherent_weight_ratios(
     creature: &CreatureJson,
-    records: &[(String, Vec<DiscoverRecord>)],
+    records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &WeightCoherenceConfig,
     topo: Option<&CreatureTopologyCache>,
 ) -> Vec<IncoherentWeightRatioCandidate> {
@@ -179,9 +179,9 @@ pub fn detect_incoherent_weight_ratios(
     };
 
     // Build records lookup
-    let records_map: HashMap<String, &Vec<DiscoverRecord>> = records
+    let records_map: HashMap<String, &[DiscoverRecord]> = records
         .iter()
-        .map(|(uuid, recs)| (uuid.clone(), recs))
+        .map(|(uuid, recs)| (uuid.clone(), recs.as_ref()))
         .collect();
 
     for neuron_uuid in &topo.hidden_uuids {
@@ -256,7 +256,7 @@ pub fn detect_incoherent_weight_ratios(
 /// Vector of candidates identifying neurons with near-constant output.
 pub fn detect_near_constant_paths(
     creature: &CreatureJson,
-    records: &[(String, Vec<DiscoverRecord>)],
+    records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &WeightCoherenceConfig,
     topo: Option<&CreatureTopologyCache>,
 ) -> Vec<NearConstantPathCandidate> {
@@ -273,9 +273,9 @@ pub fn detect_near_constant_paths(
     };
 
     // Build records lookup
-    let records_map: HashMap<String, &Vec<DiscoverRecord>> = records
+    let records_map: HashMap<String, &[DiscoverRecord]> = records
         .iter()
-        .map(|(uuid, recs)| (uuid.clone(), recs))
+        .map(|(uuid, recs)| (uuid.clone(), recs.as_ref()))
         .collect();
 
     // Iterate hidden neurons directly to avoid building a separate squash lookup map.
@@ -362,7 +362,7 @@ pub fn detect_near_constant_paths(
 /// Vector of candidates identifying symmetric weight cancellation.
 pub fn detect_symmetric_cancellation(
     creature: &CreatureJson,
-    records: &[(String, Vec<DiscoverRecord>)],
+    records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &WeightCoherenceConfig,
     topo: Option<&CreatureTopologyCache>,
 ) -> Vec<SymmetricCancellationCandidate> {
@@ -379,9 +379,9 @@ pub fn detect_symmetric_cancellation(
     };
 
     // Build records lookup indexed by obs_index for correlation calculation
-    let records_map: HashMap<String, &Vec<DiscoverRecord>> = records
+    let records_map: HashMap<String, &[DiscoverRecord]> = records
         .iter()
-        .map(|(uuid, recs)| (uuid.clone(), recs))
+        .map(|(uuid, recs)| (uuid.clone(), recs.as_ref()))
         .collect();
 
     // Iterate fan-in directly to avoid building a separate synapses-by-target map.

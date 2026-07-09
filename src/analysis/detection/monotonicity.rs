@@ -82,7 +82,7 @@ pub struct MonotonicityCandidate {
 /// relationships, sorted by estimated improvement (best first).
 pub fn detect_non_monotonic_neurons(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<MonotonicityCandidate> {
     // Only consider hidden neurons
     let hidden_uuids: HashSet<&str> = creature
@@ -95,6 +95,7 @@ pub fn detect_non_monotonic_neurons(
     let mut candidates = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
+        let records = records.as_ref();
         if !hidden_uuids.contains(uuid.as_str()) {
             continue;
         }

@@ -114,7 +114,7 @@ fn theoretical_bounds(squash: &str) -> Option<(f32, f32)> {
 /// A list of `OutputRangeCompressionNeuron` sorted by range utilisation (lowest first).
 pub fn detect_output_range_compression(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &OutputRangeCompressionConfig,
 ) -> Vec<OutputRangeCompressionNeuron> {
     // Build map from UUID to neuron info (only output neurons)
@@ -133,6 +133,7 @@ pub fn detect_output_range_compression(
     let mut results = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
+        let records = records.as_ref();
         // Only consider output neurons
         let Some(&(squash, bias)) = neuron_map.get(uuid.as_str()) else {
             continue;

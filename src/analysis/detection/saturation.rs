@@ -95,7 +95,7 @@ pub struct SaturatedNeuronCandidate {
 /// A list of `SaturatedNeuronCandidate` for neurons that are saturated.
 pub fn detect_saturated_neurons(
     neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<SaturatedNeuronCandidate> {
     let mut candidates = Vec::with_capacity(neurons.len());
 

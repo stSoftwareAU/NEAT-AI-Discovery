@@ -73,7 +73,7 @@ pub struct MultiHopCandidate {
 /// A list of `MultiHopCandidate` sorted by estimated improvement (best first).
 pub fn detect_multi_hop_candidates(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<MultiHopCandidate> {
     if neuron_records.is_empty() {
         return Vec::new();
@@ -113,6 +113,7 @@ pub fn detect_multi_hop_candidates(
     let mut error_by_obs: HashMap<&str, HashMap<u32, f32>> = HashMap::new();
 
     for (uuid, records) in neuron_records {
+        let records = records.as_ref();
         let uuid_str = uuid.as_str();
         let mut act_map = HashMap::new();
         let mut err_map = HashMap::new();

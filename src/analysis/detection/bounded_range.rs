@@ -79,7 +79,7 @@ pub struct BoundedRangeCandidate {
 /// A list of `BoundedRangeCandidate` sorted by detection confidence (highest first).
 pub fn detect_bounded_range_neurons(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<BoundedRangeCandidate> {
     // Only consider input and hidden neurons (exclude output)
     let eligible_uuids: HashSet<&str> = creature
@@ -92,6 +92,7 @@ pub fn detect_bounded_range_neurons(
     let mut candidates = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
+        let records = records.as_ref();
         if !eligible_uuids.contains(uuid.as_str()) {
             continue;
         }

@@ -410,7 +410,8 @@ fn test_oscillating_neuron_empty_records_no_candidates() {
 fn test_oscillating_neuron_missing_neuron_records_no_candidate() {
     let neurons = vec![("missing".to_string(), "TANH".to_string(), 0.0)];
     // No records for this neuron
-    let candidates = detect_oscillating_neurons(&neurons, &[]);
+    let candidates =
+        detect_oscillating_neurons(&neurons, &Vec::<(String, Vec<DiscoverRecord>)>::new());
 
     assert!(
         candidates.is_empty(),

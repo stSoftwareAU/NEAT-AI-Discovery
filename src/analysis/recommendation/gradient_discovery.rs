@@ -144,18 +144,19 @@ pub fn compute_synapse_gradient(
 /// improvement (best first).
 pub fn detect_gradient_candidates(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<GradientCandidate> {
     // Build records lookup
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
+    let records_map: HashMap<&str, &[DiscoverRecord]> = neuron_records
         .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
+        .map(|(uuid, records)| (uuid.as_str(), records.as_ref()))
         .collect();
 
     // Build obs_index → error lookup for each neuron
     let target_error_map: HashMap<&str, HashMap<u32, f32>> = neuron_records
         .iter()
         .map(|(uuid, records)| {
+            let records = records.as_ref();
             let obs_map: HashMap<u32, f32> = records
                 .iter()
                 .filter_map(|r| {

@@ -287,7 +287,7 @@ fn evaluate_alternative_squashes(
 /// cost function should prefer [`detect_output_squash_mismatches_with_cost_hint`].
 pub fn detect_output_squash_mismatches(
     output_neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<OutputSquashMismatchCandidate> {
     detect_output_squash_mismatches_with_cost_hint(
         output_neurons,
@@ -307,7 +307,7 @@ pub fn detect_output_squash_mismatches(
 /// valid.
 pub fn detect_output_squash_mismatches_with_cost_hint(
     output_neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     cost_hint: CostFunctionHint,
 ) -> Vec<OutputSquashMismatchCandidate> {
     let mut candidates = Vec::with_capacity(output_neurons.len());
@@ -316,6 +316,7 @@ pub fn detect_output_squash_mismatches_with_cost_hint(
         let Some((_id, records)) = neuron_records.iter().find(|(u, _)| u == uuid) else {
             continue;
         };
+        let records = records.as_ref();
 
         if records.len() < MIN_SAMPLES {
             continue;

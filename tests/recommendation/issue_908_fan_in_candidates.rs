@@ -286,7 +286,8 @@ fn test_fan_in_empty_records() {
         vec![synapse("input-a", "output-1", 0.5)],
     );
 
-    let candidates = detect_fan_in_candidates(&creature, &[]);
+    let candidates =
+        detect_fan_in_candidates(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
     assert!(
         candidates.is_empty(),
         "Empty records should produce no candidates"

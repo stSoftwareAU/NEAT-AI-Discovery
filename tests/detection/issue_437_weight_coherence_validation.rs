@@ -666,7 +666,12 @@ fn test_weight_coherence_empty_records_handled() {
     );
 
     let config = WeightCoherenceConfig::default();
-    let candidates = detect_incoherent_weight_ratios(&creature, &[], &config, None);
+    let candidates = detect_incoherent_weight_ratios(
+        &creature,
+        &Vec::<(String, Vec<DiscoverRecord>)>::new(),
+        &config,
+        None,
+    );
 
     assert!(
         candidates.is_empty(),

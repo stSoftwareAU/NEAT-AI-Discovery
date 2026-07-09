@@ -86,7 +86,7 @@ pub struct DeadNeuronCandidate {
 /// sorted by removal confidence (highest first).
 pub fn detect_dead_neurons(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     topo: Option<&CreatureTopologyCache>,
 ) -> Vec<DeadNeuronCandidate> {
     // Use pre-computed cache or build locally.

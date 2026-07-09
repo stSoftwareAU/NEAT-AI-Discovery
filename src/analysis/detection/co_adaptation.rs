@@ -73,7 +73,7 @@ pub struct CoAdaptedPairCandidate {
 /// A list of `CoAdaptedPairCandidate` sorted by |correlation| (highest first).
 pub fn detect_co_adapted_neurons(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<CoAdaptedPairCandidate> {
     // Identify hidden neuron UUIDs
     let hidden_uuids: Vec<&str> = creature

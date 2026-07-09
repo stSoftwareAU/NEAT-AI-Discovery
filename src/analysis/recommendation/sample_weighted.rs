@@ -259,12 +259,13 @@ pub fn stratify_samples(records: &[DiscoverRecord]) -> StratifiedAnalysis {
 /// # Returns
 /// Vector of candidates, sorted by estimated improvement (best first).
 pub fn detect_high_error_neurons(
-    records: &[(String, Vec<DiscoverRecord>)],
+    records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &SampleWeightedConfig,
 ) -> Vec<HighErrorNeuronCandidate> {
     let mut candidates = Vec::new();
 
     for (neuron_uuid, neuron_records) in records {
+        let neuron_records = neuron_records.as_ref();
         if neuron_records.len() < config.min_samples {
             continue;
         }

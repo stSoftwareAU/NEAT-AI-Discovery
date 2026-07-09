@@ -122,7 +122,7 @@ fn theoretical_bounds(squash: &str) -> Option<(f32, f32)> {
 /// A list of `RestrictedRangeNeuron` sorted by range utilisation (lowest first).
 pub fn detect_restricted_range_neurons(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &RestrictedRangeConfig,
 ) -> Vec<RestrictedRangeNeuron> {
     // Build map from UUID to neuron info (only hidden neurons)
@@ -141,6 +141,7 @@ pub fn detect_restricted_range_neurons(
     let mut results = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
+        let records = records.as_ref();
         // Only consider hidden neurons
         let Some(&(squash, bias)) = neuron_map.get(uuid.as_str()) else {
             continue;

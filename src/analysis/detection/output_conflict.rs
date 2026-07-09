@@ -71,7 +71,7 @@ pub struct OutputConflictNeuron {
 /// A list of `OutputConflictNeuron` sorted by conflict severity (worst first).
 pub fn detect_output_conflict_neurons(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<OutputConflictNeuron> {
     // Need at least 2 outputs for cross-output conflict
     if creature.output < 2 {
@@ -100,6 +100,7 @@ pub fn detect_output_conflict_neurons(
     let mut results: Vec<OutputConflictNeuron> = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
+        let records = records.as_ref();
         // Only analyse hidden neurons
         if !hidden_uuids.contains(uuid.as_str()) {
             continue;

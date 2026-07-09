@@ -85,7 +85,7 @@ pub struct PolarityFlipCandidate {
 /// Vector of polarity flip candidates, sorted by estimated improvement (best first).
 pub fn detect_weight_polarity_flip_candidates(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<PolarityFlipCandidate> {
     // Build records lookup
     let records_map = build_record_map(neuron_records);
@@ -94,6 +94,7 @@ pub fn detect_weight_polarity_flip_candidates(
     let target_error_map: HashMap<&str, HashMap<u32, f32>> = neuron_records
         .iter()
         .map(|(uuid, records)| {
+            let records = records.as_ref();
             let obs_map: HashMap<u32, f32> = records
                 .iter()
                 .filter_map(|r| {
