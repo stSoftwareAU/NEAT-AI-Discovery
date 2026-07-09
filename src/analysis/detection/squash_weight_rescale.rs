@@ -174,7 +174,7 @@ fn find_best_rescale_factor(
 pub fn detect_squash_weight_rescale_candidates(
     creature: &CreatureJson,
     hidden_neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<SquashWeightRescaleCandidate> {
     let mut candidates = Vec::with_capacity(hidden_neurons.len());
 
@@ -187,6 +187,7 @@ pub fn detect_squash_weight_rescale_candidates(
         let Some((_id, records)) = neuron_records.iter().find(|(u, _)| u == uuid) else {
             continue;
         };
+        let records = records.as_ref();
 
         if records.len() < MIN_SAMPLES {
             continue;

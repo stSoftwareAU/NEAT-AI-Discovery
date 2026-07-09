@@ -135,7 +135,7 @@ fn recommend_bounded_squash(squash: &str, mean_activation: f32) -> Option<String
 /// sorted by estimated improvement (best first).
 pub fn detect_unbounded_capping_candidates(
     neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<UnboundedCappingCandidate> {
     let mut candidates = Vec::with_capacity(neurons.len());
 

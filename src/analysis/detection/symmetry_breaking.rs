@@ -75,7 +75,7 @@ pub struct SymmetricPairCandidate {
 /// sorted by cosine similarity (most symmetric first).
 pub fn detect_symmetric_neurons(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<SymmetricPairCandidate> {
     // Collect hidden neurons
     let hidden_neurons: Vec<&crate::NeuronJson> = creature

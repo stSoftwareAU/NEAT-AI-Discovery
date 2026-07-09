@@ -95,16 +95,16 @@ pub struct FanInCandidate {
 /// Fan-in candidates sorted by estimated improvement (best first).
 pub fn detect_fan_in_candidates(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<FanInCandidate> {
     if neuron_records.is_empty() {
         return Vec::new();
     }
 
     // Build record lookup by neuron UUID.
-    let record_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
+    let record_map: HashMap<&str, &[DiscoverRecord]> = neuron_records
         .iter()
-        .map(|(uuid, recs)| (uuid.as_str(), recs))
+        .map(|(uuid, recs)| (uuid.as_str(), recs.as_ref()))
         .collect();
 
     // Classify neurons.

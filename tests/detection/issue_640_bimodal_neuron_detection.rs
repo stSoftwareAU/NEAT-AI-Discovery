@@ -305,7 +305,7 @@ fn test_bimodal_neuron_empty_records_no_candidates() {
 #[test]
 fn test_bimodal_neuron_missing_neuron_records_no_candidate() {
     let neurons = vec![("missing".to_string(), "TANH".to_string(), 0.0)];
-    let candidates = detect_bimodal_neurons(&neurons, &[]);
+    let candidates = detect_bimodal_neurons(&neurons, &Vec::<(String, Vec<DiscoverRecord>)>::new());
 
     assert!(
         candidates.is_empty(),

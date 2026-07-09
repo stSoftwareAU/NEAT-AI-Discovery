@@ -141,7 +141,7 @@ fn compute_bias_adjustment(records: &[DiscoverRecord], current_bias: f32) -> f32
 /// Vector of detected plateau candidates, sorted by estimated improvement (best first).
 pub fn detect_error_plateaus(
     output_neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<ErrorPlateauCandidate> {
     let mut candidates = Vec::with_capacity(output_neurons.len());
 
@@ -149,6 +149,7 @@ pub fn detect_error_plateaus(
         let Some((_id, records)) = neuron_records.iter().find(|(u, _)| u == uuid) else {
             continue;
         };
+        let records = records.as_ref();
 
         if records.len() < MIN_SAMPLES {
             continue;

@@ -743,7 +743,11 @@ fn test_input_sensitivity_empty_records_handled() {
     );
 
     let config = InputSensitivityConfig::default();
-    let candidates = detect_dominant_inputs(&creature, &[], &config);
+    let candidates = detect_dominant_inputs(
+        &creature,
+        &Vec::<(String, Vec<DiscoverRecord>)>::new(),
+        &config,
+    );
 
     assert!(
         candidates.is_empty(),

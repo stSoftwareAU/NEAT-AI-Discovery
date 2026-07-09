@@ -787,7 +787,8 @@ fn test_output_bias_drift_empty_records_no_candidates() {
         vec![synapse("input-1", "output-1", 0.5)],
     );
 
-    let candidates = detect_output_bias_drift(&creature, &[]);
+    let candidates =
+        detect_output_bias_drift(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
 
     assert!(
         candidates.is_empty(),

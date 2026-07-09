@@ -93,7 +93,7 @@ pub struct HighErrorSquashCandidate {
 /// (descending).
 pub fn detect_high_error_squash_candidates(
     neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<HighErrorSquashCandidate> {
     detect_high_error_squash_candidates_with_cost_hint(
         neurons,
@@ -114,7 +114,7 @@ pub fn detect_high_error_squash_candidates(
 /// and the candidate-MAE comparison.
 pub fn detect_high_error_squash_candidates_with_cost_hint(
     neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     cost_hint: CostFunctionHint,
 ) -> Vec<HighErrorSquashCandidate> {
     // Issue #1250: skip the whole detector when the cost is known non-linear.

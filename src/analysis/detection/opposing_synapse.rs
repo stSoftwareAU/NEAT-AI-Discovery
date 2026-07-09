@@ -78,7 +78,7 @@ pub struct OpposingSynapseCandidate {
 /// sorted by estimated improvement (best first).
 pub fn detect_opposing_synapses(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<OpposingSynapseCandidate> {
     // Build records lookup
     let records_map = build_record_map(neuron_records);
@@ -86,6 +86,7 @@ pub fn detect_opposing_synapses(
     // Build a mapping from obs_index to records for target neurons
     let mut target_error_map: HashMap<&str, HashMap<u32, &DiscoverRecord>> = HashMap::new();
     for (uuid, records) in neuron_records {
+        let records = records.as_ref();
         let obs_map: HashMap<u32, &DiscoverRecord> =
             records.iter().map(|r| (r.obs_index, r)).collect();
         target_error_map.insert(uuid.as_str(), obs_map);

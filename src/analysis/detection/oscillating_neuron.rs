@@ -89,7 +89,7 @@ pub struct OscillatingNeuronCandidate {
 /// sorted by estimated improvement (best first).
 pub fn detect_oscillating_neurons(
     neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<OscillatingNeuronCandidate> {
     let mut candidates = Vec::with_capacity(neurons.len());
 

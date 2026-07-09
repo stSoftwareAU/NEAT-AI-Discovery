@@ -142,7 +142,7 @@ fn compute_regime_shift_bias(
 /// Vector of detected candidates, sorted by estimated improvement (best first).
 pub fn detect_bias_perturbation_candidates(
     hidden_neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<BiasPerturbationCandidate> {
     let mut candidates = Vec::with_capacity(hidden_neurons.len());
 
@@ -150,6 +150,7 @@ pub fn detect_bias_perturbation_candidates(
         let Some((_id, records)) = neuron_records.iter().find(|(u, _)| u == uuid) else {
             continue;
         };
+        let records = records.as_ref();
 
         if records.len() < MIN_SAMPLES {
             continue;

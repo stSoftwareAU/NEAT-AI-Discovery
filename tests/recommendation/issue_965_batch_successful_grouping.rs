@@ -388,7 +388,8 @@ fn test_empty_records_no_candidates() {
         output: 1,
     };
 
-    let candidates = detect_individually_successful(&creature, &[]);
+    let candidates =
+        detect_individually_successful(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
     assert!(
         candidates.is_empty(),
         "Empty records should produce no candidates"

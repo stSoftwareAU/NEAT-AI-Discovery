@@ -438,7 +438,11 @@ fn test_output_range_compression_empty_records_no_detections() {
     );
 
     let config = OutputRangeCompressionConfig::default();
-    let detected = detect_output_range_compression(&creature, &[], &config);
+    let detected = detect_output_range_compression(
+        &creature,
+        &Vec::<(String, Vec<DiscoverRecord>)>::new(),
+        &config,
+    );
 
     assert!(
         detected.is_empty(),

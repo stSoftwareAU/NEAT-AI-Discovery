@@ -110,7 +110,7 @@ pub struct BimodalNeuronCandidate {
 /// distributions, sorted by estimated improvement (best first).
 pub fn detect_bimodal_neurons(
     neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<BimodalNeuronCandidate> {
     let mut candidates = Vec::with_capacity(neurons.len());
 

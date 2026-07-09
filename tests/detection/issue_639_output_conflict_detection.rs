@@ -376,7 +376,8 @@ fn test_results_sorted_by_severity() {
 fn test_output_conflict_empty_records_no_detections() {
     let creature = two_output_creature();
 
-    let detected = detect_output_conflict_neurons(&creature, &[]);
+    let detected =
+        detect_output_conflict_neurons(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
 
     assert!(
         detected.is_empty(),

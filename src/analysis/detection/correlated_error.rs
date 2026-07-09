@@ -76,7 +76,7 @@ pub struct CorrelatedErrorGroup {
 /// sorted by estimated improvement (best first).
 pub fn detect_correlated_error_patterns(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<CorrelatedErrorGroup> {
     // Identify output neuron UUIDs
     let output_uuids: HashSet<&str> = creature
@@ -360,7 +360,7 @@ fn count_shared_error_samples(
 fn find_predictive_inputs(
     group_uuids: &[&str],
     input_uuids: &HashSet<&str>,
-    records_map: &HashMap<&str, &Vec<DiscoverRecord>>,
+    records_map: &HashMap<&str, &[DiscoverRecord]>,
     error_by_obs: &HashMap<&str, HashMap<u32, f32>>,
     shared_obs: &[u32],
 ) -> Vec<String> {

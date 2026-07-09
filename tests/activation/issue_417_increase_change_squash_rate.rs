@@ -439,7 +439,7 @@ fn test_lowered_thresholds_increase_candidate_volume() {
         ("active-1".to_string(), "TANH".to_string(), 0.0f32),
     ];
 
-    let neuron_records = vec![
+    let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![
         // Fully saturated at 0.99
         (
             "full-sat-1".to_string(),

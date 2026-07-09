@@ -156,7 +156,7 @@ fn count_direct_input_paths(creature: &CreatureJson, output_uuid: &str) -> usize
 fn best_source_input(
     creature: &CreatureJson,
     output_uuid: &str,
-    records_map: &HashMap<&str, &Vec<DiscoverRecord>>,
+    records_map: &HashMap<&str, &[DiscoverRecord]>,
 ) -> Option<String> {
     let direct_inputs: Vec<&str> = creature
         .synapses
@@ -187,7 +187,7 @@ fn best_source_input(
 }
 
 /// Compute activation variance for a set of records.
-fn activation_variance(records: Option<&Vec<DiscoverRecord>>) -> f32 {
+fn activation_variance(records: Option<&[DiscoverRecord]>) -> f32 {
     let records = match records {
         Some(r) if !r.is_empty() => r,
         _ => return 0.0,
@@ -209,7 +209,7 @@ fn has_unhealthy_intermediates(
     creature: &CreatureJson,
     output_uuid: &str,
     hidden_set: &HashSet<&str>,
-    records_map: &HashMap<&str, &Vec<DiscoverRecord>>,
+    records_map: &HashMap<&str, &[DiscoverRecord]>,
 ) -> bool {
     // Find hidden neurons that feed (directly or indirectly) into this output
     let mut reverse_adj: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -285,7 +285,7 @@ fn has_unhealthy_intermediates(
 /// A list of `TopologyDiversificationCandidate` sorted by estimated improvement (best first).
 pub fn detect_topology_diversification_candidates(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<TopologyDiversificationCandidate> {
     let output_neurons: Vec<&str> = creature
         .neurons

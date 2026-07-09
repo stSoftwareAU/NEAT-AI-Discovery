@@ -103,7 +103,7 @@ fn squash_derivative(squash: &str, pre_activation: f32) -> f32 {
 /// Vector of compound degradation candidates, sorted by estimated improvement.
 pub fn detect_compound_bias_weight_degradations(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<CompoundDegradationCandidate> {
     let records_map = build_record_map(neuron_records);
 
@@ -147,7 +147,7 @@ pub fn detect_compound_bias_weight_degradations(
 /// Detect hidden neurons with consistent error suggesting bias drift.
 fn detect_bias_corrections(
     creature: &CreatureJson,
-    records_map: &HashMap<&str, &Vec<DiscoverRecord>>,
+    records_map: &HashMap<&str, &[DiscoverRecord]>,
     neuron_squash: &HashMap<&str, &str>,
     neuron_bias: &HashMap<&str, f32>,
 ) -> Vec<BiasCorrection> {
@@ -220,7 +220,7 @@ fn detect_bias_corrections(
 /// Detect synapses with error correlated to source activation (weight degradation).
 fn detect_weight_corrections(
     creature: &CreatureJson,
-    records_map: &HashMap<&str, &Vec<DiscoverRecord>>,
+    records_map: &HashMap<&str, &[DiscoverRecord]>,
 ) -> Vec<WeightCorrection> {
     let mut corrections = Vec::new();
 

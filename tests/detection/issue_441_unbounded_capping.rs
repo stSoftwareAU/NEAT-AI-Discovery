@@ -29,6 +29,7 @@ use crate::common::{hidden, make_creature, output, record, synapse};
 use neat_ai_discovery::analysis::detection::unbounded_capping::{
     detect_unbounded_capping_candidates, unbounded_capping_to_coordinated_candidates,
 };
+use neat_ai_discovery::types::DiscoverRecord;
 
 /// Test: RELU neuron with high activations should be detected
 #[test]
@@ -255,7 +256,7 @@ fn test_bounded_activations_excluded() {
         .collect();
 
     // Even with high activations (within their bounds), bounded activations are excluded
-    let neuron_records = vec![
+    let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![
         (
             "hidden-1".to_string(),
             (0..20)
@@ -298,7 +299,7 @@ fn test_unbounded_capping_conversion_to_coordinated_candidates() {
         .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
         .collect();
 
-    let neuron_records = vec![(
+    let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
         "hidden-1".to_string(),
         (0..20)
             .map(|i| record("hidden-1", i, 10.0 + (i as f32), Some(10.0 + (i as f32))))
@@ -385,7 +386,7 @@ fn test_leakyrelu_spiking_detected() {
         .map(|n| (n.uuid.clone(), n.squash.clone(), n.bias))
         .collect();
 
-    let neuron_records = vec![(
+    let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
         "hidden-1".to_string(),
         (0..20)
             .map(|i| record("hidden-1", i, 10.0 + (i as f32), Some(10.0 + (i as f32))))

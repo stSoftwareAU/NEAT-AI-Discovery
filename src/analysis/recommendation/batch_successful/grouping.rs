@@ -120,7 +120,7 @@ pub fn group_into_batches(candidates: &[IndividualCandidate]) -> Vec<BatchSucces
 /// detect closure.
 pub fn detect_batch_successful_groups(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<BatchSuccessfulGroup> {
     let individuals = detect_individually_successful(creature, neuron_records);
     group_into_batches(&individuals)

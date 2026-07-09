@@ -70,7 +70,7 @@ pub struct DormantSynapseCandidate {
 /// sorted by estimated improvement (best first).
 pub fn detect_dormant_synapses(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<DormantSynapseCandidate> {
     // Build fan-in count map (how many synapses target each neuron)
     let mut fan_in_count: HashMap<&str, usize> = HashMap::new();

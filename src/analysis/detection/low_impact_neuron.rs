@@ -102,7 +102,7 @@ pub struct LowImpactNeuronCandidate {
 /// A list of `LowImpactNeuronCandidate` sorted by removal confidence (highest first).
 pub fn detect_low_impact_neurons(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     topo: Option<&CreatureTopologyCache>,
 ) -> Vec<LowImpactNeuronCandidate> {
     let local_cache;

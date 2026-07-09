@@ -449,7 +449,8 @@ fn test_activation_monotonicity_empty_records_no_detections() {
         vec![],
     );
 
-    let candidates = detect_non_monotonic_neurons(&creature, &[]);
+    let candidates =
+        detect_non_monotonic_neurons(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
 
     assert!(
         candidates.is_empty(),

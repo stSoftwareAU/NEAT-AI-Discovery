@@ -303,7 +303,11 @@ fn test_empty_records_no_clusters() {
     );
 
     let config = HardSampleClusterConfig::default();
-    let clusters: Vec<HardSampleCluster> = detect_hard_sample_clusters(&creature, &[], &config);
+    let clusters: Vec<HardSampleCluster> = detect_hard_sample_clusters(
+        &creature,
+        &Vec::<(String, Vec<DiscoverRecord>)>::new(),
+        &config,
+    );
 
     assert!(
         clusters.is_empty(),

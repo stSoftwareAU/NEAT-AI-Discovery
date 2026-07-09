@@ -78,7 +78,7 @@ pub struct SentinelGatingCandidate {
 /// A list of `SentinelGatingCandidate` sorted by estimated improvement (highest first).
 pub fn detect_sentinel_gating_candidates(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<SentinelGatingCandidate> {
     // Only consider input neurons (observations)
     let input_uuids: HashSet<&str> = creature
@@ -91,6 +91,7 @@ pub fn detect_sentinel_gating_candidates(
     let mut candidates = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
+        let records = records.as_ref();
         if !input_uuids.contains(uuid.as_str()) {
             continue;
         }
