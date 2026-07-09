@@ -365,6 +365,22 @@ pub(crate) fn analyse_single_target(
         &mut helpful_work_batch,
     );
 
+    // Issue #1544: CPU pre-reject provably no-signal helpful candidates before
+    // the GPU round-trip. A screened-out candidate has no finite optimal
+    // outgoing weight, so `collect_and_process_helpful_results` would reject it
+    // anyway (`calculate_optimal_outgoing_weight(..) => None => continue`). This
+    // removes the wasted GPU submit without changing which candidates survive.
+    // The same filtered batch is passed to both submit and collect below, so
+    // the GPU stats stay index-aligned with the work items.
+    if crate::config::cpu_pre_reject_enabled() && !helpful_work_batch.is_empty() {
+        let before = helpful_work_batch.len();
+        helpful_work_batch.retain(|w| {
+            !crate::analysis::synapse::cpu_pre_reject::helpful_candidate_has_no_signal(&w.samples)
+        });
+        let dropped = u32::try_from(before - helpful_work_batch.len()).unwrap_or(u32::MAX);
+        ctx.diagnostics.record_cpu_pre_reject_no_signal(dropped);
+    }
+
     // Issue #568: Overlap CPU analysis with GPU computation.
     // Submit the helpful GPU batch non-blocking, then prepare harmful samples
     // (CPU work) while the GPU processes the helpful batch.

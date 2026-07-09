@@ -38,6 +38,7 @@ mod activation_subset_evaluation;
 pub mod adaptive_proposal;
 pub mod add_synapse_gating;
 mod candidate_generation;
+pub mod cpu_pre_reject;
 mod filtering;
 mod gpu_evaluation;
 pub(crate) mod holdout_validation;

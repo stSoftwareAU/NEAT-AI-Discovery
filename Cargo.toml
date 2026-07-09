@@ -195,6 +195,10 @@ harness = false
 name = "record_arc_sharing"
 harness = false
 
+[[bench]]
+name = "cpu_pre_reject"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

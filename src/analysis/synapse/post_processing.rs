@@ -655,6 +655,9 @@ pub(crate) struct MetadataParams<'a> {
     /// rejected by the bypass-weight floor in
     /// `detect_collapsible_hidden_neurons`.
     pub collapse_bypass_below_floor_drops: u32,
+    /// Issue #1544: count of helpful add-synapse candidates dropped by the CPU
+    /// pre-reject screen before GPU submit.
+    pub cpu_pre_reject_no_signal_drops: u32,
 }
 
 /// Build the analysis metadata from collected atomic flags and timing data.
@@ -708,6 +711,12 @@ pub(crate) fn build_metadata(
             b.record_many_u32(
                 crate::analysis::diagnostics::rejection_reasons::REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR,
                 params.collapse_bypass_below_floor_drops,
+            );
+            // Issue #1544: record CPU pre-reject drops so the drought diagnostic
+            // can distinguish a cheap CPU screen-out from a genuine drought.
+            b.record_many_u32(
+                crate::analysis::diagnostics::rejection_reasons::REJECTION_CPU_PRE_REJECT_NO_SIGNAL,
+                params.cpu_pre_reject_no_signal_drops,
             );
             b
         },
