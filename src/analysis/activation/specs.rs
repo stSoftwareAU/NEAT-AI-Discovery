@@ -5,6 +5,7 @@
 
 use super::functions::*;
 use crate::analysis::task_descriptor::{TargetTopology, TaskDescriptor};
+use std::collections::HashSet;
 
 // ============================================================================
 // Activation Candidate Specification
@@ -315,6 +316,212 @@ pub fn scan_specs_for_role(
     }
 }
 
+// ============================================================================
+// Squash-aware Hidden-target Scan Pruning (Issue #1545)
+// ============================================================================
+
+/// Core hidden-neuron squash scan set used at cold start (Issue #1545).
+///
+/// This is an **evidence-based** core, not an arbitrary shortlist. It combines:
+///
+/// - `IDENTITY` (linear), the `ReLU` family (`ELU`, `ReLU6`), and the smooth
+///   workhorses `TANH` / `GELU` — the issue's cold-start core (`ReLU` itself is
+///   scanned separately via the `ReLU` split path, so its family is represented
+///   by the smooth surrogates `ELU`, `ReLU6`, `GELU`), plus
+/// - the v0.1.139 families the [`ACTIVATION_SPECS`] comments document as having
+///   produced **accepted** add-neuron discoveries — `Mish` (2 discoveries),
+///   `HARD_TANH`, `SOFTSIGN`, and `BENT_IDENTITY` — i.e. squashes with non-zero
+///   historical success (criterion #1 of the issue).
+///
+/// The families left out of the core (`Softplus`, `LOGISTIC`, `BIPOLAR`,
+/// `CLIPPED`, `ABSOLUTE`, `ArcTan`) are either output-oriented bounded squashes
+/// already covered by [`BOUNDED_OUTPUT_SCAN_NAMES`] or near-duplicates of a core
+/// member (e.g. `ArcTan` ≈ `SOFTSIGN`), so pruning them from cold-start hidden
+/// scans drops ~40 % of the activation GPU configs (256 → 154) without removing
+/// a documented winner.
+///
+/// A creature with **no** recorded squash history scans exactly this set for
+/// hidden targets. Families outside the core set are only scanned once the
+/// creature has demonstrably adopted them (history-aware widening) or while the
+/// search is escalated (novelty / drought — see [`HiddenScanContext::escalated`]).
+pub const CORE_HIDDEN_SCAN_NAMES: &[&str] = &[
+    "IDENTITY",
+    "GELU",
+    "ELU",
+    "ReLU6",
+    "TANH",
+    "Mish",
+    "HARD_TANH",
+    "SOFTSIGN",
+    "BENT_IDENTITY",
+];
+
+/// Per-creature history and escalation signal that drives hidden-target squash
+/// pruning (Issue #1545).
+///
+/// The scan set for a hidden add-neuron target is derived from three inputs:
+/// the fixed [`CORE_HIDDEN_SCAN_NAMES`] core, the squash families the creature
+/// has already adopted (`successful_squashes` — non-zero historical success),
+/// and whether the search is currently escalated.
+pub struct HiddenScanContext<'a> {
+    /// Squash family names with non-zero historical success for this creature.
+    ///
+    /// In production this is the set of squash functions the creature's neurons
+    /// already use: a family the creature has adopted has demonstrably worked
+    /// for it, so it is worth re-scanning. Empty at cold start.
+    pub successful_squashes: &'a HashSet<String>,
+    /// When `true`, novelty escalation (#1423) or a drought restores the full
+    /// [`ACTIVATION_SPECS`] set so pruning can **never** permanently starve the
+    /// search. This is the critical guard against a filter that only helps toy
+    /// networks — a plateaued creature widens back to the full set.
+    pub escalated: bool,
+}
+
+impl HiddenScanContext<'_> {
+    /// Select the activation candidate specs to scan for a **hidden**
+    /// add-neuron target (Issue #1545).
+    ///
+    /// - **Escalated** — returns the full [`ACTIVATION_SPECS`] set (widen under
+    ///   novelty escalation / drought).
+    /// - **Otherwise** — returns [`CORE_HIDDEN_SCAN_NAMES`] widened with every
+    ///   family in [`Self::successful_squashes`]. Families that are neither core
+    ///   nor historically successful are pruned.
+    ///
+    /// The result is never empty and never over-prunes below the core set.
+    #[must_use]
+    pub fn scan_specs(&self) -> Vec<&'static ActivationCandidateSpec> {
+        if self.escalated {
+            return ACTIVATION_SPECS.iter().collect();
+        }
+        ACTIVATION_SPECS
+            .iter()
+            .filter(|spec| {
+                CORE_HIDDEN_SCAN_NAMES.contains(&spec.name)
+                    // Case-insensitive: creature squashes are uppercased at
+                    // deserialisation (Issue #753) while some spec names are
+                    // mixed-case (e.g. `Mish`, `ArcTan`, `ReLU6`).
+                    || self
+                        .successful_squashes
+                        .iter()
+                        .any(|s| s.eq_ignore_ascii_case(spec.name))
+            })
+            .collect()
+    }
+}
+
+/// A concrete GPU scan configuration: which spec (by index into the plan's spec
+/// slice) plus the activation type / orientation / scale to evaluate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScanConfig {
+    /// Index into the [`SquashScanPlan::specs`] slice this config belongs to.
+    pub spec_index: usize,
+    /// GPU activation-type id (see [`activation_name_to_gpu_id`]).
+    pub activation_type: u32,
+    /// Weight orientation (`+1.0` / `-1.0`).
+    pub orientation: f32,
+    /// Incoming-weight scale.
+    pub scale: f32,
+}
+
+/// A resolved hidden-target activation scan plan (Issue #1545).
+///
+/// Combines the pruned squash-family subset with a per-(source, target) config
+/// cap. Produced once per neuron-analysis phase and reused for every
+/// (source, target) pair, replacing the previous unconditional full-cross-product
+/// scan.
+pub struct SquashScanPlan {
+    /// Squash families to scan (a subset of [`ACTIVATION_SPECS`]).
+    pub specs: Vec<&'static ActivationCandidateSpec>,
+    /// Maximum number of (orientation × scale) configs per (source, target)
+    /// pair after family filtering. `0` disables the cap.
+    pub max_configs_per_pair: usize,
+}
+
+impl SquashScanPlan {
+    /// Build a hidden-target plan from a scan context and a per-pair config cap.
+    #[must_use]
+    pub fn for_hidden(ctx: &HiddenScanContext, max_configs_per_pair: usize) -> Self {
+        Self {
+            specs: ctx.scan_specs(),
+            max_configs_per_pair,
+        }
+    }
+
+    /// The full, unpruned, uncapped plan — the pre-Issue-#1545 behaviour.
+    ///
+    /// Used as the regression-safe default when no per-creature history is
+    /// available (e.g. the batched-evaluation unit tests and the sequential
+    /// fallback path).
+    #[must_use]
+    pub fn full() -> Self {
+        Self {
+            specs: ACTIVATION_SPECS.iter().collect(),
+            max_configs_per_pair: 0,
+        }
+    }
+
+    /// Expand the plan into concrete GPU configs, honouring the per-pair cap.
+    ///
+    /// With no cap active the configs are returned in natural spec-major order
+    /// (spec, then orientation, then scale) — identical to the pre-#1545
+    /// ordering. When the cap trims the list, the retained configs are the ones
+    /// whose scale is closest to `1.0` (the historically most productive band),
+    /// so extreme scales — which the spec comments flag as numerically unstable
+    /// — are dropped first.
+    #[must_use]
+    pub fn configs(&self) -> Vec<ScanConfig> {
+        build_scan_configs(&self.specs, self.max_configs_per_pair)
+    }
+}
+
+/// Expand a spec slice into concrete GPU configs, applying a top-N cap.
+///
+/// See [`SquashScanPlan::configs`] for the ordering and cap semantics.
+#[must_use]
+pub fn build_scan_configs(
+    specs: &[&'static ActivationCandidateSpec],
+    max_configs: usize,
+) -> Vec<ScanConfig> {
+    let mut configs: Vec<ScanConfig> = Vec::new();
+    for (spec_index, spec) in specs.iter().enumerate() {
+        let activation_type = activation_name_to_gpu_id(spec.name);
+        for &orientation in spec.orientations {
+            for &scale in spec.scales {
+                configs.push(ScanConfig {
+                    spec_index,
+                    activation_type,
+                    orientation,
+                    scale,
+                });
+            }
+        }
+    }
+
+    if max_configs > 0 && configs.len() > max_configs {
+        // Keep the `max_configs` configs whose scale is closest to 1.0. Ties
+        // (and the uncapped remainder) preserve natural spec-major order via the
+        // stable sort, so the output is deterministic.
+        configs.sort_by(|a, b| {
+            scale_centrality(a.scale)
+                .partial_cmp(&scale_centrality(b.scale))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        configs.truncate(max_configs);
+    }
+
+    configs
+}
+
+/// Distance of a scale from the productive centre (`1.0`) in log space.
+///
+/// Smaller is more central. Used to decide which configs survive the top-N cap.
+fn scale_centrality(scale: f32) -> f32 {
+    if scale <= 0.0 {
+        return f32::INFINITY;
+    }
+    scale.ln().abs()
+}
+
 #[cfg(test)]
 mod scan_specs_tests {
     use super::*;
@@ -360,37 +567,104 @@ mod scan_specs_tests {
         }
     }
 
+    // Issue #1545 rewrote the three hidden-target cases below. Before #1545 a
+    // hidden target unconditionally scanned the full `ACTIVATION_SPECS` set;
+    // hidden scans are now squash-aware via `HiddenScanContext`. The output-role
+    // cases (`onehot_output_returns_only_bounded_subset` etc.) are untouched.
+
     #[test]
-    fn onehot_hidden_uses_full_scan_set() {
-        let d = TaskDescriptor::from_name("CATEGORICAL_ERROR", 7);
-        let specs = scan_specs_for_role(NeuronRole::Hidden, &d);
+    fn onehot_hidden_cold_start_uses_core_set() {
+        // Cold start (no recorded squash history): a hidden target scans only
+        // the reduced core set, not the full ACTIVATION_SPECS list.
+        let history = HashSet::new();
+        let ctx = HiddenScanContext {
+            successful_squashes: &history,
+            escalated: false,
+        };
+        let specs = ctx.scan_specs();
+        let got = names(&specs);
         assert_eq!(
-            specs.len(),
-            ACTIVATION_SPECS.len(),
-            "Hidden neurons always see the full scan set",
+            got.len(),
+            CORE_HIDDEN_SCAN_NAMES.len(),
+            "cold-start hidden scan must equal the core set, got {got:?}",
         );
+        for core in CORE_HIDDEN_SCAN_NAMES {
+            assert!(
+                got.contains(core),
+                "core member {core} missing from {got:?}"
+            );
+        }
+        assert!(specs.len() < ACTIVATION_SPECS.len());
     }
 
     #[test]
-    fn simplex_hidden_uses_full_scan_set() {
-        let d = TaskDescriptor::from_name("CROSS_ENTROPY", 10);
-        let specs = scan_specs_for_role(NeuronRole::Hidden, &d);
+    fn simplex_hidden_escalated_restores_full_scan_set() {
+        // Escalation (novelty / drought) widens a hidden target back to the
+        // full set — the guard against permanent over-pruning.
+        let history = HashSet::new();
+        let ctx = HiddenScanContext {
+            successful_squashes: &history,
+            escalated: true,
+        };
+        let specs = ctx.scan_specs();
         assert_eq!(specs.len(), ACTIVATION_SPECS.len());
     }
 
     #[test]
-    fn unknown_descriptor_returns_full_scan_for_both_roles() {
-        // Regression guard: absent / unrecognised cost name collapses to
-        // neutral, which must preserve the pre-Issue-#1315 scan set.
+    fn hidden_history_widens_but_output_neutral_stays_full() {
+        // Hidden: a non-core family with recorded success is scanned in addition
+        // to the core set; a non-core family with no history is pruned.
+        let mut history = HashSet::new();
+        history.insert("BIPOLAR".to_string());
+        let ctx = HiddenScanContext {
+            successful_squashes: &history,
+            escalated: false,
+        };
+        let got = names(&ctx.scan_specs());
+        assert!(
+            got.contains(&"BIPOLAR"),
+            "adopted family must be scanned: {got:?}"
+        );
+        assert!(
+            !got.contains(&"CLIPPED"),
+            "unadopted family must be pruned: {got:?}"
+        );
+
+        // Output role via the neutral descriptor is unaffected by #1545 and
+        // still returns the full scan set (regression guard).
         let d = TaskDescriptor::neutral();
-        for role in [NeuronRole::Output, NeuronRole::Hidden] {
-            let specs = scan_specs_for_role(role, &d);
-            assert_eq!(
-                specs.len(),
-                ACTIVATION_SPECS.len(),
-                "Neutral descriptor must yield the full scan set for {role:?}",
-            );
+        let out = scan_specs_for_role(NeuronRole::Output, &d);
+        assert_eq!(out.len(), ACTIVATION_SPECS.len());
+    }
+
+    #[test]
+    fn build_scan_configs_respects_cap() {
+        let history = HashSet::new();
+        let ctx = HiddenScanContext {
+            successful_squashes: &history,
+            escalated: true, // full set → largest config count
+        };
+        let specs = ctx.scan_specs();
+        let uncapped = build_scan_configs(&specs, 0);
+        assert!(uncapped.len() > 20, "sanity: full set has many configs");
+
+        let cap = 12;
+        let capped = build_scan_configs(&specs, cap);
+        assert_eq!(capped.len(), cap, "cap must bound the config count");
+        // Every retained config must reference a valid spec index.
+        for cfg in &capped {
+            assert!(cfg.spec_index < specs.len());
         }
+    }
+
+    #[test]
+    fn plan_full_is_uncapped_full_set() {
+        let plan = SquashScanPlan::full();
+        assert_eq!(plan.specs.len(), ACTIVATION_SPECS.len());
+        assert_eq!(plan.max_configs_per_pair, 0);
+        // Uncapped config expansion preserves natural spec-major order.
+        let configs = plan.configs();
+        assert_eq!(configs.first().map(|c| c.spec_index), Some(0));
     }
 
     #[test]

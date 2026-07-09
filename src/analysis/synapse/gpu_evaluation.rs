@@ -15,8 +15,7 @@ pub(crate) use super::relu_evaluation::evaluate_relu_candidates_split;
 
 use crate::CandidateNeuronJson;
 use crate::analysis::activation::{
-    ACTIVATION_SPECS, activation_name_to_gpu_id, get_target_simulation_fn,
-    has_sufficient_output_variance,
+    SquashScanPlan, get_target_simulation_fn, has_sufficient_output_variance,
 };
 use crate::analysis::gpu::GpuEvaluator;
 use crate::analysis::samples::{EPSILON, HelpfulSample, NeuronStats};
@@ -46,6 +45,7 @@ pub(crate) fn evaluate_all_activation_specs_batched<G: GpuEvaluator>(
     samples: &[HelpfulSample],
     threshold: f32,
     target_squash: Option<&str>,
+    plan: &SquashScanPlan,
 ) -> Result<Vec<CandidateNeuronJson>> {
     if samples.len() < MIN_NEURON_SAMPLE_COUNT {
         return Ok(Vec::new());
@@ -61,21 +61,15 @@ pub(crate) fn evaluate_all_activation_specs_batched<G: GpuEvaluator>(
         return Ok(Vec::new());
     }
 
-    // Build list of all (spec_idx, activation_type, orientation, scale) combinations
-    let mut configs: Vec<(usize, u32, f32, f32)> = Vec::new();
-    for (spec_idx, spec) in ACTIVATION_SPECS.iter().enumerate() {
-        let activation_type = activation_name_to_gpu_id(spec.name);
-        for &orientation in spec.orientations {
-            for &scale in spec.scales {
-                configs.push((spec_idx, activation_type, orientation, scale));
-            }
-        }
-    }
+    // Issue #1545: expand only the pruned squash-family subset into GPU configs,
+    // honouring the per-(source, target) cap. `spec_index` references
+    // `plan.specs`, not the global `ACTIVATION_SPECS` array.
+    let configs = plan.configs();
 
     // Extract just the GPU configs (activation_type, orientation, scale)
     let gpu_configs: Vec<(u32, f32, f32)> = configs
         .iter()
-        .map(|&(_, activation_type, orientation, scale)| (activation_type, orientation, scale))
+        .map(|c| (c.activation_type, c.orientation, c.scale))
         .collect();
 
     // Call batched GPU evaluation
@@ -90,6 +84,7 @@ pub(crate) fn evaluate_all_activation_specs_batched<G: GpuEvaluator>(
                 samples,
                 threshold,
                 target_squash,
+                plan,
             );
         }
     };
@@ -97,12 +92,14 @@ pub(crate) fn evaluate_all_activation_specs_batched<G: GpuEvaluator>(
     // Get target activation function for accurate simulation
     let target_activation_fn = get_target_simulation_fn(samples, target_squash);
 
-    // Process results and find best candidate for each spec
-    let mut best_candidates: Vec<Option<(CandidateNeuronJson, f32)>> =
-        vec![None; ACTIVATION_SPECS.len()];
+    // Process results and find best candidate for each scanned spec
+    let mut best_candidates: Vec<Option<(CandidateNeuronJson, f32)>> = vec![None; plan.specs.len()];
 
-    for (idx, &(spec_idx, _activation_type, orientation, scale)) in configs.iter().enumerate() {
-        let spec = &ACTIVATION_SPECS[spec_idx];
+    for (idx, cfg) in configs.iter().enumerate() {
+        let spec_idx = cfg.spec_index;
+        let orientation = cfg.orientation;
+        let scale = cfg.scale;
+        let spec = plan.specs[spec_idx];
         let (sum_activation_sq, sum_error_activation, _gpu_baseline_sq, _improved_count) =
             gpu_results[idx];
 
@@ -232,9 +229,11 @@ fn evaluate_all_activation_specs_sequential<G: GpuEvaluator>(
     samples: &[HelpfulSample],
     threshold: f32,
     target_squash: Option<&str>,
+    plan: &SquashScanPlan,
 ) -> Result<Vec<CandidateNeuronJson>> {
+    // Issue #1545: iterate only the pruned squash-family subset.
     let mut results = Vec::new();
-    for spec in &ACTIVATION_SPECS {
+    for spec in &plan.specs {
         let eval_params = ActivationEvalParams {
             source_uuid,
             target_uuid,
