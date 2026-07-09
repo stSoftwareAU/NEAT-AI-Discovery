@@ -65,6 +65,7 @@ The following suites are defined in `Cargo.toml`:
 | `parallel_discovery` | Parallel discovery throughput |
 | `queue_submission_copies` | GPU queue submission copy overhead |
 | `sample_locality` | Sample data locality |
+| `source_budget` | Per-target source budget (top-K) vs unlimited enumeration (Issue #1542) |
 | `squash_normalisation` | Pre-normalised squash string lookup |
 | `synapse_counts` | Synapse count pre-computation |
 | `synapse_lookup` | Zero-allocation synapse existence and weight lookups |

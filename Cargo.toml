@@ -64,6 +64,10 @@ name = "sample_locality"
 harness = false
 
 [[bench]]
+name = "source_budget"
+harness = false
+
+[[bench]]
 name = "tiered_loading"
 harness = false
 

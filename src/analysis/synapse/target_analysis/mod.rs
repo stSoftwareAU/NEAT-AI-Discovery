@@ -296,6 +296,12 @@ pub(crate) fn analyse_single_target(
         Some(&*ctx.used_inputs),
     );
 
+    // Issue #1542: Cap the number of priority-ordered sources that proceed to
+    // sample building + GPU evaluation. Unset budget = unlimited (back-compat).
+    // `total_eligible` above records the true eligible count for diagnostics;
+    // this only bounds the expensive stage-2 work.
+    crate::analysis::utils::apply_source_budget(&mut eligible_sources);
+
     // Pre-filter sources and collect their records
     let (mut sources_to_process, existing_sources_to_process) = statistics::filter_and_load_sources(
         &eligible_sources,

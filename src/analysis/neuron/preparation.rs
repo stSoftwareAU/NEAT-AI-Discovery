@@ -277,6 +277,11 @@ pub(crate) fn load_source_records<'a>(
     let total_eligible = eligible_sources.len() as u32;
     diagnostics.set_total_eligible_sources(target_uuid, total_eligible);
 
+    // Issue #1542: Cap the number of priority-ordered sources that proceed to
+    // record loading + sample building + GPU evaluation. Reuses the same budget
+    // as synapse analysis. Unset budget = unlimited (back-compat).
+    crate::analysis::utils::apply_source_budget(&mut eligible_sources);
+
     // Log focus neuron details for debugging
     if verbose_enabled() && total_eligible == 0 {
         tracing::debug!(
