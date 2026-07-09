@@ -150,7 +150,7 @@ fn compute_covariance(x: &[f32], y: &[f32]) -> f32 {
 /// sorted by estimated improvement (best first).
 pub fn detect_dominant_inputs(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &InputSensitivityConfig,
 ) -> Vec<DominantInputCandidate> {
     // Build records lookup
@@ -324,7 +324,7 @@ pub fn detect_dominant_inputs(
 /// sorted by estimated improvement (best first).
 pub fn detect_threshold_effects(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &InputSensitivityConfig,
 ) -> Vec<ThresholdEffectCandidate> {
     // Build records lookup

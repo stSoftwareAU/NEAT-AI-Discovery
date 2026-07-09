@@ -126,7 +126,7 @@ fn generate_exploratory_weights(current_weight: f32) -> Vec<f32> {
 /// Vector of stuck synapse candidates, sorted by estimated improvement (best first).
 pub fn detect_stuck_synapse_weight_resets(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<StuckSynapseCandidate> {
     // Build records lookup
     let records_map = build_record_map(neuron_records);

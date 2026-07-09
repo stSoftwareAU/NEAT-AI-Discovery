@@ -122,7 +122,7 @@ fn compute_shortest_paths_to_output(creature: &CreatureJson) -> HashMap<String, 
 /// A list of `TopologyCandidate` sorted by estimated improvement (best first).
 pub fn detect_topology_issues(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     topo: Option<&CreatureTopologyCache>,
 ) -> Vec<TopologyCandidate> {
     // Use pre-computed cache or build locally.

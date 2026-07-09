@@ -872,7 +872,8 @@ fn test_dormant_synapse_empty_records_no_candidates() {
         ],
     );
 
-    let candidates = detect_dormant_synapses(&creature, &[]);
+    let candidates =
+        detect_dormant_synapses(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
 
     assert!(
         candidates.is_empty(),

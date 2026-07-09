@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.123"
+version = "0.74.124"
 edition = "2024"
 license = "Apache-2.0"
 description = "High-performance Rust library for recording neuron activations and errors during NEAT-AI discovery, and scanning the recorded data to identify beneficial new synapses/neurons."
@@ -52,6 +52,10 @@ name = "batched_activation"
 harness = false
 
 [[bench]]
+name = "neuron_squash_pruning"
+harness = false
+
+[[bench]]
 name = "cache_locality"
 harness = false
 
@@ -77,6 +81,10 @@ harness = false
 
 [[bench]]
 name = "quality_skip_dispatch"
+harness = false
+
+[[bench]]
+name = "module_tiering_dispatch"
 harness = false
 
 [[bench]]
@@ -189,6 +197,14 @@ harness = false
 
 [[bench]]
 name = "input_uuid_precompute"
+harness = false
+
+[[bench]]
+name = "record_arc_sharing"
+harness = false
+
+[[bench]]
+name = "cpu_pre_reject"
 harness = false
 
 [profile.release]

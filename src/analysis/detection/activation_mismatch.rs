@@ -110,7 +110,7 @@ fn is_skip_squash(squash: &str) -> bool {
 /// sorted by estimated improvement (descending).
 pub fn detect_activation_mismatches(
     neurons: &[(String, String, f32)],
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<ActivationMismatchCandidate> {
     let records_map = build_record_map(neuron_records);
 

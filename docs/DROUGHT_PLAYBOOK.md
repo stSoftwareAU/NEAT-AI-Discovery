@@ -317,6 +317,37 @@ flipped between runs without recompilation.
 | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES` | u32 | 3 | ≥ 1 | Raise to make the cooldown less aggressive when many targets are in cooldown simultaneously. |
 | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` | u64 | 10 | ≥ 1 | Lower to free targets faster after a failure streak. |
 | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | f32 | unset (uses calibration default) | 0.01–5.0 | Raise to accept lower-gain candidates during a drought, lower to be stricter. Values outside the range are ignored with a warn log. |
+| `NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD` | usize | 1000 | ≥ 1, or `0` to disable | Hidden-neuron count above which **expensive**-tier discovery modules are skipped at dispatch on non-escalation passes (Issue #1547). Lower it to tier out sooner on mid-size creatures; set `0` to always run every module. Skipping is suppressed whenever the creature is in Conservative discovery mode (the drought / novelty-escalation signal), so the full set is re-enabled during a drought. |
+
+## Module tiering during drought (Issue #1547)
+
+On a **large** creature (`hidden_neuron_count` above
+`NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD`, default 1000) the expensive
+discovery modules — multi-hop analysis, topology structure / diversification,
+co-adaptation, weight-coherence, skip-connection scans — are skipped at dispatch
+to protect the post-processing budget, because their cost grows super-linearly
+with the hidden-neuron count.
+
+**Escalation re-enables the full set.** The moment the creature enters
+Conservative discovery mode (`discoveryMode="conservative"`, the same
+low-rolling-success-rate signal that drives novelty escalation #1423 and the
+drought escape hatch #1422), tiering is suppressed and every module runs again so
+the escalation pass can try everything. That re-enable is logged:
+
+```text
+Issue #1547: drought/novelty escalation active — full discovery module set re-enabled on large creature
+```
+
+**Diagnostic signal:** during a drought pass on a large creature, the absence of
+that re-enable line means tiering wrongly suppressed modules — the expected
+first symptom is a falling accepted-candidate rate and the creature drought alarm
+(#1424) firing more often. On a non-escalation pass the complementary line
+
+```text
+Issue #1547: creature-scale tiering — expensive discovery modules skipped on large creature (no escalation active)
+```
+
+names exactly which modules were skipped.
 
 ## Worked Example — 30-epoch Drought
 
@@ -350,6 +381,8 @@ What an operator should look at, in order:
 ## See Also
 
 - `src/analysis/discovery_mode.rs` — mode decision and bias logic.
+- `src/analysis/module_tiering.rs` — creature-scale expensive-module tiering
+  (Issue #1547) and its escalation re-enable.
 - `src/analysis/candidate_cache.rs` — adaptive staleness window.
 - `src/analysis/target_failure_tracker.rs` — per-target cooldown.
 - `src/analysis/drought_diagnostic.rs` — `DroughtDiagnostic` schema and

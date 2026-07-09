@@ -13,10 +13,15 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::gpu::{GpuAnalyzer, GpuEvaluator};
 use neat_ai_discovery::analysis::samples::HelpfulSample;
 use std::hint::black_box;
+use std::sync::Arc;
 
 /// Sample sizes to benchmark, matching the range used by the GPU batch size tuning
 /// (64–4096 from `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE`).
 const SAMPLE_SIZES: &[usize] = &[64, 256, 1024, 4096];
+
+/// Number of work items in a simulated helpful submit batch (locality-grouped
+/// sources for one target). Mirrors the fan-out seen at GRQ scale.
+const BATCH_ITEMS: usize = 32;
 
 /// Create test samples with realistic variance for benchmarking.
 fn create_samples(count: usize) -> Vec<HelpfulSample> {
@@ -82,5 +87,59 @@ fn bench_sample_copy_overhead(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_direct_relu_eval, bench_sample_copy_overhead,);
+/// Issue #1548: Benchmark building a helpful submit batch by deep-cloning every
+/// work item's sample `Vec` (the pre-fix behaviour).
+///
+/// This is the cost eliminated by Arc-sharing: `submit_helpful_gpu_work`
+/// previously ran `helpful_work_batch.iter().map(|w| w.samples.clone())` on
+/// every batch submit, allocating and copying every sample for queue ownership.
+fn bench_submit_batch_deep_clone(c: &mut Criterion) {
+    let mut group = c.benchmark_group("submit_batch_deep_clone");
+    for &size in SAMPLE_SIZES {
+        // One Arc-shared sample Vec per work item (as HelpfulWork now holds).
+        let batch: Vec<Arc<Vec<HelpfulSample>>> = (0..BATCH_ITEMS)
+            .map(|_| Arc::new(create_samples(size)))
+            .collect();
+        group.bench_with_input(BenchmarkId::from_parameter(size), &batch, |b, batch| {
+            b.iter(|| {
+                // Pre-fix: deep-copy every sample Vec for queue ownership.
+                let copied: Vec<Vec<HelpfulSample>> =
+                    black_box(batch).iter().map(|w| (**w).clone()).collect();
+                black_box(copied);
+            });
+        });
+    }
+    group.finish();
+}
+
+/// Issue #1548: Benchmark building a helpful submit batch by Arc refcount clone
+/// (the post-fix behaviour).
+///
+/// The GPU thread only borrows the samples during evaluation, so a refcount
+/// clone is sufficient and avoids the per-submit deep copy.
+fn bench_submit_batch_arc_clone(c: &mut Criterion) {
+    let mut group = c.benchmark_group("submit_batch_arc_clone");
+    for &size in SAMPLE_SIZES {
+        let batch: Vec<Arc<Vec<HelpfulSample>>> = (0..BATCH_ITEMS)
+            .map(|_| Arc::new(create_samples(size)))
+            .collect();
+        group.bench_with_input(BenchmarkId::from_parameter(size), &batch, |b, batch| {
+            b.iter(|| {
+                // Post-fix: share each buffer via a cheap refcount clone.
+                let shared: Vec<Arc<Vec<HelpfulSample>>> =
+                    black_box(batch).iter().map(Arc::clone).collect();
+                black_box(shared);
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_direct_relu_eval,
+    bench_sample_copy_overhead,
+    bench_submit_batch_deep_clone,
+    bench_submit_batch_arc_clone,
+);
 criterion_main!(benches);

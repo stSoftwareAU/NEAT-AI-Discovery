@@ -100,7 +100,7 @@ fn role_aware_topology(descriptor: &TaskDescriptor) -> bool {
 #[must_use]
 pub fn detect_output_competition(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     descriptor: &TaskDescriptor,
 ) -> Vec<OutputCompetitionCandidate> {
     if !role_aware_topology(descriptor) {
@@ -128,9 +128,9 @@ pub fn detect_output_competition(
         .collect();
 
     // Records lookup by uuid.
-    let records_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
+    let records_map: HashMap<&str, &[DiscoverRecord]> = neuron_records
         .iter()
-        .map(|(uuid, records)| (uuid.as_str(), records))
+        .map(|(uuid, records)| (uuid.as_str(), records.as_ref()))
         .collect();
 
     let mut candidates = Vec::new();
@@ -307,7 +307,7 @@ mod tests {
     #[test]
     fn neutral_descriptor_skips_detection() {
         let creature = creature_with_two_outputs();
-        let records = vec![
+        let records: Vec<(String, Vec<DiscoverRecord>)> = vec![
             (
                 "output-a".to_string(),
                 (0..30).map(|i| rec("output-a", i, 0.9)).collect(),

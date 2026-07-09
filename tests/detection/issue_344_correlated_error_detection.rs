@@ -553,7 +553,8 @@ fn test_empty_records_no_groups() {
         vec![],
     );
 
-    let groups: Vec<CorrelatedErrorGroup> = detect_correlated_error_patterns(&creature, &[]);
+    let groups: Vec<CorrelatedErrorGroup> =
+        detect_correlated_error_patterns(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
 
     assert!(groups.is_empty(), "Empty records should produce no groups");
 }

@@ -257,7 +257,8 @@ fn test_multi_hop_empty_records_no_candidates() {
         vec![],
     );
 
-    let candidates = detect_multi_hop_candidates(&creature, &[]);
+    let candidates =
+        detect_multi_hop_candidates(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
 
     assert!(
         candidates.is_empty(),

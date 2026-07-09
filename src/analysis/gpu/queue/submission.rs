@@ -5,6 +5,7 @@
 
 use anyhow::{Result, anyhow};
 use crossbeam_channel::bounded;
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::{GpuFuture, GpuWorkQueue, GpuWorkRequest};
@@ -21,7 +22,7 @@ impl GpuWorkQueue {
     /// processes the helpful batch.
     pub(crate) fn submit_helpful_batch(
         &self,
-        samples: Vec<Vec<HelpfulSample>>,
+        samples: Vec<Arc<Vec<HelpfulSample>>>,
         deadline: &Option<std::time::SystemTime>,
     ) -> Result<GpuFuture<Vec<HelpfulStats>>> {
         if samples.is_empty() {
@@ -79,7 +80,7 @@ impl GpuWorkQueue {
     /// - Without deadline: uses maximum timeout (5 minutes)
     pub fn evaluate_helpful_batch(
         &self,
-        samples: Vec<Vec<HelpfulSample>>,
+        samples: Vec<Arc<Vec<HelpfulSample>>>,
         deadline: &Option<std::time::SystemTime>,
     ) -> Result<Vec<HelpfulStats>> {
         if samples.is_empty() {
@@ -136,7 +137,7 @@ impl GpuWorkQueue {
     /// The `deadline` parameter is used to calculate an adaptive timeout (60s-5min).
     pub fn evaluate_harmful_batch(
         &self,
-        samples_with_weights: Vec<(Vec<HelpfulSample>, f32)>,
+        samples_with_weights: Vec<(Arc<Vec<HelpfulSample>>, f32)>,
         deadline: &Option<std::time::SystemTime>,
     ) -> Result<Vec<HarmfulStats>> {
         if samples_with_weights.is_empty() {
@@ -371,5 +372,101 @@ impl GpuWorkQueue {
                 Err(anyhow!("GPU response channel closed unexpectedly"))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Issue #1548: verify the GPU submit path shares `Arc`-wrapped sample
+    //! buffers with the queue instead of deep-copying them for ownership.
+    use super::*;
+
+    fn sample(v: f32) -> HelpfulSample {
+        HelpfulSample {
+            activation: v,
+            avg_error: 0.0,
+            target_value: None,
+            target_activation: None,
+        }
+    }
+
+    /// Build a queue whose work receiver is returned so tests can inspect the
+    /// enqueued request. No GPU thread is spawned.
+    fn test_queue() -> (GpuWorkQueue, crossbeam_channel::Receiver<GpuWorkRequest>) {
+        let (work_tx, work_rx) = bounded::<GpuWorkRequest>(1);
+        let (_exit_tx, exit_rx) = bounded::<()>(1);
+        let queue = GpuWorkQueue {
+            work_tx,
+            thread_handle: None,
+            exit_rx,
+            deadline: None,
+        };
+        (queue, work_rx)
+    }
+
+    /// Issue #1548: submitting a helpful batch shares the sample buffer with the
+    /// queue via `Arc` (pointer identity preserved) rather than deep-copying it,
+    /// and the caller retains read access afterwards.
+    #[test]
+    fn submit_helpful_batch_shares_samples_without_deep_copy() {
+        let (queue, work_rx) = test_queue();
+
+        let samples = Arc::new(vec![sample(1.0), sample(2.0), sample(3.0)]);
+        let original_ptr = Arc::as_ptr(&samples);
+
+        // Caller keeps its own handle; the submit batch takes a refcount clone.
+        let batch = vec![Arc::clone(&samples)];
+        assert_eq!(
+            Arc::strong_count(&samples),
+            2,
+            "submit batch must share the buffer, not copy it"
+        );
+
+        let _future = queue
+            .submit_helpful_batch(batch, &None)
+            .expect("submit should enqueue");
+
+        // The queued request holds the SAME buffer — no deep copy crossed the
+        // submit boundary.
+        match work_rx.recv().expect("request should be enqueued") {
+            GpuWorkRequest::HelpfulBatch {
+                samples: queued, ..
+            } => {
+                assert_eq!(queued.len(), 1, "one work item enqueued");
+                assert!(
+                    std::ptr::eq(Arc::as_ptr(&queued[0]), original_ptr),
+                    "queued samples must be the shared buffer, not a copy"
+                );
+                assert_eq!(queued[0].len(), 3, "sample contents preserved");
+            }
+            _ => panic!("expected HelpfulBatch request variant"),
+        }
+
+        // Caller can still read its samples after submit (shared, not moved).
+        assert_eq!(samples.len(), 3, "caller retains access after submit");
+    }
+
+    /// Issue #1548: an empty helpful batch resolves immediately to empty stats
+    /// without enqueuing any work.
+    #[test]
+    fn submit_helpful_batch_empty_is_preresolved() {
+        let (queue, _work_rx) = test_queue();
+        let future = queue
+            .submit_helpful_batch(Vec::new(), &None)
+            .expect("empty batch should succeed");
+        let stats = future.collect().expect("empty batch resolves");
+        assert!(stats.is_empty(), "empty batch yields no stats");
+    }
+
+    /// Issue #1548: the harmful batch API accepts `Arc`-shared samples; the
+    /// empty-input fast path returns empty stats without a GPU.
+    #[test]
+    fn evaluate_harmful_batch_empty_returns_empty() {
+        let (queue, _work_rx) = test_queue();
+        let batch: Vec<(Arc<Vec<HelpfulSample>>, f32)> = Vec::new();
+        let stats = queue
+            .evaluate_harmful_batch(batch, &None)
+            .expect("empty harmful batch should succeed");
+        assert!(stats.is_empty(), "empty harmful batch yields no stats");
     }
 }

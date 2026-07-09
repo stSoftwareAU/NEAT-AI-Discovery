@@ -9,6 +9,7 @@ mod activation_overflow_protection_f32;
 mod complement_via_identity;
 mod discrete_activation_filtering;
 mod issue_1315_role_task_aware_scan;
+mod issue_1545_squash_aware_hidden_pruning;
 mod issue_417_increase_change_squash_rate;
 mod issue_768_activation_properties;
 mod leaky_relu_filtered;

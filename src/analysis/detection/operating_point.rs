@@ -158,7 +158,7 @@ fn compute_dynamic_range_utilisation(
 /// A list of `OperatingPointIssue` sorted by utilisation (lowest first).
 pub fn detect_operating_point_issues(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &OperatingPointConfig,
 ) -> Vec<OperatingPointIssue> {
     // Build map: UUID → (squash, bias) for hidden neurons only
@@ -172,6 +172,7 @@ pub fn detect_operating_point_issues(
     let mut results = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
+        let records = records.as_ref();
         let Some(&(squash, bias)) = neuron_map.get(uuid.as_str()) else {
             continue;
         };

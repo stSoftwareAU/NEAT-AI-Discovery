@@ -106,6 +106,19 @@ pub const REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR: &str =
 /// redirected to alternative modules.
 pub const REJECTION_MODULE_STARVED: &str = "module_starved";
 
+/// Helpful add-synapse candidate was dropped by the CPU pre-reject screen
+/// *before* the GPU submit because it provably carries no usable signal
+/// (Issue #1544).
+///
+/// The screen recomputes the least-squares sufficient statistics that the
+/// helpful GPU shader would produce (`Σ activation²`, `Σ activation·avg_error`)
+/// and applies `calculate_optimal_outgoing_weight` — the exact gate the
+/// downstream result-collection loop uses (`None => continue`). A candidate
+/// counted here would have been rejected after a wasted GPU round-trip with an
+/// identical outcome, so the reason distinguishes "cheaply screened out on CPU"
+/// from a genuine candidate drought.
+pub const REJECTION_CPU_PRE_REJECT_NO_SIGNAL: &str = "cpu_pre_reject_no_signal";
+
 /// Synapse: no overlapping discovery samples between source and target.
 pub const REJECTION_NO_SAMPLES: &str = "no_samples";
 
@@ -200,6 +213,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_COORDINATED_TARGET_CAP_EXCEEDED,
     REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR,
     REJECTION_MODULE_STARVED,
+    REJECTION_CPU_PRE_REJECT_NO_SIGNAL,
     REJECTION_NO_SAMPLES,
     REJECTION_ZERO_IMPROVEMENT,
     REJECTION_BELOW_THRESHOLD,
@@ -366,6 +380,9 @@ fn friendly_reason(reason: &str) -> String {
             crate::analysis::constants::min_bypass_weight_for_collapse()
         ),
         REJECTION_MODULE_STARVED => "per-creature module starvation cooldown".to_string(),
+        REJECTION_CPU_PRE_REJECT_NO_SIGNAL => {
+            "CPU pre-reject screen (no usable signal before GPU submit)".to_string()
+        }
         REJECTION_NO_SAMPLES => "no overlapping discovery samples".to_string(),
         REJECTION_ZERO_IMPROVEMENT => "zero consistent improvement in GPU stats".to_string(),
         REJECTION_BELOW_THRESHOLD => "expected-improvement per-target threshold".to_string(),

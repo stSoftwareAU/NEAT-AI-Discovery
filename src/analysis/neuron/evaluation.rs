@@ -46,6 +46,10 @@ pub(crate) struct NeuronEvalContext<'a> {
     pub diagnostics: &'a Arc<NeuronDiagnostics>,
     pub helpful_map: &'a Arc<Mutex<HashMap<u64, CandidateNeuronJson>>>,
     pub threshold: f32,
+    /// Squash-aware activation scan plan for hidden add-neuron targets
+    /// (Issue #1545). Computed once per phase; replaces the full-cross-product
+    /// [`crate::analysis::activation::ACTIVATION_SPECS`] scan.
+    pub scan_plan: &'a crate::analysis::activation::SquashScanPlan,
     /// Target saturation info from the pre-check (Issue #1111).
     pub target_saturation: super::preparation::TargetSaturationInfo,
     /// Issue #1164: Within-batch target-failure short-circuit tracker.
@@ -258,6 +262,7 @@ fn evaluate_activation_specs(
             samples,
             ctx.threshold,
             target_squash,
+            ctx.scan_plan,
         )?
     };
 

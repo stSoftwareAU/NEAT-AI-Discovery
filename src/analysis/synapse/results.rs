@@ -93,6 +93,7 @@ pub(super) fn finalise_synapse_results(
         calibration_corrections: pp_metrics.calibration_corrections,
         target_saturated_drops: params.diagnostics.target_saturated_drop_count(),
         collapse_bypass_below_floor_drops,
+        cpu_pre_reject_no_signal_drops: params.diagnostics.cpu_pre_reject_no_signal_drop_count(),
     });
 
     Ok(AnalyzeSynapsesResult {

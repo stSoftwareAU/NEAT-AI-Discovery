@@ -48,6 +48,51 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Build the squash-aware activation scan plan for a neuron-analysis phase
+/// (Issue #1545).
+///
+/// Add-neuron candidates always insert a **hidden** neuron between a source and
+/// a target, so the scan is gated by [`HiddenScanContext`]:
+///
+/// - When pruning is disabled ([`crate::config::hidden_squash_prune_enabled`]
+///   is `false`) the full [`SquashScanPlan::full`] is used — regression-safe.
+/// - The creature's currently-adopted squash families seed the history-aware
+///   widening (a family the creature already uses has demonstrably succeeded).
+/// - A drought (trailing-failure streak at or above
+///   [`crate::config::drought_log_threshold`]) escalates the scan back to the
+///   full set so pruning can never permanently starve a plateaued creature.
+fn build_neuron_scan_plan(
+    input: &AnalyzeNeuronsInput,
+) -> crate::analysis::activation::SquashScanPlan {
+    use crate::analysis::activation::{HiddenScanContext, SquashScanPlan};
+
+    if !crate::config::hidden_squash_prune_enabled() {
+        return SquashScanPlan::full();
+    }
+
+    // Squash families the creature already uses count as non-zero historical
+    // success for this creature (Issue #1545). Deserialisation uppercases the
+    // names; scan matching is case-insensitive.
+    let successful_squashes: std::collections::HashSet<String> = input
+        .creature
+        .neurons
+        .iter()
+        .map(|n| n.squash.clone())
+        .collect();
+
+    // Escalate to the full set while in a drought so a plateaued creature widens
+    // its search rather than re-treading the pruned core forever.
+    let escalated = input.discovery_outcome_log.as_ref().is_some_and(|log| {
+        log.consecutive_trailing_failures() >= crate::config::drought_log_threshold()
+    });
+
+    let ctx = HiddenScanContext {
+        successful_squashes: &successful_squashes,
+        escalated,
+    };
+    SquashScanPlan::for_hidden(&ctx, crate::config::max_activation_configs_per_target())
+}
+
 /// Analyze neurons for a given input.
 /// This is the public entry point for neuron analysis.
 pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResult> {
@@ -190,6 +235,12 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
     let neuron_squash_map_arc = Arc::new(prep.neuron_squash_map);
 
     let used_inputs_arc = Arc::new(prep.used_inputs);
+
+    // Issue #1545: build the squash-aware activation scan plan once for the
+    // whole phase. Hidden add-neuron targets scan only the pruned core /
+    // history-widened squash set unless the search is escalated (drought /
+    // novelty), which restores the full set.
+    let scan_plan = build_neuron_scan_plan(input);
 
     // Issue #486 / #192: Error values collected lock-free via Rayon fold/reduce (Issue #834).
 
@@ -361,6 +412,7 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
                     diagnostics: &diagnostics,
                     helpful_map: &helpful_map,
                     threshold,
+                    scan_plan: &scan_plan,
                     target_saturation,
                     within_batch_failures: &within_batch_failures,
                 };

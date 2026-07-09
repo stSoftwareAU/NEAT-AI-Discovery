@@ -67,7 +67,7 @@ pub struct UnderutilisedObservation {
 /// sorted by utilisation ratio (lowest first).
 pub fn detect_underutilised_observations(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<UnderutilisedObservation> {
     // Reuse the observation range detection logic
     let ranges = observation_range::detect_observation_ranges(creature, neuron_records);

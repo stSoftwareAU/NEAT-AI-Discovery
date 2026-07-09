@@ -79,7 +79,7 @@ pub struct BottleneckNeuronCandidate {
 /// sorted by estimated improvement (best first).
 pub fn detect_bottleneck_neurons(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     topo: Option<&CreatureTopologyCache>,
 ) -> Vec<BottleneckNeuronCandidate> {
     // Use pre-computed cache or build locally.
@@ -98,7 +98,7 @@ pub fn detect_bottleneck_neurons(
     // Compute total error across all recorded neurons for normalisation
     let total_error: f32 = neuron_records
         .iter()
-        .flat_map(|(_, records)| records.iter())
+        .flat_map(|(_, records)| records.as_ref().iter())
         .flat_map(|r| r.errors.iter())
         .map(|e| e.abs())
         .sum();

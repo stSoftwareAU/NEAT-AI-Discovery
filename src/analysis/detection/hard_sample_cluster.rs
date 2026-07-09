@@ -111,7 +111,7 @@ pub struct HardSampleCluster {
 /// A list of `HardSampleCluster` sorted by estimated improvement (best first).
 pub fn detect_hard_sample_clusters(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &HardSampleClusterConfig,
 ) -> Vec<HardSampleCluster> {
     if neuron_records.is_empty() {
@@ -229,7 +229,7 @@ pub fn detect_hard_sample_clusters(
 /// every output neuron that has a record at that index.
 fn aggregate_obs_errors(
     output_uuids: &HashSet<&str>,
-    records_map: &HashMap<&str, &Vec<DiscoverRecord>>,
+    records_map: &HashMap<&str, &[DiscoverRecord]>,
 ) -> HashMap<u32, f32> {
     // obs_index -> (sum_of_mean_abs_error, count_of_neurons)
     let mut obs_aggregated: HashMap<u32, (f32, u32)> = HashMap::new();
@@ -265,7 +265,7 @@ fn aggregate_obs_errors(
 /// Find input neurons whose mean activation differs most between hard and easy groups.
 fn find_dominant_inputs(
     input_uuids: &HashSet<&str>,
-    records_map: &HashMap<&str, &Vec<DiscoverRecord>>,
+    records_map: &HashMap<&str, &[DiscoverRecord]>,
     hard_obs: &HashSet<u32>,
     easy_obs: &HashSet<u32>,
 ) -> Vec<String> {

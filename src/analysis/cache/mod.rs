@@ -61,7 +61,7 @@ pub use super::streaming::{
 };
 
 use crate::CreatureJson;
-use crate::types::DiscoverRecord;
+use crate::types::{DiscoverRecord, SharedRecords};
 use anyhow::{Context, Result};
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -342,29 +342,35 @@ impl RecordCache {
     ///
     /// This eliminates the repeated `filter_map(|uuid| cache.get(uuid)...)` boilerplate
     /// that previously appeared 25 times in `analyze_all()`.
-    pub fn load_records_for_uuids(&self, uuids: &[String]) -> Vec<(String, Vec<DiscoverRecord>)> {
+    ///
+    /// Issue #1543: returns `Arc`-shared [`SharedRecords`] rather than deep-cloning
+    /// the inner `Vec`, so each discovery module gets a cheap `Arc::clone` of the
+    /// cache's existing allocation.
+    pub fn load_records_for_uuids(&self, uuids: &[String]) -> Vec<(String, SharedRecords)> {
         uuids
             .iter()
             .filter_map(|uuid| {
                 self.get(uuid)
                     .ok()
-                    .map(|r| (uuid.clone(), r.as_ref().clone()))
+                    .map(|r| (uuid.clone(), SharedRecords::new(r)))
             })
             .collect()
     }
 
     /// Load records for hidden neurons from the standard `(uuid, squash, bias)` tuple
     /// format used throughout the discovery dispatch (Issue #493).
+    ///
+    /// Issue #1543: `Arc`-shares the cache allocation (see [`SharedRecords`]).
     pub fn load_records_for_hidden(
         &self,
         hidden_neurons: &[(String, String, f32)],
-    ) -> Vec<(String, Vec<DiscoverRecord>)> {
+    ) -> Vec<(String, SharedRecords)> {
         hidden_neurons
             .iter()
             .filter_map(|(uuid, _, _)| {
                 self.get(uuid)
                     .ok()
-                    .map(|r| (uuid.clone(), r.as_ref().clone()))
+                    .map(|r| (uuid.clone(), SharedRecords::new(r)))
             })
             .collect()
     }
@@ -374,17 +380,18 @@ impl RecordCache {
     /// Extracts all neuron UUIDs from the creature and loads their records.
     /// Issue #1036: Inlined to avoid double-cloning (was: clone into `Vec<String>`,
     /// then clone again in `load_records_for_uuids`).
+    /// Issue #1543: `Arc`-shares the cache allocation (see [`SharedRecords`]).
     pub fn load_records_for_all_neurons(
         &self,
         creature: &CreatureJson,
-    ) -> Vec<(String, Vec<DiscoverRecord>)> {
+    ) -> Vec<(String, SharedRecords)> {
         creature
             .neurons
             .iter()
             .filter_map(|n| {
                 self.get(&n.uuid)
                     .ok()
-                    .map(|r| (n.uuid.clone(), r.as_ref().clone()))
+                    .map(|r| (n.uuid.clone(), SharedRecords::new(r)))
             })
             .collect()
     }
@@ -396,11 +403,12 @@ impl RecordCache {
     /// `&["input", "hidden"]`.
     /// Issue #1036: Inlined to avoid double-cloning (was: clone into `Vec<String>`,
     /// then clone again in `load_records_for_uuids`).
+    /// Issue #1543: `Arc`-shares the cache allocation (see [`SharedRecords`]).
     pub fn load_records_for_neuron_types(
         &self,
         creature: &CreatureJson,
         types: &[&str],
-    ) -> Vec<(String, Vec<DiscoverRecord>)> {
+    ) -> Vec<(String, SharedRecords)> {
         creature
             .neurons
             .iter()
@@ -408,7 +416,7 @@ impl RecordCache {
             .filter_map(|n| {
                 self.get(&n.uuid)
                     .ok()
-                    .map(|r| (n.uuid.clone(), r.as_ref().clone()))
+                    .map(|r| (n.uuid.clone(), SharedRecords::new(r)))
             })
             .collect()
     }
@@ -419,10 +427,11 @@ impl RecordCache {
     /// then loads their records.
     /// Issue #1036: Deduplicate via `HashSet<&str>` to avoid cloning UUIDs into a
     /// temporary `HashSet<String>`, then clone only once for the output tuple.
+    /// Issue #1543: `Arc`-shares the cache allocation (see [`SharedRecords`]).
     pub fn load_records_for_synapse_sources(
         &self,
         creature: &CreatureJson,
-    ) -> Vec<(String, Vec<DiscoverRecord>)> {
+    ) -> Vec<(String, SharedRecords)> {
         let mut seen = std::collections::HashSet::new();
         creature
             .synapses
@@ -431,7 +440,7 @@ impl RecordCache {
             .filter_map(|s| {
                 self.get(&s.from_uuid)
                     .ok()
-                    .map(|r| (s.from_uuid.clone(), r.as_ref().clone()))
+                    .map(|r| (s.from_uuid.clone(), SharedRecords::new(r)))
             })
             .collect()
     }

@@ -132,7 +132,8 @@ fn test_correlated_error_no_panic_with_minimal_data() {
     };
 
     // Only one output — should return empty (nothing to correlate)
-    let groups = detect_correlated_error_patterns(&creature, &[]);
+    let groups =
+        detect_correlated_error_patterns(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
     assert!(groups.is_empty());
 }
 

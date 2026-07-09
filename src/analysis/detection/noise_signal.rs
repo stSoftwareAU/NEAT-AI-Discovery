@@ -110,7 +110,7 @@ use super::stats::{compute_mean, compute_variance};
 /// sorted by estimated improvement (best first).
 pub fn detect_noisy_neurons(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<NoisyNeuronCandidate> {
     let threshold = noise_signal_threshold_from_env();
 
@@ -125,6 +125,7 @@ pub fn detect_noisy_neurons(
     let mut candidates = Vec::with_capacity(neuron_records.len());
 
     for (uuid, records) in neuron_records {
+        let records = records.as_ref();
         // Only consider hidden neurons
         if !hidden_uuids.contains(uuid.as_str()) {
             continue;
@@ -197,7 +198,7 @@ pub fn detect_noisy_neurons(
 /// sorted by estimated improvement (best first).
 pub fn detect_noisy_synapses(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<NoisySynapseCandidate> {
     use std::collections::HashMap;
 

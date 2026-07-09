@@ -236,7 +236,7 @@ fn margin_descriptor_emits_nothing() {
 #[test]
 fn single_output_emits_nothing() {
     let creature = creature_with_one_output();
-    let records = vec![(
+    let records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
         "output-a".to_string(),
         (0..40)
             .map(|i| make_record("output-a", i, 1.0, 0.85, 0.15))

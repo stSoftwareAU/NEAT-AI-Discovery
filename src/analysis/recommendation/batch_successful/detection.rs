@@ -41,16 +41,16 @@ const MAX_INDIVIDUAL_CANDIDATES: usize = 50;
 /// Individually successful candidates sorted by improvement (best first).
 pub fn detect_individually_successful(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<IndividualCandidate> {
     if neuron_records.is_empty() {
         return Vec::new();
     }
 
     // Build record lookup by neuron UUID.
-    let record_map: HashMap<&str, &Vec<DiscoverRecord>> = neuron_records
+    let record_map: HashMap<&str, &[DiscoverRecord]> = neuron_records
         .iter()
-        .map(|(uuid, recs)| (uuid.as_str(), recs))
+        .map(|(uuid, recs)| (uuid.as_str(), recs.as_ref()))
         .collect();
 
     // Build existing synapse set to avoid duplicating existing connections.

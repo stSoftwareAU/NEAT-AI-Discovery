@@ -87,7 +87,7 @@ pub struct FaninPolarityConflictCandidate {
 /// A list of `FaninPolarityConflictCandidate` sorted by conflict score (worst first).
 pub fn detect_fanin_polarity_conflicts(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<FaninPolarityConflictCandidate> {
     // Identify hidden neuron UUIDs
     let hidden_uuids: HashSet<&str> = creature
@@ -104,7 +104,7 @@ pub fn detect_fanin_polarity_conflicts(
     // Build records lookup for sample count validation
     let records_map: HashMap<&str, usize> = neuron_records
         .iter()
-        .map(|(uuid, recs)| (uuid.as_str(), recs.len()))
+        .map(|(uuid, recs)| (uuid.as_str(), recs.as_ref().len()))
         .collect();
 
     // Group incoming synapses by target neuron

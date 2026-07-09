@@ -112,7 +112,7 @@ fn compute_depths_from_inputs(creature: &CreatureJson) -> HashMap<String, usize>
 /// A list of `SkipConnectionCandidate` sorted by estimated improvement (best first).
 pub fn detect_skip_connection_candidates(
     creature: &CreatureJson,
-    neuron_records: &[(String, Vec<DiscoverRecord>)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<SkipConnectionCandidate> {
     let hidden_uuids: HashSet<&str> = creature
         .neurons

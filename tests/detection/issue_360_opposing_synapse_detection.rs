@@ -798,7 +798,8 @@ fn test_opposing_synapse_empty_records_no_candidates() {
         vec![synapse("input-1", "output-1", 0.5)],
     );
 
-    let candidates = detect_opposing_synapses(&creature, &[]);
+    let candidates =
+        detect_opposing_synapses(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
 
     assert!(
         candidates.is_empty(),
