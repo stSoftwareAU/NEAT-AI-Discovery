@@ -472,6 +472,10 @@ jobs:
         ref: ${{ github.head_ref }}
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
+        # This job only reads the tree (codespell) and never pushes back, so
+        # the token must not be written to .git/config where a later
+        # compromised step could read it (Issue #1569).
+        persist-credentials: false
 
     - name: Run codespell
       # Pinned to a 40-char commit SHA (Issue #1216).
