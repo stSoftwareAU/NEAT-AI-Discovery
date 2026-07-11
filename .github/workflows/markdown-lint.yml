@@ -1,10 +1,12 @@
 name: Markdown Lint
 
+# As a checker (not a deploy/publish workflow), this lint gate runs on the
+# pull request only. A post-merge `push:` run to the default branch
+# (Develop) would merely duplicate the run that already gated the PR,
+# wasting CI minutes — so no `push:` trigger is declared (Issue #1565).
 on:
   pull_request:
     branches: ["*"]
-  push:
-    branches: [main, master, Develop]
 
 # Cancel superseded runs on the same ref (Issue #1288).
 concurrency:
