@@ -382,7 +382,9 @@ impl GpuAnalyzer {
                     // Buffer is already mapped and verified by wait_for_buffer_maps_batch
                     let staging_buffer = &batch_staging_buffers[buffer_idx];
                     let buffer_slice = staging_buffer.slice(..);
-                    let data = buffer_slice.get_mapped_range();
+                    let data = buffer_slice
+                        .get_mapped_range()
+                        .context("Harmful staging buffer get_mapped_range failed")?;
                     let contributions: &[HarmfulContribution] = bytemuck::cast_slice(&data);
 
                     let mut stats = HarmfulStats::default();

@@ -283,7 +283,9 @@ impl GpuAnalyzer {
         wait_for_buffer_map(device, &receiver, GPU_BUFFER_MAP_TIMEOUT_SECS)
             .context("Activation buffer mapping failed")?;
 
-        let data = buffer_slice.get_mapped_range();
+        let data = buffer_slice
+            .get_mapped_range()
+            .context("Activation staging buffer get_mapped_range failed")?;
         let outputs: &[ActivationOutput] = bytemuck::cast_slice(&data);
 
         let mut sum_activation_sq = 0.0f32;
@@ -641,7 +643,9 @@ impl GpuAnalyzer {
         let mut results = Vec::with_capacity(activation_configs.len());
         for staging_buffer in &staging_buffers {
             let buffer_slice = staging_buffer.slice(..);
-            let data = buffer_slice.get_mapped_range();
+            let data = buffer_slice
+                .get_mapped_range()
+                .context("Batched activation staging buffer get_mapped_range failed")?;
             let outputs: &[ActivationOutput] = bytemuck::cast_slice(&data);
 
             let mut sum_activation_sq = 0.0f32;

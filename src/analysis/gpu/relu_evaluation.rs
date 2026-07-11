@@ -177,7 +177,9 @@ impl GpuAnalyzer {
         wait_for_buffer_map(device, &receiver, GPU_BUFFER_MAP_TIMEOUT_SECS)
             .context("ReLU buffer mapping failed")?;
 
-        let data = buffer_slice.get_mapped_range();
+        let data = buffer_slice
+            .get_mapped_range()
+            .context("ReLU staging buffer get_mapped_range failed")?;
         let contributions: &[ReluContribution] = bytemuck::cast_slice(&data);
 
         let mut positive_stats = ReluStats::new(ReluOrientation::Positive);
