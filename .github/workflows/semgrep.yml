@@ -28,6 +28,11 @@ jobs:
     steps:
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Don't persist GITHUB_TOKEN in .git/config — this job only checks
+          # out the tree to run the semgrep SAST scan and never pushes back
+          # or fetches a private submodule (Issue #1574).
+          persist-credentials: false
       # Exclude renovate-missing-minimum-release-age (Issue #1490): this
       # repo enforces a deliberate, tested supply-chain quarantine of
       # >=24h (Issue #1234; stSoftwareAU/VibeCoding#1614) via an explicit
