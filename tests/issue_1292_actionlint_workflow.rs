@@ -5,7 +5,12 @@
 //!
 //! This test reads `.github/workflows/actionlint.yml` and asserts:
 //!   1. The workflow file exists.
-//!   2. It triggers on both `pull_request` and `push`.
+//!   2. It triggers on `pull_request` and does NOT re-run on `push` to
+//!      the default branch `Develop` (Issue #1563): as a checker it
+//!      gates the pull request only, so a duplicate post-merge run is
+//!      not declared. (This point relaxes the original Issue #1292
+//!      requirement of a `push:` trigger — see the note on
+//!      `actionlint_workflow_triggers_on_pull_request_not_push_develop`.)
 //!   3. It declares a top-level minimal `permissions:` block with
 //!      `contents: read` (Issue #1286).
 //!   4. It pins the third-party `raven-actions/actionlint` step to a
@@ -32,20 +37,63 @@ fn actionlint_workflow_exists() {
     );
 }
 
+/// Extract the top-level `on:` block: from the `on:` line to the next
+/// top-level key (a non-space, non-comment line ending in `:`).
+fn on_block(body: &str) -> String {
+    let mut lines = body.lines();
+    let mut block = String::new();
+    let mut in_block = false;
+    for line in lines.by_ref() {
+        if line == "on:" || line.starts_with("on:") && !line.starts_with(' ') {
+            in_block = true;
+            block.push_str(line);
+            block.push('\n');
+            continue;
+        }
+        if in_block {
+            // A sibling top-level key ends the `on:` block.
+            if !line.is_empty()
+                && !line.starts_with(' ')
+                && !line.starts_with('#')
+                && line.trim_end().ends_with(':')
+            {
+                break;
+            }
+            block.push_str(line);
+            block.push('\n');
+        }
+    }
+    block
+}
+
 #[test]
-fn actionlint_workflow_triggers_on_pull_request_and_push() {
+fn actionlint_workflow_triggers_on_pull_request_not_push_develop() {
+    // Issue #1563: as a checker (not a deploy/publish workflow) this
+    // gate must fire on the pull request but must NOT re-run on `push`
+    // to the default branch `Develop`. A post-merge push run would
+    // duplicate the run that already gated the PR — wasting CI minutes
+    // and risking a red tick on Develop for a check that already
+    // passed. This assertion intentionally supersedes the original
+    // Issue #1292 requirement that the workflow trigger on `push`.
     let body = load_workflow();
-    // The `on:` mapping must include both pull_request and push so the
-    // gate fires on PRs (catching regressions) and on direct pushes to
-    // protected branches (catching anything that bypasses PR review).
+    let on = on_block(&body);
     assert!(
-        body.contains("pull_request:"),
-        "actionlint workflow must trigger on pull_request (Issue #1292)"
+        on.contains("pull_request:"),
+        "actionlint workflow must trigger on pull_request (Issue #1292 / #1563)"
     );
-    assert!(
-        body.contains("push:"),
-        "actionlint workflow must trigger on push (Issue #1292)"
-    );
+    // No `push:` trigger may reach the default branch `Develop`. The
+    // finding permits either dropping `push:` entirely or narrowing its
+    // `branches:` to exclude `Develop`; both satisfy this check because
+    // `Develop` must not appear anywhere inside a push trigger.
+    if let Some(push_idx) = on.find("push:") {
+        let push_section = &on[push_idx..];
+        assert!(
+            !push_section.contains("Develop"),
+            "actionlint workflow must not re-run on push to the default \
+             branch `Develop` — drop `push:` or exclude `Develop` from \
+             its branches filter (Issue #1563). Found:\n{on}"
+        );
+    }
 }
 
 #[test]
