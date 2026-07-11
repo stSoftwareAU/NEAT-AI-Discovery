@@ -434,7 +434,9 @@ impl GpuAnalyzer {
             let mut batch_results = Vec::with_capacity(used.len());
             for &(slot, copy_size, count, is_reduction) in &used {
                 let buffer_slice = pool[slot].staging_buffer.slice(0..copy_size);
-                let data = buffer_slice.get_mapped_range();
+                let data = buffer_slice
+                    .get_mapped_range()
+                    .context("Helpful staging buffer get_mapped_range failed")?;
                 let contributions: &[HelpfulContribution] = bytemuck::cast_slice(&data);
 
                 let mut stats = HelpfulStats::default();

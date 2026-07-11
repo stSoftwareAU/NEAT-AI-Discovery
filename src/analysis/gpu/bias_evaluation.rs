@@ -199,7 +199,9 @@ impl GpuAnalyzer {
         wait_for_buffer_map(device, &receiver, GPU_BUFFER_MAP_TIMEOUT_SECS)
             .context("Bias buffer mapping failed")?;
 
-        let data = buffer_slice.get_mapped_range();
+        let data = buffer_slice
+            .get_mapped_range()
+            .context("Bias staging buffer get_mapped_range failed")?;
         let results: &[BiasResult] = bytemuck::cast_slice(&data);
 
         // Find bias with best error reduction
