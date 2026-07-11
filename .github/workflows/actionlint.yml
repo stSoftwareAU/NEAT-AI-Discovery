@@ -4,15 +4,18 @@ name: actionlint
 # rhysd/actionlint — https://github.com/rhysd/actionlint). This is the
 # CI lint gate for the `github-actions` bucket — workflow regressions
 # (bad expressions, missing context, unsupported runner labels, etc.)
-# fail the build before they reach Develop
+# fail the build on the pull request, before they reach Develop.
+#
+# As a checker (not a deploy/publish workflow), this gate runs on the
+# pull request only. A post-merge `push:` run to the default branch
+# (Develop) would merely duplicate the run that already gated the PR,
+# wasting CI minutes — so no `push:` trigger is declared (Issue #1563).
 #
 # Issue #1292.
 
 on:
   pull_request:
     branches: ["*"]
-  push:
-    branches: [main, master, Develop]
 
 # Cancel superseded runs on the same ref (Issue #1288).
 concurrency:
