@@ -305,6 +305,12 @@ jobs:
     - name: Checkout code
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        # This job only reads the tree (file-presence, Cargo.toml field and
+        # documentation checks) and never pushes back, so the token must not be
+        # written to .git/config where a later compromised step could read it
+        # (Issue #1570).
+        persist-credentials: false
 
     - name: Check for required files
       shell: bash
