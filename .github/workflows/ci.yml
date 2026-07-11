@@ -462,6 +462,10 @@ jobs:
         ref: ${{ github.head_ref }}
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
+        # Spell-check only reads the tree (codespell); it never pushes back nor
+        # fetches a private submodule, so the token must not be persisted to
+        # .git/config where a later step could read it (Issue #1569).
+        persist-credentials: false
 
     - name: Run codespell
       # Pinned to a 40-char commit SHA (Issue #1216).
