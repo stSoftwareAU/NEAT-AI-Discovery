@@ -200,6 +200,10 @@ jobs:
         ref: ${{ github.head_ref }}
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
+        # This job only reads the tree, builds, and runs the test suite; it
+        # never pushes back or fetches a private submodule. Keep the token off
+        # disk so a compromised later step cannot read it (Issue #1568).
+        persist-credentials: false
 
     - name: Free up runner disk space
       shell: bash
