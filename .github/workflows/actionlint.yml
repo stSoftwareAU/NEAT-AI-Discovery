@@ -36,11 +36,11 @@ jobs:
     steps:
       # Pinned to actions/checkout v6.0.2 (Node.js 24) to match the
       # rest of the workflows in this repository (Issue #1216).
+      # Do not persist the GITHUB_TOKEN to .git/config: this job only reads
+      # the checkout and runs actionlint over .github/workflows — it never
+      # pushes back or fetches a private submodule, so keeping the token on
+      # disk only widens the blast radius of a compromised step (Issue #1566).
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        # actionlint only reads workflow files; it never pushes back or
-        # fetches private submodules, so the GITHUB_TOKEN must not be
-        # persisted to .git/config where a later step could read it
-        # (Issue #1566).
         with:
           persist-credentials: false
 
