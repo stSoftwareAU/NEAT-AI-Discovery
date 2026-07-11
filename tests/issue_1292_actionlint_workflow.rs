@@ -200,6 +200,54 @@ fn actionlint_workflow_declares_concurrency() {
 }
 
 #[test]
+fn actionlint_workflow_checkout_disables_persist_credentials() {
+    // Issue #1566: the `actions/checkout` step must set
+    // `persist-credentials: false` so the workflow's GITHUB_TOKEN is not
+    // written to `.git/config`, where a later compromised step could read
+    // it. This job only reads the checkout to lint workflow files — it
+    // never pushes back or fetches a private submodule — so it does not
+    // need the persisted credential.
+    let body = load_workflow();
+    let mut checkout_line: Option<usize> = None;
+    for (idx, line) in body.lines().enumerate() {
+        if line.contains("uses:") && line.contains("actions/checkout@") {
+            checkout_line = Some(idx);
+            break;
+        }
+    }
+    let checkout_idx =
+        checkout_line.expect("actionlint workflow must use actions/checkout (Issue #1566)");
+
+    // Scan the checkout step's `with:` block — the indented lines that
+    // follow the `uses:` line until the next step (`- ...`) or a
+    // dedent to the step-list column.
+    let lines: Vec<&str> = body.lines().collect();
+    let uses_indent = lines[checkout_idx].len() - lines[checkout_idx].trim_start().len();
+    let mut found = false;
+    for line in &lines[checkout_idx + 1..] {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = line.len() - trimmed.len();
+        // A new list item at or below the `uses:` indent ends this step.
+        if indent <= uses_indent {
+            break;
+        }
+        if trimmed == "persist-credentials: false" {
+            found = true;
+            break;
+        }
+    }
+    assert!(
+        found,
+        "actionlint workflow's actions/checkout step must set \
+         `persist-credentials: false` so the GITHUB_TOKEN is not written \
+         to .git/config (Issue #1566)"
+    );
+}
+
+#[test]
 fn actionlint_workflow_invokes_actionlint() {
     let body = load_workflow();
     // Sanity: ensure the workflow actually runs actionlint, either via
