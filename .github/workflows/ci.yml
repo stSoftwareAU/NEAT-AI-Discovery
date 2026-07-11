@@ -200,6 +200,10 @@ jobs:
         ref: ${{ github.head_ref }}
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
+        # This job only reads the tree (fmt, clippy, check, build, test) and
+        # never pushes back, so the token must not be written to .git/config
+        # where a later compromised step could read it (Issue #1568).
+        persist-credentials: false
 
     - name: Free up runner disk space
       shell: bash
