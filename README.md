@@ -308,6 +308,37 @@ success rates, see [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md).
 For impact calculation details, see
 [docs/IMPACT_CALCULATION.md](docs/IMPACT_CALCULATION.md).
 
+### ♻️ Remove-Neuron Weight-Redistribution Compensation
+
+A hygiene-forced `removeNeuron` is usually **regressive**: NEAT-AI's
+mean-preserving **bias** compensation cancels only the *mean* of the removed
+neuron's downstream contribution, leaving its genuine **per-sample (variance)**
+signal as residual cost. The #1558 counterfactual study found that the only
+lever able to recover that residual — and make the removal non-regressive — is
+**(d): folding the removed neuron's per-sample contribution into a correlated
+survivor's downstream weight** rather than only its bias.
+
+Evaluating (d) needs the candidate's per-sample activation distribution and its
+correlation with surviving neurons. Persisting full per-sample vectors per
+candidate is prohibitive, so the `remove_neuron_compensation` module
+(Issue #1559) persists a compact **sufficient statistic** — the per-pair
+mean/variance/covariance of the candidate against each survivor sharing a
+downstream target (`ActivationCovariance`, `O(1)` in the sample count). From
+that it computes the optimal least-squares weight bump
+`Δw = w_c · cov(a_c, a_s) / var(a_s)` and the residual per-sample variance it
+leaves, `w_c² · var(a_c) · (1 − ρ²)`. A perfectly correlated survivor (`ρ = 1`)
+drives the residual to zero — the removal becomes fully compensable.
+
+```mermaid
+flowchart TD
+    A[Remove-neuron candidate] --> B[Per-sample activations<br/>DiscoverRecords]
+    B --> C[Align on obs_index with<br/>each shared-target survivor]
+    C --> D[ActivationCovariance<br/>compact sufficient statistic]
+    D --> E{evaluate_weight_redistribution}
+    E -->|&rho; &asymp; 1| F[Residual &asymp; 0<br/>fully compensable — non-regressive]
+    E -->|&rho; &asymp; 0| G[Residual = bias-only variance<br/>no recovery — stays regressive]
+```
+
 ## 🎯 Focus Selection
 
 Discovery cannot evaluate *every* neuron within a run's budget, so each run

@@ -7,12 +7,10 @@
 name: CI/CD Pipeline
 
 on:
-  push:
-    branches:
-      - Develop
-    paths-ignore:
-      - '**.md'          # Skip CI for documentation-only changes
-      - 'docs/**'
+  # Checker workflow — gate the pull request only. No `push:` trigger to
+  # `Develop`: every job here is guarded `if: github.event_name ==
+  # 'pull_request'`, so a post-merge push run would only re-run checks that
+  # already passed on the PR, wasting runner capacity (Issue #1564).
   pull_request:
     types: [opened, synchronize, reopened]
     branches:
