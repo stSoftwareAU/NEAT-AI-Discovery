@@ -92,6 +92,16 @@ assert_pattern_present \
   "contents:[[:space:]]+read" \
   "$WORKFLOW_FILE"
 
+# --- Test: checkout does not persist credentials (Issue #1567) ---
+# The coverage job only reads the tree and uploads coverage; it never
+# pushes back or fetches private submodules, so the workflow's
+# GITHUB_TOKEN must not be written to .git/config where a later
+# compromised step could read it.
+assert_pattern_present \
+  "checkout sets persist-credentials: false" \
+  "persist-credentials:[[:space:]]+false" \
+  "$WORKFLOW_FILE"
+
 # --- Test: duplicate fmt/clippy gates removed (Issue #1289) ---
 # These steps live in ci.yml/quality and re-running them here doubles
 # CI runtime for no extra signal. Their absence is part of the
