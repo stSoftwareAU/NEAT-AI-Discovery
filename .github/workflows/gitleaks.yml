@@ -23,6 +23,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          # Don't persist GITHUB_TOKEN in .git/config — this job only reads
+          # the diff and never pushes back (Issue #1571).
+          persist-credentials: false
       - name: Install gitleaks
         # Pin the version AND verify the artefact's SHA-256 before
         # extracting it (Issue #1217). Without an integrity check, a
