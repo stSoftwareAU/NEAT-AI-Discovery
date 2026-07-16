@@ -17,8 +17,8 @@
 // - MD056/MD060 — table column count/style: tables in this repo are
 //   intentionally compact.
 //
-// Auto-generated PR summaries and archived history are excluded from
-// linting via the `ignores` list.
+// Auto-generated PR summaries and archived history (all under
+// docs/archive/**) are excluded from linting via the `ignores` list.
 {
   "config": {
     "default": true,
@@ -42,7 +42,6 @@
     "target/**",
     "node_modules/**",
     "**/CHANGELOG.md",
-    "docs/pr-summary-*.md",
     "docs/archive/**"
   ]
 }

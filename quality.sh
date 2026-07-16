@@ -33,6 +33,10 @@ if [[ "$SHELLCHECK_FAILED" -ne 0 ]]; then
 fi
 echo "shellcheck: all scripts passed"
 
+# PR summaries must stay in their canonical archive dir (Issue #1613).
+echo "📄 Checking PR summary layout..."
+./scripts/check-pr-summary-location.sh
+
 # Update dependencies to latest versions (including incompatible upgrades)
 echo "📦 Upgrading Rust library dependencies..."
 if command -v cargo-upgrade &> /dev/null; then
