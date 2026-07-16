@@ -51,7 +51,7 @@ release build).
 
 Added `tests/issue_1612_agents_readme_anchors.rs`:
 
-- `readme_anchor_generation_matches_known_headings` — the anchor deriver produces
+- `readme_anchor_generation_matches_known_headings` — the anchor derivation produces
   `#development`, `#gpu-requirement`, `#troubleshooting`, `#additional-documentation`.
 - `readme_has_no_development_guidelines_anchor` — the README has no
   `#development-guidelines` heading (guards the false anchor).
