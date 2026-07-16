@@ -341,9 +341,9 @@ integration). See `Cargo.toml` for the full dependency list.
 - Follow standard Rust idioms (`Result`, `Option`, pattern matching).
 - Use `anyhow` for error handling in application code.
 - Prefer Rust standard library features over external crates when possible.
-- All dependencies must be Apache-2.0 compatible (see
-  [README.md — Dependency License Requirements](README.md#development-guidelines)
-  for the full list of allowed licences).
+- All dependencies must be Apache-2.0 compatible (see the `[licenses]`
+  allow-list in [`deny.toml`](deny.toml), enforced by `cargo deny check`, for
+  the full list of allowed licences).
 
 ### Avoid Over-engineering
 
