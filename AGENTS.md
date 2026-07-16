@@ -306,7 +306,7 @@ src/
 | `benches/` | Criterion benchmarks (31 suites) |
 | `examples/` | Standalone examples (parquet inspection, snapshot generation) |
 | `scripts/` | Build and install helpers (`runlib.sh`) |
-| `docs/` | Supplementary documentation and PR summaries |
+| `docs/` | Supplementary documentation (PR summaries live in `docs/archive/pr-summaries/`) |
 
 ### Library Type
 
