@@ -6,6 +6,11 @@ neuron activations and errors during discovery runs, then analyses the captured
 samples to recommend **mutation candidates** (add/remove/modify) that are likely
 to improve the creature's score.
 
+> **creature**: an individual candidate neural network (a genome) in the evolving
+> [NEAT](https://en.wikipedia.org/wiki/Neuroevolution_of_augmenting_topologies)
+> population. NEAT-AI evolves a population of creatures; this library helps decide
+> which mutations to a creature are worth trying.
+
 **Important**: This library does **not** directly "fix" a creature. It returns
 candidates derived from the recorded samples. The NEAT-AI controller performs an
 **ablation test** style validation step by cloning the creature, applying a
