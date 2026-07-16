@@ -486,8 +486,13 @@ fn test_hard_to_easy_ratio() {
     for output_id in &["output-1", "output-2"] {
         let records: Vec<DiscoverRecord> = (0..100)
             .map(|i| {
-                // Hard samples have ~10x the error of easy samples
-                let error = if i >= 50 { 0.5 } else { 0.05 };
+                // Hard samples have ~10x the error of easy samples. Keep hard
+                // samples a clear minority (30/100) so their error sits well
+                // above the mean + 1σ "hard" threshold; a 50/50 split placed the
+                // hard error exactly on the boundary, where float rounding of the
+                // (HashMap-order-dependent) error summation intermittently
+                // excluded them and emptied the result.
+                let error = if i >= 70 { 0.5 } else { 0.05 };
                 record(output_id, i, 0.5, vec![error])
             })
             .collect();
