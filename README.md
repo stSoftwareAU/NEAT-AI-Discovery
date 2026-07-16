@@ -358,40 +358,11 @@ env knobs — is documented end-to-end in
 
 ### 🔧 Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_LIB_PATH` | `~/.cargo/lib/` | Path to the compiled library |
-| `RUST_LOG` | `warn` | Control structured log level (e.g. `neat_ai_discovery=info`) |
-| `NEAT_AI_DISCOVERY_VERBOSE` | off | Enable verbose logging |
-| `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` | auto | GPU batch size (64–4096) |
-| `NEAT_AI_DISCOVERY_GPU_TIMING` | off | Enable GPU kernel profiling |
-| `NEAT_AI_DISCOVERY_QUIET_GPU` | off | Suppress Mesa/libEGL debug output |
-| `NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS` | adaptive | Streaming parquet block cache limit |
-| `NEAT_AI_DISCOVERY_PREFETCH_DEPTH` | 2 | Streaming prefetch depth |
-| `NEAT_AI_DISCOVERY_PRELOAD_ALL` | off | Force full parquet preload |
-| `NEAT_AI_DISCOVERY_BLOCK_SIZE` | 10000 | Streaming block size in records |
-| `NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS` | off | Enable outlier-focused analysis |
-| `NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE` | 90 | Outlier identification threshold |
-| `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY` | off | Force output-only focus targets |
-| `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` | off | Bias toward newer input indices |
-| `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS` | off | Prioritise unused input neurons |
-| `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | dynamic | Constant-source folding threshold |
-| `NEAT_AI_DISCOVERY_CPU_PRE_REJECT` | on | CPU pre-reject screen before the helpful GPU submit (Issue #1544); set `0` to disable |
-| `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | off | Metropolis-Hastings temperature for probabilistic acceptance |
-| `NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL` | off | Re-enable disabled batch-successful module (Issue #1059) |
-| `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | unset | Cap focus-ranking eager pre-load size in MB; lazy mode + structured `info` log when projected size (file × 3) exceeds the budget (Issue #1172) |
-| `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` | 120000 | Wall-clock budget for focus ranking; a run that exceeds it aborts with a structured `Timeout` error so the caller falls back to local ranking. `0` disables the bound; other values clamp to `[1000, 3600000]` (Issue #1375) |
-| `NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS` | 60000 | Perf-cliff threshold for a *lazy* focus-ranking pass; a lazy pass at or above this emits one explicit perf-cliff `WARN` naming the neuron count and projected dataset size. Preload never trips it. `0` disables the warning (Issue #1377) |
-| `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS` | 60000 | Guaranteed minimum window (ms) reserved for synapse/neuron analysis so focus selection + parquet loading cannot starve it (Issue #1408). Parquet loading is curtailed at `deadline − reserve`; if less than 1s would remain, `analyze_all` fails fast with an actionable error instead of analysing 0/N targets. `0` disables the reserve; other values clamp to `[1, 3600000]` |
-| `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION` | 0.5 | Fraction of the remaining discovery window the reserve may claim (Issue #1408). Effective reserve = `min(ANALYSIS_RESERVE_MS, remaining × fraction)`, so tight budgets are split rather than starving loading. Honoured in `(0.0, 0.9]`; invalid values fall back to `0.5` |
-| `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` | off | Stall watchdog timeout |
-| `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` | 2 | Delay between dump and abort |
-| `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | `50` | Operator escape hatch: force a one-shot reset of failed-candidate cache entries and active target cooldowns after this many consecutive empty discovery passes (Issue #1205). Armed by default at `50` (Issue #1422); set to `0` to deliberately disable. |
-| `NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS` | `100` | Epochs since the creature last accepted a candidate at which a single, durable creature-level drought alarm fires (Issue #1424). Emits a `tracing::warn!` line and a `creatureDroughtAlarm` field on `synapseMetadata` / `neuronMetadata` carrying the creature uuid, epochs-since-last-acceptance, and an environmental-vs-search-exhaustion classification. Fires exactly once, on the crossing pass; set to `0` to disable. |
-| `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB` | 0.5 macOS / 1.0 Linux | Minimum available memory (GB) below which discovery is gated off (Issue #1420). Lower it (e.g. `0.1`) so a small-but-capable ~8GB host — where the discovery runtime itself already holds most of the RAM — can proceed; `0` disables the available-memory gate. Invalid / out-of-range (`0.0–64.0`) values fall back to the platform default. The 4GB total-memory minimum is unaffected. |
-| `NEAT_AI_DISCOVERY_INSUFFICIENT_RECORDING_FRACTION` | `1.0` | Fraction of selected focus neurons that must have **zero** Parquet rows before the fail-fast insufficient-recording gate skips synapse/neuron analysis (Issue #1444). A partial record phase leaves focus neurons with no rows, so analysis is guaranteed empty yet still burns the full budget; the gate detects this with a cheap record-count scan *before* GPU work and surfaces `insufficient_recording` as the dominant rejection reason plus an `insufficientRecording` diagnostic on `synapseMetadata` / `neuronMetadata`. Honoured in `(0.0, 1.0]`; `0` disables the gate. |
-| `NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD` | `1000` | Hidden-neuron count above which **expensive**-tier discovery modules (multi-hop, topology structure/diversification, co-adaptation, weight-coherence, skip-connection scans) are skipped at dispatch on non-escalation passes (Issue #1547). Their cost grows super-linearly with the hidden-neuron count, so on GRQ-scale creatures they dominate the post-processing budget. Skipping is suppressed whenever the creature is in a drought / novelty-escalation pass (conservative discovery mode, #1132/#1422/#1423) so the full set is re-enabled to escape the drought — that re-enable is logged, and its absence during a drought pass is the diagnostic signal. At or below the threshold tiering is a no-op; `0` disables it entirely. |
-| `NEAT_AI_DISCOVERY_REMOVE_NEURON_DROUGHT_FACTOR` | `0.1` | Multiplier applied to a single-op `RemoveNeuron` coordinated candidate's `expectedCreatureScoreGain` while the creature is in a **search-exhaustion** drought (Issue #1448). On a plateaued dense creature the destructive remove-neuron path dominates the failure cache with low-impact proposals that never pass scoring; demoting their gain sorts them below add-synapse / squash / multi-op coordinated candidates and pushes the most over-confident ones below the coordinated noise floor. Engages only when the trailing-failure streak reaches the (task-calibrated) drought threshold **and** the drought classifies as `search_exhaustion` (Issue #1421/#1424) — environmental droughts are left untouched. Clamped to `[0.001, 1.0]`; `1.0` disables it. Demotions are recorded under the `remove_neuron_drought_deprioritised` rejection reason. |
+Every `NEAT_AI_DISCOVERY_*` tunable — with its default and description — is
+maintained in one authoritative place: **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**.
+
+That single reference replaces the table that used to live here (and a duplicate
+in `AGENTS.md`) so the two can never drift apart again (Issue #1611).
 
 ## 🛠️ Troubleshooting
 
@@ -621,6 +592,7 @@ graph TD
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development guidelines for contributors |
 | [CHANGELOG.md](CHANGELOG.md) | Version-by-version history of changes |
 | [AGENTS.md](AGENTS.md) | Coding guidelines and invariants for AI agents |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Authoritative reference for every `NEAT_AI_DISCOVERY_*` environment variable |
 | [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md) | All discovery types with success/failure rates |
 | [docs/IMPACT_CALCULATION.md](docs/IMPACT_CALCULATION.md) | Neuron impact calculation details |
 | [docs/FOCUS_SELECTION.md](docs/FOCUS_SELECTION.md) | Focus-selection design end-to-end: why ~6 neurons, random → impact-weighted ranking, the wall-clock budget guard, and the error-guided fallback |

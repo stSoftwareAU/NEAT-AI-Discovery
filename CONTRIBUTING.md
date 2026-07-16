@@ -97,6 +97,17 @@ organisation, and test outcomes vs implementation — see
 
 ---
 
+## ⚙️ Environment Variables — One Source of Truth
+
+Every `NEAT_AI_DISCOVERY_*` environment variable is documented in **exactly one
+place**: [docs/CONFIGURATION.md](docs/CONFIGURATION.md). `README.md` and
+`AGENTS.md` only link to it. When you add, rename, or change the default of a
+variable, update `docs/CONFIGURATION.md` — do **not** re-copy the table into any
+other file. Duplicated tables drift apart (Issue #1611); a single reference
+cannot.
+
+---
+
 ## 📬 Pull Request Process
 
 ### 📝 PR Summary File
