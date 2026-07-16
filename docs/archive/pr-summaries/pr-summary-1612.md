@@ -1,54 +1,66 @@
+# Fix broken README cross-references in AGENTS.md (Issue #1612)
+
 ## Summary
 
-`AGENTS.md` linked to a `README.md` section anchor that does not exist —
-`[README.md — Dependency License Requirements](README.md#development-guidelines)`
-"for the full list of allowed licences". The README has no
-`## Development Guidelines` heading (`#development-guidelines` does not resolve)
-and carries no allowed-licence list at all; the allow-list is enforced by
-`cargo deny` via the `[licenses]` table in `deny.toml`. The link was worse than
-dead — it promised an authoritative list the README never contained, sending
-agents down a false trail.
+`AGENTS.md` linked its dependency-licence policy to
+`README.md#development-guidelines` — an anchor that does not resolve, because the
+README has no `## Development Guidelines` heading and carries no allowed-licence
+list anywhere. The link promised an authoritative "full list of allowed licences"
+that did not exist, sending agents down a false trail instead of `deny.toml`
+(the real list, enforced by `cargo deny` in `quality.sh`).
 
-This PR repoints that reference to the real source of truth (`deny.toml`) and
-adds a regression test that validates every `README.md#anchor` cross-reference
-in `AGENTS.md` resolves to a real README heading.
+The fix repoints that link to `deny.toml`:
 
-The second anchor called out in the issue (GPU tuning at the reported
-`AGENTS.md:670`) was already fixed in a prior change: the current
-`AGENTS.md` links to `README.md#gpu-requirement`, which resolves correctly, so
-no edit was needed there. The new anchor-integrity test confirms it stays valid.
+- **Before:** `[README.md — Dependency License Requirements](README.md#development-guidelines)`
+- **After:** `` [`deny.toml`](deny.toml) `` — "for the full list of allowed licences, enforced by `cargo deny` in `quality.sh`".
 
-Fixes #1612.
+The second link the issue flagged (`README.md#gpu-performance-tuning`) was already
+corrected in an earlier change: AGENTS.md now links `README.md#gpu-requirement`
+and `docs/GPU_GUIDE.md` for tuning, both of which resolve. No further edit was
+needed there; the new anti-drift test covers it going forward.
+
+Closes #1612.
 
 ## Evidence
 
-Backend/docs change — no web interface to screenshot. Verified via the new
-Rust test suite, which reproduces the broken cross-reference and confirms the
-fix:
-
-- Before the fix, `every_agents_readme_anchor_resolves` failed with
-  `AGENTS.md links to README.md#development-guidelines, but no such heading
-  anchor exists in README.md`.
-- After the fix, all three tests pass.
+Backend/documentation change — no web interface to screenshot. Verified via a new
+Rust test suite that derives README anchors from its headings (GitHub slug rules:
+lowercase, drop emoji/punctuation, spaces → hyphens) and asserts every
+`README.md#anchor` link in AGENTS.md resolves.
 
 ```mermaid
 flowchart LR
-    A["AGENTS.md licence note"] -->|before| B["README.md#development-guidelines<br/>(dead anchor, no licence list)"]
-    A -->|after| C["deny.toml [licenses]<br/>(real allow-list, cargo deny)"]
-    style B fill:#fdd,stroke:#c00
-    style C fill:#dfd,stroke:#0a0
+    A[AGENTS.md] -->|README.md#development-guidelines| X[dead anchor]
+    A -.fixed.-> D[deny.toml — real licence list]
+    style X fill:#f8d7da,stroke:#dc3545
+    style D fill:#d4edda,stroke:#28a745
 ```
+
+All README anchor links in AGENTS.md now resolve:
+
+| AGENTS.md link | Resolves? |
+| --- | --- |
+| `README.md#gpu-requirement` | ✅ `## 🖥️ GPU Requirement` |
+| `README.md#additional-documentation` | ✅ `## 📚 Additional Documentation` |
+| ~~`README.md#development-guidelines`~~ | replaced by `deny.toml` |
+
+`./quality.sh` passes cleanly (clippy `-D warnings`, all tests, doc build,
+release build).
 
 ## Test Plan
 
 Added `tests/issue_1612_agents_readme_anchors.rs`:
 
-- `every_agents_readme_anchor_resolves` — derives README heading anchors with a
-  GitHub-style slugger and asserts every `README.md#anchor` link in `AGENTS.md`
-  resolves (guards all cross-references against future drift).
-- `broken_development_guidelines_anchor_is_gone` — asserts the specific broken
-  `README.md#development-guidelines` anchor is no longer present.
-- `licence_reference_points_at_deny_toml` — asserts `AGENTS.md` references
-  `deny.toml` and that `deny.toml` carries the `[licenses]` allow-list.
+- `readme_anchor_generation_matches_known_headings` — the anchor deriver produces
+  `#development`, `#gpu-requirement`, `#troubleshooting`, `#additional-documentation`.
+- `readme_has_no_development_guidelines_anchor` — the README has no
+  `#development-guidelines` heading (guards the false anchor).
+- `every_agents_readme_anchor_link_resolves` — every `README.md#…` link in
+  AGENTS.md maps to a real README anchor (fails against the unfixed AGENTS.md).
+- `agents_does_not_link_the_dead_licence_anchor` — the dead
+  `README.md#development-guidelines` link is gone.
+- `agents_points_licence_policy_at_deny_toml` — the licence policy now names
+  `deny.toml`.
 
-Full `./quality.sh` gate run clean (fmt, clippy, check, tests, release build).
+The three link-integrity tests failed against the unfixed AGENTS.md and pass
+after the fix.
