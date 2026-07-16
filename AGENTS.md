@@ -623,52 +623,10 @@ Controllers must check this field before processing results.
 
 ## 10. Environment Variables
 
-Key environment variables that control library behaviour:
-
-| Variable | Purpose |
-|----------|---------|
-| `RUST_LOG` | Control log level via `tracing` (e.g. `neat_ai_discovery=info`) |
-| `NEAT_AI_DISCOVERY_VERBOSE` | Enable verbose logging (`1` to enable) |
-| `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` | Override GPU batch size (64–4096) |
-| `NEAT_AI_DISCOVERY_GPU_TIMING` | Enable GPU kernel profiling (`1` to enable) |
-| `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` | Abort if no progress for N seconds |
-| `NEAT_AI_DISCOVERY_QUIET_GPU` | Suppress Mesa/libEGL debug output |
-| `NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS` | Max blocks in streaming cache |
-| `NEAT_AI_DISCOVERY_PREFETCH_DEPTH` | Streaming prefetch depth |
-| `NEAT_AI_DISCOVERY_PRELOAD_ALL` | Disable streaming, use full preload |
-| `NEAT_AI_DISCOVERY_BLOCK_SIZE` | Block size in records (default: 10000) |
-| `NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS` | Enable outlier-focused analysis |
-| `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS` | Prioritise unused input neurons |
-| `NEAT_AI_DISCOVERY_SOURCE_INPUT_INDEX_BIAS` | Bias toward newer inputs |
-| `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY` | Output-only focus targets |
-| `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | Constant source folding threshold |
-| `NEAT_AI_DISCOVERY_SESSION_TTL_SECS` | Streaming session TTL for orphan cleanup (default 3600) |
-| `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | Metropolis-Hastings probabilistic acceptance temperature |
-| `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` | Overall wall-clock cap for discovery time in minutes (default 20, range 1–120) |
-| `NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET` | Max add-neuron candidates per target within a single batch (default 3, range 1–32) (Issue #1140) |
-| `NEAT_AI_DISCOVERY_MAX_COORDINATED_PER_TARGET` | Max coordinated-structural candidates per final-operation target neuron within a single batch (default 3, range 1–32). Mirrors the per-target add-neuron cap; applied after the post-discount expected-gain floor and before any cross-target diversity reordering (Issue #1271) |
-| `NEAT_AI_DISCOVERY_MIN_DISTINCT_TARGETS_PER_BATCH` | Minimum distinct target neurons in an emitted add-neuron batch when the candidate pool supports it. The top of the gain-sorted list is reordered to cover this many distinct targets before the per-target cap is applied (default 3, range 1–32) (Issue #1193) |
-| `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | Cap focus-ranking eager pre-load size in MB. When set and projected size (file × 3) exceeds the budget, lazy mode is used with a structured `info` log (Issue #1172). |
-| `NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR` | Cold-start calibration prior multiplier for non-invertible / periodic target activations (SINE, COSINE, GAUSSIAN, SQUARE, ABSOLUTE). Applied while the per-(`change_type`, `target_squash`) bucket has fewer than three failure samples. Default 0.25, clamped to `[0.001, 1.0]` (Issue #1192). |
-| `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN` | Absolute minimum `expected_creature_score_gain` for emitted add-neuron / add-synapse candidates. Predictions below this floor are dominated by floating-point round-off in the downstream evaluator. Default `1e-5`, clamped to `[0.0, 1e-2]` (Issue #1191). |
-| `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` | Consecutive trailing empty discovery passes at which the drought diagnostic warn log fires and the `droughtDiagnostic` payload populates on `synapseMetadata` / `neuronMetadata`. Default `5`, must be `>= 1` (Issue #1202). |
-| `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | Operator escape hatch: force a one-shot reset of failed-candidate cache entries and active target cooldowns after this many consecutive empty discovery passes (Issue #1205). **Armed by default at `50`** (Issue #1422); set to `0` to deliberately disable. Unparsable values fall back to the armed default. The effective value of this and every other drought-mitigation lever is logged once at startup (`"Issue #1422: effective drought-mitigation config"`). |
-| `NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS` | Epochs since the creature last accepted a candidate at which a single, durable creature-level drought alarm fires (Issue #1424). Emits a `tracing::warn!` line and a `creatureDroughtAlarm` field on `synapseMetadata` / `neuronMetadata` carrying the creature uuid, epochs-since-last-acceptance, and an environmental-vs-search-exhaustion classification (reusing the Issue #1421 disambiguation). Fires exactly once, on the crossing pass. Default `100`; set to `0` to disable; unparsable values fall back to the default. |
-| `NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK` | Consecutive per-(creature, module) failure count at which a single discovery module is temporarily disabled for that creature. Default `15`, clamped to `[1, 1000]` (Issue #1273). |
-| `NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS` | Epochs that a starved module remains disabled before being re-armed. Default `10`, clamped to `[1, 10_000]` (Issue #1273). |
-| `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB` | Minimum available memory (GB) below which the discovery gate disables analysis. Default is platform-specific (0.5 macOS / 1.0 Linux). On an ~8GB host the discovery runtime itself can already hold most of the RAM, so the default floor gates discovery off almost every pass; lower the floor (e.g. `0.1`, or `0` to disable the available-memory gate) to let a small-but-capable host opt in. Invalid / out-of-range (`0.0–64.0`) values fall back to the platform default; the 4GB total-memory minimum is unaffected (Issue #1420). |
-| `NEAT_AI_DISCOVERY_NOVELTY_SUPPRESSION_RATIO` | Fraction of the considered candidate pool that must be cache-suppressed before novelty/diversification escalation engages on a plateaued creature. Combined with the conservative-mode low-success-rate threshold, this gates the source-type novelty bias, operator widening, and gain-floor relaxation in `src/analysis/novelty_escalation.rs`. Default `0.8`, honoured in `(0.0, 1.0]` (Issue #1423) |
-| `NEAT_AI_DISCOVERY_NOVELTY_GAIN_RELAXATION` | Multiplier applied to the coordinated-structural expected-gain floor when novelty escalation engages, loosening it so structurally-novel candidates survive. Opposes the conservative-mode tightening. Default `0.5`, honoured in `(0.0, 1.0]`; never raises the floor above the base constant (Issue #1423) |
-| `NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE` | Minimum absolute bypass-synapse weight required to emit a 1-in/1-out hidden-neuron collapse candidate. Bypass weights below this floor signal the chain `a→h→b` was contributing nothing meaningful through `h`, so the 4-op coordinated collapse is rejected and recorded under `coordinated_collapse_bypass_weight_below_floor`. Default `0.01`, clamped to `[0.0, 0.1]` (Issue #1270). |
-| `NEAT_AI_DISCOVERY_REMOVE_NEURON_DROUGHT_FACTOR` | Multiplier applied to a single-op `RemoveNeuron` coordinated candidate's `expectedCreatureScoreGain` while the creature is in a **search-exhaustion** drought (Issue #1448). On a plateaued dense creature the destructive remove-neuron path dominates the failure cache (bucket `247b83ab`) with low-impact proposals that never pass scoring; demoting their gain sorts them below add-synapse / squash / multi-op coordinated candidates and pushes the most over-confident ones below the coordinated noise floor. Engages only when the trailing-failure streak reaches the (task-calibrated) drought-diagnostic threshold **and** the drought classifies as `search_exhaustion` (Issue #1421/#1424) — environmental droughts leave the module untouched. Default `0.1`, clamped to `[0.001, 1.0]`; set to `1.0` to disable. Demotions are recorded under the `remove_neuron_drought_deprioritised` rejection reason. |
-| `NEAT_AI_DISCOVERY_CPU_PRE_REJECT` | Toggle the CPU pre-reject screen that runs before the helpful GPU submit (Issue #1544). Enabled by default; set to `0`/`false`/`no` to disable (e.g. for A/B benchmarking). The screen drops helpful add-synapse candidates whose least-squares optimal outgoing weight is provably `None` (`Σ activation² ≤ EPSILON` or `\|Σ activation·avg_error\| / Σ activation² ≤ EPSILON`) — the exact `None => continue` gate the downstream result loop applies — so it removes a wasted GPU round-trip without changing which candidates survive. Drops are recorded under the `cpu_pre_reject_no_signal` rejection reason on `synapseMetadata`. |
-| `NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE` | Toggle squash-aware hidden-target activation scan pruning (Issue #1545). Enabled by default; set to `0`/`false`/`no` to always scan the full `ACTIVATION_SPECS` cross-product (e.g. for A/B benchmarking). When enabled, a hidden add-neuron target scans only the [`CORE_HIDDEN_SCAN_NAMES`] evidence-based core set (`IDENTITY`, `GELU`, `ELU`, `ReLU6`, `TANH`, plus the documented-successful `Mish`, `HARD_TANH`, `SOFTSIGN`, `BENT_IDENTITY`) widened by the squash families the creature already uses (non-zero historical success). A drought (trailing-failure streak at or above `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD`) escalates the scan back to the full set so pruning can never permanently starve a plateaued creature. Cuts cold-start neuron activation GPU configs by ~40% (256 → 154). |
-| `NEAT_AI_DISCOVERY_MAX_ACTIVATION_CONFIGS_PER_TARGET` | Cap on (orientation × scale) activation configs scanned per (source, target) pair for hidden add-neuron evaluation, after squash-family filtering (Issue #1545). `0` (default) disables the cap. A positive value keeps the `N` configs whose scale is closest to `1.0` (the historically productive band) and drops numerically-unstable extreme scales first. Unparsable values fall back to `0`. |
-| `NEAT_AI_DISCOVERY_INSUFFICIENT_RECORDING_FRACTION` | Fraction of selected focus neurons that must have **zero** Parquet rows before the fail-fast insufficient-recording gate skips synapse/neuron analysis (Issue #1444). When the record phase times out, focus neurons can have zero rows, so analysis is guaranteed to return nothing yet still burns the full budget; the gate detects this with a cheap in-memory record-count scan *before* any GPU work and surfaces `insufficient_recording` as the dominant rejection reason plus an `insufficientRecording` diagnostic on `synapseMetadata` / `neuronMetadata`. Default `1.0` (fire only when **every** focus neuron is missing); honoured in `(0.0, 1.0]`; set to `0` to disable the gate (analysis always runs). |
-
-See [README.md — Troubleshooting](README.md#troubleshooting) and
-[README.md — GPU Performance Tuning](README.md#gpu-performance-tuning) for
-full details.
+The full, authoritative list of every `NEAT_AI_DISCOVERY_*` environment
+variable — with defaults and descriptions — lives in exactly one place:
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md). Do **not** re-copy the table
+here; update that document when adding or changing a variable (Issue #1611).
 
 ---
 
