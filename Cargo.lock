@@ -1154,6 +1154,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lz4_flex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1227,7 +1236,7 @@ dependencies = [
 
 [[package]]
 name = "neat_ai_discovery"
-version = "0.74.129"
+version = "0.74.130"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1235,7 +1244,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "dashmap",
- "lz4_flex",
+ "lz4_flex 0.14.0",
  "naga",
  "parking_lot",
  "parquet",
@@ -1472,7 +1481,7 @@ dependencies = [
  "flate2",
  "half",
  "hashbrown 0.17.1",
- "lz4_flex",
+ "lz4_flex 0.13.1",
  "num-bigint",
  "num-integer",
  "num-traits",

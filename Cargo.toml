@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.129"
+version = "0.74.130"
 edition = "2024"
 license = "Apache-2.0"
 description = "High-performance Rust library for recording neuron activations and errors during NEAT-AI discovery, and scanning the recorded data to identify beneficial new synapses/neurons."
@@ -25,7 +25,7 @@ rayon = "1.12"
 rand = "0.10"
 
 crossbeam-channel = "0.5"  # Efficient multi-producer work queues for GPU thread
-lz4_flex = "0.13"  # Pure Rust LZ4 compression for memory-constrained cache (Issue #420)
+lz4_flex = "0.14"  # Pure Rust LZ4 compression for memory-constrained cache (Issue #420)
 dashmap = "6.2"  # Lock-free concurrent HashMap for diagnostic aggregation (Issue #216)
 parking_lot = { version = "0.12", features = ["deadlock_detection"] }  # Deadlock detection
 signal-hook = "0.4"  # Signal handling (SIGUSR1 for thread dumps)
