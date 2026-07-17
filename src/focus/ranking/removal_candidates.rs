@@ -290,6 +290,47 @@ pub(super) fn identify_removal_candidates(
 /// Value 1e-10 is from Issue #217's proposal for `DEAD_VARIANCE_THRESHOLD`.
 const CONSTANT_VARIANCE_THRESHOLD: f32 = 1e-10;
 
+/// Collect the UUIDs of functionally-constant hidden neurons — those whose
+/// recorded activation variance is at or below [`CONSTANT_VARIANCE_THRESHOLD`]
+/// (Issue #1624).
+///
+/// These are exactly the neurons the constant-removal path
+/// ([`detect_constant_neuron_removals`], Issue #306) folds into downstream
+/// biases. A neuron whose output never varies cannot yield a successful
+/// add-synapse / add-neuron focus candidate — no structural change feeding a
+/// constant signal moves the network — so every focus slot it occupies is
+/// wasted. This set lets the ranker make such neurons ineligible for focus
+/// slots while leaving them fully available to the removal path.
+///
+/// Only `hidden` neurons are considered: output neurons are always
+/// focus-eligible (they are the add-neuron targets) and input / constant-type
+/// neurons are never selectable in the first place. This mirrors the hidden-only
+/// gate in [`detect_constant_neuron_removals`], so the same neurons are made
+/// focus-ineligible and offered as removal candidates.
+pub(super) fn functionally_constant_focus_uuids(
+    selectable: &[&NeuronJson],
+    records_provider: &Arc<dyn RecordProvider>,
+    creature: &CreatureJson,
+) -> std::collections::HashSet<String> {
+    let neuron_types: HashMap<&str, &str> = creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.as_str(), n.neuron_type.as_str()))
+        .collect();
+
+    selectable
+        .par_iter()
+        .filter_map(|neuron| {
+            if neuron_types.get(neuron.uuid.as_str()).copied() != Some("hidden") {
+                return None;
+            }
+            let records = get_records_or_error(records_provider.as_ref(), &neuron.uuid).ok()?;
+            let (_mean, variance) = activation_mean_and_variance_from_records(&records);
+            (variance <= CONSTANT_VARIANCE_THRESHOLD).then(|| neuron.uuid.clone())
+        })
+        .collect()
+}
+
 /// Detect constant-value neurons and create coordinated structural candidates
 /// that remove the neuron and adjust downstream biases.
 ///
