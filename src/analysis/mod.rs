@@ -63,6 +63,7 @@ pub mod one_hot_class_allocation;
 pub mod quantised_error;
 pub mod recent_failure_window;
 pub mod remove_neuron_compensation;
+pub mod remove_neuron_constant_promotion;
 pub mod remove_neuron_drought;
 pub mod remove_neuron_gain;
 pub mod samples;
@@ -118,6 +119,14 @@ pub use change_squash_gain::estimate_change_squash_gain;
 // from the honest ranking gain.
 pub use remove_neuron_gain::{
     MAX_REASONABLE_SQUASH_ERROR, RemoveNeuronAssessment, assess_remove_neuron,
+};
+
+// Issue #1622: promote flagged functionally-constant hidden neurons past the
+// #1518 gain ranking and #1448 drought demotion as priority remove-neuron
+// candidates.
+pub use remove_neuron_constant_promotion::{
+    CONSTANT_NEURON_PRIORITY_GAIN, functionally_constant_neuron_uuids,
+    promote_constant_remove_neuron_candidates,
 };
 
 // Issue #1559: weight-redistribution compensation for remove-neuron candidates

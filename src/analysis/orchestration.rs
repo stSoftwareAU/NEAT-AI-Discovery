@@ -1056,6 +1056,34 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
     }
 
+    // Issue #1622: Promote flagged functionally-constant hidden neurons to
+    // priority remove-neuron candidates. A zero-variance neuron gets an honest
+    // gain of ≈0 (#1518) and is further demoted during a drought (#1448), so it
+    // is never selected even though removing it is harmless (its contribution
+    // folds into its targets' biases). The constant-neuron detector (a sibling
+    // sub-issue of the #1620 milestone) flags such neurons; this overrides the
+    // flagged candidate's gain with the priority marker AFTER the honest-gain
+    // override and drought demotion (bypassing both) and BEFORE the final gain
+    // floor (so the promoted candidate survives). Until the detector is wired
+    // the flag set is empty and this is a documented no-op.
+    if let Some(syn) = synapse_result.as_mut() {
+        let flagged = super::remove_neuron_constant_promotion::functionally_constant_neuron_uuids(
+            &input.creature,
+        );
+        let promoted =
+            super::remove_neuron_constant_promotion::promote_constant_remove_neuron_candidates(
+                &mut syn.coordinated_structural_candidates,
+                &flagged,
+            );
+        if promoted > 0 {
+            tracing::debug!(
+                promoted,
+                "Issue #1622: promoted {promoted} functionally-constant remove-neuron \
+                 candidate(s) to priority"
+            );
+        }
+    }
+
     // Issue #1110, #1128, #1139: Final coordinated-structural gain floor.
     //
     // MUST run unconditionally — outside the memory/deadline guard — because
