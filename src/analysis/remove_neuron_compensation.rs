@@ -44,7 +44,10 @@ use std::collections::HashMap;
 
 /// Variances at or below this magnitude are treated as zero — a neuron whose
 /// activation never varies carries no per-sample signal to redistribute.
-const VARIANCE_EPSILON: f64 = 1e-12;
+///
+/// `pub(crate)` so the constant-neuron bias-fold removal (Issue #1623) reuses
+/// this shared threshold rather than duplicating it.
+pub(crate) const VARIANCE_EPSILON: f64 = 1e-12;
 
 /// Compact per-pair sufficient statistic for counterfactual (d) (Issue #1559).
 ///
@@ -115,6 +118,19 @@ impl ActivationCovariance {
             survivor_variance: m2_y / n,
             covariance: co_moment / n,
         })
+    }
+
+    /// Accumulate the single-variable mean and variance of one neuron's
+    /// per-sample activations (Issue #1623).
+    ///
+    /// A thin wrapper over [`Self::from_pairs`] that pairs each value with
+    /// itself, reusing the numerically stable mean/variance accumulation rather
+    /// than duplicating it. The mean and variance are read from the
+    /// `candidate_*` fields (the `survivor_*` fields mirror them). Returns `None`
+    /// for an empty stream.
+    #[must_use]
+    pub fn from_values(values: impl IntoIterator<Item = f64>) -> Option<Self> {
+        Self::from_pairs(values.into_iter().map(|v| (v, v)))
     }
 
     /// Pearson correlation coefficient between the candidate and survivor
@@ -366,6 +382,21 @@ mod tests {
             .expect("pairs");
         assert!(stats.survivor_variance <= VARIANCE_EPSILON);
         assert_eq!(stats.correlation(), 0.0);
+    }
+
+    #[test]
+    fn from_values_reports_mean_and_variance() {
+        // Constant stream: zero variance (the constant-neuron case, Issue #1623).
+        let constant = ActivationCovariance::from_values(vec![4.0, 4.0, 4.0]).expect("values");
+        assert!((constant.candidate_mean - 4.0).abs() < 1e-12);
+        assert!(constant.candidate_variance <= VARIANCE_EPSILON);
+
+        // Varying stream: mean 2.0, population variance 2/3.
+        let varying = ActivationCovariance::from_values(vec![1.0, 2.0, 3.0]).expect("values");
+        assert!((varying.candidate_mean - 2.0).abs() < 1e-12);
+        assert!((varying.candidate_variance - 2.0 / 3.0).abs() < 1e-12);
+
+        assert!(ActivationCovariance::from_values(Vec::<f64>::new()).is_none());
     }
 
     #[test]
