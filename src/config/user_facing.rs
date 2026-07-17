@@ -170,6 +170,24 @@ pub fn focus_unused_observations() -> bool {
     parse_bool_env("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS")
 }
 
+/// Whether functionally-constant hidden neurons are excluded from focus-slot
+/// eligibility (Issue #1624).
+///
+/// A hidden neuron whose recorded activation variance is at or below the
+/// constant-variance threshold never varies its output, so no structural change
+/// feeding it can move the network — every focus slot it occupies is wasted and
+/// can never yield a successful add-synapse / add-neuron candidate. When this is
+/// enabled such neurons are dropped from the ranked focus list (they remain
+/// fully available to the constant-neuron *removal* path). Opt-in so the
+/// throughput recovery can be validated on a reference snapshot before it
+/// becomes the default.
+///
+/// Set `NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS=1` to enable.
+/// Truthy values: `"1"`, `"true"`, `"yes"` (case-insensitive).
+pub fn focus_exclude_constant_neurons() -> bool {
+    parse_bool_env("NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS")
+}
+
 /// Whether the CPU pre-reject screen runs before the helpful GPU submit
 /// (Issue #1544).
 ///

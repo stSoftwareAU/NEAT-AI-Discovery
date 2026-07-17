@@ -27,7 +27,9 @@ pub use score_calculation::{RankedNeuron, SelectionStats};
 pub(super) use record_providers::LazyRecordProvider;
 
 use record_providers::{EagerRecordProvider, get_records_or_error};
-use removal_candidates::{detect_constant_neuron_removals, identify_removal_candidates};
+use removal_candidates::{
+    detect_constant_neuron_removals, functionally_constant_focus_uuids, identify_removal_candidates,
+};
 use score_calculation::{
     activation_frequency_from_records, average_absolute_error_from_records,
     compute_frequency_factor, mean_absolute_activation_from_records,
@@ -147,6 +149,11 @@ pub struct RankFocusStats {
     /// Projected in-memory size of the parquet pre-load in megabytes
     /// (Issue #1172). `0` when the file size could not be determined.
     pub projected_mb: u64,
+    /// Number of functionally-constant hidden neurons excluded from focus-slot
+    /// eligibility this pass (Issue #1624). Non-zero only when
+    /// `NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS` is enabled; the
+    /// slot-waste measurement the exclusion recovered.
+    pub focus_ineligible_constant: usize,
 }
 
 pub(super) fn is_selectable_type(neuron_type: &str) -> bool {
@@ -877,6 +884,7 @@ fn rank_focus_core(args: &RankCoreArgs<'_>) -> Result<RankFocusStats> {
             lazy_reason: FocusLazyReason::None,
             budget_mb: focus_ranking_memory_budget_mb(),
             projected_mb: 0,
+            focus_ineligible_constant: 0,
         });
     }
 
@@ -1069,6 +1077,38 @@ fn rank_selectable(
     let removal_outcome =
         identify_removal_candidates(&neurons, &synapse_counts, cost_of_growth_threshold);
 
+    // Issue #1624: make functionally-constant hidden neurons (zero activation
+    // variance) ineligible for focus slots. Their output never varies, so no
+    // add-synapse / add-neuron change feeding them can move the network — every
+    // focus slot they occupy is wasted and displaces a productive neuron,
+    // starving successful-candidate throughput. The exclusion runs *after*
+    // removal-candidate identification and does not touch the `selectable` set
+    // fed to `detect_constant_neuron_removals` below, so the constant-removal
+    // path (which folds these neurons into downstream biases, #306) is
+    // unchanged. Opt-in via `NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS`.
+    let focus_ineligible_constant = if crate::config::focus_exclude_constant_neurons() {
+        let constant_uuids =
+            functionally_constant_focus_uuids(selectable, &records_provider, creature);
+        if constant_uuids.is_empty() {
+            0
+        } else {
+            let before = neurons.len();
+            neurons.retain(|n| !constant_uuids.contains(&n.neuron_uuid));
+            let removed = before - neurons.len();
+            if removed > 0 {
+                tracing::info!(
+                    target: "neat_ai_discovery::focus::ranking",
+                    focus_ineligible_constant = removed,
+                    remaining_focus = neurons.len(),
+                    "focus::ranking excluded functionally-constant hidden neurons from focus slots (Issue #1624)",
+                );
+            }
+            removed
+        }
+    } else {
+        0
+    };
+
     if let Some(limit) = args.max_results
         && neurons.len() > limit
     {
@@ -1110,6 +1150,7 @@ fn rank_selectable(
         lazy_reason: meta.reason,
         budget_mb: meta.budget_mb,
         projected_mb: meta.projected_mb,
+        focus_ineligible_constant,
     })
 }
 
