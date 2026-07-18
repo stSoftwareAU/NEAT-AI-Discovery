@@ -246,6 +246,59 @@ pub fn focus_reconstruction_mismatch_weight() -> f32 {
     )
 }
 
+/// Default impact-magnitude gate for focus-slot eligibility (Issue #1635).
+///
+/// Neurons whose structural impact magnitude is strictly below this value cannot
+/// meaningfully move the output, so — like the constant-neuron filter (#1624) —
+/// every focus slot they occupy is wasted. Derived from production snapshot
+/// mining (Issue #1631): ~31.6% of neurons had `|impact| < 1e-6`.
+pub const DEFAULT_FOCUS_IMPACT_GATE_THRESHOLD: f32 = 1e-6;
+
+/// Whether the impact-magnitude focus gate is enabled (Issue #1635).
+///
+/// When enabled, focus ranking drops neurons whose structural impact magnitude
+/// is below [`focus_impact_gate_threshold`] from the ranked focus list. This
+/// complements the constant-neuron filter (#1624): a neuron can vary across
+/// samples (so it is not constant) yet still have a near-zero downstream impact,
+/// which the constant filter leaves in the focus pool. Gated neurons remain
+/// fully available to the constant-neuron *removal* path.
+///
+/// Opt-in so the throughput shift can be validated on a reference snapshot
+/// before it becomes the default. Set `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE=1` to
+/// enable. Truthy values: `"1"`, `"true"`, `"yes"` (case-insensitive).
+pub fn focus_impact_gate_enabled() -> bool {
+    parse_bool_env("NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE")
+}
+
+/// Resolve the impact-magnitude gate threshold from a raw env value
+/// (Issue #1635).
+///
+/// Pure function for testability (no environment access). Returns `default`
+/// when `raw` is `None`, empty, non-numeric, non-finite, or non-positive. A
+/// zero or negative gate is rejected because it would gate nothing (every
+/// `|impact| >= 0`), silently disabling the feature while it appears enabled.
+#[must_use]
+pub fn resolve_focus_impact_gate_threshold(raw: Option<&str>, default: f32) -> f32 {
+    raw.and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(default)
+}
+
+/// The impact-magnitude gate threshold applied when the focus gate is enabled
+/// (Issue #1635).
+///
+/// Set `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE_THRESHOLD` to a positive finite
+/// value to override [`DEFAULT_FOCUS_IMPACT_GATE_THRESHOLD`]. Invalid,
+/// non-positive, or non-finite values fall back to the default.
+pub fn focus_impact_gate_threshold() -> f32 {
+    resolve_focus_impact_gate_threshold(
+        std::env::var("NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE_THRESHOLD")
+            .ok()
+            .as_deref(),
+        DEFAULT_FOCUS_IMPACT_GATE_THRESHOLD,
+    )
+}
+
 /// Whether the CPU pre-reject screen runs before the helpful GPU submit
 /// (Issue #1544).
 ///
