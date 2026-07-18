@@ -17,7 +17,8 @@
 //! 9. Verify missing source neuron records are handled
 //! 10. Verify weight exactly at threshold boundary
 //! 11. Verify high-activation source with zero-weight synapse
-//! 12. Verify low-activation source does not make active synapse dormant
+//! 12. Verify a source-gated active-weight synapse IS dormant, but a single-
+//!     observation spike keeps it active (contribution-based dormancy, Issue #1632)
 //! 13. Verify candidates are sorted by estimated improvement
 //! 14. Verify estimated improvement is always positive
 //! 15. Verify coordinated candidate comment includes diagnostics
@@ -485,10 +486,21 @@ fn test_zero_weight_high_activation_is_dormant() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 12: Low activation does NOT make an active-weight synapse dormant.
+// Test 12: Contribution-based dormancy (Issue #1632).
+//
+// BUSINESS-LOGIC CHANGE: this test previously encoded the flawed premise that an
+// active weight protects a synapse even when its source is gated to ~0. That
+// premise is exactly the bug (166 source-gated dormant synapses missed in
+// production). It now asserts the corrected behaviour:
+//   (a) an active-weight synapse whose source is gated to ~0 across every
+//       observation IS dormant (contribution ≈ 0), and
+//   (b) a synapse whose source spikes strongly on a single observation is NOT
+//       flagged (max-contribution guard).
 // ---------------------------------------------------------------------------
 #[test]
 fn test_low_activation_does_not_make_active_synapse_dormant() {
+    // (a) Active weight, but source gated to ~0 on every sample → contribution ≈ 0
+    //     → now correctly flagged as dormant.
     let creature = make_creature(
         vec![
             neuron("input-1", "input", "IDENTITY"),
@@ -496,12 +508,11 @@ fn test_low_activation_does_not_make_active_synapse_dormant() {
             neuron("output-1", "output", "IDENTITY"),
         ],
         vec![
-            synapse("input-1", "output-1", 0.5), // Active weight
+            synapse("input-1", "output-1", 0.5), // Active weight, but source is gated
             synapse("input-2", "output-1", 0.3),
         ],
     );
 
-    // Even with very low activation, the weight is above threshold
     let records_1 = make_records("input-1", 100, 1e-8);
     let records_2 = make_records("input-2", 100, 0.5);
 
@@ -513,9 +524,29 @@ fn test_low_activation_does_not_make_active_synapse_dormant() {
         ],
     );
 
+    assert_eq!(
+        candidates.len(),
+        1,
+        "Source-gated active-weight synapse should now be detected as dormant (contribution ≈ 0)"
+    );
+    assert_eq!(candidates[0].from_neuron_uuid, "input-1");
+
+    // (b) Same active weight, but the source spikes strongly on one observation
+    //     → NOT dormant (max-contribution guard protects it).
+    let mut spiking_records = make_records("input-1", 100, 0.0);
+    spiking_records[42] = make_record("input-1", 42, 1.0); // contribution = 0.5 on one sample
+
+    let candidates_spike = detect_dormant_synapses(
+        &creature,
+        &[
+            ("input-1".to_string(), spiking_records),
+            ("input-2".to_string(), make_records("input-2", 100, 0.5)),
+        ],
+    );
+
     assert!(
-        candidates.is_empty(),
-        "Active-weight synapse should not be flagged even with low source activation"
+        candidates_spike.is_empty(),
+        "A single-observation spike should keep the synapse active (max-contribution guard)"
     );
 }
 
@@ -1023,4 +1054,182 @@ fn test_each_candidate_has_one_remove_synapse_op() {
             "Candidate {i} operation should be removeSynapse, got: {ops_json}"
         );
     }
+}
+
+// ===========================================================================
+// Issue #1632: contribution-first dormancy — source-gated synapses.
+//
+// A synapse can carry a large weight and still contribute nothing when its
+// source neuron is gated to ~0 across every observation. The old weight-first
+// gate missed 166 such synapses in production. The tests below model that case.
+// ===========================================================================
+
+/// Number of observations recorded for the production-modelled creature.
+const PROD_OBS: u32 = 200;
+
+// ---------------------------------------------------------------------------
+// Test 26: large-weight synapse whose source is gated to 0 on every observation
+// is detected as dormant (models the 166 missed production synapses).
+// ---------------------------------------------------------------------------
+#[test]
+fn test_source_gated_large_weight_synapse_is_dormant() {
+    let creature = make_creature(
+        vec![
+            neuron("input-1", "input", "IDENTITY"),
+            neuron("input-2", "input", "IDENTITY"),
+            neuron("output-1", "output", "IDENTITY"),
+        ],
+        vec![
+            synapse("input-1", "output-1", 7.0), // Large weight, but source is gated to 0
+            synapse("input-2", "output-1", 0.5), // Active
+        ],
+    );
+
+    // Source neuron gated to exactly 0.0 across all 200 observations → contribution 0.
+    let records_1 = make_records("input-1", PROD_OBS, 0.0);
+    let records_2 = make_records("input-2", PROD_OBS, 0.5);
+
+    let candidates = detect_dormant_synapses(
+        &creature,
+        &[
+            ("input-1".to_string(), records_1),
+            ("input-2".to_string(), records_2),
+        ],
+    );
+
+    assert_eq!(
+        candidates.len(),
+        1,
+        "Large-weight synapse with a source gated to 0 should be detected as dormant"
+    );
+    let c = &candidates[0];
+    assert_eq!(c.from_neuron_uuid, "input-1");
+    assert_eq!(c.to_neuron_uuid, "output-1");
+    assert!(
+        c.weight.abs() > 1e-4,
+        "Detected synapse carries a large weight ({}), proving weight is not the gate",
+        c.weight
+    );
+    assert!(
+        c.max_abs_contribution.abs() < f32::EPSILON,
+        "Fully-gated source yields zero contribution"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 27: a source that spikes strongly on a single observation keeps the
+// synapse active (max-contribution guard), even though its mean is tiny.
+// ---------------------------------------------------------------------------
+#[test]
+fn test_single_observation_spike_is_not_dormant() {
+    let creature = make_creature(
+        vec![
+            neuron("input-1", "input", "IDENTITY"),
+            neuron("input-2", "input", "IDENTITY"),
+            neuron("output-1", "output", "IDENTITY"),
+        ],
+        vec![
+            synapse("input-1", "output-1", 7.0),
+            synapse("input-2", "output-1", 0.5),
+        ],
+    );
+
+    // Gated to 0 on 199 of 200 samples, but a single strong spike:
+    //   spike contribution = 7.0 * 0.001 = 7e-3  (>> max-contribution guard)
+    //   mean contribution  = 7e-3 / 200 = 3.5e-5 (< mean threshold)
+    // The mean alone would pass; the max-contribution guard must reject it.
+    let mut records_1 = make_records("input-1", PROD_OBS, 0.0);
+    records_1[100] = make_record("input-1", 100, 0.001);
+    let records_2 = make_records("input-2", PROD_OBS, 0.5);
+
+    let candidates = detect_dormant_synapses(
+        &creature,
+        &[
+            ("input-1".to_string(), records_1),
+            ("input-2".to_string(), records_2),
+        ],
+    );
+
+    assert!(
+        candidates.is_empty(),
+        "A synapse that spikes strongly on a single observation must not be flagged dormant"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 28: end-to-end — a source-gated synapse produces a removeSynapse
+// coordinated candidate.
+// ---------------------------------------------------------------------------
+#[test]
+fn test_source_gated_synapse_emits_remove_synapse_candidate() {
+    let creature = make_creature(
+        vec![
+            neuron("input-1", "input", "IDENTITY"),
+            neuron("input-2", "input", "IDENTITY"),
+            neuron("output-1", "output", "IDENTITY"),
+        ],
+        vec![
+            synapse("input-1", "output-1", -51.77), // Large negative weight, source gated
+            synapse("input-2", "output-1", 0.5),
+        ],
+    );
+
+    let records_1 = make_records("input-1", PROD_OBS, 0.0);
+    let records_2 = make_records("input-2", PROD_OBS, 0.5);
+
+    let candidates = detect_dormant_synapses(
+        &creature,
+        &[
+            ("input-1".to_string(), records_1),
+            ("input-2".to_string(), records_2),
+        ],
+    );
+    assert_eq!(
+        candidates.len(),
+        1,
+        "Source-gated synapse should be detected"
+    );
+
+    let coordinated = dormant_synapses_to_coordinated_candidates(&candidates);
+    assert_eq!(
+        coordinated.len(),
+        1,
+        "Should produce one coordinated candidate"
+    );
+
+    let ops_json = serde_json::to_string(&coordinated[0].operations).unwrap();
+    assert!(
+        ops_json.contains("removeSynapse"),
+        "Source-gated synapse should emit a removeSynapse op, got: {ops_json}"
+    );
+    assert!(
+        ops_json.contains("input-1") && ops_json.contains("output-1"),
+        "removeSynapse op should reference the gated connection"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 29: regression — a source-gated large-weight synapse that is the SOLE
+// input to its target is still protected (sole-connection guard unchanged).
+// ---------------------------------------------------------------------------
+#[test]
+fn test_source_gated_sole_connection_still_protected() {
+    let creature = make_creature(
+        vec![
+            neuron("input-1", "input", "IDENTITY"),
+            neuron("output-1", "output", "IDENTITY"),
+        ],
+        vec![
+            synapse("input-1", "output-1", 7.0), // Gated source, but sole connection
+        ],
+    );
+
+    let records_1 = make_records("input-1", PROD_OBS, 0.0);
+
+    let candidates = detect_dormant_synapses(&creature, &[("input-1".to_string(), records_1)]);
+
+    assert!(
+        candidates.is_empty(),
+        "Sole connection must not be removed even when its source is gated"
+    );
 }

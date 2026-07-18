@@ -1,17 +1,24 @@
-//! Dormant synapse detection module (Issue #359).
+//! Dormant synapse detection module (Issue #359, #1632).
 //!
-//! Identifies synapses with near-zero weights that contribute negligible signal
-//! to their target neuron. Dormant synapses waste computation during both forward
-//! pass and discovery analysis without providing meaningful information flow.
+//! Identifies synapses that contribute negligible signal to their target neuron.
+//! Dormant synapses waste computation during both forward pass and discovery
+//! analysis without providing meaningful information flow.
 //!
 //! See `docs/DISCOVERY_TYPES.md` § "Dormant Synapse Detection" for full documentation.
 //!
-//! ## Detection Criteria
+//! ## Detection Criteria (contribution-first — Issue #1632)
+//!
+//! Dormancy is judged on **contribution** (`weight × source_activation`), not on
+//! weight magnitude. A large weight whose source neuron is gated to ~0 across
+//! every observation carries no signal and is removable; the previous
+//! weight-magnitude gate hid these (166 such synapses missed in production).
 //!
 //! A synapse is "dormant" if:
-//! 1. **Near-zero weight**: The absolute weight is below a threshold (e.g., 1e-4).
-//! 2. **Low contribution**: The product of source activation and synapse weight
-//!    is negligible relative to other inputs to the target neuron.
+//! 1. **Negligible mean contribution**: The mean absolute contribution
+//!    (`|weight × source_activation|`) across samples is below a threshold.
+//! 2. **No single-observation spike**: The *maximum* absolute contribution is
+//!    also negligible, so a synapse that is strongly active on even one
+//!    observation is protected from removal.
 //! 3. **Not the sole connection**: The target neuron has other incoming synapses
 //!    (removing the only input would be destructive).
 //!
@@ -34,11 +41,14 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 // MIN_SAMPLES_FOR_DORMANT moved to constants.rs (Issue #424)
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DORMANT;
 
-/// Maximum absolute weight to consider a synapse dormant.
-const DORMANT_WEIGHT_THRESHOLD: f32 = 1e-4;
-
 /// Maximum mean absolute contribution (|weight × `source_activation`|) for dormancy.
 const DORMANT_CONTRIBUTION_THRESHOLD: f32 = 1e-4;
+
+/// Maximum *single-observation* absolute contribution allowed for dormancy
+/// (Issue #1632). Guards against a synapse whose mean contribution is tiny only
+/// because it is inactive on most observations but spikes strongly on a few: if
+/// any observation contributes more than this, the synapse is not dormant.
+const DORMANT_MAX_CONTRIBUTION_THRESHOLD: f32 = 7.5e-5;
 
 /// Result of detecting a dormant synapse.
 #[derive(Debug, Clone)]
@@ -51,6 +61,8 @@ pub struct DormantSynapseCandidate {
     pub weight: f32,
     /// Mean absolute contribution (|weight × activation|) across samples.
     pub mean_abs_contribution: f32,
+    /// Maximum absolute contribution (|weight × activation|) on any single sample.
+    pub max_abs_contribution: f32,
     /// Number of other incoming synapses to the target neuron.
     pub other_fan_in: usize,
     /// Number of samples analysed.
@@ -84,11 +96,6 @@ pub fn detect_dormant_synapses(
     let mut candidates = Vec::with_capacity(creature.synapses.len());
 
     for synapse in &creature.synapses {
-        // Skip if weight is not near zero
-        if synapse.weight.abs() > DORMANT_WEIGHT_THRESHOLD {
-            continue;
-        }
-
         // Skip if this is the only input to the target neuron
         let total_fan_in = fan_in_count
             .get(synapse.to_uuid.as_str())
@@ -107,14 +114,29 @@ pub fn detect_dormant_synapses(
             continue;
         }
 
-        // Compute mean absolute contribution
+        // Compute mean and maximum absolute contribution (|weight × activation|).
+        // Contribution — not weight magnitude — is the primary dormancy criterion
+        // (Issue #1632): a large-weight synapse whose source is gated to ~0 across
+        // every observation contributes nothing and is removable.
         let n = source_records.len() as f32;
-        let sum_abs_contribution: f32 = source_records
-            .iter()
-            .map(|r| (synapse.weight * r.activation).abs())
-            .sum();
+        let mut sum_abs_contribution = 0.0_f32;
+        let mut max_abs_contribution = 0.0_f32;
+        for r in *source_records {
+            let contribution = (synapse.weight * r.activation).abs();
+            sum_abs_contribution += contribution;
+            if contribution > max_abs_contribution {
+                max_abs_contribution = contribution;
+            }
+        }
         let mean_abs_contribution = sum_abs_contribution / n;
 
+        // Spike guard: a synapse that is strongly active on even a single
+        // observation is not dormant, regardless of how low its mean is.
+        if max_abs_contribution > DORMANT_MAX_CONTRIBUTION_THRESHOLD {
+            continue;
+        }
+
+        // Primary criterion: negligible mean contribution across all samples.
         if mean_abs_contribution > DORMANT_CONTRIBUTION_THRESHOLD {
             continue;
         }
@@ -129,6 +151,7 @@ pub fn detect_dormant_synapses(
             to_neuron_uuid: synapse.to_uuid.clone(),
             weight: synapse.weight,
             mean_abs_contribution,
+            max_abs_contribution,
             other_fan_in: total_fan_in - 1,
             sample_count: source_records.len(),
             estimated_improvement,
@@ -159,8 +182,8 @@ pub fn dormant_synapses_to_coordinated_candidates(
             }],
             expected_creature_score_gain: c.estimated_improvement,
             comment: Some(format!(
-                "Dormant synapse {} → {}: weight {:.2e}, mean abs contribution {:.2e}, {} samples → remove to reduce complexity",
-                c.from_neuron_uuid, c.to_neuron_uuid, c.weight, c.mean_abs_contribution, c.sample_count
+                "Dormant synapse {} → {}: weight {:.2e}, mean abs contribution {:.2e}, max abs contribution {:.2e}, {} samples → remove to reduce complexity",
+                c.from_neuron_uuid, c.to_neuron_uuid, c.weight, c.mean_abs_contribution, c.max_abs_contribution, c.sample_count
             )),
         });
     }
