@@ -484,6 +484,7 @@ mod noise_floor_tests {
             gradient_flow: GradientFlowStats::default(),
             activation_frequency: 0.5,
             weighted_score: 0.0,
+            reconstruction_mismatch: 0.0,
         }
     }
 

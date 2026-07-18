@@ -188,6 +188,64 @@ pub fn focus_exclude_constant_neurons() -> bool {
     parse_bool_env("NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS")
 }
 
+/// Default additive weight for the reconstruction-mismatch focus signal
+/// (Issue #1634).
+///
+/// The signal adds `weight × meanActivationDelta` to a neuron's focus score, so
+/// neurons whose recorded activation cannot be reconstructed from their inputs
+/// (a squash/bias/structural gap) rise in the focus budget. A conservative
+/// starting value; tune via the weight env var and validate on a reference
+/// snapshot per Issue #1631.
+pub const DEFAULT_FOCUS_RECONSTRUCTION_MISMATCH_WEIGHT: f32 = 0.1;
+
+/// Whether the reconstruction-mismatch focus signal is enabled (Issue #1634).
+///
+/// When enabled, focus ranking reconstructs each selectable neuron's activation
+/// from its inbound synapses (`bias + Σ from_activation × weight`, squashed) and
+/// folds the mean absolute activation delta into the neuron's focus score as an
+/// additive term. Poorly-reconstructed neurons — precisely where a
+/// squash/bias/structural change is most likely to help — thereby rise in the
+/// focus budget.
+///
+/// Opt-in so the throughput shift can be validated on a reference snapshot
+/// before it becomes the default. Set
+/// `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH=1` to enable. Truthy values:
+/// `"1"`, `"true"`, `"yes"` (case-insensitive).
+pub fn focus_reconstruction_mismatch_enabled() -> bool {
+    parse_bool_env("NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH")
+}
+
+/// Resolve the reconstruction-mismatch focus weight from a raw env value
+/// (Issue #1634).
+///
+/// Pure function for testability (no environment access). Returns `default`
+/// when `raw` is `None`, empty, non-numeric, non-finite, or negative (a
+/// negative weight would *penalise* mismatched neurons, inverting the signal).
+/// Zero is accepted and disables the additive contribution while leaving the
+/// pass enabled.
+#[must_use]
+pub fn resolve_focus_reconstruction_mismatch_weight(raw: Option<&str>, default: f32) -> f32 {
+    raw.and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .unwrap_or(default)
+}
+
+/// Additive weight applied to a neuron's mean reconstruction activation delta
+/// when the reconstruction-mismatch focus signal is enabled (Issue #1634).
+///
+/// Set `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH_WEIGHT` to a
+/// non-negative finite value to override
+/// [`DEFAULT_FOCUS_RECONSTRUCTION_MISMATCH_WEIGHT`]. Invalid or negative values
+/// fall back to the default.
+pub fn focus_reconstruction_mismatch_weight() -> f32 {
+    resolve_focus_reconstruction_mismatch_weight(
+        std::env::var("NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH_WEIGHT")
+            .ok()
+            .as_deref(),
+        DEFAULT_FOCUS_RECONSTRUCTION_MISMATCH_WEIGHT,
+    )
+}
+
 /// Whether the CPU pre-reject screen runs before the helpful GPU submit
 /// (Issue #1544).
 ///

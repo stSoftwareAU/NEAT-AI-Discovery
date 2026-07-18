@@ -9,8 +9,10 @@
 //! - `record_providers` — Record provider trait and implementations (eager/lazy)
 //! - `score_calculation` — Individual neuron ranking score computation
 //! - `removal_candidates` — Removal candidate identification and constant neuron removal
+//! - `reconstruction` — Reconstruction-mismatch focus signal (Issue #1634)
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+mod reconstruction;
 pub(super) mod record_providers;
 mod removal_candidates;
 mod score_calculation;
@@ -629,20 +631,33 @@ fn compute_max_output_error(
     Ok(errors.into_iter().fold(0.0, f32::max))
 }
 
+/// Read-only per-neuron metric inputs shared across the ranked-neuron build
+/// pass. Grouped into a struct to avoid `clippy::too_many_arguments` (mirrors
+/// the pattern in [`super::impact`]).
+struct RankedNeuronInputs<'a> {
+    impact_map: &'a std::collections::HashMap<String, f32>,
+    squash_map: &'a std::collections::HashMap<String, String>,
+    max_output_error: f32,
+    /// `OneHot` / `Margin` per-observation margin weights (Issue #1318).
+    obs_weights: Option<&'a std::collections::HashMap<u32, f32>>,
+    /// Per-neuron reconstruction activation delta (Issue #1634); empty when the
+    /// signal is disabled.
+    reconstruction_mismatch: &'a std::collections::HashMap<String, f32>,
+}
+
 /// Build ranked neurons from selectable neurons with their metrics.
 ///
-/// When `obs_weights` is provided (`OneHot` / `Margin` descriptors), per-neuron
-/// errors are aggregated using the per-observation margin weight rather than
-/// the unweighted mean. Issue #1318.
+/// When `inputs.obs_weights` is provided (`OneHot` / `Margin` descriptors),
+/// per-neuron errors are aggregated using the per-observation margin weight
+/// rather than the unweighted mean. Issue #1318.
 fn build_ranked_neurons(
     selectable: &[&NeuronJson],
     records_provider: &dyn RecordProvider,
-    impact_map: &std::collections::HashMap<String, f32>,
-    squash_map: &std::collections::HashMap<String, String>,
-    max_output_error: f32,
-    obs_weights: Option<&std::collections::HashMap<u32, f32>>,
+    inputs: &RankedNeuronInputs<'_>,
     deadline: Option<FocusDeadline>,
 ) -> Result<Vec<RankedNeuron>> {
+    let obs_weights = inputs.obs_weights;
+    let max_output_error = inputs.max_output_error;
     selectable
         .par_iter()
         .map(|neuron| -> Result<RankedNeuron> {
@@ -655,7 +670,7 @@ fn build_ranked_neurons(
             } else {
                 average_absolute_error_from_records(&records)
             };
-            let structural_impact = *impact_map.get(&neuron.uuid).unwrap_or(&0.0);
+            let structural_impact = *inputs.impact_map.get(&neuron.uuid).unwrap_or(&0.0);
             let mean_activation = mean_absolute_activation_from_records(&records);
 
             // Activation-weighted impact reflects the ACTUAL contribution during inference.
@@ -674,10 +689,18 @@ fn build_ranked_neurons(
 
             // Issue #206: Compute gradient flow stats for this neuron
             let gradient_flow =
-                compute_gradient_flow_for_neuron(&neuron.uuid, squash_map, &records);
+                compute_gradient_flow_for_neuron(&neuron.uuid, inputs.squash_map, &records);
 
             // Issue #204: Compute activation frequency for focus neuron ranking
             let activation_frequency = activation_frequency_from_records(&records);
+
+            // Issue #1634: reconstruction mismatch for this neuron (0.0 when the
+            // signal is disabled or no reconstruction was available).
+            let reconstruction_mismatch = inputs
+                .reconstruction_mismatch
+                .get(&neuron.uuid)
+                .copied()
+                .unwrap_or(0.0);
 
             Ok(RankedNeuron {
                 neuron_uuid: neuron.uuid.clone(),
@@ -691,6 +714,7 @@ fn build_ranked_neurons(
                 // Issue #1445: populated after construction by the ranking pass
                 // via compute_focus_weighted_score; 0.0 is a safe placeholder.
                 weighted_score: 0.0,
+                reconstruction_mismatch,
             })
         })
         .collect::<Result<Vec<_>>>()
@@ -704,19 +728,29 @@ fn build_ranked_neurons(
 /// by the optional Bayesian history multiplier `0.5 + history` (Issue #227) when
 /// a per-neuron history factor is supplied. With no history the multiplier is
 /// absent and the ordering matches the non-history path.
+///
+/// Issue #1634: when the reconstruction-mismatch signal is enabled, an additive
+/// term `recon_weight × reconstruction_mismatch` is added *after* the
+/// multiplicative history scaling so poorly-reconstructed neurons rise in the
+/// focus budget. `recon_weight` is `0.0` when the signal is disabled, which adds
+/// nothing and keeps the score byte-identical to the pre-#1634 path.
 #[must_use]
 pub(super) fn compute_focus_weighted_score(
     neuron: &RankedNeuron,
     history_factor: Option<f32>,
+    recon_weight: f32,
 ) -> f32 {
     let base = neuron.total_error * (neuron.impact + IMPACT_EPSILON).powf(IMPACT_GAMMA);
     let gradient_factor = compute_gradient_flow_factor(&neuron.gradient_flow);
     let frequency_factor = compute_frequency_factor(neuron.activation_frequency);
     let with_gradient = base * gradient_factor * frequency_factor;
-    match history_factor {
+    let scaled = match history_factor {
         Some(h) => with_gradient * (0.5 + h),
         None => with_gradient,
-    }
+    };
+    // Additive reconstruction-mismatch bonus (Issue #1634). recon_weight is 0.0
+    // when the signal is disabled, so this is a no-op for the legacy path.
+    scaled + recon_weight * neuron.reconstruction_mismatch
 }
 
 /// Ranks a creature's focus neurons by impact, loading recorded samples from
@@ -992,13 +1026,31 @@ fn rank_selectable(
     // Issue #206: Build squash map for gradient flow analysis
     let squash_map = build_squash_map(creature);
 
+    // Issue #1634: When the reconstruction-mismatch signal is enabled, compute
+    // each selectable neuron's mean activation delta (recorded vs reconstructed
+    // from its inbound synapses) so poorly-explained neurons rise in the focus
+    // budget. Disabled by default — the map is empty and the score is unchanged.
+    check_deadline(deadline, "compute_reconstruction_mismatch")?;
+    let reconstruction_mismatch = if crate::config::focus_reconstruction_mismatch_enabled() {
+        reconstruction::compute_reconstruction_mismatch_map(
+            creature,
+            selectable,
+            records_provider.as_ref(),
+        )?
+    } else {
+        std::collections::HashMap::new()
+    };
+
     let mut neurons = build_ranked_neurons(
         selectable,
         records_provider.as_ref(),
-        &impact_map,
-        &squash_map,
-        max_output_error,
-        obs_weights.as_ref(),
+        &RankedNeuronInputs {
+            impact_map: &impact_map,
+            squash_map: &squash_map,
+            max_output_error,
+            obs_weights: obs_weights.as_ref(),
+            reconstruction_mismatch: &reconstruction_mismatch,
+        },
         deadline,
     )?;
 
@@ -1036,9 +1088,17 @@ fn rank_selectable(
     // - 0.5 (neutral) → multiplier of 1.0 (no change)
     // - 1.0 (perfect success) → multiplier of 1.5 (50% boost)
     // - 0.0 (complete failure) → multiplier of 0.5 (50% penalty)
+    // Issue #1634: resolve the additive reconstruction-mismatch weight once.
+    // 0.0 when the signal is disabled, keeping the score byte-identical to the
+    // pre-#1634 path.
+    let recon_weight = if crate::config::focus_reconstruction_mismatch_enabled() {
+        crate::config::focus_reconstruction_mismatch_weight()
+    } else {
+        0.0
+    };
     for neuron in &mut neurons {
         let history_factor = history.map(|h| h.bayesian_score_for(&neuron.neuron_uuid) as f32);
-        neuron.weighted_score = compute_focus_weighted_score(neuron, history_factor);
+        neuron.weighted_score = compute_focus_weighted_score(neuron, history_factor, recon_weight);
     }
 
     neurons.sort_by(|a, b| {

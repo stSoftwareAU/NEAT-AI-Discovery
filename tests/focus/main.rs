@@ -17,6 +17,7 @@ mod issue_1376_focus_ranking_available_memory;
 mod issue_1377_focus_ranking_perf_cliff;
 mod issue_156_hidden_focus_neurons_filtered;
 mod issue_1624_constant_neuron_focus_ineligible;
+mod issue_1634_reconstruction_mismatch_focus;
 mod issue_182_focus_unused_observations;
 mod issue_222_hierarchical_focus;
 mod issue_491_split_focus_submodules;
