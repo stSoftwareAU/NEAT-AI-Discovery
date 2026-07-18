@@ -58,6 +58,18 @@ pub struct RankedNeuron {
     /// sort comparator and the downstream selection share a single source of
     /// truth. Defaults to `0.0` until populated.
     pub weighted_score: f32,
+    /// Issue #1634: Mean absolute reconstruction activation delta for this
+    /// neuron — `mean|recordedActivation − reconstructedActivation|` where the
+    /// reconstruction is `squash(bias + Σ from_activation × weight)` over the
+    /// neuron's inbound synapses.
+    ///
+    /// A high value means the current model of the creature cannot explain the
+    /// neuron's recorded activation, so a squash/bias/structural change there is
+    /// high-leverage. Folded into [`Self::weighted_score`] as an additive term
+    /// (weighted by config) when the reconstruction-mismatch focus signal is
+    /// enabled. `0.0` when the signal is disabled or no reconstruction was
+    /// available for the neuron.
+    pub reconstruction_mismatch: f32,
 }
 
 pub(super) fn average_absolute_error_from_records(records: &[DiscoverRecord]) -> f32 {

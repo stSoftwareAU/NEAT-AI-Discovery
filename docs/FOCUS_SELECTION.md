@@ -90,6 +90,8 @@ All knobs are defined in the README
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` | `120000` (eager); scaled for lazy | Wall-clock budget for focus ranking; overrun aborts with a retryable `Timeout`. When **unset**, the default is scaled by loading mode + projected dataset size — eager keeps 120 s, lazy earns `4 × 120 s + 20 ms/projected MB` (clamped to `[1000, 3600000]`) so a legitimate lazy fallback finishes (#3172). An explicit value **wins verbatim** (never scaled); `0` disables; other values clamp to `[1000, 3600000]` (#1375, #1385). |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | unset | Cap the eager pre-load size; projected size (file × 3) above the cap forces lazy mode with a structured `info` log (#1172). |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS` | `60000` | Perf-cliff threshold for a *lazy* pass; at/above it emits one perf-cliff `WARN`. Preload never trips it. `0` disables (#1377). |
+| `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH` | `false` | Enable the reconstruction-mismatch focus signal (§7). Opt-in so the throughput shift can be validated on a reference snapshot first (#1634). |
+| `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH_WEIGHT` | `0.1` | Additive weight applied to the mean reconstruction delta when the signal above is enabled. Non-negative finite values only; invalid or negative values fall back to the default (#1634). |
 
 ---
 
@@ -153,6 +155,61 @@ flowchart TD
     RR --> O[focusSelection<br/>concentration ratio + WARN if raw over 0.5]
     ST --> O
     TN --> O
+```
+
+---
+
+## 7. Reconstruction-mismatch focus signal (Issue #1634)
+
+Impact-weighted ranking measures *how much a change would move the output* but
+not *which neurons the current model of the creature fails to explain*. The
+per-neuron **reconstruction mismatch** measures exactly the latter: for each
+selectable neuron we reconstruct its activation from its inbound synapses and
+compare it to the recorded activation.
+
+```text
+reconstructedValue      = bias + Σ (from_activation × weight)   over inbound synapses
+reconstructedActivation = squash(reconstructedValue)
+reconstructionMismatch  = mean |recordedActivation − reconstructedActivation|
+```
+
+A large mismatch means a squash/bias/structural change on that neuron is
+**high-leverage** — the recorded behaviour cannot be explained by the current
+inbound weights, squash, and bias. On the production GRQ-cluster creature (1661
+hidden neurons, Issue #1631) **1117** neurons missed reconstruction by `>0.1` on
+at least one sample and **386** had a systematic mean mismatch `>0.05`, yet
+focus/candidate effort was collapsing to near-zero-delta targets.
+
+When enabled, the mismatch is folded into the focus score as an **additive**
+term, applied *after* the multiplicative gradient/frequency/history factors:
+
+```text
+weightedScore = error × (impact + ε)^γ × gradientFactor × frequencyFactor × historyMultiplier
+              + weight × reconstructionMismatch          # Issue #1634, additive
+```
+
+Because the term is additive with a configurable `weight`, poorly-reconstructed
+neurons rise in the focus budget without letting the signal swamp the
+impact-driven ordering. The signal is **opt-in**
+(`NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH=1`) with a tunable weight
+(`NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH_WEIGHT`, default `0.1`); when
+disabled the score is byte-identical to the pre-#1634 path (`weight = 0` adds
+nothing). The reconstruction is computed once per ranking pass from the same
+record provider the ranking already uses — no export pass is required.
+
+Each ranked neuron surfaces its `reconstruction_mismatch` (`0.0` when the signal
+is disabled or no reconstruction was available for the neuron), so the shift in
+the focus budget is observable.
+
+```mermaid
+flowchart LR
+    REC[Recorded activation] --> D
+    IN[Inbound activations × weights<br/>+ bias, squashed] --> RC[Reconstructed activation]
+    RC --> D{mean abs delta}
+    D --> M[reconstructionMismatch]
+    M -->|× weight, additive| S[weightedScore]
+    BASE[error × impact^γ × factors] --> S
+    S --> RANK[Ranked focus list]
 ```
 
 ---
