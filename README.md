@@ -276,6 +276,7 @@ Modules that detect structural and topological issues in the network.
 | [Skip Connection](docs/DISCOVERY_TYPES.md#skip-connection-detection) | Deep neurons with attenuated gradients | `addSynapse` |
 | [Symmetry Breaking](docs/DISCOVERY_TYPES.md#symmetry-breaking-detection) | Near-identical weight configurations | `setBias`, `setWeight`, `changeSquash` |
 | [Co-Adaptation](docs/DISCOVERY_TYPES.md#co-adaptation-detection) | Redundant neuron pairs with correlated activations | `removeNeuron`, `setWeight` |
+| [Merge Redundant Neuron](docs/DISCOVERY_TYPES.md#merge-redundant-neuron-detection) | Highly-correlated (\|r\| > 0.999) duplicate hidden neurons | `coordinatedStructural` (`setWeight`/`addSynapse`, `setBias`, `removeNeuron`) |
 | [Output Conflict](docs/DISCOVERY_TYPES.md#output-conflict-detection) | Hidden neurons with conflicting per-output contributions | `addSynapse`, `addNeuron` |
 | [Hard Sample Cluster](docs/DISCOVERY_TYPES.md#hard-sample-cluster-detection) | Observation groups consistently high-error | `addNeuron`, `addSynapse` |
 | [Multi-Hop](docs/DISCOVERY_TYPES.md#multi-hop-candidate-analysis) | Deeper structural improvements | `addNeuron`, `addSynapse` |

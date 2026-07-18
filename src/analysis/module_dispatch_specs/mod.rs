@@ -527,12 +527,13 @@ mod tests {
             TaskDescriptor::neutral(),
         );
 
-        // We expect 47 modules across all four spec groups (batch-successful
-        // is disabled by default, Issue #1059).
+        // We expect 48 modules across all four spec groups (batch-successful
+        // is disabled by default, Issue #1059; merge-redundant-neuron added in
+        // Issue #1633).
         assert_eq!(
             specs.len(),
-            47,
-            "Expected 47 discovery module specs, got {}",
+            48,
+            "Expected 48 discovery module specs, got {}",
             specs.len()
         );
 
