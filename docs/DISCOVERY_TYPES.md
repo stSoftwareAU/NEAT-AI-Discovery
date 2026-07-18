@@ -48,6 +48,7 @@ output format, and production success/failure rates.
     - [Skip Connection Detection](#skip-connection-detection)
     - [Symmetry Breaking Detection](#symmetry-breaking-detection)
     - [Co-Adaptation Detection](#co-adaptation-detection)
+    - [Merge Redundant Neuron Detection](#merge-redundant-neuron-detection)
     - [Output Conflict Detection](#output-conflict-detection)
     - [Hard Sample Cluster Detection](#hard-sample-cluster-detection)
     - [Multi-Hop Candidate Analysis](#multi-hop-candidate-analysis)
@@ -188,6 +189,7 @@ checklist for adding a new cost to NEAT-AI, see
 | [Skip Connection](#skip-connection-detection) | `detection/skip_connection.rs` | #570 | `addSynapse` | 🟢 Active |
 | [Symmetry Breaking](#symmetry-breaking-detection) | `detection/symmetry_breaking.rs` | #569 | `setBias`, `setWeight`, `changeSquash` | 🟢 Active |
 | [Co-Adaptation](#co-adaptation-detection) | `detection/co_adaptation.rs` | #571 | `removeNeuron`, `setWeight` | 🟢 Active |
+| [Merge Redundant Neuron](#merge-redundant-neuron-detection) | `merge_redundant_neuron.rs` | #1633 | `setWeight`/`addSynapse`, `setBias`, `removeNeuron` | 🟢 Active |
 | [Output Conflict](#output-conflict-detection) | `detection/output_conflict.rs` | #639 | `addSynapse`, `addNeuron` | 🟢 Active |
 | [Hard Sample Cluster](#hard-sample-cluster-detection) | `detection/hard_sample_cluster.rs` | #642 | `addNeuron`, `addSynapse` | 🟢 Active |
 | [Multi-Hop](#multi-hop-candidate-analysis) | `recommendation/multi_hop.rs` | #230 | `addNeuron`, `addSynapse` | 🟢 Active |
@@ -1333,6 +1335,55 @@ differ.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `removeNeuron`
 and/or `setWeight` operations.
+
+---
+
+### Merge Redundant Neuron Detection
+
+**Source**: `src/analysis/merge_redundant_neuron.rs` (Issue #1633)
+
+**Purpose**: Consolidates redundant hidden neurons. When two hidden neurons
+carry essentially the same signal (activations correlated at `|r| > 0.999`),
+one is pure width — it costs forward-pass and discovery-analysis budget without
+adding representational capacity. Where [Co-Adaptation](#co-adaptation-detection)
+only *observes* the correlation, this generator **folds** the redundant neuron's
+per-sample signal into its twin so the neuron can be removed while preserving the
+network's output.
+
+**How the fold works**:
+
+The linear relationship between the removed neuron `r` and the kept twin `k` is
+fitted by least squares over the recorded window: `a_r ≈ α·a_k + β`. For each
+outgoing connection `r → t` with weight `w`, the removed neuron contributes
+`w·a_r ≈ w·α·a_k + w·β` to target `t`. That contribution is redirected onto the
+twin:
+
+- the twin edge `k → t` gains weight `α·w` (a `setWeight` on an existing edge, or
+  an `addSynapse` when the twin has no edge to `t`), and
+- target `t`'s bias gains the constant `β·w` (a `setBias`).
+
+The redundant neuron and every synapse touching it are then removed with a single
+`removeNeuron`.
+
+**Detection criteria**:
+
+1. **High positive correlation**: Pearson correlation ≥ 0.999 (configurable).
+   Anti-correlated pairs are deliberately excluded — production snapshot mining
+   (Issue #1631) found genuine duplicates, not opposing pairs.
+2. **Both hidden neurons** with at least 20 aligned samples.
+3. **Not directly connected**: a pair joined by a synapse is skipped to avoid
+   creating a self-loop.
+4. **Lower-impact removed**: the neuron with the smaller downstream impact
+   (`mean|activation| × Σ|outgoing weight|`) is folded into its higher-impact
+   twin. Each neuron participates in at most one emitted candidate.
+
+**Evaluate-before-accept**: each candidate carries the maximum per-sample residual
+the fold would introduce, so NEAT-AI validates it on the recorded window through
+the same evaluate-before-accept ablation gate as the #1623 bias-fold work — a pair
+that only *looks* redundant is rejected rather than deleted blind.
+
+**Output**: Emitted as `coordinatedStructuralCandidates` with `setWeight` /
+`addSynapse`, `setBias`, and `removeNeuron` operations.
 
 ---
 

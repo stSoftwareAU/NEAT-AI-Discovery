@@ -15,7 +15,7 @@ use super::super::detection::{
     topology_cache::CreatureTopologyCache, unbounded_capping,
 };
 use super::super::recommendation::activation_recommendation;
-use super::super::{cache, discovery_dispatch};
+use super::super::{cache, discovery_dispatch, merge_redundant_neuron};
 
 /// Append neuron-focused discovery module specs to the provided vector.
 ///
@@ -195,6 +195,15 @@ pub(crate) fn append_neuron_specs(
         records: cache.load_records_for_hidden(&hidden),
         detect: |records| co_adaptation::detect_co_adapted_neurons(&creature, &records),
         convert: |detected| co_adaptation::co_adapted_pairs_to_coordinated_candidates(&detected, &creature),
+    );
+
+    // Issue #1633: Merge/fold redundant (highly-correlated) hidden neuron pairs
+    discovery_spec!(modules, "merge redundant neuron detection", "merge_redundant_neuron_detection",
+        cache = shared_cache, hidden = hidden_neurons, creature = creature =>
+        guard_min: hidden 2,
+        records: cache.load_records_for_hidden(&hidden),
+        detect: |records| merge_redundant_neuron::detect_redundant_neuron_pairs(&creature, &records),
+        convert: |detected| merge_redundant_neuron::redundant_pairs_to_coordinated_candidates(&detected, &creature),
     );
 
     // Issue #548: Squash + weight rescale detection

@@ -57,6 +57,7 @@ pub const EXPENSIVE_MODULES: &[&str] = &[
     "topology structure analysis",
     "topology diversification detection",
     "co-adaptation detection",
+    "merge redundant neuron detection",
     "weight coherence ratio detection",
     "skip connection discovery",
 ];

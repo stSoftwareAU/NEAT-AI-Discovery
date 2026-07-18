@@ -53,6 +53,7 @@ pub mod ensemble_scoring;
 pub mod failure_cache_handshake;
 pub mod gpu;
 pub mod insufficient_recording;
+pub mod merge_redundant_neuron;
 pub mod module_starvation_tracker;
 pub mod module_tiering;
 pub mod module_weights;
@@ -136,6 +137,14 @@ pub use remove_neuron_constant_promotion::{
 pub use remove_neuron_bias_fold::{
     BIAS_FOLD_GATE_TOLERANCE, BiasFoldOutcome, FoldedTarget, evaluate_constant_neuron_bias_fold,
     fold_and_remove_constant_neuron,
+};
+
+// Issue #1633: merge/fold redundant (highly-correlated) hidden neurons — fold
+// the lower-impact neuron's fan-out into its twin (scaled by the fitted linear
+// relationship) and remove it, behind the evaluate-before-accept ablation gate.
+pub use merge_redundant_neuron::{
+    MERGE_CORRELATION_THRESHOLD, RedundantNeuronPair, detect_redundant_neuron_pairs,
+    detect_redundant_neuron_pairs_with_threshold, redundant_pairs_to_coordinated_candidates,
 };
 
 // Issue #1559: weight-redistribution compensation for remove-neuron candidates
