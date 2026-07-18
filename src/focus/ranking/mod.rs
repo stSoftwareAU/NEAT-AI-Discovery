@@ -156,6 +156,13 @@ pub struct RankFocusStats {
     /// `NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS` is enabled; the
     /// slot-waste measurement the exclusion recovered.
     pub focus_ineligible_constant: usize,
+    /// Number of near-zero-impact neurons gated out of focus-slot eligibility
+    /// this pass (Issue #1635). Non-zero only when
+    /// `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE` is enabled; these neurons vary
+    /// across samples (so the constant filter leaves them in) yet carry a
+    /// structural impact magnitude below the configured gate, so no change
+    /// feeding them can move the output.
+    pub focus_ineligible_low_impact: usize,
 }
 
 pub(super) fn is_selectable_type(neuron_type: &str) -> bool {
@@ -753,6 +760,37 @@ pub(super) fn compute_focus_weighted_score(
     scaled + recon_weight * neuron.reconstruction_mismatch
 }
 
+/// Whether a neuron's structural impact magnitude falls **below** the focus gate
+/// (Issue #1635).
+///
+/// The gate is applied on `|impact|`. A neuron whose magnitude is at or above the
+/// gate is retained (`false`); one strictly below is gated out (`true`). The
+/// boundary rule is therefore **retain-on-equal**: a neuron exactly at the gate
+/// stays eligible. Non-finite impacts (`NaN`, `±inf` are impossible here but
+/// guarded anyway) are treated as below the gate — they carry no usable signal.
+#[must_use]
+fn impact_below_gate(impact: f32, gate: f32) -> bool {
+    let magnitude = impact.abs();
+    // Non-finite magnitude (`NaN`) carries no usable signal → gate it out.
+    // `magnitude < gate` gives retain-on-equal at the boundary.
+    !magnitude.is_finite() || magnitude < gate
+}
+
+/// Drop near-zero-impact neurons from the ranked focus list (Issue #1635),
+/// returning the number gated out.
+///
+/// Complements the constant-neuron filter (#1624): a neuron can vary across
+/// samples (so it is not functionally constant) yet still have a structural
+/// impact magnitude below `gate`, in which case no add-synapse / add-neuron
+/// change feeding it can move the output — the focus slot is wasted. Retains the
+/// caller's ordering for the survivors.
+#[must_use]
+fn apply_focus_impact_gate(neurons: &mut Vec<RankedNeuron>, gate: f32) -> usize {
+    let before = neurons.len();
+    neurons.retain(|n| !impact_below_gate(n.impact, gate));
+    before - neurons.len()
+}
+
 /// Ranks a creature's focus neurons by impact, loading recorded samples from
 /// `parquet_file`.
 ///
@@ -919,6 +957,7 @@ fn rank_focus_core(args: &RankCoreArgs<'_>) -> Result<RankFocusStats> {
             budget_mb: focus_ranking_memory_budget_mb(),
             projected_mb: 0,
             focus_ineligible_constant: 0,
+            focus_ineligible_low_impact: 0,
         });
     }
 
@@ -1169,6 +1208,32 @@ fn rank_selectable(
         0
     };
 
+    // Issue #1635: gate out neurons whose structural impact magnitude is below
+    // the configured threshold. This is complementary to the #1624 constant
+    // filter above: production snapshot mining (#1631) found ~31.6% of neurons
+    // had `|impact| < 1e-6` while still being non-constant, so the constant
+    // filter leaves them in the focus pool even though no change feeding them
+    // can move the output. Runs *after* removal-candidate identification and
+    // does not touch the `selectable` set fed to the constant-removal path
+    // below. Opt-in via `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE`. Never silently
+    // dropped — the gated count is logged and surfaced on `RankFocusStats`.
+    let focus_ineligible_low_impact = if crate::config::focus_impact_gate_enabled() {
+        let gate = crate::config::focus_impact_gate_threshold();
+        let removed = apply_focus_impact_gate(&mut neurons, gate);
+        if removed > 0 {
+            tracing::info!(
+                target: "neat_ai_discovery::focus::ranking",
+                focus_ineligible_low_impact = removed,
+                impact_gate = gate,
+                remaining_focus = neurons.len(),
+                "focus::ranking gated near-zero-impact neurons from focus slots (Issue #1635)",
+            );
+        }
+        removed
+    } else {
+        0
+    };
+
     if let Some(limit) = args.max_results
         && neurons.len() > limit
     {
@@ -1211,6 +1276,7 @@ fn rank_selectable(
         budget_mb: meta.budget_mb,
         projected_mb: meta.projected_mb,
         focus_ineligible_constant,
+        focus_ineligible_low_impact,
     })
 }
 
@@ -1375,6 +1441,71 @@ pub(in crate::focus) fn rank_with_provider_for_tests(
 //
 // The tests below stay inline because `FocusDeadline` and its `resolve`
 // constructor are private to this module and cannot be reached from `tests/`.
+
+#[cfg(test)]
+mod impact_gate_tests {
+    //! Issue #1635: the impact-magnitude gate helpers are private to this
+    //! module (they operate on the private ranking-pass state), so their unit
+    //! tests live inline.
+    use super::super::gradient::GradientFlowStats;
+    use super::{RankedNeuron, apply_focus_impact_gate, impact_below_gate};
+
+    /// Minimal `RankedNeuron` carrying only the `impact` the gate reads.
+    fn neuron(uuid: &str, impact: f32) -> RankedNeuron {
+        RankedNeuron {
+            neuron_uuid: uuid.to_string(),
+            total_error: 0.0,
+            raw_error: 0.0,
+            impact,
+            mean_activation: 0.0,
+            activation_weighted_impact: 0.0,
+            gradient_flow: GradientFlowStats::default(),
+            activation_frequency: 0.0,
+            weighted_score: 0.0,
+            reconstruction_mismatch: 0.0,
+        }
+    }
+
+    #[test]
+    fn below_gate_predicate_boundary_is_retain_on_equal() {
+        let gate = 1e-6f32;
+        // Strictly below the gate → gated out.
+        assert!(impact_below_gate(1e-9, gate));
+        assert!(impact_below_gate(0.0, gate));
+        // Exactly at the gate → retained (documented retain-on-equal rule).
+        assert!(!impact_below_gate(gate, gate));
+        // Above the gate → retained.
+        assert!(!impact_below_gate(1e-3, gate));
+        // Magnitude is used, so a negative impact below the gate is still gated.
+        assert!(impact_below_gate(-1e-9, gate));
+        assert!(!impact_below_gate(-1e-3, gate));
+        // Non-finite carries no signal → gated out.
+        assert!(impact_below_gate(f32::NAN, gate));
+    }
+
+    #[test]
+    fn gate_drops_low_impact_and_keeps_high_impact() {
+        let mut neurons = vec![
+            neuron("high", 0.5),
+            neuron("low-a", 1e-9),
+            neuron("boundary", 1e-6),
+            neuron("low-b", 0.0),
+        ];
+        let removed = apply_focus_impact_gate(&mut neurons, 1e-6);
+        assert_eq!(removed, 2, "both sub-gate neurons should be gated out");
+        let kept: Vec<&str> = neurons.iter().map(|n| n.neuron_uuid.as_str()).collect();
+        assert_eq!(kept, vec!["high", "boundary"]);
+    }
+
+    #[test]
+    fn gate_preserves_order_and_reports_zero_when_all_above() {
+        let mut neurons = vec![neuron("a", 0.9), neuron("b", 0.3), neuron("c", 0.1)];
+        let removed = apply_focus_impact_gate(&mut neurons, 1e-6);
+        assert_eq!(removed, 0);
+        let kept: Vec<&str> = neurons.iter().map(|n| n.neuron_uuid.as_str()).collect();
+        assert_eq!(kept, vec!["a", "b", "c"], "survivor order is preserved");
+    }
+}
 
 #[cfg(test)]
 mod focus_deadline_tests {

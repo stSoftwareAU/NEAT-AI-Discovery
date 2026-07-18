@@ -92,6 +92,8 @@ All knobs are defined in the README
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS` | `60000` | Perf-cliff threshold for a *lazy* pass; at/above it emits one perf-cliff `WARN`. Preload never trips it. `0` disables (#1377). |
 | `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH` | `false` | Enable the reconstruction-mismatch focus signal (§7). Opt-in so the throughput shift can be validated on a reference snapshot first (#1634). |
 | `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH_WEIGHT` | `0.1` | Additive weight applied to the mean reconstruction delta when the signal above is enabled. Non-negative finite values only; invalid or negative values fall back to the default (#1634). |
+| `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE` | `false` | Enable the impact-magnitude gate (§8) — drop near-zero-impact neurons from focus eligibility. Opt-in so the throughput shift can be validated on a reference snapshot first (#1635). |
+| `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE_THRESHOLD` | `1e-6` | Gate threshold: neurons with `\|impact\| <` this value are gated out (retain-on-equal). Positive finite values only; invalid or non-positive values fall back to the default (#1635). |
 
 ---
 
@@ -210,6 +212,57 @@ flowchart LR
     M -->|× weight, additive| S[weightedScore]
     BASE[error × impact^γ × factors] --> S
     S --> RANK[Ranked focus list]
+```
+
+---
+
+## 8. Impact-magnitude gate (Issue #1635)
+
+The constant-neuron filter (§ `NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS`,
+Issue #1624) removes only neurons whose activation *never varies*. But snapshot
+mining on the production GRQ-cluster creature (Issue #1631) found a second, much
+larger waste class: neurons that **vary** across samples yet carry a near-zero
+downstream impact. From `derived.impactsByNeuronUuid`, **1303 / 4126** entries
+(**31.6%**) had `|impact| < 1e-6` — a heavy low-impact tail (p50 = 5.4e-6,
+p90 = 1.4e-4). Because these neurons are not constant, the #1624 filter leaves
+them in the focus pool, and every focus slot spent on them is a wasted candidate
+evaluation: no add-synapse / add-neuron change feeding a neuron that cannot move
+the output can succeed.
+
+The **impact-magnitude gate** drops any neuron whose structural impact magnitude
+is strictly below the configured threshold:
+
+```text
+gated  ⟺  |impact| < NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE_THRESHOLD   # default 1e-6
+```
+
+- **Boundary rule — retain-on-equal.** A neuron *exactly* at the gate is kept;
+  only strictly-below is dropped. Non-finite impacts are treated as below the
+  gate.
+- **Never silently dropped.** The gated count is logged
+  (`focus_ineligible_low_impact`, with the effective gate and remaining focus
+  count) and surfaced on `RankFocusStats.focus_ineligible_low_impact`, per the
+  fail-loud / no-silent-caps guidance.
+- **Complementary, not a replacement.** The gate runs *after* the constant
+  filter and removal-candidate identification, and does not touch the
+  `selectable` set fed to the constant-neuron *removal* path — a gated neuron is
+  still available for bias-fold removal (#306).
+- **Opt-in.** Enabled via `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE=1` with a tunable
+  threshold; disabled by default so the throughput shift can be validated on a
+  reference snapshot before it becomes the default.
+
+```mermaid
+flowchart TD
+    R[Ranked neurons<br/>sorted by weightedScore] --> C{constant filter<br/>#1624 enabled?}
+    C -- Yes --> CF[Drop zero-variance neurons<br/>focus_ineligible_constant]
+    C -- No --> G
+    CF --> G{impact gate<br/>#1635 enabled?}
+    G -- Yes --> GF{"|impact| < gate?"}
+    GF -- Yes --> DROP[Gate out<br/>focus_ineligible_low_impact++]
+    GF -- No, retain-on-equal --> KEEP[Keep in focus list]
+    G -- No --> KEEP
+    DROP --> T[Truncate to maxResults]
+    KEEP --> T
 ```
 
 ---
