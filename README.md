@@ -252,7 +252,7 @@ Modules that detect issues with synapse weights and connections.
 
 | Discovery Type | What It Detects | Candidate Operations |
 |----------------|----------------|---------------------|
-| [Dormant Synapse](docs/DISCOVERY_TYPES.md#dormant-synapse-detection) | Synapses with near-zero weight | `removeSynapse` |
+| [Dormant Synapse](docs/DISCOVERY_TYPES.md#dormant-synapse-detection) | Synapses with negligible contribution (incl. source-gated) | `removeSynapse` |
 | [Opposing Synapse](docs/DISCOVERY_TYPES.md#opposing-synapse-detection) | Synapses increasing error | `removeSynapse`, `setWeight` |
 | [Weight Coherence](docs/DISCOVERY_TYPES.md#weight-coherence-detection) | Incoherent weight ratios and cancellation | `setWeight`, `removeSynapse` |
 | [Weight Magnitude Reset](docs/DISCOVERY_TYPES.md#weight-magnitude-reset-detection) | Synapses stuck in local weight minima | `setWeight` |

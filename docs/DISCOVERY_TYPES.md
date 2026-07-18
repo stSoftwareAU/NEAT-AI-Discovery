@@ -332,19 +332,25 @@ operations.
 
 ### Dormant Synapse Detection
 
-**Source**: `src/analysis/dormant_synapse.rs` (Issue #359)
+**Source**: `src/analysis/detection/dormant_synapse.rs` (Issue #359, #1632)
 
-**Purpose**: Identifies synapses with near-zero weights that contribute
-negligible signal to their target neuron. Dormant synapses waste computation
-during both forward pass and discovery analysis without providing meaningful
-information flow.
+**Purpose**: Identifies synapses that contribute negligible signal to their
+target neuron. Dormant synapses waste computation during both forward pass and
+discovery analysis without providing meaningful information flow.
 
-**Detection criteria**:
+**Detection criteria** (contribution-first — Issue #1632):
 
-1. **Near-zero weight**: The absolute weight is below a threshold (e.g.,
-   1e-4).
-2. **Low contribution**: The product of source activation and synapse weight
-   is negligible relative to other inputs to the target neuron.
+Dormancy is judged on **contribution** (`weight × source_activation`), not on
+weight magnitude. A large weight whose source neuron is gated to ~0 across every
+observation carries no signal and is removable; the previous weight-magnitude
+gate hid these (166 such synapses were missed in production).
+
+1. **Negligible mean contribution**: The mean absolute contribution
+   (`|weight × source_activation|`) across samples is below a threshold — the
+   primary dormancy criterion, applied regardless of weight magnitude.
+2. **No single-observation spike**: The *maximum* absolute contribution is also
+   negligible, so a synapse that is strongly active on even one observation is
+   protected from removal.
 3. **Not the sole connection**: The target neuron has other incoming synapses
    (removing the only input would be destructive).
 
