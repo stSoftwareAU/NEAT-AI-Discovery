@@ -2,7 +2,12 @@ name: Gitleaks
 
 on:
   pull_request:
-    branches: ["*"]
+    # `"*"` matches single-level branch names (e.g. `Develop`, `main`) but not
+    # `milestone/<slug>`, because the `*` glob does not cross `/`. Add
+    # `milestone/*` so milestone sub-issue PRs are secret-scanned too
+    # (Issue #1652). Milestone branch names carry no nested slashes, so a
+    # single-level `milestone/*` glob is sufficient.
+    branches: ["*", "milestone/*"]
 
 # Cancel superseded runs on the same ref (Issue #1288).
 concurrency:
