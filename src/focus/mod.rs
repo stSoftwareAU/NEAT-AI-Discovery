@@ -46,10 +46,10 @@ pub use impact::{
     compute_selection_stats, derive_regime_threshold_from_records, margin_weights_from_margins,
 };
 
-// From selection (Issue #1445)
+// From selection (Issue #1445, superseded by exploit/explore under #1662)
 pub use selection::{
-    CONCENTRATION_WARN_THRESHOLD, DROUGHT_ROTATION_POOL_FACTOR, FocusCandidate, FocusSelection,
-    select_focus_neurons, weight_concentration_ratio,
+    CONCENTRATION_WARN_THRESHOLD, DEFAULT_EXPLORATION_FRACTION, DROUGHT_EXPLORATION_FRACTION,
+    FocusCandidate, FocusSelection, select_focus_neurons, weight_concentration_ratio,
 };
 
 // From ranking

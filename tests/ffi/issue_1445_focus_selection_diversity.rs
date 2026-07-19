@@ -166,24 +166,34 @@ fn focus_selection_is_surfaced_with_concentration_metrics() {
         raw > 0.5,
         "expected raw concentration > 0.5 for the plateau fixture, got {raw}"
     );
-    assert!(
-        fs["diversityFloorApplied"].as_bool().unwrap(),
-        "diversity floor should fire on a single-dominant fixture"
-    );
-    // ...but the effective selection is well under the warn threshold (AC1).
-    assert!(
-        eff < 0.5,
-        "effective concentration must drop below 0.5 after the floor, got {eff}"
-    );
 
-    // The selected set is diverse: >=3 distinct focus targets (AC3 at the FFI
-    // boundary).
+    // Issue #1662: the allocation diagnostics are surfaced. Exploitation keeps a
+    // strict majority; a bounded exploration quota is reserved. (Replaces the
+    // #1445 `diversityFloorApplied` assertion — that behaviour is corrected.)
+    let exploitation = fs["exploitationCount"].as_u64().unwrap();
+    let exploration = fs["explorationCount"].as_u64().unwrap();
     let selected: Vec<String> = fs["selected"]
         .as_array()
         .unwrap()
         .iter()
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
+    assert_eq!(exploitation + exploration, selected.len() as u64);
+    assert!(
+        exploitation * 2 > selected.len() as u64,
+        "exploitation must be a strict majority, got {exploitation}/{}",
+        selected.len()
+    );
+    assert!(fs["eligiblePoolSize"].as_u64().unwrap() >= selected.len() as u64);
+    assert!(fs["explorationCursor"].is_number());
+    assert!(fs["cumulativeCoverage"].is_number());
+
+    // Issue #1662 exploits ranking rather than flattening it, so the effective
+    // concentration is now the genuine metric over the selected weights (the
+    // #1445 artificial equal-share `eff < 0.5` assertion no longer applies).
+    let _ = eff;
+
+    // The selected set is diverse: >=3 distinct focus targets.
     let distinct: std::collections::HashSet<&String> = selected.iter().collect();
     assert!(
         distinct.len() >= 3,
@@ -192,28 +202,30 @@ fn focus_selection_is_surfaced_with_concentration_metrics() {
 }
 
 #[test]
-fn drought_rotation_rotates_focus_across_passes() {
-    // Pool of 18 hidden neurons so K×N (3×6) rotation has room to move.
-    let (creature, parquet_file, _guard) = build_plateau_parquet(18);
+fn drought_widens_exploration_and_advances_cursor() {
+    // Issue #1662: replaces the #1445 top-`K × N` rotation assertion. A large
+    // eligible pool gives the exploration cursor a tail to sweep; drought keeps
+    // a strict exploitation majority while the monotonic cursor advances.
+    let (creature, parquet_file, _guard) = build_plateau_parquet(40);
 
-    let select_for_epoch = |epoch: u64| -> Vec<String> {
+    let select_for = |epochs: u64, cursor: u64| -> Value {
         let rank_input = json!({
             "parquetFile": parquet_file,
             "creature": creature,
-            "maxResults": 18,
+            "maxResults": 40,
             "focusSetSize": 6,
-            // Default drought threshold is 5 passes (#1202); 5+ triggers rotation.
-            "epochsSinceLastAcceptedCandidate": epoch
+            // Default drought threshold is 5 passes (#1202); 5+ signals drought.
+            "epochsSinceLastAcceptedCandidate": epochs,
+            "focusSelectionCursor": cursor
         })
         .to_string();
         let result_json = rank_focus_neurons_internal(&rank_input).unwrap();
         let result: Value = serde_json::from_str(&result_json).unwrap();
         assert_eq!(result["success"], true, "rank failed: {result:?}");
-        let fs = &result["focusSelection"];
-        assert!(
-            fs["rotationApplied"].as_bool().unwrap(),
-            "drought epochs must trigger rotation"
-        );
+        result["focusSelection"].clone()
+    };
+
+    let selected = |fs: &Value| -> Vec<String> {
         fs["selected"]
             .as_array()
             .unwrap()
@@ -222,17 +234,51 @@ fn drought_rotation_rotates_focus_across_passes() {
             .collect()
     };
 
-    let pass_a = select_for_epoch(5);
-    let pass_b = select_for_epoch(6);
-    let pass_c = select_for_epoch(7);
+    let fs_a = select_for(5, 0);
+    let fs_b = select_for(6, 1);
+    let fs_c = select_for(7, 2);
 
-    assert_ne!(pass_a, pass_b, "rotation must advance between passes");
-    assert_ne!(pass_b, pass_c, "rotation must advance between passes");
+    // Drought is active and reported.
+    assert!(fs_a["droughtActive"].as_bool().unwrap());
+    // Exploitation stays a strict majority under drought.
+    let exploitation = fs_a["exploitationCount"].as_u64().unwrap();
+    let total = fs_a["selected"].as_array().unwrap().len() as u64;
+    assert!(
+        exploitation * 2 > total,
+        "drought must keep exploitation majority, got {exploitation}/{total}"
+    );
+    assert!(fs_a["explorationCount"].as_u64().unwrap() >= 1);
+
+    let pass_a = selected(&fs_a);
+    let pass_b = selected(&fs_b);
+    let pass_c = selected(&fs_c);
+    assert_ne!(pass_a, pass_b, "advancing the cursor must change the set");
+    assert_ne!(pass_b, pass_c, "advancing the cursor must change the set");
 
     let union: std::collections::HashSet<String> =
         pass_a.into_iter().chain(pass_b).chain(pass_c).collect();
     assert!(
         union.len() >= 3,
-        "rotation across 3 passes must cover >=3 distinct targets, got {union:?}"
+        "three cursor positions must cover >=3 distinct targets, got {union:?}"
     );
+}
+
+#[test]
+fn rank_focus_input_focus_selection_cursor_round_trips() {
+    // Issue #1662: the monotonic exploration cursor deserialises and defaults to
+    // None (backwards compatible).
+    let without = r#"{
+        "parquetFile": "/tmp/x.parquet",
+        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0}
+    }"#;
+    let parsed: RankFocusNeuronsInput = serde_json::from_str(without).expect("parse");
+    assert!(parsed.focus_selection_cursor.is_none());
+
+    let with = r#"{
+        "parquetFile": "/tmp/x.parquet",
+        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "focusSelectionCursor": 123
+    }"#;
+    let parsed: RankFocusNeuronsInput = serde_json::from_str(with).expect("parse");
+    assert_eq!(parsed.focus_selection_cursor, Some(123));
 }

@@ -67,29 +67,37 @@ pub struct GetVersionOutput {
 
 /// Diversity-aware focus-selection diagnostics (Issue #1445).
 ///
-/// Surfaces the final focus set the diversity floor / drought rotation chose
-/// over the impact-ranked list, plus the concentration metrics that motivated
-/// it. Serialised as `focusSelection` on [`RankFocusNeuronsOutput`].
+/// Surfaces the final focus set the exploit/explore allocator chose over the
+/// impact-ranked list, plus the concentration metrics and the allocation
+/// diagnostics that motivated it (Issue #1662). Serialised as `focusSelection`
+/// on [`RankFocusNeuronsOutput`].
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FocusSelectionJson {
-    /// Selected neuron uuids, in selection order — the focus set the caller
-    /// should analyse this pass.
+    /// Selected neuron uuids, in selection order (exploitation head first, then
+    /// the exploration picks) — the focus set the caller should analyse.
     pub selected: Vec<String>,
     /// Concentration ratio (max weight ÷ sum) of the **raw** roulette weights
     /// over the ranked pool. The diagnostic that exposes single-target
     /// collapse — ~0.985 on the GRQ-3 plateau fixture.
     pub raw_weight_concentration_ratio: f32,
-    /// Concentration ratio after the diversity floor / rotation is applied.
-    /// Below [`crate::focus::CONCENTRATION_WARN_THRESHOLD`] for any focus set of
-    /// 3+ targets.
+    /// Concentration ratio of the **selected** set's weights. Lower than the raw
+    /// ratio because the exploration quota spreads budget.
     pub weight_concentration_ratio: f32,
-    /// Whether the diversity floor reshaped the selection.
-    pub diversity_floor_applied: bool,
-    /// Whether drought-aware round-robin rotation was used.
-    pub rotation_applied: bool,
-    /// Number of candidates considered (rotation pool size under drought, else
-    /// the full ranked candidate count).
+    /// Slots filled by ranking/history exploitation (the strongest neurons).
+    pub exploitation_count: usize,
+    /// Slots filled by deterministic exploration rotation over the eligible tail.
+    pub exploration_count: usize,
+    /// The monotonic per-creature cursor that seeded exploration this pass.
+    pub exploration_cursor: u64,
+    /// Total eligible candidate-producing neurons available for selection.
+    pub eligible_pool_size: usize,
+    /// Best-effort cumulative coverage across cursors `0..=explorationCursor`.
+    pub cumulative_coverage: usize,
+    /// Whether drought widened the exploration quota this pass.
+    pub drought_active: bool,
+    /// Number of candidates considered (== `eligiblePoolSize`). Kept for logging
+    /// compatibility.
     pub pool_size: usize,
 }
 

@@ -97,66 +97,80 @@ All knobs are defined in the README
 
 ---
 
-## 6. Diversity floor and drought rotation (Issue #1445)
+## 6. Exploit/explore focus allocation (Issue #1662, supersedes #1445)
 
-Impact-weighted ranking only **orders** neurons; it does not enforce
-**diversity** in the final focus set. On a plateaued mature network a single
-high-impact neuron can hold the vast majority of the roulette weight — on the
-production GRQ-3 creature one neuron held **~98.5%** of the weight, so the
-weighted roulette collapsed to a **single target** and discovery revisited the
-same neighbourhood every pass.
+Impact-weighted ranking already folds in error, impact, gradient/frequency,
+reconstruction mismatch and the optional Bayesian success-history multiplier.
+The selector should **exploit** that evidence, not flatten it. Issue #1445's
+full-list *stratification* (and top-`K × N` drought rotation) over-corrected: on
+a production creature with ~1,661 eligible hidden neurons and `N = 16` it kept
+only **one** of sixteen focus slots in the highest-ranked neighbourhood, moving
+expensive analysis budget away from the neurons most likely to yield successful
+candidates — and its `3 × N` drought pool never guaranteed full coverage.
 
-[`src/focus/selection.rs`](../src/focus/selection.rs) adds a deterministic
-selection layer over the ranked list (`select_focus_neurons`). Each ranked
-neuron now carries its combined `weighted_score` (surfaced as `weightedScore` on
-each `neurons[]` entry), which is the roulette weight selection operates on.
+[`src/focus/selection.rs`](../src/focus/selection.rs) now allocates the focus
+set deterministically between **exploitation** and **exploration**
+(`select_focus_neurons`). Each ranked neuron carries its combined
+`weighted_score` (surfaced as `weightedScore` on each `neurons[]` entry).
 
 The FFI surfaces a `focusSelection` block on the `rank_focus_neurons` response:
 
 | Field | Meaning |
 |-------|---------|
-| `selected` | The chosen focus uuids, in order. |
+| `selected` | The chosen focus uuids, exploitation head first then exploration picks. |
 | `rawWeightConcentrationRatio` | max weight ÷ sum over the ranked pool — the diagnostic that exposes single-target collapse (~0.985 on GRQ-3). |
-| `weightConcentrationRatio` | Concentration **after** the diversity floor / rotation — below `0.5` for any focus set of 3+ targets. |
-| `diversityFloorApplied` / `rotationApplied` | Which guard fired. |
-| `poolSize` | Candidates considered (rotation pool under drought, else the full ranked count). |
+| `weightConcentrationRatio` | Genuine concentration over the **selected** weights. |
+| `exploitationCount` / `explorationCount` | How the focus set was allocated. |
+| `explorationCursor` | The monotonic per-creature cursor that seeded exploration. |
+| `eligiblePoolSize` | Eligible candidate-producing neurons available. |
+| `cumulativeCoverage` | Best-effort eligible neurons reached across cursors `0..=explorationCursor`. |
+| `droughtActive` | Whether drought widened the exploration quota. |
+| `poolSize` | Candidates considered (== `eligiblePoolSize`). |
 
 When `rawWeightConcentrationRatio` exceeds `0.5` the crate emits a single
-`focus_selection_weight_concentration_high` WARN naming both ratios and which
-guard corrected it.
+`focus_selection_weight_concentration_high` WARN naming the ratios and the
+allocation diagnostics.
 
-### Diversity floor
+### Exploitation majority
 
-When one neuron exceeds its even `1/N` share of the roulette weight, the final
-set is picked **stratified** across the ranked list: the list is divided into
-`N` contiguous bands and the strongest neuron of each band is taken. Band 0
-keeps the dominant neuron; later bands draw from progressively lower-ranked
-regions, guaranteeing quartile-style coverage instead of "dominant + N−1 noise".
+Most slots take the highest-ranked, highest-weight neurons — by default at least
+**80%** outside drought, and always a strict majority. This is where the ranking
+(including its Bayesian success-history multiplier) is exploited.
 
-### Drought-aware rotation
+### Bounded exploration quota and eventual coverage
+
+The remaining slots (default **20%**, at least one when the set has capacity)
+rotate deterministically through the **complete eligible tail** of the ranked
+list. The rotation is seeded by `focusSelectionCursor` — a **monotonic
+per-creature cursor** the caller advances every pass and **never resets when a
+candidate succeeds**. Because the walk advances by the exploration quota each
+pass and skips the exploitation head, every eligible neuron is selected within a
+finite number of passes and success does not reset coverage progress.
+
+### Drought stays exploitative
 
 Once the creature's `epochsSinceLastAcceptedCandidate` meets or exceeds the
 drought threshold (`NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD`, Issue #1202),
-selection switches from weighted ranking to **round-robin** across the top
-`K × N` ranked neurons (K = `DROUGHT_ROTATION_POOL_FACTOR` = 3). The epoch count
-seeds the rotation cursor, so successive passes pick fresh targets and the
-unexplored tail of the ranking finally gets analysis budget.
+drought **widens** the exploration quota
+(`DROUGHT_EXPLORATION_FRACTION` = 0.4 vs `DEFAULT_EXPLORATION_FRACTION` = 0.2)
+but exploitation always keeps a strict majority (>50%). Drought never discards
+exploitation.
 
 > **Caller contract.** The focus-set size `N` comes from `focusSetSize`
 > (default 6, NEAT-AI's `discoveryMaxNeurons`); the candidate pool is the
-> `maxResults` ranked neurons. For rotation to draw from unexplored targets,
-> pass `maxResults >= K × N`.
+> `maxResults` ranked neurons. Pass a `maxResults` comfortably larger than `N`
+> so exploration has an unexplored tail to sweep, and advance
+> `focusSelectionCursor` monotonically for eventual full coverage.
 
 ```mermaid
 flowchart TD
-    R[Ranked neurons<br/>weightedScore each] --> C{epochs >= drought<br/>threshold?}
-    C -- Yes --> RR[Round-robin across top K×N<br/>cursor = epochs]
-    C -- No --> D{max weight share<br/>over 1/N?}
-    D -- Yes --> ST[Stratified pick:<br/>strongest of each of N bands]
-    D -- No --> TN[Weighted top-N]
-    RR --> O[focusSelection<br/>concentration ratio + WARN if raw over 0.5]
-    ST --> O
-    TN --> O
+    R[Ranked neurons<br/>weightedScore each] --> Q{drought active?}
+    Q -- Yes --> W[explore quota = 40%<br/>capped to strict majority]
+    Q -- No --> N2[explore quota = 20%<br/>≥80% exploitation]
+    W --> EX[Exploitation: top slots<br/>by ranking/history]
+    N2 --> EX
+    EX --> EP[Exploration: rotate eligible tail<br/>by monotonic focusSelectionCursor]
+    EP --> O[focusSelection<br/>allocation diagnostics + WARN if raw over 0.5]
 ```
 
 ---
@@ -292,4 +306,5 @@ flowchart TD
   `selection.rs`).
 - Issues: #1373 (incident), #1374, #1375, #1376, #1377, #1385 (guard work);
   #1382, #1386 (this confirmation); #1445 (diversity floor and drought
-  rotation).
+  rotation, superseded); #1662 (exploit/explore allocation and eventual
+  coverage).
