@@ -921,37 +921,12 @@ export NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE=90
 
 ## 📦 Tiered Loading Strategy (Issue #215)
 
-The library automatically selects the optimal loading strategy based on file size
-and available system memory.
-
-**Loading Strategies:**
-
-| Strategy | When Selected | Behaviour |
-|----------|---------------|-----------|
-| **PreloadAll** | Estimated expanded < available_memory ÷ 4 | Loads entire file upfront (fastest access) |
-| **LruCache** | Expanded fits in memory but exceeds 1/4 | Per-neuron caching with LRU eviction |
-| **Streaming** | Expanded exceeds available memory | Block-based loading (lowest memory) |
-
-**How it works:**
-
-1. The library estimates expanded memory = file_size × 3 (decompression ratio)
-2. Compares against available system memory
-3. Automatically selects the best strategy
-
-**LRU Cache Benefits:**
-
-- **Bounded memory**: Uses half of available memory as cache capacity
-- **Per-neuron caching**: More efficient than block-based for focus neuron analysis
-- **Smart eviction**: Least-recently-used neurons are evicted when capacity exceeded
-- **Thread-safe**: Supports concurrent access during parallel analysis
-
-**Example file size thresholds (8GB system):**
-
-| File Size | Expanded Size | Strategy |
-|-----------|---------------|----------|
-| 100 MB    | 300 MB        | PreloadAll (< 2GB = 8GB ÷ 4) |
-| 500 MB    | 1.5 GB        | LruCache (< 8GB but > 2GB) |
-| 3 GB      | 9 GB          | Streaming (> 8GB available) |
+The library automatically selects the optimal loading strategy (PreloadAll, LRU
+cache, or Streaming) based on file size and available system memory. The
+tier-selection heuristic — the ×3 decompression estimate, the `÷4` PreloadAll
+threshold, the half-memory LRU capacity, and the worked size thresholds — is
+documented once in
+[docs/CACHE_TUNING.md § Tier Selection Logic](CACHE_TUNING.md#tier-selection-logic).
 
 **API Usage:**
 

@@ -174,21 +174,15 @@ input values.
 ## 📈 Production Success Rates
 
 How often does each discovery type actually improve the creature when validated
-by NEAT-AI?
-
-| Discovery Type | Success Rate | Volume |
-|----------------|:------------:|-------:|
-| Remove Low-Impact | **17.6%** | 369 candidates |
-| Change Squash | **18.2%** | 11 candidates |
-| Add Synapse | **10.0%** | 10 candidates |
-| Add Neuron | **5.9%** | 9,500 candidates |
-| **Overall** | **6.3%** | **9,900 candidates** |
+by NEAT-AI? The authoritative per-type success/failure counts and rates
+(currently ~6.3% overall across ~9,900 validated candidates) are maintained in
+one place — the
+[Production Success Rates table in docs/DISCOVERY_TYPES.md](../DISCOVERY_TYPES.md#production-success-rates).
 
 The pruning discoveries (saturated, bottleneck, dead, dormant, opposing,
 oscillating, correlated error, multi-hop, redundant path, output bias drift) are
 emitted as **coordinated structural candidates** and their success rates are
-tracked separately within each category. See the
-[technical reference](../DISCOVERY_TYPES.md) for detailed per-type statistics.
+tracked separately within each category.
 
 ---
 

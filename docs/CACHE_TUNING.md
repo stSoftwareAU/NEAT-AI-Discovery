@@ -167,14 +167,11 @@ selection runs before the memory budget is checked. The interaction is:
 
 ## Environment Variables
 
-These environment variables control cache and streaming behaviour:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_PRELOAD_ALL` | off | Force PreloadAll tier (disable streaming) |
-| `NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS` | adaptive | Maximum blocks in streaming cache |
-| `NEAT_AI_DISCOVERY_PREFETCH_DEPTH` | 2 | Streaming prefetch depth (0 = disabled) |
-| `NEAT_AI_DISCOVERY_BLOCK_SIZE` | 10000 | Records per streaming block (min: 10, max: 100000) |
+The cache and streaming knobs (`NEAT_AI_DISCOVERY_PRELOAD_ALL`,
+`NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS`, `NEAT_AI_DISCOVERY_PREFETCH_DEPTH`,
+`NEAT_AI_DISCOVERY_BLOCK_SIZE`) — with their defaults and valid ranges — are
+documented in the single authoritative reference,
+[docs/CONFIGURATION.md § Streaming & Parquet](CONFIGURATION.md#streaming--parquet).
 
 ### Forcing a specific tier
 
@@ -259,11 +256,10 @@ reading from it.
    will not contain the original data.
 
 **Fix:**
-- Follow the recommended shutdown sequence:
-  1. Call `cancel_analysis()` when SIGTERM arrives.
-  2. Wait for the analysis FFI call to return.
-  3. Optionally poll `is_analysis_active()` until it returns `0`.
-  4. Delete the temp directory.
+- Follow the recommended shutdown sequence documented in
+  [docs/FFI_API.md](FFI_API.md#analysis-lifecycle-guard-issue-1048) — cancel, wait
+  for the FFI call to return, poll `is_analysis_active()` until idle, then delete
+  the temp directory.
 
 ---
 
