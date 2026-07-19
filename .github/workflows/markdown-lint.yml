@@ -4,9 +4,12 @@ name: Markdown Lint
 # pull request only. A post-merge `push:` run to the default branch
 # (Develop) would merely duplicate the run that already gated the PR,
 # wasting CI minutes — so no `push:` trigger is declared (Issue #1565).
+# The single-star glob `*` matches only slash-free branch names, so
+# milestone feature branches (`milestone/<slug>`) need an explicit
+# `milestone/*` entry or this gate would skip their sub-issue PRs (Issue #1653).
 on:
   pull_request:
-    branches: ["*"]
+    branches: ["*", "milestone/*"]
 
 # Cancel superseded runs on the same ref (Issue #1288).
 concurrency:
