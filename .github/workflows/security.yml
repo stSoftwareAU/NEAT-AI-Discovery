@@ -11,8 +11,11 @@ on:
 
 permissions:
   contents: read
+  # dependency-review-action posts its PR summary comment through the Issues
+  # API, so it needs issues write. The Checks-API write grant is deliberately
+  # omitted — its only consumer was the RustSec audit-check action, removed as
+  # a duplicate of the explicit cargo-audit path (Issue #1657).
   issues: write
-  checks: write
 
 jobs:
   security:
@@ -27,6 +30,12 @@ jobs:
       # Node.js 20 deprecation warning that will become a hard error on
       # GitHub-hosted runners from September 2026 onwards.
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        # The security job only audits dependencies — it never pushes back
+        # to the repository or fetches private submodules. Do not persist the
+        # GITHUB_TOKEN in .git/config so a compromised later step cannot read
+        # it (Issue #1647).
+        persist-credentials: false
 
     - name: Install Rust toolchain
       # Pinned to a SHA on the action's `stable` branch (Issue #1216).
@@ -36,8 +45,8 @@ jobs:
       # Pinned to a reviewed release and --locked so the plugin's own
       # Cargo.lock is honoured. Without both flags a poisoned new
       # release of cargo-audit (or any transitive dep) would execute via
-      # build.rs with this workflow's issues: write / checks: write
-      # GITHUB_TOKEN. See Issue #1223.
+      # build.rs with this workflow's issues-write GITHUB_TOKEN.
+      # See Issue #1223.
       # Updated to 0.22.1: this version adds CVSS 4.0 support, which is
       # required to parse new advisory-db entries (e.g. RUSTSEC-2026-0076).
       # cargo-audit 0.21.x fails with "unsupported CVSS version: 4.0" and
@@ -45,17 +54,12 @@ jobs:
       run: cargo install --locked --version 0.22.1 cargo-audit
 
     - name: Run security audit
+      # Single RustSec advisory gate. Previously the RustSec audit-check action
+      # ran a second time over the same Cargo.lock and advisory database; it was
+      # removed as duplicate work (Issue #1657). The explicit path is kept
+      # because it is version-pinned (0.22.1) for CVSS 4.0 support, whereas the
+      # action resolved its own cargo-audit version.
       run: cargo audit
-
-    - name: RustSec audit-check
-      # Official RustSec GitHub Action — wraps cargo-audit and annotates
-      # PRs / opens issues for newly disclosed advisories. Pinned to a
-      # 40-char commit SHA (Issue #1216). Updated to the post-v2.0.0 main
-      # branch commit that bumped the action runtime to node24, avoiding the
-      # Node.js 20 deprecation warning that becomes a hard error from June 2026.
-      uses: rustsec/audit-check@858dc40f52ca2b8570b7a997c1c4e35c6fc9a432 # post-v2.0.0 main (node24)
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Dependency review
       if: ${{ inputs.include-dependency-review && github.event_name == 'pull_request' }}

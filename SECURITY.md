@@ -27,7 +27,7 @@ Routine supply-chain defence runs automatically; you do not need to invoke it
 to report a vulnerability. It is summarised here so responders know what is
 already in place:
 
-- **Per-PR audit** — `cargo audit` (`rustsec/audit-check`) and
+- **Per-PR audit** — `cargo audit` and
   `actions/dependency-review-action` run on every pull request via
   `.github/workflows/security.yml` (invoked from `.github/workflows/ci.yml`).
 - **Quarantine window** — Renovate holds external crates.io and GitHub Actions

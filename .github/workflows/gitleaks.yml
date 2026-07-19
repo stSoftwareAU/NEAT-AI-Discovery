@@ -2,7 +2,12 @@ name: Gitleaks
 
 on:
   pull_request:
-    branches: ["*"]
+    # `"*"` matches single-level branch names (e.g. `Develop`, `main`) but not
+    # `milestone/<slug>`, because the `*` glob does not cross `/`. Add
+    # `milestone/*` so milestone sub-issue PRs are secret-scanned too
+    # (Issue #1652). Milestone branch names carry no nested slashes, so a
+    # single-level `milestone/*` glob is sufficient.
+    branches: ["*", "milestone/*"]
 
 # Cancel superseded runs on the same ref (Issue #1288).
 concurrency:
@@ -23,6 +28,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          # Do not persist GITHUB_TOKEN in .git/config — this job only
+          # scans the diff, it never pushes back (Issue #1645).
+          persist-credentials: false
       - name: Install gitleaks
         # Pin the version AND verify the artefact's SHA-256 before
         # extracting it (Issue #1217). Without an integrity check, a

@@ -15,6 +15,10 @@ on:
     types: [opened, synchronize, reopened]
     branches:
       - Develop
+      # Milestone feature branches (milestone/<slug>, no nested slashes) so the
+      # gate runs on milestone sub-issue PRs too, not just the rollup into
+      # Develop (Issue #1651). The single-level `milestone/*` glob is sufficient.
+      - milestone/*
   workflow_dispatch: # Allow manual trigger if needed
 
 # Cancel superseded runs on the same ref (Issue #1288). When a contributor
@@ -254,10 +258,7 @@ jobs:
       
     - name: Run linter
       run: cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args -D clippy::filter_next -D clippy::collapsible_if
-      
-    - name: Check types
-      run: cargo check --all-targets --all-features
-      
+
     - name: Build library
       run: cargo build --lib
 
@@ -282,13 +283,14 @@ jobs:
     uses: ./.github/workflows/security.yml
     if: github.event_name == 'pull_request'
     needs: [version-increment]
-    # Reusable security.yml requests checks: write and issues: write for
-    # rustsec/audit-check and dependency-review-action. Override the
-    # top-level read-only default so the caller can grant them (Issue #1286).
+    # Reusable security.yml requests issues: write for dependency-review-action,
+    # which posts its PR summary comment through the Issues API. Override the
+    # top-level read-only default so the caller can grant it (Issue #1286).
+    # checks: write is no longer requested — the duplicate rustsec/audit-check
+    # step that used the Checks API was removed (Issue #1657).
     permissions:
       contents: read
       issues: write
-      checks: write
     with:
       include-dependency-review: true
 
@@ -305,6 +307,12 @@ jobs:
     - name: Checkout code
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        # The validation job only checks for required files and Cargo.toml
+        # fields — it never pushes back to the repository. Do not persist the
+        # GITHUB_TOKEN in .git/config so a compromised later step cannot read
+        # it (Issue #1644).
+        persist-credentials: false
 
     - name: Check for required files
       shell: bash
@@ -340,7 +348,7 @@ jobs:
         echo "🔍 Validating Cargo.toml..."
 
         # Manifest resolvability is proven by the broader compile gate in
-        # the `quality` job (Check types) on the same pull request;
+        # the `quality` job (Run linter) on the same pull request;
         # recompiling here only duplicated that work (Issue #1342).
         for field in "name" "version" "edition"; do
           if ! grep -vE "^[[:space:]]*#" Cargo.toml | grep -qE "^[[:space:]]*${field}[[:space:]]*="; then

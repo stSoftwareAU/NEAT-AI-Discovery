@@ -4,9 +4,12 @@ name: Markdown Lint
 # pull request only. A post-merge `push:` run to the default branch
 # (Develop) would merely duplicate the run that already gated the PR,
 # wasting CI minutes — so no `push:` trigger is declared (Issue #1565).
+# The single-star glob `*` matches only slash-free branch names, so
+# milestone feature branches (`milestone/<slug>`) need an explicit
+# `milestone/*` entry or this gate would skip their sub-issue PRs (Issue #1653).
 on:
   pull_request:
-    branches: ["*"]
+    branches: ["*", "milestone/*"]
 
 # Cancel superseded runs on the same ref (Issue #1288).
 concurrency:
@@ -24,6 +27,11 @@ jobs:
     steps:
       # actions/checkout@v5
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        # This lint-only job never pushes back or fetches private submodules,
+        # so the GITHUB_TOKEN must not be persisted to .git/config where a
+        # later compromised step could read it (Issue #1646).
+        with:
+          persist-credentials: false
       # actions/setup-node@v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:

@@ -15,7 +15,11 @@ name: actionlint
 
 on:
   pull_request:
-    branches: ["*"]
+    # `"*"` gates single-level branches (Develop, main, feature/... top-level);
+    # the `*` glob does not cross `/`, so `milestone/*` is added to also gate
+    # milestone sub-issue PRs that target a shared `milestone/<slug>` branch
+    # (Issue #1650).
+    branches: ["*", "milestone/*"]
 
 # Cancel superseded runs on the same ref (Issue #1288).
 concurrency:

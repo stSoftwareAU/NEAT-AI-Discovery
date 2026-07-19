@@ -6,7 +6,10 @@ name: ShellCheck
 
 on:
   pull_request:
-    branches: ["*"]
+    # "*" matches single-level branch names (e.g. Develop) but not
+    # milestone/<slug>, since the "*" glob does not span "/". Add
+    # "milestone/*" so milestone sub-issue PRs are gated too (Issue #1655).
+    branches: ["*", "milestone/*"]
 
 # Cancel superseded runs on the same ref (Issue #1288).
 concurrency:
@@ -25,6 +28,11 @@ jobs:
     steps:
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Do not persist GITHUB_TOKEN to .git/config — this job only lints
+          # scripts and never pushes back or fetches private submodules
+          # (Issue #1649).
+          persist-credentials: false
       - name: Run ShellCheck (koalaman/shellcheck)
         # Pinned to a 40-char commit SHA (Issue #1215) to mitigate
         # supply-chain risk from mutable upstream branches. Update via

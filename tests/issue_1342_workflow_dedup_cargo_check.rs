@@ -8,14 +8,17 @@
 //! expensive part of the `validation` job. The redundant `cargo check`
 //! is removed from the "Validate Cargo.toml" step, leaving only the
 //! field-presence validation unique to that step. The single compile gate
-//! is the `quality` job's "Check types" step.
+//! is the `quality` job's "Run linter" (clippy) step — clippy is a superset
+//! of `cargo check` and drives the same compilation, so it proves manifest
+//! resolvability on every pull request (the redundant standalone "Check types"
+//! `cargo check` step was removed in Issue #1658).
 //!
 //! This test parses `ci.yml` as plain text (no YAML parser is in the
 //! dependency tree) and asserts:
 //!   1. The "Validate Cargo.toml" step contains no `cargo check`.
 //!   2. The "Validate Cargo.toml" step still performs field-presence
 //!      validation (its genuinely distinct work is preserved).
-//!   3. The "Check types" step retains the broad compile gate so the
+//!   3. The "Run linter" step retains the broad compile gate so the
 //!      manifest is still proven resolvable on every pull request.
 
 use std::fs;
@@ -71,8 +74,8 @@ fn validate_cargo_toml_step_has_no_cargo_check() {
     assert!(
         !block.contains("cargo check"),
         "step `Validate Cargo.toml` must not run `cargo check` — it duplicates the \
-         broader compile gate in the `quality` job's `Check types` step \
-         (`cargo check --all-targets --all-features`), doubling the crate's \
+         broader compile gate in the `quality` job's `Run linter` step \
+         (`cargo clippy --all-targets --all-features`), doubling the crate's \
          compilation per pull request for no added coverage (Issue #1342)",
     );
 }
@@ -94,13 +97,13 @@ fn validate_cargo_toml_step_keeps_field_presence_validation() {
 }
 
 #[test]
-fn check_types_step_retains_broad_compile_gate() {
+fn linter_step_retains_broad_compile_gate() {
     let body = read_workflow("ci.yml");
-    let block = step_block(&body, "Check types").expect("step `Check types` not found in ci.yml");
+    let block = step_block(&body, "Run linter").expect("step `Run linter` not found in ci.yml");
     assert!(
-        block.contains("cargo check --all-targets --all-features"),
-        "the `Check types` step must retain `cargo check --all-targets --all-features` \
+        block.contains("cargo clippy --all-targets --all-features"),
+        "the `Run linter` step must retain `cargo clippy --all-targets --all-features` \
          as the single compile gate that proves manifest resolvability on every \
-         pull request (Issue #1342)",
+         pull request — clippy is a superset of `cargo check` (Issue #1342, Issue #1658)",
     );
 }
