@@ -286,13 +286,14 @@ jobs:
     uses: ./.github/workflows/security.yml
     if: github.event_name == 'pull_request'
     needs: [version-increment]
-    # Reusable security.yml requests checks: write and issues: write for
-    # rustsec/audit-check and dependency-review-action. Override the
-    # top-level read-only default so the caller can grant them (Issue #1286).
+    # Reusable security.yml requests issues: write for dependency-review-action,
+    # which posts its PR summary comment through the Issues API. Override the
+    # top-level read-only default so the caller can grant it (Issue #1286).
+    # checks: write is no longer requested — the duplicate rustsec/audit-check
+    # step that used the Checks API was removed (Issue #1657).
     permissions:
       contents: read
       issues: write
-      checks: write
     with:
       include-dependency-review: true
 
