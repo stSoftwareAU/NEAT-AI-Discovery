@@ -200,6 +200,10 @@ jobs:
         ref: ${{ github.head_ref }}
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
+        # The quality job only fetches, builds, and tests — it never pushes
+        # back to the repository. Do not persist the GITHUB_TOKEN in
+        # .git/config so a compromised later step cannot read it (Issue #1643).
+        persist-credentials: false
 
     - name: Free up runner disk space
       shell: bash
