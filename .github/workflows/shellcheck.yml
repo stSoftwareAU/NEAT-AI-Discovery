@@ -6,7 +6,10 @@ name: ShellCheck
 
 on:
   pull_request:
-    branches: ["*"]
+    # "*" matches single-level branch names (e.g. Develop) but not
+    # milestone/<slug>, since the "*" glob does not span "/". Add
+    # "milestone/*" so milestone sub-issue PRs are gated too (Issue #1655).
+    branches: ["*", "milestone/*"]
 
 # Cancel superseded runs on the same ref (Issue #1288).
 concurrency:
