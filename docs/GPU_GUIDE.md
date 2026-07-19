@@ -356,21 +356,12 @@ gdb -p <pid> -ex 'thread apply all bt' -ex 'quit'
 
 ## 💾 Parquet File Memory Check
 
-Before loading a parquet file, the library checks if there's enough available memory.
-Parquet files are compressed, so they typically expand to 2-4× their file size when
-loaded into memory. The library uses conservative checks to prevent memory pressure:
-
-1. **3× file size** for in-memory representation
-2. **1GB headroom** after loading (for GPU buffers, etc.)
-3. **50% RAM limit** - won't use more than half of total RAM for parquet data
-
-**Maximum parquet file sizes by RAM:**
-
-| Total RAM | Max Parquet File | Explanation |
-|-----------|------------------|-------------|
-| 8 GB      | ~1.3 GB          | 50% limit = 4GB, ÷3 decompression = 1.3GB |
-| 16 GB     | ~2.6 GB          | 50% limit = 8GB, ÷3 decompression = 2.6GB |
-| 32 GB     | ~5.3 GB          | 50% limit = 16GB, ÷3 decompression = 5.3GB |
+Before loading a parquet file, the library checks whether there's enough
+available memory. Parquet files are compressed, so they typically expand to
+2–4× their file size when loaded. The conservative memory model behind this
+check — the ×3 decompression estimate, the half-of-RAM cap, and the resulting
+maximum file sizes by RAM — is documented once in
+[docs/CACHE_TUNING.md § Tier Selection Logic](CACHE_TUNING.md#tier-selection-logic).
 
 To reduce parquet file size:
 - Lower `discoverySampleRate` (e.g., from 0.05 to 0.02)
@@ -382,21 +373,11 @@ To reduce parquet file size:
 For very large datasets, the library supports streaming parquet loading with block-based
 caching and prefetch.
 
-**Configuration:**
-
-```bash
-# Maximum blocks to keep in memory (default: adaptive based on RAM)
-export NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS=100
-
-# Prefetch depth - how many blocks ahead to load (default: 2)
-export NEAT_AI_DISCOVERY_PREFETCH_DEPTH=2
-
-# Disable streaming and use full preload (like before)
-export NEAT_AI_DISCOVERY_PRELOAD_ALL=1
-
-# Block size in records (default: 10000, minimum: 10)
-export NEAT_AI_DISCOVERY_BLOCK_SIZE=10000
-```
+**Configuration:** the streaming knobs (`NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS`,
+`NEAT_AI_DISCOVERY_PREFETCH_DEPTH`, `NEAT_AI_DISCOVERY_PRELOAD_ALL`,
+`NEAT_AI_DISCOVERY_BLOCK_SIZE`) — with their defaults and valid ranges — live in
+the single authoritative reference,
+[docs/CONFIGURATION.md § Streaming & Parquet](CONFIGURATION.md#streaming--parquet).
 
 ### 🧠 Memory-Constrained Streaming (Issue #420)
 

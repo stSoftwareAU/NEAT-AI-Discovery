@@ -29,6 +29,8 @@ default rather than aborting.
 | `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` | auto | Override GPU batch size (64–4096). |
 | `NEAT_AI_DISCOVERY_GPU_TIMING` | off | Enable GPU kernel profiling. |
 | `NEAT_AI_DISCOVERY_QUIET_GPU` | off | Suppress Mesa/libEGL debug output. |
+| `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` | 3 | Maximum consecutive device-lost recovery attempts on the GPU work queue before the pass fails. Accepted range `0–10`; out-of-range or invalid values fall back to the default. |
+| `NEAT_AI_DISCOVERY_ZERO_COPY` | auto-detect | Force-enable (`1`/`true`) or force-disable (`0`/`false`) zero-copy GPU buffers, overriding hardware auto-detection. Unset lets the library decide from the adapter. |
 
 ## Streaming & Parquet
 
@@ -54,8 +56,19 @@ default rather than aborting.
 | `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE_THRESHOLD` | 1e-6 | Impact-magnitude gate: neurons with `\|impact\| <` this value are gated out when the gate above is enabled (retain-on-equal at the boundary). Positive finite values only; invalid or non-positive values fall back to the default (Issue #1635). |
 | `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | dynamic | Constant-source folding threshold. |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | unset | Cap focus-ranking eager pre-load size in MB. When set and projected size (file × 3) exceeds the budget, lazy mode is used with a structured `info` log (Issue #1172). |
-| `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` | 120000 | Wall-clock budget for focus ranking; a run that exceeds it aborts with a structured `Timeout` error so the caller falls back to local ranking. `0` disables the bound; other values clamp to `[1000, 3600000]` (Issue #1375). |
+| `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` | 1024 | Safety margin (MB) reserved from OS-available memory when deciding eager-vs-lazy focus-ranking pre-load. `0` reserves no margin; unset / invalid values fall back to the default. |
+| `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` | 120000 (eager); scaled for lazy | Wall-clock budget for focus ranking; a run that exceeds it aborts with a structured `Timeout` error so the caller falls back to local ranking. When **unset**, the default is scaled by loading mode and projected dataset size — eager keeps the flat 120 s, while a *lazy* pass earns `4 × 120 s + 20 ms per projected MB` so a legitimate lazy fallback finishes instead of aborting into degraded recorded-error aggregation (Issue #3172). An explicit value **wins verbatim** and is never scaled; `0` disables the bound; other values clamp to `[1000, 3600000]` (Issue #1375). |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS` | 60000 | Perf-cliff threshold for a *lazy* focus-ranking pass; a lazy pass at or above this emits one explicit perf-cliff `WARN` naming the neuron count and projected dataset size. Preload never trips it. `0` disables the warning (Issue #1377). |
+| `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH` | off | Fold each neuron's mean reconstruction-activation delta into its focus score as an additive term. Opt-in (`1`/`true`/`yes`) so the throughput shift can be validated on a reference snapshot first (Issue #1634). |
+| `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH_WEIGHT` | 0.1 | Additive weight applied to the mean reconstruction delta when the signal above is enabled. Non-negative finite values only (`0.0` disables the contribution); invalid or negative values fall back to the default (Issue #1634). |
+
+## Detection thresholds
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD` | 2.0 | Noise-to-signal ratio threshold for the noise-signal detection module. Parsed as `f32`; unset uses the module default. |
+| `NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD` | 2.0 | Input-dominance threshold for input-sensitivity detection. Parsed as `f32`; unset uses the module default. |
+| `NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD` | 10.0 | Gradient threshold for input-sensitivity detection. Parsed as `f32`; unset uses the module default. |
 
 ## Analysis budget & deadlines
 
@@ -83,6 +96,8 @@ default rather than aborting.
 | `NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD` | 1000 | Hidden-neuron count above which **expensive**-tier discovery modules are skipped at dispatch on non-escalation passes (Issue #1547). Suppressed during drought / novelty-escalation passes so the full set re-enables. `0` disables it entirely. |
 | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | off | Metropolis-Hastings temperature for probabilistic acceptance. |
 | `NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL` | off | Re-enable the disabled batch-successful module (Issue #1059). |
+| `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR` | `1e-5` | Minimum `net_improvement` a remove-low-impact candidate must clear to reach the FFI response (matches `COORDINATED_MIN_EXPECTED_GAIN`). Non-negative finite values only; `0.0` disables the floor (test path); invalid values fall back to the default. Sensible band `1e-8`–`1e-3`. |
+| `NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER` | 1.0 | **Test-only escape hatch.** Multiplier applied to every per-op-count coordinated-structural noise floor; production callers leave it unset. Finite `> 0.0` values only, clamped to `[1e-3, 100.0]`; invalid values fall back to `1.0` (Issue #1142). |
 
 ## Drought & novelty escalation
 
@@ -97,6 +112,16 @@ default rather than aborting.
 | `NEAT_AI_DISCOVERY_NOVELTY_GAIN_RELAXATION` | 0.5 | Multiplier applied to the coordinated-structural expected-gain floor when novelty escalation engages, loosening it so structurally-novel candidates survive. Honoured in `(0.0, 1.0]`; never raises the floor above the base constant (Issue #1423). |
 | `NEAT_AI_DISCOVERY_REMOVE_NEURON_DROUGHT_FACTOR` | 0.1 | Multiplier applied to a single-op `RemoveNeuron` coordinated candidate's `expectedCreatureScoreGain` while the creature is in a **search-exhaustion** drought (Issue #1448). Engages only when the trailing-failure streak reaches the drought threshold **and** the drought classifies as `search_exhaustion`. Clamped to `[0.001, 1.0]`; `1.0` disables it. |
 | `NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR` | 0.25 | Cold-start calibration prior multiplier for non-invertible / periodic target activations (SINE, COSINE, GAUSSIAN, SQUARE, ABSOLUTE). Applied while the per-(`change_type`, `target_squash`) bucket has fewer than three failure samples. Clamped to `[0.001, 1.0]` (Issue #1192). |
+| `NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD` | 0.2 | Rolling success-rate threshold below which the creature enters **Conservative** discovery mode (Issue #1132). Honoured in `(0.0, 1.0]`; invalid values fall back to the default. |
+| `NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS` | 20 | Maximum consecutive failed passes Conservative mode persists before it is abandoned and Normal mode resumes. Must be `>= 1`; invalid values fall back to the default. |
+| `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` | 10.0 | Multiplier applied to the coordinated-structural expected-gain floor (`COORDINATED_MIN_EXPECTED_GAIN`) while Conservative mode is active. Values `< 1.0` are clamped up to `1.0`; the floor never relaxes below the base constant. |
+| `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES` | 3 | Consecutive per-target failures before a target neuron enters cooldown. Must be `>= 1`; invalid values fall back to the default (Issue #1273). |
+| `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` | 10 | Cooldown duration in epochs for a skipped target neuron. Must be `>= 1`; invalid values fall back to the default. |
+| `NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT` | 1 | Within-batch failures on a single target before subsequent same-target candidates in that batch are short-circuited. Must be `>= 1`; invalid values fall back to the default. |
+| `NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR` | 2 | Divisor that shrinks the target-cooldown epoch window while in Conservative mode so failing targets re-enter focus sooner. Clamped to `[1, 64]`. |
+| `NEAT_AI_DISCOVERY_COOLDOWN_EXTENDED_DROUGHT_DIVISOR` | 4 | Divisor applied to the target-cooldown window during an extended drought (last-ditch escape hatch; effective cooldown floored at 2 epochs). Clamped to `[1, 64]`. |
+| `NEAT_AI_DISCOVERY_STALENESS_CONSERVATIVE_DIVISOR` | 2 | Divisor that shrinks the candidate-cache staleness window in Conservative mode so failed candidates are re-evaluated sooner. Clamped to `[1, 64]`. |
+| `NEAT_AI_DISCOVERY_STALENESS_EXTENDED_DROUGHT_DIVISOR` | 4 | Divisor applied to the candidate-cache staleness window during an extended drought (effective window floored at 5 epochs). Clamped to `[1, 64]`. |
 
 ## Memory & recording gates
 
@@ -104,6 +129,16 @@ default rather than aborting.
 |----------|---------|-------------|
 | `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB` | 0.5 macOS / 1.0 Linux | Minimum available memory (GB) below which discovery is gated off (Issue #1420). Lower it (e.g. `0.1`) so a small-but-capable ~8GB host can proceed; `0` disables the available-memory gate. Invalid / out-of-range (`0.0–64.0`) values fall back to the platform default. The 4GB total-memory minimum is unaffected. |
 | `NEAT_AI_DISCOVERY_INSUFFICIENT_RECORDING_FRACTION` | 1.0 | Fraction of selected focus neurons that must have **zero** Parquet rows before the fail-fast insufficient-recording gate skips synapse/neuron analysis (Issue #1444). The gate detects this with a cheap record-count scan *before* GPU work and surfaces `insufficient_recording` as the dominant rejection reason. Honoured in `(0.0, 1.0]`; `0` disables the gate. |
+
+## Observability & diagnostics
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEAT_AI_DISCOVERY_TIMING` | off | Print phase timing to stderr when set to any value (convention `=1`). |
+| `NEAT_AI_DISCOVERY_PROFILE` | off | Emit a structured profile to stderr. The only recognised value is `json` (case-insensitive); anything else disables profiling. |
+| `NEAT_AI_DISCOVERY_GPU_METRICS` | off | Print GPU metrics to stderr when set to any value (convention `=1`). |
+| `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | 10.0 | `actual/expected` ratio above which prediction-vs-actual calibration mismatches are logged via `tracing::warn!`. Must be finite and `> 1.0`; invalid values fall back to the default so the log channel cannot be silenced by a malformed value. |
+| `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` | `sample` | Path override for the macOS `sample` binary used for thread-dump diagnostics. Diagnostics/tooling only — not a discovery-tuning knob. |
 
 ## Related guides
 

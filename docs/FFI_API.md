@@ -509,6 +509,12 @@ per `analyze_all` invocation when the diagnostic fires.
 | `dominantRejectionCount` | Count for `dominantRejectionReason`. |
 | `totalCandidatesConsidered` | `totalCandidatesRejected + candidatesReturned`. |
 | `totalCandidatesRejected` | Sum across the rejection breakdown. |
+| `dominantFailedModule` | Discovery module responsible for the most recent failures (e.g. `"coordinated-structural"`). `null` until ≥ 5 failures are recorded. |
+| `dominantFailedModuleShare` | Share (0.0–1.0) of recent failures attributed to `dominantFailedModule`. |
+| `dominantFailedTargetUuid` | Target neuron UUID absorbing the most recent failures. `null` until ≥ 5 failures are recorded. |
+| `dominantFailedTargetShare` | Share (0.0–1.0) of recent failures targeting `dominantFailedTargetUuid`. |
+| `dominantOperationCount` | Most common operation count among recent failures (e.g. `4` for 4-op coordinated-structural collapses). `null` until ≥ 5 failures are recorded. |
+| `predictedVsActualGapP50` | Median ratio of `actualErrorReduction / expectedCreatureScoreGain` over the recent-failure window; negative means candidates moved error the wrong way. `0.0` when the window is below the 5-failure floor or every prediction was zero. |
 
 ### Failure-Cache Handshake (Issue #1447)
 
@@ -636,126 +642,23 @@ Instead of one monolithic `record_discovery` call, data is streamed incrementall
 TypeScript accumulated 6+ minutes of discovery data and tried to JSON.stringify it all
 at once for the FFI call, it hit this limit. The streaming API keeps each FFI call small.
 
-### 🛠️ Usage Pattern
-
-```mermaid
-sequenceDiagram
-    participant TS as 🟦 TypeScript
-    participant RS as 🦀 Rust Library
-
-    TS->>RS: 1. start_discovery_session()
-    RS-->>TS: sessionId
-
-    loop Collect data batches
-        Note over TS: Collect records<br/>(estimate size)
-        TS->>RS: 2. append_discovery_records()
-        Note over RS: Writes batch<br/>to Parquet
-        RS-->>TS: recordsWritten
-    end
-
-    TS->>RS: 3. finish_discovery_session()
-    RS-->>TS: tempDir, file, totalRecords
-```
-
 ### ⚙️ FFI Functions
 
-**`start_discovery_session`** — Start a new recording session
+The exported symbols and their session lifecycle (start → append → finish, or
+cancel to abort):
 
-Input:
-```json
-{
-  "creature": { "neurons": ["..."], "synapses": ["..."], "input": 20, "output": 2 },
-  "tempDir": ".discovery/abc123_456789"
-}
-```
+| Symbol | Purpose | Validates `CreatureJson` |
+|--------|---------|--------------------------|
+| `start_discovery_session` | Start a new recording session; returns a `sessionId`. | yes (Issue #1188) |
+| `append_discovery_records` | Append a batch of observations to an open session; returns `recordsWritten`. | no — session captured at start |
+| `finish_discovery_session` | Finalise and close the Parquet file; returns `tempDir`, `file`, `totalRecords`. | no |
+| `cancel_discovery_session` | Cancel a session, cleaning up without finalising. | no |
 
-Output:
-```json
-{
-  "success": true,
-  "sessionId": "550e8400-e29b-41d4-a716-446655440000"
-}
-```
-
-**`append_discovery_records`** — Append records to an existing session
-
-Input:
-```json
-{
-  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
-  "observations": [
-    {
-      "obsIndex": 0,
-      "neuronData": [
-        { "neuronUuid": "hidden-1", "activation": 0.5, "value": 0.4, "errors": [0.1] }
-      ],
-      "inputs": [0.1, 0.2, 0.3]
-    }
-  ]
-}
-```
-
-Output:
-```json
-{
-  "success": true,
-  "recordsWritten": 42
-}
-```
-
-**`finish_discovery_session`** — Finalise and close the Parquet file
-
-Input:
-```json
-{
-  "sessionId": "550e8400-e29b-41d4-a716-446655440000"
-}
-```
-
-Output:
-```json
-{
-  "success": true,
-  "tempDir": ".discovery/abc123_456789",
-  "file": "discovery_data.parquet",
-  "totalRecords": 12345
-}
-```
-
-**`cancel_discovery_session`** — Cancel a session (cleanup without finalising)
-
-Input:
-```json
-{
-  "sessionId": "550e8400-e29b-41d4-a716-446655440000"
-}
-```
-
-Output:
-```json
-{
-  "success": true
-}
-```
-
-### 📐 Size Estimation for TypeScript
-
-To decide when to flush, estimate the JSON size before serialising:
-
-```typescript
-// Rough estimate: ~200 bytes per neuron record + input array
-const estimatedBytes = observations.length * (
-  200 * creature.neurons.length +
-  4 * creature.input
-);
-
-// Flush when approaching 50MB (well under JS string limits)
-const FLUSH_THRESHOLD = 50 * 1024 * 1024;
-if (estimatedBytes > FLUSH_THRESHOLD) {
-  await appendDiscoveryRecords(sessionId, observations);
-  observations = []; // Reset batch
-}
-```
+The full request/response JSON shapes for each function, the workflow sequence
+diagram, the batch-size estimation snippet (flush near 50 MB), and the
+TypeScript error-handling patterns are documented once in the
+[Streaming API Guide](STREAMING_GUIDE.md) — this section is the FFI-symbol
+reference only.
 
 ### ✅ Benefits
 

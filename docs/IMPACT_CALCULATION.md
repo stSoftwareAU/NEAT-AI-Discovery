@@ -380,6 +380,57 @@ savings = costOfGrowth × (1 + (incomingSynapses + outgoingSynapses) / 10)
 
 ---
 
+## ♻️ Remove-Neuron Weight-Redistribution Compensation (Issue #1559)
+
+A hygiene-forced `removeNeuron` is usually **regressive**: NEAT-AI's
+mean-preserving **bias** compensation cancels only the *mean* of the removed
+neuron's downstream contribution, leaving its genuine **per-sample (variance)**
+signal as residual cost. The #1558 counterfactual study found that the only
+lever able to recover that residual — and make the removal non-regressive — is
+**(d): folding the removed neuron's per-sample contribution into a correlated
+survivor's downstream weight** rather than only its bias. Of the five strategies
+studied, only (d) has a ceiling that reaches a non-regressive removal.
+
+Evaluating (d) needs the candidate's per-sample activation distribution and its
+correlation with surviving neurons. Persisting full per-sample vectors per
+candidate is prohibitive, so the `remove_neuron_compensation` module
+(`src/analysis/remove_neuron_compensation.rs`) persists a compact **sufficient
+statistic** — the per-pair mean/variance/covariance of the candidate against
+each survivor sharing a downstream target (`ActivationCovariance`, `O(1)` in the
+sample count, accumulated in a single numerically stable pass via the
+two-variable extension of Welford's algorithm). From that it computes the
+optimal least-squares weight bump and the residual per-sample variance it leaves:
+
+```
+Δw       = w_c · cov(a_c, a_s) / var(a_s)
+residual = w_c² · var(a_c) · (1 − ρ²)
+```
+
+where `a_c`/`a_s` are the candidate's and survivor's per-sample activations,
+`w_c` is the removed neuron's downstream weight, and `ρ` is their correlation. A
+perfectly correlated survivor (`ρ = 1`) drives the residual to zero — the
+removal becomes fully compensable and non-regressive, which the mean-only bias
+lever can never achieve; an uncorrelated survivor (`ρ = 0`) recovers nothing and
+the removal stays regressive.
+
+`shared_downstream_targets` enumerates survivors sharing a downstream target,
+`aligned_activations` joins two neurons' per-sample `DiscoverRecord`s on
+`obs_index`, and `best_weight_redistribution` picks the survivor whose
+redistribution recovers the most variance — returning `None` (no fabricated
+compensation) when no shared-target survivor has aligned samples.
+
+```mermaid
+flowchart TD
+    A[Remove-neuron candidate] --> B[Per-sample activations<br/>DiscoverRecords]
+    B --> C[Align on obs_index with<br/>each shared-target survivor]
+    C --> D[ActivationCovariance<br/>compact sufficient statistic]
+    D --> E{evaluate_weight_redistribution}
+    E -->|&rho; &asymp; 1| F[Residual &asymp; 0<br/>fully compensable — non-regressive]
+    E -->|&rho; &asymp; 0| G[Residual = bias-only variance<br/>no recovery — stays regressive]
+```
+
+---
+
 ## 📋 Implementation Status (v0.2.1+)
 
 The impact calculation is now **squash-aware** and uses **activation-based statistics**

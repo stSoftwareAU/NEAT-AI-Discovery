@@ -82,18 +82,18 @@ the implemented and documented design.
 
 ## 5. The environment knobs
 
-All knobs are defined in the README
-[Environment Variables](../README.md#-environment-variables) table:
+Every focus-ranking knob — with its default, valid range, and description — is
+documented once in the single authoritative reference,
+[docs/CONFIGURATION.md § Focus selection & ranking](CONFIGURATION.md#focus-selection--ranking).
+The knobs that control the focus signals designed in this document are:
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` | `120000` (eager); scaled for lazy | Wall-clock budget for focus ranking; overrun aborts with a retryable `Timeout`. When **unset**, the default is scaled by loading mode + projected dataset size — eager keeps 120 s, lazy earns `4 × 120 s + 20 ms/projected MB` (clamped to `[1000, 3600000]`) so a legitimate lazy fallback finishes (#3172). An explicit value **wins verbatim** (never scaled); `0` disables; other values clamp to `[1000, 3600000]` (#1375, #1385). |
-| `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | unset | Cap the eager pre-load size; projected size (file × 3) above the cap forces lazy mode with a structured `info` log (#1172). |
-| `NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS` | `60000` | Perf-cliff threshold for a *lazy* pass; at/above it emits one perf-cliff `WARN`. Preload never trips it. `0` disables (#1377). |
-| `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH` | `false` | Enable the reconstruction-mismatch focus signal (§7). Opt-in so the throughput shift can be validated on a reference snapshot first (#1634). |
-| `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH_WEIGHT` | `0.1` | Additive weight applied to the mean reconstruction delta when the signal above is enabled. Non-negative finite values only; invalid or negative values fall back to the default (#1634). |
-| `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE` | `false` | Enable the impact-magnitude gate (§8) — drop near-zero-impact neurons from focus eligibility. Opt-in so the throughput shift can be validated on a reference snapshot first (#1635). |
-| `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE_THRESHOLD` | `1e-6` | Gate threshold: neurons with `\|impact\| <` this value are gated out (retain-on-equal). Positive finite values only; invalid or non-positive values fall back to the default (#1635). |
+- `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS`, `…_MEMORY_BUDGET_MB`,
+  `…_MEMORY_MARGIN_MB`, `…_PERF_CLIFF_MS` — the wall-clock budget, eager-vs-lazy
+  pre-load decision, and perf-cliff warning (§4, #3172, #1172, #1375, #1377).
+- `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH` and its `…_WEIGHT` —
+  the reconstruction-mismatch focus signal (§7, #1634).
+- `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE` and its `…_THRESHOLD` —
+  the impact-magnitude gate (§8, #1635).
 
 ---
 
