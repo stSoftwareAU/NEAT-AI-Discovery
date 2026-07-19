@@ -584,29 +584,38 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
             let drought_threshold = u64::from(crate::config::drought_log_threshold());
             let epochs = input.epochs_since_last_accepted_candidate.unwrap_or(0);
             let drought_active = drought_threshold > 0 && epochs >= drought_threshold;
+            // Issue #1662: exploration rotates on a monotonic per-creature cursor
+            // that does NOT reset when a candidate succeeds, so coverage is
+            // eventual. Fall back to the drought epoch counter only when the host
+            // has not yet adopted the dedicated cursor field.
+            let focus_cursor = input.focus_selection_cursor.unwrap_or(epochs);
             let focus_selection = focus::select_focus_neurons(
                 &focus_candidates,
                 focus_set_size,
                 drought_active,
-                epochs,
+                focus_cursor,
             );
 
-            // Issue #1445: WARN when the raw roulette is pathologically
-            // single-target so operators can see the collapse the diversity
-            // floor / rotation just corrected.
+            // Issue #1662: WARN when the raw roulette is pathologically
+            // single-target so operators can see the collapse the exploit/explore
+            // allocation just spread, and surface the allocation diagnostics.
             if focus_selection.raw_weight_concentration_ratio > focus::CONCENTRATION_WARN_THRESHOLD
             {
                 tracing::warn!(
                     raw_weight_concentration_ratio = focus_selection.raw_weight_concentration_ratio,
                     effective_weight_concentration_ratio =
                         focus_selection.weight_concentration_ratio,
-                    diversity_floor_applied = focus_selection.diversity_floor_applied,
-                    rotation_applied = focus_selection.rotation_applied,
-                    pool_size = focus_selection.pool_size,
+                    exploitation_count = focus_selection.exploitation_count,
+                    exploration_count = focus_selection.exploration_count,
+                    exploration_cursor = focus_selection.exploration_cursor,
+                    eligible_pool_size = focus_selection.eligible_pool_size,
+                    cumulative_coverage = focus_selection.cumulative_coverage,
+                    drought_active = focus_selection.drought_active,
                     focus_set_size,
                     "focus_selection_weight_concentration_high: a single neuron \
-                     dominated the focus-selection roulette; diversity floor / \
-                     drought rotation applied to spread the focus set"
+                     dominated the focus-selection roulette; exploit/explore \
+                     allocation spread the focus set while keeping the ranking \
+                     majority"
                 );
             }
 
@@ -614,8 +623,12 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 selected: focus_selection.selected,
                 raw_weight_concentration_ratio: focus_selection.raw_weight_concentration_ratio,
                 weight_concentration_ratio: focus_selection.weight_concentration_ratio,
-                diversity_floor_applied: focus_selection.diversity_floor_applied,
-                rotation_applied: focus_selection.rotation_applied,
+                exploitation_count: focus_selection.exploitation_count,
+                exploration_count: focus_selection.exploration_count,
+                exploration_cursor: focus_selection.exploration_cursor,
+                eligible_pool_size: focus_selection.eligible_pool_size,
+                cumulative_coverage: focus_selection.cumulative_coverage,
+                drought_active: focus_selection.drought_active,
                 pool_size: focus_selection.pool_size,
             };
 

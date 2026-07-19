@@ -377,28 +377,37 @@ pub struct RankFocusNeuronsInput {
     #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
     /// Number of discovery passes since this creature last had a candidate
-    /// accepted (Issue #1445). Drives diversity-aware focus selection:
+    /// accepted (Issue #1445). Drives drought classification for focus
+    /// selection: once it meets or exceeds the drought threshold
+    /// (`NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD`, #1202) the exploit/explore
+    /// allocator **widens the exploration quota** (Issue #1662) while keeping a
+    /// strict exploitation majority.
     ///
-    /// - Once it meets or exceeds the drought threshold
-    ///   (`NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD`, #1202) focus selection
-    ///   switches from weighted ranking to **round-robin rotation** across the
-    ///   top `K × N` ranked neurons so a plateaued creature stops revisiting the
-    ///   same dominant neuron every pass.
-    /// - It also seeds the rotation cursor, so successive passes pick fresh
-    ///   targets.
-    ///
-    /// When absent (or below the threshold) the diversity-floor path applies
-    /// instead. Backwards compatible: omitting it preserves the legacy
-    /// non-drought selection behaviour.
+    /// Note: this counter resets when a candidate succeeds, so it is **not**
+    /// used as the exploration cursor — see [`Self::focus_selection_cursor`].
+    /// Backwards compatible: omitting it disables drought widening.
     #[serde(default)]
     pub epochs_since_last_accepted_candidate: Option<u64>,
+    /// Monotonic per-creature focus-selection cursor (Issue #1662). The caller
+    /// advances it by one every focus-selection pass and **never resets it when
+    /// a candidate succeeds**, so the bounded exploration quota rotates through
+    /// the complete eligible neuron list and every eligible candidate-producing
+    /// neuron is eventually selected.
+    ///
+    /// When absent, selection falls back to
+    /// [`Self::epochs_since_last_accepted_candidate`] for cursor seeding, which
+    /// preserves legacy behaviour but resets exploration on success — hosts
+    /// should supply this field to guarantee full coverage.
+    #[serde(default)]
+    pub focus_selection_cursor: Option<u64>,
     /// Final focus-set size `N` — the number of neurons the caller will
     /// actually analyse this pass (NEAT-AI's `discoveryMaxNeurons`, default 6).
-    /// Issue #1445: diversity-aware focus selection picks `N` diverse targets
-    /// from the ranked pool (`max_results` neurons). For drought rotation to
-    /// draw from unexplored targets, pass `max_results >= K × N`
-    /// (K = [`crate::focus::DROUGHT_ROTATION_POOL_FACTOR`]). When absent,
-    /// defaults to [`DEFAULT_FOCUS_SET_SIZE`].
+    /// Issue #1662: the exploit/explore allocator fills most of `N` from the
+    /// ranked exploitation head and reserves a bounded exploration quota that
+    /// rotates through the eligible pool (`max_results` neurons). Pass a
+    /// `max_results` comfortably larger than `N` so exploration has an
+    /// unexplored tail to sweep. When absent, defaults to
+    /// [`DEFAULT_FOCUS_SET_SIZE`].
     #[serde(default)]
     pub focus_set_size: Option<usize>,
 }
