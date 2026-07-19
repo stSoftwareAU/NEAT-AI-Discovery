@@ -2,7 +2,10 @@ name: Semgrep
 
 on:
   pull_request:
-    branches: ["*"]
+    # `*` does not cross `/` in GitHub branch filters, so it never matches
+    # `milestone/<slug>`. Add `milestone/*` so the SAST gate also runs on
+    # milestone sub-issue PRs (Issue #1654).
+    branches: ["*", "milestone/*"]
 
 # Cancel superseded runs on the same ref (Issue #1288).
 concurrency:
