@@ -27,6 +27,12 @@ jobs:
       # Node.js 20 deprecation warning that will become a hard error on
       # GitHub-hosted runners from September 2026 onwards.
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        # The security job only audits dependencies — it never pushes back
+        # to the repository or fetches private submodules. Do not persist the
+        # GITHUB_TOKEN in .git/config so a compromised later step cannot read
+        # it (Issue #1647).
+        persist-credentials: false
 
     - name: Install Rust toolchain
       # Pinned to a SHA on the action's `stable` branch (Issue #1216).
