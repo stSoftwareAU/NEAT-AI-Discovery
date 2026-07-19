@@ -15,6 +15,10 @@ on:
     types: [opened, synchronize, reopened]
     branches:
       - Develop
+      # Milestone feature branches (milestone/<slug>, no nested slashes) so the
+      # gate runs on milestone sub-issue PRs too, not just the rollup into
+      # Develop (Issue #1651). The single-level `milestone/*` glob is sufficient.
+      - milestone/*
   workflow_dispatch: # Allow manual trigger if needed
 
 # Cancel superseded runs on the same ref (Issue #1288). When a contributor
