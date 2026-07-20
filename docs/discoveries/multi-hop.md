@@ -1,6 +1,6 @@
 # 🔀 Multi-Hop Candidate Analysis
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/multi_hop.rs`](../../src/analysis/multi_hop.rs) | **Issue:** [#230](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/230)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/recommendation/multi_hop.rs`](../../src/analysis/recommendation/multi_hop.rs) | **Issue:** [#230](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/230)
 
 ---
 

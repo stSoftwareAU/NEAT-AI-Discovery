@@ -1,6 +1,6 @@
 # ⚔️ Opposing Synapse Detection
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/opposing_synapse.rs`](../../src/analysis/opposing_synapse.rs) | **Issue:** [#360](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/360)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/detection/opposing_synapse.rs`](../../src/analysis/detection/opposing_synapse.rs) | **Issue:** [#360](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/360)
 
 ---
 

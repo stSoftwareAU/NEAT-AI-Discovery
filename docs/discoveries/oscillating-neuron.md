@@ -1,6 +1,6 @@
 # 🔄 Oscillating Neuron Detection
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/oscillating_neuron.rs`](../../src/analysis/oscillating_neuron.rs) | **Issue:** [#358](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/358)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/detection/oscillating_neuron.rs`](../../src/analysis/detection/oscillating_neuron.rs) | **Issue:** [#358](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/358)
 
 ---
 

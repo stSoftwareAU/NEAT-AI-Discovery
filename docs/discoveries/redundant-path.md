@@ -1,6 +1,6 @@
 # 🔀 Redundant Path Pruning
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/redundant_path.rs`](../../src/analysis/redundant_path.rs) | **Issue:** [#164](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/164)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/detection/redundant_path.rs`](../../src/analysis/detection/redundant_path.rs) | **Issue:** [#164](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/164)
 
 ---
 

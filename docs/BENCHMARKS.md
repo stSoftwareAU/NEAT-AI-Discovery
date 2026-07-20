@@ -5,7 +5,7 @@ performance regressions using Criterion.
 
 ## 🔍 Overview
 
-The project includes 28 Criterion benchmark suites in `benches/`. The
+The project includes 42 Criterion benchmark suites in `benches/`. The
 `benchmark_compare.sh` script automates baseline saving and regression
 detection by leveraging Criterion's built-in comparison features.
 
@@ -114,19 +114,30 @@ The following suites are defined in `Cargo.toml`:
 | `async_pipeline` | CPU/GPU overlap pipeline throughput |
 | `batched_activation` | Batched vs sequential activation evaluation |
 | `bfs_allocation` | Visited-set allocation strategies in BFS |
+| `cache_eviction` | Cache eviction patterns under memory pressure (Issue #1040) |
 | `cache_locality` | Cache access patterns |
 | `candidate_pipeline_clones` | Clone reduction in candidate pipeline operations |
 | `clone_reduction` | Clone elimination in hot paths |
+| `cpu_pre_reject` | CPU pre-reject screen before the helpful GPU submit (Issue #1544) |
 | `error_collection` | Lock-free vs mutex-based error collection |
+| `ffi_marshalling` | FFI JSON marshalling overhead across the FFI boundary (Issue #1040) |
 | `gpu_buffer_transfers` | GPU buffer transfer overhead |
+| `gpu_helpful_chunk_reuse` | GPU buffer reuse across helpful-batch chunks (Issue #1369) |
 | `gpu_shader_workgroup` | GPU shader workgroup optimisation |
-| `impact_cache_contention` | Lock contention in parallel impact computation |
 | `impact_uuid_cloning` | UUID string cloning in focus/impact hot loops |
+| `input_uuid_precompute` | Input-neuron UUID construction on the recording hot path (Issue #1368) |
 | `memory_streaming` | Memory streaming performance |
+| `module_tiering_dispatch` | Creature-scale module tiering during discovery dispatch (Issue #1547) |
 | `neuron_interning` | Neuron UUID interning |
+| `neuron_squash_pruning` | Squash-aware hidden-target `ACTIVATION_SPECS` pruning (Issue #1545) |
 | `parallel_discovery` | Parallel discovery throughput |
+| `parquet_loading_comparison` | Parquet loading strategy comparison across cache tiers (Issue #1040) |
+| `pipeline_utilisation` | Analysis pipeline wall-clock utilisation across `analyze_all()` (Issue #1001) |
+| `quality_skip_dispatch` | Quality-based module skipping during dispatch merge (Issue #1074) |
 | `queue_submission_copies` | GPU queue submission copy overhead |
+| `record_arc_sharing` | Arc-shared `DiscoverRecord` across detection modules (Issue #1543) |
 | `sample_locality` | Sample data locality |
+| `simd_hot_paths` | SIMD baseline micro-benchmarks for hot numerical loops (Issue #1006) |
 | `source_budget` | Per-target source budget (top-K) vs unlimited enumeration (Issue #1542) |
 | `squash_normalisation` | Pre-normalised squash string lookup |
 | `synapse_counts` | Synapse count pre-computation |
@@ -136,9 +147,11 @@ The following suites are defined in `Cargo.toml`:
 | `topology_cache` | Pre-computed topology cache vs repeated map building |
 | `topology_traversal` | Backtracking vs HashSet clone in topology traversal |
 | `upsert_candidate` | Candidate upsert operations |
+| `uuid_arc_preparation` | UUID string cloning reduction in analysis preparation (Issue #1036) |
 | `uuid_hashing` | Deterministic UUID generation for candidates |
+| `vectorisation_audit` | Compiler auto-vectorisation audit of AoS iteration (Issue #1009) |
 | `weight_coherence_cache` | Weight coherence detection with topology cache |
-| `zero_copy_buffer` | Zero-copy buffer performance |
+| `zero_copy_buffer` | Zero-copy vs traditional GPU buffer sharing (Issue #228) |
 
 **Note:** Most benchmarks require a GPU. Suites that cannot initialise a GPU
 are automatically skipped.
@@ -153,7 +166,7 @@ Save a baseline on your machine before making performance-sensitive changes:
 ./benchmark_compare.sh --save-baseline
 ```
 
-This runs all 28 benchmark suites and stores results in `target/criterion/`.
+This runs all 42 benchmark suites and stores results in `target/criterion/`.
 
 ### 🔎 Detecting Regressions
 

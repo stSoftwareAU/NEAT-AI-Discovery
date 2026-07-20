@@ -1,6 +1,6 @@
 # 🫠 Saturated Neuron Detection
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/saturation.rs`](../../src/analysis/saturation.rs) | **Issue:** [#342](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/342)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/detection/saturation.rs`](../../src/analysis/detection/saturation.rs) | **Issue:** [#342](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/342)
 
 ---
 

@@ -630,11 +630,11 @@ These could further improve accuracy:
 
 | File | Function | Purpose |
 |------|----------|---------|
-| `src/focus.rs` | `compute_impacts_internal()` | Core impact calculation 🔄 |
-| `src/focus.rs` | `compute_impact_recursive()` | Recursive path traversal |
-| `src/focus.rs` | `rank_focus_neurons()` | Uses impact for ranking 📊 |
-| `src/analysis.rs` | `compute_impacts_public()` | Public API for analysis |
-| `tests/focus.rs` | Various | Impact calculation tests ✅ |
+| `src/focus/impact.rs` | `compute_impacts_internal()` | Core impact calculation 🔄 |
+| `src/focus/impact.rs` | `compute_impact_recursive()` | Recursive path traversal |
+| `src/focus/ranking/mod.rs` | `rank_focus_neurons()` | Uses impact for ranking 📊 |
+| `src/focus/impact.rs` | `compute_impacts_public()` | Public API for analysis |
+| `tests/focus/` | Various | Impact calculation tests ✅ |
 
 ---
 

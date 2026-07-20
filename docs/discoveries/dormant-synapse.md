@@ -1,6 +1,6 @@
 # 😴 Dormant Synapse Detection
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/dormant_synapse.rs`](../../src/analysis/dormant_synapse.rs) | **Issue:** [#359](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/359), [#1632](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/1632)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/detection/dormant_synapse.rs`](../../src/analysis/detection/dormant_synapse.rs) | **Issue:** [#359](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/359), [#1632](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/1632)
 
 ---
 

@@ -1,6 +1,6 @@
 # 🚧 Bottleneck Neuron Detection
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/bottleneck.rs`](../../src/analysis/bottleneck.rs) | **Issue:** [#343](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/343)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/detection/bottleneck.rs`](../../src/analysis/detection/bottleneck.rs) | **Issue:** [#343](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/343)
 
 ---
 

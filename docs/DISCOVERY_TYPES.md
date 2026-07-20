@@ -26,7 +26,7 @@ output format, and production success/failure rates.
     - [Output Squash Mismatch Detection](#output-squash-mismatch-detection)
     - [Activation Function Recommendation](#activation-function-recommendation)
     - [Bias Perturbation Detection](#bias-perturbation-detection)
-    - [Squash + Weight Rescale Detection](#squash-weight-rescale-detection)
+    - [Squash + Weight Rescale Detection](#squash--weight-rescale-detection)
     - [High Error Squash Exploration](#high-error-squash-exploration)
     - [Low-Impact Neuron Detection](#low-impact-neuron-detection)
   - Weight & Synapse
@@ -159,7 +159,7 @@ checklist for adding a new cost to NEAT-AI, see
 | [Output Squash Mismatch](#output-squash-mismatch-detection) | `detection/output_squash_mismatch.rs` | #545 | `changeSquash` | 🟢 Active |
 | [Activation Recommendation](#activation-function-recommendation) | `recommendation/activation_recommendation.rs` | #431 | `changeSquash` | 🟢 Active |
 | [Bias Perturbation](#bias-perturbation-detection) | `detection/bias_perturbation.rs` | #551 | `setBias` | 🟢 Active |
-| [Squash + Weight Rescale](#squash-weight-rescale-detection) | `detection/squash_weight_rescale.rs` | #548 | `changeSquash`, `setWeight` | 🟢 Active |
+| [Squash + Weight Rescale](#squash--weight-rescale-detection) | `detection/squash_weight_rescale.rs` | #548 | `changeSquash`, `setWeight` | 🟢 Active |
 | [High Error Squash Exploration](#high-error-squash-exploration) | `detection/high_error_squash_exploration.rs` | #788 | `changeSquash` | 🟢 Active |
 | [Low-Impact Neuron](#low-impact-neuron-detection) | `detection/low_impact_neuron.rs` | #793 | `removeNeuron` | 🟢 Active |
 
@@ -236,7 +236,7 @@ checklist for adding a new cost to NEAT-AI, see
 
 ### Saturated Neuron Detection
 
-**Source**: `src/analysis/saturation.rs` (Issue #342)
+**Source**: `src/analysis/detection/saturation.rs` (Issue #342)
 
 **Purpose**: Identifies neurons that are permanently saturated (stuck at
 activation ceiling or floor) and recommends activation function changes or bias
@@ -271,7 +271,7 @@ and/or `setBias` operations.
 
 ### Bottleneck Neuron Detection
 
-**Source**: `src/analysis/bottleneck.rs` (Issue #343)
+**Source**: `src/analysis/detection/bottleneck.rs` (Issue #343)
 
 **Purpose**: Identifies hidden neurons that form information bottlenecks —
 single points where many input signals converge through one neuron before
@@ -302,7 +302,7 @@ and/or `addSynapse` operations.
 
 ### Dead Neuron Detection
 
-**Source**: `src/analysis/dead_neuron.rs` (Issue #341)
+**Source**: `src/analysis/detection/dead_neuron.rs` (Issue #341)
 
 **Purpose**: Identifies neurons that have become effectively dead (always
 outputting zero or near-zero activation) and recommends their removal. Dead
@@ -368,7 +368,7 @@ operations.
 
 ### Opposing Synapse Detection
 
-**Source**: `src/analysis/opposing_synapse.rs` (Issue #360)
+**Source**: `src/analysis/detection/opposing_synapse.rs` (Issue #360)
 
 **Purpose**: Identifies synapses whose contribution consistently works against
 error reduction. When a synapse's activation–error correlation is strongly
@@ -399,7 +399,7 @@ or `setWeight` operations.
 
 ### Output Bias Drift Detection
 
-**Source**: `src/analysis/output_bias_drift.rs` (Issue #361)
+**Source**: `src/analysis/recommendation/output_bias_drift.rs` (Issue #361)
 
 **Purpose**: Identifies output neurons with a consistent error sign bias —
 neurons whose errors are predominantly positive (predicting too low) or
@@ -428,7 +428,7 @@ operation.
 
 ### Oscillating Neuron Detection
 
-**Source**: `src/analysis/oscillating_neuron.rs` (Issue #358)
+**Source**: `src/analysis/detection/oscillating_neuron.rs` (Issue #358)
 
 **Purpose**: Identifies hidden neurons whose activations oscillate between
 positive and negative values across training samples, indicating the neuron
@@ -547,7 +547,7 @@ in underutilisation of the function's gradient capacity.
 
 ### Unbounded Capping Detection
 
-**Source**: `src/analysis/unbounded_capping.rs` (Issue #441)
+**Source**: `src/analysis/detection/unbounded_capping.rs` (Issue #441)
 
 **Purpose**: Identifies neurons with unbounded activation functions (RELU,
 IDENTITY, LEAKYRELU, etc.) that are producing high activations ("spiking")
@@ -718,7 +718,7 @@ operations.
 
 ### Activation Function Recommendation
 
-**Source**: `src/analysis/activation_recommendation.rs` (Issue #431)
+**Source**: `src/analysis/recommendation/activation_recommendation.rs` (Issue #431)
 
 **Purpose**: Provides **proactive** activation function recommendations based
 on input distribution analysis. Unlike reactive `changeSquash` candidates
@@ -901,7 +901,7 @@ operations.
 
 ### Noise-to-Signal Ratio Detection
 
-**Source**: `src/analysis/noise_signal.rs` (Issue #434)
+**Source**: `src/analysis/detection/noise_signal.rs` (Issue #434)
 
 **Purpose**: Part of the "Brilliant but Brittle" initiative (Issue #432). This
 module identifies neurons and synapses with high noise-to-signal ratios that
@@ -1073,7 +1073,7 @@ and/or `addSynapse` operations.
 
 ### Correlated Error Pattern Detection
 
-**Source**: `src/analysis/correlated_error.rs` (Issue #344)
+**Source**: `src/analysis/detection/correlated_error.rs` (Issue #344)
 
 **Purpose**: Identifies groups of output neurons that exhibit correlated error
 patterns across samples, suggesting they share a common missing cause.
@@ -1103,7 +1103,7 @@ treating each output independently.
 
 ### Multi-Hop Candidate Analysis
 
-**Source**: `src/analysis/multi_hop.rs` (Issue #230)
+**Source**: `src/analysis/recommendation/multi_hop.rs` (Issue #230)
 
 **Purpose**: Current discovery only considers single-hop improvements (adding
 one synapse or neuron). For deep networks, multi-hop improvements (adding a
@@ -1136,7 +1136,7 @@ and/or `addSynapse` operations.
 
 ### Redundant Path Pruning
 
-**Source**: `src/analysis/redundant_path.rs` (Issue #164)
+**Source**: `src/analysis/detection/redundant_path.rs` (Issue #164)
 
 **Discovery type**: `COORDINATED_PRUNE_AND_REWEIGHT`
 
@@ -1184,7 +1184,7 @@ and `setWeight` operations.
 
 ### Topology-Aware Structure Analysis
 
-**Source**: `src/analysis/topology.rs` (Issue #422)
+**Source**: `src/analysis/detection/topology.rs` (Issue #422)
 
 **Purpose**: Analyses overall network structure to identify topology-based
 improvements. Unlike per-neuron detectors (saturation, dead neuron), this
@@ -1448,7 +1448,7 @@ and/or `addSynapse` operations.
 
 ### Gradient-Based Synapse Adjustment
 
-**Source**: `src/analysis/gradient_discovery.rs` (Issue #421)
+**Source**: `src/analysis/recommendation/gradient_discovery.rs` (Issue #421)
 
 **Purpose**: Computes local gradients (∂error/∂weight) for each synapse and
 proposes weight adjustments in the error-reducing direction. Unlike
@@ -1674,7 +1674,7 @@ operations.
 
 ### Add Neurons
 
-**Source**: `src/analysis/neuron.rs`
+**Source**: `src/analysis/neuron/`
 
 **Purpose**: Add a new hidden neuron by inserting it between a source and
 target neuron.
@@ -1713,7 +1713,7 @@ target neuron.
 
 ### Add Synapses
 
-**Source**: `src/analysis/synapse.rs` (Issue #413)
+**Source**: `src/analysis/synapse/` (Issue #413)
 
 **Purpose**: Add a new synapse connection between existing neurons.
 
@@ -1749,7 +1749,7 @@ Target: 15–20% success rate (up from 10%).
 
 ### Remove Low-Impact Neurons
 
-**Source**: `src/analysis/neuron.rs`
+**Source**: `src/analysis/neuron/`
 
 **Purpose**: Remove neurons that contribute less than the cost of their
 complexity.
@@ -1781,7 +1781,7 @@ complexity.
 
 ### Remove Harmful Synapse
 
-**Source**: `src/analysis/implementation.rs`
+**Source**: `src/analysis/synapse/`
 
 **Purpose**: Remove existing synapses that are actively increasing creature
 error.
@@ -1823,7 +1823,7 @@ harmful synapses.
 
 ### Remove Neuron (High Error)
 
-**Source**: `src/focus.rs` (previously active, now disabled)
+**Source**: `src/focus/` (previously active, now disabled)
 
 **Purpose**: Remove neurons with extremely high error magnitude (harmful
 neurons).
@@ -2101,7 +2101,7 @@ All 7 operation types are implemented in NEAT-AI's
    filtered these out, but no candidates with positive expected gain were being
    generated because truly harmful synapses are relatively rare.
 
-   **Root cause**: Missing threshold check in `src/analysis/implementation.rs`.
+   **Root cause**: Missing threshold check in `src/analysis/synapse/`.
    The code was creating candidates for every synapse without checking if
    `neuron_error_improvement > 0.0`.
 
