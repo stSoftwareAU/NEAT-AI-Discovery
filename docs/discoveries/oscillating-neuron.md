@@ -43,10 +43,10 @@ flowchart TD
     B --> C{"📏 Mean |activation| >= 0.01?"}
     C -->|"No — near-zero"| Z["💀 Dead, not oscillating"]
     C -->|"Yes"| D["📊 Count positive & negative"]
-    D --> E{"⚖️ Minority sign >= 20%?"}
+    D --> E{"⚖️ Minority sign >= 10%?"}
     E -->|"No"| G["✅ Consistent neuron"]
     E -->|"Yes"| F["🔢 Sort by observation index<br/>Count sign changes"]
-    F --> H{"🔄 Sign change fraction >= 30%?"}
+    F --> H{"🔄 Sign change fraction >= 15%?"}
     H -->|"Yes"| I["🔄 Oscillating!<br/>severity = sign_change × mean_abs"]
     H -->|"No"| G
     style A fill:#e3f2fd,stroke:#1565c0,color:#000
@@ -66,8 +66,8 @@ flowchart TD
 | Sign Change Fraction | Meaning |
 |---------------------|---------|
 | 0% | All same sign → not oscillating |
-| 20% | Mostly one sign → normal variation |
-| **30%** | **Frequent flips → OSCILLATING** ⚠️ |
+| 10% | Mostly one sign → normal variation |
+| **15%** | **Frequent flips → OSCILLATING** ⚠️ (Issue #417: lowered from 30%) |
 | 50% | Random flips → strongly oscillating |
 
 ---
@@ -108,8 +108,8 @@ negative split is uneven (>60% or <40% positive).
 > | Samples | 200 |
 > | Mean |activation| | 0.65 (not dead) |
 > | Positive activations | 108/200 = 54% |
-> | Negative activations | 92/200 = 46% (minority 46% >= 20% ✓) |
-> | Sign changes | 78/199 = 39% (>= 30% ✓) |
+> | Negative activations | 92/200 = 46% (minority 46% >= 10% ✓) |
+> | Sign changes | 78/199 = 39% (>= 15% ✓) |
 > | Severity | 0.39 × 0.65 = **0.25** |
 >
 > **Fix:** `changeSquash` TANH → ABSOLUTE

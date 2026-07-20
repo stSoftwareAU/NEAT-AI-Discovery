@@ -201,18 +201,25 @@ graph LR
 
 🚨 **ERROR: Off by ~1,000,000x**
 
-#### ✅ Implemented Solution (v0.1.132+)
+#### ✅ Implemented Solution (Issue #1300)
 
-For neurons feeding into STEP/BIPOLAR targets, **don't normalise by total_inbound**.
-Each synapse is treated as potentially decisive:
+The original fix returned the full unnormalised `child_impact` for *every*
+inbound synapse of a threshold target. That overstated influence by a factor of
+`N` for `N` inbound synapses (the sum across inbound synapses was
+`N × child_impact`). **Issue #1300 corrected this**: threshold squashes now
+normalise by `total_inbound` weight — exactly like Linear bounded squashes — and
+apply the squash emit-magnitude cap (see the **Squash emit magnitude (Issue #1300)** section below):
 
-$$\text{contribution} = \text{child\_impact}$$
+$$\text{contribution} = \frac{|w|}{T} \times \text{child\_impact}$$
 
 **Rationale:**
-- Any synapse crossing the threshold causes full output change 🔀
-- Without activation data, we can't know which synapses are "close" to threshold
-- Conservative: won't underestimate impact (may overestimate)
-- Better for removal candidate detection (won't incorrectly flag as "safe to remove") ✅
+- The "any synapse can flip the output" intent is preserved by the emit-magnitude
+  cap — each synapse still receives its weighted share of the full,
+  emit-bounded influence 🔀
+- Normalisation keeps the sum of inbound contributions bounded (no `N ×`
+  overstatement), matching the Linear-squash treatment
+- The sum cannot exceed the downstream squash's emit magnitude `M` (`1.0` for
+  STEP/BIPOLAR), even when the neuron feeds multiple outputs
 
 #### 🔮 Future Enhancement
 
@@ -540,8 +547,8 @@ flowchart LR
 | **IDENTITY** | Linear (normalised) | ✅ Accurate | Mathematically exact |
 | **TANH/LOGISTIC** | Linear (normalised) | ⚠️ Approx | Saturation not modelled |
 | **HARD_TANH** | Linear (normalised) | ⚠️ Approx | Clamping not modelled |
-| **STEP** | Threshold (full impact) | ✅ Conservative | Any synapse can flip output 🎚️ |
-| **BIPOLAR** | Threshold (full impact) | ✅ Conservative | Any synapse can flip output 🎚️ |
+| **STEP** | Threshold (normalised + emit cap) | ✅ Bounded | Normalised by total inbound, capped at emit magnitude 🎚️ (Issue #1300) |
+| **BIPOLAR** | Threshold (normalised + emit cap) | ✅ Bounded | Normalised by total inbound, capped at emit magnitude 🎚️ (Issue #1300) |
 | **MINIMUM** | Activation-based | ✅ Accurate | Actual win probability from samples 🏆 |
 | **MAXIMUM** | Activation-based | ✅ Accurate | Actual win probability from samples 🏆 |
 | **IF** | Synapse-type-aware | ✅ Accurate | Condition/positive/negative branches |
@@ -567,9 +574,12 @@ $$\text{contribution} = \frac{|w|}{T} \times \text{child\_impact}$$
 
 **Threshold squashes** (STEP/BIPOLAR) 🎚️:
 
-$$\text{contribution} = \text{child\_impact}$$
+$$\text{contribution} = \frac{|w|}{T} \times \text{child\_impact} \quad\text{(then capped at emit magnitude } M\text{)}$$
 
-No normalisation - any synapse can flip output!
+Normalised by total inbound weight and capped at the squash emit magnitude
+(Issue #1300) — identical to Linear bounded squashes. The "any synapse can flip
+the output" intent is preserved by the emit-magnitude cap rather than by
+returning the full unnormalised `child_impact`.
 
 **Selection squashes** (MINIMUM/MAXIMUM/IF) 🏆:
 
@@ -599,7 +609,7 @@ Equal probability for N incoming synapses.
 - [x] Document the problem (this document)
 - [x] Track squash functions in impact calculation
 - [x] Add squash-aware impact functions
-- [x] STEP/BIPOLAR support (conservative full-impact approach) 🎚️
+- [x] STEP/BIPOLAR support (normalised + emit-magnitude cap, Issue #1300) 🎚️
 - [x] MINIMUM/MAXIMUM support (equal-probability approach) 🏆
 - [x] **MINIMUM/MAXIMUM: Compute actual selection probability from samples** 🎲 (v0.1.143)
 - [x] **IF: Synapse-type-aware impact (condition/positive/negative)** (v0.1.143)
@@ -658,9 +668,9 @@ Where $f_{\text{squash}}$ depends on child's squash function:
 
 $$f = \frac{|w|}{T} \times \text{impact}(\text{child})$$
 
-**Threshold** (STEP, BIPOLAR) 🎚️:
+**Threshold** (STEP, BIPOLAR) 🎚️ — normalised and emit-capped (Issue #1300):
 
-$$f = \text{impact}(\text{child})$$
+$$f = \frac{|w|}{T} \times \text{impact}(\text{child}) \quad\text{(capped at emit magnitude } M\text{)}$$
 
 **Selection** (MINIMUM, MAXIMUM) 🏆:
 
