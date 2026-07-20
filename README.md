@@ -88,8 +88,9 @@ Everything in this repository serves that objective:
 
 ## 🔌 FFI API Summary
 
-The library exposes a Deno FFI-friendly symbol set. The authoritative list lives in
-`src/lib.rs` as `#[no_mangle] pub extern "C"` functions.
+The library exposes a Deno FFI-friendly symbol set. The authoritative list lives under
+`src/ffi/` (`mod.rs`, `analysis.rs`, `gpu.rs`, `recording.rs`, `utilities.rs`) as
+`#[unsafe(no_mangle)] pub extern "C"` functions.
 
 | Category | Entry Points |
 |----------|-------------|
@@ -124,7 +125,7 @@ discovery phase. This is by design:
 | Requirement | Minimum | Reason |
 |-------------|---------|--------|
 | **Total RAM** | 4 GB | GPU operations require memory for staging buffers |
-| **Available RAM** | 1 GB | Prevents hangs from memory pressure/swap thrashing |
+| **Available RAM** | 0.5 GB (macOS) / 1 GB (Linux) | Prevents hangs from memory pressure/swap thrashing |
 | **GPU** | Metal (macOS) or Vulkan (Linux) | Required for compute shaders |
 
 When requirements aren't met, `check_gpu_available()` returns `gpuAvailable: false`
@@ -308,7 +309,7 @@ For detailed troubleshooting steps, see [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md).
    - Export `NEAT_AI_DISCOVERY_LIB_PATH=/absolute/path/to/libneat_ai_discovery.*`.
 2. Grant FFI permissions when running discovery jobs:
    ```bash
-   deno run --allow-env --allow-ffi --allow-read your-script.ts
+   deno run --allow-env --allow-ffi --allow-read --allow-write your-script.ts
    ```
 3. From your controller, guard calls with `isRustDiscoveryEnabled()` so the job
    fails fast if the module cannot be loaded.
@@ -463,12 +464,18 @@ All dependencies build automatically on remote, unattended machines.
 
 ## 📦 Distributed Build & Versioning
 
-- Versions are managed in `Cargo.toml` and automatically incremented by CI when
-  `src/` changes are detected.
+- Versions are managed in `Cargo.toml`. The `version-increment` CI job
+  auto-bumps the patch version on **every pull request** (unless the PR branch
+  already carries a bump), not only when `src/` changes — see
+  `.github/workflows/ci.yml`.
 - Local and remote runs use a distributed build pattern via `scripts/runlib.sh`:
   the library is installed to `~/.cargo/lib/` and tracked with a version marker at
   `~/.cargo/lib/.neat_ai_discovery.version`.
-- Do not manually edit version numbers; CI handles patch bumps.
+- In the normal PR workflow you do not need to bump the version yourself — CI
+  does it. If you commit **directly** (outside the PR workflow, where CI does not
+  run), you **must** manually increment the patch version so cached builds pick
+  up your change. This is the single authoritative version-bump policy; other
+  docs link here.
 
 ## 🔗 Related Repositories
 
@@ -478,7 +485,7 @@ The NEAT-AI project is split across seven public repositories. Each focuses on o
 |------------|------|
 | [NEAT-AI](https://github.com/stSoftwareAU/NEAT-AI) | Primary Deno/TypeScript neural-network engine (evolution, training, WASM activation). |
 | [NEAT-AI-core](https://github.com/stSoftwareAU/NEAT-AI-core) | Shared native Rust library (`neat-core`) with numerics, topology helpers, and the chunked `.bin` training stream. |
-| [NEAT-AI-Discovery](https://github.com/stSoftwareAU/NEAT-AI-Discovery) | Rust discovery module invoked by NEAT-AI via Deno FFI to search architectures and hyper-parameters. |
+| [NEAT-AI-Discovery](https://github.com/stSoftwareAU/NEAT-AI-Discovery) | Rust discovery module invoked by NEAT-AI via Deno FFI to propose structural/bias/weight/squash mutation candidates. |
 | [NEAT-AI-Snapshot](https://github.com/stSoftwareAU/NEAT-AI-Snapshot) | Creature/genome snapshot format and fixtures produced by NEAT-AI and consumed by downstream tools. |
 | [NEAT-AI-scorer](https://github.com/stSoftwareAU/NEAT-AI-scorer) | Production forward-only scoring application built on `neat-core` via a path dependency. |
 | [NEAT-AI-Explore](https://github.com/stSoftwareAU/NEAT-AI-Explore) | Visualiser for creatures that reads NEAT-AI-Snapshot data. |
