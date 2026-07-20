@@ -1,53 +1,64 @@
-# AGENTS.md — Agent-Only Notes for AI Coding Agents
+# AGENTS.md — Agent-Only Pointers for This Repository
 
-This is a **thin pointer file**. The shared conventions, architecture, testing
-doctrine and quality gate now live in the human docs — this file carries only
-the invariants and rules that are specific to AI agents working in this repo.
+This is a **thin pointer file** for AI coding agents. It carries only the
+agent-specific rules and invariants that have no better home. Everything else
+lives in the human docs — go there first:
 
-- **User-facing overview, GPU requirements, documentation index** —
-  [README.md](README.md).
-- **Coding conventions, testing philosophy, quality gate, CI pipeline,
-  version management, project structure** —
-  [CONTRIBUTING.md](CONTRIBUTING.md). It is the canonical home for that
-  material; do not re-copy it here.
+- **[README.md](README.md)** — project overview, mission, GPU requirement, and
+  the [Minimum System Requirements](README.md#minimum-system-requirements).
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — the canonical coding conventions
+  (including the Australian English requirement), testing doctrine, the
+  `./quality.sh` quality gate, and the CI pipeline.
+- **[docs/FFI_API.md](docs/FFI_API.md)** — full FFI API reference.
+- **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** — the authoritative
+  `NEAT_AI_DISCOVERY_*` environment-variable list.
+- **[docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md)** — the full candidate-type
+  reference (types, operations, success/failure rates).
 
-Read both before making changes. The sections below are the delta an agent
-must know on top of them.
+The source layout is not mirrored here — it drifts. Read `src/` directly; each
+module's `mod.rs` documents its own responsibilities.
 
----
-
-## Where things live
-
-| Topic | Canonical home |
-|-------|----------------|
-| Project mission, GPU requirement, docs index | [README.md](README.md) |
-| Coding conventions (KISS/DRY, Australian English) | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Testing philosophy ("what" vs "how", benchmarks vs tests) | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Quality gate (`./quality.sh`) and CI pipeline | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Build/install (`./scripts/runlib.sh`) and versioning | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Source layout | `src/` (the tree is authoritative; do not mirror it here) |
-| FFI API reference | [docs/FFI_API.md](docs/FFI_API.md) |
-| Candidate types | [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md) |
-| Environment variables | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) |
-| GPU tuning | [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) |
-
-The source tree changes constantly — read `src/` directly rather than trusting
-any hand-maintained mirror. There is intentionally no directory listing in this
-file.
+All dependencies must be Apache-2.0 compatible: the authoritative allowed-licence
+list is the `[licenses]` table in [`deny.toml`](deny.toml), enforced by
+`cargo deny check`.
 
 ---
 
-## CI is off-limits
+## Do Not Modify CI Without Approval
 
-**Do NOT modify `.github/workflows/ci.yml` without explicit human approval.**
-CI treats warnings as errors; always run `./quality.sh` locally before
-committing (see [CONTRIBUTING.md](CONTRIBUTING.md) for the full gate).
+**Do NOT modify `.github/workflows/ci.yml` without explicit approval.** The CI
+triggers, the auto-format job, and the `version-increment` job (which uses the
+`ACTIONS_PUSH` PAT so its push re-triggers workflows) are load-bearing.
 
 ---
 
-## Key Invariants
+## Dependency Bumps — the `cargo upgrade --incompatible` trap
 
-These invariants **must not** be violated by any code change.
+`./quality.sh` runs `cargo upgrade --incompatible` (see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full gate). The `--incompatible` flag
+force-bumps dependencies across **major** versions, which can break unrelated
+source. The **wgpu**/naga **29 → 30** bump (changed
+`Buffer::get_mapped_range()` to return `Result<BufferView, MapRangeError>` and
+added `RequestAdapterOptions::apply_limit_buckets`) broke `src/analysis/gpu/*`
+and was independently rediscovered and reverted in ~ten PRs before the migration
+finally landed (Issue #1594). If a major bump breaks code outside your issue's
+scope, **either migrate it in the same PR or revert the bump** — never commit a
+half-migrated build.
+
+---
+
+## Version Bumps
+
+**The version in `Cargo.toml` must be incremented on any code change.** Remote
+and unattended machines cache the compiled library by version number; without a
+bump they keep running the old library. CI's `version-increment` job auto-bumps
+the patch version on every PR, but if you commit outside that flow you must bump
+it manually (e.g. `0.43.8` → `0.43.9`). Confirm the loaded version with
+`get_library_version()`.
+
+---
+
+## Key Invariants — Must Not Be Violated
 
 ### Forward-only Activation Order
 
@@ -72,7 +83,7 @@ with `error_kind: "data_validation"`.
 |-----------------|------------------------|-----------|-------|
 | `record_discovery` | yes | yes | via `record_discovery_internal` |
 | `start_discovery_session` | yes | yes | validated in the FFI handler before `streaming::start_session` (Issue #1188) |
-| `append_discovery_records` | no | n/a | references session by ID; creature captured at session start |
+| `append_discovery_records` | no | n/a | references session by ID; creature is captured at session start |
 | `finish_discovery_session` | no | n/a | session ID only |
 | `cancel_discovery_session` | no | n/a | session ID only |
 | `analyze_parallel` | yes | yes | via `analyze_parallel_internal` |
@@ -108,7 +119,7 @@ come from the same training record:
 ### FFI Memory Management
 
 Every FFI call returning a `char*` **must** be freed with
-`free_discovery_result()`. Failure to do so leaks memory.
+`free_discovery_result()`. Failure to do so will leak memory.
 
 ### VALUE Domain Errors
 
@@ -118,18 +129,9 @@ check this field before processing results.
 
 ---
 
-## GPU Requirement
-
-**This library requires a GPU.** There is no CPU fallback. See
-[README.md — Minimum System Requirements](README.md#minimum-system-requirements)
-for hardware requirements and [docs/GPU_GUIDE.md](docs/GPU_GUIDE.md) for tuning
-and troubleshooting.
-
----
-
 ## Candidate Types
 
-Reuse existing candidate types whenever possible. A genuinely new type must be
-documented in README.md and given a corresponding handler in NEAT-AI. The full
-reference — with operations, success/failure rates and descriptions — lives in
-[docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md).
+Reuse existing candidate types whenever possible. If a new type is truly
+required, it must be documented in README.md and a corresponding handler added
+to NEAT-AI. See [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md) for the full
+reference with operations and success/failure rates.
