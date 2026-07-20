@@ -12,6 +12,68 @@ detection by leveraging Criterion's built-in comparison features.
 Baselines are machine-specific — each developer or CI runner saves their own
 baseline locally in `target/criterion/`.
 
+## 🧪 Optimisation outcomes
+
+This section records the durable outcomes of past optimisation investigations —
+including **negative results** — so the same fruitless approaches are not
+re-attempted. Nothing in the code fails when a negative result is lost; the
+effort is simply re-spent. These findings were folded here from the PR-summary
+archive (Issue #1682).
+
+### 🧭 SIMD / vectorisation of the hot numerical loops
+
+- **Auto-vectorisation first (policy, #1006).** Rely on compiler
+  auto-vectorisation before reaching for explicit SIMD (`std::arch`, `wide`, or
+  nightly `std::simd`). Explicit SIMD stays out of the codebase unless
+  auto-vectorisation is measured insufficient — it adds `unsafe`, extra crates,
+  and portability cost. Baselines for the six hot loops
+  (`benches/simd_hot_paths.rs`) show the target-simulation (`tanh`) paths are
+  ~3–4× slower than the value-domain paths because of the `f32::tanh()` call per
+  sample.
+
+- **Negative result — Struct-of-Arrays layout and compiler hints do not help
+  (#1009).** An Apple Silicon / NEON assembly audit showed the hot improvement
+  functions (`compute_synapse_improvement_and_count`,
+  `compute_relu_improvement_and_count`, `compute_activation_improvement_and_count`,
+  `compute_source_variance_confidence`, `compute_error_variance`) are blocked
+  from auto-vectorisation by **`is_finite()` branches and function-pointer calls**
+  — an *algorithmic* blocker, not data layout. `ErrorDistribution::from_errors`,
+  which is branch-free over `&[f32]`, already gets full NEON vectorisation.
+  Converting to a Struct-of-Arrays layout gave at best 1–3 % at production scale
+  and the `.iter().map().collect()` extraction cost usually made it *slower*.
+  `#[inline(always)]` (redundant under `lto = "fat"` + `codegen-units = 1`),
+  `target-cpu=native`, and `#[target_feature]` were all assessed **not
+  applicable** (NEON is baseline on AArch64; the branch-heavy loops would not
+  vectorise on x86-64 AVX2 either). **No code changes were warranted** — the
+  current AoS layout is the right choice. Do not re-attempt SoA or compiler-hint
+  tweaks on these loops without first removing the branch/function-pointer
+  blockers.
+
+- **Branch elimination helps only the value-domain paths (caveat, #1075).**
+  Eliminating branches from the no-target ("value-domain") paths gave a real
+  **30–34 % throughput improvement**. On `tanh`-dominated paths the same change
+  was **within noise** (±1–6 %) because `f32::tanh()` per sample dominates the
+  loop cost. Optimise the `tanh` paths by attacking the transcendental cost, not
+  the surrounding branches.
+
+### ⚙️ Release-profile link-time optimisation (#741)
+
+The release profile pins `lto = "fat"` and `codegen-units = 1`
+(`Cargo.toml`, `[profile.release]`). Measured against the full `analyze_all()`
+pipeline (`cargo bench --bench parallel_discovery`):
+
+| Scenario (creature size) | Baseline | With LTO | Change |
+|--------------------------|----------|----------|--------|
+| 5h_100r (small)          | 166.11 ms | 72.87 ms | **−56 %** |
+| 20h_200r (medium)        | 113.12 ms | 88.19 ms | **−22 %** |
+| 50h_200r (large)         | 295.56 ms | 272.13 ms | **−8 %** |
+
+Smaller creatures gain most because CPU-bound analysis dominates; larger
+creatures are more GPU-bound, so the CPU optimisation has less headroom.
+**Trade-off:** full release compile time rose from ~12 s to ~3 m 07 s
+(~1 m 11 s incremental). Debug builds are unaffected. Keep both settings unless a
+future measurement shows the compile-time cost outweighs the runtime win.
+
 ## 🚀 Quick Start
 
 ```bash

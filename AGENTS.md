@@ -479,6 +479,17 @@ so do not skip this step.
 9. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
 10. `cargo build --release --lib`
 
+> **Watch step 2 — `cargo upgrade --incompatible` pulls breaking major bumps.**
+> The `--incompatible` flag force-bumps dependencies across major versions,
+> which can break unrelated source. The wgpu/naga **29 → 30** bump (changed
+> `Buffer::get_mapped_range()` to return `Result<BufferView, MapRangeError>`,
+> added `RequestAdapterOptions::apply_limit_buckets`) broke `src/analysis/gpu/*`
+> and was independently rediscovered and reverted in ~ten PRs before the
+> migration finally landed (Issue #1594). If a major bump breaks code outside
+> your issue's scope, **either migrate it in the same PR (the #1613 flow) or
+> revert the bump** — do not commit a half-migrated build. Reverting an
+> out-of-scope major bump keeps the PR focused; leaving it broken fails the gate.
+
 If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `./quality.sh`.
 

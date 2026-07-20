@@ -5,6 +5,31 @@ NEAT-AI-Discovery. For a high-level overview, see [README.md](../README.md).
 
 ---
 
+## 🧱 GPU stack: wgpu 30 (migration complete)
+
+The GPU backend targets **wgpu 30 / naga 30 / pollster 1.0** (`Cargo.toml`). The
+29 → 30 migration is **complete** (Issue #1594); this note records the API
+breakages so a future major bump — which `quality.sh`'s
+`cargo upgrade --incompatible` step will surface again — is not re-derived from
+scratch (it was independently rediscovered in ~ten PRs before landing):
+
+- **`Buffer::get_mapped_range()` now returns `Result<BufferView, MapRangeError>`.**
+  All six read-back paths in `src/analysis/gpu/*` unwrap it with `.context(...)?`
+  **before** `bytemuck::cast_slice`, so a map failure surfaces loudly rather than
+  being masked (Issue #3234).
+- **`RequestAdapterOptions` gained `apply_limit_buckets: bool`** — set `false`
+  for a trusted native app (limit bucketing only matters for fingerprint
+  resistance when exposing wgpu to untrusted web content).
+- **`AdapterInfo` test helper** — `transient_saves_memory` became
+  `Option<bool>` and a `limit_bucket: Option<AdapterLimitBucketInfo>` field was
+  added.
+
+When the next major wgpu bump lands, migrate `src/analysis/gpu/*` in the same PR
+(the #1613 dependency-bump flow) or revert the bump — never commit a
+half-migrated GPU build.
+
+---
+
 ## ⚡ GPU Performance Tuning
 
 The library auto-detects GPU capabilities **and available system memory** to optimise
