@@ -333,7 +333,8 @@ If the script reports that discovery is enabled, you are ready to schedule
 For prerequisites, building, testing, code style, and the full development
 workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-> **For AI agents**: Machine-readable coding conventions and invariants live in
+> **For AI agents**: coding conventions and the testing philosophy live in
+> [CONTRIBUTING.md](CONTRIBUTING.md); the agent-only invariants and rules live in
 > [AGENTS.md](AGENTS.md).
 
 **Quick reference:**
@@ -517,7 +518,7 @@ graph TD
 | [docs/discoveries/](docs/discoveries/README.md) | Visual discovery scenario guides with diagrams and examples |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development guidelines for contributors |
 | [CHANGELOG.md](CHANGELOG.md) | Version-by-version history of changes |
-| [AGENTS.md](AGENTS.md) | Coding guidelines and invariants for AI agents |
+| [AGENTS.md](AGENTS.md) | Agent-only invariants and rules (conventions live in CONTRIBUTING.md) |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Authoritative reference for every `NEAT_AI_DISCOVERY_*` environment variable |
 | [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md) | All discovery types with success/failure rates |
 | [docs/IMPACT_CALCULATION.md](docs/IMPACT_CALCULATION.md) | Neuron impact calculation details |

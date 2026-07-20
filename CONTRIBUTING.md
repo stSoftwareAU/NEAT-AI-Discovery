@@ -72,28 +72,148 @@ We follow strict TDD:
 
 ### ✅ Quality Gate
 
-**Always run `./quality.sh` before committing.** CI treats warnings as errors.
-For the full list of checks performed by `./quality.sh` and details of the CI
-pipeline, see [AGENTS.md — Quality Gate](AGENTS.md#5-quality-gate).
+**Always run `./quality.sh` before committing.** CI treats warnings as errors,
+so do not skip this step. `./quality.sh` performs these checks in order:
+
+1. Bash syntax check (all `.sh` files)
+2. `shellcheck` over every `.sh` file (hard-fails if `shellcheck` is not
+   installed)
+3. `./scripts/check-pr-summary-location.sh` — PR summaries must stay in
+   `docs/archive/pr-summaries/` (Issue #1613)
+4. `cargo upgrade --incompatible` + `cargo update` (dependency upgrade)
+5. `cargo deny check` (licence and dependency audit)
+6. `cargo build` (debug, quick feedback)
+7. `cargo fmt --all` (auto-formatting)
+8. `cargo clippy --all-targets --all-features -- -D warnings`
+9. `cargo check --all-targets --all-features`
+10. `cargo test --lib --tests --all-features -- --test-threads=2`
+11. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
+12. `cargo build --release --lib`
+
+If any step fails, fix the issue and re-run. Do **not** commit code that fails
+`./quality.sh`.
 
 **GPU tests are skipped in CI** (no GPU available). For full coverage, run
 `./quality.sh` locally before pushing.
+
+#### CI Pipeline
+
+GitHub Actions runs the checker on every pull request into `Develop` **and**
+into `milestone/*` feature branches (`.github/workflows/ci.yml`, Issue #1651), so
+the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`:
+
+- `auto-format` — applies `rustfmt` and commits fixes
+- `version-increment` — auto-bumps the patch version on every PR when changes
+  exist (uses the `ACTIONS_PUSH` PAT so the push re-triggers workflows)
+- `quality` — fmt check, Clippy, cargo check, doc build, tests, build
+- `spell-check` — runs codespell on the codebase
+- `validation` — checks required files and `Cargo.toml`
+- `security` — runs the security audit workflow
+- `shellcheck` (separate workflow `.github/workflows/shellcheck.yml`) — lints
+  bash scripts via ShellCheck
+
+**Do NOT modify `.github/workflows/ci.yml` without explicit approval.**
 
 ---
 
 ## 🎨 Code Style
 
-For the full coding conventions — Australian English requirements, formatting,
-linting, coding principles, and Rust best practices — see
-[AGENTS.md — Coding Conventions](AGENTS.md#3-coding-conventions).
+### Language
+
+**Use Australian English** throughout all code, comments, and documentation:
+colour, behaviour, organisation, favour, metre, centre, analyse, minimise,
+optimise, serialise, initialise, utilise, recognise, emphasise, prioritise,
+licence (noun), defence, modelling, travelling, programme (except "program" in
+computing contexts).
+
+### Principles
+
+- **KISS** — Favour simplicity; avoid unnecessary complexity.
+- **DRY** — Avoid duplication; maintain a single source of truth.
+- **Boy Scout Rule** — Leave the code cleaner than you found it.
+- **Prefer smaller files** — Favour many smaller, focused source files over large
+  monolithic ones (Single Responsibility Principle). Target individual source
+  files under ~1,500 lines; consider splitting at ~2,000 lines.
+- **Separate concerns** — GPU infrastructure, business logic, and types belong in
+  separate files.
+
+### Rust Best Practices
+
+- Follow standard Rust idioms (`Result`, `Option`, pattern matching).
+- Use `anyhow` for error handling in application code.
+- Prefer Rust standard library features over external crates when possible.
+- All dependencies must be Apache-2.0 compatible (see the `[licenses]` allow-list
+  in [`deny.toml`](deny.toml), enforced by `cargo deny check`).
+
+### Avoid Over-engineering
+
+- Only make changes that are directly requested or clearly necessary.
+- Do not add features, refactor code, or make "improvements" beyond what was
+  asked.
+- Do not add error handling for scenarios that cannot happen.
+- Do not create helpers or abstractions for one-time operations.
+- Do not add docstrings, comments, or type annotations to code you did not
+  change.
 
 ---
 
 ## 🧪 Testing Guidelines
 
-For the full testing philosophy — TDD workflow, unit tests vs benchmarks, test
-organisation, and test outcomes vs implementation — see
-[AGENTS.md — Testing Philosophy](AGENTS.md#4-testing-philosophy).
+**The quality of tests is what makes a good system.** (For the TDD loop itself,
+see the Test-Driven Development steps under Development Workflow above.)
+
+### Test Outcomes, Not Implementation ("What" vs "How")
+
+Tests verify **what** the system does, not **how** it does it. The same test
+should pass regardless of whether we use GPU, CPU, or TPU internally.
+
+**"What" tests (GOOD)** — test observable outcomes:
+- Call a function with test data, assert on the result.
+- Verify the system produces correct candidates, detects patterns, returns the
+  expected JSON structure, etc.
+- Will still pass if we switch quick sort to bubble sort, HashMap to BTreeMap, or
+  GPU to CPU.
+
+**"How" tests (BAD)** — test implementation details:
+- Assert that a specific internal function is called.
+- Check that a particular data structure is used internally.
+- Verify iteration order, internal cache state, or call counts for non-observable
+  behaviour.
+- Break on any refactor even when behaviour is unchanged.
+
+**Benchmarks disguised as tests (BAD)** — measure performance in unit tests:
+- Loop N times and assert on elapsed time.
+- Compare durations between two code paths.
+- Use `Instant::now()` / `.elapsed()` to validate speed.
+- These always produce unreliable results because tests run in parallel with
+  other system activity.
+
+### Unit Tests vs Benchmarks
+
+| Concern | Unit Tests | Benchmarks |
+|---------|-----------|------------|
+| **Purpose** | Verify correctness | Measure performance |
+| **Location** | `tests/` (integration) or `src/` with `#[cfg(test)]` | `benches/` |
+| **Run with** | `cargo test` | `cargo bench --bench <name>` |
+| **Asserts on** | Results, structure, correctness | Timing, throughput |
+| **Must not** | Use `Instant`/`elapsed` for pass/fail | Verify correctness |
+
+Put timing assertions in `benches/`, not `tests/`. **Never reduce iteration
+counts to make "performance tests" faster in unit tests** — write a proper
+benchmark instead.
+
+### Test Organisation
+
+- **Prefer the `tests/` directory** (integration tests) over inline unit tests.
+- Only place tests under `src/` when the behaviour cannot be exercised cleanly
+  via the public API.
+- Do not make APIs public just for testing.
+- Group related tests by concern (e.g. all weight tests in one file).
+
+Tests that mutate shared global state (environment variables, deadline
+overrides, watchdog) are marked with `#[serial]` from the `serial_test` crate.
+GPU-dependent tests include `skip_without_gpu!()` and are skipped automatically
+on machines without a GPU.
 
 ---
 
@@ -174,8 +294,21 @@ section. Call `get_library_version()` to confirm what a worker has loaded.
 
 ## 🏗️ Project Structure
 
-For the full source layout with all files and directory descriptions, see
-[AGENTS.md — Architecture](AGENTS.md#2-architecture).
+The crate produces both a `cdylib` (for FFI via Deno) and an `rlib` (for Rust
+integration). Rather than maintain a hand-written mirror of the tree — which
+drifts as files move (Issue #1683) — browse the source directly:
+
+- **`src/`** — the library source. Key areas: `src/ffi/` (FFI entry points),
+  `src/ffi_types/` (JSON request/response structs), `src/analysis/` (the core
+  analysis engine, including `detection/`, `recommendation/`, and `scoring/`),
+  `src/focus/` (focus-neuron selection), and `src/parquet_format/` (Parquet I/O).
+- **The module column of [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md)** —
+  the authoritative map from each discovery type to its source module.
+- **`tests/`** — integration tests, **`benches/`** — Criterion benchmarks,
+  **`examples/`** — standalone examples, **`scripts/`** — build/install helpers
+  (`runlib.sh`), **`docs/`** — supplementary documentation.
+
+See `Cargo.toml` for the full dependency list.
 
 ---
 
