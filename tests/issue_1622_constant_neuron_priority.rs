@@ -55,6 +55,7 @@ fn creature() -> CreatureJson {
 fn remove_neuron_candidate(uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
             neuron_uuid: uuid.to_string(),
         }],
@@ -66,6 +67,7 @@ fn remove_neuron_candidate(uuid: &str, gain: f32) -> CoordinatedStructuralCandid
 fn positive_gain_candidate(uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::SetBias {
             neuron_uuid: uuid.to_string(),
             bias: 0.1,

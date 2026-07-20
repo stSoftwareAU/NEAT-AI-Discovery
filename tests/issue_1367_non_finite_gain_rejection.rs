@@ -38,6 +38,7 @@ fn empty_synapse_result() -> AnalyzeSynapsesResult {
 fn single_op_candidate(gain: f32, label: &str) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
             from_neuron_uuid: "a".to_string(),
             to_neuron_uuid: "b".to_string(),

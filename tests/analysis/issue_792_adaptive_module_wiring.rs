@@ -36,6 +36,7 @@ fn empty_synapse_result() -> AnalyzeSynapsesResult {
 fn make_candidate(gain: f32, comment: &str) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![],
         expected_creature_score_gain: gain,
         comment: Some(comment.to_string()),
@@ -260,6 +261,7 @@ fn ensemble_scoring_uses_real_tracker() {
     // Two candidates targeting the same neuron from different modules (agreeing)
     let c1 = CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::SetBias {
             neuron_uuid: "target-1".to_string(),
             bias: 0.5,
@@ -269,6 +271,7 @@ fn ensemble_scoring_uses_real_tracker() {
     };
     let c2 = CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::SetBias {
             neuron_uuid: "target-1".to_string(),
             bias: 0.6,

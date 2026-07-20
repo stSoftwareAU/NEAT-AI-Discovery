@@ -44,6 +44,7 @@ fn empty_synapse_result() -> shared::AnalyzeSynapsesResult {
 fn make_candidate(gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
             from_neuron_uuid: "a".to_string(),
             to_neuron_uuid: "b".to_string(),
@@ -418,6 +419,7 @@ fn merge_ordering_compression_before_discovery() {
     syn.coordinated_structural_candidates
         .push(CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::AddNeuron {
                 neuron_uuid: "compress-test".to_string(),
                 neuron_type: "hidden".to_string(),

@@ -217,6 +217,7 @@ pub fn output_range_compression_to_coordinated_candidates(
         let recommended_squash = recommend_squash(n);
         results.push(CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
                 neuron_uuid: n.neuron_uuid.clone(),
                 squash: recommended_squash.clone(),
@@ -270,6 +271,7 @@ pub fn output_range_compression_to_coordinated_candidates(
 
             results.push(CoordinatedStructuralCandidateJson {
                 remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                 operations: ops,
                 expected_creature_score_gain: base_improvement * 0.7,
                 comment: Some(format!(

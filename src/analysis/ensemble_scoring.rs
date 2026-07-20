@@ -318,6 +318,7 @@ mod tests {
     fn target_key_for_set_bias() {
         let c = CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::SetBias {
                 neuron_uuid: "abc".to_string(),
                 bias: 0.5,
@@ -332,6 +333,7 @@ mod tests {
     fn target_key_for_add_synapse() {
         let c = CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::AddSynapse {
                 from_neuron_uuid: "a".to_string(),
                 to_neuron_uuid: "b".to_string(),
@@ -348,6 +350,7 @@ mod tests {
         let group = vec![
             CoordinatedStructuralCandidateJson {
                 remove_neuron_compensation: None,
+                constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::SetBias {
                     neuron_uuid: "a".to_string(),
                     bias: 0.1,
@@ -357,6 +360,7 @@ mod tests {
             },
             CoordinatedStructuralCandidateJson {
                 remove_neuron_compensation: None,
+                constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::SetBias {
                     neuron_uuid: "a".to_string(),
                     bias: 0.2,
@@ -375,6 +379,7 @@ mod tests {
         let group = vec![
             CoordinatedStructuralCandidateJson {
                 remove_neuron_compensation: None,
+                constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
                     neuron_uuid: "a".to_string(),
                 }],
@@ -383,6 +388,7 @@ mod tests {
             },
             CoordinatedStructuralCandidateJson {
                 remove_neuron_compensation: None,
+                constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
                     neuron_uuid: "a".to_string(),
                     squash: "RELU".to_string(),
@@ -399,6 +405,7 @@ mod tests {
     fn extract_module_name_from_comment() {
         let c = CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![],
             expected_creature_score_gain: 0.01,
             comment: Some("saturation detection: found 3 saturated neurons".to_string()),
@@ -410,6 +417,7 @@ mod tests {
     fn extract_module_name_no_comment() {
         let c = CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![],
             expected_creature_score_gain: 0.01,
             comment: None,

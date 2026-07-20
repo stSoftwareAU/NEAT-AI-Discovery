@@ -264,6 +264,7 @@ pub fn stuck_synapses_to_coordinated_candidates(
 
             results.push(CoordinatedStructuralCandidateJson {
                 remove_neuron_compensation: None,
+                constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::SetWeight {
                     from_neuron_uuid: c.from_neuron_uuid.clone(),
                     to_neuron_uuid: c.to_neuron_uuid.clone(),

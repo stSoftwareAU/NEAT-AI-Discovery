@@ -301,6 +301,7 @@ pub fn skip_connections_to_coordinated_candidates(
 
         results.push(CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::AddSynapse {
                 from_neuron_uuid: c.source_uuid.clone(),
                 to_neuron_uuid: c.target_uuid.clone(),

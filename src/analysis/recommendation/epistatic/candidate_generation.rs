@@ -451,6 +451,7 @@ pub fn epistatic_pairs_to_coordinated_candidates(
         .iter()
         .map(|pair| CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![
                 CoordinatedStructuralOpJson::AddSynapse {
                     from_neuron_uuid: pair.source_a_uuid.clone(),

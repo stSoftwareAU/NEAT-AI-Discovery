@@ -70,6 +70,7 @@ pub use ffi_types::{
     CleanOrphanedDirsOutput,
     CleanupDiscoveryDirInput,
     CleanupDiscoveryDirOutput,
+    ConstantNeuronBiasFoldJson,
     CoordinatedStructuralCandidateJson,
     CoordinatedStructuralOpJson,
     CpuTimingBreakdownJson,
@@ -87,6 +88,7 @@ pub use ffi_types::{
     ExportVisualisationStats,
     FinishSessionInput,
     FinishSessionOutput,
+    FoldedBiasDeltaJson,
     // Response types — top-level (`ffi_types::responses`).
     GetVersionOutput,
     GpuAdapterInfoJson,

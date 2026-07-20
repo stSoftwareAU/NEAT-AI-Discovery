@@ -317,6 +317,7 @@ pub fn saturated_neurons_to_coordinated_candidates(
 
             results.push(CoordinatedStructuralCandidateJson {
                 remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                 operations,
                 expected_creature_score_gain: c.estimated_improvement,
                 comment: Some(format!(
@@ -330,6 +331,7 @@ pub fn saturated_neurons_to_coordinated_candidates(
         if let Some(delta) = c.recommended_bias_delta {
             results.push(CoordinatedStructuralCandidateJson {
                 remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::SetBias {
                     neuron_uuid: c.neuron_uuid.clone(),
                     bias: delta,

@@ -475,6 +475,7 @@ pub fn compound_degradations_to_coordinated_candidates(
         .iter()
         .map(|c| CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![
                 CoordinatedStructuralOpJson::SetBias {
                     neuron_uuid: c.bias_neuron_uuid.clone(),

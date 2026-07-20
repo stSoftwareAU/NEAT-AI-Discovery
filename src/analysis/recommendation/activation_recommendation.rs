@@ -774,6 +774,7 @@ pub fn recommendation_to_coordinated_candidate(
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
             neuron_uuid: recommendation.neuron_uuid.clone(),
             squash: recommendation.recommended_squash.clone(),

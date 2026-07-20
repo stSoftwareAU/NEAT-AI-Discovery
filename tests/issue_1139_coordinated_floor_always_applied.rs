@@ -56,6 +56,7 @@ fn empty_synapse_result() -> AnalyzeSynapsesResult {
 fn add_synapse_candidate(weight: f32, gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::AddSynapse {
             from_neuron_uuid: "src".to_string(),
             to_neuron_uuid: "dst".to_string(),

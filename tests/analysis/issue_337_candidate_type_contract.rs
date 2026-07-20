@@ -165,6 +165,7 @@ fn coordinated_op_set_weight_serialises_for_neat_ai() {
 fn coordinated_candidate_serialises_with_all_required_fields() {
     let candidate = CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![
             CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "input-0".to_string(),
@@ -197,6 +198,7 @@ fn coordinated_candidate_serialises_with_all_required_fields() {
 fn coordinated_candidate_omits_comment_when_none() {
     let candidate = CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::SetBias {
             neuron_uuid: "h-1".to_string(),
             bias: 0.0,
@@ -226,6 +228,7 @@ fn synergistic_candidate_uses_add_synapse_operations() {
     // coordinated-structural path — no new operation type is needed.
     let candidate = CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![
             CoordinatedStructuralOpJson::AddSynapse {
                 from_neuron_uuid: "input-0".to_string(),
