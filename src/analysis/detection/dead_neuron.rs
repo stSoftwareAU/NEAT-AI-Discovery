@@ -249,6 +249,7 @@ pub fn dead_neurons_to_coordinated_candidates(
 
     for c in candidates {
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
                 neuron_uuid: c.neuron_uuid.clone(),
             }],

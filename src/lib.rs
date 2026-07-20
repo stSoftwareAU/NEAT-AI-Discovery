@@ -110,6 +110,7 @@ pub use ffi_types::{
     RecordDiscoveryInput,
     RecordDiscoveryOutput,
     RemovalCandidateJson,
+    RemoveNeuronCompensationJson,
     SCHEMA_VERSION,
     ShaderTimingJson,
     StartSessionInput,

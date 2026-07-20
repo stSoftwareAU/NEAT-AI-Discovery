@@ -247,6 +247,7 @@ pub fn operating_point_to_coordinated_candidates(
         let new_bias = issue.bias + bias_delta;
 
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![CoordinatedStructuralOpJson::SetBias {
                 neuron_uuid: issue.neuron_uuid.clone(),
                 bias: new_bias,
@@ -268,6 +269,7 @@ pub fn operating_point_to_coordinated_candidates(
 
         // Candidate 2: changeSquash — switch to IDENTITY (no bounding)
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
                 neuron_uuid: issue.neuron_uuid.clone(),
                 squash: "IDENTITY".to_string(),
@@ -311,6 +313,7 @@ pub fn operating_point_to_coordinated_candidates(
             });
 
             results.push(CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
                 operations: weight_ops,
                 expected_creature_score_gain: base_improvement * 0.5,
                 comment: Some(format!(

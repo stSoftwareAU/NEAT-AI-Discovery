@@ -545,6 +545,7 @@ pub fn output_squash_mismatch_to_coordinated_candidates(
     candidates
         .iter()
         .map(|c| CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
                 neuron_uuid: c.neuron_uuid.clone(),
                 squash: c.recommended_squash.clone(),

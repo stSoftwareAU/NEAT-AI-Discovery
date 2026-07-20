@@ -202,6 +202,7 @@ pub fn co_adapted_pairs_to_coordinated_candidates(
         };
 
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
                 neuron_uuid: remove_uuid.clone(),
             }],
@@ -229,6 +230,7 @@ pub fn co_adapted_pairs_to_coordinated_candidates(
 
             if !ops.is_empty() {
                 results.push(CoordinatedStructuralCandidateJson {
+                    remove_neuron_compensation: None,
                     operations: ops,
                     expected_creature_score_gain: c.estimated_improvement * 0.8,
                     comment: Some(format!(

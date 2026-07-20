@@ -537,6 +537,7 @@ pub fn correlated_errors_to_coordinated_candidates(
         };
 
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations,
             expected_creature_score_gain: group.estimated_improvement,
             comment: Some(format!(

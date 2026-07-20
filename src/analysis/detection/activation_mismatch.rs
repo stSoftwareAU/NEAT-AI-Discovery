@@ -246,6 +246,7 @@ pub fn activation_mismatch_to_coordinated_candidates(
             let recommended = c.recommended_squash.as_ref()?;
 
             Some(CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
                 operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
                     neuron_uuid: c.neuron_uuid.clone(),
                     squash: recommended.clone(),

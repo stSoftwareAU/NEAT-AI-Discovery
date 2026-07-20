@@ -45,6 +45,7 @@ fn make_multi_op_candidate(op_count: usize, gain: f32) -> CoordinatedStructuralC
     }
 
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations,
         expected_creature_score_gain: gain,
         comment: Some("test coordinated module".to_string()),

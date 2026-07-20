@@ -22,6 +22,7 @@ fn make_coordinated_candidate(
     expected_gain: f32,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![
             CoordinatedStructuralOpJson::AddSynapse {
                 from_neuron_uuid: source_a.to_string(),
@@ -233,6 +234,7 @@ fn coordinated_variant_preserves_non_add_synapse_operations() {
     // A coordinated candidate with mixed ops (RemoveSynapse + AddSynapse)
     // should only scale AddSynapse weights, leaving other ops untouched.
     let candidate = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![
             CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "input-0".to_string(),
@@ -320,6 +322,7 @@ fn coordinated_variant_respects_max_candidates_limit() {
 fn coordinated_variant_skips_candidates_without_add_synapse() {
     // A candidate with only RemoveSynapse ops has no weights to scale.
     let candidate = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![
             CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "input-0".to_string(),

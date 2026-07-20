@@ -377,6 +377,7 @@ pub(crate) fn convert_neurons_to_coordinated_replacements(
         }
 
         replacements.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![
                 CoordinatedStructuralOpJson::RemoveSynapse {
                     from_neuron_uuid: candidate.source_neuron_uuid.clone(),

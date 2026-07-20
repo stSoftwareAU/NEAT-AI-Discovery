@@ -213,6 +213,7 @@ pub(crate) fn detect_noisy_vs_trusted(
     best.map(|(noisy, trusted, gain)| {
         let new_weight = trusted.weight + noisy.weight;
         CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![
                 CoordinatedStructuralOpJson::RemoveSynapse {
                     from_neuron_uuid: noisy.from_uuid.to_string(),
@@ -405,6 +406,7 @@ pub(crate) fn detect_collapsible_hidden_neurons(
         }
 
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![
                 CoordinatedStructuralOpJson::RemoveSynapse {
                     from_neuron_uuid: a.to_string(),

@@ -544,6 +544,7 @@ fn fan_in_to_single_coordinated(
     });
 
     Some(CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations,
         expected_creature_score_gain: candidate.estimated_improvement,
         comment: Some(candidate.reason.clone()),

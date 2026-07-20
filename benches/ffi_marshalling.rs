@@ -149,6 +149,7 @@ fn create_weight_update_candidates(count: usize) -> Vec<SynapseWeightUpdateCandi
 fn create_coordinated_candidates(count: usize) -> Vec<CoordinatedStructuralCandidateJson> {
     (0..count)
         .map(|i| CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![
                 CoordinatedStructuralOpJson::AddNeuron {
                     neuron_uuid: format!("new-neuron-{i}"),

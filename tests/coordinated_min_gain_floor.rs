@@ -51,6 +51,7 @@ fn empty_synapse_result() -> AnalyzeSynapsesResult {
 
 fn single_op_candidate(gain: f32, module: &str) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
             from_neuron_uuid: "a".to_string(),
             to_neuron_uuid: "b".to_string(),
@@ -64,6 +65,7 @@ fn two_op_candidate(gain: f32, module: &str) -> CoordinatedStructuralCandidateJs
     // A remove + add-synapse pair — the discount factor is 0.5 for 2-op
     // candidates (COORDINATED_EMPIRICAL_DISCOUNT_2OPS).
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![
             CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "a".to_string(),

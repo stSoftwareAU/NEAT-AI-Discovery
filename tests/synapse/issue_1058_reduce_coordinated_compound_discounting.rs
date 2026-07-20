@@ -24,6 +24,7 @@ use neat_ai_discovery::{CoordinatedStructuralCandidateJson, CoordinatedStructura
 
 fn make_single_op_candidate(gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::SetBias {
             neuron_uuid: "neuron-a".to_string(),
             bias: 0.5,
@@ -60,6 +61,7 @@ fn make_multi_op_candidate(op_count: usize, gain: f32) -> CoordinatedStructuralC
     }
 
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations,
         expected_creature_score_gain: gain,
         comment: Some("test coordinated module".to_string()),

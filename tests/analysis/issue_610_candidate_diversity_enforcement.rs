@@ -23,6 +23,7 @@ use neat_ai_discovery::{CoordinatedStructuralCandidateJson, CoordinatedStructura
 /// Helper: create a `RemoveSynapse` coordinated candidate.
 fn remove_synapse_candidate(from: &str, to: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
             from_neuron_uuid: from.to_string(),
             to_neuron_uuid: to.to_string(),
@@ -40,6 +41,7 @@ fn add_synapse_candidate(
     gain: f32,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::AddSynapse {
             from_neuron_uuid: from.to_string(),
             to_neuron_uuid: to.to_string(),
@@ -57,6 +59,7 @@ fn change_squash_candidate(
     gain: f32,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
             neuron_uuid: neuron.to_string(),
             squash: squash.to_string(),
@@ -114,6 +117,7 @@ fn test_different_candidates_low_similarity() {
 fn test_same_neuron_different_ops_moderate_similarity() {
     let a = change_squash_candidate("hidden-5", "RELU", 0.10);
     let b = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::SetBias {
             neuron_uuid: "hidden-5".to_string(),
             bias: 0.5,
@@ -291,6 +295,7 @@ fn test_zero_penalty_preserves_ordering() {
 fn test_multi_operation_similarity() {
     // Two coordinated candidates that both remove a synapse and add a neuron at similar positions
     let a = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![
             CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "input-1".to_string(),
@@ -309,6 +314,7 @@ fn test_multi_operation_similarity() {
     };
 
     let b = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![
             CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "input-2".to_string(),

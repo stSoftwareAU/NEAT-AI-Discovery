@@ -326,6 +326,7 @@ pub fn squash_weight_rescale_to_coordinated_candidates(
             }
 
             CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
                 operations,
                 expected_creature_score_gain: c.estimated_improvement,
                 comment: Some(c.reason.clone()),

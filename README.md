@@ -248,6 +248,12 @@ neuron's downstream contribution. The `remove_neuron_compensation` module
 it into a correlated survivor's downstream weight — a perfectly correlated
 survivor makes the removal fully compensable and non-regressive.
 
+The live dispatch path wires this in (Issue #1689): every emitted sole-op
+`RemoveNeuron` candidate that removes a variance-carrying neuron now carries a
+`removeNeuronCompensation` block (optimal `Δw`, the covariance statistic, and the
+`fullyCompensable` flag) so the applier redistributes weight instead of folding
+the mean. Constant neurons route to the #1623 bias fold instead.
+
 The compact-covariance sufficient statistic, the `Δw`/residual maths, and the
 evaluation flow are documented in
 [docs/IMPACT_CALCULATION.md § Remove-Neuron Weight-Redistribution Compensation](docs/IMPACT_CALCULATION.md#remove-neuron-weight-redistribution-compensation-issue-1559).

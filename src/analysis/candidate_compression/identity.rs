@@ -102,6 +102,7 @@ fn compress_group(
         .collect();
 
     Some(CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations,
         expected_creature_score_gain: discounted_gain,
         comment: Some(format!(

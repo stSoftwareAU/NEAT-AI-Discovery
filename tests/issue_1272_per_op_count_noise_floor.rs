@@ -45,6 +45,7 @@ fn candidate_with_ops(
         });
     }
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations,
         expected_creature_score_gain: gain,
         comment: Some(label.to_string()),

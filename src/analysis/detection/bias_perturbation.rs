@@ -252,6 +252,7 @@ pub fn bias_perturbation_to_coordinated_candidates(
     candidates
         .iter()
         .map(|c| CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![CoordinatedStructuralOpJson::SetBias {
                 neuron_uuid: c.neuron_uuid.clone(),
                 bias: c.recommended_bias,

@@ -29,6 +29,7 @@ fn change_squash_candidate(
     comment: &str,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
             neuron_uuid: neuron_uuid.to_string(),
             squash: squash.to_string(),
@@ -45,6 +46,7 @@ fn remove_neuron_candidate(
     comment: &str,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
             neuron_uuid: neuron_uuid.to_string(),
         }],
@@ -61,6 +63,7 @@ fn set_bias_candidate(
     comment: &str,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::SetBias {
             neuron_uuid: neuron_uuid.to_string(),
             bias,
@@ -79,6 +82,7 @@ fn add_synapse_candidate(
     comment: &str,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::AddSynapse {
             from_neuron_uuid: from.to_string(),
             to_neuron_uuid: to.to_string(),
@@ -200,6 +204,7 @@ fn test_cross_module_dedup_single_candidate_passthrough() {
 #[test]
 fn test_multi_op_candidates_deduplicated() {
     let candidate1 = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![
             CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "input-0".to_string(),
@@ -216,6 +221,7 @@ fn test_multi_op_candidates_deduplicated() {
     };
 
     let candidate2 = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![
             CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "input-0".to_string(),

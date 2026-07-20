@@ -309,6 +309,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
             }
 
             results.push(CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
                 operations,
                 expected_creature_score_gain: c.estimated_improvement,
                 comment: Some(comment),
@@ -345,6 +346,7 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
                     let bypass_weight = upstream_weight * downstream_weight * 0.5;
 
                     results.push(CoordinatedStructuralCandidateJson {
+                        remove_neuron_compensation: None,
                         operations: vec![CoordinatedStructuralOpJson::AddSynapse {
                             from_neuron_uuid: upstream_uuid.clone(),
                             to_neuron_uuid: downstream_uuid.clone(),
