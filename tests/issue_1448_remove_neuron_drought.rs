@@ -30,6 +30,7 @@ fn inputs(failures: u32, disabled: u32, threshold: u32) -> DroughtDeprioritisati
 
 fn remove_neuron(uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
             neuron_uuid: uuid.to_string(),
         }],
@@ -40,6 +41,7 @@ fn remove_neuron(uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
 
 fn change_squash(uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
             neuron_uuid: uuid.to_string(),
             squash: "TANH".to_string(),
@@ -83,6 +85,7 @@ fn only_single_op_remove_neuron_is_classified() {
 
     // A multi-op group containing a RemoveNeuron is NOT a single-op remove.
     let multi = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![
             CoordinatedStructuralOpJson::RemoveNeuron {
                 neuron_uuid: "h1".to_string(),

@@ -151,6 +151,7 @@ pub fn batch_successful_to_coordinated_candidates(
                 .collect();
 
             CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
                 operations,
                 expected_creature_score_gain: group.combined_improvement,
                 comment: Some(group.reason.clone()),

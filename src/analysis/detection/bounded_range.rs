@@ -252,6 +252,7 @@ pub fn bounded_range_to_coordinated_candidates(
         let gate_uuid = format!("gate-bounded-{}", c.neuron_uuid);
 
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![
                 CoordinatedStructuralOpJson::AddNeuron {
                     neuron_uuid: gate_uuid.clone(),

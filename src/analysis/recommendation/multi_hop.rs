@@ -419,6 +419,7 @@ pub fn multi_hop_to_coordinated_candidates(
             };
 
             results.push(CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
                 operations: vec![CoordinatedStructuralOpJson::AddSynapse {
                     from_neuron_uuid: source.clone(),
                     to_neuron_uuid: target.clone(),
@@ -473,6 +474,7 @@ pub fn multi_hop_to_coordinated_candidates(
 
             let path_str = candidate.path.join(" → ");
             results.push(CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
                 operations,
                 expected_creature_score_gain: candidate.estimated_improvement,
                 comment: Some(format!(

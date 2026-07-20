@@ -222,6 +222,7 @@ pub fn output_competition_to_coordinated_candidates(
 
     for c in candidates {
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![CoordinatedStructuralOpJson::AddSynapse {
                 from_neuron_uuid: c.from_output_uuid.clone(),
                 to_neuron_uuid: c.to_output_uuid.clone(),

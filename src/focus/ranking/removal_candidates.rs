@@ -424,6 +424,7 @@ pub(super) fn detect_constant_neuron_removals(
                 calculate_removal_savings(incoming_count, outgoing_count, cost_of_growth_threshold);
 
             Some(CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
                 operations,
                 expected_creature_score_gain: removal_savings,
                 comment: Some(format!(

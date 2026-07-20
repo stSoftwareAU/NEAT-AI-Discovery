@@ -157,6 +157,7 @@ pub fn observation_utilisation_to_coordinated_candidates(
             }
 
             candidates.push(CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
                 operations: vec![CoordinatedStructuralOpJson::SetBias {
                     neuron_uuid: target_uuid.to_string(),
                     bias: bias_compensation,

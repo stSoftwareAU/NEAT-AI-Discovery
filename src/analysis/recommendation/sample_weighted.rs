@@ -345,6 +345,7 @@ pub fn high_error_neurons_to_coordinated_candidates(
             let bias_adjustment = -c.weighted_mean_error * 0.1;
 
             CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
                 operations: vec![CoordinatedStructuralOpJson::SetBias {
                     neuron_uuid: c.neuron_uuid.clone(),
                     bias: bias_adjustment,

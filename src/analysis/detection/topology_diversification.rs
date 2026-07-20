@@ -442,6 +442,7 @@ pub fn topology_diversification_to_coordinated_candidates(
         ];
 
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations,
             expected_creature_score_gain: c.estimated_improvement,
             comment: Some(format!(

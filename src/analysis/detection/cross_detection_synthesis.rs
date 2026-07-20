@@ -185,6 +185,7 @@ pub fn synthesise_cross_detection_candidates(
         );
 
         synthesised.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: combined_ops,
             expected_creature_score_gain: best_gain,
             comment: Some(comment),
@@ -210,6 +211,7 @@ mod tests {
     #[test]
     fn primary_neuron_uuid_for_change_squash() {
         let c = CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
                 neuron_uuid: "abc".to_string(),
                 squash: "RELU".to_string(),
@@ -223,6 +225,7 @@ mod tests {
     #[test]
     fn primary_neuron_uuid_for_set_weight_uses_target() {
         let c = CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![CoordinatedStructuralOpJson::SetWeight {
                 from_neuron_uuid: "source".to_string(),
                 to_neuron_uuid: "target".to_string(),
@@ -237,6 +240,7 @@ mod tests {
     #[test]
     fn primary_neuron_uuid_none_for_multi_op() {
         let c = CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![
                 CoordinatedStructuralOpJson::ChangeSquash {
                     neuron_uuid: "a".to_string(),

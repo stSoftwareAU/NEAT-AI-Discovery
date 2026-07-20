@@ -174,16 +174,19 @@ fn test_mean_abs_activation_empty() {
 fn test_sort_candidates_descending() {
     let mut candidates = vec![
         CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![],
             expected_creature_score_gain: 0.001,
             comment: Some("low".to_string()),
         },
         CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![],
             expected_creature_score_gain: 0.010,
             comment: Some("high".to_string()),
         },
         CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![],
             expected_creature_score_gain: 0.005,
             comment: Some("mid".to_string()),
@@ -209,6 +212,7 @@ fn test_sort_candidates_empty() {
 #[test]
 fn test_sort_candidates_single() {
     let mut candidates = vec![CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![],
         expected_creature_score_gain: 0.005,
         comment: Some("only".to_string()),

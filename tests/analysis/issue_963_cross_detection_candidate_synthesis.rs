@@ -31,6 +31,7 @@ fn change_squash_candidate(
     module: &str,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
             neuron_uuid: neuron_uuid.to_string(),
             squash: squash.to_string(),
@@ -48,6 +49,7 @@ fn set_bias_candidate(
     module: &str,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::SetBias {
             neuron_uuid: neuron_uuid.to_string(),
             bias,
@@ -66,6 +68,7 @@ fn set_weight_candidate(
     module: &str,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::SetWeight {
             from_neuron_uuid: from.to_string(),
             to_neuron_uuid: to.to_string(),
@@ -83,6 +86,7 @@ fn remove_neuron_candidate(
     module: &str,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
             neuron_uuid: neuron_uuid.to_string(),
         }],
@@ -99,6 +103,7 @@ fn remove_synapse_candidate(
     module: &str,
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
             from_neuron_uuid: from.to_string(),
             to_neuron_uuid: to.to_string(),
@@ -146,6 +151,7 @@ fn test_group_candidates_empty_input() {
 fn test_group_candidates_multi_op_candidates_excluded() {
     // Multi-operation candidates should not be grouped (they are already coordinated)
     let multi_op = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
         operations: vec![
             CoordinatedStructuralOpJson::ChangeSquash {
                 neuron_uuid: "neuron-a".to_string(),

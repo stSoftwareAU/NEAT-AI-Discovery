@@ -1011,6 +1011,66 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
     }
 
+    // Issue #1689: Wire the variance-aware weight-redistribution compensation
+    // (#1559) into the live path. Milestone #1559 built the compensation API but
+    // nothing invoked it, so emitted remove-neuron candidates carried no remedy
+    // and the applier fell back to the mean-only bias fold, which regresses the
+    // removed neuron's per-sample (variance) signal (the #1558/#1686 failure
+    // class). For each sole-op RemoveNeuron candidate that removes a
+    // variance-carrying neuron, attach counterfactual (d): the optimal weight
+    // bump into a correlated survivor plus the covariance sufficient statistic.
+    // Constant neurons route to the #1623 bias fold and are left untouched here.
+    if let Some(syn) = synapse_result.as_mut() {
+        // Gather the per-sample records for every neuron a bare remove-neuron
+        // candidate needs — the candidate itself and each shared-target survivor
+        // — from the record cache in one pass.
+        let mut needed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for candidate in &syn.coordinated_structural_candidates {
+            if let [crate::CoordinatedStructuralOpJson::RemoveNeuron { neuron_uuid }] =
+                candidate.operations.as_slice()
+            {
+                needed.insert(neuron_uuid.clone());
+                for shared in super::shared_downstream_targets(&input.creature, neuron_uuid) {
+                    needed.insert(shared.survivor_uuid);
+                }
+            }
+        }
+
+        let mut records: Vec<crate::types::DiscoverRecord> = Vec::new();
+        let mut missing = 0usize;
+        for uuid in &needed {
+            match shared_cache.get(uuid) {
+                Ok(neuron_records) => records.extend(neuron_records.iter().cloned()),
+                // No per-sample records for this neuron — counterfactual (d)
+                // cannot be evaluated for candidates that need it, so the remedy
+                // is legitimately absent (the applier flags such removals rather
+                // than folding the mean). Count it for observability rather than
+                // masking it.
+                Err(_) => missing += 1,
+            }
+        }
+        if missing > 0 {
+            tracing::debug!(
+                missing,
+                "Issue #1689: {missing} neuron(s) had no cached per-sample records — \
+                 compensation left absent for candidates that depend on them"
+            );
+        }
+
+        let attached = super::discovery_dispatch::apply_remove_neuron_compensation(
+            &input.creature,
+            &records,
+            &mut syn.coordinated_structural_candidates,
+        );
+        if attached > 0 {
+            tracing::debug!(
+                attached,
+                "Issue #1689: attached variance-aware weight-redistribution compensation to \
+                 {attached} remove-neuron candidate(s)"
+            );
+        }
+    }
+
     // Issue #1448: Deprioritise destructive remove-neuron candidates during a
     // search-exhaustion drought. On a plateaued dense creature the remove-neuron
     // path dominates the failure cache (bucket `247b83ab`) with low-impact

@@ -248,6 +248,7 @@ pub fn polarity_flip_candidates_to_coordinated(
         let negated_weight = -c.current_weight;
 
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: vec![CoordinatedStructuralOpJson::SetWeight {
                 from_neuron_uuid: c.from_neuron_uuid.clone(),
                 to_neuron_uuid: c.to_neuron_uuid.clone(),

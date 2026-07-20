@@ -849,6 +849,7 @@ mod failure_cache_handshake_wiring_tests {
 
     fn coordinated() -> CoordinatedStructuralCandidateJson {
         CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
             operations: Vec::new(),
             expected_creature_score_gain: 0.01,
             comment: None,
