@@ -1,6 +1,6 @@
 # 📉 Output Bias Drift Detection
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/output_bias_drift.rs`](../../src/analysis/output_bias_drift.rs) | **Issue:** [#361](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/361)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/recommendation/output_bias_drift.rs`](../../src/analysis/recommendation/output_bias_drift.rs) | **Issue:** [#361](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/361)
 
 ---
 

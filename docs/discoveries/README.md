@@ -129,6 +129,8 @@ configuration.
 | [Symmetry Breaking](symmetry-breaking.md) | Neuron pairs with near-identical weight configs | Perturb weights and bias to break symmetry |
 | [Error Plateau](error-plateau.md) | Output neurons stuck at uniformly high error | Change squash + recentre bias |
 | [Output Squash Mismatch](output-squash-mismatch.md) | Output activation incompatible with target data | Change to compatible output activation |
+| [Monotonicity](monotonicity.md) | Non-monotonic activation-error relationship in a hidden neuron | Add neuron or change activation to restore monotonic response |
+| [Output Range Compression](output-range-compression.md) | Output neuron whose bounded squash compresses its usable range | Change squash to a wider-range activation |
 
 ### 🌱 Growth Discoveries (Add Missing Structure)
 
@@ -139,6 +141,8 @@ paths would reduce error.
 |----------|--------------|--------------|
 | [Bottleneck Neuron](bottleneck-neuron.md) | Information jams (many inputs, one neuron) | Add parallel neuron or bypass |
 | [Correlated Error](correlated-error.md) | Multiple outputs with shared error pattern | Add shared hidden neuron |
+| [Output Conflict](output-conflict.md) | Hidden neuron helping one output while harming another | Add synapse or neuron to decouple the outputs |
+| [Hard Sample Cluster](hard-sample-cluster.md) | Clusters of training samples with persistent high error | Add neuron or synapse targeting the hard cluster |
 | [Multi-Hop](multi-hop.md) | Useful indirect signal paths (2–3 hops) | Add synapse or relay neuron |
 | [Add Neuron](add-neuron.md) | Missing intermediate computations | Add hidden neuron |
 | [Add Synapse](add-synapse.md) | Missing direct connections | Add synapse |
@@ -157,6 +161,7 @@ reduce brittleness.
 | [Weight Magnitude Reset](weight-magnitude-reset.md) | Synapses stuck in error plateau | Try dramatically different weight values |
 | [Input Sensitivity](input-sensitivity.md) | Dominant inputs or threshold cliff effects | Reduce weight, add dampening, or shift bias |
 | [Sample-Weighted Discovery](sample-weighted.md) | Neurons failing on high-error samples | Adjust bias toward hard-sample performance |
+| [Weight Polarity Flip](weight-polarity-flip.md) | Synapse whose sign opposes the error gradient | Flip the weight sign toward the gradient |
 
 ### 🛡️ Data Quality Discoveries (Handle Sentinel Values)
 

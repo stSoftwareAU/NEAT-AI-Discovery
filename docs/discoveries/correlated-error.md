@@ -1,6 +1,6 @@
 # 🔗 Correlated Error Pattern Detection
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/correlated_error.rs`](../../src/analysis/correlated_error.rs) | **Issue:** [#344](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/344)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/detection/correlated_error.rs`](../../src/analysis/detection/correlated_error.rs) | **Issue:** [#344](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/344)
 
 ---
 

@@ -1,6 +1,6 @@
 # 💀 Dead Neuron Detection
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/dead_neuron.rs`](../../src/analysis/dead_neuron.rs) | **Issue:** [#341](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/341)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/detection/dead_neuron.rs`](../../src/analysis/detection/dead_neuron.rs) | **Issue:** [#341](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/341)
 
 ---
 

@@ -1,6 +1,6 @@
 # 📉 Remove Low-Impact Neurons
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/neuron.rs`](../../src/analysis/neuron.rs)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/neuron/`](../../src/analysis/neuron/)
 
 ---
 

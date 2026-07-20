@@ -177,7 +177,7 @@ candidates for the same synapse, only the most promising candidate survives.
 
 ## 🧪 Tests
 
-See [`tests/issue_644_weight_polarity_flip.rs`](../../tests/issue_644_weight_polarity_flip.rs):
+See [`tests/detection/issue_644_weight_polarity_flip.rs`](../../tests/detection/issue_644_weight_polarity_flip.rs):
 
 1. Detects positive weight + positive gradient (descent crosses zero)
 2. Detects negative weight + negative gradient (descent crosses zero)

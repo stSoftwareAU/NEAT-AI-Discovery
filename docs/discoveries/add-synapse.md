@@ -1,6 +1,6 @@
 # 🔗 Add Synapse Discovery
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/synapse.rs`](../../src/analysis/synapse.rs)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/synapse/`](../../src/analysis/synapse/)
 
 ---
 
