@@ -2,6 +2,14 @@
 
 Issue #1017 — Part of #1016
 
+> ⚠️ **Historical audit — partially superseded (see the [Postscript](#8-postscript-1018-later-introduced-opt-in-metropolis-hastings-acceptance)).**
+> This document records the state of the pipeline as of Issue #1017. Its central
+> negative recommendation ("no probabilistic acceptance", "do not introduce MCMC
+> machinery") describes the pipeline **at that time**. Issue #1018 has since
+> landed **opt-in** Metropolis–Hastings acceptance, gated on the
+> `NEAT_AI_DISCOVERY_MH_TEMPERATURE` environment variable. Read the statements
+> below as the historical audit finding, not as current fact.
+
 ## 1. Executive Summary
 
 After thorough analysis of the candidate selection pipeline, the finding is that
@@ -214,3 +222,39 @@ approaches are more promising than MCMC:
 | `src/analysis/synapse/scoring/improvement.rs` | Improvement calculation | Source of prediction overestimation |
 | `src/analysis/synapse/post_processing.rs` | Full post-processing pipeline | Impact, boosts, calibration, diversification |
 | `src/analysis/constants/detection_thresholds.rs` | `MIN_IMPROVED_RATIO` (0.6) | Deterministic acceptance threshold |
+
+## 8. Postscript: #1018 later introduced opt-in Metropolis-Hastings acceptance
+
+**Dated 2026-07-20.** After this audit was written, **Issue #1018** added
+**opt-in Metropolis–Hastings (MH) probabilistic acceptance** for marginal
+synapse candidates. This does **not** invalidate the audit — the pipeline is
+still a one-shot optimisation search by default — but it does mean two statements
+above are no longer unconditionally true and must be read as history:
+
+- §2 and §3.2 state there is *"no probabilistic acceptance (no Metropolis–Hastings α)"*.
+- §5.4 and §6 recommend *"do not introduce MCMC machinery"* and treat temperature
+  scheduling as having *"nothing to anneal"*.
+
+### What #1018 (and follow-ups) actually landed
+
+- **Opt-in MH acceptance** lives in
+  `src/analysis/synapse/target_analysis/evaluation.rs`. For a *marginal*
+  candidate (improvement above zero but at or below the effective threshold), an
+  acceptance probability `min(1, exp(improvement / effective_mh_temp))` is
+  computed and compared against a **deterministic** pseudo-random value hashed
+  from the source+target UUIDs (so runs remain reproducible on the same data).
+- The behaviour is **gated on `NEAT_AI_DISCOVERY_MH_TEMPERATURE`**. When the
+  variable is unset, the original deterministic accept/reject logic described in
+  §3.2 is preserved exactly. Only when a temperature is configured are marginal
+  candidates accepted probabilistically.
+- Issue #1020 added a **temperature schedule** that scales the MH temperature,
+  and Issue #1021 added **MCMC-style acceptance-rate diagnostics**
+  (`src/analysis/diagnostics/mcmc_diagnostics.rs`), so the "convergence
+  diagnostics: completely absent" row of §2 is likewise now only historically true.
+- The variable is documented in
+  [docs/CONFIGURATION.md](CONFIGURATION.md) and
+  [docs/FFI_API.md](FFI_API.md).
+
+The audit's negative recommendation is preserved here as the reasoning that held
+**before** #1018; the opt-in MH path is the deliberate, configuration-gated
+exception that was subsequently added.

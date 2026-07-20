@@ -47,7 +47,7 @@ flowchart TD
     A["🔍 For each hidden neuron<br/>with bounded activation"] --> B["📊 Collect activation samples<br/><i>minimum 20</i>"]
     B --> C["📐 Compute mean & std deviation"]
     C --> D{"🧪 Near activation bound?"}
-    D -->|"TANH: |mean| > 0.95<br/>LOGISTIC: mean > 0.95 or < 0.05<br/>HARD_TANH: |mean| > 0.99"| E{"📏 Std dev < 0.05?"}
+    D -->|"TANH: |mean| > 0.85<br/>LOGISTIC: mean > 0.90 or < 0.10<br/>HARD_TANH: |mean| > 0.95"| E{"📏 Std dev < 0.08?"}
     D -->|"No"| G["✅ Not saturated"]
     E -->|"Yes"| F["🫠 Neuron is saturated"]
     E -->|"No"| G
