@@ -68,6 +68,8 @@ pub mod remove_neuron_compensation;
 pub mod remove_neuron_constant_promotion;
 pub mod remove_neuron_drought;
 pub mod remove_neuron_gain;
+#[cfg(test)]
+mod remove_neuron_regression_test;
 pub mod samples;
 pub mod scale_outcomes;
 pub mod shared;
