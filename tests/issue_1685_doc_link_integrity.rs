@@ -94,7 +94,10 @@ fn discovery_source_links_resolve() {
             }
         }
     }
-    assert!(checked >= 13, "expected to check the discovery source links, saw {checked}");
+    assert!(
+        checked >= 13,
+        "expected to check the discovery source links, saw {checked}"
+    );
 }
 
 // ============================================================================
@@ -262,7 +265,11 @@ fn cargo_bench_names() -> Vec<String> {
 #[test]
 fn benchmarks_doc_matches_cargo_bench_targets() {
     let benches = cargo_bench_names();
-    assert!(benches.len() >= 40, "expected many [[bench]] targets, saw {}", benches.len());
+    assert!(
+        benches.len() >= 40,
+        "expected many [[bench]] targets, saw {}",
+        benches.len()
+    );
     let doc = read("docs/BENCHMARKS.md");
     for name in &benches {
         assert!(
@@ -311,9 +318,7 @@ fn ci_doc_build_step_pointers_are_current() {
     if let Ok(rd) = std::fs::read_dir(&wf_dir) {
         for e in rd.flatten() {
             let is_yml = e.path().extension().and_then(|x| x.to_str()) == Some("yml");
-            if is_yml
-                && std::fs::read_to_string(e.path()).is_ok_and(|c| c.contains("cargo doc"))
-            {
+            if is_yml && std::fs::read_to_string(e.path()).is_ok_and(|c| c.contains("cargo doc")) {
                 has_cargo_doc = true;
             }
         }
