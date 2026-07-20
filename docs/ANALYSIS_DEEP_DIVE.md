@@ -142,9 +142,10 @@ their input is consistently very large or very small. A TANH neuron with input a
 outputs ≈ 1.0 regardless of input variation, effectively becoming a constant. This blocks
 useful signal propagation and wastes gradient capacity.
 
-**Detection criteria**:
-- **Activation near bounds**: For TANH, mean activation > 0.95 or < -0.95 across samples
-- **Low relative variance**: Activation standard deviation < 0.05 (output doesn't vary)
+**Detection criteria** (Issue #417 lowered the thresholds to catch
+near-saturated neurons earlier):
+- **Activation near bounds**: For TANH, mean activation > 0.85 or < -0.85 across samples
+- **Low relative variance**: Activation standard deviation < 0.08 (output doesn't vary)
 - **Bounded activation**: Only bounded functions (TANH, LOGISTIC, HARD_TANH, etc.) can saturate
 - **RELU dead-zone**: RELU neurons with all-zero output are also detected
 
@@ -152,11 +153,11 @@ useful signal propagation and wastes gradient capacity.
 
 | Squash | Saturation Type | Threshold |
 |--------|----------------|-----------|
-| TANH | Ceiling/floor | \|mean\| > 0.95 |
-| LOGISTIC | Ceiling/floor | mean > 0.95 or < 0.05 |
-| HARD_TANH | Clamped | \|mean\| > 0.99 |
+| TANH | Ceiling/floor | \|mean\| > 0.85 |
+| LOGISTIC | Ceiling/floor | mean > 0.90 or < 0.10 |
+| HARD_TANH | Clamped | \|mean\| > 0.95 |
 | RELU | Dead zone | mean ≈ 0, std ≈ 0 |
-| SOFTSIGN, ISRU, ARCTAN | Ceiling/floor | \|mean\| > 0.95 |
+| SOFTSIGN, ISRU, ARCTAN | Ceiling/floor | \|mean\| > 0.85 |
 | RELU6 | Ceiling/dead | mean > 5.9 or ≈ 0 |
 
 **Recommended actions**:
@@ -264,10 +265,11 @@ An oscillating neuron is fighting between two contradictory functions — it act
 positively for some samples and negatively for others, with frequent sign changes. This
 wastes representational capacity and can be stabilised by changing the activation function.
 
-**Detection criteria**:
-1. **Sign change fraction ≥ 0.3**: At least 30% of consecutive sample pairs show a sign change.
+**Detection criteria** (Issue #417 lowered the thresholds to catch mildly
+oscillating neurons):
+1. **Sign change fraction ≥ 0.15**: At least 15% of consecutive sample pairs show a sign change.
 2. **Balanced signs**: Both positive and negative activations appear in substantial proportions
-   (minority sign ≥ 20%).
+   (minority sign ≥ 10%).
 3. **Meaningful magnitude**: Mean absolute activation ≥ 0.01 (distinguishes from dead neurons).
 4. **Hidden neurons only**: Input and output neurons are excluded.
 
@@ -279,15 +281,21 @@ wastes representational capacity and can be stabilised by changing the activatio
 **Output**: Oscillating neuron candidates appear in `coordinatedStructuralCandidates` with
 `changeSquash` and optionally `setBias` operations.
 
-### 💤 Dormant Synapse Detection (Issue #359)
+### 💤 Dormant Synapse Detection (Issue #359, #1632)
 
-Identifies synapses with near-zero weights that contribute negligible signal to their
-target neuron. Dormant synapses waste computation during both forward pass and discovery
-analysis without providing meaningful information flow.
+Identifies synapses that contribute negligible signal to their target neuron. Dormant
+synapses waste computation during both forward pass and discovery analysis without
+providing meaningful information flow.
 
-**Detection criteria**:
-1. **Near-zero weight**: Absolute weight < 1e-4.
-2. **Low contribution**: Mean absolute contribution (|weight × source_activation|) < 1e-4.
+**Detection criteria** (contribution-first — Issue #1632): dormancy is judged on
+**contribution** (`weight × source_activation`), not on weight magnitude. A large weight
+whose source neuron is gated to ~0 across every observation carries no signal and is
+removable; the previous weight-magnitude gate hid these (166 such synapses were missed in
+production).
+1. **Negligible mean contribution**: Mean absolute contribution (|weight × source_activation|)
+   below the dormancy threshold — the primary criterion, applied regardless of weight magnitude.
+2. **No single-observation spike**: The maximum absolute contribution is also negligible, so a
+   synapse that is strongly active on even one observation is protected from removal.
 3. **Not the sole connection**: The target neuron has other incoming synapses (removing the
    only input would be destructive).
 4. **Sufficient samples**: At least 20 samples for statistical reliability.

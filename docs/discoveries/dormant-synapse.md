@@ -1,23 +1,26 @@
 # 😴 Dormant Synapse Detection
 
-[Back to Discovery Index](README.md) | **Source:** [`src/analysis/dormant_synapse.rs`](../../src/analysis/dormant_synapse.rs) | **Issue:** [#359](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/359)
+[Back to Discovery Index](README.md) | **Source:** [`src/analysis/dormant_synapse.rs`](../../src/analysis/dormant_synapse.rs) | **Issue:** [#359](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/359), [#1632](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/1632)
 
 ---
 
 ## 🔍 The Problem
 
-A **dormant synapse** is a connection between two neurons whose weight has
-decayed to near-zero. It contributes negligible signal to its target but still
-adds to the creature's structural complexity.
+A **dormant synapse** is a connection that carries negligible **signal** to its
+target — its mean absolute contribution (`|weight × source_activation|`) is
+near-zero — yet it still adds to the creature's structural complexity. Dormancy
+is judged on contribution, **not** on weight magnitude (Issue #1632): a large
+weight whose source neuron is gated to ~0 across every observation carries no
+signal and is just as removable as a near-zero weight.
 
 ```mermaid
 graph LR
-    A["🧠 A"] -->|"w ≈ 0.00 😴"| B["🧠 B"]
+    A["🧠 A<br/>activation ≈ 0"] -->|"contribution ≈ 0.00 😴"| B["🧠 B"]
     style A fill:#9b59b6,stroke:#333,color:#fff
     style B fill:#9b59b6,stroke:#333,color:#fff
 ```
 
-> 😴 **Dormant synapse!** Signal = activation × 0.00 ≈ 0 — adds cost, contributes nothing.
+> 😴 **Dormant synapse!** Contribution = weight × activation ≈ 0 — adds cost, contributes nothing.
 
 ### ⚠️ Why It Hurts the Creature's Score
 
@@ -34,26 +37,32 @@ graph LR
 
 ```mermaid
 flowchart TD
-    A["🔍 For each synapse"] --> B{"📏 |weight| < 0.0001?"}
-    B -->|No| Z["✅ Synapse is active"]
-    B -->|Yes| C{"🔗 Target has fan-in > 1?"}
+    A["🔍 For each synapse"] --> C{"🔗 Target has fan-in > 1?"}
     C -->|No| Z2["🛡️ Skip — only input!"]
-    C -->|Yes| D["📊 Compute mean |contribution|<br/><i>mean(|weight × source|)</i>"]
-    D --> E{"📏 mean |contribution| < 0.0001?"}
-    E -->|No| Z
+    C -->|Yes| D["📊 Over all samples compute<br/>mean & max |contribution|<br/><i>|weight × source_activation|</i>"]
+    D --> S{"⚡ max |contribution| > 7.5e-5?"}
+    S -->|Yes| Z3["✅ Spikes on ≥1 obs — not dormant"]
+    S -->|No| E{"📏 mean |contribution| < 1e-4?"}
+    E -->|No| Z["✅ Synapse is active"]
     E -->|Yes| F["😴 Synapse is dormant"]
     style A fill:#e3f2fd,stroke:#1565c0,color:#000
-    style B fill:#fff3e0,stroke:#f57c00,color:#000
     style C fill:#fff3e0,stroke:#f57c00,color:#000
     style D fill:#e3f2fd,stroke:#1565c0,color:#000
+    style S fill:#fff3e0,stroke:#f57c00,color:#000
     style E fill:#fff3e0,stroke:#f57c00,color:#000
     style F fill:#fce4ec,stroke:#c62828,color:#000
     style Z fill:#e8f5e9,stroke:#2e7d32,color:#000
     style Z2 fill:#e8f5e9,stroke:#2e7d32,color:#000
+    style Z3 fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
 
-The fan-in check is a safety guard — we never remove a target neuron's only
-remaining input, as that would effectively disconnect it.
+Detection is **contribution-first** (Issue #1632): weight magnitude alone is
+never the gate. The primary criterion is a negligible **mean** absolute
+contribution, and a **spike guard** protects any synapse whose *maximum*
+contribution on a single observation exceeds `7.5e-5` — a synapse that is
+strongly active on even one observation is not dormant. The fan-in check is a
+further safety guard — we never remove a target neuron's only remaining input,
+as that would effectively disconnect it.
 
 ```mermaid
 graph LR
@@ -112,16 +121,21 @@ graph LR
 
 ## 📝 Example
 
-> A creature has 200 synapses. Analysis finds 12 with |weight| < 0.0001:
+> A creature has 200 synapses. Analysis finds 12 whose mean absolute
+> contribution (`|weight × source_activation|`) is below `1e-4` with no
+> single-observation spike above `7.5e-5`:
 >
-> | Synapse | Weight | Contribution |
-> |---------|--------|-------------|
-> | I3 → H5 | 0.00002 | 0.000008 |
-> | H2 → H7 | 0.00001 | 0.000003 |
-> | H8 → O1 | 0.00009 | 0.000041 |
-> | … (9 more) | | |
+> | Synapse | Weight | Mean \|contribution\| | Why dormant |
+> |---------|--------|-----------------------|-------------|
+> | I3 → H5 | 0.00002 | 0.000008 | tiny weight |
+> | H2 → H7 | 0.00001 | 0.000003 | tiny weight |
+> | H8 → O1 | 4.20 | 0.000041 | large weight, source gated to ~0 |
+> | … (9 more) | | | |
 >
-> All targets have fan-in > 1.
+> Note H8 → O1: a large weight is still dormant because its source neuron is
+> gated to ~0 across every observation, so it carries no signal — the
+> contribution-first criterion (Issue #1632) catches it where a weight-magnitude
+> gate would have missed it. All targets have fan-in > 1.
 >
 > **Fix:** Remove all 12 dormant synapses
 > **Result:** 188 synapses, lower complexity cost, same functional output ✅
