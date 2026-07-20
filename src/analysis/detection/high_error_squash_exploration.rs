@@ -271,6 +271,7 @@ pub fn high_error_squash_to_coordinated_candidates(
 
             Some(CoordinatedStructuralCandidateJson {
                 remove_neuron_compensation: None,
+                constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
                     neuron_uuid: c.neuron_uuid.clone(),
                     squash: recommended.clone(),

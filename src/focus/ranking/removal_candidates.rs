@@ -425,6 +425,7 @@ pub(super) fn detect_constant_neuron_removals(
 
             Some(CoordinatedStructuralCandidateJson {
                 remove_neuron_compensation: None,
+                constant_neuron_bias_fold: None,
                 operations,
                 expected_creature_score_gain: removal_savings,
                 comment: Some(format!(

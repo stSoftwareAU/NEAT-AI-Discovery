@@ -22,6 +22,7 @@ fn make_set_bias_candidate(
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::SetBias {
             neuron_uuid: neuron_uuid.to_string(),
             bias,
@@ -39,6 +40,7 @@ fn make_change_squash_candidate(
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
             neuron_uuid: neuron_uuid.to_string(),
             squash: squash.to_string(),
@@ -55,6 +57,7 @@ fn make_remove_neuron_candidate(
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
             neuron_uuid: neuron_uuid.to_string(),
         }],
@@ -72,6 +75,7 @@ fn make_add_synapse_candidate(
 ) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::AddSynapse {
             from_neuron_uuid: from.to_string(),
             to_neuron_uuid: to.to_string(),

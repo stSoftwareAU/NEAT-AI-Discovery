@@ -1069,6 +1069,30 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                  {attached} remove-neuron candidate(s)"
             );
         }
+
+        // Issue #1690: Wire the constant-neuron bias fold (#1623) into the live
+        // path, alongside the #1559 redistribution above. A genuinely-constant
+        // neuron carries no per-sample variance, so a plain bias fold is fully
+        // compensable — no survivor redistribution is needed. For each sole-op
+        // RemoveNeuron candidate that removes a constant-class neuron, evaluate
+        // the fold behind the evaluate-before-accept gate and emit the folded
+        // per-target bias deltas so the applier folds the constant contribution
+        // into downstream biases rather than folding a mean. Routing is by class,
+        // mutually exclusive with the redistribution path: a looks-constant or
+        // no-records candidate is rejected fail-loud (no fold emitted, never
+        // deleted blind), the same records gathered above are reused.
+        let folded = super::discovery_dispatch::apply_constant_neuron_bias_fold(
+            &input.creature,
+            &records,
+            &mut syn.coordinated_structural_candidates,
+        );
+        if folded > 0 {
+            tracing::debug!(
+                folded,
+                "Issue #1690: attached constant-neuron bias fold to {folded} \
+                 remove-neuron candidate(s)"
+            );
+        }
     }
 
     // Issue #1448: Deprioritise destructive remove-neuron candidates during a

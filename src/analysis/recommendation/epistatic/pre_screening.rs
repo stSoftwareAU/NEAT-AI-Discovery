@@ -389,6 +389,7 @@ pub fn synergistic_to_coordinated_candidates(
         .iter()
         .map(|c| CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![
                 CoordinatedStructuralOpJson::AddSynapse {
                     from_neuron_uuid: c.primary_source_uuid.clone(),

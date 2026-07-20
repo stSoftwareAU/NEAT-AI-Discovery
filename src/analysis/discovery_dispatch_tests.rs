@@ -23,6 +23,7 @@ fn empty_synapse_result() -> shared::AnalyzeSynapsesResult {
 fn make_candidate(gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
             from_neuron_uuid: "a".to_string(),
             to_neuron_uuid: "b".to_string(),
@@ -415,6 +416,7 @@ fn run_discovery_module_filters_negative_gain_candidates() {
 fn make_candidate_with_target(target_uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::AddSynapse {
             from_neuron_uuid: format!("source-{gain}"),
             to_neuron_uuid: target_uuid.to_string(),
@@ -665,6 +667,7 @@ fn creature_with_deep_neuron() -> CreatureJson {
 fn remove_neuron_candidate(uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
             neuron_uuid: uuid.to_string(),
         }],
@@ -712,6 +715,7 @@ fn multi_op_candidate_gain_is_not_overridden() {
     let creature = creature_with_deep_neuron();
     let mut candidates = vec![CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![
             CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "input-0".to_string(),
@@ -896,6 +900,7 @@ fn multi_op_candidate_gets_no_compensation() {
         expected_creature_score_gain: -0.05,
         comment: None,
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
     }];
 
     let attached = apply_remove_neuron_compensation(&creature, &records, &mut candidates);

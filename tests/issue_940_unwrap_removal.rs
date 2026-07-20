@@ -56,6 +56,7 @@ fn test_confidence_metrics_single_sample_no_panic() {
 fn test_ensemble_scoring_single_candidate_no_panic() {
     let candidates = vec![CoordinatedStructuralCandidateJson {
         remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::SetBias {
             neuron_uuid: "output-0".to_string(),
             bias: 0.1,
@@ -76,6 +77,7 @@ fn test_ensemble_scoring_agreeing_candidates_no_panic() {
     let candidates = vec![
         CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::SetBias {
                 neuron_uuid: "output-0".to_string(),
                 bias: 0.1,
@@ -85,6 +87,7 @@ fn test_ensemble_scoring_agreeing_candidates_no_panic() {
         },
         CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::SetBias {
                 neuron_uuid: "output-0".to_string(),
                 bias: 0.15,

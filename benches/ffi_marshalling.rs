@@ -150,6 +150,7 @@ fn create_coordinated_candidates(count: usize) -> Vec<CoordinatedStructuralCandi
     (0..count)
         .map(|i| CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![
                 CoordinatedStructuralOpJson::AddNeuron {
                     neuron_uuid: format!("new-neuron-{i}"),

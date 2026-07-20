@@ -120,6 +120,7 @@ mod tests {
     fn remove_candidate(uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
         CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
                 neuron_uuid: uuid.to_string(),
             }],
@@ -165,6 +166,7 @@ mod tests {
         // A flagged UUID but inside a multi-op group — not a bare removal.
         let mut candidates = vec![CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![
                 CoordinatedStructuralOpJson::RemoveSynapse {
                     from_neuron_uuid: "input-0".to_string(),
@@ -186,6 +188,7 @@ mod tests {
     fn non_removal_candidate_is_not_promoted() {
         let mut candidates = vec![CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::SetBias {
                 neuron_uuid: "c".to_string(),
                 bias: 0.1,
