@@ -522,6 +522,8 @@ pub fn dominant_inputs_to_coordinated_candidates(
 
     for c in candidates {
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::SetWeight {
                 from_neuron_uuid: c.input_neuron_uuid.clone(),
                 to_neuron_uuid: c.target_neuron_uuid.clone(),
@@ -597,6 +599,8 @@ pub fn threshold_effects_to_coordinated_candidates(
         };
 
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
             operations,
             expected_creature_score_gain: c.estimated_improvement,
             comment: Some(format!(

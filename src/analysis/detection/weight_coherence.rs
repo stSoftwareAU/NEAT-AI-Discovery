@@ -472,6 +472,8 @@ pub fn incoherent_ratios_to_coordinated_candidates(
         .iter()
         .map(|c| {
             CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::SetWeight {
                     from_neuron_uuid: c.neuron_uuid.clone(),
                     to_neuron_uuid: "".to_string(), // Will be filled by NEAT-AI based on topology
@@ -516,6 +518,8 @@ pub fn near_constant_paths_to_coordinated_candidates(
             };
 
             CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                 operations: vec![operation],
                 expected_creature_score_gain: c.estimated_improvement,
                 comment: Some(format!(
@@ -549,6 +553,8 @@ pub fn symmetric_cancellation_to_coordinated_candidates(
             };
 
             CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::SetWeight {
                     from_neuron_uuid: from_uuid,
                     to_neuron_uuid: c.target_neuron_uuid.clone(),

@@ -773,6 +773,8 @@ mod remove_neuron_calibration_tests {
 
     fn single_remove_neuron_candidate(gain: f32) -> CoordinatedStructuralCandidateJson {
         CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
                 neuron_uuid: "h-1075292892".to_string(),
             }],
@@ -814,6 +816,8 @@ mod remove_neuron_calibration_tests {
 
         // Multi-op group containing a RemoveNeuron stays coordinated-structural.
         let multi = CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![
                 CoordinatedStructuralOpJson::SetBias {
                     neuron_uuid: "out-0".to_string(),
@@ -833,6 +837,8 @@ mod remove_neuron_calibration_tests {
 
         // A non-removal single op stays coordinated-structural too.
         let add = CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::AddSynapse {
                 from_neuron_uuid: "a".to_string(),
                 to_neuron_uuid: "b".to_string(),
@@ -891,6 +897,8 @@ mod remove_neuron_calibration_tests {
 
         let raw_gain = 0.165_710_48_f32;
         let mut coordinated = CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![
                 CoordinatedStructuralOpJson::RemoveSynapse {
                     from_neuron_uuid: "a".to_string(),

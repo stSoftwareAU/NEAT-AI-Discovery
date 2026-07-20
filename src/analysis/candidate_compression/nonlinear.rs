@@ -127,6 +127,8 @@ fn compress_group_nonlinear(
         .collect();
 
     Some(CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations,
         expected_creature_score_gain: discounted_gain,
         comment: Some(format!(

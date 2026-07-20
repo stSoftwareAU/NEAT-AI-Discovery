@@ -464,6 +464,8 @@ fn make_candidate(
     comment: &str,
 ) -> neat_ai_discovery::CoordinatedStructuralCandidateJson {
     neat_ai_discovery::CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![],
         expected_creature_score_gain: gain,
         comment: Some(comment.to_string()),

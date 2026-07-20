@@ -223,6 +223,8 @@ pub fn restricted_range_to_coordinated_candidates(
 
         // Candidate 1: Change squash to IDENTITY (removes bounding)
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::ChangeSquash {
                 neuron_uuid: n.neuron_uuid.clone(),
                 squash: "IDENTITY".to_string(),
@@ -249,6 +251,8 @@ pub fn restricted_range_to_coordinated_candidates(
         let new_bias = n.bias + bias_delta;
 
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::SetBias {
                 neuron_uuid: n.neuron_uuid.clone(),
                 bias: new_bias,
@@ -294,6 +298,8 @@ pub fn restricted_range_to_coordinated_candidates(
             });
 
             results.push(CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                 operations: weight_ops,
                 expected_creature_score_gain: base_improvement * 0.5,
                 comment: Some(format!(

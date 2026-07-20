@@ -420,6 +420,8 @@ fn neuron_pairing_skips_ultra_conservative_for_small_outgoing() {
 #[test]
 fn coordinated_pairing_generates_ultra_conservative_for_large_weight() {
     let candidate = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::AddSynapse {
             from_neuron_uuid: "n1".to_string(),
             to_neuron_uuid: "n2".to_string(),
@@ -452,6 +454,8 @@ fn coordinated_pairing_generates_ultra_conservative_for_large_weight() {
 fn coordinated_pairing_skips_ultra_conservative_for_small_weight() {
     let small_weight = ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD * 0.5;
     let candidate = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::AddSynapse {
             from_neuron_uuid: "n1".to_string(),
             to_neuron_uuid: "n2".to_string(),

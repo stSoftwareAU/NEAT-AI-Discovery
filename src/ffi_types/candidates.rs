@@ -187,17 +187,127 @@ pub enum CoordinatedStructuralOpJson {
     },
 }
 
+/// Variance-aware weight-redistribution compensation attached to a bare
+/// remove-neuron candidate (Issue #1689, wiring Issue #1559).
+///
+/// When a candidate's sole operation removes a **variance-carrying** neuron, the
+/// live dispatch path evaluates counterfactual (d) — folding the removed
+/// neuron's per-sample downstream signal into a correlated survivor's weight —
+/// and attaches the result here so the applier redistributes the survivor's
+/// weight instead of applying a mean-only bias fold. The compact covariance
+/// sufficient statistic travels alongside the remedy so the applier can reason
+/// about the removal without re-reading per-sample activations.
+///
+/// This is absent (`None`) for candidates with no variance-carrying survivor and
+/// for constant-neuron candidates, which route to the bias-fold path
+/// (Issue #1623) rather than being given a redistribution here.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveNeuronCompensationJson {
+    /// Downstream neuron that both the removed candidate and the chosen survivor
+    /// feed — the shared target whose inbound weight absorbs the signal.
+    pub target_neuron_uuid: String,
+    /// Surviving neuron whose weight into `target_neuron_uuid` is bumped to
+    /// absorb the removed neuron's per-sample signal.
+    pub survivor_neuron_uuid: String,
+    /// Optimal least-squares weight bump to add to the survivor's weight into the
+    /// shared target: `Δw = w_c · cov / var(a_s)`.
+    pub delta_weight: f32,
+    /// Number of aligned per-sample activation pairs behind the statistic.
+    pub sample_count: u64,
+    /// Population variance of the removed neuron's per-sample activation.
+    pub candidate_variance: f32,
+    /// Population variance of the survivor's per-sample activation.
+    pub survivor_variance: f32,
+    /// Population covariance of the candidate and survivor activations.
+    pub covariance: f32,
+    /// Candidate/survivor activation correlation in `[-1, 1]`.
+    pub correlation: f32,
+    /// Per-sample residual variance under NEAT-AI's mean-only bias fold — the
+    /// cost that survives the current lever.
+    pub bias_only_residual_variance: f32,
+    /// Per-sample residual variance after weight redistribution (d).
+    pub redistributed_residual_variance: f32,
+    /// Variance recovered by redistribution over the bias-only fold (`≥ 0`).
+    pub variance_recovered: f32,
+    /// `true` when redistribution drives the residual variance to ~0 — the
+    /// removal becomes non-regressive, which the mean-only bias lever can never
+    /// achieve.
+    pub fully_compensable: bool,
+}
+
+/// A single downstream target that absorbs a folded constant-neuron bias delta
+/// (Issue #1690, emitting the #1623 fold).
+///
+/// When a functionally-constant neuron is removed, its fixed contribution
+/// `outgoing_weight × constant_activation` to each downstream target is folded
+/// into that target's bias so the removal is behaviour-preserving on the recorded
+/// window.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FoldedBiasDeltaJson {
+    /// Downstream neuron whose bias absorbs the constant contribution.
+    pub target_neuron_uuid: String,
+    /// Bias delta to add to the target: `outgoing_weight × constant_activation`.
+    pub bias_delta: f32,
+}
+
+/// Constant-neuron bias-fold compensation attached to a bare remove-neuron
+/// candidate (Issue #1690, wiring Issue #1623).
+///
+/// When a candidate's sole operation removes a **functionally-constant** neuron —
+/// one whose recorded activations are constant within the evaluate-before-accept
+/// gate tolerance — the live dispatch path evaluates the #1623 bias fold and
+/// attaches the folded per-target bias deltas here so the applier folds the
+/// constant contribution into downstream biases rather than applying a mean-only
+/// fold. A constant neuron carries no per-sample variance, so a plain bias fold
+/// is fully compensable and no survivor redistribution is needed.
+///
+/// This is absent (`None`) for variance-carrying candidates, which route to the
+/// #1559 weight-redistribution remedy ([`RemoveNeuronCompensationJson`]) instead,
+/// and for candidates the gate rejects (records vary over tolerance or none are
+/// recorded — rejected fail-loud, never folded blind).
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstantNeuronBiasFoldJson {
+    /// The mean activation used as the folded constant `c`.
+    pub constant_activation: f32,
+    /// The population variance of the neuron's activation over the recorded
+    /// window — (near-)zero for a genuinely constant neuron.
+    pub activation_variance: f32,
+    /// The maximum per-sample residual `|w·(a_i − c)|` across every outgoing
+    /// connection and observation, at or below the gate tolerance on acceptance.
+    pub max_residual: f32,
+    /// Per-target bias deltas the applier adds before deleting the neuron.
+    pub folded_targets: Vec<FoldedBiasDeltaJson>,
+}
+
 /// A grouped candidate that must be applied as a single unit.
 ///
 /// This supports "Coordinated Structural Discovery" (Issue #165): beneficial changes that are
 /// epistatic (no single edit improves fitness in isolation).
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CoordinatedStructuralCandidateJson {
     pub operations: Vec<CoordinatedStructuralOpJson>,
     pub expected_creature_score_gain: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Variance-aware compensation for a bare remove-neuron candidate
+    /// (Issue #1689). Populated by the live dispatch path for sole-op
+    /// `RemoveNeuron` candidates whose removed neuron carries per-sample variance
+    /// and has a correlated downstream survivor; `None` otherwise (including for
+    /// constant-neuron candidates, which route to the #1623 bias fold).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remove_neuron_compensation: Option<RemoveNeuronCompensationJson>,
+    /// Constant-neuron bias-fold compensation for a bare remove-neuron candidate
+    /// (Issue #1690). Populated by the live dispatch path for sole-op
+    /// `RemoveNeuron` candidates whose removed neuron is functionally constant
+    /// (recorded activations constant within the gate tolerance); `None`
+    /// otherwise (including for variance-carrying candidates, which route to the
+    /// #1559 weight-redistribution remedy).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub constant_neuron_bias_fold: Option<ConstantNeuronBiasFoldJson>,
 }
 
 /// JSON-serialisable `addNeuron` candidate: a proposed hidden neuron bridging a

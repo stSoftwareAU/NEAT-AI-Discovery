@@ -365,6 +365,8 @@ fn empty_synapse_result() -> neat_ai_discovery::analysis::shared::AnalyzeSynapse
 
 fn make_candidate(gain: f32) -> neat_ai_discovery::CoordinatedStructuralCandidateJson {
     neat_ai_discovery::CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![],
         expected_creature_score_gain: gain,
         comment: Some("test candidate".to_string()),

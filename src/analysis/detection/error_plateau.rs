@@ -263,6 +263,8 @@ pub fn error_plateaus_to_coordinated_candidates(
             }
 
             CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
+                constant_neuron_bias_fold: None,
                 operations,
                 expected_creature_score_gain: c.estimated_improvement,
                 comment: Some(c.reason.clone()),

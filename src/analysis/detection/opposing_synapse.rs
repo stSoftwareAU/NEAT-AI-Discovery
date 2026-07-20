@@ -196,6 +196,8 @@ pub fn opposing_synapses_to_coordinated_candidates(
     for c in candidates {
         if c.recommend_removal {
             results.push(CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
                     from_neuron_uuid: c.from_neuron_uuid.clone(),
                     to_neuron_uuid: c.to_neuron_uuid.clone(),
@@ -208,6 +210,8 @@ pub fn opposing_synapses_to_coordinated_candidates(
             });
         } else {
             results.push(CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::SetWeight {
                     from_neuron_uuid: c.from_neuron_uuid.clone(),
                     to_neuron_uuid: c.to_neuron_uuid.clone(),

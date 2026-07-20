@@ -462,6 +462,8 @@ pub(crate) fn collect_and_process_helpful_results(
                     CandidateType::Coordinated,
                 );
                 coordinated_to_add.push(crate::CoordinatedStructuralCandidateJson {
+                    remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                     operations: vec![crate::CoordinatedStructuralOpJson::SetWeight {
                         from_neuron_uuid: work.source_uuid.clone(),
                         to_neuron_uuid: work.target_uuid.clone(),
@@ -515,6 +517,8 @@ pub(crate) fn collect_and_process_helpful_results(
                                 );
                                 coordinated_to_add.push(
                                     crate::CoordinatedStructuralCandidateJson {
+                                        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                                         operations: vec![
                                             crate::CoordinatedStructuralOpJson::SetBias {
                                                 neuron_uuid: work.target_uuid.clone(),

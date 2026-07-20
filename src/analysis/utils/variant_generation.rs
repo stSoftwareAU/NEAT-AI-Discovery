@@ -793,6 +793,8 @@ fn scale_coordinated_add_synapse_weights(
     }
 
     Some(CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: scaled_ops,
         expected_creature_score_gain: original.expected_creature_score_gain * expected_multiplier,
         comment: Some(comment.to_string()),

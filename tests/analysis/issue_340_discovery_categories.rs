@@ -186,6 +186,8 @@ fn coordinated_structural_operations_contract() {
     ];
 
     let candidate = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: ops,
         expected_creature_score_gain: 0.05,
         comment: Some("Test all operation types".to_string()),
@@ -231,6 +233,8 @@ fn coordinated_structural_operations_contract() {
 #[test]
 fn coordinated_structural_candidate_optional_fields() {
     let candidate = CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
             neuron_uuid: "x".to_string(),
         }],

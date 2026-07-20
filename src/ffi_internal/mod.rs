@@ -349,6 +349,8 @@ mod tests {
         // The end-to-end behaviour is covered by the integration test:
         // `tests/coordinated_structural_mercury_digital.rs`.
         let candidate = CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![
                 CoordinatedStructuralOpJson::RemoveSynapse {
                     from_neuron_uuid: "input-0".to_string(),

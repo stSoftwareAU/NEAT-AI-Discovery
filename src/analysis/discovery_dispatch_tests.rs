@@ -22,6 +22,8 @@ fn empty_synapse_result() -> shared::AnalyzeSynapsesResult {
 
 fn make_candidate(gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
             from_neuron_uuid: "a".to_string(),
             to_neuron_uuid: "b".to_string(),
@@ -413,6 +415,8 @@ fn run_discovery_module_filters_negative_gain_candidates() {
 /// expected gain.
 fn make_candidate_with_target(target_uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::AddSynapse {
             from_neuron_uuid: format!("source-{gain}"),
             to_neuron_uuid: target_uuid.to_string(),
@@ -662,6 +666,8 @@ fn creature_with_deep_neuron() -> CreatureJson {
 
 fn remove_neuron_candidate(uuid: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
     CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveNeuron {
             neuron_uuid: uuid.to_string(),
         }],
@@ -708,6 +714,8 @@ fn honest_gain_overrides_fabricated_remove_neuron_gain() {
 fn multi_op_candidate_gain_is_not_overridden() {
     let creature = creature_with_deep_neuron();
     let mut candidates = vec![CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![
             CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "input-0".to_string(),
@@ -754,4 +762,180 @@ fn output_and_absent_neuron_candidates_are_not_overridden() {
     assert_eq!(overridden, 0, "output/absent neurons yield no estimate");
     assert!((candidates[0].expected_creature_score_gain - 0.9).abs() < f32::EPSILON);
     assert!((candidates[1].expected_creature_score_gain - 0.8).abs() < f32::EPSILON);
+}
+
+// =============================================================================
+// Issue #1689: wire #1559 covariance stats + weight-redistribution into dispatch
+// =============================================================================
+
+use super::apply_remove_neuron_compensation;
+use crate::types::DiscoverRecord;
+
+fn record(obs: u32, uuid: &str, activation: f32) -> DiscoverRecord {
+    DiscoverRecord::new(obs, uuid.to_string(), None, activation, vec![])
+}
+
+/// A creature where a **constant** hidden-class neuron `konst` and a
+/// variance-carrying survivor `sib` both feed the shared output `out-0`. Used to
+/// prove that routing is by neuron *class*: `konst` is left for the #1623 bias
+/// fold even though a shared-target survivor exists.
+fn creature_with_constant_neuron() -> CreatureJson {
+    serde_json::from_str(
+        r#"{
+            "input": 1, "output": 1,
+            "neurons": [
+                {"uuid": "input-0", "type": "input"},
+                {"uuid": "konst", "type": "constant", "squash": "IDENTITY"},
+                {"uuid": "sib", "type": "hidden", "squash": "IDENTITY"},
+                {"uuid": "out-0", "type": "output", "squash": "IDENTITY"}
+            ],
+            "synapses": [
+                {"fromUUID": "input-0", "toUUID": "sib", "weight": 1.0},
+                {"fromUUID": "konst", "toUUID": "out-0", "weight": 1.0},
+                {"fromUUID": "sib", "toUUID": "out-0", "weight": 1.0}
+            ]
+        }"#,
+    )
+    .expect("valid creature JSON")
+}
+
+/// Perfectly-correlated per-sample activations for two neurons, aligned on
+/// `obs_index`. The candidate genuinely varies (carries a per-sample signal) and
+/// the survivor tracks it exactly (ρ = 1).
+fn correlated_records(candidate_uuid: &str, survivor_uuid: &str) -> Vec<DiscoverRecord> {
+    let activations = [1.0_f32, 2.0, 3.0];
+    let mut records = Vec::new();
+    for (obs, &a) in activations.iter().enumerate() {
+        let obs = u32::try_from(obs).expect("small index");
+        records.push(record(obs, candidate_uuid, a));
+        records.push(record(obs, survivor_uuid, a));
+    }
+    records
+}
+
+/// The core wiring: a sole-op `RemoveNeuron` candidate whose removed neuron
+/// carries per-sample variance is emitted with covariance stats and a
+/// weight-redistribution remedy (optimal `delta_weight`, residual variances,
+/// `fully_compensable`).
+#[test]
+fn remove_neuron_candidate_carries_covariance_and_redistribution() {
+    let creature = creature_with_deep_neuron();
+    let records = correlated_records("deep", "sib");
+    let mut candidates = vec![remove_neuron_candidate("deep", -0.05)];
+
+    let attached = apply_remove_neuron_compensation(&creature, &records, &mut candidates);
+    assert_eq!(
+        attached, 1,
+        "the variance-carrying candidate is compensated"
+    );
+
+    let comp = candidates[0]
+        .remove_neuron_compensation
+        .as_ref()
+        .expect("compensation attached to the candidate");
+
+    assert_eq!(comp.survivor_neuron_uuid, "sib");
+    assert_eq!(comp.target_neuron_uuid, "out-0");
+    assert_eq!(comp.sample_count, 3);
+    // Δw = w_c · cov / var(a_s) = 1 · (2/3) / (2/3) = 1.0.
+    assert!(
+        (comp.delta_weight - 1.0).abs() < 1e-5,
+        "optimal weight bump must be 1.0, got {}",
+        comp.delta_weight
+    );
+    // Perfect correlation ⇒ the removal becomes non-regressive.
+    assert!(
+        comp.fully_compensable,
+        "a perfectly-correlated survivor makes the removal fully compensable"
+    );
+    assert!(
+        (comp.correlation - 1.0).abs() < 1e-5,
+        "correlation must be ~1.0, got {}",
+        comp.correlation
+    );
+    assert!(
+        comp.variance_recovered > 0.0,
+        "redistribution must recover per-sample variance, got {}",
+        comp.variance_recovered
+    );
+    assert!(
+        comp.redistributed_residual_variance <= comp.bias_only_residual_variance + 1e-6,
+        "redistribution must not add residual variance over the mean-only fold"
+    );
+}
+
+/// Routing test: a constant-neuron candidate is **not** given a redistribution
+/// remedy here — it routes to the #1623 bias-fold path — even when a
+/// shared-target survivor with correlated records exists.
+#[test]
+fn constant_neuron_candidate_is_not_given_redistribution() {
+    let creature = creature_with_constant_neuron();
+    let records = correlated_records("konst", "sib");
+    let mut candidates = vec![remove_neuron_candidate("konst", -0.01)];
+
+    let attached = apply_remove_neuron_compensation(&creature, &records, &mut candidates);
+    assert_eq!(attached, 0, "constant neurons route to the #1623 bias fold");
+    assert!(
+        candidates[0].remove_neuron_compensation.is_none(),
+        "constant-neuron candidate must carry no redistribution remedy"
+    );
+}
+
+/// Multi-operation coordinated candidates are not bare neuron removals, so they
+/// receive no compensation.
+#[test]
+fn multi_op_candidate_gets_no_compensation() {
+    let creature = creature_with_deep_neuron();
+    let records = correlated_records("deep", "sib");
+    let mut candidates = vec![CoordinatedStructuralCandidateJson {
+        operations: vec![
+            CoordinatedStructuralOpJson::RemoveSynapse {
+                from_neuron_uuid: "input-0".to_string(),
+                to_neuron_uuid: "deep".to_string(),
+            },
+            CoordinatedStructuralOpJson::RemoveNeuron {
+                neuron_uuid: "deep".to_string(),
+            },
+        ],
+        expected_creature_score_gain: -0.05,
+        comment: None,
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
+    }];
+
+    let attached = apply_remove_neuron_compensation(&creature, &records, &mut candidates);
+    assert_eq!(attached, 0, "multi-op candidates are not compensated");
+    assert!(candidates[0].remove_neuron_compensation.is_none());
+}
+
+/// Non-`RemoveNeuron` single-op candidates receive no compensation.
+#[test]
+fn non_remove_neuron_candidate_gets_no_compensation() {
+    let creature = creature_with_deep_neuron();
+    let records = correlated_records("deep", "sib");
+    let mut candidates = vec![make_candidate(0.42)]; // a RemoveSynapse candidate
+
+    let attached = apply_remove_neuron_compensation(&creature, &records, &mut candidates);
+    assert_eq!(
+        attached, 0,
+        "non-RemoveNeuron candidates are not compensated"
+    );
+    assert!(candidates[0].remove_neuron_compensation.is_none());
+}
+
+/// A variance-carrying candidate with no shared-target survivor records cannot
+/// evaluate counterfactual (d), so no remedy is fabricated — the field stays
+/// `None` (the applier flags such removals rather than folding the mean).
+#[test]
+fn variance_candidate_without_records_gets_no_compensation() {
+    let creature = creature_with_deep_neuron();
+    let mut candidates = vec![remove_neuron_candidate("deep", -0.05)];
+
+    // No per-sample records supplied.
+    let attached = apply_remove_neuron_compensation(&creature, &[], &mut candidates);
+    assert_eq!(attached, 0, "no records ⇒ (d) cannot be evaluated");
+    assert!(
+        candidates[0].remove_neuron_compensation.is_none(),
+        "no remedy is fabricated without per-sample data"
+    );
 }

@@ -403,6 +403,8 @@ pub fn redundant_pairs_to_coordinated_candidates(
         let expected_gain = MERGE_BASE_IMPROVEMENT * (0.5 + 0.5 * severity as f32);
 
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations,
             expected_creature_score_gain: expected_gain,
             comment: Some(format!(

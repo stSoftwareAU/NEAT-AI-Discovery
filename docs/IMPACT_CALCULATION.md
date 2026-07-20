@@ -426,6 +426,28 @@ the removal stays regressive.
 redistribution recovers the most variance — returning `None` (no fabricated
 compensation) when no shared-target survivor has aligned samples.
 
+### Live-path wiring (Issue #1689)
+
+Milestone #1559 **built** the compensation API but nothing in the live pipeline
+invoked it, so emitted `RemoveNeuron` candidates carried no remedy and the
+applier fell back to the mean-only bias fold — reproducing the #1558/#1686
+regression class. `apply_remove_neuron_compensation`
+(`src/analysis/discovery_dispatch.rs`) closes that gap, mirroring the
+`apply_honest_remove_neuron_gain` wiring (#1516/#1523). After the honest-gain
+override, `analyze_all` gathers the candidate's and its shared-target survivors'
+per-sample records from the record cache and, for each candidate whose **sole**
+operation is a `RemoveNeuron`, attaches a `removeNeuronCompensation` block to the
+emitted candidate JSON: the optimal `deltaWeight`, the compact covariance
+statistic (`sampleCount`, variances, covariance, correlation), the bias-only and
+redistributed residual variances, and the `fullyCompensable` flag. Routing is by
+neuron **class** — constant neurons (no per-sample variance) are left untouched
+for the #1623 bias-fold remedy, not duplicated here. Consistent with
+propose-and-evaluate, provably-regressive removals are **not** gated at proposal
+time: the remedy is attached and evaluation decides. Candidates with no
+shared-target survivor or no aligned records are emitted with the field absent —
+no remedy is fabricated, and the applier flags such variance-carrying removals
+rather than folding the mean.
+
 ```mermaid
 flowchart TD
     A[Remove-neuron candidate] --> B[Per-sample activations<br/>DiscoverRecords]

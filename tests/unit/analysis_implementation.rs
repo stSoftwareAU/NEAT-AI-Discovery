@@ -995,6 +995,8 @@ Pages speculative:                        12345.
         // coordinated candidate with a distinct score to ensure truncation is global across buckets.
         let coordinated = vec![
             crate::CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                 operations: vec![crate::CoordinatedStructuralOpJson::SetWeight {
                     from_neuron_uuid: "d".to_string(),
                     to_neuron_uuid: "t".to_string(),
@@ -1004,6 +1006,8 @@ Pages speculative:                        12345.
                 comment: None,
             },
             crate::CoordinatedStructuralCandidateJson {
+                remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                 operations: vec![crate::CoordinatedStructuralOpJson::RemoveSynapse {
                     from_neuron_uuid: "e".to_string(),
                     to_neuron_uuid: "t".to_string(),
@@ -1092,6 +1096,8 @@ Pages speculative:                        12345.
         }];
 
         let coordinated = vec![crate::CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
             operations: vec![crate::CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "c1".to_string(),
                 to_neuron_uuid: "t".to_string(),

@@ -70,6 +70,8 @@ fn postprocess_reapplies_max_synapse_candidates_after_coordinated_merge() {
     };
 
     let replacements = vec![CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
             from_neuron_uuid: "a".to_string(),
             to_neuron_uuid: "b".to_string(),
@@ -125,6 +127,8 @@ fn postprocess_truncates_across_all_synapse_buckets_not_just_coordinated() {
     };
 
     let replacements = vec![CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
             from_neuron_uuid: "a".to_string(),
             to_neuron_uuid: "b".to_string(),
@@ -187,6 +191,8 @@ fn postprocess_updates_candidates_returned_after_merging_neuron_replacements() {
     };
 
     let replacements = vec![CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
         operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
             from_neuron_uuid: "a".to_string(),
             to_neuron_uuid: "b".to_string(),
@@ -298,6 +304,8 @@ fn merge_coordinated_structural_filters_zero_gain_candidates() {
 
     let replacements = vec![
         CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "a".to_string(),
                 to_neuron_uuid: "b".to_string(),
@@ -306,6 +314,8 @@ fn merge_coordinated_structural_filters_zero_gain_candidates() {
             comment: Some("positive".to_string()),
         },
         CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "c".to_string(),
                 to_neuron_uuid: "d".to_string(),
@@ -314,6 +324,8 @@ fn merge_coordinated_structural_filters_zero_gain_candidates() {
             comment: Some("zero".to_string()),
         },
         CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
                 from_neuron_uuid: "e".to_string(),
                 to_neuron_uuid: "f".to_string(),

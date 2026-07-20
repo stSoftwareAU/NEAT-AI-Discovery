@@ -315,6 +315,8 @@ pub fn output_conflicts_to_coordinated_candidates(
         let harmed_indices: Vec<usize> = harmed_outputs.iter().map(|&(i, _)| i).collect();
 
         results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
             operations,
             expected_creature_score_gain: conflict.estimated_improvement,
             comment: Some(format!(

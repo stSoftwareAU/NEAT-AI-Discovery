@@ -333,6 +333,8 @@ pub fn topology_issues_to_coordinated_candidates(
                     // Skip connection: neuron → output with small initial weight
                     let weight = 0.1 * c.mean_abs_error.min(1.0);
                     results.push(CoordinatedStructuralCandidateJson {
+                        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                         operations: vec![CoordinatedStructuralOpJson::AddSynapse {
                             from_neuron_uuid: c.neuron_uuid.clone(),
                             to_neuron_uuid: target.clone(),
@@ -356,6 +358,8 @@ pub fn topology_issues_to_coordinated_candidates(
                     // Add connection from input to starved neuron with small weight
                     let weight = 0.1;
                     results.push(CoordinatedStructuralCandidateJson {
+                        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
                         operations: vec![CoordinatedStructuralOpJson::AddSynapse {
                             from_neuron_uuid: source.clone(),
                             to_neuron_uuid: c.neuron_uuid.clone(),
