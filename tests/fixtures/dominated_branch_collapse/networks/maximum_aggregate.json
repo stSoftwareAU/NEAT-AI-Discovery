@@ -1,0 +1,18 @@
+{
+  "_comment": "Synthetic MAXIMUM selection aggregate for Issue #1705 (dominated-branch collapse). Two branches feed a MAXIMUM aggregate: the ABSOLUTE branch is scaled by -1 (always <= 0) and is analytically dominated because a MAXIMUM can never select it while the RELU branch (always >= 0) is available. Fixtures only - no engine behaviour change. Input neurons are implicit (referenced as input-N), matching the production convention in ../../remove_neuron_propagation/network.json.",
+  "input": 2,
+  "output": 1,
+  "neurons": [
+    { "type": "hidden", "uuid": "neuron-abs", "squash": "ABSOLUTE", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-relu", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-max", "squash": "MAXIMUM", "bias": 0 },
+    { "type": "output", "uuid": "output-0", "squash": "IDENTITY", "bias": 0 }
+  ],
+  "synapses": [
+    { "fromUUID": "input-0", "toUUID": "neuron-abs", "weight": 1 },
+    { "fromUUID": "input-1", "toUUID": "neuron-relu", "weight": 1 },
+    { "fromUUID": "neuron-abs", "toUUID": "neuron-max", "weight": -1 },
+    { "fromUUID": "neuron-relu", "toUUID": "neuron-max", "weight": 1 },
+    { "fromUUID": "neuron-max", "toUUID": "output-0", "weight": 1 }
+  ]
+}
