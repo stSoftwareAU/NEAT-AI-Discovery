@@ -1,0 +1,21 @@
+{
+  "_comment": "Synthetic THREE-branch MAXIMUM selection aggregate for Issue #1712 (gap G2, partial dominance). Branches neuron-a, neuron-b and neuron-c each feed one MAXIMUM (neuron-maxm). Used to characterise combination dominance: with a suitable observation window, neuron-c never wins the 3-way MAXIMUM (dominated by the combination of a and b) even though it is NOT pairwise-dominated by either a or b alone. Fixtures only - no engine behaviour change. Input neurons are implicit (referenced as input-N).",
+  "input": 3,
+  "output": 1,
+  "neurons": [
+    { "type": "hidden", "uuid": "neuron-a", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-b", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-c", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-maxm", "squash": "MAXIMUM", "bias": 0 },
+    { "type": "output", "uuid": "output-0", "squash": "IDENTITY", "bias": 0 }
+  ],
+  "synapses": [
+    { "fromUUID": "input-0", "toUUID": "neuron-a", "weight": 1 },
+    { "fromUUID": "input-1", "toUUID": "neuron-b", "weight": 1 },
+    { "fromUUID": "input-2", "toUUID": "neuron-c", "weight": 1 },
+    { "fromUUID": "neuron-a", "toUUID": "neuron-maxm", "weight": 1 },
+    { "fromUUID": "neuron-b", "toUUID": "neuron-maxm", "weight": 1 },
+    { "fromUUID": "neuron-c", "toUUID": "neuron-maxm", "weight": 1 },
+    { "fromUUID": "neuron-maxm", "toUUID": "output-0", "weight": 1 }
+  ]
+}

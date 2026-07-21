@@ -20,6 +20,7 @@ mod allocation;
 mod gradient;
 mod impact;
 pub(crate) mod layers;
+pub mod partial_dominance;
 pub(crate) mod ranking;
 pub mod selection;
 
@@ -44,6 +45,12 @@ pub use impact::{
     ConsumerContract, MARGIN_WEIGHT_EPS, OutputGate, compute_impacts_public,
     compute_impacts_with_activations, compute_impacts_with_contract, compute_per_obs_margins,
     compute_selection_stats, derive_regime_threshold_from_records, margin_weights_from_margins,
+};
+
+// From partial_dominance (Issue #1712 — gap G2, partial-dominance safety gate)
+pub use partial_dominance::{
+    AggregateDominance, BranchDominance, BranchVerdict, DEFAULT_PARTIAL_WIN_FRACTION,
+    DominanceThresholds, IfConditionRegime, analyse_partial_dominance, safe_collapse_branches,
 };
 
 // From selection (Issue #1445, superseded by exploit/explore under #1662)
