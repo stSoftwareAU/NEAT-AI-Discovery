@@ -199,7 +199,7 @@ consistent with the #1623 pattern.
 |-----|-----------|---------|
 | **G1** | #1711 (**closed**) | Analytical dominated-branch collapse detector + transform for MAX/MIN aggregates. **Delivered** in `src/analysis/dominated_branch_collapse.rs`: a sound sign-based dominance proof (`weight × squash(range)`) plus a collapse transform that removes the dominated branch and folds the single-survivor aggregate to a pass-through, behind the #1623-style evaluate-before-accept gate. |
 | **G2** | #1712 | Partially-dominated shapes: IF conditional dominance (F1), multi-branch aggregates, small-but-non-zero win fraction (F2). |
-| **G3** | #1713 | Contribution-propagation break: expected-error-reduction estimator ignores downstream aggregate selection (change-squash skips aggregates; SELU→ABSOLUTE `+4.2e-10` vs `−8.7e-4`). |
+| **G3** | #1713 (**closed**) | Contribution-propagation break: expected-error-reduction estimator ignores downstream aggregate selection (change-squash skips aggregates; SELU→ABSOLUTE `+4.2e-10` vs `−8.7e-4`). **Delivered** in `src/analysis/detection/squash_weight_rescale.rs`: `detect_squash_weight_rescale_candidates` now gates out any candidate whose branch feeds a downstream aggregate selection (`feeds_downstream_aggregate`), so no misleading local `f(x)` estimate is emitted until a proper propagation model exists. |
 
 ### Cross-repo dependencies noted during characterisation
 

@@ -65,6 +65,32 @@ const RESCALE_CANDIDATES: &[f32] = &[
 /// likelihood of immediate benefit.
 const COORDINATED_BOOST: f32 = 1.5;
 
+/// Returns true if the candidate neuron's output feeds a downstream aggregate
+/// (MAX/MIN/IF/MEAN/HYPOT) selection neuron (Issue #1713).
+///
+/// The expected-error-reduction estimator simulates each candidate neuron in
+/// isolation as `f(x)` and compares MAE against that neuron's *own* target. That
+/// is only meaningful when the neuron's activation flows to the output through
+/// pure `f(x)` neurons. When the branch instead feeds a selection aggregate, the
+/// aggregate — not the neuron — decides whether the branch's value reaches the
+/// output, so a change that flips the branch's activation sign/range changes
+/// which branch is selected. The local estimate cannot see that effect and
+/// systematically mispredicts the gain (e.g. SELU→ABSOLUTE predicted `+4.2e-10`
+/// but measured `−8.7e-4`). Until a proper propagation model exists, gate such
+/// candidates out rather than emit a misleading estimate.
+fn feeds_downstream_aggregate(creature: &CreatureJson, neuron_uuid: &str) -> bool {
+    creature
+        .synapses
+        .iter()
+        .filter(|s| s.from_uuid == neuron_uuid)
+        .any(|s| {
+            creature
+                .neurons
+                .iter()
+                .any(|n| n.uuid == s.to_uuid && is_aggregate_squash(&n.squash))
+        })
+}
+
 /// A detected squash + weight rescale candidate.
 #[derive(Debug, Clone)]
 pub struct SquashWeightRescaleCandidate {
@@ -181,6 +207,14 @@ pub fn detect_squash_weight_rescale_candidates(
     for (uuid, current_squash, _bias) in hidden_neurons {
         // Skip aggregate squashes — they cannot be simulated as f(x)
         if is_aggregate_squash(current_squash) {
+            continue;
+        }
+
+        // Gate out candidates whose branch feeds a downstream aggregate
+        // selection (MAX/MIN/IF/…). The local f(x) estimate cannot model how a
+        // changed activation range alters which branch the aggregate selects,
+        // so it systematically mispredicts the whole-creature gain (Issue #1713).
+        if feeds_downstream_aggregate(creature, uuid) {
             continue;
         }
 
