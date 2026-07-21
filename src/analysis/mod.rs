@@ -46,6 +46,7 @@ pub mod deadline_breakdown;
 pub mod diagnostics;
 pub mod discovery_dispatch;
 pub mod discovery_mode;
+pub mod dominated_branch_collapse;
 pub mod drought_diagnostic;
 pub mod drought_reset;
 pub mod early_termination;
@@ -139,6 +140,16 @@ pub use remove_neuron_constant_promotion::{
 pub use remove_neuron_bias_fold::{
     BIAS_FOLD_GATE_TOLERANCE, BiasFoldOutcome, FoldedTarget, evaluate_constant_neuron_bias_fold,
     fold_and_remove_constant_neuron,
+};
+
+// Issue #1711: analytical dominated-branch collapse for MAX/MIN selection
+// aggregates — prove a branch's `weight × squash(range)` can never win the
+// aggregate, then remove it and fold the single-survivor aggregate to a
+// pass-through, behind the evaluate-before-accept gate.
+pub use dominated_branch_collapse::{
+    AggregateKind, COLLAPSE_GATE_TOLERANCE, CollapseOutcome, DominatedBranch, SquashSign,
+    analytically_dominated_branch_uuids, collapse_dominated_branch, detect_dominated_branches,
+    evaluate_dominated_branch_collapse, scalar_squash_sign,
 };
 
 // Issue #1633: merge/fold redundant (highly-correlated) hidden neurons — fold

@@ -162,7 +162,7 @@ consistent with the #1623 pattern.
 
 | Gap | Follow-up | Summary |
 |-----|-----------|---------|
-| **G1** | #1711 | Analytical dominated-branch collapse detector + transform for MAX/MIN aggregates (no dominance proof exists today; extent of collapse is zero). |
+| **G1** | #1711 (**closed**) | Analytical dominated-branch collapse detector + transform for MAX/MIN aggregates. **Delivered** in `src/analysis/dominated_branch_collapse.rs`: a sound sign-based dominance proof (`weight × squash(range)`) plus a collapse transform that removes the dominated branch and folds the single-survivor aggregate to a pass-through, behind the #1623-style evaluate-before-accept gate. |
 | **G2** | #1712 | Partially-dominated shapes: IF conditional dominance (F1), multi-branch aggregates, small-but-non-zero win fraction (F2). |
 | **G3** | #1713 | Contribution-propagation break: expected-error-reduction estimator ignores downstream aggregate selection (change-squash skips aggregates; SELU→ABSOLUTE `+4.2e-10` vs `−8.7e-4`). |
 
