@@ -1,0 +1,86 @@
+{
+  "shapeId": "d1ac1f41",
+  "_comment": "Candidate-cache 'd1ac1f41' shape for Issue #1705: 1 success (remove-neuron) versus 5 failures (1 change-squash, 4 remove-neuron). Mirrors the real GRQ-Discovery cache directory shape so the contribution-propagation suite can assert the success/failure split and the change-squash/remove-neuron mix. Values are synthetic but structurally faithful to committed cache records.",
+  "successes": [
+    {
+      "wireSchemaVersion": 2,
+      "key": "v2_remove-neuron_d1ac1f41-success-0",
+      "changeType": "remove-neuron",
+      "description": "💀 Removed harmful neuron (success)",
+      "originalScore": 0.4236678629467732,
+      "candidateScore": 0.4239678629467732,
+      "scoreDelta": 0.0003,
+      "timestamp": "2026-07-16T01:00:00.000000000Z",
+      "discoveryVersion": "0.74.131",
+      "expectedErrorReduction": 0.0002,
+      "actualErrorReduction": 0.0003
+    }
+  ],
+  "failures": [
+    {
+      "wireSchemaVersion": 2,
+      "key": "v2_change-squash_d1ac1f41-failure-0",
+      "changeType": "change-squash",
+      "description": "🎨 Changed activation function (failure)",
+      "originalScore": 0.4236678629467732,
+      "candidateScore": 0.4232678629467732,
+      "scoreDelta": -0.0004,
+      "timestamp": "2026-07-16T01:01:00.000000000Z",
+      "discoveryVersion": "0.74.131",
+      "expectedErrorReduction": 3.1e-10,
+      "actualErrorReduction": -0.0004
+    },
+    {
+      "wireSchemaVersion": 2,
+      "key": "v2_remove-neuron_d1ac1f41-failure-1",
+      "changeType": "remove-neuron",
+      "description": "💀 Removed harmful neuron (failure)",
+      "originalScore": 0.4236678629467732,
+      "candidateScore": 0.4234678629467732,
+      "scoreDelta": -0.0002,
+      "timestamp": "2026-07-16T01:02:00.000000000Z",
+      "discoveryVersion": "0.74.131",
+      "expectedErrorReduction": 0.15,
+      "actualErrorReduction": -0.0002
+    },
+    {
+      "wireSchemaVersion": 2,
+      "key": "v2_remove-neuron_d1ac1f41-failure-2",
+      "changeType": "remove-neuron",
+      "description": "💀 Removed harmful neuron (failure)",
+      "originalScore": 0.4236678629467732,
+      "candidateScore": 0.4235178629467732,
+      "scoreDelta": -0.00015,
+      "timestamp": "2026-07-16T01:03:00.000000000Z",
+      "discoveryVersion": "0.74.131",
+      "expectedErrorReduction": 0.12,
+      "actualErrorReduction": -0.00015
+    },
+    {
+      "wireSchemaVersion": 2,
+      "key": "v2_remove-neuron_d1ac1f41-failure-3",
+      "changeType": "remove-neuron",
+      "description": "💀 Removed harmful neuron (failure)",
+      "originalScore": 0.4236678629467732,
+      "candidateScore": 0.4235678629467732,
+      "scoreDelta": -0.0001,
+      "timestamp": "2026-07-16T01:04:00.000000000Z",
+      "discoveryVersion": "0.74.131",
+      "expectedErrorReduction": 0.09,
+      "actualErrorReduction": -0.0001
+    },
+    {
+      "wireSchemaVersion": 2,
+      "key": "v2_remove-neuron_d1ac1f41-failure-4",
+      "changeType": "remove-neuron",
+      "description": "💀 Removed harmful neuron (failure)",
+      "originalScore": 0.4236678629467732,
+      "candidateScore": 0.4235478629467732,
+      "scoreDelta": -0.00012,
+      "timestamp": "2026-07-16T01:05:00.000000000Z",
+      "discoveryVersion": "0.74.131",
+      "expectedErrorReduction": 0.1,
+      "actualErrorReduction": -0.00012
+    }
+  ]
+}
