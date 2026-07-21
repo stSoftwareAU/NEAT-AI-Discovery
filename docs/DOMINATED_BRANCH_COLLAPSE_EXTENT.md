@@ -152,6 +152,41 @@ deliberately does **not** assert. → **Gap G2**.
   existing transform will ever reach it. Closing the gap needs a new
   analytical-dominance detector, not a tweak to the constant-neuron path.
 
+### G2 status — partial-dominance safety analyser landed (#1712)
+
+The **safety-verdict** half of G2 is implemented in
+`src/focus/partial_dominance.rs` (`analyse_partial_dominance` /
+`safe_collapse_branches`). It classifies every MAX/MIN/IF branch over the
+recorded window from its empirical win fraction and decides where a collapse is
+*provably safe* — the input the #1623 evaluate-before-accept gate and the #1711
+collapse transform consume. It performs **no** mutation itself.
+
+```mermaid
+flowchart TD
+    B[branch of a MAX/MIN/IF aggregate] --> W{win fraction<br/>over the window}
+    W -- "== 0" --> D[Dominated]
+    W -- "0 < wf < partial" --> P[Partial]
+    W -- ">= partial / no evidence" --> C[Contributing]
+    D --> AGG{aggregate type?}
+    AGG -- MAX/MIN --> SAFE[safe to collapse<br/>*gated by evaluate-before-accept*]
+    AGG -- IF --> COND{condition<br/>degenerate?}
+    COND -- "AlwaysPositive/Negative" --> SAFE
+    COND -- "Mixed / Unknown (F1)" --> HOLD[no branch safe]
+    P --> GATE[gated candidate only]
+    C --> KEEP[keep]
+```
+
+- **F1 (IF).** A dominated IF branch is safe **only** when the condition is
+  provably degenerate over the window; a `Mixed` condition holds every branch,
+  matching `if_dominance_is_conditional_not_global`.
+- **Multi-branch.** Combination dominance falls out of the win fraction — a
+  branch that never wins the true multi-way selection scores `0` even when no
+  single other branch pairwise-dominates it.
+- **Small win fraction.** `0 < wf < partial_win_fraction` ⇒ `Partial`: a gated
+  candidate only, never auto-collapsed.
+
+The **collapse transform** that acts on these verdicts remains G1/#1711.
+
 ---
 
 ## Follow-up issue register
