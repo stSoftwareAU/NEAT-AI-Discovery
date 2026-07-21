@@ -1,0 +1,21 @@
+{
+  "_comment": "Synthetic IF selection aggregate for Issue #1705 (dominated-branch collapse). An IF aggregate selects its positive or negative branch based on a condition synapse. Here the RELU branch is wired as the positive branch (always >= 0) and the ABSOLUTE-scaled-by-(-1) branch as the negative branch (always <= 0, analytically dominated whenever the condition selects positive). The IF condition synapse (type=condition) is driven by neuron-cond. Fixtures only - no engine behaviour change. Input neurons are implicit (referenced as input-N).",
+  "input": 3,
+  "output": 1,
+  "neurons": [
+    { "type": "hidden", "uuid": "neuron-abs", "squash": "ABSOLUTE", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-relu", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-cond", "squash": "TANH", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-if", "squash": "IF", "bias": 0 },
+    { "type": "output", "uuid": "output-0", "squash": "IDENTITY", "bias": 0 }
+  ],
+  "synapses": [
+    { "fromUUID": "input-0", "toUUID": "neuron-abs", "weight": 1 },
+    { "fromUUID": "input-1", "toUUID": "neuron-relu", "weight": 1 },
+    { "fromUUID": "input-2", "toUUID": "neuron-cond", "weight": 1 },
+    { "fromUUID": "neuron-cond", "toUUID": "neuron-if", "weight": 1, "type": "condition" },
+    { "fromUUID": "neuron-relu", "toUUID": "neuron-if", "weight": 1, "type": "positive" },
+    { "fromUUID": "neuron-abs", "toUUID": "neuron-if", "weight": -1, "type": "negative" },
+    { "fromUUID": "neuron-if", "toUUID": "output-0", "weight": 1 }
+  ]
+}

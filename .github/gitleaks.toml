@@ -31,8 +31,9 @@
 useDefault = true
 
 [allowlist]
-description = "Synthetic remove-neuron propagation test fixtures (no real secrets)"
+description = "Synthetic discovery test fixtures — remove-neuron propagation and dominated-branch collapse (no real secrets)"
 targetRules = ["generic-api-key"]
 paths = [
   '''tests/fixtures/remove_neuron_propagation/.*\.json''',
+  '''tests/fixtures/dominated_branch_collapse/.*\.json''',
 ]
